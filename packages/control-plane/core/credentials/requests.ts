@@ -95,7 +95,7 @@ async function requestForResolution(
   });
   if (
     request === null ||
-    (principal.id !== "operator" && request.owner_id !== principal.id)
+    (!principal.platformOperator && request.owner_id !== principal.id)
   ) {
     throw new HttpError(404, "credential request not found");
   }
@@ -225,9 +225,9 @@ export async function listRequests(
         FROM credential_requests request
         JOIN workspaces workspace ON workspace.id = request.workspace_id
         WHERE request.state = ?1
-          AND (?2 = 'operator' OR workspace.owner_id = ?2)
+          AND (?2 = 1 OR workspace.owner_id = ?3)
         ORDER BY request.created_at, request.id`,
-    v: [state, principal.id],
+    v: [state, principal.platformOperator ? 1 : 0, principal.id],
   });
   return requests.map((request) => ({
     id: request.id,

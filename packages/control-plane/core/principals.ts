@@ -1,11 +1,4 @@
-import {
-  bearerToken,
-  DUMMY_HASH,
-  hashSecret,
-  matchesStoredHash,
-  randomToken,
-  safeEqualSecret,
-} from "./crypto.js";
+import { DUMMY_HASH, hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 import { isString } from "./http.js";
@@ -14,18 +7,24 @@ export interface Principal {
   id: string;
   unixName: string;
   harnesses: string[];
+  membershipId: string | null;
+  orgId: string | null;
+  role: "admin" | "member" | null;
+  platformOperator: boolean;
 }
 
 export interface PrincipalSource {
   authenticate(request: Request, db: Db): Promise<Principal | null>;
-  exchange(request: Request): Promise<Principal | null>;
 }
 
 interface SessionRow {
   token_hash: string;
   id: string;
-  unix_name: string;
-  harnesses: string;
+  platform_operator: number;
+  membership_id: string | null;
+  org_id: string | null;
+  role: "admin" | "member" | null;
+  status: "invited" | "active" | "disabled" | null;
 }
 
 export const SESSION_COOKIE = "blitz_session";
@@ -47,17 +46,6 @@ export function cookieValue(request: Request, name: string): string | null {
   return null;
 }
 
-function parseHarnesses(value: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((item) => isString(item))
-      ? parsed
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 export async function findSessionPrincipal(
   request: Request,
   db: Db,
@@ -66,25 +54,30 @@ export async function findSessionPrincipal(
   if (token === null) return null;
   const hash = await hashSecret(token);
   const row = await first<SessionRow>(db, {
-    q: `SELECT s.token_hash, p.id, p.unix_name, p.harnesses
-       FROM sessions s JOIN principals p ON p.id = s.principal_id
+    q: `SELECT s.token_hash, u.id, u.platform_operator, s.membership_id,
+              m.org_id, m.role, m.status
+       FROM sessions s
+       JOIN users u ON u.id = s.principal_id
+       LEFT JOIN memberships m ON m.id = s.membership_id AND m.user_id = u.id
        WHERE s.token_hash = ?1 AND s.expires_at > ?2 LIMIT 1`,
     v: [hash, Date.now()],
   });
   const matches = await matchesStoredHash(token, row?.token_hash ?? DUMMY_HASH);
   if (row === null || !matches) return null;
-  return { id: row.id, unixName: row.unix_name, harnesses: parseHarnesses(row.harnesses) };
+  if (row.membership_id !== null && row.status !== "active") return null;
+  return {
+    id: row.id,
+    unixName: "blitz",
+    harnesses: ["claude", "codex"],
+    membershipId: row.membership_id,
+    orgId: row.org_id,
+    role: row.role,
+    platformOperator: row.platform_operator === 1,
+  };
 }
 
-export function createOperatorPrincipalSource(operatorKey: string): PrincipalSource {
-  return {
-    authenticate: findSessionPrincipal,
-    async exchange(request): Promise<Principal | null> {
-      const provided = bearerToken(request) ?? request.headers.get("x-operator-key");
-      if (provided === null || !(await safeEqualSecret(provided, operatorKey))) return null;
-      return { id: "operator", unixName: "operator", harnesses: ["claude", "codex"] };
-    },
-  };
+export function createSessionPrincipalSource(): PrincipalSource {
+  return { authenticate: findSessionPrincipal };
 }
 
 export async function ensurePrincipal(db: Db, principal: Principal): Promise<void> {
@@ -107,6 +100,23 @@ export async function mintSession(
     q: `INSERT INTO sessions (token_hash, principal_id, created_at, expires_at)
         VALUES (?1, ?2, ?3, ?4)`,
     v: [await hashSecret(token), principal.id, now, now + ttlMs],
+  });
+  return token;
+}
+
+export async function mintUserSession(
+  db: Db,
+  userId: string,
+  membershipId: string | null,
+  ttlMs: number,
+  now = Date.now(),
+): Promise<string> {
+  const token = randomToken();
+  await rows(db, {
+    q: `INSERT INTO sessions
+        (token_hash, principal_id, created_at, expires_at, membership_id)
+        VALUES (?1, ?2, ?3, ?4, ?5)`,
+    v: [await hashSecret(token), userId, now, now + ttlMs, membershipId],
   });
   return token;
 }

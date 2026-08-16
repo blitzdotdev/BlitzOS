@@ -47,7 +47,14 @@ same deploy command:
 ```sh
 npx wrangler secret put HETZNER_API_TOKEN --config packages/control-plane/wrangler.toml
 npx wrangler secret put OPERATOR_API_KEY --config packages/control-plane/wrangler.toml
+npx wrangler secret put GOOGLE_CLIENT_ID --config packages/control-plane/wrangler.toml
+npx wrangler secret put GOOGLE_CLIENT_SECRET --config packages/control-plane/wrangler.toml
 ```
+
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` configure Google OAuth.
+`OPERATOR_API_KEY` is no longer an API credential: it is only the bootstrap
+secret that enables the first Google user to claim the legacy operator-owned
+rows and become the platform operator.
 
 `MICROVM_HOSTS` is a non-secret JSON array. The primary production shape is a
 pinned host with exactly `name`, `url`, and `tokenVar`; `tokenVar` names a

@@ -1,6 +1,7 @@
 import type { Db, Query } from "../db.js";
 import { changed, first, rows, transaction } from "../db.js";
 import { HttpError, isString } from "../http.js";
+import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
 import type { Lease, MintResult } from "./types.js";
 
@@ -115,7 +116,7 @@ export async function createLease(
 export async function listLeases(
   db: Db,
   workspaceId: string,
-  principalId: string,
+  principal: Principal,
 ): Promise<Lease[]> {
   const workspace = await first<{ owner_id: string }>(db, {
     q: "SELECT owner_id FROM workspaces WHERE id = ?1 LIMIT 1",
@@ -123,7 +124,7 @@ export async function listLeases(
   });
   if (
     workspace === null ||
-    (principalId !== "operator" && workspace.owner_id !== principalId)
+    (!principal.platformOperator && workspace.owner_id !== principal.id)
   ) {
     throw new HttpError(404, "workspace not found");
   }
@@ -143,7 +144,7 @@ export async function listLeases(
 export async function revokeLease(
   db: Db,
   id: string,
-  principalId: string,
+  principal: Principal,
   now = Date.now(),
 ): Promise<void> {
   const row = await first<LeaseRow>(db, {
@@ -157,7 +158,7 @@ export async function revokeLease(
   });
   if (
     row === null ||
-    (principalId !== "operator" && row.owner_id !== principalId)
+    (!principal.platformOperator && row.owner_id !== principal.id)
   ) {
     throw new HttpError(404, "credential lease not found");
   }

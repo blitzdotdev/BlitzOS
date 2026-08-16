@@ -152,6 +152,10 @@ async function webAppWorkspaceForRequest(
     const row = await first<WorkspaceRow & { session_token_hash: string }>(runtime.db, {
       q: `SELECT w.*, s.token_hash AS session_token_hash
           FROM sessions s
+          JOIN memberships m
+            ON m.id = s.membership_id
+           AND m.user_id = s.principal_id
+           AND m.status = 'active'
           JOIN workspaces w ON w.owner_id = s.principal_id
           WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND w.id = ?3
           LIMIT 1`,
@@ -636,6 +640,7 @@ export function addWorkspaceRoutes(
     await transaction(runtime.db, [
       revokeWorkspaceLeasesQuery(id),
       { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [id] },
+      { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [id] },
       {
         q: `UPDATE workspaces
             SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,

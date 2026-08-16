@@ -38,6 +38,10 @@ const expected = [
   "core/credentials/mint.ts",
   "core/credentials/proxy.ts",
   "core/http.ts",
+  "core/identity/google.ts",
+  "core/identity/oauth-state.ts",
+  "core/identity/orgs.ts",
+  "core/identity/routes.ts",
   "core/janitors.ts",
   "core/oauth.ts",
   "core/principals.ts",
@@ -45,6 +49,7 @@ const expected = [
   "core/sessions.ts",
   "core/types.ts",
   "core/volumes.ts",
+  "core/webapp-state.ts",
   "core/workspaces.ts",
   "core/providers/registry.ts",
   "core/providers/types.ts",
@@ -71,7 +76,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(39);
+    expect(first.files).toHaveLength(44);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

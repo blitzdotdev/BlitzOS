@@ -33,6 +33,9 @@ directory = "../webapp/dist"
 not_found_handling = "single-page-application"
 run_worker_first = [
   "/sessions*",
+  "/auth/*",
+  "/me",
+  "/orgs*",
   "/workspaces*",
   "/integrations*",
   "/leases*",
@@ -40,6 +43,7 @@ run_worker_first = [
   "/proxy*",
   "/volumes*",
   "/machine-types*",
+  "/webapp-state*",
   "/hosts*",
   "/oauth/*",
   "/boxes/*",

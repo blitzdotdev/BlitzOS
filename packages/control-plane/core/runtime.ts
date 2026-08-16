@@ -26,7 +26,7 @@ export interface CoreContext {
     status?: number,
     headers?: Record<string, string>,
   ): Response;
-  header(name: string, value: string): void;
+  header(name: string, value: string, options?: { append?: boolean }): void;
   readonly executionCtx: { waitUntil(promise: Promise<unknown>): void };
 }
 
@@ -52,6 +52,9 @@ export interface RuntimeVariables {
   boxImageTag: string;
   sessionTtlMs: number;
   maxConcurrentWorkspaces: number;
+  googleClientId: string;
+  googleClientSecret: string;
+  bootstrapSecret: string;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

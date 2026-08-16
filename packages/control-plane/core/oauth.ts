@@ -35,6 +35,7 @@ interface BoxTokenRow {
   principal_id: string;
   workspace_id: string | null;
   is_broker: number;
+  platform_operator: number;
 }
 
 export interface IssuedBoxTokens {
@@ -144,8 +145,11 @@ export async function authenticateBox(
   const hash = await hashSecret(token);
   const row = await first<BoxTokenRow>(db, {
     q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-               b.id, b.principal_id, b.workspace_id, b.is_broker
-        FROM box_token_families f JOIN boxes b ON b.id = f.box_id
+               b.id, b.principal_id, b.workspace_id, b.is_broker,
+               COALESCE(u.platform_operator, 0) AS platform_operator
+        FROM box_token_families f
+        JOIN boxes b ON b.id = f.box_id
+        LEFT JOIN users u ON u.id = b.principal_id
         WHERE f.access_hash = ?1 LIMIT 1`,
     v: [hash],
   });
@@ -158,6 +162,7 @@ export async function authenticateBox(
     principalId: row.principal_id,
     workspaceId: row.workspace_id,
     isBroker: row.is_broker === 1,
+    platformOperator: row.platform_operator === 1,
   };
 }
 

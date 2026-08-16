@@ -1,0 +1,305 @@
+import { randomToken } from "../crypto.js";
+import type { Db } from "../db.js";
+import { first, rows, transaction } from "../db.js";
+import { HttpError, isRecord, isString } from "../http.js";
+import {
+  cookieValue,
+  mintUserSession,
+  sessionCookie,
+} from "../principals.js";
+import { fetchBoundedJson, type JsonValue } from "../providers/json-fetch.js";
+import type { CoreRouter, RuntimeFactory } from "../runtime.js";
+import {
+  clearGoogleOAuthStateCookie,
+  createGoogleOAuthState,
+  GOOGLE_OAUTH_COOKIE,
+  verifyGoogleOAuthStateCookie,
+} from "./oauth-state.js";
+import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
+
+const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
+
+interface GoogleProfile {
+  googleUserId: string;
+  email: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+interface UserRow {
+  id: string;
+  platform_operator: number;
+  name: string;
+}
+
+interface MembershipRow {
+  id: string;
+}
+
+function providerObject(value: JsonValue | null, label: string): Record<string, JsonValue> {
+  if (!isRecord(value)) throw new Error(`${label} returned an invalid response`);
+  return value;
+}
+
+function providerString(
+  value: JsonValue | undefined,
+  field: string,
+  maxLength = 4_096,
+): string {
+  if (!isString(value) || value === "" || value.length > maxLength) {
+    throw new Error(`Google response has invalid ${field}`);
+  }
+  return value;
+}
+
+function parseGoogleProfile(value: JsonValue | null): GoogleProfile {
+  const profile = providerObject(value, "Google userinfo");
+  if (profile.email_verified !== true) {
+    throw new HttpError(401, "Google email is not verified");
+  }
+  const email = providerString(profile.email, "email", 320).trim().toLowerCase();
+  const avatarUrl = profile.picture === undefined
+    ? null
+    : providerString(profile.picture, "picture", 4_096);
+  return {
+    googleUserId: providerString(profile.sub, "sub", 256),
+    email,
+    name: providerString(profile.name, "name", 256).trim(),
+    avatarUrl,
+  };
+}
+
+async function googleProfile(
+  code: string,
+  codeVerifier: string,
+  redirectUri: string,
+  clientId: string,
+  clientSecret: string,
+): Promise<GoogleProfile> {
+  const tokenResult = await fetchBoundedJson(
+    globalThis.fetch,
+    GOOGLE_TOKEN_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code",
+        code_verifier: codeVerifier,
+      }),
+    },
+    {
+      responseLabel: "Google token exchange",
+      bodyDisposition: () => "read",
+      invalidJsonDisposition: () => "provider-error",
+    },
+  );
+  if (!tokenResult.response.ok) throw new HttpError(502, "Google token exchange failed");
+  const token = providerObject(tokenResult.body, "Google token exchange");
+  const accessToken = providerString(token.access_token, "access_token");
+  const userinfo = await fetchBoundedJson(
+    globalThis.fetch,
+    GOOGLE_USERINFO_URL,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    {
+      responseLabel: "Google userinfo",
+      bodyDisposition: () => "read",
+      invalidJsonDisposition: () => "provider-error",
+    },
+  );
+  if (!userinfo.response.ok) throw new HttpError(502, "Google userinfo failed");
+  return parseGoogleProfile(userinfo.body);
+}
+
+async function activeMembership(db: Db, userId: string): Promise<MembershipRow | null> {
+  return first<MembershipRow>(db, {
+    q: `SELECT m.id FROM memberships m
+        WHERE m.user_id = ?1 AND m.status = 'active'
+        ORDER BY COALESCE((
+          SELECT MAX(s.created_at) FROM sessions s WHERE s.membership_id = m.id
+        ), 0) DESC, m.rowid DESC
+        LIMIT 1`,
+    v: [userId],
+  });
+}
+
+async function resolveUser(
+  db: Db,
+  profile: GoogleProfile,
+  now: number,
+  bootstrapEnabled: boolean,
+): Promise<UserRow> {
+  let user = await first<UserRow>(db, {
+    q: "SELECT id, platform_operator, name FROM users WHERE google_user_id = ?1 LIMIT 1",
+    v: [profile.googleUserId],
+  });
+  if (user !== null) {
+    await rows(db, {
+      q: `UPDATE users SET email = ?1, name = ?2, avatar_url = ?3, updated_at = ?4
+          WHERE id = ?5`,
+      v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
+    });
+  } else {
+    const id = crypto.randomUUID();
+    await rows(db, {
+      q: `INSERT INTO users
+          (id, google_user_id, email, name, avatar_url, platform_operator,
+           created_at, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5,
+            CASE WHEN ?6 = 1
+                   AND NOT EXISTS (SELECT 1 FROM users WHERE platform_operator = 1)
+                 THEN 1 ELSE 0 END,
+            ?7, ?7)`,
+      v: [
+        id,
+        profile.googleUserId,
+        profile.email,
+        profile.name,
+        profile.avatarUrl,
+        bootstrapEnabled ? 1 : 0,
+        now,
+      ],
+    });
+    user = { id, platform_operator: 0, name: profile.name };
+  }
+  await rows(db, {
+    q: `INSERT INTO principals (id, unix_name, harnesses)
+        VALUES (?1, 'blitz', '["claude","codex"]')
+        ON CONFLICT(id) DO UPDATE SET unix_name = 'blitz', harnesses = '["claude","codex"]'`,
+    v: [user.id],
+  });
+  const refreshed = await first<UserRow>(db, {
+    q: "SELECT id, platform_operator, name FROM users WHERE id = ?1 LIMIT 1",
+    v: [user.id],
+  });
+  if (refreshed === null) throw new Error("Google user disappeared during login");
+  return refreshed;
+}
+
+async function bootstrapMembership(
+  db: Db,
+  user: UserRow,
+  now: number,
+): Promise<MembershipRow> {
+  const orgId = crypto.randomUUID();
+  const membershipId = crypto.randomUUID();
+  const slug = await availableOrgSlug(db, user.name);
+  const result = await transaction(db, [
+    {
+      q: `INSERT INTO orgs (id, slug, name, vm_limit, created_at, updated_at)
+          SELECT ?1, ?2, ?3, ?4, ?5, ?5
+          WHERE EXISTS (
+            SELECT 1 FROM users
+            WHERE id = ?6 AND platform_operator = 1
+          ) AND NOT EXISTS (
+            SELECT 1 FROM memberships
+            WHERE user_id = ?6 AND status = 'active'
+          )
+          RETURNING id`,
+      v: [orgId, slug, user.name, DEFAULT_ORG_VM_LIMIT, now, user.id],
+    },
+    {
+      q: `INSERT INTO memberships (id, user_id, org_id, role, status)
+          SELECT ?1, ?2, ?3, 'admin', 'active'
+          WHERE EXISTS (SELECT 1 FROM orgs WHERE id = ?3)
+          RETURNING id`,
+      v: [membershipId, user.id, orgId],
+    },
+    {
+      q: `UPDATE workspaces
+          SET owner_id = ?1, org_id = ?2, owner_membership_id = ?3
+          WHERE owner_id = 'operator'`,
+      v: [user.id, orgId, membershipId],
+    },
+    {
+      q: "UPDATE boxes SET principal_id = ?1 WHERE principal_id = 'operator'",
+      v: [user.id],
+    },
+    {
+      q: "UPDATE webapp_state SET principal_id = ?1 WHERE principal_id = 'operator'",
+      v: [user.id],
+    },
+  ]);
+  if (result[0]?.length !== 1 || result[1]?.length !== 1) {
+    const existing = await activeMembership(db, user.id);
+    if (existing === null) throw new Error("operator bootstrap did not create a membership");
+    return existing;
+  }
+  return { id: membershipId };
+}
+
+export function addGoogleAuthRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+): void {
+  router.get("/auth/google/start", async (context) => {
+    const runtime = runtimeFactory(context);
+    const oauth = await createGoogleOAuthState(runtime.vars.googleClientSecret);
+    const redirectUri = `${new URL(context.req.url).origin}/auth/google/callback`;
+    const authorize = new URL(GOOGLE_AUTHORIZE_URL);
+    authorize.search = new URLSearchParams({
+      client_id: runtime.vars.googleClientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: "openid email profile",
+      state: oauth.state,
+      code_challenge: oauth.codeChallenge,
+      code_challenge_method: "S256",
+    }).toString();
+    return context.body(null, 302, {
+      Location: authorize.toString(),
+      "Set-Cookie": oauth.cookie,
+    });
+  });
+
+  router.get("/auth/google/callback", async (context) => {
+    const runtime = runtimeFactory(context);
+    const requestUrl = new URL(context.req.url);
+    const code = requestUrl.searchParams.get("code");
+    const returnedState = requestUrl.searchParams.get("state");
+    const signedState = cookieValue(context.req.raw, GOOGLE_OAUTH_COOKIE);
+    if (code === null || returnedState === null || signedState === null) {
+      throw new HttpError(401, "invalid Google OAuth callback");
+    }
+    const state = await verifyGoogleOAuthStateCookie(
+      signedState,
+      returnedState,
+      runtime.vars.googleClientSecret,
+    );
+    if (state === null) throw new HttpError(401, "invalid Google OAuth state");
+    const redirectUri = `${requestUrl.origin}/auth/google/callback`;
+    const profile = await googleProfile(
+      code,
+      state.codeVerifier,
+      redirectUri,
+      runtime.vars.googleClientId,
+      runtime.vars.googleClientSecret,
+    );
+    const now = Date.now();
+    const user = await resolveUser(
+      runtime.db,
+      profile,
+      now,
+      runtime.vars.bootstrapSecret !== "",
+    );
+    let membership = await activeMembership(runtime.db, user.id);
+    if (membership === null && user.platform_operator === 1) {
+      membership = await bootstrapMembership(runtime.db, user, now);
+    }
+    const token = await mintUserSession(
+      runtime.db,
+      user.id,
+      membership?.id ?? null,
+      runtime.vars.sessionTtlMs,
+      now,
+    );
+    context.header("Set-Cookie", sessionCookie(token, runtime.vars.sessionTtlMs));
+    context.header("Set-Cookie", clearGoogleOAuthStateCookie(), { append: true });
+    return context.body(null, 302, { Location: "/" });
+  });
+}

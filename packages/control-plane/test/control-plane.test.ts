@@ -34,6 +34,7 @@ import {
   phoneHomeUrl,
   resetDatabase,
   testRuntime,
+  userSession,
 } from "./helpers.js";
 
 interface WorkspaceResponse {
@@ -49,27 +50,20 @@ describe("control plane security and lifecycle", () => {
     vi.restoreAllMocks();
   });
 
-  it("rejects an absent or wrong operator key with 401", async () => {
+  it("does not expose operator-key session exchange or authenticate routes", async () => {
     const { app } = harness();
     const absent = await appRequest(app, "/sessions", { method: "POST" });
-    const wrong = await appRequest(app, "/sessions", {
-      method: "POST",
-      headers: { Authorization: "Bearer wrong-key" },
-    });
-    expect(absent.status).toBe(401);
-    expect(wrong.status).toBe(401);
-  });
-
-  it("mints sessions with a 30-day default expiry and honors SESSION_TTL_DAYS", async () => {
-    const { app } = harness();
-    const defaultResponse = await appRequest(app, "/sessions", {
-      method: "POST",
+    const keyed = await appRequest(app, "/machine-types", {
       headers: { Authorization: `Bearer ${OPERATOR_KEY}` },
     });
-    const defaultSetCookie = defaultResponse.headers.get("set-cookie") ?? "";
-    expect(defaultSetCookie).toContain("Max-Age=2592000");
-    const defaultCookie = defaultSetCookie.split(";", 1)[0] ?? "";
-    const defaultToken = decodeURIComponent(defaultCookie.slice(defaultCookie.indexOf("=") + 1));
+    expect(absent.status).toBe(404);
+    expect(keyed.status).toBe(401);
+  });
+
+  it("stores only a hash for a user session with the default expiry", async () => {
+    const { app } = harness();
+    const defaultCookie = await operatorSession(app);
+    const defaultToken = defaultCookie.slice(defaultCookie.indexOf("=") + 1);
     const defaultRow = await env.DB
       .prepare("SELECT created_at, expires_at FROM sessions WHERE token_hash = ?1")
       .bind(await hashSecret(defaultToken))
@@ -78,28 +72,7 @@ describe("control plane security and lifecycle", () => {
     expect((defaultRow?.expires_at ?? 0) - (defaultRow?.created_at ?? 0)).toBe(
       30 * 24 * 60 * 60 * 1000,
     );
-
-    const overridden = await appRequest(
-      app,
-      "/sessions",
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${OPERATOR_KEY}` },
-      },
-      { SESSION_TTL_DAYS: "2" },
-    );
-    expect(overridden.headers.get("set-cookie")).toContain("Max-Age=172800");
-    const overrideCookie = overridden.headers.get("set-cookie")?.split(";", 1)[0];
-    if (overrideCookie === undefined) throw new Error("override session cookie is missing");
-    const overrideToken = decodeURIComponent(overrideCookie.slice(overrideCookie.indexOf("=") + 1));
-    const overrideRow = await env.DB
-      .prepare("SELECT created_at, expires_at FROM sessions WHERE token_hash = ?1")
-      .bind(await hashSecret(overrideToken))
-      .first<{ created_at: number; expires_at: number }>();
-    expect(overrideRow).not.toBeNull();
-    expect((overrideRow?.expires_at ?? 0) - (overrideRow?.created_at ?? 0)).toBe(
-      2 * 24 * 60 * 60 * 1000,
-    );
+    expect(defaultRow?.created_at).not.toBe(defaultToken);
   });
 
   it("returns 401 for expired sessions", async () => {
@@ -669,20 +642,7 @@ describe("control plane security and lifecycle", () => {
       ).status,
     ).toBe(201);
 
-    const secondToken = "second-principal-session";
-    await env.DB.batch([
-      env.DB
-        .prepare(
-          `INSERT INTO principals (id, unix_name, harnesses)
-           VALUES ('second-principal', 'second', '[]')`,
-        ),
-      env.DB
-        .prepare(
-          `INSERT INTO sessions (token_hash, principal_id, created_at, expires_at)
-           VALUES (?1, 'second-principal', ?2, ?3)`,
-        )
-        .bind(await hashSecret(secondToken), Date.now(), Date.now() + 60_000),
-    ]);
+    const secondCookie = await userSession("second-principal");
 
     const second = await appRequest(
       app,
@@ -690,7 +650,7 @@ describe("control plane security and lifecycle", () => {
       {
         method: "POST",
         headers: {
-          Cookie: `blitz_session=${secondToken}`,
+          Cookie: secondCookie,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -1130,7 +1090,7 @@ describe("control plane security and lifecycle", () => {
     });
     expect(registration.status).toBe(200);
     expect(await registration.json<RegisterKeysResponse>()).toEqual({
-      memberUnixName: "operator",
+      memberUnixName: "blitz",
       broker: {
         host: "broker.example",
         port: 22,
@@ -1146,7 +1106,7 @@ describe("control plane security and lifecycle", () => {
     const body = await feed.json<FeedResponse>();
     expect(body.members).toHaveLength(1);
     expect(body.members[0]).toMatchObject({
-      unixName: "operator",
+      unixName: "blitz",
       harnesses: ["claude", "codex"],
     });
     expect(body.members[0]?.keys).toEqual(

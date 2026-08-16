@@ -5,6 +5,8 @@ export const DB_BINDING = "DB";
 export const REQUIRED_SECRETS = Object.freeze([
   "HETZNER_API_TOKEN",
   "OPERATOR_API_KEY",
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
   "CRED_MASTER_KEY",
 ]);
 
