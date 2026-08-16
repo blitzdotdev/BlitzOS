@@ -10,6 +10,7 @@ import { defaultGlobalWebAppState, defaultWorkspaceWebAppState } from "../src/st
 function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["retryAction"]): WorkspaceView {
   return {
     id: `workspace-${phase}`,
+    name: `name-${phase}`,
     machineTypeId: "mv-2c2g@lab",
     phase,
     retryAction,

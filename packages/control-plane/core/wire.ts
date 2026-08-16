@@ -59,6 +59,7 @@ export interface Volume {
 
 export interface WorkspaceView {
   id: string;
+  name: string;
   machineTypeId: string;
   phase: Phase;
   retryAction: RetryAction;
@@ -82,6 +83,7 @@ export interface ListMachineTypesResponse {
 
 export interface CreateWorkspaceRequest {
   machineTypeId: string;
+  name?: string;
   sshPublicKey?: string;
   volumeId?: string;
   userData?: string;

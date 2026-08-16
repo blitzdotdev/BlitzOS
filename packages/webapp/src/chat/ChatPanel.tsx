@@ -7,7 +7,6 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { endpointTarget } from "../resolver.js";
 import { isString } from "../type-guards.js";
 import { ChatTranscript } from "./ChatTranscript.js";
 import { chatReducer, initialChatState } from "./reducer.js";
@@ -156,8 +155,31 @@ export function ChatPanel({
     permissionResolvers.current.delete(toolCallId);
   };
 
-  const submit = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  const updatePinned = (): void => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const pinned = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    pinnedRef.current = pinned;
+    setShowJump(!pinned);
+  };
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (element && pinnedRef.current) element.scrollTop = element.scrollHeight;
+  }, [state]);
+
+  const jumpToLatest = (): void => {
+    const element = scrollRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+    pinnedRef.current = true;
+    setShowJump(false);
+  };
+
+  const send = async (): Promise<void> => {
     const text = composer.trim();
     const context = connectionRef.current;
     const sessionId = sessionIdRef.current;
@@ -192,40 +214,89 @@ export function ChatPanel({
     setModes({ ...modes, currentModeId: modeId });
   };
 
+  const connected = status === "Connected";
   return (
     <section className="panel chat-panel">
-      <div className="panel-toolbar">
-        <span className={`connection-status${status === "Connected" ? " active" : status.includes("Connecting") ? " transitional" : ""}`}>{status}</span>
-        <code className="endpoint-target">{endpointTarget(url)}</code>
-        {modes !== null && modes.availableModes.length > 0 && (
-          <label>
-            Mode
-            <select value={modes.currentModeId} onChange={(event) => void setMode(event.currentTarget.value)}>
-              {modes.availableModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
-            </select>
-          </label>
+      <div className="chat-body">
+        <div className="chat-scroll" ref={scrollRef} aria-live="polite" onScroll={updatePinned}>
+          {state.rows.length === 0 && !state.running && (
+            <div className="chat-empty">
+              {connected
+                ? "Ask the agent anything — it runs on your workspace VM."
+                : status}
+            </div>
+          )}
+          <ChatTranscript
+            state={state}
+            onPermission={answerPermission}
+            onOpenPreview={onOpenPreview}
+          />
+          {state.running && (
+            <div className="chat-working" role="status">
+              <span className="webapp-inline-spinner" aria-hidden="true" />
+              <span>Working…</span>
+            </div>
+          )}
+          {!state.running && state.stopReasons.length > 0 && (
+            <div className="chat-result-meta">{state.stopReasons.at(-1)?.stopReason}</div>
+          )}
+        </div>
+        {showJump && (
+          <button type="button" className="chat-jump" onClick={jumpToLatest}>
+            Jump to latest
+          </button>
         )}
       </div>
-      <ChatTranscript
-        state={state}
-        onPermission={answerPermission}
-        onOpenPreview={onOpenPreview}
-      />
-      {state.stopReasons.length > 0 && (
-        <p className="stop-reason">Stopped: {state.stopReasons.at(-1)?.stopReason}</p>
-      )}
-      <form className="composer" onSubmit={(event) => void submit(event)}>
-        <textarea
-          aria-label="Message"
-          rows={3}
-          value={composer}
-          disabled={state.running}
-          placeholder={state.running ? "Agent is working…" : "Ask the agent"}
-          onChange={(event) => setComposer(event.currentTarget.value)}
-        />
-        <div className="button-row">
-          {state.running && <button className="webapp-action" type="button" onClick={cancel}>Cancel turn</button>}
-          <button className="webapp-action webapp-action--primary" type="submit" disabled={state.running || status !== "Connected"}>Send</button>
+      <form
+        className="chat-composer"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+      >
+        {modes !== null && modes.availableModes.length > 0 && (
+          <div className="chat-composer-controls">
+            <label className="chat-composer-control">
+              Mode
+              <select
+                className="chat-model-select"
+                value={modes.currentModeId}
+                onChange={(event) => void setMode(event.currentTarget.value)}
+              >
+                {modes.availableModes.map((mode) => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
+              </select>
+            </label>
+          </div>
+        )}
+        <div className="chat-input-row">
+          <textarea
+            aria-label="Message"
+            rows={1}
+            value={composer}
+            disabled={!connected}
+            placeholder={connected ? "Message the agent…" : status}
+            onChange={(event) => setComposer(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && state.running) {
+                event.preventDefault();
+                cancel();
+              } else if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+          />
+          <div className="chat-input-actions">
+            {state.running ? (
+              <button type="button" className="chat-stop" onClick={cancel}>
+                <span className="chat-key">Esc</span> Stop
+              </button>
+            ) : (
+              <button type="submit" disabled={!connected || composer.trim().length === 0}>
+                Send
+              </button>
+            )}
+          </div>
         </div>
       </form>
     </section>

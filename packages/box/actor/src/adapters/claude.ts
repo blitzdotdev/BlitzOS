@@ -68,16 +68,22 @@ export class ClaudeAdapter implements AgentAdapter {
     Object.assign(options, claudeOptionalOptions(input));
     let resumeId = input.resumeId ?? undefined;
     let stopReason: TurnOutput["stopReason"] = "refusal";
+    // Stream-event records carry a fresh uuid per event, so deltas must share
+    // an id per assistant message or every chunk renders as its own message.
+    let messageId = input.turnId;
     for await (const message of query({ prompt: promptText(input.prompt), options })) {
       const record = asRecord(message);
       if (isString(record.session_id)) resumeId = record.session_id;
       if (record.type === "stream_event") {
         const event = asRecord(record.event);
+        if (event.type === "message_start") {
+          messageId = isString(record.uuid) ? record.uuid : `${input.turnId}-${Date.now()}`;
+        }
         const delta = asRecord(event.delta);
         if (event.type === "content_block_delta" && delta.type === "text_delta" && isString(delta.text)) {
           await input.emit({
             sessionUpdate: "agent_message_chunk",
-            messageId: isString(record.uuid) ? record.uuid : input.turnId,
+            messageId,
             content: { type: "text", text: delta.text },
           });
         }

@@ -17,19 +17,13 @@ import type { FileStat, WebDAVClient } from 'webdav';
 import { FileTypeIcon } from './FileTypeIcon';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { davErrorStatus, fullDavPath } from './files';
-
-type FileNode = {
-  id: string;
-  kind: 'file' | 'directory';
-  name: string;
-  path: string;
-  children?: FileNode[];
-} | {
-  id: string;
-  kind: 'status';
-  path: string;
-  status: 'loading' | 'empty' | 'error';
-};
+import {
+  listedNodes,
+  mergedTree,
+  replaceDirectory,
+  statusNode,
+  type FileNode,
+} from './files-tree';
 
 type FilesSidebarProps = {
   client: WebDAVClient | null;
@@ -53,6 +47,7 @@ type DirectoryLoadResult = 'loaded' | 'error' | 'transient-error' | 'unavailable
 
 export const ROOT_RETRY_INTERVAL_MS = 2_500;
 export const ROOT_RETRY_WINDOW_MS = 60_000;
+export const FILES_POLL_INTERVAL_MS = 4_000;
 
 function transientDavStatus(status: number | undefined): boolean {
   return status === undefined
@@ -68,49 +63,6 @@ type FilesContextMenu = {
   directory: string;
   createKind?: 'file' | 'folder';
 };
-
-function statusNode(path: string, status: 'loading' | 'empty' | 'error'): FileNode {
-  return {
-    id: `//status/${status}/${path}`,
-    kind: 'status',
-    path,
-    status,
-  };
-}
-
-function listedNodes(path: string, entries: FileStat[]): FileNode[] {
-  return entries
-    .filter(({ basename }) => basename.length > 0)
-    .sort((left, right) => (
-      left.type === right.type
-        ? left.basename.localeCompare(right.basename, undefined, { sensitivity: 'base' })
-        : left.type === 'directory' ? -1 : 1
-    ))
-    .map((entry): FileNode => {
-      const filePath = path ? `${path}/${entry.basename}` : entry.basename;
-      const node: FileNode = {
-        id: filePath,
-        kind: entry.type,
-        name: entry.basename,
-        path: filePath,
-      };
-      if (entry.type === 'directory') node.children = [statusNode(filePath, 'loading')];
-      return node;
-    });
-}
-
-function replaceDirectory(
-  nodes: FileNode[],
-  path: string,
-  children: FileNode[],
-): FileNode[] {
-  return nodes.map((node) => {
-    if (node.kind !== 'directory') return node;
-    if (node.path === path) return { ...node, children };
-    if (!node.children) return node;
-    return { ...node, children: replaceDirectory(node.children, path, children) };
-  });
-}
 
 function IndentGuides({ depth }: { depth: number }) {
   if (depth === 0) return null;
@@ -345,6 +297,29 @@ export function FilesSidebar({
     }
   }, [currentClient, onUnauthorized]);
 
+  // Reloads root plus expanded directories without loading placeholders, so
+  // files created outside the sidebar (terminal, agents, editor) show up.
+  const silentRefresh = useCallback(async () => {
+    const requestClient = currentClient();
+    if (!requestClient) return;
+    const listings = new Map<string, FileStat[]>();
+    let unauthorized = false;
+    await Promise.all(['', ...expandedRef.current].map(async (path) => {
+      try {
+        listings.set(path, await requestClient.getDirectoryContents(path || '/'));
+      } catch (listError) {
+        if (davErrorStatus(listError) === 401) unauthorized = true;
+      }
+    }));
+    if (unauthorized) {
+      onUnauthorized();
+      return;
+    }
+    if (!listings.has('')) return;
+    setData((current) => mergedTree(current, listings));
+    setRootState('ready');
+  }, [currentClient, onUnauthorized]);
+
   const openContextMenu = useCallback((event: ReactMouseEvent, directory: string) => {
     if (!currentClient()) return;
     event.preventDefault();
@@ -472,19 +447,33 @@ export function FilesSidebar({
   useEffect(() => {
     if (lastRefreshVersion.current === refreshVersion) return;
     lastRefreshVersion.current = refreshVersion;
-    startRootRetry();
-  }, [refreshVersion, startRootRetry]);
+    void silentRefresh();
+  }, [refreshVersion, silentRefresh]);
 
   useEffect(() => {
     const refreshOnFocus = () => {
       if (!ready || !visible) return;
       if (Date.now() - lastFocusRefresh.current < 5_000) return;
       lastFocusRefresh.current = Date.now();
-      startRootRetry();
+      void silentRefresh();
     };
     window.addEventListener('focus', refreshOnFocus);
     return () => window.removeEventListener('focus', refreshOnFocus);
-  }, [ready, startRootRetry, visible]);
+  }, [ready, silentRefresh, visible]);
+
+  useEffect(() => {
+    if (!ready || !visible) return;
+    const poll = () => {
+      if (document.visibilityState === 'hidden') return;
+      void silentRefresh();
+    };
+    const timer = window.setInterval(poll, FILES_POLL_INTERVAL_MS);
+    document.addEventListener('visibilitychange', poll);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', poll);
+    };
+  }, [ready, silentRefresh, visible]);
 
   const renderNode = useCallback((props: NodeRendererProps<FileNode>) => (
     <FileTreeNode

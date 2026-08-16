@@ -15,6 +15,8 @@ export interface ListMachineTypesResponse {
 
 export interface CreateWorkspaceRequest {
   machineTypeId: string;
+  /** Optional display name; blank means the server picks a random one. */
+  name?: string;
   sshPublicKey?: string;
   volumeId?: string;
   /** User-data is readable inside the VM; never put secrets here. */

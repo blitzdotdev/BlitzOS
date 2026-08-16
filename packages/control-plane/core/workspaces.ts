@@ -17,6 +17,7 @@ import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { cookieValue, SESSION_COOKIE } from "./principals.js";
 import { isMicrovmProviderId } from "./providers/microvm.js";
+import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
 import type {
   CoreContext,
@@ -35,6 +36,7 @@ import type {
 
 export interface WorkspaceRow {
   id: string;
+  name: string | null;
   machine_type_id: string;
   owner_id: string;
   phase: Phase;
@@ -110,6 +112,7 @@ export function workspaceView(row: WorkspaceRow): WorkspaceView {
   const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
   return {
     id: row.id,
+    name: row.name ?? row.id,
     machineTypeId: machineTypeIdForRow(row),
     phase: row.phase,
     retryAction: retryActions[row.phase],
@@ -186,6 +189,12 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   const result: CreateWorkspaceRequest = {
     machineTypeId: requiredString(value.machineTypeId, "machineTypeId", 256),
   };
+  if (value.name !== undefined) {
+    const name = isString(value.name)
+      ? value.name.trim()
+      : requiredString(value.name, "name", 64);
+    if (name !== "") result.name = requiredString(name, "name", 64);
+  }
   if (value.sshPublicKey !== undefined) {
     const sshPublicKey = isString(value.sshPublicKey)
       ? value.sshPublicKey.trim()
@@ -407,16 +416,17 @@ export function addWorkspaceRoutes(
 
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO workspaces
-          (id, owner_id, machine_type_id, phase, revision, volume_id,
+          (id, name, owner_id, machine_type_id, phase, revision, volume_id,
            phone_home_hash, manifest, created_at, updated_at)
-          SELECT ?1, ?2, ?3, 'creating', 1, ?4, ?5, ?6, ?7, ?7
+          SELECT ?1, ?2, ?3, ?4, 'creating', 1, ?5, ?6, ?7, ?8, ?8
           WHERE (
             SELECT COUNT(*) FROM workspaces
-            WHERE owner_id = ?2 AND phase IN ('creating', 'ready', 'destroying', 'error')
-          ) < ?8
+            WHERE owner_id = ?3 AND phase IN ('creating', 'ready', 'destroying', 'error')
+          ) < ?9
           RETURNING id`,
       v: [
         id,
+        input.name ?? randomWorkspaceName(),
         principal.id,
         input.machineTypeId,
         input.volumeId ?? null,

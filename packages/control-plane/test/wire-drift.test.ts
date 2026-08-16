@@ -35,6 +35,7 @@ const volume: SharedShape<wire.Volume, schema.Volume> = {
 
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
+  name: "brave-otter",
   machineTypeId: "mv-2c2g@lab",
   phase: "ready",
   retryAction: null,

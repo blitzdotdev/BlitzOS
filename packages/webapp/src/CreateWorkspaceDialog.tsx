@@ -60,12 +60,14 @@ export function CreateWorkspaceDialog({
     event.preventDefault();
     if (busy || submitted.current || selectedMachineType === '') return;
     const data = new FormData(event.currentTarget);
+    const name = String(data.get('name') ?? '').trim();
     const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
     const volumeId = String(data.get('volumeId') ?? '');
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
     };
+    if (name) input.name = name;
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
     onSubmit(input);
@@ -89,6 +91,25 @@ export function CreateWorkspaceDialog({
               <p className="webapp-form-message" role="alert">{error ?? loadError}</p>
             </div>
           )}
+
+          <section className="blueprint-selection">
+            <div className="blueprint-selection__heading">
+              <h2>Name</h2>
+              <p>Optional. Leave blank to get a random name.</p>
+            </div>
+            <label className="blueprint-field">
+              Workspace name
+              <input
+                name="name"
+                aria-label="Workspace name (optional)"
+                maxLength={64}
+                placeholder="e.g. brave-otter"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </label>
+          </section>
 
           <section className="blueprint-selection">
             <div className="blueprint-selection__heading">

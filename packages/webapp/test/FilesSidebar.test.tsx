@@ -2,6 +2,7 @@ import { act } from "react";
 import type { WebDAVClient } from "webdav";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  FILES_POLL_INTERVAL_MS,
   FilesSidebar,
   ROOT_RETRY_INTERVAL_MS,
   ROOT_RETRY_WINDOW_MS,
@@ -82,7 +83,7 @@ describe("FilesSidebar root listing retries", () => {
       await vi.advanceTimersByTimeAsync(ROOT_RETRY_INTERVAL_MS * 2);
     });
 
-    expect(getDirectoryContents).toHaveBeenCalledTimes(3);
+    expect(getDirectoryContents).toHaveBeenCalledTimes(4);
     expect(view.container.textContent).toContain("(empty)");
     expect(view.container.textContent).not.toContain("couldn't list");
 
@@ -178,6 +179,25 @@ describe("FilesSidebar root listing retries", () => {
 
     expect(onUnauthorized).not.toHaveBeenCalled();
     expect(getDirectoryContents).toHaveBeenCalledTimes(1);
+
+    await view.unmount();
+  });
+
+  it("shows files created outside the sidebar on the next poll", async () => {
+    const getDirectoryContents = vi.fn().mockResolvedValue([]);
+    const client = webDavClient(getDirectoryContents);
+    const view = await render(sidebar(client, () => client));
+    await flushPromises();
+    expect(view.container.textContent).toContain("(empty)");
+
+    getDirectoryContents.mockResolvedValue([
+      { basename: "note.txt", filename: "/note.txt", type: "file" },
+    ]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(FILES_POLL_INTERVAL_MS);
+    });
+
+    expect(view.container.textContent).toContain("note.txt");
 
     await view.unmount();
   });
