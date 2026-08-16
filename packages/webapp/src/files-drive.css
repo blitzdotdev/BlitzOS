@@ -866,3 +866,16 @@
   font-size: 13.5px;
   box-shadow: var(--lift);
 }
+
+.drive-org-glyph {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: var(--sunken);
+  color: var(--ink);
+  font-weight: 600;
+}

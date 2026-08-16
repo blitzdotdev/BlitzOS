@@ -1,16 +1,38 @@
 import type { MachineType, WorkspaceTemplateView } from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
-import type { FolderView } from '../file-library-api';
+import type { FolderObjectView, FolderView } from '../file-library-api';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
 import { MachineCatalogGrid } from '../MachineCatalogGrid';
-import { canManageFolder, normalizeFolderName, splitFolders } from './drive-model';
+import { DriveAvatar } from './DriveAvatar';
+import { CloseGlyph, FileGlyph, FolderGlyph } from './DriveIcons';
+import {
+  canManageFolder,
+  entriesAt,
+  formatBytes,
+  formatWhen,
+  normalizeFolderName,
+} from './drive-model';
 import { collectDropped } from './drop-upload';
 
+function BackGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+  );
+}
+
+interface BrowseState {
+  folderId: string;
+  path: string[];
+}
+
 /** Dedicated screen for building a workspace template: name it, pick a
- * machine, and select the Drive folders every workspace created from it
- * starts with. Dropping a directory here uploads it as a new folder and
- * selects it. */
+ * machine, and attach the Drive folders every workspace created from it
+ * starts with. The folder browser merges My Drive and Shared with me:
+ * single click selects, double click enters, Back walks up, and the drop
+ * strip uploads a local directory as a new attached folder. */
 export function CreateTemplateScreen({
   client,
   orgName,
@@ -26,20 +48,18 @@ export function CreateTemplateScreen({
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [machineTypeId, setMachineTypeId] = useState('');
   const [folders, setFolders] = useState<FolderView[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [browse, setBrowse] = useState<BrowseState | null>(null);
+  const [objectsByFolder, setObjectsByFolder] = useState<Map<string, FolderObjectView[]>>(new Map());
   const [shareWithOrg, setShareWithOrg] = useState(true);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
+  const [dropHint, setDropHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const dragDepth = useRef(0);
-
-  const loadFolders = async () => {
-    const response = await client.listFolders();
-    setFolders(response.folders);
-    return response.folders;
-  };
 
   useEffect(() => {
     let mounted = true;
@@ -62,18 +82,71 @@ export function CreateTemplateScreen({
     return () => { mounted = false; };
   }, [client]);
 
-  const toggle = (folderId: string) => {
-    setSelected((current) => {
+  const accessible = folders.filter(({ role }) => role !== null);
+  const rows = [...accessible].sort((left, right) => {
+    const leftMine = left.role === 'owner' ? 0 : 1;
+    const rightMine = right.role === 'owner' ? 0 : 1;
+    if (leftMine !== rightMine) return leftMine - rightMine;
+    return left.name.toLowerCase() < right.name.toLowerCase() ? -1 : 1;
+  });
+  const attached = rows.filter(({ id }) => attachedIds.has(id));
+  const browsedFolder = browse === null
+    ? null
+    : accessible.find(({ id }) => id === browse.folderId) ?? null;
+  const target = browsedFolder ?? accessible.find(({ id }) => id === selectedId) ?? null;
+  const targetAttached = target !== null && attachedIds.has(target.id);
+
+  const loadObjects = (folderId: string) => {
+    if (objectsByFolder.has(folderId)) return;
+    void client.listFolderObjects(folderId)
+      .then(({ objects }) => {
+        setObjectsByFolder((current) => new Map(current).set(folderId, objects));
+      })
+      .catch((caught: Error) => setError(caught.message));
+  };
+
+  const enterFolder = (folderId: string) => {
+    setSelectedId(folderId);
+    setBrowse({ folderId, path: [] });
+    loadObjects(folderId);
+  };
+
+  const goBack = () => {
+    setBrowse((current) => {
+      if (current === null) return null;
+      if (current.path.length === 0) return null;
+      return { folderId: current.folderId, path: current.path.slice(0, -1) };
+    });
+  };
+
+  const toggleAttach = () => {
+    if (target === null) return;
+    const id = target.id;
+    setAttachedIds((current) => {
       const next = new Set(current);
-      if (next.has(folderId)) next.delete(folderId);
-      else next.add(folderId);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const detach = (folderId: string) => {
+    setAttachedIds((current) => {
+      const next = new Set(current);
+      next.delete(folderId);
       return next;
     });
   };
 
   const uploadDroppedFolders = async (
     dropped: { name: string; files: { file: File; relativePath: string }[] }[],
+    looseFiles: number,
   ) => {
+    if (dropped.length === 0) {
+      setDropHint(looseFiles > 0 ? 'Drop folders, not loose files' : 'Nothing to upload in that drop');
+      return;
+    }
+    setDropHint(null);
     for (const entry of dropped) {
       const folderName = normalizeFolderName(entry.name);
       if (folderName === '') continue;
@@ -83,7 +156,7 @@ export function CreateTemplateScreen({
         for (const { file, relativePath } of entry.files) {
           await client.uploadFolderObject(folder.id, relativePath, file);
         }
-        setSelected((current) => new Set([...current, folder.id]));
+        setAttachedIds((current) => new Set([...current, folder.id]));
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : 'Upload failed.');
         setUploading(null);
@@ -91,7 +164,9 @@ export function CreateTemplateScreen({
       }
     }
     setUploading(null);
-    await loadFolders().catch((caught: Error) => setError(caught.message));
+    await client.listFolders()
+      .then(({ folders: loaded }) => setFolders(loaded))
+      .catch((caught: Error) => setError(caught.message));
   };
 
   const create = async () => {
@@ -101,11 +176,11 @@ export function CreateTemplateScreen({
     setError(null);
     try {
       if (shareWithOrg) {
-        // Folders you control get org-wide viewer access so the template
-        // works for members without individual grants; folders someone else
-        // shared with you stay as they are.
-        for (const folder of folders) {
-          if (!selected.has(folder.id)) continue;
+        // Attached folders you control get org-wide viewer access so the
+        // template works for members without individual grants; folders
+        // someone else shared with you stay as they are.
+        for (const folder of accessible) {
+          if (!attachedIds.has(folder.id)) continue;
           if (!canManageFolder(folder.role) || folder.orgRole !== null) continue;
           await client.setFolderOrgRole(folder.id, 'viewer');
         }
@@ -113,7 +188,7 @@ export function CreateTemplateScreen({
       const { template } = await client.createWorkspaceTemplate({
         name: trimmed,
         machineTypeId,
-        folderIds: [...selected],
+        folderIds: [...attachedIds],
       });
       onCreated(template);
     } catch (caught) {
@@ -122,23 +197,78 @@ export function CreateTemplateScreen({
     }
   };
 
-  const { mine, shared } = splitFolders(folders);
-  const renderFolderRow = (folder: FolderView) => (
-    <label className="template-pick" key={folder.id}>
-      <input
-        type="checkbox"
-        checked={selected.has(folder.id)}
-        onChange={() => toggle(folder.id)}
-      />
-      <span className="template-pick__name">{folder.name}</span>
-      <span className="template-pick__meta">
-        {folder.role === 'owner' ? 'yours' : `by ${folder.owner.name}`}
-        {folder.orgRole !== null ? ` · everyone at ${orgName}` : ''}
-      </span>
-    </label>
+  const dragHasFiles = (event: React.DragEvent) => event.dataTransfer.types.includes('Files');
+
+  const entries = browse === null
+    ? null
+    : entriesAt(objectsByFolder.get(browse.folderId) ?? [], browse.path);
+
+  const renderRootRows = () => (
+    <>
+      {rows.length === 0 && !loading && (
+        <div className="tplf-empty">No Drive folders yet — drop one below, or make one in My Drive.</div>
+      )}
+      {rows.map((folder) => (
+        <button
+          className={`tplf-row${selectedId === folder.id ? ' tplf-row--selected' : ''}`}
+          type="button"
+          key={folder.id}
+          onClick={() => setSelectedId(folder.id)}
+          onDoubleClick={() => enterFolder(folder.id)}
+        >
+          <FolderGlyph />
+          <span className="tplf-row-name">{folder.name}</span>
+          <span className="tplf-row-owner">
+            <DriveAvatar name={folder.owner.name} avatarUrl={folder.owner.avatarUrl} me={folder.role === 'owner'} />
+            <span>{folder.role === 'owner' ? 'me' : folder.owner.name}</span>
+          </span>
+          <span className="tplf-row-state">
+            {folder.orgRole !== null && <em className="tplf-chip">{orgName}</em>}
+            {attachedIds.has(folder.id) && <em className="tplf-chip tplf-chip--attached">In template</em>}
+          </span>
+        </button>
+      ))}
+    </>
   );
 
-  const dragHasFiles = (event: React.DragEvent) => event.dataTransfer.types.includes('Files');
+  const renderBrowseRows = () => {
+    if (entries === null) return null;
+    if (!objectsByFolder.has(browse?.folderId ?? '')) {
+      return <div className="tplf-empty">Loading files…</div>;
+    }
+    if (entries.dirs.length === 0 && entries.files.length === 0) {
+      return <div className="tplf-empty">This folder is empty</div>;
+    }
+    return (
+      <>
+        {entries.dirs.map((dir) => (
+          <button
+            className="tplf-row"
+            type="button"
+            key={`dir-${dir.name}`}
+            onDoubleClick={() => {
+              setBrowse((current) => current === null
+                ? current
+                : { folderId: current.folderId, path: [...current.path, dir.name] });
+            }}
+          >
+            <FolderGlyph />
+            <span className="tplf-row-name">{dir.name}</span>
+            <span className="tplf-row-owner" />
+            <span className="tplf-row-state">{dir.fileCount} {dir.fileCount === 1 ? 'file' : 'files'}</span>
+          </button>
+        ))}
+        {entries.files.map((file) => (
+          <div className="tplf-row tplf-row--file" key={file.key}>
+            <FileGlyph />
+            <span className="tplf-row-name">{file.name}</span>
+            <span className="tplf-row-owner" />
+            <span className="tplf-row-state">{formatWhen(file.mtime)} · {formatBytes(file.size)}</span>
+          </div>
+        ))}
+      </>
+    );
+  };
 
   return (
     <div className="create-workspace-screen" role="presentation">
@@ -197,75 +327,122 @@ export function CreateTemplateScreen({
             )}
           </section>
 
-          <section
-            className={`blueprint-selection${dropActive ? ' template-dropzone--active' : ''}`}
-            onDragEnter={(event) => {
-              if (!dragHasFiles(event)) return;
-              event.preventDefault();
-              dragDepth.current += 1;
-              setDropActive(true);
-            }}
-            onDragOver={(event) => {
-              if (!dragHasFiles(event)) return;
-              event.preventDefault();
-              event.dataTransfer.dropEffect = 'copy';
-            }}
-            onDragLeave={() => {
-              if (dragDepth.current === 0) return;
-              dragDepth.current -= 1;
-              if (dragDepth.current === 0) setDropActive(false);
-            }}
-            onDrop={(event) => {
-              if (!dragHasFiles(event)) return;
-              event.preventDefault();
-              dragDepth.current = 0;
-              setDropActive(false);
-              void collectDropped(
-                Array.from(event.dataTransfer.items),
-                Array.from(event.dataTransfer.files),
-              )
-                .then((payload) => uploadDroppedFolders(payload.folders))
-                .catch((caught: Error) => setError(caught.message));
-            }}
-          >
+          <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
-              <h2>Folders</h2>
+              <h2>Attach folders</h2>
               <p>
-                Selected folders sync into every workspace created from this template.
-                Drag a folder from your computer here to upload it.
+                Attached folders sync into every workspace created from this template.
+                Click to select, double-click to look inside.
               </p>
             </div>
-            {uploading !== null && (
-              <p className="template-uploading" role="status">Uploading <b>{uploading}</b>…</p>
-            )}
-            {folders.length === 0 && !loading && (
-              <div className="blueprint-selection__empty">
-                No Drive folders yet — drop one here or make one in My Drive.
+            <div className="tplf">
+              <div className="tplf-main">
+                <div className="tplf-head">
+                  <button
+                    className="tplf-back"
+                    type="button"
+                    aria-label="Back"
+                    disabled={browse === null}
+                    onClick={goBack}
+                  >
+                    <BackGlyph />
+                  </button>
+                  <span className="tplf-crumb">
+                    {browse === null || browsedFolder === null
+                      ? 'All folders'
+                      : [browsedFolder.name, ...browse.path].join(' / ')}
+                  </span>
+                </div>
+                <div className="tplf-rows" role="listbox" aria-label="Drive folders">
+                  {browse === null ? renderRootRows() : renderBrowseRows()}
+                </div>
+                {browse === null && (
+                  <div
+                    className={`tplf-drop${dropActive ? ' tplf-drop--active' : ''}`}
+                    onDragEnter={(event) => {
+                      if (!dragHasFiles(event)) return;
+                      event.preventDefault();
+                      dragDepth.current += 1;
+                      setDropActive(true);
+                    }}
+                    onDragOver={(event) => {
+                      if (!dragHasFiles(event)) return;
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = 'copy';
+                    }}
+                    onDragLeave={() => {
+                      if (dragDepth.current === 0) return;
+                      dragDepth.current -= 1;
+                      if (dragDepth.current === 0) setDropActive(false);
+                    }}
+                    onDrop={(event) => {
+                      if (!dragHasFiles(event)) return;
+                      event.preventDefault();
+                      dragDepth.current = 0;
+                      setDropActive(false);
+                      void collectDropped(
+                        Array.from(event.dataTransfer.items),
+                        Array.from(event.dataTransfer.files),
+                      )
+                        .then((payload) => uploadDroppedFolders(payload.folders, payload.files.length))
+                        .catch((caught: Error) => setError(caught.message));
+                    }}
+                  >
+                    <span>
+                      {uploading !== null
+                        ? <>Uploading <b>{uploading}</b>…</>
+                        : dropHint ?? <>Drop folders here — they upload to My Drive and attach to this template</>}
+                    </span>
+                  </div>
+                )}
               </div>
-            )}
-            {mine.length > 0 && (
-              <div className="template-pick-group">
-                <h3>My Drive</h3>
-                {mine.map(renderFolderRow)}
+              <aside className="tplf-side" aria-label="Attached folders">
+                <h3>In this template</h3>
+                <div className="tplf-side-list">
+                  {attached.length === 0
+                    ? <p className="tplf-side-empty">Nothing attached yet. Select a folder and press Attach.</p>
+                    : attached.map((folder) => (
+                      <div className="tplf-side-item" key={folder.id}>
+                        <FolderGlyph />
+                        <span>{folder.name}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${folder.name} from template`}
+                          onClick={() => detach(folder.id)}
+                        >
+                          <CloseGlyph />
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              </aside>
+              <div className="tplf-foot">
+                <span className="tplf-foot-hint">
+                  {attached.length === 0
+                    ? 'No folders attached'
+                    : `${attached.length} ${attached.length === 1 ? 'folder' : 'folders'} attached`}
+                </span>
+                <button
+                  className={`drive-button${targetAttached ? '' : ' drive-button--primary'}`}
+                  type="button"
+                  disabled={target === null}
+                  onClick={toggleAttach}
+                >
+                  {target === null
+                    ? 'Select a folder to attach'
+                    : targetAttached ? `Detach “${target.name}”` : `Attach “${target.name}”`}
+                </button>
               </div>
-            )}
-            {shared.length > 0 && (
-              <div className="template-pick-group">
-                <h3>Shared with me</h3>
-                {shared.map(renderFolderRow)}
-              </div>
-            )}
-            <label className="template-pick template-pick--option">
+            </div>
+            <label className="tplf-share">
               <input
                 type="checkbox"
                 checked={shareWithOrg}
                 onChange={(event) => setShareWithOrg(event.currentTarget.checked)}
               />
-              <span className="template-pick__name">
-                Share selected folders with everyone at {orgName} (viewer)
-              </span>
-              <span className="template-pick__meta">
-                so the template works for members without individual grants
+              <span>
+                Share attached folders you own with everyone at {orgName} (viewer),
+                so the template works without individual grants
               </span>
             </label>
           </section>
