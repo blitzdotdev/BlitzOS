@@ -332,11 +332,43 @@ export function CreateTemplateScreen({
               <h2>Attach folders</h2>
               <p>
                 Attached folders sync into every workspace created from this template.
-                Click to select, double-click to look inside.
+                Click to select, double-click to look inside — or drop a folder from
+                your computer anywhere in the list to upload and attach it.
               </p>
             </div>
             <div className="tplf">
-              <div className="tplf-main">
+              <div
+                className="tplf-main"
+                onDragEnter={(event) => {
+                  if (!dragHasFiles(event)) return;
+                  event.preventDefault();
+                  dragDepth.current += 1;
+                  setDropActive(true);
+                  setDropHint(null);
+                }}
+                onDragOver={(event) => {
+                  if (!dragHasFiles(event)) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'copy';
+                }}
+                onDragLeave={() => {
+                  if (dragDepth.current === 0) return;
+                  dragDepth.current -= 1;
+                  if (dragDepth.current === 0) setDropActive(false);
+                }}
+                onDrop={(event) => {
+                  if (!dragHasFiles(event)) return;
+                  event.preventDefault();
+                  dragDepth.current = 0;
+                  setDropActive(false);
+                  void collectDropped(
+                    Array.from(event.dataTransfer.items),
+                    Array.from(event.dataTransfer.files),
+                  )
+                    .then((payload) => uploadDroppedFolders(payload.folders, payload.files.length))
+                    .catch((caught: Error) => setError(caught.message));
+                }}
+              >
                 <div className="tplf-head">
                   <button
                     className="tplf-back"
@@ -356,43 +388,16 @@ export function CreateTemplateScreen({
                 <div className="tplf-rows" role="listbox" aria-label="Drive folders">
                   {browse === null ? renderRootRows() : renderBrowseRows()}
                 </div>
-                {browse === null && (
-                  <div
-                    className={`tplf-drop${dropActive ? ' tplf-drop--active' : ''}`}
-                    onDragEnter={(event) => {
-                      if (!dragHasFiles(event)) return;
-                      event.preventDefault();
-                      dragDepth.current += 1;
-                      setDropActive(true);
-                    }}
-                    onDragOver={(event) => {
-                      if (!dragHasFiles(event)) return;
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = 'copy';
-                    }}
-                    onDragLeave={() => {
-                      if (dragDepth.current === 0) return;
-                      dragDepth.current -= 1;
-                      if (dragDepth.current === 0) setDropActive(false);
-                    }}
-                    onDrop={(event) => {
-                      if (!dragHasFiles(event)) return;
-                      event.preventDefault();
-                      dragDepth.current = 0;
-                      setDropActive(false);
-                      void collectDropped(
-                        Array.from(event.dataTransfer.items),
-                        Array.from(event.dataTransfer.files),
-                      )
-                        .then((payload) => uploadDroppedFolders(payload.folders, payload.files.length))
-                        .catch((caught: Error) => setError(caught.message));
-                    }}
-                  >
-                    <span>
-                      {uploading !== null
-                        ? <>Uploading <b>{uploading}</b>…</>
-                        : dropHint ?? <>Drop folders here — they upload to My Drive and attach to this template</>}
-                    </span>
+                {(uploading !== null || dropHint !== null) && (
+                  <p className="tplf-status" role="status">
+                    {uploading !== null
+                      ? <>Uploading <b>{uploading}</b>…</>
+                      : dropHint}
+                  </p>
+                )}
+                {dropActive && (
+                  <div className="tplf-dropover" aria-hidden="true">
+                    <span>Drop to upload to My Drive and attach to this template</span>
                   </div>
                 )}
               </div>
