@@ -53,8 +53,9 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET --config packages/control-plane/wra
 
 `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` configure Google OAuth.
 `OPERATOR_API_KEY` is no longer an API credential: it is only the bootstrap
-secret that enables the first Google user to claim the legacy operator-owned
-rows and become the platform operator.
+secret. The first admin signs in at
+`/auth/google/start?bootstrap=<OPERATOR_API_KEY>` to claim the legacy
+operator-owned rows and become the platform operator.
 
 `MICROVM_HOSTS` is a non-secret JSON array. The primary production shape is a
 pinned host with exactly `name`, `url`, and `tokenVar`; `tokenVar` names a

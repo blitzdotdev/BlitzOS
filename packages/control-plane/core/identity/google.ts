@@ -1,4 +1,4 @@
-import { randomToken } from "../crypto.js";
+import { randomToken, safeEqualSecret } from "../crypto.js";
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, isString } from "../http.js";
@@ -239,8 +239,24 @@ export function addGoogleAuthRoutes(
 ): void {
   router.get("/auth/google/start", async (context) => {
     const runtime = runtimeFactory(context);
-    const oauth = await createGoogleOAuthState(runtime.vars.googleClientSecret);
-    const redirectUri = `${new URL(context.req.url).origin}/auth/google/callback`;
+    const requestUrl = new URL(context.req.url);
+    const presentedBootstrap = requestUrl.searchParams.get("bootstrap");
+    const bootstrap = presentedBootstrap !== null;
+    if (presentedBootstrap !== null) {
+      const matches = await safeEqualSecret(
+        presentedBootstrap,
+        runtime.vars.bootstrapSecret,
+      );
+      if (runtime.vars.bootstrapSecret === "" || !matches) {
+        throw new HttpError(401, "unauthorized");
+      }
+    }
+    const oauth = await createGoogleOAuthState(
+      runtime.vars.googleClientSecret,
+      Date.now(),
+      bootstrap,
+    );
+    const redirectUri = `${requestUrl.origin}/auth/google/callback`;
     const authorize = new URL(GOOGLE_AUTHORIZE_URL);
     authorize.search = new URLSearchParams({
       client_id: runtime.vars.googleClientId,
@@ -285,7 +301,7 @@ export function addGoogleAuthRoutes(
       runtime.db,
       profile,
       now,
-      runtime.vars.bootstrapSecret !== "",
+      state.bootstrap === true && runtime.vars.bootstrapSecret !== "",
     );
     let membership = await activeMembership(runtime.db, user.id);
     if (membership === null && user.platform_operator === 1) {

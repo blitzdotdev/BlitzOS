@@ -191,7 +191,7 @@ export function appWithVmProviders(
       ),
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
-      bootstrapSecret: OPERATOR_KEY,
+      bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
     },
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),

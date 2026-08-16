@@ -55,13 +55,18 @@ describe("identity phase 1", () => {
   });
 
   it("signs OAuth state, compares it constant-time, and enforces the ten-minute expiry", async () => {
-    const created = await createGoogleOAuthState("state-secret", 1_000);
+    const created = await createGoogleOAuthState("state-secret", 1_000, true);
     const cookie = decodeURIComponent(
       oauthCookie(created.cookie).slice(`${GOOGLE_OAUTH_COOKIE}=`.length),
     );
     await expect(
       verifyGoogleOAuthStateCookie(cookie, created.state, "state-secret", 600_999),
-    ).resolves.toMatchObject({ version: 1, state: created.state, expiresAt: 601_000 });
+    ).resolves.toMatchObject({
+      version: 1,
+      state: created.state,
+      expiresAt: 601_000,
+      bootstrap: true,
+    });
     await expect(
       verifyGoogleOAuthStateCookie(cookie, "wrong-state", "state-secret", 2_000),
     ).resolves.toBeNull();
@@ -138,7 +143,7 @@ describe("identity phase 1", () => {
     })).status).toBe(409);
   });
 
-  it("creates an identity-only session for a Google user without an active membership", async () => {
+  it("keeps bootstrap login ordinary after a platform operator exists", async () => {
     const { app } = harness();
     await operatorSession(app);
     vi.spyOn(globalThis, "fetch")
@@ -150,7 +155,10 @@ describe("identity phase 1", () => {
         name: "New Person",
       }));
 
-    const start = await appRequest(app, "/auth/google/start");
+    const start = await appRequest(
+      app,
+      `/auth/google/start?bootstrap=${encodeURIComponent(OPERATOR_KEY)}`,
+    );
     const location = new URL(start.headers.get("location") ?? "");
     const callback = await appRequest(
       app,
@@ -174,6 +182,49 @@ describe("identity phase 1", () => {
     expect(await env.DB.prepare(
       "SELECT membership_id FROM sessions WHERE principal_id = (SELECT id FROM users WHERE google_user_id = 'google-no-membership') ORDER BY created_at DESC LIMIT 1",
     ).first<string>("membership_id")).toBeNull();
+  });
+
+  it("creates an ordinary first Google user when bootstrap is absent", async () => {
+    const { app } = harness();
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(Response.json({ access_token: "transient-token" }))
+      .mockResolvedValueOnce(Response.json({
+        sub: "google-ordinary-first",
+        email: "ordinary@example.com",
+        email_verified: true,
+        name: "Ordinary Person",
+      }));
+
+    const start = await appRequest(app, "/auth/google/start");
+    const location = new URL(start.headers.get("location") ?? "");
+    const callback = await appRequest(
+      app,
+      `/auth/google/callback?code=google-code&state=${encodeURIComponent(location.searchParams.get("state") ?? "")}`,
+      { headers: { Cookie: oauthCookie(start.headers.get("set-cookie") ?? "") } },
+    );
+
+    expect(callback.status).toBe(302);
+    expect(await env.DB.prepare(
+      "SELECT platform_operator FROM users WHERE google_user_id = 'google-ordinary-first'",
+    ).first<number>("platform_operator")).toBe(0);
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM memberships",
+    ).first<number>("count")).toBe(0);
+  });
+
+  it("rejects a wrong bootstrap secret at the Google start boundary", async () => {
+    const { app } = harness();
+    const start = await appRequest(app, "/auth/google/start?bootstrap=wrong-secret");
+    expect(start.status).toBe(401);
+    await expect(start.json()).resolves.toEqual({ error: "unauthorized", retryAction: null });
+
+    const disabled = await appRequest(
+      app,
+      `/auth/google/start?bootstrap=${encodeURIComponent(OPERATOR_KEY)}`,
+      undefined,
+      { OPERATOR_API_KEY: "" },
+    );
+    expect(disabled.status).toBe(401);
   });
 
   it("demotes bootstrap auth to the first Google login and backfills operator-owned rows", async () => {
@@ -212,7 +263,10 @@ describe("identity phase 1", () => {
         picture: "https://images.example/alice.png",
       }));
 
-    const start = await appRequest(app, "/auth/google/start");
+    const start = await appRequest(
+      app,
+      `/auth/google/start?bootstrap=${encodeURIComponent(OPERATOR_KEY)}`,
+    );
     expect(start.status).toBe(302);
     const location = new URL(start.headers.get("location") ?? "");
     expect(location.searchParams.get("code_challenge_method")).toBe("S256");
