@@ -9,19 +9,27 @@ type Pending = { resolve(value: unknown): void; reject(error: Error): void };
 export type ThreadRequestParams = {
   threadId?: string;
   cwd?: string;
-  approvalPolicy?: "on-request";
+  approvalPolicy?: "on-request" | "never";
   sandbox?: "workspace-write";
 };
 
 export function codexThreadRequestParams(
-  input: Pick<TurnInput, "resumeId" | "cwd">,
+  input: Pick<TurnInput, "resumeId" | "cwd" | "config">,
 ): ThreadRequestParams {
   const params: ThreadRequestParams = {};
   if (input.resumeId) params.threadId = input.resumeId;
   params.cwd = input.cwd;
-  params.approvalPolicy = "on-request";
+  params.approvalPolicy = input.config.permission === "never" ? "never" : "on-request";
   params.sandbox = "workspace-write";
   return params;
+}
+
+/** Model and reasoning effort ride in as `codex -c key=value` overrides. */
+export function codexConfigArguments(config: TurnInput["config"]): string[] {
+  const args: string[] = [];
+  if (config.model !== "default") args.push("-c", `model=${JSON.stringify(config.model)}`);
+  if (config.effort) args.push("-c", `model_reasoning_effort=${JSON.stringify(config.effort)}`);
+  return args;
 }
 
 class AppServer {
@@ -32,8 +40,9 @@ class AppServer {
   public constructor(
     private readonly notify: (method: string, params: JsonObject) => Promise<void>,
     private readonly serverRequest: (method: string, params: JsonObject) => Promise<unknown>,
+    configArguments: string[] = [],
   ) {
-    this.child = spawn("codex", ["app-server", "--stdio"], {
+    this.child = spawn("codex", [...configArguments, "app-server", "--stdio"], {
       cwd: "/workspace",
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -169,6 +178,7 @@ export class CodexAdapter implements AgentAdapter {
           answer.outcome.outcome === "selected" && answer.outcome.optionId === "allow-once" ? "accept" : "decline";
         return { decision };
       },
+      codexConfigArguments(input.config),
     );
     try {
       await server.request("initialize", {

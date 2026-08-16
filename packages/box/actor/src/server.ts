@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { ActorService, Subscriber } from "./actor.js";
 import { allowedOrigins, FRAME_BYTES, originAllowed } from "./config.js";
 import { socketStream } from "./socket-stream.js";
+import { isString } from "./type-guards.js";
 
 export class ActorServer {
   private readonly http: HttpServer;
@@ -69,13 +70,21 @@ export class ActorServer {
         agentCapabilities: { loadSession: true },
         agentInfo: { name: "BlitzOS box", version: "0.1.0" },
       }))
-      .onRequest(acp.methods.agent.session.new, async ({ params }) => ({
-        sessionId: await this.service.newSession(params.cwd, subscriber),
-      }))
+      .onRequest(acp.methods.agent.session.new, async ({ params }) => {
+        const sessionId = await this.service.newSession(params.cwd, subscriber);
+        return { sessionId, configOptions: this.service.configOptions(sessionId) };
+      })
       .onRequest(acp.methods.agent.session.load, async ({ params }) => {
         await this.service.loadSession(params.sessionId, params.cwd, subscriber);
-        return {};
+        return { configOptions: this.service.configOptions(params.sessionId) };
       })
+      .onRequest(acp.methods.agent.session.setConfigOption, ({ params }) => ({
+        configOptions: this.service.setConfigOption(
+          params.sessionId,
+          params.configId,
+          isString(params.value) ? params.value : "",
+        ),
+      }))
       .onRequest(acp.methods.agent.session.prompt, ({ params }) => this.service.prompt(params.sessionId, params.prompt))
       .onNotification(acp.methods.agent.session.cancel, ({ params }) => this.service.cancel(params.sessionId));
     const connection = app.connect(socketStream(socket));

@@ -5,6 +5,7 @@ import type {
   SessionUpdate,
   StopReason,
 } from "@agentclientprotocol/sdk";
+import type { AgentConfig } from "./agent-config.js";
 
 export type Provider = "claude" | "codex";
 
@@ -16,6 +17,7 @@ export type TurnInput = {
   resumeId: string | null;
   signal: AbortSignal;
   token: string | null;
+  config: AgentConfig;
   emit(update: SessionUpdate): Promise<void>;
   requestPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;
 };

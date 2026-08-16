@@ -10,10 +10,12 @@ import type { ChatPermission, ChatState } from "./reducer.js";
 
 export function ChatTranscript({
   state,
+  showThinking,
   onPermission,
   onOpenPreview,
 }: {
   state: ChatState;
+  showThinking: boolean;
   onPermission: (toolCallId: string, optionId: string) => void;
   onOpenPreview?: (port: number) => boolean;
 }): React.JSX.Element {
@@ -37,6 +39,7 @@ export function ChatTranscript({
             );
           }
           if (message.role === "thought") {
+            if (!showThinking) return null;
             return <ThinkingView key={`${row.kind}:${row.id}`} text={message.text} />;
           }
           return (
