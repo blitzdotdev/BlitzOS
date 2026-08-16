@@ -5,6 +5,7 @@ import { terminalWebSocketUrl } from "../src/CloudApp.js";
 
 const workspace: WorkspaceView = {
   id: "one",
+  name: "brave-otter",
   machineTypeId: "cx23@fsn1",
   phase: "ready",
   retryAction: null,

@@ -22,6 +22,8 @@ export const PHASE_TRANSITIONS = {
 
 export interface WorkspaceView {
   id: string;
+  /** Display name; the server generates one when the creator omits it. */
+  name: string;
   machineTypeId: string;
   phase: Phase;
   retryAction: RetryAction;

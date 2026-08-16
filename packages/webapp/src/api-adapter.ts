@@ -101,7 +101,7 @@ export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord |
     canControl: true,
     shared: false,
     machineType: workspace.machineTypeId,
-    name: workspace.id,
+    name: workspace.name,
     status: statusFromWire(workspace),
     errorDetail: workspace.error,
     createdAt: 0,

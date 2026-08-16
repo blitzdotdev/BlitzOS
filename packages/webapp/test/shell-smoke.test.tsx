@@ -72,6 +72,7 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
 
 const creating: WorkspaceView = {
   id: "workspace-one",
+  name: "workspace-one-name",
   machineTypeId: "cx23@fsn1",
   phase: "creating",
   retryAction: "poll",
@@ -85,6 +86,7 @@ const creating: WorkspaceView = {
 
 const running: WorkspaceView = {
   id: "workspace-running",
+  name: "workspace-running-name",
   machineTypeId: "cx23@fsn1",
   phase: "ready",
   retryAction: null,
