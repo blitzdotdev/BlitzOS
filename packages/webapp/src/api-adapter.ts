@@ -119,7 +119,7 @@ export function workspaceFromWire(
     id: workspace.id,
     ownerMembershipId: workspace.role === "owner" ? ownerMembershipId : "",
     canControl: workspace.role !== null,
-    shared: workspace.role === "editor",
+    shared: workspace.role === "editor" || workspace.role === "viewer",
     accessRole: workspace.role,
     owner: workspace.owner,
     machineType: workspace.machineTypeId,

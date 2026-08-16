@@ -19,6 +19,19 @@ import { CredentialSource } from "./credentials.js";
 import { Journal } from "./journal.js";
 import { PROMPT_QUEUE_LIMIT, REPLAY_LIMIT } from "./config.js";
 import type { AdapterFactory, AgentAdapter, Provider } from "./types.js";
+import type { ConnectionIdentity } from "./auth.js";
+import type { JournalFrame, PermissionAnsweredFrame, SessionUpdateFrame } from "./journal.js";
+
+export interface ActorSessionSummary {
+  id: string;
+  provider: Provider;
+  createdBy: string;
+  updatedAt: number;
+}
+
+function attributedActor(identity: ConnectionIdentity) {
+  return { userId: identity.userId, name: identity.name };
+}
 
 export class Subscriber {
   public readonly sessions = new Set<string>();
@@ -26,6 +39,7 @@ export class Subscriber {
 
   public constructor(
     public readonly id: string,
+    public readonly identity: ConnectionIdentity,
     private readonly disconnect: () => void,
   ) {}
 
@@ -38,9 +52,10 @@ export class Subscriber {
     this.disconnect();
   }
 
-  public update(sessionId: string, update: SessionUpdate): Promise<void> {
+  public deliver(frame: JournalFrame): Promise<void> {
     if (!this.context) return Promise.reject(new Error("subscriber disconnected"));
-    return this.context.notify("session/update", { sessionId, update });
+    const method: string = frame.method;
+    return this.context.notify<JournalFrame["params"]>(method, frame.params);
   }
 
   public permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -64,6 +79,7 @@ class SessionActor {
   private delivery = Promise.resolve();
   private queued = 0;
   private currentAbort: AbortController | undefined;
+  private abortIdentity: ConnectionIdentity | undefined;
   private config: AgentConfig;
 
   public constructor(
@@ -91,13 +107,14 @@ class SessionActor {
     const operation = this.delivery.then(async () => {
       if (replay) {
         for (const event of this.journal.replay(this.id, REPLAY_LIMIT)) {
-          // SAFETY: Journal frames were written from outbound session-update objects; persisted rows are not revalidated here. TODO(deslop-tier-c): validate replayed journal JSON and require params.update before delivery.
-          const frame = JSON.parse(event.frame) as { params: { update: SessionUpdate } };
-          await subscriber.update(this.id, frame.params.update);
+          // SAFETY: Journal frames are written only from the two ActorService-owned outbound frame constructors; persisted rows are not revalidated here. TODO(deslop-tier-c): validate replayed journal JSON before delivery.
+          const frame = JSON.parse(event.frame) as JournalFrame;
+          await subscriber.deliver(frame);
         }
       }
       this.subscribers.set(subscriber.id, subscriber);
       subscriber.sessions.add(this.id);
+      this.journal.addParticipant(this.id, subscriber.identity);
       for (const permission of this.pendingPermissions()) this.askSubscriber(permission, subscriber);
     });
     this.delivery = operation.catch(() => undefined);
@@ -109,12 +126,12 @@ class SessionActor {
     subscriber.sessions.delete(this.id);
   }
 
-  public enqueue(prompt: ContentBlock[]): Promise<PromptResponse> {
+  public enqueue(prompt: ContentBlock[], identity: ConnectionIdentity): Promise<PromptResponse> {
     if (this.queued >= PROMPT_QUEUE_LIMIT) return Promise.reject(new Error("prompt queue is full"));
     this.queued += 1;
     const turnId = randomUUID();
     this.journal.startTurn(turnId, this.id);
-    const result = this.tail.then(() => this.runTurn(turnId, prompt));
+    const result = this.tail.then(() => this.runTurn(turnId, prompt, identity));
     this.tail = result.then(
       () => undefined,
       () => undefined,
@@ -124,24 +141,25 @@ class SessionActor {
     });
   }
 
-  public cancel(): void {
+  public cancel(identity: ConnectionIdentity): void {
+    this.abortIdentity = identity;
     this.currentAbort?.abort();
   }
 
-  private async runTurn(turnId: string, prompt: ContentBlock[]): Promise<PromptResponse> {
+  private async runTurn(turnId: string, prompt: ContentBlock[], identity: ConnectionIdentity): Promise<PromptResponse> {
     const abort = new AbortController();
     this.currentAbort = abort;
     let stopReason: StopReason = "refusal";
     try {
       const messageId = randomUUID();
       for (const content of prompt) {
-        await this.emit({ sessionUpdate: "user_message_chunk", messageId, content });
+        await this.emit({ sessionUpdate: "user_message_chunk", messageId, content }, identity);
       }
       let token: string | null;
       try {
         token = await this.credentials.token(this.provider);
       } catch {
-        await this.visibleError("Credential mint failed; the prompt was not sent.");
+        await this.visibleError("Credential mint failed; the prompt was not sent.", identity);
         return { stopReason };
       }
       if (abort.signal.aborted) {
@@ -158,8 +176,8 @@ class SessionActor {
           signal: abort.signal,
           token,
           config: this.config,
-          emit: (update) => this.emit(update),
-          requestPermission: (request) => this.requestPermission(request),
+          emit: (update) => this.emit(update, identity),
+          requestPermission: (request) => this.requestPermission(request, identity),
         });
         stopReason = abort.signal.aborted ? "cancelled" : output.stopReason;
         if (output.resumeId) {
@@ -170,33 +188,39 @@ class SessionActor {
         if (abort.signal.aborted) {
           stopReason = "cancelled";
         } else {
-          await this.visibleError("Agent stopped unexpectedly; the prompt was not retried.");
+          await this.visibleError("Agent stopped unexpectedly; the prompt was not retried.", identity);
         }
       }
       return { stopReason };
     } finally {
       this.currentAbort = undefined;
+      this.abortIdentity = undefined;
       if (!this.journal.finishTurn(turnId, stopReason)) throw new Error("turn already reached a terminal state");
     }
   }
 
-  private visibleError(text: string): Promise<void> {
+  private visibleError(text: string, identity: ConnectionIdentity): Promise<void> {
     return this.emit({
       sessionUpdate: "agent_message_chunk",
       messageId: randomUUID(),
       content: { type: "text", text },
-    });
+    }, identity);
   }
 
-  private emit(update: SessionUpdate): Promise<void> {
+  private emit(update: SessionUpdate, identity: ConnectionIdentity): Promise<void> {
     const operation = this.delivery.then(async () => {
-      this.journal.append(this.id, {
+      const frame: SessionUpdateFrame = {
         jsonrpc: "2.0",
         method: "session/update",
-        params: { sessionId: this.id, update },
-      });
+        params: {
+          sessionId: this.id,
+          update,
+          actor: attributedActor(identity),
+        },
+      };
+      this.journal.append(this.id, frame);
       const subscribers = [...this.subscribers.values()];
-      const settled = await Promise.allSettled(subscribers.map((subscriber) => subscriber.update(this.id, update)));
+      const settled = await Promise.allSettled(subscribers.map((subscriber) => subscriber.deliver(frame)));
       let index = 0;
       for (const subscriber of subscribers) {
         if (settled[index]?.status === "rejected") subscriber.close();
@@ -207,7 +231,10 @@ class SessionActor {
     return operation;
   }
 
-  private requestPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+  private requestPermission(
+    request: RequestPermissionRequest,
+    promptingIdentity: ConnectionIdentity,
+  ): Promise<RequestPermissionResponse> {
     const id = randomUUID();
     let resolve!: (response: RequestPermissionResponse) => void;
     const permission: PendingPermission = {
@@ -222,7 +249,11 @@ class SessionActor {
     this.permissions.set(id, permission);
     this.journal.addPermission(id, this.id, request);
     for (const subscriber of this.subscribers.values()) this.askSubscriber(permission, subscriber);
-    const cancel = (): void => this.acceptPermission(permission, { outcome: { outcome: "cancelled" } });
+    const cancel = (): void => this.acceptPermission(
+      permission,
+      { outcome: { outcome: "cancelled" } },
+      this.abortIdentity ?? promptingIdentity,
+    );
     this.currentAbort?.signal.addEventListener("abort", cancel, { once: true });
     return permission.promise.finally(() => this.currentAbort?.signal.removeEventListener("abort", cancel));
   }
@@ -247,18 +278,36 @@ class SessionActor {
   }
 
   private askSubscriber(permission: PendingPermission, subscriber: Subscriber): void {
+    if (subscriber.identity.role === "viewer") return;
     if (permission.attempted.has(subscriber.id)) return;
     permission.attempted.add(subscriber.id);
     void subscriber.permission(permission.request).then(
-      (response) => this.acceptPermission(permission, response),
+      (response) => this.acceptPermission(permission, response, subscriber.identity),
       () => permission.attempted.delete(subscriber.id),
     );
   }
 
-  private acceptPermission(permission: PendingPermission, response: RequestPermissionResponse): void {
+  private acceptPermission(
+    permission: PendingPermission,
+    response: RequestPermissionResponse,
+    identity: ConnectionIdentity = { userId: "system", membershipId: "system", role: "owner" },
+  ): void {
     if (!validPermissionAnswer(permission.request, response)) return;
-    if (!this.journal.answerPermission(permission.id, response)) return;
+    if (!this.journal.answerPermission(permission.id, response, identity)) return;
     this.permissions.delete(permission.id);
+    const selected = response.outcome.outcome === "selected" ? response.outcome.optionId : null;
+    const frame: PermissionAnsweredFrame = {
+      jsonrpc: "2.0",
+      method: "blitz/permission_answered",
+      params: {
+        sessionId: this.id,
+        toolCallId: permission.request.toolCall.toolCallId,
+        optionId: selected,
+        actor: attributedActor(identity),
+      },
+    };
+    this.journal.append(this.id, frame);
+    for (const subscriber of this.subscribers.values()) void subscriber.deliver(frame);
     permission.resolve(response);
   }
 }
@@ -274,8 +323,16 @@ export class ActorService {
   ) {}
 
   public async newSession(cwd: string, subscriber: Subscriber): Promise<string> {
+    requireEditor(subscriber);
     const id = randomUUID();
-    this.journal.createSession({ id, provider: this.defaultProvider, cwd, resumeId: null });
+    this.journal.createSession({
+      id,
+      provider: this.defaultProvider,
+      cwd,
+      resumeId: null,
+      createdBy: subscriber.identity.userId,
+      updatedAt: Date.now(),
+    });
     const actor = this.restore(id);
     await actor.attach(subscriber, false);
     return id;
@@ -287,20 +344,27 @@ export class ActorService {
     await this.restore(id).attach(subscriber, true);
   }
 
+  public listSessions(): ActorSessionSummary[] {
+    return this.journal.listSessions();
+  }
+
   public configOptions(id: string): SessionConfigOption[] {
     return this.restore(id).configOptions();
   }
 
-  public setConfigOption(id: string, configId: string, valueId: string): SessionConfigOption[] {
+  public setConfigOption(id: string, configId: string, valueId: string, subscriber: Subscriber): SessionConfigOption[] {
+    requireEditor(subscriber);
     return this.restore(id).setConfigOption(configId, valueId);
   }
 
-  public prompt(id: string, prompt: ContentBlock[]): Promise<PromptResponse> {
-    return this.restore(id).enqueue(prompt);
+  public prompt(id: string, prompt: ContentBlock[], subscriber: Subscriber): Promise<PromptResponse> {
+    requireEditor(subscriber);
+    return this.restore(id).enqueue(prompt, subscriber.identity);
   }
 
-  public cancel(id: string): void {
-    this.sessions.get(id)?.cancel();
+  public cancel(id: string, subscriber: Subscriber): void {
+    requireEditor(subscriber);
+    this.sessions.get(id)?.cancel(subscriber.identity);
   }
 
   public removeSubscriber(subscriber: Subscriber): void {
@@ -324,6 +388,10 @@ export class ActorService {
     this.sessions.set(id, actor);
     return actor;
   }
+}
+
+function requireEditor(subscriber: Subscriber): void {
+  if (subscriber.identity.role === "viewer") throw new Error("viewer access is replay-only");
 }
 
 function validPermissionAnswer(request: RequestPermissionRequest, response: RequestPermissionResponse): boolean {

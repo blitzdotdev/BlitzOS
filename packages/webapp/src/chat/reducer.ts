@@ -15,6 +15,12 @@ export interface ChatMessage {
   role: "user" | "agent" | "thought";
   text: string;
   otherContent: ContentBlock[];
+  actor?: ChatActor;
+}
+
+export interface ChatActor {
+  userId: string;
+  name?: string;
 }
 
 export interface ChatTool {
@@ -33,6 +39,7 @@ export interface ChatPermission {
   options: PermissionOption[];
   answeredOptionId: string | null;
   cancelled: boolean;
+  answeredBy?: ChatActor;
 }
 
 export type ChatRow =
@@ -76,11 +83,11 @@ export const initialChatState: ChatState = {
 };
 
 export type ChatAction =
-  | { type: "update"; update: unknown }
+  | { type: "update"; update: unknown; actor?: ChatActor }
   | { type: "begin-replay" }
   | { type: "reconcile-running" }
   | { type: "permission-request"; request: RequestPermissionRequest }
-  | { type: "permission-answered"; toolCallId: string; optionId: string | null }
+  | { type: "permission-answered"; toolCallId: string; optionId: string | null; actor?: ChatActor }
   | { type: "turn-started"; turnId: string }
   | { type: "turn-ended"; turnId: string; stopReason: StopReason }
   | { type: "generic"; label: string };
@@ -97,11 +104,11 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, running: false, pendingCalls };
     }
     case "update":
-      return applyUpdate(state, action.update);
+      return applyUpdate(state, action.update, action.actor);
     case "permission-request":
       return addPermission(state, action.request);
     case "permission-answered":
-      return answerPermission(state, action.toolCallId, action.optionId);
+      return answerPermission(state, action.toolCallId, action.optionId, action.actor);
     case "turn-started":
       return state.running
         ? state
@@ -126,7 +133,22 @@ export function reduceAcpFrame(state: ChatState, frame: unknown): ChatState {
     }
     if (frame.method === "session/update") {
       if (!isRecord(frame.params) || !isRecord(frame.params.update)) return state;
-      return chatReducer(state, { type: "update", update: frame.params.update });
+      const actor = parseActor(frame.params.actor);
+      const action: ChatAction = { type: "update", update: frame.params.update };
+      if (actor !== undefined) action.actor = actor;
+      return chatReducer(state, action);
+    }
+    if (frame.method === "blitz/permission_answered") {
+      if (!isRecord(frame.params) || !isString(frame.params.toolCallId)) return state;
+      if (!(frame.params.optionId === null || isString(frame.params.optionId))) return state;
+      const actor = parseActor(frame.params.actor);
+      const action: ChatAction = {
+        type: "permission-answered",
+        toolCallId: frame.params.toolCallId,
+        optionId: frame.params.optionId,
+      };
+      if (actor !== undefined) action.actor = actor;
+      return chatReducer(state, action);
     }
     if (frame.method === "session/request_permission" && isRequestId(frame.id)) {
       const request = parsePermission(frame.params);
@@ -159,15 +181,15 @@ export function reduceAcpFrame(state: ChatState, frame: unknown): ChatState {
   return withoutPending(state, callId);
 }
 
-function applyUpdate(state: ChatState, value: unknown): ChatState {
+function applyUpdate(state: ChatState, value: unknown, actor?: ChatActor): ChatState {
   if (!isRecord(value) || !isString(value.sessionUpdate)) return state;
   switch (value.sessionUpdate) {
     case "user_message_chunk":
-      return addMessageChunk(state, value, "user");
+      return addMessageChunk(state, value, "user", actor);
     case "agent_message_chunk":
-      return addMessageChunk(state, value, "agent");
+      return addMessageChunk(state, value, "agent", actor);
     case "agent_thought_chunk":
-      return addMessageChunk(state, value, "thought");
+      return addMessageChunk(state, value, "thought", actor);
     case "tool_call":
       return addTool(state, value);
     case "tool_call_update":
@@ -192,17 +214,15 @@ function addMessageChunk(
   state: ChatState,
   value: Record<string, unknown>,
   role: ChatMessage["role"],
+  actor?: ChatActor,
 ): ChatState {
   if (!isContentBlock(value.content)) return state;
   const messageId = isString(value.messageId)
     ? value.messageId
     : `anonymous-${state.sequence + 1}`;
-  const existing = state.messages[messageId] ?? {
-    id: messageId,
-    role,
-    text: "",
-    otherContent: [],
-  };
+  const created: ChatMessage = { id: messageId, role, text: "", otherContent: [] };
+  if (actor !== undefined) created.actor = actor;
+  const existing = state.messages[messageId] ?? created;
   const rows = hasRow(state.rows, "message", messageId)
     ? state.rows
     : [...state.rows, { kind: "message" as const, id: messageId }];
@@ -312,20 +332,30 @@ function addPermission(state: ChatState, request: RequestPermissionRequest): Cha
   };
 }
 
-function answerPermission(state: ChatState, id: string, optionId: string | null): ChatState {
+function answerPermission(state: ChatState, id: string, optionId: string | null, actor?: ChatActor): ChatState {
   const permission = state.permissions[id];
   if (permission === undefined || permission.answeredOptionId !== null || permission.cancelled) return state;
+  const answered: ChatPermission = {
+    ...permission,
+    answeredOptionId: optionId,
+    cancelled: optionId === null,
+  };
+  if (actor !== undefined) answered.answeredBy = actor;
   return {
     ...state,
     permissions: {
       ...state.permissions,
-      [id]: {
-        ...permission,
-        answeredOptionId: optionId,
-        cancelled: optionId === null,
-      },
+      [id]: answered,
     },
   };
+}
+
+function parseActor<Value>(value: Value): ChatActor | undefined {
+  if (!isRecord(value) || !isString(value.userId)) return undefined;
+  if (!(value.name === undefined || isString(value.name))) return undefined;
+  const actor: ChatActor = { userId: value.userId };
+  if (isString(value.name)) actor.name = value.name;
+  return actor;
 }
 
 function finishTurn(state: ChatState, turnId: string, stopReason: StopReason): ChatState {

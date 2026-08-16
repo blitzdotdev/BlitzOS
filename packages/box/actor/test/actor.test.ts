@@ -1,16 +1,45 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
+import Database from "better-sqlite3";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { afterEach, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
 import { ActorService } from "../src/actor.js";
 import { CredentialSource } from "../src/credentials.js";
 import { Journal } from "../src/journal.js";
+import type { JournalFrame } from "../src/journal.js";
 import { ActorServer } from "../src/server.js";
 import type { AdapterFactory, AgentAdapter, Provider, TurnInput } from "../src/types.js";
+import { ActorAuthenticator } from "../src/auth.js";
+
+const ACTOR_TEST_SECRET = "actor-test-secret";
+const ACTOR_TEST_ORIGIN = "http://localhost:3000";
+
+function testAuthenticator(directory: string): ActorAuthenticator {
+  const tokenPath = join(directory, "webapp-token");
+  const workspacePath = join(directory, "workspace-id");
+  writeFileSync(tokenPath, ACTOR_TEST_SECRET, { mode: 0o600 });
+  writeFileSync(workspacePath, "actor-test-workspace", { mode: 0o600 });
+  return new ActorAuthenticator(tokenPath, workspacePath);
+}
+
+function actorTicket(role: "editor" | "viewer", exp = Math.floor(Date.now() / 1_000) + 60): string {
+  const payload = Buffer.from(JSON.stringify({
+    workspaceId: "actor-test-workspace",
+    userId: `${role}-user`,
+    membershipId: `${role}-member`,
+    role,
+    surface: "chat",
+    exp,
+  })).toString("base64url");
+  const input = `v1.${payload}`;
+  const signature = createHmac("sha256", ACTOR_TEST_SECRET).update(input).digest("base64url");
+  return `${input}.${signature}`;
+}
 
 type Frame = Record<string, unknown> & { id?: string | number; method?: string; params?: Record<string, unknown> };
 
@@ -28,9 +57,12 @@ class Client {
     });
   }
 
-  public static open(url: string, origin?: string): Promise<Client> {
+  public static open(url: string, origin = ACTOR_TEST_ORIGIN, token = ACTOR_TEST_SECRET): Promise<Client> {
     return new Promise((resolve, reject) => {
-      const socket = new WebSocket(url, origin ? { origin } : undefined);
+      const socket = new WebSocket(url, {
+        ...(origin === "" ? {} : { origin }),
+        headers: { "X-Blitz-WebApp-Token": token },
+      });
       const client = new Client(socket);
       socket.once("open", () => resolve(client));
       socket.once("error", reject);
@@ -92,7 +124,7 @@ async function start(adapter: AgentAdapter, provider: Provider = "claude"): Prom
   const credentials = new FakeCredentials(dir);
   const factory: AdapterFactory = () => adapter;
   const service = new ActorService(journal, credentials, factory, provider);
-  const server = new ActorServer(service, "127.0.0.1", 0);
+  const server = new ActorServer(service, "127.0.0.1", 0, undefined, testAuthenticator(dir));
   const address = (await server.start()) as AddressInfo;
   const item = { server, journal, credentials, url: `ws://127.0.0.1:${address.port}`, dir };
   running.push(item);
@@ -123,7 +155,38 @@ function fixtureUpdates(): SessionUpdate[] {
   return updates;
 }
 
+function fixtureFrames(name: string): Frame[] {
+  const directory = fileURLToPath(new URL("../../../schema/fixtures/acp/", import.meta.url));
+  return readFileSync(join(directory, name), "utf8").trim().split("\n")
+    .map((line) => JSON.parse(line) as Frame);
+}
+
 describe("ACP actor", () => {
+  test("persists the shared attributed-event and session-list fixture shapes", () => {
+    const directory = mkdtempSync(join(tmpdir(), "blitz-actor-fixture-"));
+    const journal = new Journal(join(directory, "journal.db"));
+    const attributed = fixtureFrames("attribution.jsonl")[2] as JournalFrame;
+    journal.createSession({
+      id: "session-attributed",
+      provider: "claude",
+      cwd: "/workspace",
+      resumeId: null,
+      createdBy: "user-alice",
+      updatedAt: Date.parse("2026-08-16T00:00:00.000Z"),
+    });
+    const listed = journal.listSessions()[0];
+    const fixtureInfo = ((fixtureFrames("session-list.jsonl")[1]?.result as { sessions: unknown[] }).sessions[0]);
+    expect({
+      sessionId: listed?.id,
+      cwd: "/workspace",
+      updatedAt: listed === undefined ? undefined : new Date(listed.updatedAt).toISOString(),
+      _meta: { id: listed?.id, provider: listed?.provider, createdBy: listed?.createdBy },
+    }).toMatchObject(fixtureInfo as object);
+    journal.append("session-attributed", attributed);
+    expect(JSON.parse(journal.replay("session-attributed", 10)[0]!.frame)).toEqual(attributed);
+    journal.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   test("admin drain closes every active websocket", async () => {
     const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } });
     const first = await Client.open(item.url);
@@ -134,6 +197,7 @@ describe("ACP actor", () => {
     ]);
     const response = await fetch(item.url.replace("ws://", "http://") + "/admin/drain", {
       method: "POST",
+      headers: { "X-Blitz-WebApp-Token": ACTOR_TEST_SECRET },
     });
     expect(response.status).toBe(204);
     await closed;
@@ -168,6 +232,39 @@ describe("ACP actor", () => {
     expect(item.journal.sequences(sessionId)).toEqual(observed.map((_value, index) => index + 1));
     expect(item.journal.terminals(sessionId)).toEqual(["end_turn"]);
     client.close();
+  });
+
+  test("session/list discovers workspace sessions and viewers are replay-only", async () => {
+    const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } });
+    const editor = await Client.open(item.url, ACTOR_TEST_ORIGIN, actorTicket("editor"));
+    await editor.initialize();
+    const sessionId = await editor.newSession();
+    const viewer = await Client.open(item.url, ACTOR_TEST_ORIGIN, actorTicket("viewer"));
+    await viewer.initialize("viewer-init");
+    viewer.send({ jsonrpc: "2.0", id: "list", method: "session/list", params: { cwd: "/workspace" } });
+    const listed = await viewer.take((frame) => frame.id === "list");
+    expect(listed.result).toMatchObject({
+      sessions: [{
+        sessionId,
+        _meta: { id: sessionId, provider: "claude", createdBy: "editor-user" },
+      }],
+    });
+    viewer.send({ jsonrpc: "2.0", id: "load", method: "session/load", params: { sessionId, cwd: "/workspace", mcpServers: [] } });
+    await viewer.take((frame) => frame.id === "load");
+    const participantDatabase = new Database(join(item.dir, "journal.db"), { readonly: true });
+    expect(participantDatabase.prepare(
+      "SELECT user_id, membership_id, role FROM participants WHERE session_id = ? ORDER BY user_id",
+    ).all(sessionId)).toEqual([
+      { user_id: "editor-user", membership_id: "editor-member", role: "editor" },
+      { user_id: "viewer-user", membership_id: "viewer-member", role: "viewer" },
+    ]);
+    participantDatabase.close();
+    viewer.send({ jsonrpc: "2.0", id: "viewer-new", method: "session/new", params: { cwd: "/workspace", mcpServers: [] } });
+    expect(await viewer.take((frame) => frame.id === "viewer-new")).toHaveProperty("error");
+    viewer.send({ jsonrpc: "2.0", id: "viewer-prompt", method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: "no" }] } });
+    expect(await viewer.take((frame) => frame.id === "viewer-prompt")).toHaveProperty("error");
+    editor.close();
+    viewer.close();
   });
 
   test("cancel is explicit and converges exactly once", async () => {
@@ -272,6 +369,7 @@ describe("ACP actor", () => {
   test("malformed frames, Origin rejection, and the 1 MiB cap isolate one connection", async () => {
     const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } });
     await expect(Client.open(item.url, "https://evil.example")).rejects.toThrow();
+    await expect(Client.open(item.url, "")).rejects.toThrow();
     const bad = await Client.open(item.url);
     const good = await Client.open(item.url, "http://localhost:3000");
     await bad.initialize("bad-init");
@@ -317,11 +415,21 @@ describe("ACP actor", () => {
     const request1 = await first.take((frame) => frame.method === "session/request_permission");
     const request2 = await second.take((frame) => frame.method === "session/request_permission");
     first.send({ jsonrpc: "2.0", id: request1.id, result: { outcome: { outcome: "selected", optionId: "allow-once" } } });
+    const attribution = await first.take((frame) => frame.method === "blitz/permission_answered");
+    expect(attribution.params).toMatchObject({
+      toolCallId: "tool",
+      actor: { userId: "legacy-owner", name: "Legacy owner" },
+    });
     await first.take((frame) => frame.method === "session/update" && JSON.stringify(frame).includes("allow-once"));
     second.send({ jsonrpc: "2.0", id: request2.id, result: { outcome: { outcome: "selected", optionId: "reject-once" } } });
     await first.take((frame) => frame.id === "turn");
     expect(item.journal.answeredPermissions(sessionId)).toBe(1);
     expect(item.journal.pendingPermissions(sessionId)).toEqual([]);
+    const permissionDatabase = new Database(join(item.dir, "journal.db"), { readonly: true });
+    expect(permissionDatabase.prepare(
+      "SELECT responded_by, responded_name FROM permissions WHERE session_id = ?",
+    ).get(sessionId)).toEqual({ responded_by: "legacy-owner", responded_name: "Legacy owner" });
+    permissionDatabase.close();
     first.close();
     second.close();
   });
@@ -341,7 +449,7 @@ describe("ACP actor", () => {
       },
       provider,
     );
-    const server = new ActorServer(service, "127.0.0.1", 0);
+    const server = new ActorServer(service, "127.0.0.1", 0, undefined, testAuthenticator(dir));
     const address = await server.start();
     const client = await Client.open(`ws://127.0.0.1:${address.port}`);
     await client.initialize();

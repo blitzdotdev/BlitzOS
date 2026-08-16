@@ -1,6 +1,8 @@
 import type {
   ApiError,
   ListCredentialLeasesResponse,
+  ListCredentialEventsResponse,
+  CredentialEventView,
   ListCredentialRequestsResponse,
   ListIntegrationsResponse,
   CreateWorkspaceRequest,
@@ -87,7 +89,7 @@ export interface InviteView {
 export interface WorkspaceGrantView {
   id: string;
   membershipId: string;
-  role: "editor";
+  role: "editor" | "viewer";
   createdAt: number;
   member: { name: string; email: string; avatarUrl: string | null };
 }
@@ -119,7 +121,7 @@ export interface ControlPlaneClient {
   createInvite(input: { email?: string; role: "admin" | "member" }): Promise<{ invite: InviteView; code: string; ttlDays: number }>;
   revokeInvite(id: string): Promise<void>;
   listWorkspaceGrants(workspaceId: string): Promise<{ grants: WorkspaceGrantView[] }>;
-  createWorkspaceGrant(workspaceId: string, membershipId: string): Promise<{ grant: WorkspaceGrantView }>;
+  createWorkspaceGrant(workspaceId: string, membershipId: string, role: "editor" | "viewer"): Promise<{ grant: WorkspaceGrantView }>;
   revokeWorkspaceGrant(workspaceId: string, grantId: string): Promise<void>;
   getGlobalWebAppState(): Promise<WebAppStateResponse<GlobalWebAppStateV1>>;
   putGlobalWebAppState(
@@ -141,6 +143,7 @@ export interface ControlPlaneClient {
   putIntegration(name: string, input: PutIntegrationRequest): Promise<void>;
   deleteIntegration(name: string): Promise<void>;
   listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
+  listCredentialEvents(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialEventsResponse>;
   revokeLease(id: string): Promise<void>;
   listCredentialRequests(
     signal?: AbortSignal,
@@ -405,7 +408,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       grant === null
       || !isString(grant.id)
       || !isString(grant.membershipId)
-      || grant.role !== "editor"
+      || (grant.role !== "editor" && grant.role !== "viewer")
       || !isNumber(grant.createdAt)
       || member === null
       || !isString(member.name)
@@ -415,7 +418,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     return {
       id: grant.id,
       membershipId: grant.membershipId,
-      role: "editor",
+      role: grant.role,
       createdAt: grant.createdAt,
       member: { name: member.name, email: member.email, avatarUrl: member.avatarUrl },
     };
@@ -430,6 +433,30 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
   function decodeGrant(json: string): GrantResponse {
     const object = parsedObject(json, "workspace grant");
     return { grant: grantView(object.grant ?? null, "workspace grant") };
+  }
+
+  function decodeCredentialEvents(json: string): ListCredentialEventsResponse {
+    const object = parsedObject(json, "credential events");
+    if (!Array.isArray(object.events)) throw new Error("credential events returned an invalid list");
+    const events: CredentialEventView[] = object.events.map((value) => {
+      const event = asJsonObject(value);
+      if (
+        event === null
+        || !isNumber(event.id)
+        || !Number.isSafeInteger(event.id)
+        || !(event.leaseId === null || isString(event.leaseId))
+        || (event.event !== "minted" && event.event !== "revoked" && event.event !== "denied" && event.event !== "approved")
+        || !isNumber(event.createdAt)
+      ) throw new Error("credential events returned an invalid event");
+      return {
+        id: event.id,
+        leaseId: event.leaseId,
+        event: event.event,
+        detail: event.detail ?? null,
+        createdAt: event.createdAt,
+      };
+    });
+    return { events };
   }
 
   return {
@@ -465,12 +492,12 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     listWorkspaceGrants: (workspaceId) => request<{ grants: WorkspaceGrantView[] }>(
       `/workspaces/${encodeURIComponent(workspaceId)}/grants`, {}, decodeGrants,
     ),
-    createWorkspaceGrant: (workspaceId, membershipId) => request<{ grant: WorkspaceGrantView }>(
+    createWorkspaceGrant: (workspaceId, membershipId, role) => request<{ grant: WorkspaceGrantView }>(
       `/workspaces/${encodeURIComponent(workspaceId)}/grants`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ membershipId, role: "editor" }),
+        body: JSON.stringify({ membershipId, role }),
       }, decodeGrant,
     ),
     revokeWorkspaceGrant: (workspaceId, grantId) => request<void>(
@@ -538,6 +565,12 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<ListCredentialLeasesResponse>(
         `/workspaces/${encodeURIComponent(workspaceId)}/leases`,
         { signal },
+      ),
+    listCredentialEvents: (workspaceId, signal) =>
+      request<ListCredentialEventsResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/credential-events`,
+        { signal },
+        decodeCredentialEvents,
       ),
     revokeLease: (id) =>
       request<void>(`/leases/${encodeURIComponent(id)}`, { method: "DELETE" }),
