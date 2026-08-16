@@ -6,6 +6,7 @@ import { IntegrationsPanel } from './settings/IntegrationsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
 import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
+import { FilesPanel } from './settings/FilesPanel';
 
 function initial(identity: TenantMe['identity']): string {
   return (identity.name || identity.email || 'B').trim().charAt(0).toUpperCase() || 'B';
@@ -116,6 +117,7 @@ export function SettingsPage({
   const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'profile', label: 'Profile' },
     { id: 'members', label: 'Members' },
+    { id: 'files', label: 'Files' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'invites' as const, label: 'Invites' }] : []),
     { id: 'integrations', label: 'Integrations' },
     { id: 'requests', label: 'Requests' },
@@ -146,6 +148,7 @@ export function SettingsPage({
       <div className="settings-content">
         {section === 'profile' && <ProfilePanel viewer={viewer} onSignOut={onSignOut} />}
         {section === 'members' && <MembersPanel client={client} admin={viewer.membership.role === 'admin'} />}
+        {section === 'files' && <FilesPanel client={client} />}
         {section === 'invites' && viewer.membership.role === 'admin' && <InvitesPanel client={client} />}
         {section === 'integrations' && (
           <IntegrationsPanel client={client} requestedName={requestedIntegrationName} />

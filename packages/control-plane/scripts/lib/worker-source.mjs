@@ -7,7 +7,6 @@ const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
-
 export const CORE_MANIFEST = Object.freeze([
   "core/index.ts",
   "core/app.ts",
@@ -19,24 +18,11 @@ export const CORE_MANIFEST = Object.freeze([
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
-  "core/credentials/types.ts",
-  "core/credentials/root-crypto.ts",
-  "core/credentials/manifest.ts",
-  "core/credentials/leases.ts",
-  "core/credentials/minters/static.ts",
-  "core/credentials/minters/app-jwt/github-app.ts",
-  "core/credentials/registry.ts",
-  "core/credentials/requests.ts",
-  "core/credentials/mint.ts",
-  "core/credentials/proxy.ts",
+  "core/credentials/types.ts", "core/credentials/root-crypto.ts", "core/credentials/manifest.ts", "core/credentials/leases.ts",
+  "core/credentials/minters/static.ts", "core/credentials/minters/app-jwt/github-app.ts", "core/credentials/registry.ts", "core/credentials/requests.ts", "core/credentials/mint.ts", "core/credentials/proxy.ts",
   "core/http.ts",
-  "core/identity/google.ts",
-  "core/identity/grants.ts",
-  "core/identity/invites.ts",
-  "core/identity/members.ts",
-  "core/identity/oauth-state.ts",
-  "core/identity/orgs.ts",
-  "core/identity/routes.ts",
+  "core/files/access.ts", "core/files/attachments.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/routes.ts", "core/files/sync.ts",
+  "core/identity/google.ts", "core/identity/grants.ts", "core/identity/invites.ts", "core/identity/members.ts", "core/identity/oauth-state.ts", "core/identity/orgs.ts", "core/identity/routes.ts",
   "core/janitors.ts",
   "core/oauth.ts",
   "core/principals.ts",
@@ -47,28 +33,19 @@ export const CORE_MANIFEST = Object.freeze([
   "core/webapp-state.ts",
   "core/workspace-access.ts", "core/workspace-records.ts",
   "core/workspaces.ts",
-  "core/providers/registry.ts",
-  "core/providers/types.ts",
-  "core/providers/hetzner.ts",
-  "core/providers/microvm-hosts.js",
-  "core/providers/microvm-config.ts",
-  "core/providers/microvm-agent.ts",
-  "core/providers/microvm-host-registry.ts",
-  "core/providers/microvm.ts",
+  "core/providers/registry.ts", "core/providers/types.ts", "core/providers/hetzner.ts", "core/providers/microvm-hosts.js",
+  "core/providers/microvm-config.ts", "core/providers/microvm-agent.ts", "core/providers/microvm-host-registry.ts", "core/providers/microvm.ts",
 ]);
-
 export const UPLOAD_MANIFEST = Object.freeze([
   "teenybase.ts",
   "worker.ts",
   ...CORE_MANIFEST,
 ]);
-
 export const UPLOAD_ORDER = Object.freeze([
   ...CORE_MANIFEST,
   "teenybase.ts",
   "worker.ts",
 ]);
-
 export const DENY_ALL_RULES = Object.freeze({
   name: "rules",
   listRule: null,
@@ -201,6 +178,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
       indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }],
       extensions: [DENY_ALL_RULES],
     },
+    { name: "folders", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
+    { name: "folder_grants", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" }, { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["folder_id", "membership_id"] }, { name: "membership", fields: ["membership_id", "folder_id"] }], extensions: [DENY_ALL_RULES] },
+    { name: "folder_attachments", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "attached_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",
       fields: [
@@ -424,7 +404,7 @@ const config = ${tsValue(BLITZDEV_CONFIG)} satisfies DatabaseSettings;
 export default config;
 `);
 
-export const WORKER_SOURCE = normalizeSource(`import { $Database, teenyHono } from "teenybase";
+export const WORKER_SOURCE = normalizeSource(`import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase";
 import config from "virtual:teenybase";
 import {
   credentialMasterKeyFor,
@@ -434,6 +414,8 @@ import {
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
+  runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
+  runSessionSweep, runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
   VmProviderRegistry,
   blobResponse,
@@ -579,6 +561,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
   return {
     db,
     blobs: managedBlobStore(context.get("$db") as $Database, "box-image"),
+    fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket,
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
@@ -617,7 +600,23 @@ app.get("/", (c) => webAppResponse(c, "/index.html"));
 app.get("*", (c) => isApiPath(c.req.path)
   ? c.json({ error: "not found", retryAction: null }, 404)
   : webAppResponse(c, "/index.html"));
-export default app;
+const worker = Object.assign(app, {
+  async scheduled(_event: ScheduledController, env: ManagedBindings, executionContext: ExecutionContext) {
+    const db = new $DatabaseRawImpl(env.TEENY_PRIMARY_DB);
+    executionContext.waitUntil((async () => {
+      const key = await credentialMasterKeyFor(env.CRED_MASTER_KEY);
+      const runtime = runtimeFor({
+        env, executionCtx: executionContext,
+        get: (name) => name === "$db" ? db : key,
+      });
+      await runtime.providers.microvm?.syncStaticHosts();
+      await runSessionSweep(runtime); await runLeaseSweep(runtime);
+      await runInvariantSweep(runtime); await runOrphanSweep(runtime);
+      await runWorkspaceTunnelSweep(runtime); await runFileSyncSweep(runtime);
+    })());
+  },
+});
+export default worker;
 `);
 
 export function importSpecifiers(source) {

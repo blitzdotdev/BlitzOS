@@ -143,6 +143,50 @@ const feedResponse: SharedShape<wire.FeedResponse, schema.FeedResponse> = {
   members: [feedMember],
 };
 
+const folderGrant: SharedShape<wire.FolderGrantView, schema.FolderGrantView> = {
+  id: "grant",
+  membershipId: "member",
+  role: "editor",
+  createdAt: 1,
+  member: { name: "Editor", email: "editor@example.com", avatarUrl: null },
+};
+
+const folder: SharedShape<wire.FolderView, schema.FolderView> = {
+  id: "folder",
+  name: "Shared",
+  role: "owner",
+  createdAt: 1,
+  updatedAt: 2,
+  grants: [folderGrant],
+};
+
+const folderObject: SharedShape<wire.FolderObjectView, schema.FolderObjectView> = {
+  key: "notes/today.txt",
+  size: 12,
+  mtime: 1,
+  editedBy: "Editor",
+};
+
+const folderObjects: SharedShape<
+  wire.ListFolderObjectsResponse,
+  schema.ListFolderObjectsResponse
+> = { objects: [folderObject], cursor: null, truncated: false };
+
+const folderAttachment: SharedShape<
+  wire.FolderAttachmentView,
+  schema.FolderAttachmentView
+> = {
+  id: "folder",
+  name: "Shared",
+  role: "editor",
+  attachedAt: 3,
+};
+
+const folderAttachments: SharedShape<
+  wire.ListFolderAttachmentsResponse,
+  schema.ListFolderAttachmentsResponse
+> = { folders: [folderAttachment] };
+
 const fullFieldValues = [
   machineType,
   machineTypeFailure,
@@ -161,6 +205,12 @@ const fullFieldValues = [
   feedKey,
   feedMember,
   feedResponse,
+  folderGrant,
+  folder,
+  folderObject,
+  folderObjects,
+  folderAttachment,
+  folderAttachments,
 ];
 
 describe("local wire copies", () => {
@@ -185,6 +235,13 @@ describe("local wire copies", () => {
     expectTypeOf<wire.FeedResponse>().toEqualTypeOf<schema.FeedResponse>();
     expectTypeOf<wire.FeedMember>().toEqualTypeOf<schema.FeedMember>();
     expectTypeOf<wire.FeedKey>().toEqualTypeOf<schema.FeedKey>();
+    expectTypeOf<wire.FolderRole>().toEqualTypeOf<schema.FolderRole>();
+    expectTypeOf<wire.FolderGrantView>().toEqualTypeOf<schema.FolderGrantView>();
+    expectTypeOf<wire.FolderView>().toEqualTypeOf<schema.FolderView>();
+    expectTypeOf<wire.FolderObjectView>().toEqualTypeOf<schema.FolderObjectView>();
+    expectTypeOf<wire.ListFolderObjectsResponse>().toEqualTypeOf<schema.ListFolderObjectsResponse>();
+    expectTypeOf<wire.FolderAttachmentView>().toEqualTypeOf<schema.FolderAttachmentView>();
+    expectTypeOf<wire.ListFolderAttachmentsResponse>().toEqualTypeOf<schema.ListFolderAttachmentsResponse>();
   });
 
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {
@@ -194,6 +251,7 @@ describe("local wire copies", () => {
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
     expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);
+    expect(wire.FILES_MULTIPART_CHUNK_BYTES).toBe(schema.FILES_MULTIPART_CHUNK_BYTES);
     for (const value of fullFieldValues) {
       expect(JSON.parse(JSON.stringify(value))).toEqual(value);
     }

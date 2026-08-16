@@ -1,6 +1,7 @@
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./credentials/mint.js";
 import { HttpError } from "./http.js";
+import { addFilesRoutes } from "./files/routes.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
@@ -41,6 +42,7 @@ export function installControlPlaneRoutes(
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addFilesRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addRegistryRoutes(router, runtimeFactory);
 
   router.get("/machine-types", async (context) => {

@@ -1,11 +1,11 @@
-export type SettingsSection = 'profile' | 'members' | 'invites' | 'integrations' | 'requests';
+export type SettingsSection = 'profile' | 'members' | 'files' | 'invites' | 'integrations' | 'requests';
 
 export type AppRoute =
   | { workspaceId: string | null; page: 'webApp' }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|files|invites|integrations|requests))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,

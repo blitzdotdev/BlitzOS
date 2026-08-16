@@ -38,6 +38,13 @@ const expected = [
   "core/credentials/mint.ts",
   "core/credentials/proxy.ts",
   "core/http.ts",
+  "core/files/access.ts",
+  "core/files/attachments.ts",
+  "core/files/folders.ts",
+  "core/files/keys.ts",
+  "core/files/objects.ts",
+  "core/files/routes.ts",
+  "core/files/sync.ts",
   "core/identity/google.ts",
   "core/identity/grants.ts",
   "core/identity/invites.ts",
@@ -81,7 +88,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(49);
+    expect(first.files).toHaveLength(56);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
@@ -108,6 +115,12 @@ describe("blitz.dev managed emitter", () => {
     expect(teenybase?.source).toContain('appUrl: "$APP_URL"');
     expect(emitted).not.toMatch(/https:\/\/[^\s"']*workers\.dev/iu);
     expect(emitted).not.toContain("blitz-core-probe-caae.app.blitz.dev");
+  });
+
+  it("wires the managed worker file bucket and scheduled folder sweep", () => {
+    expect(WORKER_SOURCE).toContain("fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket");
+    expect(WORKER_SOURCE).toContain("async scheduled(");
+    expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
   });
 
   it("redacts agent credentials from diagnostics", () => {

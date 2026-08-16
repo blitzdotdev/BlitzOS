@@ -1,10 +1,54 @@
 export const FEED_MAX_BYTES = 1_048_576;
 export const HARNESSES = ["claude", "codex"] as const;
+export const FILES_MULTIPART_CHUNK_BYTES = 32 * 1024 * 1024;
 
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
 export interface JsonObject {
   [key: string]: JsonValue;
+}
+
+export type FolderRole = "owner" | "admin" | "editor" | "viewer";
+
+export interface FolderGrantView {
+  id: string;
+  membershipId: string;
+  role: "editor" | "viewer";
+  createdAt: number;
+  member: { name: string; email: string; avatarUrl: string | null };
+}
+
+export interface FolderView {
+  id: string;
+  name: string;
+  role: FolderRole | null;
+  createdAt: number;
+  updatedAt: number;
+  grants?: FolderGrantView[];
+}
+
+export interface FolderObjectView {
+  key: string;
+  size: number;
+  mtime: number;
+  editedBy: string;
+}
+
+export interface ListFolderObjectsResponse {
+  objects: FolderObjectView[];
+  cursor: string | null;
+  truncated: boolean;
+}
+
+export interface FolderAttachmentView {
+  id: string;
+  name: string;
+  role: FolderRole;
+  attachedAt: number;
+}
+
+export interface ListFolderAttachmentsResponse {
+  folders: FolderAttachmentView[];
 }
 
 export interface CredentialManifest {

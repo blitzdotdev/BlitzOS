@@ -37,6 +37,7 @@ run_worker_first = [
   "/me",
   "/orgs*",
   "/workspaces*",
+  "/folders*",
   "/integrations*",
   "/leases*",
   "/requests*",

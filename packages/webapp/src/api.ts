@@ -28,6 +28,10 @@ import {
   isNumber,
   isString,
 } from "./type-guards.js";
+import {
+  createFileLibraryClient,
+  type FileLibraryClient,
+} from "./file-library-api.js";
 
 export class ApiRequestError extends Error {
   public constructor(
@@ -107,7 +111,7 @@ export interface CreateOrgResponse {
   membership: NonNullable<MeResponse["membership"]>;
 }
 
-export interface ControlPlaneClient {
+export interface ControlPlaneClient extends FileLibraryClient {
   googleLoginUrl(): string;
   inviteGoogleLoginUrl(code: string): string;
   inviteStatus(code: string): Promise<{ invite: InviteView; ttlDays: number }>;
@@ -161,6 +165,17 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     init: RequestInit = {},
     decode?: (json: string) => T,
   ): Promise<T> {
+    const response = await rawRequest(path, init);
+    if (response.status === 204) {
+      // SAFETY: Callers are expected to request void for 204 endpoints, but the generic is not constrained here. TODO(deslop-tier-c): encode no-content endpoints so T must be void.
+      return undefined as T;
+    }
+    if (decode !== undefined) return decode(await response.text());
+    // SAFETY: Legacy endpoint JSON is delegated to caller-selected T without validation. TODO(deslop-tier-c): decode each remaining endpoint response into its declared domain type.
+    return (await response.json()) as T;
+  }
+
+  async function rawRequest(path: string, init: RequestInit = {}): Promise<Response> {
     const response = await fetch(`${base}${path}`, { ...init, credentials: "include" });
     if (!response.ok) {
       let error: ApiError = { error: `Request failed (${response.status})`, retryAction: null };
@@ -172,13 +187,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }
       throw new ApiRequestError(error.error, response.status, error.retryAction ?? null);
     }
-    if (response.status === 204) {
-      // SAFETY: Callers are expected to request void for 204 endpoints, but the generic is not constrained here. TODO(deslop-tier-c): encode no-content endpoints so T must be void.
-      return undefined as T;
-    }
-    if (decode !== undefined) return decode(await response.text());
-    // SAFETY: Legacy endpoint JSON is delegated to caller-selected T without validation. TODO(deslop-tier-c): decode each remaining endpoint response into its declared domain type.
-    return (await response.json()) as T;
+    return response;
   }
 
   function decodeMe(json: string): MeResponse {
@@ -460,6 +469,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
   }
 
   return {
+    ...createFileLibraryClient(rawRequest),
     googleLoginUrl: () => `${base}/auth/google/start`,
     inviteGoogleLoginUrl: (code) => `${base}/auth/google/start?invite=${encodeURIComponent(code)}`,
     inviteStatus: (code) => request<{ invite: InviteView; ttlDays: number }>(`/invite/${encodeURIComponent(code)}`, {}, decodeInviteStatus),
