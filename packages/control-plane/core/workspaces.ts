@@ -518,12 +518,16 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
-    const credential = await requireWorkspaceWebAppAuth(runtime.providers.webAppAuth).mint({
-      workspaceId: row.id,
-      userId: access.userId,
-      membershipId: access.membershipId,
-      role: access.role,
-    });
+    // TODO(identity-phase-4): Mint per-user tickets here once every box image is
+    // re-pinned with the ticket-verifying gateway. Deployed gateways compare this
+    // header byte-for-byte against the static per-workspace token, so a ticket
+    // fails every proxied request. The static token cannot carry a role, so
+    // viewers are refused here rather than silently upgraded to write access.
+    if (access.role === "viewer") {
+      throw new HttpError(403, "read-only workspace access arrives with the next box image update");
+    }
+    const credential = await requireWorkspaceWebAppAuth(runtime.providers.webAppAuth)
+      .tokenFor(row.id);
     const authenticatedRequest = requestWithWebAppCredential(context.req.raw, credential);
     const workspaceTunnels = runtime.providers.workspaceTunnels;
     let upstream: Response | null;
