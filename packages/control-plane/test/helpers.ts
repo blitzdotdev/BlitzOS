@@ -1,9 +1,4 @@
-import type {
-  CreateVolumeRequest,
-  MachineType,
-  Volume,
-  WorkspaceView,
-} from "@blitzos/schema";
+import type { CreateVolumeRequest, Volume, WorkspaceView } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import type { $Env } from "teenybase/worker";
@@ -13,6 +8,7 @@ import {
   installControlPlaneRoutes,
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
+  VmProviderRegistry,
   type BlobStore,
   type CoreContext,
   type CoreRouter,
@@ -22,6 +18,7 @@ import {
 import type {
   CreatedVm,
   CreateVmInput,
+  ProviderMachineType,
   VmInspection,
   VmProvider,
   VolumeProvider,
@@ -57,6 +54,7 @@ type TestEnv = $Env<TestBindings> & {
 };
 
 export class FakeProviders implements VmProvider, VolumeProvider {
+  readonly id = "fake";
   readonly sshPublicKeys = new Map<string, string | undefined>();
   readonly userData = new Map<string, string>();
   readonly volumes = new Map<string, Volume>();
@@ -70,7 +68,15 @@ export class FakeProviders implements VmProvider, VolumeProvider {
     return { volumes: true, maxUserDataBytes: 32 * 1024 };
   }
 
-  async listMachineTypes(): Promise<MachineType[]> {
+  ownsMachineType(machineTypeId: string): boolean {
+    return machineTypeId === "small";
+  }
+
+  ownsVmId(vmId: string): boolean {
+    return vmId.startsWith("vm-");
+  }
+
+  async listMachineTypes(): Promise<ProviderMachineType[]> {
     return [
       {
         id: "small",
@@ -150,6 +156,13 @@ export function appWithProviders(
   vmProvider: VmProvider,
   volumeProvider: VolumeProvider,
 ): TestApp {
+  return appWithVmProviders([vmProvider], volumeProvider);
+}
+
+export function appWithVmProviders(
+  vmProviders: readonly VmProvider[],
+  volumeProvider: VolumeProvider,
+): TestApp {
   const app = teenyHono<TestEnv>(
     async (context) => {
       context.set("$credentialMasterKey", credentialMasterKey);
@@ -173,7 +186,10 @@ export function appWithProviders(
         (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES,
       ),
     },
-    providers: { vm: vmProvider, volume: volumeProvider },
+    providers: {
+      vmRegistry: new VmProviderRegistry(vmProviders),
+      volume: volumeProvider,
+    },
     principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
   });
@@ -199,7 +215,10 @@ export function testRuntime(providers: FakeProviders): CoreRuntime {
       sessionTtlMs: sessionTtlMsFromEnv(undefined),
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(undefined),
     },
-    providers: { vm: providers, volume: providers },
+    providers: {
+      vmRegistry: new VmProviderRegistry([providers]),
+      volume: providers,
+    },
     principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
     waitUntil: () => undefined,
   };

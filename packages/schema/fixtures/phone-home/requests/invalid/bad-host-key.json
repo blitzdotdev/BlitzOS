@@ -1,0 +1,10 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "pub_key_ed25519": "not-an-ssh-key"
+  },
+  "expect": {
+    "valid": false,
+    "reason": "invalid SSH public key"
+  }
+}

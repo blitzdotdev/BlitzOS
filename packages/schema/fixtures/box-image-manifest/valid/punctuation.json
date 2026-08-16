@@ -1,0 +1,10 @@
+{
+  "parts": [
+    {
+      "name": "archive.part-01_gz",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "totalSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "imageTag": "registry.example/blitz_box:v1@sha256-abc"
+}

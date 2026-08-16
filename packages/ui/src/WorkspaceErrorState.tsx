@@ -3,8 +3,8 @@ import type { RetryAction } from '@blitzos/schema';
 
 const ERROR_DETAIL_PREVIEW_LENGTH = 180;
 
-function failureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'Workspace retry failed.';
+function failureMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : 'Workspace retry failed.';
 }
 
 export function WorkspaceErrorState({

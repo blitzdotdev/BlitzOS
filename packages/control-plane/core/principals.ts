@@ -8,6 +8,7 @@ import {
 } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
+import { isString } from "./http.js";
 import { DEFAULT_SESSION_TTL_MS } from "./runtime.js";
 
 export interface Principal {
@@ -50,7 +51,7 @@ export function cookieValue(request: Request, name: string): string | null {
 function parseHarnesses(value: string): string[] {
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
+    return Array.isArray(parsed) && parsed.every((item) => isString(item))
       ? parsed
       : [];
   } catch {

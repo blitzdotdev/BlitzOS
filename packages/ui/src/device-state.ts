@@ -7,6 +7,7 @@ const PORTS_KEY = "blitz.cockpit.ports.v1";
 function readJson<T>(key: string, fallback: T): T {
   try {
     const stored = localStorage.getItem(key);
+    // SAFETY: JSON parsing establishes valid JSON only; caller-selected T is not checked. TODO(deslop-tier-c): require a decoder for each persisted device-state value.
     return stored === null ? fallback : (JSON.parse(stored) as T);
   } catch {
     return fallback;
@@ -17,7 +18,9 @@ export function useStandalonePorts(): [StandalonePorts, (ports: StandalonePorts)
   const [ports, setPorts] = useState<StandalonePorts>(() => {
     const stored = readJson<Partial<StandalonePorts>>(PORTS_KEY, {});
     return {
+      // SAFETY: validPort establishes a finite integer in the supported TCP port range.
       acp: validPort(stored.acp ?? 0) ? (stored.acp as number) : DEFAULT_PORTS.acp,
+      // SAFETY: validPort establishes a finite integer in the supported TCP port range.
       files: validPort(stored.files ?? 0) ? (stored.files as number) : DEFAULT_PORTS.files,
     };
   });

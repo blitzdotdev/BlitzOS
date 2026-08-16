@@ -1,0 +1,13 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "box_id": "box-fixture",
+    "access_token": "access-fixture",
+    "refresh_token": "refresh-fixture",
+    "workspace_id": "not part of v1"
+  },
+  "expect": {
+    "valid": false,
+    "reason": "response fields must be exact"
+  }
+}

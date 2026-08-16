@@ -69,7 +69,7 @@ function client(): ControlPlaneClient {
       .mockResolvedValue({ workspaces: [creating] }),
     create: vi.fn(async () => ({ workspace: creating })),
     destroy: vi.fn(async () => ({ workspace: creating })),
-    listMachineTypes: vi.fn(async () => ({ machineTypes: [] })),
+    listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
     listIntegrations: vi.fn(async () => ({ integrations: [] })),
     putIntegration: vi.fn(async () => undefined),

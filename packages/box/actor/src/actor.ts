@@ -72,6 +72,7 @@ class SessionActor {
     const operation = this.delivery.then(async () => {
       if (replay) {
         for (const event of this.journal.replay(this.id, REPLAY_LIMIT)) {
+          // SAFETY: Journal frames were written from outbound session-update objects; persisted rows are not revalidated here. TODO(deslop-tier-c): validate replayed journal JSON and require params.update before delivery.
           const frame = JSON.parse(event.frame) as { params: { update: SessionUpdate } };
           await subscriber.update(this.id, frame.params.update);
         }
@@ -212,6 +213,7 @@ class SessionActor {
       let resolve!: (response: RequestPermissionResponse) => void;
       const permission: PendingPermission = {
         id: stored.id,
+        // SAFETY: The journal stores JSON produced from permission requests; persisted rows are not revalidated here. TODO(deslop-tier-c): validate stored permission JSON against RequestPermissionRequest before replay.
         request: JSON.parse(stored.request) as RequestPermissionRequest,
         attempted: new Set(),
         promise: new Promise((answer) => {

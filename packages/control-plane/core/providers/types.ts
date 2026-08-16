@@ -1,5 +1,10 @@
 import type { CreateVolumeRequest, MachineType, Volume } from "../wire.js";
 
+export type ProviderMachineType = Omit<
+  MachineType,
+  "providerId" | "supportsVolumes"
+>;
+
 export interface ProviderCapabilities {
   volumes: boolean;
   maxUserDataBytes?: number | null;
@@ -27,8 +32,11 @@ export interface VmInspection extends CreatedVm {
 export type SurfacePort = 7444 | 7445;
 
 export interface VmProvider {
+  readonly id: string;
+  ownsMachineType(machineTypeId: string): boolean;
+  ownsVmId(vmId: string): boolean;
   capabilities(): ProviderCapabilities;
-  listMachineTypes(): Promise<MachineType[]>;
+  listMachineTypes(): Promise<ProviderMachineType[]>;
   createVm(input: CreateVmInput): Promise<CreatedVm>;
   shutdown(id: string): Promise<void>;
   destroy(id: string): Promise<void>;

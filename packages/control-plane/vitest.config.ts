@@ -1,6 +1,6 @@
 import path from "node:path";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-pool-workers";
-import { defineConfig, defineProject } from "vitest/config";
+import { configDefaults, defineConfig, defineProject } from "vitest/config";
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations(path.join(import.meta.dirname, "migrations"));
@@ -17,6 +17,9 @@ export default defineConfig(async () => {
         },
       }),
     ],
-    test: { setupFiles: ["./test/apply-migrations.ts"] },
+    test: {
+      exclude: [...configDefaults.exclude, "test/bootstrap-python.test.mjs"],
+      setupFiles: ["./test/apply-migrations.ts"],
+    },
   });
 });

@@ -2,6 +2,7 @@ import type { IntegrationView, PutIntegrationRequest } from '@blitzos/schema';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
+import { caughtErrorMessage } from '../error-message';
 
 export type IntegrationTemplateId = 'github' | 'anthropic' | 'openai' | 'hetzner' | 'generic';
 
@@ -17,13 +18,13 @@ const TEMPLATES: readonly {
   { id: 'generic', name: 'Generic static', detail: 'Any static API credential' },
 ] as const;
 
-const DEFAULT_NAMES: Record<IntegrationTemplateId, string> = {
+const DEFAULT_NAMES = {
   github: 'github',
   anthropic: 'anthropic',
   openai: 'openai',
   hetzner: 'hetzner',
   generic: '',
-};
+} satisfies Record<IntegrationTemplateId, string>;
 
 function bytes(...parts: readonly Uint8Array[]): Uint8Array {
   const result = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
@@ -183,10 +184,6 @@ function templateFor(integration: IntegrationView): IntegrationTemplateId {
   return 'generic';
 }
 
-function caughtMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
-
 export function IntegrationsPanel({
   client,
   requestedName,
@@ -214,7 +211,7 @@ export function IntegrationsPanel({
       setIntegrations(response.integrations);
       setError(null);
     } catch (caught) {
-      setError(caughtMessage(caught, 'Integrations failed to load.'));
+      setError(caughtErrorMessage(caught, 'Integrations failed to load.'));
     } finally {
       setLoading(false);
     }
@@ -267,7 +264,7 @@ export function IntegrationsPanel({
       setFormVersion((current) => current + 1);
       await reload();
     } catch (caught) {
-      setError(caughtMessage(caught, 'Integration save failed.'));
+      setError(caughtErrorMessage(caught, 'Integration save failed.'));
     } finally {
       setSaving(false);
     }
@@ -282,7 +279,7 @@ export function IntegrationsPanel({
       await client.deleteIntegration(integration.name);
       await reload();
     } catch (caught) {
-      setError(caughtMessage(caught, 'Integration delete failed.'));
+      setError(caughtErrorMessage(caught, 'Integration delete failed.'));
     } finally {
       setDeleting(null);
     }

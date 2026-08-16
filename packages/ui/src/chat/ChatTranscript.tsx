@@ -1,6 +1,7 @@
 import type { ContentBlock, ToolCallContent } from "@agentclientprotocol/sdk";
 import type { MouseEvent, ReactNode } from "react";
 import { previewPortFromLocalUrl } from "../preview.js";
+import { isString } from "../type-guards.js";
 import type { ChatState } from "./reducer.js";
 
 export function ChatTranscript({
@@ -180,7 +181,7 @@ function ToolContentView({
 function JsonDetails({ label, value }: { label: string; value: unknown }): React.JSX.Element {
   let text: string;
   try {
-    text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    text = isString(value) ? value : JSON.stringify(value, null, 2);
   } catch {
     text = "Unavailable";
   }

@@ -15,6 +15,26 @@ const PHONE_HOME_URL =
 const BOX_IMAGE_REF = `ghcr.io/blitzdotdev/blitz-box@sha256:${"a".repeat(64)}`;
 const BOX_IMAGE_TAG = "blitz-box:release";
 const BOX_IMAGE_SHA256 = "b".repeat(64);
+const phoneHomeFixtureSources = import.meta.glob<string>(
+  "../../schema/fixtures/phone-home/**/*.json",
+  { eager: true, import: "default", query: "?raw" },
+);
+
+interface PhoneHomeFixtureDescriptor {
+  contentType: string;
+  body: string | Record<string, string>;
+  expect: {
+    canonicalKeys?: string[];
+  };
+}
+
+function phoneHomeFixture(relativePath: string): PhoneHomeFixtureDescriptor {
+  const suffix = `/phone-home/${relativePath}`;
+  const source = Object.entries(phoneHomeFixtureSources)
+    .find(([fixturePath]) => fixturePath.endsWith(suffix))?.[1];
+  if (source === undefined) throw new Error(`missing phone-home fixture ${relativePath}`);
+  return JSON.parse(source) as PhoneHomeFixtureDescriptor;
+}
 
 function registryUserData(callerUserData?: string): string {
   return buildUserData(
@@ -260,6 +280,7 @@ describe("production VM bootstrap", () => {
 
   it("waits for box health before posting keys and installs credentials mode 0600", () => {
     const userData = registryUserData();
+    const fixture = phoneHomeFixture("requests/valid/form-success.json");
 
     const wait = userData.indexOf("health_deadline=$((SECONDS + 180))");
     const running = userData.indexOf("docker inspect", wait);
@@ -273,9 +294,12 @@ describe("production VM bootstrap", () => {
     expect(hostKeys).toBeGreaterThan(running);
     expect(post).toBeGreaterThan(sshAnswer);
     expect(credential).toBeGreaterThan(post);
-    expect(userData).toContain("pub_key_ecdsa");
-    expect(userData).toContain("pub_key_ed25519");
-    expect(userData).toContain("pub_key_rsa");
+    const requestEnd = userData.indexOf('"$PHONE_HOME_URL"', post);
+    const requestFields = Array.from(
+      userData.slice(post, requestEnd).matchAll(/--data-urlencode "([^=]+)=/gu),
+      (match) => match[1],
+    );
+    expect(requestFields).toEqual(fixture.expect.canonicalKeys);
     expect(userData).toContain("chmod 0600 /var/lib/blitz/box-credential.json");
     expect(userData).toContain("/var/lib/blitz/origin");
     expect(userData).toContain("/var/log/blitz-bootstrap.log");
@@ -351,6 +375,7 @@ describe("production VM bootstrap", () => {
 
   it("reports bootstrap failures to the capability with only a bounded bootstrap_error field", () => {
     const userData = registryUserData();
+    const fixture = phoneHomeFixture("requests/valid/form-failure.json");
     const failureReporter = userData.match(
       /report_bootstrap_failure\(\) \{\n(?<body>[\s\S]*?)\n\}/u,
     );
@@ -367,7 +392,7 @@ describe("production VM bootstrap", () => {
     expect(body).toContain('"$PHONE_HOME_URL"');
     expect(
       Array.from(body.matchAll(/--data-urlencode "([^=]+)=/gu), (match) => match[1]),
-    ).toEqual(["bootstrap_error"]);
+    ).toEqual(fixture.expect.canonicalKeys);
     expect(userData).toContain(
       'LC_ALL=C cut -c 1-"$BOOTSTRAP_ERROR_MAX_BYTES"',
     );
@@ -375,6 +400,7 @@ describe("production VM bootstrap", () => {
 
   it("persists exactly the three broker credential fields", () => {
     const userData = registryUserData();
+    const fixture = phoneHomeFixture("responses/valid/success.json");
     const projection = userData.match(
       /credential = \{\n(?<fields>(?:    "[^"]+": response\["[^"]+"\],\n)+)\}/u,
     );
@@ -384,7 +410,7 @@ describe("production VM bootstrap", () => {
       (projection?.groups?.fields ?? "").matchAll(/^    "([^"]+)":/gmu),
       (match) => match[1],
     );
-    expect(fields).toEqual(["box_id", "access_token", "refresh_token"]);
+    expect(fields).toEqual(fixture.expect.canonicalKeys);
     expect(userData).toContain(
       'with open(credential_path, "w", encoding="utf-8") as credential_file:',
     );
@@ -640,6 +666,12 @@ write_files:
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const init = fetchMock.mock.calls[0]?.[1];
+    const headers = init?.headers ?? {};
+    expect(Object.keys(headers)).toEqual(["Authorization", "Content-Type"]);
+    expect("Content-Type" in headers).toBe(true);
+    expect(JSON.stringify(headers)).toBe(
+      '{"Authorization":"Bearer test-token","Content-Type":"application/json"}',
+    );
     expect(JSON.parse(String(init?.body))).toMatchObject({
       labels: {
         "blitz-workspace": "workspace-id",

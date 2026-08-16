@@ -5,6 +5,7 @@ import {
   HttpError,
   isRecord,
   isSshPublicKey,
+  isString,
   positiveInteger,
   readJson,
   requiredString,
@@ -49,7 +50,7 @@ interface PrincipalRow {
 function parseHarnesses(value: string): string[] {
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
+    return Array.isArray(parsed) && parsed.every((item) => isString(item))
       ? parsed
       : [];
   } catch {

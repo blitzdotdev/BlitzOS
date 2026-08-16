@@ -1,9 +1,36 @@
 import { query, type CanUseTool, type Options, type PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import { hasObjectType, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
 type TokenOptions = Options & {
   getOAuthToken?: (options: { signal: AbortSignal }) => Promise<string>;
 };
+
+interface ClaudeOptionalOptions {
+  resume?: string;
+  getOAuthToken?: TokenOptions["getOAuthToken"];
+}
+
+export function claudeOptionalOptions(
+  input: Pick<TurnInput, "resumeId" | "token">,
+): ClaudeOptionalOptions {
+  const options: ClaudeOptionalOptions = {};
+  if (input.resumeId) options.resume = input.resumeId;
+  if (input.token) {
+    // SAFETY: This branch is evaluated only when the nullable string token is truthy.
+    options.getOAuthToken = async () => input.token as string;
+  }
+  return options;
+}
+
+export function claudeTurnOutput(
+  stopReason: TurnOutput["stopReason"],
+  resumeId: string | undefined,
+): TurnOutput {
+  const output: TurnOutput = { stopReason };
+  if (resumeId) output.resumeId = resumeId;
+  return output;
+}
 
 export class ClaudeAdapter implements AgentAdapter {
   public async runTurn(input: TurnInput): Promise<TurnOutput> {
@@ -37,28 +64,27 @@ export class ClaudeAdapter implements AgentAdapter {
       includePartialMessages: true,
       pathToClaudeCodeExecutable: "/usr/local/bin/claude",
       permissionMode: "default",
-      ...(input.resumeId ? { resume: input.resumeId } : {}),
-      ...(input.token ? { getOAuthToken: async () => input.token as string } : {}),
     };
+    Object.assign(options, claudeOptionalOptions(input));
     let resumeId = input.resumeId ?? undefined;
     let stopReason: TurnOutput["stopReason"] = "refusal";
     for await (const message of query({ prompt: promptText(input.prompt), options })) {
       const record = asRecord(message);
-      if (typeof record.session_id === "string") resumeId = record.session_id;
+      if (isString(record.session_id)) resumeId = record.session_id;
       if (record.type === "stream_event") {
         const event = asRecord(record.event);
         const delta = asRecord(event.delta);
-        if (event.type === "content_block_delta" && delta.type === "text_delta" && typeof delta.text === "string") {
+        if (event.type === "content_block_delta" && delta.type === "text_delta" && isString(delta.text)) {
           await input.emit({
             sessionUpdate: "agent_message_chunk",
-            messageId: typeof record.uuid === "string" ? record.uuid : input.turnId,
+            messageId: isString(record.uuid) ? record.uuid : input.turnId,
             content: { type: "text", text: delta.text },
           });
         }
       }
       if (record.type === "result") stopReason = record.subtype === "success" ? "end_turn" : "refusal";
     }
-    return { stopReason, ...(resumeId ? { resumeId } : {}) };
+    return claudeTurnOutput(stopReason, resumeId);
   }
 }
 
@@ -80,5 +106,6 @@ function toolKind(name: string): "read" | "edit" | "delete" | "execute" | "other
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  // SAFETY: The preceding checks establish only a non-null, non-array object record; individual SDK fields remain unvalidated.
+  return value && hasObjectType(value) && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }

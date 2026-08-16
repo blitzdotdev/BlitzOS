@@ -57,19 +57,27 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+export function isString<Value>(value: Value): value is Value & string {
+  return typeof value === "string";
+}
+
+export function isNumber<Value>(value: Value): value is Value & number {
+  return typeof value === "number";
+}
+
 export function requiredString(
   value: unknown,
   field: string,
   maxLength = 16_384,
 ): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+  if (!isString(value) || value.length === 0 || value.length > maxLength) {
     throw new HttpError(400, `${field} must be a non-empty string`);
   }
   return value;
 }
 
 export function positiveInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+  if (!isNumber(value) || !Number.isSafeInteger(value) || value <= 0) {
     throw new HttpError(400, `${field} must be a positive integer`);
   }
   return value;

@@ -445,6 +445,7 @@ describe("credential control plane", () => {
       placements: [
         { kind: "env", name: "HCLOUD_TOKEN" },
         { kind: "file", path: "/run/credentials/hcloud", mode: 0o600 },
+        { kind: "file", path: "/run/credentials/default" },
         { kind: "unset-env", name: "OLD_HCLOUD_TOKEN" },
       ],
     });
@@ -468,8 +469,21 @@ describe("credential control plane", () => {
         mode: 0o600,
         value: ROOT,
       },
+      { kind: "file", path: "/run/credentials/default", value: ROOT },
       { kind: "unset-env", name: "OLD_HCLOUD_TOKEN" },
     ]);
+    const explicitMode = result.placements[1];
+    expect(Object.keys(explicitMode ?? {})).toEqual(["kind", "path", "value", "mode"]);
+    expect(explicitMode && "mode" in explicitMode).toBe(true);
+    expect(JSON.stringify(explicitMode)).toBe(
+      `{"kind":"file","path":"/run/credentials/hcloud","value":"${ROOT}","mode":384}`,
+    );
+    const omittedMode = result.placements[2];
+    expect(Object.keys(omittedMode ?? {})).toEqual(["kind", "path", "value"]);
+    expect(omittedMode && "mode" in omittedMode).toBe(false);
+    expect(JSON.stringify(omittedMode)).toBe(
+      `{"kind":"file","path":"/run/credentials/default","value":"${ROOT}"}`,
+    );
     const stored = await env.DB
       .prepare("SELECT config, root_ciphertext FROM integrations WHERE name = ?1")
       .bind("hetzner-prod")

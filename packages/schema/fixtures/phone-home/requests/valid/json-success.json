@@ -1,0 +1,14 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "pub_key_ecdsa": "ecdsa-sha2-nistp256 AAAAecdsa",
+    "pub_key_ed25519": "ssh-ed25519 AAAAed25519",
+    "pub_key_rsa": "ssh-rsa AAAArsa"
+  },
+  "expect": {
+    "valid": true,
+    "kind": "success",
+    "hostPublicKey": "ssh-ed25519 AAAAed25519",
+    "canonicalKeys": ["pub_key_ecdsa", "pub_key_ed25519", "pub_key_rsa"]
+  }
+}

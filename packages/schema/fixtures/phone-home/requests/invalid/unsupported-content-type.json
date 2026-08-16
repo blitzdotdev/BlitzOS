@@ -1,0 +1,8 @@
+{
+  "contentType": "text/plain",
+  "body": "pub_key_ed25519=ssh-ed25519+AAAAed25519",
+  "expect": {
+    "valid": false,
+    "reason": "unsupported content type"
+  }
+}

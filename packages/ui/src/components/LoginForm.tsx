@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isString } from "../type-guards";
 
 export function LoginForm({
   onLogin,
@@ -13,7 +14,7 @@ export function LoginForm({
     if (submitting) return;
     const form = event.currentTarget;
     const operatorKey = new FormData(form).get("operatorKey");
-    if (typeof operatorKey !== "string" || operatorKey.length === 0) return;
+    if (!isString(operatorKey) || operatorKey.length === 0) return;
     form.reset();
     setSubmitting(true);
     setError(null);

@@ -12,13 +12,13 @@ export const RETRY_ACTIONS = ["poll", "destroy", "create"] as const;
 
 export type RetryAction = (typeof RETRY_ACTIONS)[number] | null;
 
-export const PHASE_TRANSITIONS: Record<Phase, readonly Phase[]> = {
+export const PHASE_TRANSITIONS = {
   creating: ["ready", "error"],
   ready: ["destroying"],
   error: ["destroying"],
   destroying: ["destroyed"],
   destroyed: [],
-};
+} satisfies Record<Phase, readonly Phase[]>;
 
 export interface WorkspaceView {
   id: string;

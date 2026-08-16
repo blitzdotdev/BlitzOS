@@ -1,0 +1,14 @@
+{
+  "parts": [
+    {
+      "name": "image.part1",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "name": "image_part-2",
+      "sha256": "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+    }
+  ],
+  "totalSha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "imageTag": "ghcr.io/blitzdotdev/blitz-box:v1"
+}

@@ -7,12 +7,12 @@ import type { TerminalAgent } from './protocol';
 export type CockpitSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview';
 export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
 
-export const SPAWN_SESSION_LABELS: Record<SpawnSessionType, string> = {
+export const SPAWN_SESSION_LABELS = {
   chat: 'Chat',
   claude: 'Claude',
   codex: 'Codex',
   terminal: 'Terminal',
-};
+} satisfies Record<SpawnSessionType, string>;
 
 const SPAWN_SESSION_TYPES: SpawnSessionType[] = [
   'chat',
@@ -104,6 +104,7 @@ export function CockpitHeader({
   useEffect(() => {
     if (!menuOpen) return;
     const closeOnPointerDown = (event: PointerEvent) => {
+      // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
       if (!newTabControl.current?.contains(event.target as Node)) {
         setMenuOpen(false);
         onMenuOpenChange(false);

@@ -1,0 +1,8 @@
+{
+  "contentType": "application/json",
+  "body": "{",
+  "expect": {
+    "valid": false,
+    "reason": "invalid JSON"
+  }
+}

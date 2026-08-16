@@ -10,6 +10,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
+// TODO: wtf is this? why is this script inline.
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");

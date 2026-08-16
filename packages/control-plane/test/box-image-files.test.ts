@@ -3,9 +3,24 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { WORKER_SOURCE, createBoxImageAssetSet, managedFileId } from "../scripts/build-blitzdev.mjs";
+import {
+  WORKER_SOURCE,
+  createBoxImageAssetSet,
+  managedFileId,
+  validateBoxImageManifest,
+} from "../scripts/build-blitzdev.mjs";
 
 const temporaryDirectories: string[] = [];
+const manifestFixtureSources = import.meta.glob<string>(
+  "../../schema/fixtures/box-image-manifest/{valid,invalid}/*.json",
+  { eager: true, import: "default", query: "?raw" },
+);
+
+function manifestFixtureEntries(kind: "valid" | "invalid"): Array<[string, string]> {
+  return Object.entries(manifestFixtureSources)
+    .filter(([fixturePath]) => fixturePath.includes(`/${kind}/`))
+    .sort(([left], [right]) => left.localeCompare(right));
+}
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -16,6 +31,25 @@ function digest(value: string): string {
 }
 
 describe("managed box-image file attempt", () => {
+  it("matches every shared box-image manifest fixture", async () => {
+    const validEntries = manifestFixtureEntries("valid");
+    const invalidEntries = manifestFixtureEntries("invalid");
+    for (const [fixturePath, source] of validEntries) {
+      const value = JSON.parse(source);
+      const manifest = validateBoxImageManifest(value);
+      expect(manifest.parts, fixturePath).not.toHaveLength(0);
+      expect(manifest.totalSha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(manifest.parts.every(({ sha256 }: { sha256: string }) =>
+        /^[a-f0-9]{64}$/u.test(sha256))).toBe(true);
+    }
+    for (const [fixturePath, source] of invalidEntries) {
+      expect(() => validateBoxImageManifest(JSON.parse(source)), fixturePath).toThrow();
+    }
+    console.info(
+      `box-image manifest producer conformance: ${validEntries.length} valid + ${invalidEntries.length} invalid fixtures`,
+    );
+  });
+
   it("preserves manifest/part logical keys, verifies hashes, and activates the manifest last", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "blitz-box-files-"));
     temporaryDirectories.push(directory);

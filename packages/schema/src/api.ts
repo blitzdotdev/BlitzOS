@@ -1,9 +1,16 @@
 import type { MachineType } from "./machine.js";
+import type { CredentialManifest } from "./credential.js";
 import type { Volume } from "./volume.js";
 import type { RetryAction, WorkspaceView } from "./workspace.js";
 
+export interface MachineTypeProviderFailure {
+  providerId: string;
+  error: string;
+}
+
 export interface ListMachineTypesResponse {
   machineTypes: MachineType[];
+  failures: MachineTypeProviderFailure[];
 }
 
 export interface CreateWorkspaceRequest {
@@ -12,9 +19,7 @@ export interface CreateWorkspaceRequest {
   volumeId?: string;
   /** User-data is readable inside the VM; never put secrets here. */
   userData?: string;
-  manifest?: {
-    integrations: Record<string, Record<string, unknown>>;
-  };
+  manifest?: CredentialManifest;
 }
 
 export interface CreateWorkspaceResponse {

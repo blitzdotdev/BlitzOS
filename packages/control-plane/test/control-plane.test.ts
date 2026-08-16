@@ -17,6 +17,7 @@ import {
   maybeScheduleLazySweep,
   runInvariantSweep,
   runOrphanSweep,
+  VmProviderRegistry,
 } from "../core/index.js";
 import { buildUserData } from "../core/cloud-init.js";
 import { hashSecret } from "../core/crypto.js";
@@ -172,9 +173,64 @@ describe("control plane security and lifecycle", () => {
       headers: { Cookie: cookie },
     });
     expect(response.status).toBe(200);
-    expect(await response.json<ListMachineTypesResponse>()).toEqual({
-      machineTypes: await providers.listMachineTypes(),
+    expect(await response.json<ListMachineTypesResponse>()).toEqual(
+      await new VmProviderRegistry([providers]).listMachineTypes(),
+    );
+  });
+
+  it("rejects an unknown machine type before inserting a workspace", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "unknown-machine" }),
     });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "unknown machine type: unknown-machine",
+      retryAction: null,
+    });
+    expect(providers.createCalls).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS count FROM workspaces").first<number>("count"),
+    ).toBe(0);
+  });
+
+  it("returns a clear error instead of falling back for an unowned workspace VM ID", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    await env.DB
+      .prepare("UPDATE workspaces SET phase = 'ready', vm_id = 'unowned' WHERE id = ?1")
+      .bind(workspace.id)
+      .run();
+
+    const surface = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/surface/7445/ports`,
+      { headers: { Cookie: cookie } },
+    );
+    const destroy = await appRequest(app, `/workspaces/${workspace.id}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+
+    for (const response of [surface, destroy]) {
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: "no VM provider owns VM ID unowned",
+        retryAction: null,
+      });
+    }
+    expect(providers.destroyCalls).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT phase FROM workspaces WHERE id = ?1")
+        .bind(workspace.id)
+        .first<string>("phase"),
+    ).toBe("ready");
   });
 
   it("creates workspaces without an SSH key and normalizes blank keys to absence", async () => {
@@ -242,7 +298,7 @@ describe("control plane security and lifecycle", () => {
   });
 
   it("filters deprecated Hetzner machine types and locations from the API response", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         server_types: [
           {
@@ -300,6 +356,31 @@ describe("control plane security and lifecycle", () => {
     expect(response.status).toBe(200);
     const body = await response.json<ListMachineTypesResponse>();
     expect(body.machineTypes.map(({ id }) => id)).toEqual(["cpx22@nbg1", "cx23@fsn1"]);
+    const listHeaders = fetchMock.mock.calls[0]?.[1]?.headers ?? {};
+    expect(Object.keys(listHeaders)).toEqual(["Authorization"]);
+    expect("Content-Type" in listHeaders).toBe(false);
+    expect(JSON.stringify(listHeaders)).toBe('{"Authorization":"Bearer test-token"}');
+  });
+
+  it("caps Hetzner JSON responses before parsing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{}", { headers: { "Content-Length": "65537" } }),
+    );
+    const provider = new HetznerProvider("test-token");
+
+    await expect(provider.listMachineTypes()).rejects.toThrow("Hetzner response is too large");
+  });
+
+  it("recognizes only Hetzner's letter-then-digit server type and decimal VM ID grammars", () => {
+    const provider = new HetznerProvider("test-token");
+
+    expect(provider.ownsMachineType("cx22@fsn1")).toBe(true);
+    expect(provider.ownsMachineType("cpx31@nbg1")).toBe(true);
+    expect(provider.ownsMachineType("cax11")).toBe(true);
+    expect(provider.ownsMachineType("cx-22@fsn1")).toBe(false);
+    expect(provider.ownsMachineType("mv-2c2g@lab")).toBe(false);
+    expect(provider.ownsVmId("12345678")).toBe(true);
+    expect(provider.ownsVmId("microvm:v1:lab:vm-1")).toBe(false);
   });
 
   it("excludes Hetzner machine types with no currently available placement", async () => {
@@ -1169,5 +1250,29 @@ describe("control plane security and lifecycle", () => {
     expect(errorLog).toHaveBeenCalledWith(
       expect.stringContaining("lazy control-plane sweep failed"),
     );
+  });
+
+  it("logs and skips an orphan row whose VM ID has no owning provider", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    await env.DB
+      .prepare("UPDATE workspaces SET phase = 'destroying', vm_id = 'unowned' WHERE id = ?1")
+      .bind(workspace.id)
+      .run();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(await runOrphanSweep(testRuntime(providers))).toBe(0);
+    expect(providers.destroyCalls).toBe(0);
+    expect(errorLog).toHaveBeenCalledWith(JSON.stringify({
+      message: "orphan sweep skipped VM with no owning provider",
+      workspaceId: workspace.id,
+      vmId: "unowned",
+    }));
+    expect(
+      await env.DB.prepare("SELECT phase FROM workspaces WHERE id = ?1")
+        .bind(workspace.id)
+        .first<string>("phase"),
+    ).toBe("destroying");
   });
 });

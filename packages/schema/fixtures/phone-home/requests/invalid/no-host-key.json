@@ -1,0 +1,12 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "pub_key_ecdsa": "",
+    "pub_key_ed25519": "",
+    "pub_key_rsa": ""
+  },
+  "expect": {
+    "valid": false,
+    "reason": "an SSH host public key is required"
+  }
+}

@@ -1,10 +1,28 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { hasObjectType, isNumber, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
 type JsonObject = Record<string, unknown>;
 type Pending = { resolve(value: unknown): void; reject(error: Error): void };
+export type ThreadRequestParams = {
+  threadId?: string;
+  cwd?: string;
+  approvalPolicy?: "on-request";
+  sandbox?: "workspace-write";
+};
+
+export function codexThreadRequestParams(
+  input: Pick<TurnInput, "resumeId" | "cwd">,
+): ThreadRequestParams {
+  const params: ThreadRequestParams = {};
+  if (input.resumeId) params.threadId = input.resumeId;
+  params.cwd = input.cwd;
+  params.approvalPolicy = "on-request";
+  params.sandbox = "workspace-write";
+  return params;
+}
 
 class AppServer {
   private readonly child: ChildProcessWithoutNullStreams;
@@ -47,14 +65,15 @@ class AppServer {
   private receive(line: string): void {
     let message: JsonObject;
     try {
+      // SAFETY: JSON parsing establishes valid JSON only. TODO(deslop-tier-c): validate that each subprocess line is a JSON-RPC object before property access.
       message = JSON.parse(line) as JsonObject;
     } catch {
       this.close();
       return;
     }
-    if (typeof message.method === "string") {
+    if (isString(message.method)) {
       const params = asRecord(message.params);
-      if (typeof message.id === "number") {
+      if (isNumber(message.id)) {
         void this.serverRequest(message.method, params).then(
           (result) => this.write({ jsonrpc: "2.0", id: message.id, result }),
           () => this.write({ jsonrpc: "2.0", id: message.id, error: { code: -32603, message: "Request failed" } }),
@@ -64,7 +83,7 @@ class AppServer {
       }
       return;
     }
-    if (typeof message.id !== "number") return;
+    if (!isNumber(message.id)) return;
     const pending = this.pending.get(message.id);
     if (!pending) return;
     this.pending.delete(message.id);
@@ -86,10 +105,10 @@ export class CodexAdapter implements AgentAdapter {
     let token = input.token;
     const server = new AppServer(
       async (method, params) => {
-        if (method === "item/agentMessage/delta" && typeof params.delta === "string") {
+        if (method === "item/agentMessage/delta" && isString(params.delta)) {
           await input.emit({
             sessionUpdate: "agent_message_chunk",
-            messageId: typeof params.itemId === "string" ? params.itemId : input.turnId,
+            messageId: isString(params.itemId) ? params.itemId : input.turnId,
             content: { type: "text", text: params.delta },
           });
         } else if (method === "turn/plan/updated") {
@@ -99,7 +118,7 @@ export class CodexAdapter implements AgentAdapter {
             entries: plan.map((value) => {
               const item = asRecord(value);
               return {
-                content: typeof item.step === "string" ? item.step : "",
+                content: isString(item.step) ? item.step : "",
                 priority: "medium" as const,
                 status: item.status === "inProgress" ? "in_progress" : item.status === "completed" ? "completed" : "pending",
               };
@@ -126,15 +145,15 @@ export class CodexAdapter implements AgentAdapter {
         if (method !== "item/commandExecution/requestApproval" && method !== "item/fileChange/requestApproval") {
           throw new Error("unsupported codex request");
         }
-        const itemId = typeof params.itemId === "string" ? params.itemId : crypto.randomUUID();
+        const itemId = isString(params.itemId) ? params.itemId : crypto.randomUUID();
         const answer = await input.requestPermission({
           sessionId: input.sessionId,
           toolCall: {
             toolCallId: itemId,
             title:
-              typeof params.command === "string"
+              isString(params.command)
                 ? params.command
-                : typeof params.reason === "string"
+                : isString(params.reason)
                   ? params.reason
                   : "Apply file changes",
             kind: method.includes("commandExecution") ? "execute" : "edit",
@@ -158,16 +177,12 @@ export class CodexAdapter implements AgentAdapter {
       });
       server.notification("initialized");
       if (token) await server.request("account/login/start", { type: "chatgptAuthTokens", ...codexAuth(token) });
+      const threadParams = codexThreadRequestParams(input);
       const threadResult = asRecord(
-        await server.request(input.resumeId ? "thread/resume" : "thread/start", {
-          ...(input.resumeId ? { threadId: input.resumeId } : {}),
-          cwd: input.cwd,
-          approvalPolicy: "on-request",
-          sandbox: "workspace-write",
-        }),
+        await server.request(input.resumeId ? "thread/resume" : "thread/start", threadParams),
       );
       const thread = asRecord(threadResult.thread);
-      const threadId = typeof thread.id === "string" ? thread.id : input.resumeId;
+      const threadId = isString(thread.id) ? thread.id : input.resumeId;
       if (!threadId) throw new Error("codex returned no thread ID");
       token = input.token;
       const turnResult = asRecord(
@@ -177,7 +192,7 @@ export class CodexAdapter implements AgentAdapter {
         }),
       );
       const turn = asRecord(turnResult.turn);
-      const turnId = typeof turn.id === "string" ? turn.id : undefined;
+      const turnId = isString(turn.id) ? turn.id : undefined;
       const interrupt = (): void => {
         if (turnId) void server.request("turn/interrupt", { threadId, turnId });
       };
@@ -192,7 +207,7 @@ export class CodexAdapter implements AgentAdapter {
 }
 
 function toolUpdate(item: JsonObject, status: "pending" | "completed"): SessionUpdate | undefined {
-  if (typeof item.id !== "string" || typeof item.type !== "string") return undefined;
+  if (!isString(item.id) || !isString(item.type)) return undefined;
   if (status === "completed") {
     if (!["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall"].includes(item.type)) return undefined;
     return { sessionUpdate: "tool_call_update" as const, toolCallId: item.id, status };
@@ -203,18 +218,24 @@ function toolUpdate(item: JsonObject, status: "pending" | "completed"): SessionU
   return {
     sessionUpdate: "tool_call" as const,
     toolCallId: item.id,
-    title: typeof item.command === "string" ? item.command : item.type,
+    title: isString(item.command) ? item.command : item.type,
     kind,
     status,
     rawInput: item,
   };
 }
 
-function codexAuth(accessToken: string): { accessToken: string; chatgptAccountId: string; chatgptPlanType: null } {
+interface CodexAuth {
+  accessToken: string;
+  chatgptAccountId: string;
+  chatgptPlanType: null;
+}
+
+function codexAuth(accessToken: string): CodexAuth {
   const claims = asRecord(JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString("utf8")));
   const account =
     claims["https://api.openai.com/auth.chatgpt_account_id"] ?? claims.chatgpt_account_id ?? claims.account_id;
-  if (typeof account !== "string" || !account) throw new Error("codex token has no account ID");
+  if (!isString(account) || !account) throw new Error("codex token has no account ID");
   return { accessToken, chatgptAccountId: account, chatgptPlanType: null };
 }
 
@@ -225,5 +246,6 @@ function promptText(blocks: TurnInput["prompt"]): string {
 }
 
 function asRecord(value: unknown): JsonObject {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonObject) : {};
+  // SAFETY: The preceding checks establish only a non-null, non-array object record; JSON-RPC fields remain unvalidated.
+  return value && hasObjectType(value) && !Array.isArray(value) ? (value as JsonObject) : {};
 }

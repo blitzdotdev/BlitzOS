@@ -1,3 +1,5 @@
+import { parseMicrovmHosts } from "../core/providers/microvm-hosts.js";
+
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
 export const DB_BINDING = "DB";
 export const REQUIRED_SECRETS = Object.freeze([
@@ -8,87 +10,6 @@ export const REQUIRED_SECRETS = Object.freeze([
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function exactFields(value, expected, description) {
-  const actual = Object.keys(value).sort();
-  const wanted = [...expected].sort();
-  if (actual.length !== wanted.length || actual.some((field, index) => field !== wanted[index])) {
-    throw new Error(`invalid ${description} fields`);
-  }
-}
-
-function normalizedMicrovmHostUrl(raw) {
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("MICROVM_HOSTS url must be an absolute HTTP(S) URL");
-  }
-  if (
-    (url.protocol !== "http:" && url.protocol !== "https:") ||
-    url.hostname.length === 0 ||
-    url.username !== "" ||
-    url.password !== "" ||
-    url.search !== "" ||
-    url.hash !== ""
-  ) {
-    throw new Error(
-      "MICROVM_HOSTS url must be an absolute HTTP(S) URL without credentials, query, or fragment",
-    );
-  }
-  return url.href.replace(/\/+$/u, "");
-}
-
-function parseMicrovmHosts(rawHosts) {
-  if (rawHosts === undefined || rawHosts === "") return [];
-  if (typeof rawHosts !== "string") throw new Error("MICROVM_HOSTS must be a JSON array");
-  let hosts;
-  try {
-    hosts = JSON.parse(rawHosts);
-  } catch {
-    throw new Error("MICROVM_HOSTS must be valid JSON");
-  }
-  if (!Array.isArray(hosts)) throw new Error("MICROVM_HOSTS must be a JSON array");
-
-  const names = new Set();
-  const urls = new Set();
-  return hosts.map((host, index) => {
-    if (!isRecord(host)) throw new Error(`MICROVM_HOSTS[${index}] must be an object`);
-    const dynamic = host.dynamic === true;
-    exactFields(
-      host,
-      dynamic ? ["name", "tokenVar", "dynamic"] : ["name", "url", "tokenVar"],
-      `MICROVM_HOSTS[${index}]`,
-    );
-    if (
-      typeof host.name !== "string" ||
-      !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(host.name)
-    ) {
-      throw new Error(`MICROVM_HOSTS[${index}].name is invalid`);
-    }
-    if (names.has(host.name)) {
-      throw new Error(`MICROVM_HOSTS contains duplicate name ${host.name}`);
-    }
-    names.add(host.name);
-    if (
-      typeof host.tokenVar !== "string" ||
-      !/^[A-Z][A-Z0-9_]{0,127}$/u.test(host.tokenVar)
-    ) {
-      throw new Error(`MICROVM_HOSTS[${index}].tokenVar is invalid`);
-    }
-    if (host.tokenVar === "MICROVM_HOSTS") {
-      throw new Error(`MICROVM_HOSTS[${index}].tokenVar must name a secret binding`);
-    }
-    if (dynamic) return { name: host.name, tokenVar: host.tokenVar, dynamic: true };
-    if (typeof host.url !== "string") {
-      throw new Error(`MICROVM_HOSTS[${index}].url must be a string`);
-    }
-    const url = normalizedMicrovmHostUrl(host.url);
-    if (urls.has(url)) throw new Error(`MICROVM_HOSTS contains duplicate url ${url}`);
-    urls.add(url);
-    return { name: host.name, url, tokenVar: host.tokenVar };
-  });
 }
 
 export function parseD1Binding(rawConfig, binding) {

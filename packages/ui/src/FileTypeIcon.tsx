@@ -1,5 +1,6 @@
 import { getIconForFilePath, type MaterialIcon } from 'vscode-material-icons';
 
+// SAFETY: Vite's eager `?url` glob imports resolve each matched SVG default export to a URL string.
 const iconAssets = import.meta.glob([
   '../../../node_modules/vscode-material-icons/generated/icons/*.svg',
   '!../../../node_modules/vscode-material-icons/generated/icons/file.svg',

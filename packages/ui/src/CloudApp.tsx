@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -11,7 +10,6 @@ import { createClient, type WebDAVClient } from 'webdav';
 import {
   ApiAdapter,
   ApiError,
-  type V2WorkspaceRecord,
 } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView } from '@blitzos/schema';
@@ -28,6 +26,7 @@ import {
   type CreateWorkspaceDialogInput,
 } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
+import { caughtErrorMessage } from './error-message';
 import {
   CockpitLoadingPane,
   CockpitLoadingShell,
@@ -45,23 +44,15 @@ import {
   type SettingsSection,
 } from './sessions-page-state';
 import {
-  createStorageNamespace,
-  defaultWorkspaceTabs,
   defaultWorkspaceFiles,
-  loadWorkspaceTabs,
-  loadWorkspaceFiles,
-  loadUiPreferences,
   removeDismissedChatAuthProviders,
   removeWorkspaceFiles,
   removeWorkspaceTabs,
-  saveWorkspaceTabs,
-  saveWorkspaceFiles,
   saveUiPreferences,
+  storedWorkspacePreference,
   type StorageNamespace,
-  type WorkspaceFiles,
   type WorkspaceDrawerSegment,
   type WorkspaceTab,
-  type WorkspaceTabs,
 } from './storage';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
@@ -88,9 +79,18 @@ import {
 } from './preview';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
-import type { BoxEndpoints, EndpointResolver } from './resolver';
+import type { EndpointResolver } from './resolver';
 import { isMicrovmWorkspace } from './resolver';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
+import {
+  rememberWorkspaceEndpoints,
+  type WorkspaceEndpoints,
+} from './workspace-endpoints';
+import { useWorkspacePersistence } from './use-workspace-persistence';
+import {
+  useWorkspaceBootstrap,
+  useWorkspacePolling,
+} from './use-workspace-lifecycle';
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
@@ -121,47 +121,7 @@ function TerminalIcon() {
   );
 }
 
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return error instanceof Error ? error.message : 'The control plane request failed.';
-}
-
-type WorkspaceEndpoints = BoxEndpoints & {
-  label: string;
-  wire: V2WorkspaceRecord['wire'];
-};
-
-export function terminalWebSocketUrl(value: string): string {
-  const target = new URL(value, window.location.href);
-  target.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
-  target.pathname = `${target.pathname.replace(/\/+$/u, '')}/ws`;
-  target.search = '';
-  target.hash = '';
-  return target.toString();
-}
-
-function rememberWorkspaceEndpoints(
-  entries: Map<string, WorkspaceEndpoints>,
-  records: V2WorkspaceRecord[],
-  resolver: EndpointResolver,
-  authoritative = false,
-): void {
-  if (authoritative) {
-    const ids = new Set(records.map(({ id }) => id));
-    for (const id of entries.keys()) {
-      if (!ids.has(id)) entries.delete(id);
-    }
-  }
-  for (const record of records) {
-    const endpoints = resolver.resolve(record.wire);
-    entries.set(record.id, {
-      ...endpoints,
-      terminalUrl: terminalWebSocketUrl(endpoints.terminalUrl),
-      label: record.ingressLabel,
-      wire: record.wire,
-    });
-  }
-}
+export { terminalWebSocketUrl } from './workspace-endpoints';
 
 type CockpitConfirmation = {
   workspaceId: string;
@@ -171,12 +131,6 @@ type CockpitConfirmation = {
 type FileCloseConfirmation = {
   id: string;
   label: string;
-};
-
-type LocalWorkspaceTabs = {
-  workspaceId: string;
-  value: WorkspaceTabs;
-  loaded: boolean;
 };
 
 function PasteCodeModal({
@@ -261,15 +215,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
-  const [workspaceTabs, setWorkspaceTabs] = useState<LocalWorkspaceTabs>(() => ({
-    workspaceId: '',
-    value: defaultWorkspaceTabs(),
-    loaded: false,
-  }));
-  const [workspaceFiles, setWorkspaceFiles] = useState<{
-    workspaceId: string;
-    value: WorkspaceFiles;
-  }>(() => ({ workspaceId: '', value: defaultWorkspaceFiles() }));
+  const {
+    workspaceTabs,
+    setWorkspaceTabs,
+    workspaceFiles,
+    setWorkspaceFiles,
+  } = useWorkspacePersistence(storageNamespace, activeWorkspaceId);
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
   const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
@@ -443,7 +394,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         }
       } catch (caught) {
         if (!disposed && request === current && !current.signal.aborted) {
-          setPendingRequestsError(errorMessage(caught));
+          setPendingRequestsError(caughtErrorMessage(caught, 'The control plane request failed.'));
         }
       } finally {
         if (request === current) request = null;
@@ -495,35 +446,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       setDropBusy(false);
     }
   }, [filesClient]);
-  useEffect(() => {
-    if (signedOut) return;
-    let mounted = true;
-    setLoaded(false);
-    setError(null);
-    void api.getMe()
-      .then(async (me) => {
-        const namespace = createStorageNamespace(me.org.id, me.membership.id);
-        const preferences = loadUiPreferences(namespace);
-        const records = await api.listWorkspaces();
-        if (!mounted) return;
-        rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
-        const routeWorkspaceId = parseAppRoute(window.location.pathname).workspaceId;
-        const requestedWorkspaceId = routeWorkspaceId ?? preferences.activeWorkspaceId;
-        activeWorkspaceIdRef.current = requestedWorkspaceId;
-        setActiveWorkspaceId(requestedWorkspaceId);
-        setStorageNamespace(namespace);
-        dispatch({ type: 'workspaces_loaded', records, viewer: me, preferences });
-        setLoaded(true);
-      })
-      .catch((loadError: unknown) => {
-        if (!mounted || (loadError instanceof ApiError && loadError.status === 401)) return;
-        setLoaded(true);
-        setError(errorMessage(loadError));
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [api, bootstrapVersion, resolver, signedOut]);
+  useWorkspaceBootstrap({
+    api,
+    bootstrapVersion,
+    signedOut,
+    resolver,
+    workspaceEndpoints,
+    activeWorkspaceIdRef,
+    setActiveWorkspaceId,
+    setStorageNamespace,
+    dispatch,
+    setLoaded,
+    setError,
+  });
 
   useEffect(() => {
     if (!store.viewer) return;
@@ -626,19 +561,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  useEffect(() => {
-    if (!loaded) return;
-    const refresh = () => {
-      void refreshWorkspaceRecords();
-    };
-    const interval = window.setInterval(refresh, 15_000);
-    window.addEventListener('focus', refresh);
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', refresh);
-    };
-  }, [loaded, refreshWorkspaceRecords, signedOut]);
-
   const transitioningWorkspaceCount = store.workspaces.filter(
     ({ lifecycleStatus }) => (
       lifecycleStatus === 'creating'
@@ -648,21 +570,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ),
   ).length;
 
-  useEffect(() => {
-    if (!loaded || signedOut || transitioningWorkspaceCount === 0) return;
-    let mounted = true;
-    const refresh = async () => {
-      if (mounted) await refreshWorkspaceRecords();
-    };
-    void refresh();
-    const interval = window.setInterval(() => { void refresh(); }, 5_000);
-    window.addEventListener('focus', refresh);
-    return () => {
-      mounted = false;
-      window.clearInterval(interval);
-      window.removeEventListener('focus', refresh);
-    };
-  }, [loaded, refreshWorkspaceRecords, signedOut, transitioningWorkspaceCount]);
+  useWorkspacePolling({
+    loaded,
+    signedOut,
+    transitioningWorkspaceCount,
+    refreshWorkspaceRecords,
+  });
 
   useEffect(() => {
     if (!loaded || !storageNamespace) return;
@@ -673,10 +586,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       order: store.workspaces.map(({ id }) => id),
       workspaces: Object.fromEntries(store.workspaces
         .filter(({ canControl }) => canControl)
-        .map((workspace) => [workspace.id, {
-        ...(workspace.title === workspace.serverName ? {} : { title: workspace.title }),
-        agentDefault: workspace.agentDefault,
-      }])),
+        .map((workspace) => [
+          workspace.id,
+          storedWorkspacePreference(workspace.title, workspace.serverName, workspace.agentDefault),
+        ])),
     });
   }, [activeWorkspaceId, loaded, storageNamespace, store.workspaces]);
 
@@ -737,13 +650,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         }
         workspaceEndpoints.current.delete(workspaceId);
       })
-      .catch((deleteError: unknown) => {
+      .catch((cause: unknown) => {
         dispatch({
           type: 'workspace_delete_rolled_back',
           workspace,
           index: workspaceIndex,
         });
-        setError(`Could not delete “${workspace.title}”: ${errorMessage(deleteError)}`);
+        setError(`Could not delete “${workspace.title}”: ${caughtErrorMessage(cause, 'The control plane request failed.')}`);
       });
   }, [api, navigateToWorkspacePage, storageNamespace]);
 
@@ -772,7 +685,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }
       setShowCreateWorkspace(false);
     } catch (createFailure) {
-      setCreateWorkspaceError(errorMessage(createFailure));
+      setCreateWorkspaceError(caughtErrorMessage(createFailure, 'The control plane request failed.'));
     } finally {
       setCreateWorkspaceBusy(false);
     }
@@ -860,48 +773,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }));
   };
 
-  useLayoutEffect(() => {
-    if (!storageNamespace || !activeWorkspaceId) {
-      setWorkspaceTabs({
-        workspaceId: activeWorkspaceId,
-        value: defaultWorkspaceTabs(),
-        loaded: false,
-      });
-      return;
-    }
-    setWorkspaceTabs({
-      workspaceId: activeWorkspaceId,
-      value: loadWorkspaceTabs(storageNamespace, activeWorkspaceId),
-      loaded: true,
-    });
-  }, [activeWorkspaceId, storageNamespace]);
-  useEffect(() => {
-    if (
-      !storageNamespace
-      || !activeWorkspaceId
-      || workspaceTabs.workspaceId !== activeWorkspaceId
-      || !workspaceTabs.loaded
-    ) return;
-    saveWorkspaceTabs(storageNamespace, activeWorkspaceId, workspaceTabs.value);
-  }, [activeWorkspaceId, storageNamespace, workspaceTabs]);
-  useEffect(() => {
-    if (!storageNamespace || !activeWorkspaceId) {
-      setWorkspaceFiles({ workspaceId: '', value: defaultWorkspaceFiles() });
-      return;
-    }
-    setWorkspaceFiles({
-      workspaceId: activeWorkspaceId,
-      value: loadWorkspaceFiles(storageNamespace, activeWorkspaceId),
-    });
-  }, [activeWorkspaceId, storageNamespace]);
-  useEffect(() => {
-    if (
-      !storageNamespace
-      || !activeWorkspaceId
-      || workspaceFiles.workspaceId !== activeWorkspaceId
-    ) return;
-    saveWorkspaceFiles(storageNamespace, activeWorkspaceId, workspaceFiles.value);
-  }, [activeWorkspaceId, storageNamespace, workspaceFiles]);
   useEffect(() => {
     setDirtyFileIds(new Set());
     setFileCloseConfirmation(null);
@@ -1257,6 +1128,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onDragLeave={(event) => {
         // Fires for every child crossing; only clear when the pointer really left.
+        // SAFETY: relatedTarget is either the Node receiving the pointer or null when it left the document.
         if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
         setDropActive(false);
       }}

@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "core/providers/microvm-hosts.js",
     "migrations",
     "README.md",
     "scripts/deploy-helpers.mjs",
@@ -26,8 +27,9 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "deploy": "node scripts/deploy.mjs",
     "test:shell": "sh test/shell-syntax.sh",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test:python": "npm run build --silent && node --test test/bootstrap-python.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.wire-drift.json",
+    "test": "vitest run && npm run test:python"
   },
   "dependencies": {
     "hono": "4.13.1",

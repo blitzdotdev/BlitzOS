@@ -1,6 +1,6 @@
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
-import { HttpError } from "../http.js";
+import { HttpError, isString } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { parseManifest, usableByAllows } from "./manifest.js";
@@ -41,7 +41,7 @@ function scopesFromJson(value: string): string[] {
     const parsed: unknown = JSON.parse(value);
     if (
       Array.isArray(parsed) &&
-      parsed.every((scope) => typeof scope === "string" && scope.length > 0)
+      parsed.every((scope) => isString(scope) && scope.length > 0)
     ) {
       return parsed;
     }
@@ -134,6 +134,7 @@ function widenedManifest(
   if (current === undefined) {
     manifest.integrations[integrationName] = { scopes: [...requestedScopes] };
   } else if (current.scopes !== undefined) {
+    // SAFETY: parseManifest establishes that a present scopes member is a string array.
     const allowed = new Set(current.scopes as string[]);
     for (const scope of requestedScopes) allowed.add(scope);
     current.scopes = [...allowed];

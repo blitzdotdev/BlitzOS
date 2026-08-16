@@ -1,0 +1,13 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "hostPublicKeys": ["ssh-ed25519 AAAAlegacyCamel"]
+  },
+  "expect": {
+    "valid": true,
+    "kind": "success",
+    "hostPublicKey": "ssh-ed25519 AAAAlegacyCamel",
+    "canonicalKeys": ["pub_key_ed25519"],
+    "legacy": true
+  }
+}

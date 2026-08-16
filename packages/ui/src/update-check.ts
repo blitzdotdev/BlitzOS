@@ -22,6 +22,7 @@ export function extractIndexAsset(
   for (const match of source.matchAll(INDEX_ASSET_PATTERN)) {
     if (extension && match[2] !== extension) continue;
     return {
+      // SAFETY: The regex constrains capture group 2 to css or js, exactly the IndexAsset extension union.
       extension: match[2] as IndexAsset['extension'],
       hash: match[1]!,
     };

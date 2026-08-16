@@ -1,14 +1,11 @@
 import type { CredentialRequestView, IntegrationView } from '@blitzos/schema';
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, CredentialRequestState } from '../api';
+import { caughtErrorMessage } from '../error-message';
 
 export type StatefulCredentialRequest = CredentialRequestView & {
   state: CredentialRequestState;
 };
-
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
 
 export function RequestsPanel({
   client,
@@ -39,7 +36,7 @@ export function RequestsPanel({
       setError(null);
     } catch (caught) {
       if (signal?.aborted) return;
-      setError(errorMessage(caught, 'Access requests failed to load.'));
+      setError(caughtErrorMessage(caught, 'Access requests failed to load.'));
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
@@ -62,7 +59,7 @@ export function RequestsPanel({
         ? { ...entry, state: action === 'approve' ? 'approved' : 'denied' }
         : entry));
     } catch (caught) {
-      setError(errorMessage(caught, `Request ${action} failed.`));
+      setError(caughtErrorMessage(caught, `Request ${action} failed.`));
     } finally {
       setResolving(null);
     }

@@ -46,9 +46,13 @@ export interface PutIntegrationRequest {
   provider: string;
   kind: MintKind;
   custody: Custody;
-  config: Record<string, unknown>;
+  config: JsonObject;
   root: string;
   usable_by?: { owners: string[] } | null;
+}
+
+export interface CredentialManifest {
+  integrations: Record<string, JsonObject>;
 }
 
 export interface ListCredentialLeasesResponse {
@@ -66,3 +70,4 @@ export interface CredentialRequestView {
 export interface ListCredentialRequestsResponse {
   requests: CredentialRequestView[];
 }
+import type { JsonObject } from "./json.js";

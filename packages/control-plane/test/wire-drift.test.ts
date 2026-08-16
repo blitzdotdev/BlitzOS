@@ -1,8 +1,39 @@
 import * as schema from "@blitzos/schema";
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import * as wire from "../core/wire.js";
 
-const workspace: wire.WorkspaceView & schema.WorkspaceView = {
+type SharedShape<Wire, Schema> = Wire & Schema;
+
+const machineType: SharedShape<wire.MachineType, schema.MachineType> = {
+  id: "mv-2c2g@lab",
+  providerId: "microvm",
+  supportsVolumes: false,
+  name: "MicroVM 2 vCPU / 2 GB",
+  cpuCores: 2,
+  memGb: 2,
+  diskGb: 8,
+  arch: "x86",
+  location: "lab",
+};
+
+const machineTypeFailure: SharedShape<
+  wire.MachineTypeProviderFailure,
+  schema.MachineTypeProviderFailure
+> = {
+  providerId: "microvm",
+  error: "capacity unavailable",
+};
+
+const volume: SharedShape<wire.Volume, schema.Volume> = {
+  id: "volume",
+  name: "state",
+  sizeGb: 20,
+  location: "fsn1",
+  status: "attached",
+  attachedTo: "workspace",
+};
+
+const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   machineTypeId: "mv-2c2g@lab",
   phase: "ready",
@@ -16,29 +47,150 @@ const workspace: wire.WorkspaceView & schema.WorkspaceView = {
     user: "blitz",
     hostPublicKey: "ssh-ed25519 AAAAhost",
   },
-  volumeId: "volume",
+  volumeId: volume.id,
   error: null,
 };
 
-const feed: wire.FeedResponse & schema.FeedResponse = {
-  version: "version",
-  members: [
-    {
-      unixName: "operator",
-      harnesses: ["claude", "codex"],
-      keys: [{ pubkey: "ssh-ed25519 AAAAkey", op: "mint" }],
-    },
-  ],
+const listMachineTypesResponse: SharedShape<
+  wire.ListMachineTypesResponse,
+  schema.ListMachineTypesResponse
+> = {
+  machineTypes: [machineType],
+  failures: [machineTypeFailure],
 };
 
+const createWorkspaceRequest: SharedShape<
+  wire.CreateWorkspaceRequest,
+  schema.CreateWorkspaceRequest
+> = {
+  machineTypeId: machineType.id,
+  sshPublicKey: "ssh-ed25519 AAAAcaller",
+  volumeId: volume.id,
+  userData: "#cloud-config\n",
+  manifest: {
+    integrations: {
+      github: { scopes: ["contents:read"] },
+    },
+  },
+};
+
+const createWorkspaceResponse: SharedShape<
+  wire.CreateWorkspaceResponse,
+  schema.CreateWorkspaceResponse
+> = { workspace };
+
+const pollResponse: SharedShape<wire.PollResponse, schema.PollResponse> = {
+  workspaces: [workspace],
+};
+
+const registerKeysResponse: SharedShape<
+  wire.RegisterKeysResponse,
+  schema.RegisterKeysResponse
+> = {
+  memberUnixName: "operator",
+  broker: {
+    host: "broker.example",
+    port: 2222,
+    sshHostPublicKey: "ssh-ed25519 AAAAbroker",
+  },
+};
+
+const apiError: SharedShape<wire.ApiError, schema.ApiError> = {
+  error: "workspace is still creating",
+  retryAction: "poll",
+};
+
+const createVolumeRequest: SharedShape<
+  wire.CreateVolumeRequest,
+  schema.CreateVolumeRequest
+> = {
+  name: volume.name,
+  sizeGb: volume.sizeGb,
+  location: volume.location,
+};
+
+const createVolumeResponse: SharedShape<
+  wire.CreateVolumeResponse,
+  schema.CreateVolumeResponse
+> = { volume };
+
+const listVolumesResponse: SharedShape<
+  wire.ListVolumesResponse,
+  schema.ListVolumesResponse
+> = { volumes: [volume] };
+
+const deleteVolumeResponse: SharedShape<
+  wire.DeleteVolumeResponse,
+  schema.DeleteVolumeResponse
+> = { id: volume.id };
+
+const feedKey: SharedShape<wire.FeedKey, schema.FeedKey> = {
+  pubkey: "ssh-ed25519 AAAAkey",
+  op: "mint",
+};
+
+const feedMember: SharedShape<wire.FeedMember, schema.FeedMember> = {
+  unixName: "operator",
+  harnesses: ["claude", "codex"],
+  keys: [feedKey],
+};
+
+const feedResponse: SharedShape<wire.FeedResponse, schema.FeedResponse> = {
+  version: "version",
+  members: [feedMember],
+};
+
+const fullFieldValues = [
+  machineType,
+  machineTypeFailure,
+  volume,
+  workspace,
+  listMachineTypesResponse,
+  createWorkspaceRequest,
+  createWorkspaceResponse,
+  pollResponse,
+  registerKeysResponse,
+  apiError,
+  createVolumeRequest,
+  createVolumeResponse,
+  listVolumesResponse,
+  deleteVolumeResponse,
+  feedKey,
+  feedMember,
+  feedResponse,
+];
+
 describe("local wire copies", () => {
-  it("keeps constants and representative JSON shapes equal to @blitzos/schema", () => {
+  it("keeps every duplicated type exactly equal to @blitzos/schema", () => {
+    expectTypeOf<wire.Phase>().toEqualTypeOf<schema.Phase>();
+    expectTypeOf<wire.RetryAction>().toEqualTypeOf<schema.RetryAction>();
+    expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
+    expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
+    expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
+    expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
+    expectTypeOf<wire.ListMachineTypesResponse>().toEqualTypeOf<schema.ListMachineTypesResponse>();
+    expectTypeOf<wire.CreateWorkspaceRequest>().toEqualTypeOf<schema.CreateWorkspaceRequest>();
+    expectTypeOf<wire.CreateWorkspaceResponse>().toEqualTypeOf<schema.CreateWorkspaceResponse>();
+    expectTypeOf<wire.PollResponse>().toEqualTypeOf<schema.PollResponse>();
+    expectTypeOf<wire.RegisterKeysResponse>().toEqualTypeOf<schema.RegisterKeysResponse>();
+    expectTypeOf<wire.ApiError>().toEqualTypeOf<schema.ApiError>();
+    expectTypeOf<wire.CreateVolumeRequest>().toEqualTypeOf<schema.CreateVolumeRequest>();
+    expectTypeOf<wire.CreateVolumeResponse>().toEqualTypeOf<schema.CreateVolumeResponse>();
+    expectTypeOf<wire.ListVolumesResponse>().toEqualTypeOf<schema.ListVolumesResponse>();
+    expectTypeOf<wire.DeleteVolumeResponse>().toEqualTypeOf<schema.DeleteVolumeResponse>();
+    expectTypeOf<wire.FeedResponse>().toEqualTypeOf<schema.FeedResponse>();
+    expectTypeOf<wire.FeedMember>().toEqualTypeOf<schema.FeedMember>();
+    expectTypeOf<wire.FeedKey>().toEqualTypeOf<schema.FeedKey>();
+  });
+
+  it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {
     expect(wire.FEED_MAX_BYTES).toBe(schema.FEED_MAX_BYTES);
     expect(wire.HARNESSES).toEqual(schema.HARNESSES);
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
-    expect(JSON.parse(JSON.stringify(workspace))).toEqual(workspace);
-    expect(JSON.parse(JSON.stringify(feed))).toEqual(feed);
+    for (const value of fullFieldValues) {
+      expect(JSON.parse(JSON.stringify(value))).toEqual(value);
+    }
   });
 });

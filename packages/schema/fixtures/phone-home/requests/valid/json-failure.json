@@ -1,0 +1,12 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "bootstrap_error": "box health timeout after 180 seconds"
+  },
+  "expect": {
+    "valid": true,
+    "kind": "failure",
+    "message": "bootstrap failed: box health timeout after 180 seconds",
+    "canonicalKeys": ["bootstrap_error"]
+  }
+}

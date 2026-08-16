@@ -1,0 +1,13 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "ssh_host_public_keys": ["ssh-rsa AAAAlegacyRsa"]
+  },
+  "expect": {
+    "valid": true,
+    "kind": "success",
+    "hostPublicKey": "ssh-rsa AAAAlegacyRsa",
+    "canonicalKeys": ["pub_key_rsa"],
+    "legacy": true
+  }
+}

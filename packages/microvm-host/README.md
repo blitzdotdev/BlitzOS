@@ -121,7 +121,7 @@ backoff. It logs the URL and HTTP status only; it never logs the token.
 
 `guest/build-rootfs-m2.sh` copies the spike base to the versioned `blitz-box-base-m2-v4.ext4` and replaces only `/microvm-init` plus `/usr/local/libexec/blitz-microvm-enroll.js` through `debugfs`; it refuses to overwrite an existing version. The spike's `blitz-box-base.ext4` remains unchanged. The host also retains the preflight `m2-v1` image, superseded because it used the host's Node path instead of the image's `/usr/local/bin/node`.
 
-The agent passes phone-home URL, control-plane origin, and workspace ID as base64url kernel arguments. The M2 init starts a Node one-shot, then execs the image's original `/init`. The one-shot waits until the image has generated SSH host keys and sshd accepts TCP connections, POSTs JSON containing `workspace_id`, `host_public_keys`, and `ssh_host_public_keys`, and atomically writes:
+The agent passes phone-home URL, control-plane origin, and workspace ID as base64url kernel arguments. The M2 init starts a Node one-shot, then execs the image's original `/init`. The one-shot waits until the image has generated SSH host keys and sshd accepts TCP connections, POSTs JSON containing only the canonical `pub_key_ecdsa`, `pub_key_ed25519`, and `pub_key_rsa` scalar fields, and atomically writes:
 
 - `/var/lib/blitz/box-credential.json`, mode 0600, with only `box_id`, `access_token`, and `refresh_token`.
 - `/var/lib/blitz/origin`, mode 0644, containing `cp_origin`.

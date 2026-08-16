@@ -1,5 +1,19 @@
 import Database from "better-sqlite3";
+import type {
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionUpdate,
+} from "@agentclientprotocol/sdk";
 import type { Provider } from "./types.js";
+
+export interface SessionUpdateFrame {
+  jsonrpc: "2.0";
+  method: "session/update";
+  params: {
+    sessionId: string;
+    update: SessionUpdate;
+  };
+}
 
 export type StoredSession = {
   id: string;
@@ -60,6 +74,7 @@ export class Journal {
   }
 
   public session(id: string): StoredSession | undefined {
+    // SAFETY: The query selects every StoredSession field from the schema-owned sessions table with the matching alias.
     const row = this.database
       .prepare("SELECT id, provider, cwd, resume_id AS resumeId FROM sessions WHERE id = ?")
       .get(id) as StoredSession | undefined;
@@ -70,8 +85,9 @@ export class Journal {
     this.database.prepare("UPDATE sessions SET resume_id = ? WHERE id = ?").run(resumeId, sessionId);
   }
 
-  public append(sessionId: string, frame: object): number {
+  public append(sessionId: string, frame: SessionUpdateFrame): number {
     return this.database.transaction(() => {
+      // SAFETY: The schema-owned sessions table declares next_seq as a non-null integer, aliased here as seq.
       const row = this.database.prepare("SELECT next_seq AS seq FROM sessions WHERE id = ?").get(sessionId) as
         | { seq: number }
         | undefined;
@@ -85,6 +101,7 @@ export class Journal {
   }
 
   public replay(sessionId: string, limit: number): JournalEvent[] {
+    // SAFETY: The query selects the complete JournalEvent projection from schema-owned event rows.
     const rows = this.database
       .prepare(
         `SELECT seq, frame FROM (
@@ -105,30 +122,33 @@ export class Journal {
   }
 
   public terminal(id: string): string | null | undefined {
+    // SAFETY: The query projects the nullable terminal column from at most one schema-owned turn row.
     return (this.database.prepare("SELECT terminal FROM turns WHERE id = ?").get(id) as
       | { terminal: string | null }
       | undefined)?.terminal;
   }
 
-  public addPermission(id: string, sessionId: string, request: object): void {
+  public addPermission(id: string, sessionId: string, request: RequestPermissionRequest): void {
     this.database
       .prepare("INSERT INTO permissions (id, session_id, request) VALUES (?, ?, ?)")
       .run(id, sessionId, JSON.stringify(request));
   }
 
-  public answerPermission(id: string, response: object): boolean {
+  public answerPermission(id: string, response: RequestPermissionResponse): boolean {
     return this.database
       .prepare("UPDATE permissions SET response = ? WHERE id = ? AND response IS NULL")
       .run(JSON.stringify(response), id).changes === 1;
   }
 
   public pendingPermissions(sessionId: string): Array<{ id: string; request: string }> {
+    // SAFETY: The query projects the non-null id and request text columns from schema-owned permission rows.
     return this.database
       .prepare("SELECT id, request FROM permissions WHERE session_id = ? AND response IS NULL ORDER BY rowid")
       .all(sessionId) as Array<{ id: string; request: string }>;
   }
 
   public sequences(sessionId: string): number[] {
+    // SAFETY: The query projects the integer seq column from schema-owned event rows.
     return (
       this.database.prepare("SELECT seq FROM events WHERE session_id = ? ORDER BY seq").all(sessionId) as Array<{
         seq: number;
@@ -137,6 +157,7 @@ export class Journal {
   }
 
   public terminals(sessionId: string): string[] {
+    // SAFETY: The WHERE clause excludes null terminals before projecting schema-owned turn rows.
     return (
       this.database.prepare("SELECT terminal FROM turns WHERE session_id = ? ORDER BY rowid").all(sessionId) as Array<{
         terminal: string;
@@ -145,6 +166,7 @@ export class Journal {
   }
 
   public answeredPermissions(sessionId: string): number {
+    // SAFETY: COUNT(*) always produces one row with an integer count value.
     return (
       this.database
         .prepare("SELECT count(*) AS count FROM permissions WHERE session_id = ? AND response IS NOT NULL")

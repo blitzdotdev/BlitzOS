@@ -1,6 +1,6 @@
 import type { Db, Query } from "../db.js";
 import { changed, first, rows, transaction } from "../db.js";
-import { HttpError } from "../http.js";
+import { HttpError, isString } from "../http.js";
 import type { CoreRuntime } from "../runtime.js";
 import type { Lease, MintResult } from "./types.js";
 
@@ -34,7 +34,7 @@ interface CreateLeaseInput {
 function scopesFromJson(value: string): string[] {
   try {
     const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((scope) => typeof scope === "string")
+    return Array.isArray(parsed) && parsed.every((scope) => isString(scope))
       ? parsed
       : [];
   } catch {

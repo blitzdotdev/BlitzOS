@@ -3,6 +3,12 @@ export interface Query {
   v: any[];
 }
 
+export type DbValue = string | number | boolean | null | ArrayBuffer;
+
+export interface DbRow {
+  [column: string]: DbValue;
+}
+
 export interface RawRun<T> {
   run(): Promise<T[] | null>;
 }
@@ -12,8 +18,8 @@ export interface TransactionRun<T> {
 }
 
 export interface Db {
-  rawSQL<T = Record<string, unknown>>(query: Query): RawRun<T>;
-  rawSQLTransaction<T = Record<string, unknown>>(
+  rawSQL<T = DbRow>(query: Query): RawRun<T>;
+  rawSQLTransaction<T = DbRow>(
     queries: Query[],
   ): TransactionRun<T>;
 }

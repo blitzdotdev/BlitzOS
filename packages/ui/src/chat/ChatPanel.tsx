@@ -8,6 +8,7 @@ import type {
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { endpointTarget } from "../resolver.js";
+import { isString } from "../type-guards.js";
 import { ChatTranscript } from "./ChatTranscript.js";
 import { chatReducer, initialChatState } from "./reducer.js";
 
@@ -230,7 +231,7 @@ export function ChatPanel({
 }
 
 function parseSessionNotification(value: unknown): RawSessionNotification {
-  if (!isRecord(value) || typeof value.sessionId !== "string" || !isRecord(value.update)) {
+  if (!isRecord(value) || !isString(value.sessionId) || !isRecord(value.update)) {
     throw new Error("Malformed session update");
   }
   return { sessionId: value.sessionId, update: value.update };

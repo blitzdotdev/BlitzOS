@@ -18,6 +18,25 @@ export const TERMINAL_SUBMIT_EVENT = 'blitz:terminal-submit';
 
 export type TerminalSessionType = TerminalAgent | 'terminal';
 
+interface TtydHandshake {
+  AuthToken: string;
+  columns?: number;
+  rows?: number;
+}
+
+export function ttydHandshake(
+  readOnly: boolean,
+  columns: number,
+  rows: number,
+): TtydHandshake {
+  const handshake: TtydHandshake = { AuthToken: '' };
+  if (!readOnly) {
+    handshake.columns = columns;
+    handshake.rows = rows;
+  }
+  return handshake;
+}
+
 // The prompt wraps at narrow widths ("Press Enter to" / "continue…"), so
 // match across joined rows, not per row.
 export function hasEnterPrompt(rows: string[]): boolean {
@@ -77,6 +96,7 @@ export function TtydTerminal({
   useEffect(() => {
     if (readOnly) return;
     const handleSubmit = (event: Event) => {
+      // SAFETY: Only the shared event name is assumed here; payload shape is not checked. TODO(deslop-tier-c): validate the CustomEvent detail before reading data and enters.
       const detail = (event as CustomEvent<{ data?: string; enters?: number }>).detail;
       if (!detail?.data) return;
       const enters = detail.enters ?? 0;
@@ -273,17 +293,13 @@ export function TtydTerminal({
         // blitz-session's tmux attach -r client is read-only,ignore-size (proved
         // with a real tmux client in golden.test.mjs), so omit observer geometry
         // here as well and leave the active tenant client in sole control.
-        next.send(JSON.stringify({
-          AuthToken: '',
-          ...(readOnly ? {} : {
-            columns: terminal.cols,
-            rows: terminal.rows,
-          }),
-        }));
+        const handshake = ttydHandshake(readOnly, terminal.cols, terminal.rows);
+        next.send(JSON.stringify(handshake));
         if (!isTouchInputDevice()) terminal.focus();
       };
 
       next.onmessage = (event) => {
+        // SAFETY: The client requests arraybuffer frames, but browser WebSocket APIs still permit text data. TODO(deslop-tier-c): reject or handle non-ArrayBuffer MessageEvent.data before constructing Uint8Array.
         const frame = new Uint8Array(event.data as ArrayBuffer);
         if (frame[0] === '0'.charCodeAt(0)) {
           reconnectDelay = 500;

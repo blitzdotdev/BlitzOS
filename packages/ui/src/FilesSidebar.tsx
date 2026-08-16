@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -73,15 +72,14 @@ function listedNodes(path: string, entries: FileStat[]): FileNode[] {
     ))
     .map((entry): FileNode => {
       const filePath = path ? `${path}/${entry.basename}` : entry.basename;
-      return {
+      const node: FileNode = {
         id: filePath,
         kind: entry.type,
         name: entry.basename,
         path: filePath,
-        ...(entry.type === 'directory'
-          ? { children: [statusNode(filePath, 'loading')] }
-          : {}),
       };
+      if (entry.type === 'directory') node.children = [statusNode(filePath, 'loading')];
+      return node;
     });
 }
 
@@ -234,6 +232,7 @@ export function FilesSidebar({
   useEffect(() => {
     if (!contextMenu) return;
     const closeOnPointerDown = (event: PointerEvent) => {
+      // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
       if (!contextPopup.current?.contains(event.target as Node)) setContextMenu(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -448,7 +447,10 @@ export function FilesSidebar({
     <aside
       id="cockpit-files-sidebar"
       className={`files-sidebar${open ? ' files-sidebar--open' : ''}`}
-      style={{ '--files-sidebar-width': `${width}px` } as CSSProperties}
+      style={
+        // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
+        { '--files-sidebar-width': `${width}px` } as CSSProperties
+      }
       aria-label="Workspace files"
       aria-hidden={mobile && !open ? true : undefined}
       inert={mobile && !open}
@@ -496,6 +498,7 @@ export function FilesSidebar({
         onContextMenu={(event) => openContextMenu(event, '')}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' || event.defaultPrevented) return;
+          // SAFETY: React keyboard events in this element originate from DOM Element targets.
           if ((event.target as Element).closest('button')) return;
           const selected = tree.current?.selectedNodes[0] ?? tree.current?.focusedNode;
           if (!selected || selected.data.kind === 'status') return;

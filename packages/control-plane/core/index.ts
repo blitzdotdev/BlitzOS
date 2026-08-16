@@ -19,7 +19,8 @@ export { createOperatorPrincipalSource } from "./principals.js";
 export type { Principal, PrincipalSource } from "./principals.js";
 export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
-export { CompositeVmProvider } from "./providers/composite.js";
+export { VmProviderRegistry } from "./providers/registry.js";
+export type { VmProviderListResult } from "./providers/registry.js";
 export {
   addMicrovmHostRoutes,
   isMicrovmProviderId,
@@ -37,6 +38,7 @@ export type {
 export type {
   CreatedVm,
   CreateVmInput,
+  ProviderMachineType,
   ProviderCapabilities,
   SurfacePort,
   VmInspection,

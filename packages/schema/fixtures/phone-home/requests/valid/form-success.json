@@ -1,0 +1,10 @@
+{
+  "contentType": "application/x-www-form-urlencoded",
+  "body": "pub_key_ecdsa=&pub_key_ed25519=ssh-ed25519+AAAAed25519&pub_key_rsa=",
+  "expect": {
+    "valid": true,
+    "kind": "success",
+    "hostPublicKey": "ssh-ed25519 AAAAed25519",
+    "canonicalKeys": ["pub_key_ecdsa", "pub_key_ed25519", "pub_key_rsa"]
+  }
+}

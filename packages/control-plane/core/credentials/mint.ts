@@ -1,7 +1,7 @@
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { first, rows } from "../db.js";
-import { HttpError, isRecord, readJson, requiredString } from "../http.js";
+import { HttpError, isRecord, isString, readJson, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
 import {
   createLease,
@@ -39,7 +39,7 @@ interface ParsedMintBody {
 function parseScopes(value: unknown): string[] {
   if (
     !Array.isArray(value) ||
-    !value.every((scope) => typeof scope === "string" && scope.length > 0)
+    !value.every((scope) => isString(scope) && scope.length > 0)
   ) {
     throw new HttpError(400, "scopes must be an array of non-empty strings");
   }

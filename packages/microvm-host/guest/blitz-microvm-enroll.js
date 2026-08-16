@@ -20,7 +20,7 @@ function decode(name) {
 
 const phoneHomeURL = decode('BLITZ_MICROVM_PHONE_HOME_B64');
 const cpOrigin = decode('BLITZ_MICROVM_CP_ORIGIN_B64');
-const workspaceID = decode('BLITZ_MICROVM_WORKSPACE_B64');
+const phoneHomeResponseFields = ['box_id', 'access_token', 'refresh_token'];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,6 +98,57 @@ function atomicWrite(filename, value, mode) {
 
 function safeError(error) {
   return String(error && error.message ? error.message : error).replace(/[\r\n]+/g, ' ').slice(0, 1000);
+}
+
+function phoneHomeField(hostPublicKey) {
+  const algorithm = hostPublicKey.trim().split(/\s+/, 1)[0] || '';
+  if (algorithm.startsWith('ecdsa-')) return 'pub_key_ecdsa';
+  if (algorithm === 'ssh-ed25519' || algorithm.startsWith('sk-ssh-ed25519')) return 'pub_key_ed25519';
+  if (algorithm === 'ssh-rsa') return 'pub_key_rsa';
+  return null;
+}
+
+function buildPhoneHomePayload(hostPublicKeys) {
+  if (!Array.isArray(hostPublicKeys)) throw new TypeError('host public keys must be an array');
+  const payload = {
+    pub_key_ecdsa: '',
+    pub_key_ed25519: '',
+    pub_key_rsa: '',
+  };
+  for (const hostPublicKey of hostPublicKeys) {
+    if (typeof hostPublicKey !== 'string') throw new TypeError('host public key must be a string');
+    const field = phoneHomeField(hostPublicKey);
+    if (field && payload[field] === '') payload[field] = hostPublicKey.trim();
+  }
+  return payload;
+}
+
+function buildPhoneHomeFailurePayload(message) {
+  if (typeof message !== 'string' || message.length === 0) {
+    throw new TypeError('bootstrap error must be a non-empty string');
+  }
+  return {bootstrap_error: message};
+}
+
+function parsePhoneHomeResponse(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('phone-home response must be an object');
+  }
+  const fields = Object.keys(value).sort();
+  const expected = [...phoneHomeResponseFields].sort();
+  if (fields.length !== expected.length || fields.some((field, index) => field !== expected[index])) {
+    throw new Error('phone-home response fields are invalid');
+  }
+  for (const field of phoneHomeResponseFields) {
+    if (typeof value[field] !== 'string' || value[field].length === 0) {
+      throw new Error(`phone-home response omitted ${field}`);
+    }
+  }
+  return {
+    box_id: value.box_id,
+    access_token: value.access_token,
+    refresh_token: value.refresh_token,
+  };
 }
 
 async function pokeRegister() {
@@ -178,9 +229,9 @@ async function pokeRegister() {
 async function reportFailure(message) {
   const line = `${new Date().toISOString()} ${message}\n`;
   atomicWrite(errorPath, line, 0o600);
-  const form = new URLSearchParams({bootstrap_error: message, workspace_id: workspaceID}).toString();
+  const payload = JSON.stringify(buildPhoneHomeFailurePayload(message));
   try {
-    await request(phoneHomeURL, 'application/x-www-form-urlencoded', form);
+    await request(phoneHomeURL, 'application/json', payload);
   } catch (error) {
     fs.appendFileSync(errorPath, `${new Date().toISOString()} failure-report: ${safeError(error)}\n`);
   }
@@ -190,36 +241,35 @@ async function main() {
   if (!phoneHomeURL) throw new Error('missing phone-home URL');
   const hostPublicKeys = await waitForHostKeys();
   await waitForSSHD();
-  const payload = JSON.stringify({
-    workspace_id: workspaceID,
-    host_public_keys: hostPublicKeys,
-    ssh_host_public_keys: hostPublicKeys,
-  });
+  const payload = JSON.stringify(buildPhoneHomePayload(hostPublicKeys));
   const response = await request(phoneHomeURL, 'application/json', payload);
   if (response.status < 200 || response.status >= 300) {
     throw new Error(`phone-home returned HTTP ${response.status}`);
   }
-  let credential;
+  let responseValue;
   try {
-    credential = JSON.parse(response.body);
+    responseValue = JSON.parse(response.body);
   } catch (_) {
     throw new Error('phone-home returned invalid JSON');
   }
-  for (const field of ['box_id', 'access_token', 'refresh_token']) {
-    if (!credential || typeof credential[field] !== 'string' || credential[field].length === 0) {
-      throw new Error(`phone-home response omitted ${field}`);
-    }
-  }
-  const stored = {box_id: credential.box_id, access_token: credential.access_token, refresh_token: credential.refresh_token};
+  const stored = parsePhoneHomeResponse(responseValue);
   atomicWrite(path.join(stateDir, 'box-credential.json'), `${JSON.stringify(stored)}\n`, 0o600);
   atomicWrite(path.join(stateDir, 'origin'), `${cpOrigin}\n`, 0o644);
   await pokeRegister();
   process.stdout.write(`microvm-enroll: complete host_key_count=${hostPublicKeys.length}\n`);
 }
 
-main().catch(async (error) => {
-  const message = safeError(error);
-  await reportFailure(message);
-  process.stderr.write(`microvm-enroll: failed: ${message}\n`);
-  process.exitCode = 1;
-});
+module.exports = {
+  buildPhoneHomeFailurePayload,
+  buildPhoneHomePayload,
+  parsePhoneHomeResponse,
+};
+
+if (require.main === module) {
+  main().catch(async (error) => {
+    const message = safeError(error);
+    await reportFailure(message);
+    process.stderr.write(`microvm-enroll: failed: ${message}\n`);
+    process.exitCode = 1;
+  });
+}

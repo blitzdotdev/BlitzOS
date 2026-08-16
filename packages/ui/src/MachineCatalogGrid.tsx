@@ -6,9 +6,9 @@ export function machineTypeLabel(typeId: string): string {
 
 function machineGroup(machine: MachineType): string {
   const location = machine.location || machine.id.split('@').at(-1) || 'unknown';
-  return machine.id.startsWith('mv-') || location === 'lab'
-    ? 'Local lab'
-    : `Hetzner · ${location}`;
+  if (machine.providerId === 'microvm') return 'Local lab';
+  if (machine.providerId === 'hetzner') return `Hetzner · ${location}`;
+  return `${machine.providerId} · ${location}`;
 }
 
 export function groupMachineTypes(machines: readonly MachineType[]): Array<{

@@ -1,0 +1,11 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "box_id": "box-fixture",
+    "access_token": "access-fixture"
+  },
+  "expect": {
+    "valid": false,
+    "reason": "refresh_token is required"
+  }
+}

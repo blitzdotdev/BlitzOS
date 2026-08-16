@@ -28,6 +28,8 @@ export function CreateWorkspaceDialog({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const submitted = useRef(false);
+  const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
+  const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
 
   useEffect(() => {
     if (!busy) submitted.current = false;
@@ -61,11 +63,12 @@ export function CreateWorkspaceDialog({
     const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
     const volumeId = String(data.get('volumeId') ?? '');
     submitted.current = true;
-    onSubmit({
+    const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
-      ...(sshPublicKey ? { sshPublicKey } : {}),
-      ...(volumeId ? { volumeId } : {}),
-    });
+    };
+    if (sshPublicKey) input.sshPublicKey = sshPublicKey;
+    if (volumeId) input.volumeId = volumeId;
+    onSubmit(input);
   };
 
   return (
@@ -112,7 +115,7 @@ export function CreateWorkspaceDialog({
             </div>
             <label className="blueprint-field">
               Volume
-              <select name="volumeId" defaultValue="">
+              <select name="volumeId" defaultValue="" disabled={!supportsVolumes}>
                 <option value="">No volume</option>
                 {volumes.map((volume) => (
                   <option key={volume.id} value={volume.id} disabled={volume.status !== 'available'}>
@@ -120,6 +123,9 @@ export function CreateWorkspaceDialog({
                   </option>
                 ))}
               </select>
+              {!supportsVolumes && selectedMachine !== undefined && (
+                <span>Volumes are not supported by this machine provider.</span>
+              )}
             </label>
           </section>
 

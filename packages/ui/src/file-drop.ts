@@ -5,7 +5,7 @@ import { shellQuotedPath } from './files';
 // paste reuses the terminal's existing submit event. No new protocol.
 
 export type DropUploader = {
-  putFileContents(path: string, data: ArrayBuffer): Promise<unknown>;
+  putFileContents(path: string, data: ArrayBuffer): Promise<boolean>;
   exists(path: string): Promise<boolean>;
 };
 

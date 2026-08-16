@@ -1,4 +1,5 @@
 import type { WorkspaceTabs } from './storage';
+import { hasObjectType, isDefined, isNumber, isString } from './type-guards';
 
 export const PORTS_POLL_INTERVAL_MS = 5_000;
 
@@ -41,17 +42,19 @@ export function isPreviewPort(port: number): boolean {
 }
 
 function parsedPorts(value: unknown): Array<{ port: number; process: string }> {
-  if (!value || typeof value !== 'object') return [];
+  if (!value || !hasObjectType(value)) return [];
+  // SAFETY: The preceding check establishes a non-null object; only the optional ports field is read.
   const ports = (value as { ports?: unknown }).ports;
   if (!Array.isArray(ports)) return [];
   const seen = new Set<number>();
   return ports.flatMap((value): Array<{ port: number; process: string }> => {
-    if (!value || typeof value !== 'object') return [];
+    if (!value || !hasObjectType(value)) return [];
+    // SAFETY: The preceding check establishes a non-null object; individual fields are validated below.
     const entry = value as { port?: unknown; process?: unknown };
     if (
-      typeof entry.port !== 'number'
+      !isNumber(entry.port)
       || !isPreviewPort(entry.port)
-      || typeof entry.process !== 'string'
+      || !isString(entry.process)
       || seen.has(entry.port)
     ) return [];
     seen.add(entry.port);
@@ -92,6 +95,7 @@ export async function fetchWorkspacePorts(
       signal,
     });
     if (!response.ok) return [];
+    // SAFETY: The explicit unknown assertion prevents Response.json's ambient any from bypassing parsedPorts validation.
     return parsedPorts(await response.json() as unknown);
   } catch {
     return [];
@@ -168,7 +172,7 @@ export function previewPortFromLocalUrl(href: string): number | null {
   try {
     const target = new URL(
       href,
-      typeof window === 'undefined' ? 'http://localhost/' : window.location.href,
+      !isDefined(globalThis.window) ? 'http://localhost/' : window.location.href,
     );
     if (target.protocol !== 'http:' && target.protocol !== 'https:') return null;
     const localhost = target.hostname === 'localhost' || target.hostname === '127.0.0.1';

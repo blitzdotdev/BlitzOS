@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-const sources = import.meta.glob<string>("../core/**/*.ts", {
+const sources = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"], {
   eager: true,
   import: "default",
   query: "?raw",
@@ -29,9 +29,14 @@ const expected = [
   "janitors.ts",
   "oauth.ts",
   "principals.ts",
-  "providers/composite.ts",
   "providers/hetzner.ts",
+  "providers/json-fetch.ts",
+  "providers/microvm-agent.ts",
+  "providers/microvm-config.ts",
+  "providers/microvm-host-registry.ts",
+  "providers/microvm-hosts.js",
   "providers/microvm.ts",
+  "providers/registry.ts",
   "providers/types.ts",
   "registry.ts",
   "runtime.ts",
@@ -58,6 +63,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(33);
+    expect(expected).toHaveLength(38);
   });
 });

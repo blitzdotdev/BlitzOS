@@ -1,4 +1,4 @@
-import { HttpError, isRecord } from "../../../http.js";
+import { HttpError, isRecord, isString } from "../../../http.js";
 import type {
   Integration,
   Minter,
@@ -20,6 +20,11 @@ interface GithubAppConfig {
   repositories?: string[];
   permissions?: Record<string, string>;
   placements?: PlacementTemplate[];
+}
+
+interface GithubTokenRequestBody {
+  repositories?: string[];
+  permissions?: Record<string, string>;
 }
 
 function decodePrivateKeyPem(value: string): Uint8Array {
@@ -54,7 +59,7 @@ function encodeBase64Url(value: Uint8Array): string {
 
 async function appJwt(root: string, config: GithubAppConfig, now: number): Promise<string> {
   const seconds = Math.floor(now / 1000);
-  const encodeJson = (value: unknown): string =>
+  const encodeJson = <Value>(value: Value): string =>
     encodeBase64Url(new TextEncoder().encode(JSON.stringify(value)));
   const header = encodeJson({ alg: "RS256", typ: "JWT" });
   const payload = encodeJson({
@@ -75,12 +80,13 @@ function parseConfig(value: string): GithubAppConfig {
   const parsed: unknown = JSON.parse(value);
   if (
     !isRecord(parsed) ||
-    typeof parsed.app_id !== "string" ||
-    typeof parsed.installation_id !== "string"
+    !isString(parsed.app_id) ||
+    !isString(parsed.installation_id)
   ) {
     throw new Error("github app integration config is invalid");
   }
-  return parsed as unknown as GithubAppConfig;
+  // SAFETY: app_id and installation_id are strings; optional nested config is not checked. TODO(deslop-tier-c): validate placements, repositories, and permissions before constructing GithubAppConfig.
+  return parsed as typeof parsed & GithubAppConfig;
 }
 
 function fillPlacements(config: GithubAppConfig, token: string): Placement[] {
@@ -99,14 +105,14 @@ function grantedScopes(value: Record<string, unknown>): string[] {
   const granted: string[] = [];
   if (Array.isArray(value.repositories)) {
     for (const repository of value.repositories) {
-      if (isRecord(repository) && typeof repository.name === "string") {
+      if (isRecord(repository) && isString(repository.name)) {
         granted.push(`repo:${repository.name}`);
       }
     }
   }
   if (isRecord(value.permissions)) {
     for (const [permission, level] of Object.entries(value.permissions)) {
-      if (typeof level === "string") granted.push(`${permission}:${level}`);
+      if (isString(level)) granted.push(`${permission}:${level}`);
     }
   }
   return granted;
@@ -135,7 +141,7 @@ export const githubAppMinter: Minter = {
     }
     if (root === null) throw new HttpError(409, "integration has no active root");
     const config = parseConfig(integration.config);
-    const body: Record<string, unknown> = {};
+    const body: GithubTokenRequestBody = {};
     if (config.repositories !== undefined) body.repositories = config.repositories;
     if (config.permissions !== undefined) body.permissions = config.permissions;
     const response = await fetch(
@@ -153,7 +159,7 @@ export const githubAppMinter: Minter = {
     );
     if (!response.ok) throw vendorError(response.status);
     const value: unknown = await response.json();
-    if (!isRecord(value) || typeof value.token !== "string" || typeof value.expires_at !== "string") {
+    if (!isRecord(value) || !isString(value.token) || !isString(value.expires_at)) {
       throw new HttpError(502, "github returned an invalid installation token response");
     }
     const expiresAt = Date.parse(value.expires_at);

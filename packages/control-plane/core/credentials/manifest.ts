@@ -1,4 +1,4 @@
-import { HttpError, isRecord } from "../http.js";
+import { HttpError, isRecord, isString } from "../http.js";
 import type { Integration } from "./types.js";
 
 type CredentialManifest = {
@@ -8,7 +8,7 @@ type CredentialManifest = {
 function stringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&
-    value.every((item) => typeof item === "string" && item.length > 0)
+    value.every((item) => isString(item) && item.length > 0)
   );
 }
 

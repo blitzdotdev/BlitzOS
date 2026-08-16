@@ -9,13 +9,10 @@ import {
 } from 'react';
 import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
+import { caughtErrorMessage } from './error-message';
 import type { WorkspaceDrawerSegment } from './storage';
 
 export const CREDENTIAL_POLL_INTERVAL_MS = 5_000;
-
-function message(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback;
-}
 
 export function expiryCountdown(expiresAt: number, now = Date.now()): string {
   const seconds = Math.ceil((expiresAt - now) / 1_000);
@@ -61,7 +58,7 @@ export function WorkspaceLeasesPanel({
       } catch (caught) {
         if (!active || request !== current || current.signal.aborted) return;
         setLoading(false);
-        setError(message(caught, 'Credential leases failed to load.'));
+        setError(caughtErrorMessage(caught, 'Credential leases failed to load.'));
       } finally {
         if (request === current) request = null;
       }
@@ -88,7 +85,7 @@ export function WorkspaceLeasesPanel({
         entry.id === lease.id ? { ...entry, state: 'revoked' } : entry
       )));
     } catch (caught) {
-      setError(message(caught, 'Credential lease revoke failed.'));
+      setError(caughtErrorMessage(caught, 'Credential lease revoke failed.'));
     } finally {
       setRevoking(null);
     }
@@ -165,7 +162,7 @@ export function WorkspaceRequestsPanel({
     try {
       await onResolve(request, action);
     } catch (caught) {
-      setError(message(caught, `Request ${action} failed.`));
+      setError(caughtErrorMessage(caught, `Request ${action} failed.`));
     } finally {
       setResolving(null);
     }
@@ -266,7 +263,10 @@ export function WorkspaceDrawer({
     <aside
       id="cockpit-workspace-drawer"
       className={`workspace-drawer${open ? ' workspace-drawer--open' : ''}`}
-      style={{ '--files-sidebar-width': `${width}px` } as CSSProperties}
+      style={
+        // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
+        { '--files-sidebar-width': `${width}px` } as CSSProperties
+      }
       aria-label="Workspace drawer"
       aria-hidden={mobile && !open ? true : undefined}
       inert={mobile && !open}

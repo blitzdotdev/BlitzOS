@@ -1,0 +1,5 @@
+{
+  "parts": ["image.part1"],
+  "totalSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "imageTag": "blitz-box:release"
+}

@@ -1,7 +1,10 @@
-export function davErrorStatus(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === 'number' ? status : undefined;
+import { hasObjectType, isNumber } from './type-guards';
+
+export function davErrorStatus(cause: unknown): number | undefined {
+  if (!cause || !hasObjectType(cause)) return undefined;
+  // SAFETY: The preceding check permits reading an optional property from a non-null object; it does not claim any broader DAV error shape.
+  const status = (cause as { status?: unknown }).status;
+  return isNumber(status) ? status : undefined;
 }
 
 export function fullDavPath(filePath: string): string {

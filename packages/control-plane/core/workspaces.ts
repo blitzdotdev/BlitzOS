@@ -7,6 +7,7 @@ import { first, rows, transaction } from "./db.js";
 import {
   HttpError,
   isRecord,
+  isString,
   isSshPublicKey,
   readJson,
   readText,
@@ -15,8 +16,13 @@ import {
 import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { isMicrovmProviderId } from "./providers/microvm.js";
-import type { SurfacePort } from "./providers/types.js";
-import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import type { SurfacePort, VmProvider } from "./providers/types.js";
+import type {
+  CoreContext,
+  CoreRouter,
+  CoreRuntime,
+  RuntimeFactory,
+} from "./runtime.js";
 import type {
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
@@ -46,16 +52,47 @@ export interface WorkspaceRow {
   manifest: string | null;
 }
 
-const retryActions: Record<Phase, RetryAction> = {
+const retryActions = {
   creating: "poll",
   ready: null,
   destroying: "poll",
   destroyed: "create",
   error: "destroy",
-};
+} satisfies Record<Phase, RetryAction>;
 
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
+const PHONE_HOME_REQUEST_FIELDS = Object.freeze([
+  "pub_key_ecdsa",
+  "pub_key_ed25519",
+  "pub_key_rsa",
+  "bootstrap_error",
+] as const);
+const PHONE_HOME_REQUEST_FIELD_SET: ReadonlySet<string> = new Set(
+  PHONE_HOME_REQUEST_FIELDS,
+);
+
+export interface PhoneHomeSuccessRequest {
+  kind: "success";
+  hostPublicKey: string;
+  canonicalKeys: string[];
+}
+
+export interface PhoneHomeFailureRequest {
+  kind: "failure";
+  message: string;
+  canonicalKeys: string[];
+}
+
+export type PhoneHomeRequest =
+  | PhoneHomeSuccessRequest
+  | PhoneHomeFailureRequest;
+
+export interface PhoneHomeResponse {
+  box_id: string;
+  access_token: string;
+  refresh_token: string;
+}
 
 function machineTypeIdForRow(row: WorkspaceRow): string {
   return row.machine_type_id === "unknown"
@@ -96,13 +133,21 @@ async function workspaceById(db: Db, id: string): Promise<WorkspaceRow | null> {
   });
 }
 
+function providerForVmId(runtime: CoreRuntime, vmId: string): VmProvider {
+  const provider = runtime.providers.vmRegistry.forVmId(vmId);
+  if (provider === undefined) {
+    throw new HttpError(409, `no VM provider owns VM ID ${vmId}`);
+  }
+  return provider;
+}
+
 function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const result: CreateWorkspaceRequest = {
     machineTypeId: requiredString(value.machineTypeId, "machineTypeId", 256),
   };
   if (value.sshPublicKey !== undefined) {
-    const sshPublicKey = typeof value.sshPublicKey === "string"
+    const sshPublicKey = isString(value.sshPublicKey)
       ? value.sshPublicKey.trim()
       : requiredString(value.sshPublicKey, "sshPublicKey");
     if (sshPublicKey !== "") {
@@ -120,7 +165,9 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     result.userData = requiredString(value.userData, "userData", 48 * 1024);
   }
   if (value.manifest !== undefined) {
-    result.manifest = parseManifest(value.manifest);
+    const manifest = parseManifest(value.manifest);
+    // SAFETY: This private parser receives JSON.parse output, so all retained ceiling values are JSON values; parseManifest checks each ceiling object and present scopes array.
+    result.manifest = manifest as typeof manifest & CreateWorkspaceRequest["manifest"];
   }
   return result;
 }
@@ -149,25 +196,66 @@ function providerOperationError(error: unknown): string {
   return detail === "" ? "provider operation failed" : `provider operation failed: ${detail}`;
 }
 
-function phoneHomeKeys(value: unknown): string[] {
-  if (!isRecord(value)) return [];
-  for (const field of ["hostPublicKeys", "host_public_keys", "ssh_host_public_keys"]) {
-    const candidate = value[field];
-    if (!Array.isArray(candidate)) continue;
-    const keys = candidate.filter(isSshPublicKey);
-    if (keys.length > 0) return keys;
-  }
-  return ["pub_key_ed25519", "pub_key_ecdsa", "pub_key_rsa", "pub_key_dsa"]
-    .map((field) => value[field])
-    .filter(isSshPublicKey);
+function canonicalFieldForLegacyHostKey(
+  hostKey: string,
+): "pub_key_ecdsa" | "pub_key_ed25519" | "pub_key_rsa" {
+  const algorithm = hostKey.trim().split(/\s+/u, 1)[0] ?? "";
+  if (algorithm.startsWith("ecdsa-")) return "pub_key_ecdsa";
+  if (algorithm === "ssh-rsa") return "pub_key_rsa";
+  return "pub_key_ed25519";
 }
 
-function bootstrapFailureMessage(value: unknown): string | null {
-  if (!isRecord(value) || !("bootstrap_error" in value)) return null;
-  if (typeof value.bootstrap_error !== "string" || value.bootstrap_error.length === 0) {
+function addLegacyHostKeys(
+  adapted: Record<string, unknown>,
+  candidate: unknown,
+): void {
+  if (!Array.isArray(candidate)) return;
+  for (const hostKey of candidate.filter(isSshPublicKey)) {
+    const field = canonicalFieldForLegacyHostKey(hostKey);
+    if (adapted[field] === undefined || adapted[field] === "") {
+      adapted[field] = hostKey;
+    }
+  }
+}
+
+function adaptLegacyPhoneHomeRequestForInFlightImages(value: unknown) {
+  if (!isRecord(value)) return value;
+  const adapted = { ...value };
+  let hasLegacyPayload = false;
+
+  // Old in-flight microVM images sent array aliases, pub_key_dsa, and workspace_id.
+  // Keep all legacy handling isolated here so canonical parsing stays v1-only.
+  for (const field of [
+    "hostPublicKeys",
+    "host_public_keys",
+    "ssh_host_public_keys",
+  ] as const) {
+    if (!(field in adapted)) continue;
+    hasLegacyPayload = true;
+    addLegacyHostKeys(adapted, adapted[field]);
+    delete adapted[field];
+  }
+  if ("pub_key_dsa" in adapted) {
+    hasLegacyPayload = true;
+    const dsaKey = adapted.pub_key_dsa;
+    if (
+      isSshPublicKey(dsaKey) &&
+      (adapted.pub_key_ed25519 === undefined || adapted.pub_key_ed25519 === "")
+    ) {
+      adapted.pub_key_ed25519 = dsaKey;
+    }
+    delete adapted.pub_key_dsa;
+  }
+  const isLegacyFailure = "workspace_id" in adapted && "bootstrap_error" in adapted;
+  if (hasLegacyPayload || isLegacyFailure) delete adapted.workspace_id;
+  return adapted;
+}
+
+function bootstrapFailureMessage(value: unknown): string {
+  if (!isString(value) || value.length === 0) {
     throw new HttpError(400, "bootstrap_error must be a non-empty string");
   }
-  const detail = value.bootstrap_error
+  const detail = value
     .replace(/[\s\u0000-\u001f\u007f-\u009f]+/gu, " ")
     .trim();
   if (detail === "") {
@@ -179,11 +267,78 @@ function bootstrapFailureMessage(value: unknown): string | null {
   );
 }
 
-async function readPhoneHome(context: CoreContext): Promise<unknown> {
-  const contentType = context.req.header("content-type") ?? "";
-  if (contentType.includes("application/json")) return readJson(context.req.raw);
-  const text = await readText(context.req.raw);
-  return Object.fromEntries(new URLSearchParams(text).entries());
+function parseCanonicalPhoneHomeRequest(value: unknown): PhoneHomeRequest {
+  if (!isRecord(value)) throw new HttpError(400, "phone-home body must be an object");
+  const canonicalKeys = Object.keys(value);
+  const unexpected = canonicalKeys.filter(
+    (field) => !PHONE_HOME_REQUEST_FIELD_SET.has(field),
+  );
+  if (unexpected.length > 0) {
+    throw new HttpError(400, `phone-home body has unexpected field ${unexpected[0]}`);
+  }
+  if ("bootstrap_error" in value) {
+    return {
+      kind: "failure",
+      message: bootstrapFailureMessage(value.bootstrap_error),
+      canonicalKeys,
+    };
+  }
+
+  const hostPublicKeys: string[] = [];
+  for (const field of ["pub_key_ed25519", "pub_key_ecdsa", "pub_key_rsa"] as const) {
+    const candidate = value[field];
+    if (candidate === undefined || candidate === "") continue;
+    if (!isSshPublicKey(candidate)) {
+      throw new HttpError(400, `${field} must be an SSH public key`);
+    }
+    hostPublicKeys.push(candidate.trim());
+  }
+  const hostPublicKey = hostPublicKeys[0];
+  if (hostPublicKey === undefined) {
+    throw new HttpError(400, "an SSH host public key is required");
+  }
+  return { kind: "success", hostPublicKey, canonicalKeys };
+}
+
+export function parsePhoneHomeRequest(
+  contentType: string,
+  body: string,
+): PhoneHomeRequest {
+  const mediaType = contentType.split(";", 1)[0]?.trim().toLowerCase();
+  let value: unknown;
+  if (mediaType === "application/json") {
+    try {
+      value = JSON.parse(body);
+    } catch {
+      throw new HttpError(400, "invalid JSON");
+    }
+  } else if (mediaType === "application/x-www-form-urlencoded") {
+    value = Object.fromEntries(new URLSearchParams(body).entries());
+  } else {
+    throw new HttpError(400, "phone-home content type must be application/json or application/x-www-form-urlencoded");
+  }
+  return parseCanonicalPhoneHomeRequest(
+    adaptLegacyPhoneHomeRequestForInFlightImages(value),
+  );
+}
+
+export function createPhoneHomeResponse(
+  boxId: string,
+  accessToken: string,
+  refreshToken: string,
+): PhoneHomeResponse {
+  return {
+    box_id: boxId,
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  };
+}
+
+async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
+  return parsePhoneHomeRequest(
+    context.req.header("content-type") ?? "",
+    await readText(context.req.raw),
+  );
 }
 
 export function addWorkspaceRoutes(
@@ -194,11 +349,21 @@ export function addWorkspaceRoutes(
   router.post("/workspaces", async (context) => {
     const principal = await requirePrincipal(context);
     const input = parseCreateWorkspace(await readJson(context.req.raw));
+    const runtime = runtimeFactory(context);
+    const vmProvider = runtime.providers.vmRegistry.forMachineType(
+      input.machineTypeId,
+    );
+    const providerCapabilities = vmProvider.capabilities();
+    if (input.volumeId !== undefined && !providerCapabilities.volumes) {
+      throw new HttpError(
+        400,
+        `machine type ${input.machineTypeId} does not support volumes`,
+      );
+    }
     const id = crypto.randomUUID();
     const capability = randomToken();
     const now = Date.now();
     const phoneHomeUrl = `${new URL(context.req.url).origin}/workspaces/${id}/phone-home/${capability}`;
-    const runtime = runtimeFactory(context);
     const userData = buildUserData(
       input.sshPublicKey,
       phoneHomeUrl,
@@ -207,8 +372,7 @@ export function addWorkspaceRoutes(
       runtime.vars.boxImageTag,
       runtime.vars.boxImageSha256,
     );
-    const maxUserDataBytes =
-      runtime.providers.vm.capabilities().maxUserDataBytes ?? null;
+    const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
     if (maxUserDataBytes !== null) {
       const encoder = new TextEncoder();
       const callerBytes = encoder.encode(input.userData ?? "").byteLength;
@@ -251,7 +415,7 @@ export function addWorkspaceRoutes(
     }
 
     try {
-      const vm = await runtime.providers.vm.createVm({
+      const vm = await vmProvider.createVm({
         workspaceId: id,
         machineTypeId: input.machineTypeId,
         sshPublicKey: input.sshPublicKey,
@@ -313,17 +477,18 @@ export function addWorkspaceRoutes(
     if (row === null || row.owner_id !== principal.id) {
       throw new HttpError(404, "workspace not found");
     }
-    if (!machineTypeIdForRow(row).startsWith("mv-")) {
-      throw new HttpError(400, "workspace is not backed by the microVM provider");
-    }
     if (row.vm_id === null) {
       throw new HttpError(409, "microVM workspace is not ready for surface access");
+    }
+    const provider = providerForVmId(runtime, row.vm_id);
+    if (provider.id !== "microvm") {
+      throw new HttpError(400, "workspace is not backed by the microVM provider");
     }
     const rawPort = context.req.param("port");
     if (rawPort !== "7444" && rawPort !== "7445") {
       throw new HttpError(400, "surface port must be 7444 or 7445");
     }
-    const port = Number(rawPort) as SurfacePort;
+    const port: SurfacePort = rawPort === "7444" ? 7444 : 7445;
     const requestURL = new URL(context.req.url);
     const routePrefix = `/workspaces/${encodeURIComponent(id)}/surface/${rawPort}`;
     if (!requestURL.pathname.startsWith(routePrefix)) {
@@ -331,7 +496,6 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
-    const provider = runtime.providers.vm;
     if (provider.proxySurface === undefined) {
       throw new HttpError(400, "microVM surface proxy is unavailable");
     }
@@ -370,6 +534,9 @@ export function addWorkspaceRoutes(
     if (row.phase === "destroyed") {
       return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) });
     }
+    const vmProvider = row.vm_id === null
+      ? undefined
+      : providerForVmId(runtime, row.vm_id);
 
     await rows(runtime.db, {
       q: `UPDATE workspaces
@@ -381,11 +548,13 @@ export function addWorkspaceRoutes(
     row = await workspaceById(runtime.db, id);
     if (row === null) throw new Error("workspace disappeared during destroy");
 
-    if (row.volume_id !== null && row.vm_id !== null) {
-      await runtime.providers.vm.shutdown(row.vm_id);
-      await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
+    if (row.vm_id !== null && vmProvider !== undefined) {
+      if (row.volume_id !== null) {
+        await vmProvider.shutdown(row.vm_id);
+        await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
+      }
+      await vmProvider.destroy(row.vm_id);
     }
-    if (row.vm_id !== null) await runtime.providers.vm.destroy(row.vm_id);
 
     await transaction(runtime.db, [
       revokeWorkspaceLeasesQuery(id),
@@ -421,8 +590,7 @@ export function addWorkspaceRoutes(
     }
     if (row.phase !== "creating") throw new HttpError(409, "workspace is not creating");
     const phoneHome = await readPhoneHome(context);
-    const bootstrapFailure = bootstrapFailureMessage(phoneHome);
-    if (bootstrapFailure !== null) {
+    if (phoneHome.kind === "failure") {
       const consumed = await rows(db, {
         q: `UPDATE workspaces
             SET phase = 'error', error = ?1, phone_home_used = 1,
@@ -430,7 +598,7 @@ export function addWorkspaceRoutes(
             WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0
               AND phone_home_hash = ?4
             RETURNING id`,
-        v: [bootstrapFailure, Date.now(), id, row.phone_home_hash],
+        v: [phoneHome.message, Date.now(), id, row.phone_home_hash],
       });
       if (consumed.length !== 1) {
         throw new HttpError(409, "phone_home capability already used");
@@ -441,10 +609,7 @@ export function addWorkspaceRoutes(
       throw new HttpError(409, "workspace provisioning is not recorded yet");
     }
 
-    const hostKey = phoneHomeKeys(phoneHome)[0];
-    if (hostKey === undefined) {
-      throw new HttpError(400, "an SSH host public key is required");
-    }
+    const hostKey = phoneHome.hostPublicKey;
     const credentials = await issueBoxTokens();
     const boxId = crypto.randomUUID();
     const now = Date.now();
@@ -481,13 +646,11 @@ export function addWorkspaceRoutes(
     if (results[2]?.length !== 1) {
       throw new HttpError(409, "phone_home capability already used");
     }
-    return context.json({
-      box_id: boxId,
-      access_token: credentials.accessToken,
-      refresh_token: credentials.refreshToken,
-      token_type: "Bearer",
-      expires_in: credentials.expiresIn,
-    });
+    return context.json<PhoneHomeResponse>(createPhoneHomeResponse(
+      boxId,
+      credentials.accessToken,
+      credentials.refreshToken,
+    ));
   });
 }
 

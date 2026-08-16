@@ -10,6 +10,7 @@ export function parseAppRoute(pathname: string): AppRoute {
     return {
       workspaceId: null,
       page: 'settings',
+      // SAFETY: The regular expression captures only profile, integrations, or requests in group 1.
       settingsSection: (settings[1] as SettingsSection | undefined) ?? 'profile',
     };
   }

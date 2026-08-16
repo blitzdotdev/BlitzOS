@@ -68,6 +68,7 @@ function send(socket: WebSocket, message: AnyMessage): Promise<void> {
 
 function isMessage(value: unknown): value is AnyMessage {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  // SAFETY: The preceding checks establish only a non-null, non-array object record; the remaining branches inspect the JSON-RPC fields.
   const record = value as Record<string, unknown>;
   if (record.jsonrpc !== "2.0") return false;
   const hasMethod = typeof record.method === "string";
@@ -79,7 +80,7 @@ function isMessage(value: unknown): value is AnyMessage {
   return true;
 }
 
-function validId(value: unknown): boolean {
+function validId(value: unknown): value is string | number {
   return typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 

@@ -35,9 +35,10 @@ export class ActorServer {
   public start(): Promise<AddressInfo> {
     return new Promise((resolve, reject) => {
       this.http.once("error", reject);
-      this.http.listen(this.port, this.host, () => {
-        this.http.off("error", reject);
-        resolve(this.http.address() as AddressInfo);
+        this.http.listen(this.port, this.host, () => {
+          this.http.off("error", reject);
+          // SAFETY: This callback runs after the explicitly configured TCP host/port listener has bound, so address() is an AddressInfo.
+          resolve(this.http.address() as AddressInfo);
       });
     });
   }

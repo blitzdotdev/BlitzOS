@@ -1,8 +1,10 @@
-import { isRecord } from "../http.js";
-import type { CreateVolumeRequest, MachineType, Volume } from "../wire.js";
+import { isNumber, isRecord, isString } from "../http.js";
+import type { CreateVolumeRequest, Volume } from "../wire.js";
+import { fetchBoundedJson } from "./json-fetch.js";
 import type {
   CreatedVm,
   CreateVmInput,
+  ProviderMachineType,
   ProviderCapabilities,
   VmInspection,
   VmProvider,
@@ -13,11 +15,37 @@ const API = "https://api.hetzner.cloud/v1";
 export const HETZNER_USER_DATA_MAX_BYTES = 32 * 1024;
 const SHUTDOWN_POLL_INTERVAL_MS = 1_000;
 const SHUTDOWN_TIMEOUT_MS = 45_000;
+// Current Hetzner server-type names (for example cx22, cpx31, and cax11)
+// are lowercase ASCII letters followed by decimal digits, with no dash.
+const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
+const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
 
 export interface HetznerProviderOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
 }
+
+interface MachineSelection {
+  type: string;
+  location: string | null;
+}
+
+interface CreateServerBody {
+  name: string;
+  server_type: string;
+  image: string;
+  user_data: string;
+  labels: {
+    "blitz-workspace": string;
+    "blitz-purpose": "workspace";
+  };
+  location?: string;
+}
+
+type HetznerRequestHeaders = {
+  Authorization: string;
+  "Content-Type"?: "application/json";
+};
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -43,9 +71,9 @@ function abortable<T>(
         signal.removeEventListener("abort", onAbort);
         resolve(value);
       },
-      (error: unknown) => {
+      (cause: unknown) => {
         signal.removeEventListener("abort", onAbort);
-        reject(error);
+        reject(cause);
       },
     );
   });
@@ -60,13 +88,13 @@ function records(value: unknown, field: string): Record<string, unknown>[] {
 
 function stringField(value: Record<string, unknown>, field: string): string {
   const result = value[field];
-  if (typeof result !== "string") throw new Error(`invalid Hetzner ${field}`);
+  if (!isString(result)) throw new Error(`invalid Hetzner ${field}`);
   return result;
 }
 
 function numberField(value: Record<string, unknown>, field: string): number {
   const result = value[field];
-  if (typeof result !== "number") throw new Error(`invalid Hetzner ${field}`);
+  if (!isNumber(result)) throw new Error(`invalid Hetzner ${field}`);
   return result;
 }
 
@@ -75,7 +103,7 @@ function isDeprecated(value: Record<string, unknown>): boolean {
 }
 
 function hetznerErrorMessage(value: unknown): string | null {
-  if (!isRecord(value) || !isRecord(value.error) || typeof value.error.message !== "string") {
+  if (!isRecord(value) || !isRecord(value.error) || !isString(value.error.message)) {
     return null;
   }
   const message = value.error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
@@ -99,7 +127,7 @@ function serverTypeIds(message: string): number[] {
   return [...new Set(ids)].slice(0, 8);
 }
 
-function machineId(value: string): { type: string; location: string | null } {
+function machineId(value: string): MachineSelection {
   const separator = value.lastIndexOf("@");
   if (separator === -1) return { type: value, location: null };
   return { type: value.slice(0, separator), location: value.slice(separator + 1) };
@@ -112,12 +140,13 @@ function volumeFromHetzner(value: Record<string, unknown>): Volume {
     name: stringField(value, "name"),
     sizeGb: numberField(value, "size"),
     location: isRecord(value.location) ? stringField(value.location, "name") : "",
-    status: typeof server === "number" ? "attached" : "available",
-    attachedTo: typeof server === "number" ? String(server) : null,
+    status: isNumber(server) ? "attached" : "available",
+    attachedTo: isNumber(server) ? String(server) : null,
   };
 }
 
 export class HetznerProvider implements VmProvider, VolumeProvider {
+  readonly id = "hetzner";
   private readonly serverTypeNames = new Map<number, string>();
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
@@ -134,26 +163,39 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     return { volumes: true, maxUserDataBytes: HETZNER_USER_DATA_MAX_BYTES };
   }
 
+  ownsMachineType(machineTypeId: string): boolean {
+    const selected = machineId(machineTypeId);
+    return SERVER_TYPE_NAME_PATTERN.test(selected.type)
+      && (selected.location === null || LOCATION_NAME_PATTERN.test(selected.location));
+  }
+
+  ownsVmId(vmId: string): boolean {
+    return /^\d+$/u.test(vmId);
+  }
+
   private async request(
     path: string,
     init?: RequestInit,
     notFoundIsNull = false,
   ): Promise<unknown> {
-    const response = await fetch(`${API}${path}`, {
+    const headers: HetznerRequestHeaders = {
+      Authorization: `Bearer ${this.token}`,
+    };
+    if (init?.body !== undefined) headers["Content-Type"] = "application/json";
+    const { response, body } = await fetchBoundedJson(fetch, `${API}${path}`, {
       ...init,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
-      },
+      headers,
+    }, {
+      responseLabel: "Hetzner",
+      bodyDisposition: (candidate) =>
+        candidate.status === 204 || (candidate.status === 404 && notFoundIsNull)
+          ? "omit"
+          : "read",
+      invalidJsonDisposition: (candidate) => candidate.ok ? "native-error" : "null",
     });
     if (response.status === 404 && notFoundIsNull) return null;
     if (!response.ok) {
-      let message: string | null = null;
-      try {
-        message = hetznerErrorMessage(await response.json<unknown>());
-      } catch {
-        // Fall back to the status-only error below for malformed provider responses.
-      }
+      const message = hetznerErrorMessage(body);
       if (message === null) {
         throw new Error(`Hetzner API request failed with status ${response.status}`);
       }
@@ -161,7 +203,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       throw new Error(annotateServerTypeIds(message, this.serverTypeNames));
     }
     if (response.status === 204) return null;
-    return response.json<unknown>();
+    return body;
   }
 
   private async resolveServerTypeNames(message: string): Promise<void> {
@@ -179,7 +221,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
           const name = value.server_type.name;
           if (
             responseId === id &&
-            typeof name === "string" &&
+            isString(name) &&
             /^[a-z0-9-]{1,128}$/iu.test(name)
           ) {
             this.serverTypeNames.set(id, name);
@@ -201,7 +243,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
         isRecord(value) &&
         isRecord(value.meta) &&
         isRecord(value.meta.pagination) &&
-        typeof value.meta.pagination.next_page === "number"
+        isNumber(value.meta.pagination.next_page)
           ? value.meta.pagination.next_page
           : null;
       if (nextPage === null) return result;
@@ -209,12 +251,12 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     }
   }
 
-  async listMachineTypes(): Promise<MachineType[]> {
+  async listMachineTypes(): Promise<ProviderMachineType[]> {
     const types = await this.list("/server_types", "server_types");
     for (const type of types) {
       const id = type.id;
       const name = type.name;
-      if (typeof id === "number" && Number.isSafeInteger(id) && typeof name === "string") {
+      if (isNumber(id) && Number.isSafeInteger(id) && isString(name)) {
         this.serverTypeNames.set(id, name);
       }
     }
@@ -237,14 +279,14 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
           diskGb: numberField(type, "disk"),
           arch: architecture === "arm" ? "arm64" : "x86",
           location: locationName,
-        } satisfies MachineType;
+        } satisfies ProviderMachineType;
       });
     });
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
     const selected = machineId(input.machineTypeId);
-    const body: Record<string, unknown> = {
+    const body: CreateServerBody = {
       name: `blitz-${input.workspaceId.slice(0, 12)}`,
       server_type: selected.type,
       image: "ubuntu-24.04",
@@ -264,7 +306,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     const ipv4 =
       isRecord(server.public_net) &&
       isRecord(server.public_net.ipv4) &&
-      typeof server.public_net.ipv4.ip === "string"
+      isString(server.public_net.ipv4.ip)
         ? server.public_net.ipv4.ip
         : null;
     if (ipv4 === null) throw new Error("Hetzner server has no public IPv4 address");
@@ -332,7 +374,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     const ipv4 =
       isRecord(server.public_net) &&
       isRecord(server.public_net.ipv4) &&
-      typeof server.public_net.ipv4.ip === "string"
+      isString(server.public_net.ipv4.ip)
         ? server.public_net.ipv4.ip
         : null;
     if (ipv4 === null) throw new Error("Hetzner server has no public IPv4 address");

@@ -1,7 +1,7 @@
 import { hashSecret, matchesStoredHash } from "../crypto.js";
 import type { Db } from "../db.js";
 import { first } from "../db.js";
-import { isRecord } from "../http.js";
+import { isRecord, isString } from "../http.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { openRoot } from "./root-crypto.js";
 
@@ -91,11 +91,11 @@ function parseProxyConfig(value: string): ProxyConfig | null {
     const tokenHeader = config.proxy.token_header ?? "Authorization";
     const tokenPrefix = config.proxy.token_prefix ?? "Bearer ";
     if (
-      typeof baseUrl !== "string" ||
+      !isString(baseUrl) ||
       new URL(baseUrl).protocol !== "https:" ||
-      typeof tokenHeader !== "string" ||
+      !isString(tokenHeader) ||
       tokenHeader.length === 0 ||
-      typeof tokenPrefix !== "string"
+      !isString(tokenPrefix)
     ) {
       return null;
     }

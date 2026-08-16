@@ -1,5 +1,6 @@
 import type { Agent, TerminalAgent } from './protocol';
 import { isPreviewPort } from './preview';
+import { hasObjectType, isBoolean, isNumber, isString } from './type-guards';
 
 const UI_STORAGE_KEY = 'blitz-cockpit-ui-v1';
 const TABS_KEY_PREFIX = 'blitz-cockpit-tabs-v1:';
@@ -19,7 +20,12 @@ function storedViewModeKey(key: string): string {
   return key.toLowerCase().replace(/[-_]/gu, '');
 }
 
-function normalizeStoredViewModes(value: unknown): { value: unknown; migrated: boolean } {
+interface NormalizedStoredViewModes {
+  value: unknown;
+  migrated: boolean;
+}
+
+function normalizeStoredViewModes(value: unknown): NormalizedStoredViewModes {
   if (Array.isArray(value)) {
     let migrated = false;
     const normalized = value.map((entry) => {
@@ -29,7 +35,7 @@ function normalizeStoredViewModes(value: unknown): { value: unknown; migrated: b
     });
     return { value: migrated ? normalized : value, migrated };
   }
-  if (!value || typeof value !== 'object') return { value, migrated: false };
+  if (!value || !hasObjectType(value)) return { value, migrated: false };
 
   let migrated = false;
   const normalized = Object.fromEntries(Object.entries(value).map(([key, entry]) => {
@@ -86,8 +92,8 @@ function chatAuthDismissalsStorageKey(
   return `${namespacePrefix(namespace)}${CHAT_AUTH_DISMISSALS_KEY_PREFIX}${workspaceId}`;
 }
 
-function isSafeRelativePath(value: unknown): value is string {
-  return typeof value === 'string'
+function isSafeRelativePath<Value>(value: Value): value is Value & string {
+  return isString(value)
     && value.length > 0
     && !value.startsWith('/')
     && !value.split('/').includes('..');
@@ -97,6 +103,17 @@ export type WorkspacePreference = {
   title?: string;
   agentDefault?: Agent;
 };
+
+export function storedWorkspacePreference(
+  title: string,
+  serverName: string,
+  agentDefault: Agent,
+): WorkspacePreference {
+  const preference: WorkspacePreference = {};
+  if (title !== serverName) preference.title = title;
+  preference.agentDefault = agentDefault;
+  return preference;
+}
 
 export type UiPreferences = {
   version: 1;
@@ -123,6 +140,13 @@ export type WorkspaceTab = {
   type: 'preview';
   port: number;
 };
+
+interface RestoredSessionTab {
+  id: number;
+  type: TerminalAgent | 'terminal' | 'chat';
+  chatSessionId?: string;
+  chatProvider?: Agent;
+}
 
 export type WorkspaceTabs = {
   version: 1;
@@ -175,14 +199,15 @@ export function loadUiPreferences(
   storage: StorageBackend = localStorage,
 ): UiPreferences {
   try {
+    // SAFETY: loadStoredJson returns parsed storage data without shape validation. TODO(deslop-tier-c): validate the full UiPreferences object, including nested workspace metadata, before use.
     const value = loadStoredJson(storage, uiStorageKey(namespace), '') as Partial<UiPreferences>;
     if (value.version !== 1) return defaultUiPreferences();
     return {
       version: 1,
-      activeWorkspaceId: typeof value.activeWorkspaceId === 'string' ? value.activeWorkspaceId : '',
+      activeWorkspaceId: isString(value.activeWorkspaceId) ? value.activeWorkspaceId : '',
       railWidth: Math.max(190, Math.min(600, Number(value.railWidth) || 240)),
-      order: Array.isArray(value.order) ? value.order.filter((id): id is string => typeof id === 'string') : [],
-      workspaces: value.workspaces && typeof value.workspaces === 'object' ? value.workspaces : {},
+      order: Array.isArray(value.order) ? value.order.filter((id): id is string => isString(id)) : [],
+      workspaces: value.workspaces && hasObjectType(value.workspaces) ? value.workspaces : {},
     };
   } catch {
     return defaultUiPreferences();
@@ -208,9 +233,11 @@ export function loadWorkspaceTabs(
       return defaultWorkspaceTabs();
     }
     const seen = new Set<number>();
+    // SAFETY: Array.isArray establishes an array container; each external entry remains validated by the mapping body.
     const tabs: WorkspaceTab[] = (value.tabs as unknown[]).flatMap(
       (entry: unknown): WorkspaceTab[] => {
-        if (!entry || typeof entry !== 'object') return [];
+        if (!entry || !hasObjectType(entry)) return [];
+        // SAFETY: The preceding check establishes a non-null object; consumed tab fields are checked below.
         const tab = entry as Partial<WorkspaceTab>;
         const type = String(tab.type);
         if (
@@ -238,27 +265,34 @@ export function loadWorkspaceTabs(
         const port = 'port' in tab ? tab.port : undefined;
         if (
           type === 'preview'
-          && (typeof port !== 'number' || !isPreviewPort(port))
+          && (!isNumber(port) || !isPreviewPort(port))
         ) return [];
         const id = Number(tab.id);
         seen.add(id);
         if (type === 'file') {
+          // SAFETY: The file branch above requires filePath to be a string.
           return [{ id, type: 'file', filePath: filePath as string }];
         }
         if (type === 'preview') {
+          // SAFETY: The preview branch above requires port to be a valid numeric preview port.
           return [{ id, type: 'preview', port: port as number }];
         }
-        return [{
+        const restored: RestoredSessionTab = {
           id,
+          // SAFETY: The accepted-type check above limits type to terminal, chat, claude, or codex.
           type: type as TerminalAgent | 'terminal' | 'chat',
-          ...(type === 'chat' && 'chatSessionId' in tab && typeof tab.chatSessionId === 'string'
-            ? { chatSessionId: tab.chatSessionId }
-            : {}),
-          ...(type === 'chat' && 'chatProvider' in tab
-            && (tab.chatProvider === 'claude' || tab.chatProvider === 'codex')
-            ? { chatProvider: tab.chatProvider }
-            : {}),
-        } as WorkspaceTab];
+        };
+        if (type === 'chat' && 'chatSessionId' in tab && isString(tab.chatSessionId)) {
+          restored.chatSessionId = tab.chatSessionId;
+        }
+        if (
+          type === 'chat' && 'chatProvider' in tab
+          && (tab.chatProvider === 'claude' || tab.chatProvider === 'codex')
+        ) {
+          restored.chatProvider = tab.chatProvider;
+        }
+        // SAFETY: The accepted-type and chat-only optional-field checks above establish a WorkspaceTab variant.
+        return [restored as WorkspaceTab];
       },
     );
     if (tabs.length === 0) return defaultWorkspaceTabs();
@@ -302,13 +336,14 @@ export function loadWorkspaceFiles(
   storage: StorageBackend = localStorage,
 ): WorkspaceFiles {
   try {
+    // SAFETY: JSON parsing establishes valid JSON only; the partial WorkspaceFiles fields are normalized below.
     const value = JSON.parse(
       storage.getItem(filesStorageKey(namespace, workspaceId)) ?? 'null',
     ) as Partial<WorkspaceFiles> | null;
     if (!value || value.version !== 1) return defaultWorkspaceFiles();
     return {
       version: 1,
-      open: typeof value.open === 'boolean' ? value.open : true,
+      open: isBoolean(value.open) ? value.open : true,
       width: Math.max(200, Math.min(480, Number(value.width) || 264)),
       expanded: Array.isArray(value.expanded)
         ? [...new Set(value.expanded.filter(isSafeRelativePath))]
@@ -345,6 +380,7 @@ export function loadDismissedChatAuthProviders(
   storage: StorageBackend = localStorage,
 ): Agent[] {
   try {
+    // SAFETY: JSON parsing establishes valid JSON only; version and providers are checked before use.
     const value = JSON.parse(
       storage.getItem(chatAuthDismissalsStorageKey(namespace, workspaceId)) ?? 'null',
     ) as { version?: unknown; providers?: unknown } | null;

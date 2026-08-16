@@ -53,13 +53,18 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     if (!response.ok) {
       let error: ApiError = { error: `Request failed (${response.status})`, retryAction: null };
       try {
+        // SAFETY: response.json establishes JSON only; ApiError fields are not checked. TODO(deslop-tier-c): validate the error envelope before replacing the status-derived fallback.
         error = (await response.json()) as ApiError;
       } catch {
         // The status is still authoritative when an intermediary returns non-JSON.
       }
       throw new ApiRequestError(error.error, response.status, error.retryAction ?? null);
     }
-    if (response.status === 204) return undefined as T;
+    if (response.status === 204) {
+      // SAFETY: Callers are expected to request void for 204 endpoints, but the generic is not constrained here. TODO(deslop-tier-c): encode no-content endpoints so T must be void.
+      return undefined as T;
+    }
+    // SAFETY: Successful JSON is delegated to caller-selected T without validation. TODO(deslop-tier-c): decode each endpoint response into its declared domain type.
     return (await response.json()) as T;
   }
 

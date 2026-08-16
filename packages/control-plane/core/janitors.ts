@@ -40,12 +40,21 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
   let destroyed = 0;
   for (const row of result) {
     if (row.vm_id === null) continue;
+    const provider = runtime.providers.vmRegistry.forVmId(row.vm_id);
+    if (provider === undefined) {
+      console.error(JSON.stringify({
+        message: "orphan sweep skipped VM with no owning provider",
+        workspaceId: row.id,
+        vmId: row.vm_id,
+      }));
+      continue;
+    }
     if (row.volume_id !== null) {
-      await runtime.providers.vm.shutdown(row.vm_id);
+      await provider.shutdown(row.vm_id);
       await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
     }
-    if ((await runtime.providers.vm.inspect(row.vm_id)) !== null) {
-      await runtime.providers.vm.destroy(row.vm_id);
+    if ((await provider.inspect(row.vm_id)) !== null) {
+      await provider.destroy(row.vm_id);
     }
     if (row.phase === "destroying") {
       const transition = await transaction(runtime.db, [

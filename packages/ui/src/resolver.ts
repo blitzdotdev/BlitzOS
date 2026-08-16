@@ -17,9 +17,10 @@ export interface StandalonePorts {
 }
 
 export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
+const LEGACY_MICROVM_MACHINE_TYPE_PREFIX = "mv-";
 
 export function isMicrovmWorkspace(workspace: WorkspaceView): boolean {
-  return workspace.machineTypeId.startsWith("mv-");
+  return workspace.machineTypeId.startsWith(LEGACY_MICROVM_MACHINE_TYPE_PREFIX);
 }
 
 export function standaloneResolver(

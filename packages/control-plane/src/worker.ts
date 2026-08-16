@@ -2,7 +2,6 @@ import type { DatabaseSettings } from "teenybase";
 import type { $Env } from "teenybase/worker";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import {
-  CompositeVmProvider,
   credentialMasterKeyFor,
   createOperatorPrincipalSource,
   HetznerProvider,
@@ -15,6 +14,7 @@ import {
   runOrphanSweep,
   runSessionSweep,
   sessionTtlMsFromEnv,
+  VmProviderRegistry,
   type BlobStore,
   type CoreContext,
   type CoreRouter,
@@ -44,12 +44,13 @@ type WorkerEnv = $Env<WorkerBindings> & {
 
 interface TargetContext {
   readonly env: WorkerBindings;
-  get(name: string): unknown;
+  get(name: string): Db | CryptoKey | undefined;
   readonly executionCtx: { waitUntil(promise: Promise<unknown>): void };
 }
 
 function dynamicBinding(env: WorkerBindings, name: string): unknown {
-  return Reflect.get(env, name);
+  // SAFETY: The key assertion only enables ordinary bracket lookup; a missing binding still yields undefined and is rejected by the token resolver.
+  return env[name as keyof WorkerBindings];
 }
 
 function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
@@ -60,7 +61,7 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
     { db },
   );
   return {
-    vm: new CompositeVmProvider(hetzner, microvm),
+    vmRegistry: new VmProviderRegistry([hetzner, microvm]),
     volume: hetzner,
     microvm,
   };
@@ -69,11 +70,15 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
 function runtimeFor(context: CoreContext): CoreRuntime;
 function runtimeFor(context: TargetContext): CoreRuntime;
 function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
+  // SAFETY: Both routed Hono context variants carry the declared WorkerBindings environment.
   const env = context.env as WorkerBindings;
+  // SAFETY: The database middleware installs a Db instance under $db before routed handlers run.
   const db = context.get("$db") as Db;
   return {
     db,
+    // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
+    // SAFETY: Authentication middleware installs the imported CryptoKey under $credentialMasterKey.
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
@@ -99,6 +104,7 @@ function runtimeForScheduled(
   const providers = providersFor(env, db);
   return {
     db,
+    // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
     credentialMasterKey,
     vars: {
@@ -133,7 +139,8 @@ const app = teenyHono<WorkerEnv>(
   },
 );
 
-installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
+// SAFETY: The Hono app and CoreRouter expose the same route-registration methods consumed by installControlPlaneRoutes.
+installControlPlaneRoutes(app as typeof app & CoreRouter, runtimeFor);
 
 export default {
   fetch(
@@ -151,7 +158,7 @@ export default {
     const db = new $DatabaseRawImpl(env.DB);
     executionContext.waitUntil(
       (async () => {
-        const runtime = runtimeForScheduled(
+        const runtime =  runtimeForScheduled(
           env,
           db,
           executionContext,

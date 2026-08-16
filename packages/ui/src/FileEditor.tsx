@@ -12,6 +12,7 @@ import type {
   WebDAVClient,
 } from 'webdav';
 import { FileIcon } from './CockpitIcons';
+import { hasObjectType, isString } from './type-guards';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { CockpitLoadingPane } from './LoadingSkeleton';
 import {
@@ -76,10 +77,10 @@ function fileStat(result: FileStat | ResponseDataDetailed<FileStat>): FileStat {
 function fileBytes(
   result: BufferLike | string | ResponseDataDetailed<BufferLike | string>,
 ): Uint8Array {
-  const value = typeof result === 'object' && result !== null && 'data' in result
+  const value = hasObjectType(result) && result !== null && 'data' in result
     ? result.data
     : result;
-  if (typeof value === 'string') return new TextEncoder().encode(value);
+  if (isString(value)) return new TextEncoder().encode(value);
   if (ArrayBuffer.isView(value)) {
     return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
   }
@@ -89,14 +90,14 @@ function fileBytes(
 function detailedEtag(
   result: BufferLike | string | ResponseDataDetailed<BufferLike | string>,
 ): string | null {
-  if (typeof result !== 'object' || result === null || !('data' in result)) return null;
+  if (!hasObjectType(result) || result === null || !('data' in result)) return null;
   const etag = Object.entries(result.headers)
     .find(([name]) => name.toLowerCase() === 'etag')?.[1];
-  return typeof etag === 'string' && etag.length > 0 ? etag : null;
+  return isString(etag) && etag.length > 0 ? etag : null;
 }
 
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError';
+function isAbortError(cause: unknown): boolean {
+  return cause instanceof Error && cause.name === 'AbortError';
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -201,8 +202,8 @@ export function FileEditor({
     onDirtyChange(dirty);
   }, [onDirtyChange]);
 
-  const handleFailure = useCallback((failure: unknown, message: string) => {
-    const status = davErrorStatus(failure);
+  const handleFailure = useCallback((cause: unknown, message: string) => {
+    const status = davErrorStatus(cause);
     if (status === 401) {
       onUnauthorized();
       return status;
@@ -211,7 +212,7 @@ export function FileEditor({
       setNotice('You do not have permission to edit this file.');
       return status;
     }
-    setError(failure instanceof Error ? failure.message : message);
+    setError(cause instanceof Error ? cause.message : message);
     return status;
   }, [onUnauthorized]);
 

@@ -18,11 +18,14 @@
     "packages/ui"
   ],
   "scripts": {
+    "lint": "oxlint .",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present && node --test packages/microvm-host/guest/blitz-microvm-enroll.test.js"
   },
   "devDependencies": {
-    "jsdom": "29.0.0"
+    "@oxlint/plugins": "^1.78.0",
+    "jsdom": "29.0.0",
+    "oxlint": "^1.78.0"
   },
   "optionalDependencies": {
     "@typescript/typescript-darwin-arm64": "7.0.2"

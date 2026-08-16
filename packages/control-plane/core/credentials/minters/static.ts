@@ -1,5 +1,5 @@
 import { hashSecret, randomToken } from "../../crypto.js";
-import { HttpError, isRecord } from "../../http.js";
+import { HttpError, isNumber, isRecord, isString } from "../../http.js";
 import type {
   Integration,
   Minter,
@@ -28,7 +28,7 @@ function staticPlacements(
     if (!isRecord(placement)) throw new Error("static placement is invalid");
     if (
       placement.kind === "env" &&
-      typeof placement.name === "string" &&
+      isString(placement.name) &&
       placement.name.length > 0 &&
       (placement.fill === undefined ||
         placement.fill === "token" ||
@@ -42,27 +42,28 @@ function staticPlacements(
     }
     if (
       placement.kind === "file" &&
-      typeof placement.path === "string" &&
+      isString(placement.path) &&
       placement.path.length > 0 &&
       (placement.mode === undefined ||
         (Number.isSafeInteger(placement.mode) &&
-          typeof placement.mode === "number" &&
+          isNumber(placement.mode) &&
           placement.mode >= 0 &&
           placement.mode <= 0o777)) &&
       (placement.fill === undefined ||
         placement.fill === "token" ||
         placement.fill === "proxy-url")
     ) {
-      return {
+      const result: Placement = {
         kind: "file",
         path: placement.path,
         value: placement.fill === "proxy-url" ? proxyUrl : token,
-        ...(placement.mode === undefined ? {} : { mode: placement.mode }),
       };
+      if (placement.mode !== undefined) result.mode = placement.mode;
+      return result;
     }
     if (
       placement.kind === "unset-env" &&
-      typeof placement.name === "string" &&
+      isString(placement.name) &&
       placement.name.length > 0
     ) {
       return { kind: "unset-env", name: placement.name };

@@ -1,0 +1,11 @@
+{
+  "contentType": "application/json",
+  "body": {
+    "pub_key_ed25519": "ssh-ed25519 AAAAed25519",
+    "workspace_id": "new-producer-must-not-send-this"
+  },
+  "expect": {
+    "valid": false,
+    "reason": "unknown canonical key"
+  }
+}

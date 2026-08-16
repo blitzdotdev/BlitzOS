@@ -3,7 +3,9 @@ import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import {
   HttpError,
+  isNumber,
   isRecord,
+  isString,
   readJson,
   requiredString,
 } from "../http.js";
@@ -19,6 +21,55 @@ import { staticMinter } from "./minters/static.js";
 
 const minters: readonly Minter[] = [githubAppMinter, staticMinter];
 
+type PlacementFill = "token" | "proxy-url";
+
+interface EnvPlacementTemplate {
+  kind: "env";
+  name: string;
+  fill?: PlacementFill;
+}
+
+interface FilePlacementTemplate {
+  kind: "file";
+  path: string;
+  mode?: number;
+  fill?: PlacementFill;
+}
+
+interface UnsetEnvPlacementTemplate {
+  kind: "unset-env";
+  name: string;
+}
+
+type ParsedPlacementTemplate =
+  | EnvPlacementTemplate
+  | FilePlacementTemplate
+  | UnsetEnvPlacementTemplate;
+
+interface ParsedProxyConfig {
+  base_url: string;
+  token_header: string;
+  token_prefix: string;
+}
+
+interface ParsedStaticConfig {
+  placements: ParsedPlacementTemplate[];
+  default_scopes?: string[];
+  proxy?: ParsedProxyConfig;
+}
+
+interface ParsedStringMap {
+  [key: string]: string;
+}
+
+interface ParsedAppJwtConfig {
+  app_id: string;
+  installation_id: string;
+  placements?: ParsedPlacementTemplate[];
+  repositories?: string[];
+  permissions?: ParsedStringMap;
+}
+
 function isMintKind(value: unknown): value is MintKind {
   return value === "app-jwt" || value === "oauth" || value === "static";
 }
@@ -30,7 +81,7 @@ function isCustody(value: unknown): value is Custody {
 function stringArray(value: unknown, field: string): string[] {
   if (
     !Array.isArray(value) ||
-    !value.every((item) => typeof item === "string" && item.length > 0)
+    !value.every((item) => isString(item) && item.length > 0)
   ) {
     throw new HttpError(400, `${field} must be an array of non-empty strings`);
   }
@@ -40,10 +91,10 @@ function stringArray(value: unknown, field: string): string[] {
 function placementTemplate(
   value: unknown,
   allowStaticFill = false,
-): Record<string, unknown> {
+): ParsedPlacementTemplate {
   if (!isRecord(value)) throw new HttpError(400, "each placement must be an object");
   if (value.kind === "env") {
-    const result: Record<string, unknown> = {
+    const result: EnvPlacementTemplate = {
       kind: "env",
       name: requiredString(value.name, "placement.name", 256),
     };
@@ -56,13 +107,13 @@ function placementTemplate(
     return result;
   }
   if (value.kind === "file") {
-    const result: Record<string, unknown> = {
+    const result: FilePlacementTemplate = {
       kind: "file",
       path: requiredString(value.path, "placement.path", 4_096),
     };
     if (value.mode !== undefined) {
       if (
-        typeof value.mode !== "number" ||
+        !isNumber(value.mode) ||
         !Number.isSafeInteger(value.mode) ||
         value.mode < 0 ||
         value.mode > 0o777
@@ -91,7 +142,7 @@ function placementTemplate(
   throw new HttpError(400, "placement.kind must be env, file, or unset-env");
 }
 
-function proxyConfig(value: unknown): Record<string, string> {
+function proxyConfig(value: unknown): ParsedProxyConfig {
   if (!isRecord(value)) throw new HttpError(400, "config.proxy must be an object");
   const baseUrl = requiredString(value.base_url, "config.proxy.base_url", 4_096);
   try {
@@ -100,11 +151,11 @@ function proxyConfig(value: unknown): Record<string, string> {
     throw new HttpError(400, "config.proxy.base_url must be an https URL");
   }
   const tokenHeader = value.token_header ?? "Authorization";
-  if (typeof tokenHeader !== "string" || tokenHeader.length === 0) {
+  if (!isString(tokenHeader) || tokenHeader.length === 0) {
     throw new HttpError(400, "config.proxy.token_header must be a non-empty string");
   }
   const tokenPrefix = value.token_prefix ?? "Bearer ";
-  if (typeof tokenPrefix !== "string" || tokenPrefix.length > 4_096) {
+  if (!isString(tokenPrefix) || tokenPrefix.length > 4_096) {
     throw new HttpError(400, "config.proxy.token_prefix must be a string");
   }
   try {
@@ -125,7 +176,7 @@ function staticConfigJson(value: unknown, custody: Custody): string {
   if (!Array.isArray(value.placements)) {
     throw new HttpError(400, "config.placements must be an array");
   }
-  const config: Record<string, unknown> = {
+  const config: ParsedStaticConfig = {
     placements: value.placements.map((placement) =>
       placementTemplate(placement, true)
     ),
@@ -142,7 +193,7 @@ function staticConfigJson(value: unknown, custody: Custody): string {
 
 function digitString(value: unknown, field: string): string {
   if (
-    typeof value !== "string" ||
+    !isString(value) ||
     value.length === 0 ||
     value.length > 256 ||
     !/^\d+$/u.test(value)
@@ -152,13 +203,13 @@ function digitString(value: unknown, field: string): string {
   return value;
 }
 
-function stringMap(value: unknown, field: string): Record<string, string> {
+function stringMap(value: unknown, field: string): ParsedStringMap {
   if (!isRecord(value)) {
     throw new HttpError(400, `${field} must be an object of non-empty strings`);
   }
-  const result: Record<string, string> = {};
+  const result: ParsedStringMap = {};
   for (const [key, item] of Object.entries(value)) {
-    if (key.length === 0 || typeof item !== "string" || item.length === 0) {
+    if (key.length === 0 || !isString(item) || item.length === 0) {
       throw new HttpError(400, `${field} must be an object of non-empty strings`);
     }
     result[key] = item;
@@ -168,7 +219,7 @@ function stringMap(value: unknown, field: string): Record<string, string> {
 
 function appJwtConfigJson(value: unknown): string {
   if (!isRecord(value)) throw new HttpError(400, "config must be an object");
-  const config: Record<string, unknown> = {
+  const config: ParsedAppJwtConfig = {
     app_id: digitString(value.app_id, "config.app_id"),
     installation_id: digitString(value.installation_id, "config.installation_id"),
   };

@@ -39,18 +39,18 @@ const server = http.createServer((req, res) => {
     const body = Buffer.concat(chunks).toString('utf8');
     if ((req.headers['content-type'] || '').startsWith('application/x-www-form-urlencoded')) {
       const form = new URLSearchParams(body);
-      record({status: 'bootstrap_error', path: req.url, workspace_id: form.get('workspace_id') || '', has_error: form.has('bootstrap_error')});
+      record({status: 'bootstrap_error', path: req.url, has_error: form.has('bootstrap_error')});
       res.writeHead(204).end();
       return;
     }
     try {
       const payload = JSON.parse(body);
-      const keys = Array.isArray(payload.host_public_keys) ? payload.host_public_keys : [];
-      if (keys.length === 0 || keys.some((key) => typeof key !== 'string' || !key.startsWith('ssh-'))) {
+      const keys = [payload.pub_key_ed25519, payload.pub_key_ecdsa, payload.pub_key_rsa].filter(Boolean);
+      if (keys.length === 0 || keys.some((key) => typeof key !== 'string' || !/^(?:ssh-|ecdsa-|sk-)/.test(key))) {
         throw new Error('missing host public keys');
       }
       record({
-        status: 'enrolled', path: req.url, workspace_id: payload.workspace_id || '',
+        status: 'enrolled', path: req.url,
         key_count: keys.length, key_algorithms: keys.map((key) => key.split(' ', 1)[0]),
       });
       res.writeHead(200, {'content-type': 'application/json'});

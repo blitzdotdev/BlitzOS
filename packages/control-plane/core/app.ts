@@ -35,9 +35,9 @@ export function installControlPlaneRoutes(
 
   router.get("/machine-types", async (context) => {
     await requirePrincipal(context);
-    return context.json({
-      machineTypes: await runtimeFactory(context).providers.vm.listMachineTypes(),
-    });
+    return context.json(
+      await runtimeFactory(context).providers.vmRegistry.listMachineTypes(),
+    );
   });
 
   router.notFound((context) =>

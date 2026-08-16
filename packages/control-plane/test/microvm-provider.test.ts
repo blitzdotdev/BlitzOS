@@ -1,9 +1,9 @@
-import type { MachineType, WorkspaceView } from "@blitzos/schema";
+import type { WorkspaceView } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { $DatabaseRawImpl } from "teenybase/worker";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../core/db.js";
-import { CompositeVmProvider } from "../core/providers/composite.js";
+import { VmProviderRegistry } from "../core/providers/registry.js";
 import {
   MicrovmPoolProvider,
   parseMicrovmHosts,
@@ -12,6 +12,7 @@ import {
 import type {
   CreatedVm,
   CreateVmInput,
+  ProviderMachineType,
   VmInspection,
   VmProvider,
 } from "../core/providers/types.js";
@@ -19,6 +20,7 @@ import {
   FakeProviders,
   appRequest,
   appWithProviders,
+  appWithVmProviders,
   operatorSession,
   resetDatabase,
 } from "./helpers.js";
@@ -91,13 +93,22 @@ function agentVm(vmId = "vm-1-abcdef123456") {
 }
 
 class RecordingVmProvider implements VmProvider {
+  readonly id = "hetzner";
   readonly calls: string[] = [];
 
   capabilities() {
     return { volumes: true, maxUserDataBytes: 32 * 1_024 };
   }
 
-  async listMachineTypes(): Promise<MachineType[]> {
+  ownsMachineType(machineTypeId: string): boolean {
+    return /^cx\d+@/u.test(machineTypeId);
+  }
+
+  ownsVmId(vmId: string): boolean {
+    return /^\d+$/u.test(vmId);
+  }
+
+  async listMachineTypes(): Promise<ProviderMachineType[]> {
     this.calls.push("list");
     return [{
       id: "cx23@fsn1",
@@ -349,9 +360,12 @@ describe("microVM pool provider", () => {
   it("lists only recognized sizes fitting each live authenticated host capacity", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
-      expect(init?.headers).toMatchObject({
-        Authorization: url.includes("edge.example") ? `Bearer ${EDGE_TOKEN}` : `Bearer ${LAB_TOKEN}`,
-      });
+      const authorization = url.includes("edge.example") ? `Bearer ${EDGE_TOKEN}` : `Bearer ${LAB_TOKEN}`;
+      expect(init?.headers).toEqual({ Authorization: authorization });
+      const headers = init?.headers ?? {};
+      expect(Object.keys(headers)).toEqual(["Authorization"]);
+      expect("Content-Type" in headers).toBe(false);
+      expect(JSON.stringify(headers)).toBe(JSON.stringify({ Authorization: authorization }));
       if (url === "https://lab.example/v1/capacity") {
         return Response.json(capacity({ used_cpu: 4, used_mem_mb: 2_048 }));
       }
@@ -488,11 +502,18 @@ describe("microVM pool provider", () => {
   it("sends the exact agent create payload and maps its response to an encoded provider identity and blitz SSH", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe("POST");
-      expect(init?.headers).toEqual({
+      const headers = init?.headers ?? {};
+      expect(headers).toEqual({
         Authorization: `Bearer ${LAB_TOKEN}`,
         "Content-Type": "application/json",
       });
-      expect(JSON.parse(String(init?.body))).toEqual({
+      expect(Object.keys(headers)).toEqual(["Authorization", "Content-Type"]);
+      expect("Content-Type" in headers).toBe(true);
+      expect(JSON.stringify(headers)).toBe(
+        JSON.stringify({ Authorization: `Bearer ${LAB_TOKEN}`, "Content-Type": "application/json" }),
+      );
+      const body = JSON.parse(String(init?.body));
+      expect(body).toEqual({
         workspace_id: "workspace-id",
         cpu: 2,
         mem_mb: 2_048,
@@ -500,6 +521,18 @@ describe("microVM pool provider", () => {
         phone_home_url: PHONE_HOME_URL,
         cp_origin: "https://cp.example",
       });
+      expect(Object.keys(body)).toEqual([
+        "workspace_id",
+        "cpu",
+        "mem_mb",
+        "ssh_authorized_key",
+        "phone_home_url",
+        "cp_origin",
+      ]);
+      expect("ssh_authorized_key" in body).toBe(true);
+      expect(JSON.stringify(body)).toBe(
+        `{"workspace_id":"workspace-id","cpu":2,"mem_mb":2048,"ssh_authorized_key":"${SSH_KEY}","phone_home_url":"${PHONE_HOME_URL}","cp_origin":"https://cp.example"}`,
+      );
       return Response.json({
         vm_id: "vm-1-abcdef123456",
         host_ip: "192.0.2.10",
@@ -559,6 +592,11 @@ describe("microVM pool provider", () => {
     expect(bodies).toHaveLength(3);
     for (const body of bodies) {
       expect(body).not.toHaveProperty("ssh_authorized_key");
+      expect(Object.keys(body)).toEqual(["workspace_id", "cpu", "mem_mb", "phone_home_url", "cp_origin"]);
+      expect("ssh_authorized_key" in body).toBe(false);
+      expect(JSON.stringify(body)).toBe(
+        `{"workspace_id":"workspace-id","cpu":2,"mem_mb":2048,"phone_home_url":"${PHONE_HOME_URL}","cp_origin":"https://cp.example"}`,
+      );
     }
   });
 
@@ -625,6 +663,70 @@ describe("microVM pool provider", () => {
     expect(body.workspace.error).toBe(
       "provider operation failed: insufficient microVM capacity",
     );
+  });
+
+  it("does not apply another provider's user-data limit to a microVM create", async () => {
+    let createCalls = 0;
+    const microvm = provider(
+      hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
+      async (_input, init) => {
+        if (init?.method !== "POST") throw new Error("unexpected microVM request");
+        createCalls += 1;
+        return Response.json({
+          vm_id: "vm-1-abcdef123456",
+          host_ip: "192.0.2.10",
+          ssh_port: 22_001,
+        }, { status: 201 });
+      },
+    );
+    const cloud = new FakeProviders();
+    const app = appWithVmProviders([cloud, microvm], cloud);
+    const cookie = await operatorSession(app);
+
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        machineTypeId: "mv-2c2g@lab",
+        userData: "a".repeat(40 * 1_024),
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(createCalls).toBe(1);
+    expect(cloud.createCalls).toBe(0);
+  });
+
+  it("rejects a microVM volume before inserting a workspace or creating a VM", async () => {
+    const fetcher = vi.fn(async () => {
+      throw new Error("microVM create must not be called");
+    });
+    const microvm = provider(
+      hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
+      fetcher,
+    );
+    const cloud = new FakeProviders();
+    const app = appWithVmProviders([cloud, microvm], cloud);
+    const cookie = await operatorSession(app);
+
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        machineTypeId: "mv-2c2g@lab",
+        volumeId: "volume-1",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "machine type mv-2c2g@lab does not support volumes",
+      retryAction: null,
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS count FROM workspaces").first<number>("count"),
+    ).toBe(0);
   });
 
   it("accepts the guest enrollment contract and publishes the lab SSH endpoint", async () => {
@@ -871,7 +973,7 @@ describe("microVM pool provider", () => {
     socket.close(1000, "done");
   });
 
-  it("combines listings and routes mv creates and encoded lifecycle IDs to microVM while leaving other operations on Hetzner", async () => {
+  it("combines listings and resolves mv creates and encoded lifecycle IDs to microVM while leaving other operations on Hetzner", async () => {
     const hetzner = new RecordingVmProvider();
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -892,19 +994,30 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       fetcher,
     );
-    const composite = new CompositeVmProvider(hetzner, microvm);
+    const registry = new VmProviderRegistry([hetzner, microvm]);
 
-    expect((await composite.listMachineTypes()).map(({ id }) => id)).toEqual([
+    expect((await registry.listMachineTypes()).machineTypes.map(({ id }) => id)).toEqual([
       "cx23@fsn1",
       "mv-2c2g@lab",
       "mv-2c4g@lab",
     ]);
-    const cloudVm = await composite.createVm(createInput("cx23@fsn1"));
-    const microVm = await composite.createVm(createInput("mv-2c2g@lab"));
-    await composite.destroy(cloudVm.id);
-    await composite.shutdown(microVm.id);
-    await composite.inspect(cloudVm.id);
-    await expect(composite.destroy("microvm:v1:broken")).rejects.toThrow(
+    const cloudVm = await registry
+      .forMachineType("cx23@fsn1")
+      .createVm(createInput("cx23@fsn1"));
+    const microVm = await registry
+      .forMachineType("mv-2c2g@lab")
+      .createVm(createInput("mv-2c2g@lab"));
+    const cloudOwner = registry.forVmId(cloudVm.id);
+    const microvmOwner = registry.forVmId(microVm.id);
+    if (cloudOwner === undefined || microvmOwner === undefined) {
+      throw new Error("created VM has no owning provider");
+    }
+    await cloudOwner.destroy(cloudVm.id);
+    await microvmOwner.shutdown(microVm.id);
+    await cloudOwner.inspect(cloudVm.id);
+    await expect(
+      registry.forVmId("microvm:v1:broken")?.destroy("microvm:v1:broken"),
+    ).rejects.toThrow(
       "invalid microVM provider ID",
     );
 
@@ -917,7 +1030,7 @@ describe("microVM pool provider", () => {
     expect(fetcher.mock.calls.some(([input, init]) =>
       String(input).endsWith("/v1/vms/vm-1-abcdef123456") && init?.method === "DELETE"
     )).toBe(true);
-    expect(composite.capabilities()).toEqual({
+    expect(registry.get("hetzner")?.capabilities()).toEqual({
       volumes: true,
       maxUserDataBytes: 32 * 1_024,
     });

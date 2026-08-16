@@ -1,0 +1,10 @@
+{
+  "contentType": "application/x-www-form-urlencoded; charset=UTF-8",
+  "body": "bootstrap_error=host+setup+failed",
+  "expect": {
+    "valid": true,
+    "kind": "failure",
+    "message": "bootstrap failed: host setup failed",
+    "canonicalKeys": ["bootstrap_error"]
+  }
+}
