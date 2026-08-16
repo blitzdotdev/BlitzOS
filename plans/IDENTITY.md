@@ -82,6 +82,18 @@ Carried from the collab plan:
   is portable [v2]; the audit exists to avoid double-building, not to pick a
   framework.
 
+### Teenybase auth audit (0.0.15, 2026-08-16)
+
+| Primitive | Use / skip | Reason |
+|---|---|---|
+| Auth-table user records | Skip | Its email/username auth shape cannot preserve the required Google-`sub` identity key, profile refresh, nullable membership, and bootstrap backfill transaction. |
+| Google OAuth redirect flow | Skip | It owns callback routing and mints framework JWT sessions, while this design must bind a DB session row to a selected membership and run one-shot bootstrap logic atomically. |
+| OAuth state cookie | Skip | The built-in 10-minute CSRF cookie is unsigned and the installed flow does not provide the plan's signed state payload and constant-time verification contract. |
+| JWT access tokens | Skip | Revocation and org rebinding require the existing hash-only D1 session row, not a stateless bearer token. |
+| KV refresh-token sessions | Skip | Rotation is useful but conflicts with the deliberate DB-backed browser-session decision and adds a second session store. |
+| Auth cookie integration | Skip | It transports teenybase JWTs; the existing `blitz_session` cookie transports an opaque token whose hash is stored in D1. |
+| Auth row rules (`auth.*`) | Skip | Core routes already resolve a `Principal`; membership-aware authorization remains application SQL and explicit route checks. |
+
 Newly resolved (previously open questions 1, 3, 4, 5):
 
 - **Signup is self-serve, through an explicit create-org page.** A first
