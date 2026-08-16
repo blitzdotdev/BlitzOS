@@ -155,6 +155,8 @@ const folder: SharedShape<wire.FolderView, schema.FolderView> = {
   id: "folder",
   name: "Shared",
   role: "owner",
+  owner: { name: "Owner", avatarUrl: null },
+  attachedWorkspaceIds: ["workspace"],
   createdAt: 1,
   updatedAt: 2,
   grants: [folderGrant],

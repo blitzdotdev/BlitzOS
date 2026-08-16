@@ -117,6 +117,8 @@ describe("organization file library", () => {
       id: folderId,
       name: "Shared",
       role: null,
+      owner: { name: expect.any(String), avatarUrl: null },
+      attachedWorkspaceIds: [],
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
     }] });
@@ -129,6 +131,8 @@ describe("organization file library", () => {
       id: folderId,
       name: "Shared",
       role: "viewer",
+      owner: { name: expect.any(String), avatarUrl: null },
+      attachedWorkspaceIds: [],
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
     }] });
@@ -315,5 +319,90 @@ describe("organization file library", () => {
     await expect(appRequest(app, `/workspaces/${workspace.id}/folders`, {
       headers: { Cookie: collaborator.cookie },
     }).then((response) => response.json())).resolves.toEqual({ folders: [] });
+  });
+
+  it("detaches a folder from a controlled workspace", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const workspace = await createWorkspace(app, owner);
+    const folderId = await createFolder(app, owner, "Detachable");
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    })).status).toBe(201);
+    const listed = await appRequest(app, "/folders", { headers: { Cookie: owner } });
+    await expect(listed.json()).resolves.toMatchObject({
+      folders: [{ id: folderId, attachedWorkspaceIds: [workspace.id] }],
+    });
+
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders/${folderId}`, {
+      method: "DELETE",
+      headers: { Cookie: owner },
+    })).status).toBe(204);
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders/${folderId}`, {
+      method: "DELETE",
+      headers: { Cookie: owner },
+    })).status).toBe(404);
+    await expect(appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      headers: { Cookie: owner },
+    }).then((response) => response.json())).resolves.toEqual({ folders: [] });
+  });
+
+  it("renames a folder for controllers only and rejects unsafe names", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const member = await sameOrgSession("rename-member");
+    const folderId = await createFolder(app, owner, "Before");
+    await grant(app, owner, folderId, member.membershipId, "editor");
+
+    expect((await appRequest(app, `/folders/${folderId}`, {
+      method: "PATCH",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "after" }),
+    })).status).toBe(403);
+    expect((await appRequest(app, `/folders/${folderId}`, {
+      method: "PATCH",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "../escape" }),
+    })).status).toBe(400);
+    expect((await appRequest(app, `/folders/${folderId}`, {
+      method: "PATCH",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "after" }),
+    })).status).toBe(204);
+    const listed = await appRequest(app, "/folders", { headers: { Cookie: owner } });
+    await expect(listed.json()).resolves.toMatchObject({
+      folders: [{ id: folderId, name: "after" }],
+    });
+  });
+
+  it("deletes an object for editors and refuses viewers", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const member = await sameOrgSession("delete-member");
+    const folderId = await createFolder(app, owner, "Prunable");
+    const path = objectPath(folderId, "notes/prune.txt");
+    expect((await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: owner, "x-blitz-mtime": "10" },
+      body: "bytes",
+    })).status).toBe(204);
+
+    await grant(app, owner, folderId, member.membershipId, "viewer");
+    expect((await appRequest(app, path, {
+      method: "DELETE",
+      headers: { Cookie: member.cookie },
+    })).status).toBe(403);
+    await grant(app, owner, folderId, member.membershipId, "editor");
+    expect((await appRequest(app, path, {
+      method: "DELETE",
+      headers: { Cookie: member.cookie },
+    })).status).toBe(204);
+    expect((await appRequest(app, path, {
+      method: "DELETE",
+      headers: { Cookie: member.cookie },
+    })).status).toBe(404);
+    expect((await appRequest(app, path, { headers: { Cookie: owner } })).status).toBe(404);
   });
 });

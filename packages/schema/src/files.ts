@@ -1,6 +1,6 @@
 /**
- * Eight MiB stays above R2's five MiB multipart minimum while remaining well
- * below Cloudflare's smallest current inbound request limit (100 MB).
+ * Thirty-two MiB stays above R2's five MiB multipart minimum while remaining
+ * well below Cloudflare's smallest current inbound request limit (100 MB).
  */
 export const FILES_MULTIPART_CHUNK_BYTES = 32 * 1024 * 1024;
 
@@ -18,6 +18,8 @@ export interface FolderView {
   id: string;
   name: string;
   role: FolderRole | null;
+  owner: { name: string; avatarUrl: string | null };
+  attachedWorkspaceIds: string[];
   createdAt: number;
   updatedAt: number;
   grants?: FolderGrantView[];

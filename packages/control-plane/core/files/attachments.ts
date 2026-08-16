@@ -117,4 +117,21 @@ export function addFolderAttachmentRoutes(
       } satisfies FolderAttachmentView,
     }, 201);
   });
+
+  router.delete("/workspaces/:id/folders/:folderId", async (context) => {
+    const runtime = runtimeFactory(context);
+    const principal = await requirePrincipal(context);
+    const actor: FilesActor = {
+      principal,
+      editedBy: principal.id,
+    };
+    const workspace = await controlledWorkspace(runtime, context.req.param("id"), actor);
+    const deleted = await rows<{ folder_id: string }>(runtime.db, {
+      q: `DELETE FROM folder_attachments
+          WHERE workspace_id = ?1 AND folder_id = ?2 RETURNING folder_id`,
+      v: [workspace.id, context.req.param("folderId")],
+    });
+    if (deleted.length === 0) throw new HttpError(404, "folder attachment not found");
+    return context.body(null, 204);
+  });
 }
