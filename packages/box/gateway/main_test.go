@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -13,7 +17,118 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+func signedTicket(t *testing.T, secret string, claims webAppTicketClaims) string {
+	t.Helper()
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	input := "v1." + encoded
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(input))
+	return input + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func writeGatewayIdentity(t *testing.T, secret, workspaceID string) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	tokenPath := filepath.Join(directory, "webapp-token")
+	workspacePath := filepath.Join(directory, "workspace-id")
+	if err := os.WriteFile(tokenPath, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(workspacePath, []byte(workspaceID), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return tokenPath, workspacePath
+}
+
+func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
+	const secret = "workspace-ticket-secret"
+	const workspaceID = "workspace-ticket"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	observed := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		observed <- request.URL.RequestURI()
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{
+		dufs:            httputil.NewSingleHostReverseProxy(upstreamURL),
+		terminal:        upstreamURL,
+		webAppTokenPath: tokenPath,
+		workspaceIDPath: workspacePath,
+		transport:       http.DefaultTransport,
+	}
+	viewer := webAppTicketClaims{
+		WorkspaceID: workspaceID, UserID: "viewer-user", MembershipID: "viewer-member",
+		Role: "viewer", Exp: time.Now().Unix() + 60,
+	}
+	request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws?arg=terminal&arg=tab&arg=client-value", nil)
+	request.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+	request.Header.Set("Origin", "http://localhost:3000")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("terminal status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+	}
+	if got := <-observed; got != "/ws?arg=terminal&arg=tab&arg=ro" {
+		t.Fatalf("viewer terminal URI = %q", got)
+	}
+
+	writeRequest := httptest.NewRequest(http.MethodPut, "http://box/workspace/file.txt", strings.NewReader("write"))
+	writeRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+	writeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(writeResponse, writeRequest)
+	if writeResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer write status = %d, want %d", writeResponse.Code, http.StatusForbidden)
+	}
+
+	expired := viewer
+	expired.Exp = time.Now().Unix()
+	expiredRequest := httptest.NewRequest(http.MethodGet, "http://box/workspace/file.txt", nil)
+	expiredRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, expired))
+	expiredResponse := httptest.NewRecorder()
+	handler.ServeHTTP(expiredResponse, expiredRequest)
+	if expiredResponse.Code != http.StatusForbidden {
+		t.Fatalf("expired ticket status = %d, want %d", expiredResponse.Code, http.StatusForbidden)
+	}
+}
+
+func TestTargetedDrainClosesOnlyMatchingIdentity(t *testing.T) {
+	tokenPath, workspacePath := writeGatewayIdentity(t, "drain-target-secret", "workspace-drain")
+	handler := &gateway{webAppTokenPath: tokenPath, workspaceIDPath: workspacePath}
+	first, firstPeer := net.Pipe()
+	second, secondPeer := net.Pipe()
+	defer firstPeer.Close()
+	defer secondPeer.Close()
+	handler.trackConnection(first, webAppIdentity{UserID: "user-one", MembershipID: "member-one", Role: "editor"})
+	handler.trackConnection(second, webAppIdentity{UserID: "user-two", MembershipID: "member-two", Role: "editor"})
+	request := httptest.NewRequest(http.MethodPost, "/admin/drain", strings.NewReader(`{"membershipId":"member-one"}`))
+	request.Header.Set(webAppTokenHeader, "drain-target-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("targeted drain status = %d", response.Code)
+	}
+	if _, err := firstPeer.Write([]byte("closed")); err == nil {
+		t.Fatal("matching connection remained open")
+	}
+	go func() { _, _ = secondPeer.Write([]byte("open")) }()
+	buffer := make([]byte, 4)
+	if _, err := second.Read(buffer); err != nil || string(buffer) != "open" {
+		t.Fatalf("nonmatching connection was closed: %v", err)
+	}
+	_ = second.Close()
+}
 
 func TestDrainRequiresTokenAndClosesTrackedConnections(t *testing.T) {
 	tokenPath := filepath.Join(t.TempDir(), "webapp-token")
@@ -23,7 +138,7 @@ func TestDrainRequiresTokenAndClosesTrackedConnections(t *testing.T) {
 	handler := &gateway{webAppTokenPath: tokenPath, tunnelTokenPath: filepath.Join(t.TempDir(), "tunnel-token")}
 	client, peer := net.Pipe()
 	defer peer.Close()
-	handler.trackConnection(client)
+	handler.trackConnection(client, webAppIdentity{UserID: "user-drain", MembershipID: "member-drain", Role: "owner"})
 
 	forbidden := httptest.NewRecorder()
 	handler.ServeHTTP(forbidden, httptest.NewRequest(http.MethodPost, "/admin/drain", nil))
@@ -417,10 +532,11 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		path        string
 		upstreamURI string
 		webSocket   bool
+		keepsToken  bool
 	}{
 		{name: "dufs", path: "/workspace/file.txt", upstreamURI: "/workspace/file.txt"},
 		{name: "preview", path: "/preview/" + strconv.Itoa(upstreamPort) + "/asset.js?x=1", upstreamURI: "/asset.js?x=1"},
-		{name: "acp", path: "/acp/v1/sessions?resume=true", upstreamURI: "/v1/sessions?resume=true"},
+		{name: "acp", path: "/acp/v1/sessions?resume=true", upstreamURI: "/v1/sessions?resume=true", keepsToken: true},
 		{name: "terminal websocket", path: "/terminal/ws?arg=terminal", upstreamURI: "/ws?arg=terminal", webSocket: true},
 	}
 	for _, test := range tests {
@@ -430,6 +546,7 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 			if test.webSocket {
 				request.Header.Set("Connection", "Upgrade")
 				request.Header.Set("Upgrade", "websocket")
+				request.Header.Set("Origin", "http://localhost:3000")
 			}
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
@@ -440,8 +557,8 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 			if got.requestURI != test.upstreamURI {
 				t.Errorf("upstream request URI = %q, want %q", got.requestURI, test.upstreamURI)
 			}
-			if got.hasWebAppToken {
-				t.Error("upstream request contains the webApp token header")
+			if got.hasWebAppToken != test.keepsToken {
+				t.Errorf("upstream token presence = %v, want %v", got.hasWebAppToken, test.keepsToken)
 			}
 		})
 	}
@@ -757,7 +874,7 @@ func TestWebSocketOriginPolicy(t *testing.T) {
 		origin *string
 		status int
 	}{
-		{name: "absent", status: http.StatusNoContent},
+		{name: "absent", status: http.StatusForbidden},
 		{name: "localhost any port", origin: stringPointer("http://localhost:49152"), status: http.StatusNoContent},
 		{name: "loopback IP any port", origin: stringPointer("https://127.0.0.1:8445"), status: http.StatusNoContent},
 		{name: "control plane exact", origin: stringPointer("https://blitz-control-plane.example"), status: http.StatusNoContent},

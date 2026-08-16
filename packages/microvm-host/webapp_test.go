@@ -44,7 +44,7 @@ func webAppTestHandler(t *testing.T, backendURL string) http.Handler {
 
 func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 	type observedRequest struct {
-		method, uri, authorization, cookie, origin, body string
+		method, uri, authorization, cookie, origin, webAppToken, body string
 	}
 	observed := make(chan observedRequest, 4)
 	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
@@ -53,7 +53,8 @@ func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 			method: request.Method, uri: request.URL.RequestURI(),
 			authorization: request.Header.Get("Authorization"),
 			cookie:        request.Header.Get("Cookie"), origin: request.Header.Get("Origin"),
-			body: string(body),
+			webAppToken: request.Header.Get("X-Blitz-WebApp-Token"),
+			body:        string(body),
 		}
 		response.Header().Set("X-Guest", "gateway")
 		response.WriteHeader(http.StatusCreated)
@@ -101,6 +102,7 @@ func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 		)
 		request.Header.Set("Authorization", "Bearer "+webAppTestToken)
 		request.Header.Set("Cookie", "blitz_session=must-not-reach-guest")
+		request.Header.Set("X-Blitz-WebApp-Token", "guest-ticket")
 		request.Header.Set("Origin", "https://cp.example.test")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
@@ -111,7 +113,7 @@ func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 		if got.method != http.MethodPatch || got.uri != "/workspace/a%20b?arg=one&arg=two" || got.body != "payload" {
 			t.Fatalf("upstream request = %#v", got)
 		}
-		if got.authorization != "" || got.cookie != "" || got.origin != "https://cp.example.test" {
+		if got.authorization != "" || got.cookie != "" || got.origin != "https://cp.example.test" || got.webAppToken != "guest-ticket" {
 			t.Fatalf("upstream credential/origin headers = %#v", got)
 		}
 	})
@@ -135,7 +137,7 @@ func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 func TestWebAppWebSocketBidirectionalPipe(t *testing.T) {
 	backendResult := make(chan string, 1)
 	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.Header.Get("Authorization") != "" || request.Header.Get("Origin") != "http://127.0.0.1" {
+		if request.Header.Get("Authorization") != "" || request.Header.Get("Origin") != "http://127.0.0.1" || request.Header.Get("X-Blitz-WebApp-Token") != "guest-ticket" {
 			backendResult <- "unexpected forwarded credentials or origin"
 			return
 		}
@@ -181,7 +183,7 @@ func TestWebAppWebSocketBidirectionalPipe(t *testing.T) {
 	}
 	defer connection.Close()
 	key := base64.StdEncoding.EncodeToString([]byte("webApp-test-key"))
-	_, _ = fmt.Fprintf(connection, "GET /vms/vm-1-webApp/webapp/7444?arg=kept HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Protocol: acp\r\nOrigin: https://cp.example.test\r\n\r\n", agentURL.Host, webAppTestToken, key)
+	_, _ = fmt.Fprintf(connection, "GET /vms/vm-1-webApp/webapp/7444?arg=kept HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nX-Blitz-WebApp-Token: guest-ticket\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Protocol: acp\r\nOrigin: https://cp.example.test\r\n\r\n", agentURL.Host, webAppTestToken, key)
 	reader := bufio.NewReader(connection)
 	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
 	if err != nil {

@@ -2,10 +2,13 @@
   "contentType": "application/json",
   "body": {
     "box_id": "box-fixture",
-    "access_token": "access-fixture"
+    "access_token": "access-fixture",
+    "workspace_id": "workspace-fixture",
+    "webapp_token": "webapp-fixture"
   },
   "expect": {
     "valid": false,
+    "canonicalKeys": ["box_id", "access_token", "refresh_token", "workspace_id", "webapp_token"],
     "reason": "refresh_token is required"
   }
 }

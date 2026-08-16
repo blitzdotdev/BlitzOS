@@ -21,6 +21,7 @@ function decode(name) {
 const phoneHomeURL = decode('BLITZ_MICROVM_PHONE_HOME_B64');
 const cpOrigin = decode('BLITZ_MICROVM_CP_ORIGIN_B64');
 const phoneHomeResponseFields = ['box_id', 'access_token', 'refresh_token'];
+const phoneHomeIdentityFields = ['workspace_id', 'webapp_token'];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -88,12 +89,25 @@ function request(rawURL, contentType, body) {
 }
 
 function atomicWrite(filename, value, mode) {
-  fs.mkdirSync(stateDir, {recursive: true, mode: 0o700});
+  fs.mkdirSync(path.dirname(filename), {recursive: true, mode: 0o700});
   const temp = `${filename}.new.${process.pid}`;
   fs.writeFileSync(temp, value, {mode});
   fs.chmodSync(temp, mode);
   try { fs.chownSync(temp, 1000, 1000); } catch (_) {}
   fs.renameSync(temp, filename);
+}
+
+function storePhoneHomeResponse(stored, targetStateDir = stateDir) {
+  const credential = {
+    box_id: stored.box_id,
+    access_token: stored.access_token,
+    refresh_token: stored.refresh_token,
+  };
+  atomicWrite(path.join(targetStateDir, 'box-credential.json'), `${JSON.stringify(credential)}\n`, 0o600);
+  if (stored.webapp_token) {
+    atomicWrite(path.join(targetStateDir, 'webapp-token'), `${stored.webapp_token}\n`, 0o600);
+    atomicWrite(path.join(targetStateDir, 'workspace-id'), `${stored.workspace_id}\n`, 0o600);
+  }
 }
 
 function safeError(error) {
@@ -135,8 +149,11 @@ function parsePhoneHomeResponse(value) {
     throw new Error('phone-home response must be an object');
   }
   const fields = Object.keys(value).sort();
-  const expected = [...phoneHomeResponseFields].sort();
-  if (fields.length !== expected.length || fields.some((field, index) => field !== expected[index])) {
+  const legacy = [...phoneHomeResponseFields].sort();
+  const current = [...phoneHomeResponseFields, ...phoneHomeIdentityFields].sort();
+  const exactLegacy = fields.length === legacy.length && fields.every((field, index) => field === legacy[index]);
+  const exactCurrent = fields.length === current.length && fields.every((field, index) => field === current[index]);
+  if (!exactLegacy && !exactCurrent) {
     throw new Error('phone-home response fields are invalid');
   }
   for (const field of phoneHomeResponseFields) {
@@ -144,11 +161,22 @@ function parsePhoneHomeResponse(value) {
       throw new Error(`phone-home response omitted ${field}`);
     }
   }
-  return {
+  const response = {
     box_id: value.box_id,
     access_token: value.access_token,
     refresh_token: value.refresh_token,
   };
+  if (exactCurrent) {
+    for (const field of phoneHomeIdentityFields) {
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- JSON boundary validation for the optional phone-home revision fields.
+      if (typeof value[field] !== 'string' || value[field].length === 0) {
+        throw new Error(`phone-home response omitted ${field}`);
+      }
+    }
+    response.workspace_id = value.workspace_id;
+    response.webapp_token = value.webapp_token;
+  }
+  return response;
 }
 
 async function pokeRegister() {
@@ -253,7 +281,7 @@ async function main() {
     throw new Error('phone-home returned invalid JSON');
   }
   const stored = parsePhoneHomeResponse(responseValue);
-  atomicWrite(path.join(stateDir, 'box-credential.json'), `${JSON.stringify(stored)}\n`, 0o600);
+  storePhoneHomeResponse(stored);
   atomicWrite(path.join(stateDir, 'origin'), `${cpOrigin}\n`, 0o644);
   await pokeRegister();
   process.stdout.write(`microvm-enroll: complete host_key_count=${hostPublicKeys.length}\n`);
@@ -263,6 +291,7 @@ module.exports = {
   buildPhoneHomeFailurePayload,
   buildPhoneHomePayload,
   parsePhoneHomeResponse,
+  storePhoneHomeResponse,
 };
 
 if (require.main === module) {

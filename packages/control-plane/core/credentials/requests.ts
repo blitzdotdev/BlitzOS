@@ -1,6 +1,6 @@
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
-import { HttpError, isString } from "../http.js";
+import { HttpError, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { parseManifest, usableByAllows } from "./manifest.js";
@@ -18,6 +18,12 @@ interface CredentialRequestRow {
   created_at: number;
   resolved_at: number | null;
   resolved_by: string | null;
+  requester: string | null;
+}
+
+export interface CredentialRequester {
+  boxId: string;
+  userId: string;
 }
 
 interface RequestResolutionRow extends CredentialRequestRow {
@@ -33,6 +39,7 @@ export interface CredentialRequestView {
   integration_name: string;
   requested_scopes: string[];
   created_at: number;
+  requester: CredentialRequester | null;
 }
 
 function scopesJson(scopes: readonly string[]): string {
@@ -59,6 +66,7 @@ export async function fileRequest(
   workspaceId: string,
   integrationName: string,
   requestedScopes: readonly string[],
+  requester: CredentialRequester,
   now = Date.now(),
 ): Promise<string> {
   const id = crypto.randomUUID();
@@ -66,11 +74,11 @@ export async function fileRequest(
   const inserted = await rows<{ id: string }>(db, {
     q: `INSERT INTO credential_requests
         (id, workspace_id, integration_name, requested_scopes, state, created_at,
-         resolved_at, resolved_by)
-        VALUES (?1, ?2, ?3, ?4, 'pending', ?5, NULL, NULL)
+         resolved_at, resolved_by, requester)
+        VALUES (?1, ?2, ?3, ?4, 'pending', ?5, NULL, NULL, ?6)
         ON CONFLICT DO NOTHING
         RETURNING id`,
-    v: [id, workspaceId, integrationName, requestedScopesJson, now],
+    v: [id, workspaceId, integrationName, requestedScopesJson, now, JSON.stringify(requester)],
   });
   if (inserted[0] !== undefined) return inserted[0].id;
   const pending = await first<{ id: string }>(db, {
@@ -181,6 +189,10 @@ export async function approve(
           scopes: requestedScopes,
           workspace_id: request.workspace_id,
           resolved_by: principal.id,
+          acting_principal: {
+            userId: principal.id,
+            membershipId: principal.membershipId,
+          },
         }),
         now,
         request.id,
@@ -206,14 +218,38 @@ export async function deny(
   now = Date.now(),
 ): Promise<void> {
   const request = await requestForResolution(db, requestId, principal);
-  const resolved = await rows(db, {
-    q: `UPDATE credential_requests
-        SET state = 'denied', resolved_at = ?1, resolved_by = ?2
-        WHERE id = ?3 AND state = 'pending'
-        RETURNING id`,
-    v: [now, principal.id, request.id],
-  });
-  if (resolved.length !== 1) {
+  const result = await transaction(db, [
+    {
+      q: `UPDATE credential_requests
+          SET state = 'denied', resolved_at = ?1, resolved_by = ?2
+          WHERE id = ?3 AND state = 'pending'
+          RETURNING id`,
+      v: [now, principal.id, request.id],
+    },
+    {
+      q: `INSERT INTO credential_events (lease_id, event, detail, created_at)
+          SELECT NULL, 'denied', ?1, ?2
+          WHERE EXISTS (
+            SELECT 1 FROM credential_requests
+            WHERE id = ?3 AND state = 'denied' AND resolved_at = ?2
+          )`,
+      v: [
+        JSON.stringify({
+          integration: request.integration_name,
+          scopes: scopesFromJson(request.requested_scopes),
+          workspace_id: request.workspace_id,
+          resolution: "denied",
+          acting_principal: {
+            userId: principal.id,
+            membershipId: principal.membershipId,
+          },
+        }),
+        now,
+        request.id,
+      ],
+    },
+  ]);
+  if (result[0]?.length !== 1) {
     throw new HttpError(409, "credential request is not pending");
   }
 }
@@ -239,7 +275,26 @@ export async function listRequests(
     integration_name: request.integration_name,
     requested_scopes: scopesFromJson(request.requested_scopes),
     created_at: request.created_at,
+    requester: requesterFromJson(request.requester),
   }));
+}
+
+function requesterFromJson(value: string | null): CredentialRequester | null {
+  if (value === null) return null;
+  let parsed: JsonValue;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new HttpError(409, "credential request requester is invalid");
+  }
+  if (
+    !isRecord(parsed)
+    || Object.keys(parsed).sort().join(",") !== "boxId,userId"
+  ) throw new HttpError(409, "credential request requester is invalid");
+  if (!isString(parsed.boxId) || !isString(parsed.userId)) {
+    throw new HttpError(409, "credential request requester is invalid");
+  }
+  return { boxId: parsed.boxId, userId: parsed.userId };
 }
 
 function requestState(value: string | null): RequestState {

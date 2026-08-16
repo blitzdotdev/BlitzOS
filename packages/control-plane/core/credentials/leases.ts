@@ -1,6 +1,6 @@
 import type { Db, Query } from "../db.js";
 import { changed, first, rows, transaction } from "../db.js";
-import { HttpError, isString } from "../http.js";
+import { HttpError, isNumber, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
 import type { Lease, MintResult } from "./types.js";
@@ -33,6 +33,23 @@ interface CreateLeaseInput {
   result: MintResult;
   tokenHash: string | null;
   now: number;
+  principal: Principal;
+}
+
+interface CredentialEventRow {
+  id: number;
+  lease_id: string | null;
+  event: "minted" | "revoked" | "denied" | "approved";
+  detail: string | null;
+  created_at: number;
+}
+
+export interface CredentialEventView {
+  id: number;
+  leaseId: string | null;
+  event: CredentialEventRow["event"];
+  detail: JsonValue | null;
+  createdAt: number;
 }
 
 function scopesFromJson(value: string): string[] {
@@ -74,12 +91,13 @@ export async function createLease(
       q: `INSERT INTO credential_leases
           (id, workspace_id, box_id, integration_id, user_id, scopes, mode,
            token_hash, issued_at, expires_at, state)
-          VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9, 'active')`,
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')`,
       v: [
         input.id,
         input.workspaceId,
         input.boxId,
         input.integrationId,
+        input.principal.id,
         scopes,
         input.result.mode,
         input.tokenHash,
@@ -97,6 +115,10 @@ export async function createLease(
           scopes: input.scopes,
           box_id: input.boxId,
           workspace_id: input.workspaceId,
+          acting_principal: {
+            userId: input.principal.id,
+            membershipId: input.principal.membershipId,
+          },
         }),
         input.now,
       ],
@@ -107,7 +129,7 @@ export async function createLease(
     workspaceId: input.workspaceId,
     boxId: input.boxId,
     integration: input.integrationName,
-    userId: null,
+    userId: input.principal.id,
     scopes: input.scopes,
     mode: input.result.mode,
     issuedAt: input.now,
@@ -184,11 +206,69 @@ export async function revokeLease(
           scopes: scopesFromJson(row.scopes),
           box_id: row.box_id,
           workspace_id: row.workspace_id,
+          acting_principal: {
+            userId: principal.id,
+            membershipId: principal.membershipId,
+          },
         }),
         now,
       ],
     },
   ]);
+}
+
+function isJsonValue<Value>(value: Value): value is Value & JsonValue {
+  if (value === null || isString(value) || value === true || value === false) return true;
+  if (isNumber(value)) return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  if (!isRecord(value)) return false;
+  return Object.values(value).every(isJsonValue);
+}
+
+function eventDetail(value: string | null): JsonValue | null {
+  if (value === null) return null;
+  let parsed: JsonValue;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new HttpError(409, "credential event detail is invalid");
+  }
+  if (!isJsonValue(parsed)) throw new HttpError(409, "credential event detail is invalid");
+  return parsed;
+}
+
+export async function listCredentialEvents(
+  db: Db,
+  workspaceId: string,
+  principal: Principal,
+): Promise<CredentialEventView[]> {
+  const workspace = await first<{
+    id: string;
+    org_id: string | null;
+    owner_membership_id: string | null;
+  }>(db, {
+    q: "SELECT id, org_id, owner_membership_id FROM workspaces WHERE id = ?1 LIMIT 1",
+    v: [workspaceId],
+  });
+  if (workspace === null || workspace.org_id !== principal.orgId) {
+    throw new HttpError(404, "workspace not found");
+  }
+  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  const events = await rows<CredentialEventRow>(db, {
+    q: `SELECT event.id, event.lease_id, event.event, event.detail, event.created_at
+        FROM credential_events event
+        LEFT JOIN credential_leases lease ON lease.id = event.lease_id
+        WHERE lease.workspace_id = ?1 OR json_extract(event.detail, '$.workspace_id') = ?1
+        ORDER BY event.created_at DESC, event.id DESC`,
+    v: [workspaceId],
+  });
+  return events.map((event) => ({
+    id: event.id,
+    leaseId: event.lease_id,
+    event: event.event,
+    detail: eventDetail(event.detail),
+    createdAt: event.created_at,
+  }));
 }
 
 export function revokeWorkspaceLeasesQuery(workspaceId: string): Query {

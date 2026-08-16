@@ -217,6 +217,7 @@ describe("local wire copies", () => {
   it("keeps every duplicated type exactly equal to @blitzos/schema", () => {
     expectTypeOf<wire.Phase>().toEqualTypeOf<schema.Phase>();
     expectTypeOf<wire.RetryAction>().toEqualTypeOf<schema.RetryAction>();
+    expectTypeOf<wire.WorkspaceRole>().toEqualTypeOf<schema.WorkspaceRole>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();

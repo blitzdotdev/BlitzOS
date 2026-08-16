@@ -1289,6 +1289,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                                   rememberChatSession(sessionId, chatSessionId, 'claude');
                                 }}
                                 onOpenPreview={openPreviewPort}
+                                readOnly={activeWorkspace?.accessRole === 'viewer'}
                               />
                             </div>
                           );
@@ -1301,6 +1302,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                               sessionType={session.type}
                               sessionKey={sessionId}
                               active={active}
+                              readOnly={activeWorkspace?.accessRole === 'viewer'}
                               onSignInUrl={setTerminalSignInUrl}
                               onOpenPreview={openPreviewPort}
                             />
@@ -1370,6 +1372,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 segment={activeFiles.segment}
                 pendingRequests={activePendingRequests}
                 pendingRequestsError={pendingRequestsError}
+                canManageCredentials={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
                 onWidthChange={(width) => {
                   setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
                     ? { ...current, value: { ...current.value, width } }

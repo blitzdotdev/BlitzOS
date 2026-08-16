@@ -20,7 +20,7 @@ export function allowedOrigins(extra = process.env.BLITZ_ALLOWED_ORIGINS): Set<s
 }
 
 export function originAllowed(origin: string | undefined, allowlist: Set<string>): boolean {
-  if (origin === undefined) return true;
+  if (origin === undefined) return false;
   try {
     const parsed = new URL(origin);
     return allowlist.has(parsed.origin) || allowlist.has(`${parsed.protocol}//${parsed.hostname}`);

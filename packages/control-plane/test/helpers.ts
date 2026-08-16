@@ -9,6 +9,7 @@ import {
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
   VmProviderRegistry,
+  WorkspaceWebAppAuth,
   type WorkspaceTunnels,
   type BlobStore,
   type CoreContext,
@@ -31,6 +32,7 @@ export const OPERATOR_KEY = "test-operator-key";
 export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 const credentialMasterKey = await credentialMasterKeyFor(CRED_MASTER_KEY);
+const webAppAuth = new WorkspaceWebAppAuth("test-webapp-root-secret");
 
 interface TestApp {
   request(
@@ -198,6 +200,7 @@ export function appWithVmProviders(
       vmRegistry: new VmProviderRegistry(vmProviders),
       volume: volumeProvider,
       workspaceTunnels,
+      webAppAuth,
     },
     principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
@@ -238,6 +241,7 @@ export function testRuntime(
       vmRegistry: new VmProviderRegistry([providers]),
       volume: providers,
       workspaceTunnels,
+      webAppAuth,
     },
     principalSource: createSessionPrincipalSource(),
     waitUntil: () => undefined,

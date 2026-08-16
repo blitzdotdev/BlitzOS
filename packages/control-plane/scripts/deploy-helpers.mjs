@@ -7,6 +7,7 @@ export const REQUIRED_SECRETS = Object.freeze([
   "OPERATOR_API_KEY",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
+  "WEBAPP_TOKEN_SECRET",
   "CRED_MASTER_KEY",
 ]);
 

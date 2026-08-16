@@ -15,6 +15,7 @@ export function ShareWorkspaceDialog({
   const [members, setMembers] = useState<MemberView[]>([]);
   const [grants, setGrants] = useState<WorkspaceGrantView[]>([]);
   const [membershipId, setMembershipId] = useState('');
+  const [role, setRole] = useState<'editor' | 'viewer'>('editor');
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
@@ -37,11 +38,11 @@ export function ShareWorkspaceDialog({
     <div className="confirmation-backdrop" role="presentation">
       <section className="confirmation-dialog" role="dialog" aria-modal="true" aria-label={`Share ${workspaceName}`}>
         <h2>Share {workspaceName}</h2>
-        <p>Editors can use terminal, chat, and files. They cannot destroy or manage credentials.</p>
+        <p>Editors can write in terminal, chat, and files. Viewers get a read-only terminal, files, and chat replay.</p>
         <form onSubmit={(event) => {
           event.preventDefault();
           if (!membershipId) return;
-          void client.createWorkspaceGrant(workspaceId, membershipId).then(() => {
+          void client.createWorkspaceGrant(workspaceId, membershipId, role).then(() => {
             setMembershipId('');
             return load();
           }).catch((caught: Error) => setError(caught.message));
@@ -50,12 +51,12 @@ export function ShareWorkspaceDialog({
             <option value="">Select member</option>
             {candidates.map((member) => <option key={member.id} value={member.id}>{member.name || member.email}</option>)}
           </select>
-          <select aria-label="Workspace role" value="editor" disabled><option value="editor">Editor</option></select>
+          <select aria-label="Workspace role" value={role} onChange={(event) => setRole(event.currentTarget.value === 'viewer' ? 'viewer' : 'editor')}><option value="editor">Editor</option><option value="viewer">Viewer</option></select>
           <button type="submit" disabled={!membershipId}>Share</button>
         </form>
         {error && <p role="alert">{error}</p>}
         <ul>
-          {grants.map((grant) => <li key={grant.id}><span>{grant.member.name || grant.member.email} · editor</span><button type="button" onClick={() => void client.revokeWorkspaceGrant(workspaceId, grant.id).then(load).catch((caught: Error) => setError(caught.message))}>Revoke</button></li>)}
+          {grants.map((grant) => <li key={grant.id}><span>{grant.member.name || grant.member.email} · {grant.role}</span><button type="button" onClick={() => void client.revokeWorkspaceGrant(workspaceId, grant.id).then(load).catch((caught: Error) => setError(caught.message))}>Revoke</button></li>)}
         </ul>
         <button type="button" onClick={onClose}>Done</button>
       </section>

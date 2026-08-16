@@ -122,6 +122,7 @@ function ApprovalView({
           {permission.cancelled
             ? "Cancelled"
             : permission.options.find(({ optionId }) => optionId === permission.answeredOptionId)?.name ?? "Answered"}
+          {permission.answeredBy && ` · ${permission.answeredBy.name ?? permission.answeredBy.userId}`}
         </div>
       )}
     </div>

@@ -485,6 +485,19 @@ describe("credential control plane", () => {
       .first<{ config: string; root_ciphertext: string }>();
     expect(stored?.root_ciphertext).not.toBe(ROOT);
     expect(stored?.config).not.toContain(ROOT);
+    expect(
+      await env.DB
+        .prepare("SELECT user_id FROM credential_leases WHERE workspace_id = ?1")
+        .bind(workspace.id)
+        .first<string>("user_id"),
+    ).toBe("operator");
+    const mintEvent = await env.DB
+      .prepare("SELECT detail FROM credential_events WHERE event = 'minted' ORDER BY id DESC LIMIT 1")
+      .first<string>("detail");
+    expect(JSON.parse(mintEvent ?? "null")).toMatchObject({
+      workspace_id: workspace.id,
+      acting_principal: { userId: "operator", membershipId: "personal" },
+    });
   });
 
   it("mints a default-custody proxy token and streams a header-swapped call", async () => {
@@ -770,6 +783,7 @@ describe("credential control plane", () => {
           workspace_id: workspace.id,
           integration_name: "hetzner-prod",
           requested_scopes: ["servers:read"],
+          requester: { boxId: box.box_id, userId: "operator" },
           created_at: expect.any(Number),
         },
       ],
@@ -805,6 +819,7 @@ describe("credential control plane", () => {
       scopes: ["servers:read"],
       workspace_id: workspace.id,
       resolved_by: "operator",
+      acting_principal: { userId: "operator", membershipId: "personal" },
     });
 
     const retried = await mint(app, workspace.id, box.access_token, {
@@ -859,6 +874,23 @@ describe("credential control plane", () => {
         .prepare("SELECT COUNT(*) AS count FROM credential_events WHERE event = 'approved'")
         .first<number>("count"),
     ).toBe(0);
+    const events = await appRequest(app, `/workspaces/${workspace.id}/credential-events`, {
+      headers: { Cookie: cookie },
+    });
+    expect(events.status).toBe(200);
+    await expect(events.json()).resolves.toMatchObject({
+      events: expect.arrayContaining([
+        expect.objectContaining({
+          leaseId: null,
+          event: "denied",
+          detail: expect.objectContaining({
+            workspace_id: workspace.id,
+            resolution: "denied",
+            acting_principal: { userId: "operator", membershipId: "personal" },
+          }),
+        }),
+      ]),
+    });
     expect(
       (await mint(app, workspace.id, box.access_token, {
         integration: "hetzner-prod",

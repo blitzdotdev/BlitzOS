@@ -17,6 +17,7 @@ import {
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
   workspaceTunnelsFromEnv,
+  workspaceWebAppAuthFromEnv,
   VmProviderRegistry,
   type BlobStore,
   type CoreContext,
@@ -72,6 +73,7 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
     volume: hetzner,
     microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),
+    webAppAuth: workspaceWebAppAuthFromEnv(env),
   };
 }
 

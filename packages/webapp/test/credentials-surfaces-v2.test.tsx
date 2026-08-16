@@ -50,6 +50,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     putIntegration: vi.fn(async () => undefined),
     deleteIntegration: vi.fn(async () => undefined),
     listLeases: vi.fn(async () => ({ leases: [] })),
+    listCredentialEvents: vi.fn(async () => ({ events: [] })),
     revokeLease: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
@@ -113,6 +114,7 @@ describe('v2 credential surfaces', () => {
           width={264}
           segment={segment}
           pendingRequests={[]}
+          canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
           onSegmentChange={setSegment}
@@ -176,6 +178,7 @@ describe('v2 credential surfaces', () => {
       integration_name: 'github',
       requested_scopes: ['repo:read'],
       created_at: Date.now(),
+      requester: { boxId: 'box-one', userId: 'user-one' },
     };
     const approve = vi.fn(async (_id: string) => undefined);
     function Harness() {
@@ -189,6 +192,7 @@ describe('v2 credential surfaces', () => {
           width={264}
           segment="requests"
           pendingRequests={requests}
+          canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
           onSegmentChange={() => undefined}

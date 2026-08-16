@@ -66,9 +66,22 @@ export interface CredentialRequestView {
   integration_name: string;
   requested_scopes: string[];
   created_at: number;
+  requester: { boxId: string; userId: string } | null;
 }
 
 export interface ListCredentialRequestsResponse {
   requests: CredentialRequestView[];
 }
-import type { JsonObject } from "./json.js";
+
+export interface CredentialEventView {
+  id: number;
+  leaseId: string | null;
+  event: "minted" | "revoked" | "denied" | "approved";
+  detail: JsonValue | null;
+  createdAt: number;
+}
+
+export interface ListCredentialEventsResponse {
+  events: CredentialEventView[];
+}
+import type { JsonObject, JsonValue } from "./json.js";

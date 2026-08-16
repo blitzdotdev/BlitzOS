@@ -28,15 +28,23 @@ describe("ACP fixture reducer", () => {
 
   it("replays every shared fixture file", () => {
     expect(fixtureNames).toEqual([
+      "attribution.jsonl",
       "malformed.jsonl",
       "permission.jsonl",
       "plan.jsonl",
       "replay.jsonl",
+      "session-list.jsonl",
       "text-turn.jsonl",
       "tool-call.jsonl",
       "unknown-kind.jsonl",
     ]);
     for (const name of fixtureNames) expect(() => replay(name)).not.toThrow();
+  });
+
+  it("retains event and permission-decision attribution", () => {
+    const state = replay("attribution.jsonl");
+    expect(state.messages["message-attributed"]?.actor).toEqual({ userId: "user-alice", name: "Alice" });
+    expect(state.permissions["tool-attributed"]?.answeredBy).toEqual({ userId: "user-alice", name: "Alice" });
   });
 
   it("streams user and agent text and records one terminal stopReason", () => {

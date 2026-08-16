@@ -6,6 +6,7 @@ import { cookieValue, SESSION_COOKIE } from "./principals.js";
 import { hashSecret, matchesStoredHash } from "./crypto.js";
 import type { CoreContext, CoreRuntime } from "./runtime.js";
 import { workspaceById, type WorkspaceRow } from "./workspace-records.js";
+import type { WorkspaceRole } from "./wire.js";
 
 export interface WorkspaceAccessRow {
   id: string;
@@ -29,11 +30,18 @@ export function canControlWorkspace(
 export function workspaceRole(
   principal: Principal,
   workspace: WorkspaceAccessRow & { grant_role?: "editor" | "viewer" | null },
-): "owner" | "admin" | "editor" | null {
+): WorkspaceRole | null {
   if (principal.orgId === null || workspace.org_id !== principal.orgId) return null;
   if (workspace.owner_membership_id === principal.membershipId) return "owner";
   if (principal.role === "admin") return "admin";
-  return workspace.grant_role === "editor" ? "editor" : null;
+  return workspace.grant_role ?? null;
+}
+
+export interface WebAppWorkspaceAccess {
+  workspace: WorkspaceRow;
+  userId: string;
+  membershipId: string;
+  role: WorkspaceRole;
 }
 
 export async function requireWorkspaceControl<T extends WorkspaceAccessRow>(
@@ -64,7 +72,7 @@ export async function webAppWorkspaceForRequest(
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
   context: CoreContext,
   id: string,
-): Promise<WorkspaceRow> {
+): Promise<WebAppWorkspaceAccess> {
   const token = cookieValue(context.req.raw, SESSION_COOKIE);
   if (token !== null) {
     const hash = await hashSecret(token);
@@ -106,8 +114,14 @@ export async function webAppWorkspaceForRequest(
         platformOperator: false,
       };
       if (row.org_id !== principal.orgId) throw new HttpError(404, "workspace not found");
-      if (workspaceRole(principal, row) === null) throw new HttpError(403, "forbidden");
-      return row;
+      const role = workspaceRole(principal, row);
+      if (role === null) throw new HttpError(403, "forbidden");
+      return {
+        workspace: row,
+        userId: principal.id,
+        membershipId: row.session_membership_id,
+        role,
+      };
     }
   }
   const principal = await requirePrincipal(context);
@@ -115,6 +129,8 @@ export async function webAppWorkspaceForRequest(
   if (row === null || row.org_id !== principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
-  if (workspaceRole(principal, row) === null) throw new HttpError(403, "forbidden");
-  return row;
+  const role = workspaceRole(principal, row);
+  if (role === null) throw new HttpError(403, "forbidden");
+  if (principal.membershipId === null) throw new HttpError(403, "active membership required");
+  return { workspace: row, userId: principal.id, membershipId: principal.membershipId, role };
 }
