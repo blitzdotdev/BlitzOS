@@ -32,6 +32,7 @@ interface AttachmentRow {
   name: string;
   created_by_membership_id: string;
   grant_role: "editor" | "viewer" | null;
+  org_role: "editor" | "viewer" | null;
   guest_path: string | null;
   attached_at: number;
 }
@@ -80,7 +81,8 @@ export function addFolderAttachmentRoutes(
     const workspace = await controlledWorkspace(runtime, context.req.param("id"), actor);
     const attached = await rows<AttachmentRow>(runtime.db, {
       q: `SELECT folder.id, folder.org_id, folder.name,
-                 folder.created_by_membership_id, grant.role AS grant_role,
+                 folder.created_by_membership_id, folder.org_role,
+                 grant.role AS grant_role,
                  attachment.guest_path, attachment.created_at AS attached_at
           FROM folder_attachments attachment
           JOIN folders folder ON folder.id = attachment.folder_id

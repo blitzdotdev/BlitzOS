@@ -87,6 +87,7 @@ describe("organization file library", () => {
       "created_by_membership_id",
       "created_at",
       "updated_at",
+      "org_role",
     ]);
     expect(grantColumns.results.map(({ name }) => name)).toEqual([
       "id",
@@ -118,6 +119,7 @@ describe("organization file library", () => {
       id: folderId,
       name: "Shared",
       role: null,
+      orgRole: null,
       owner: { name: expect.any(String), avatarUrl: null },
       attachedWorkspaceIds: [],
       createdAt: expect.any(Number),
@@ -132,6 +134,7 @@ describe("organization file library", () => {
       id: folderId,
       name: "Shared",
       role: "viewer",
+      orgRole: null,
       owner: { name: expect.any(String), avatarUrl: null },
       attachedWorkspaceIds: [],
       createdAt: expect.any(Number),

@@ -7,7 +7,10 @@ import type {
   ListIntegrationsResponse,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
+  CreateWorkspaceTemplateRequest,
+  CreateWorkspaceTemplateResponse,
   ListMachineTypesResponse,
+  ListWorkspaceTemplatesResponse,
   ListVolumesResponse,
   PollResponse,
   PutIntegrationRequest,
@@ -141,6 +144,12 @@ export interface ControlPlaneClient extends FileLibraryClient {
   poll(signal?: AbortSignal): Promise<PollResponse>;
   create(input: CreateWorkspaceRequest): Promise<CreateWorkspaceResponse>;
   destroy(id: string): Promise<CreateWorkspaceResponse>;
+  listWorkspaceTemplates(): Promise<ListWorkspaceTemplatesResponse>;
+  createWorkspaceTemplate(
+    input: CreateWorkspaceTemplateRequest,
+  ): Promise<CreateWorkspaceTemplateResponse>;
+  deleteWorkspaceTemplate(id: string): Promise<void>;
+  setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
   listIntegrations(signal?: AbortSignal): Promise<ListIntegrationsResponse>;
@@ -556,6 +565,24 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     destroy: (id) =>
       request<CreateWorkspaceResponse>(`/workspaces/${encodeURIComponent(id)}`, {
         method: "DELETE",
+      }),
+    listWorkspaceTemplates: () =>
+      request<ListWorkspaceTemplatesResponse>("/workspace-templates"),
+    createWorkspaceTemplate: (input) =>
+      request<CreateWorkspaceTemplateResponse>("/workspace-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    deleteWorkspaceTemplate: (id) =>
+      request<void>(`/workspace-templates/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      }),
+    setWorkspaceOrgRole: (workspaceId, role) =>
+      request<void>(`/workspaces/${encodeURIComponent(workspaceId)}/org-role`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
       }),
     listMachineTypes: () => request<ListMachineTypesResponse>("/machine-types"),
     listVolumes: () => request<ListVolumesResponse>("/volumes"),

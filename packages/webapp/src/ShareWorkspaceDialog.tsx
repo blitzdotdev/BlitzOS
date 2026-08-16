@@ -5,15 +5,20 @@ export function ShareWorkspaceDialog({
   client,
   workspaceId,
   workspaceName,
+  orgName,
+  orgShareRole,
   onClose,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
   workspaceName: string;
+  orgName: string;
+  orgShareRole: 'editor' | 'viewer' | null;
   onClose: () => void;
 }) {
   const [members, setMembers] = useState<MemberView[]>([]);
   const [grants, setGrants] = useState<WorkspaceGrantView[]>([]);
+  const [orgRole, setOrgRole] = useState<'editor' | 'viewer' | null>(orgShareRole);
   const [membershipId, setMembershipId] = useState('');
   const [role, setRole] = useState<'editor' | 'viewer'>('editor');
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +44,24 @@ export function ShareWorkspaceDialog({
       <section className="confirmation-dialog" role="dialog" aria-modal="true" aria-label={`Share ${workspaceName}`}>
         <h2>Share {workspaceName}</h2>
         <p>Editors can write in terminal, chat, and files. Viewers get a read-only terminal, files, and chat replay.</p>
+        <label className="workspace-org-share">
+          <span>Everyone at {orgName}</span>
+          <select
+            aria-label={`Access for everyone at ${orgName}`}
+            value={orgRole ?? 'off'}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              const next = value === 'editor' || value === 'viewer' ? value : null;
+              void client.setWorkspaceOrgRole(workspaceId, next)
+                .then(() => setOrgRole(next))
+                .catch((caught: Error) => setError(caught.message));
+            }}
+          >
+            <option value="off">No access</option>
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+          </select>
+        </label>
         <form onSubmit={(event) => {
           event.preventDefault();
           if (!membershipId) return;

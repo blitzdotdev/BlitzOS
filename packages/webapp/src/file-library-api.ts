@@ -21,6 +21,7 @@ export interface FileLibraryClient {
   listFolders(): Promise<{ folders: FolderView[] }>;
   createFolder(name: string): Promise<{ folder: FolderView }>;
   renameFolder(folderId: string, name: string): Promise<void>;
+  setFolderOrgRole(folderId: string, orgRole: 'editor' | 'viewer' | null): Promise<void>;
   deleteFolder(folderId: string): Promise<void>;
   createFolderGrant(
     folderId: string,
@@ -97,12 +98,14 @@ function folderOwner(value: JsonValue | undefined, label: string): FolderView['o
 function folder(value: JsonValue, label: string): FolderView {
   const object = asJsonObject(value);
   const role = object?.role;
+  const orgRole = object?.orgRole;
   const controlled = role === 'owner' || role === 'admin';
   if (
     object === null
     || !isString(object.id)
     || !isString(object.name)
     || !(role === null || role === 'owner' || role === 'admin' || role === 'editor' || role === 'viewer')
+    || !(orgRole === null || orgRole === 'editor' || orgRole === 'viewer')
     || !isNumber(object.createdAt)
     || !isNumber(object.updatedAt)
     || !Array.isArray(object.attachedWorkspaceIds)
@@ -113,6 +116,7 @@ function folder(value: JsonValue, label: string): FolderView {
     id: object.id,
     name: object.name,
     role,
+    orgRole,
     owner: folderOwner(object.owner, label),
     attachedWorkspaceIds: object.attachedWorkspaceIds,
     createdAt: object.createdAt,
@@ -221,6 +225,11 @@ export function createFileLibraryClient(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name }),
+    }).then(() => undefined),
+    setFolderOrgRole: (folderId, orgRole) => rawRequest(`/folders/${encodeURIComponent(folderId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orgRole }),
     }).then(() => undefined),
     deleteFolder: (folderId) => rawRequest(`/folders/${encodeURIComponent(folderId)}`, {
       method: 'DELETE',

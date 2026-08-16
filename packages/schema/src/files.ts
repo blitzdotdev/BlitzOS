@@ -18,6 +18,7 @@ export interface FolderView {
   id: string;
   name: string;
   role: FolderRole | null;
+  orgRole: "editor" | "viewer" | null;
   owner: { name: string; avatarUrl: string | null };
   attachedWorkspaceIds: string[];
   createdAt: number;

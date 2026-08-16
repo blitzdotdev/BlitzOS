@@ -24,6 +24,7 @@ interface FolderListRow {
   created_at: number;
   updated_at: number;
   grant_role: "editor" | "viewer" | null;
+  org_role: "editor" | "viewer" | null;
   owner_name: string;
   owner_avatar_url: string | null;
 }
@@ -46,6 +47,26 @@ interface GrantRow {
 
 interface CreateFolderInput { name: string }
 interface CreateGrantInput { membershipId: string; role: "editor" | "viewer" }
+interface UpdateFolderInput {
+  name?: string;
+  orgRole?: "editor" | "viewer" | null;
+}
+
+function parseUpdateFolder(value: JsonValue): UpdateFolderInput {
+  if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+  const input: UpdateFolderInput = {};
+  if (value.name !== undefined) input.name = parseCreateFolder({ name: value.name }).name;
+  if (value.orgRole !== undefined) {
+    if (value.orgRole !== null && value.orgRole !== "editor" && value.orgRole !== "viewer") {
+      throw new HttpError(400, "orgRole must be editor, viewer, or null");
+    }
+    input.orgRole = value.orgRole;
+  }
+  if (input.name === undefined && input.orgRole === undefined) {
+    throw new HttpError(400, "name or orgRole is required");
+  }
+  return input;
+}
 
 function parseCreateFolder(value: JsonValue): CreateFolderInput {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
@@ -116,6 +137,7 @@ export function addFolderRoutes(
       id,
       name: input.name,
       role: "owner",
+      orgRole: null,
       owner: {
         name: creator?.name ?? actor.editedBy,
         avatarUrl: creator?.avatar_url ?? null,
@@ -134,7 +156,7 @@ export function addFolderRoutes(
     const folderRows = await rows<FolderListRow>(runtime.db, {
       q: `SELECT f.id, f.org_id, f.name,
                  f.created_by_membership_id, f.created_at, f.updated_at,
-                 grant.role AS grant_role,
+                 f.org_role, grant.role AS grant_role,
                  owner_user.name AS owner_name,
                  owner_user.avatar_url AS owner_avatar_url
           FROM folders f
@@ -190,6 +212,7 @@ export function addFolderRoutes(
         id: row.id,
         name: row.name,
         role,
+        orgRole: row.org_role,
         owner: { name: row.owner_name, avatarUrl: row.owner_avatar_url },
         attachedWorkspaceIds: attachmentsByFolder.get(row.id) ?? [],
         createdAt: row.created_at,
@@ -212,10 +235,20 @@ export function addFolderRoutes(
       actor,
       "control",
     );
-    const input = parseCreateFolder(await readJson(context.req.raw));
+    const input = parseUpdateFolder(await readJson(context.req.raw));
     await rows(runtime.db, {
-      q: "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3",
-      v: [input.name, Date.now(), folder.id],
+      q: `UPDATE folders
+          SET name = COALESCE(?1, name),
+              org_role = CASE WHEN ?2 THEN ?3 ELSE org_role END,
+              updated_at = ?4
+          WHERE id = ?5`,
+      v: [
+        input.name ?? null,
+        input.orgRole === undefined ? 0 : 1,
+        input.orgRole ?? null,
+        Date.now(),
+        folder.id,
+      ],
     });
     return context.body(null, 204);
   });
@@ -235,6 +268,10 @@ export function addFolderRoutes(
     });
     await rows(runtime.db, {
       q: "DELETE FROM folder_attachments WHERE folder_id = ?1",
+      v: [folder.id],
+    });
+    await rows(runtime.db, {
+      q: "DELETE FROM workspace_template_folders WHERE folder_id = ?1",
       v: [folder.id],
     });
     await deleteFolderObjects(

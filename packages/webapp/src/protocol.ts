@@ -22,6 +22,7 @@ export type WorkspaceRecord = {
     avatarUrl: string | null;
   };
   accessRole?: WorkspaceRole | null;
+  orgShareRole?: 'editor' | 'viewer' | null;
   machineType?: string | null;
   name: string;
   status: RestWorkspaceStatus;

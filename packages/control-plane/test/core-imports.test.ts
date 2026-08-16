@@ -58,6 +58,7 @@ const expected = [
   "sessions.ts",
   "workspace-names.ts",
   "workspace-access.ts",
+  "workspace-templates.ts",
   "workspace-records.ts",
   "workspace-tunnels.ts",
   "types.ts",
@@ -84,6 +85,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(59);
+    expect(expected).toHaveLength(60);
   });
 });

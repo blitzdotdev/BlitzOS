@@ -15,6 +15,9 @@ describe("create workspace dialog", () => {
       <CreateWorkspaceDialog
         busy={false}
         error={null}
+        orgName="acme"
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
         listMachineTypes={async () => machines}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -37,12 +40,12 @@ describe("create workspace dialog", () => {
       );
     });
     expect(submit).toHaveBeenCalledOnce();
-    expect(submit).toHaveBeenCalledWith({ machineTypeId: "cx23@fsn1" });
+    expect(submit).toHaveBeenCalledWith({ machineTypeId: "cx23@fsn1", orgShareRole: "editor" });
     const keylessRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(keylessRequest)).toEqual(["machineTypeId"]);
+    expect(Object.keys(keylessRequest).sort()).toEqual(["machineTypeId", "orgShareRole"]);
     expect("sshPublicKey" in keylessRequest).toBe(false);
     expect("volumeId" in keylessRequest).toBe(false);
-    expect(JSON.stringify(keylessRequest)).toBe('{"machineTypeId":"cx23@fsn1"}');
+    expect(JSON.stringify(keylessRequest)).toBe('{"machineTypeId":"cx23@fsn1","orgShareRole":"editor"}');
     await view.unmount();
   });
 
@@ -52,6 +55,9 @@ describe("create workspace dialog", () => {
       <CreateWorkspaceDialog
         busy={false}
         error={null}
+        orgName="acme"
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
         listMachineTypes={async () => machines}
         listVolumes={async () => [{
           id: "vol-1",
@@ -81,15 +87,16 @@ describe("create workspace dialog", () => {
 
     expect(submit).toHaveBeenCalledWith({
       machineTypeId: "cx23@fsn1",
+      orgShareRole: "editor",
       sshPublicKey: "ssh-ed25519 AAAA operator@example",
       volumeId: "vol-1",
     });
     const completeRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(completeRequest)).toEqual(["machineTypeId", "sshPublicKey", "volumeId"]);
+    expect(Object.keys(completeRequest).sort()).toEqual(["machineTypeId", "orgShareRole", "sshPublicKey", "volumeId"])
     expect("sshPublicKey" in completeRequest).toBe(true);
     expect("volumeId" in completeRequest).toBe(true);
     expect(JSON.stringify(completeRequest)).toBe(
-      '{"machineTypeId":"cx23@fsn1","sshPublicKey":"ssh-ed25519 AAAA operator@example","volumeId":"vol-1"}',
+      '{"machineTypeId":"cx23@fsn1","sshPublicKey":"ssh-ed25519 AAAA operator@example","volumeId":"vol-1","orgShareRole":"editor"}',
     );
     await view.unmount();
   });
@@ -100,6 +107,9 @@ describe("create workspace dialog", () => {
       <CreateWorkspaceDialog
         busy={false}
         error={null}
+        orgName="acme"
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
         listMachineTypes={async () => machines}
         listVolumes={async () => [{
           id: "vol-1",
@@ -127,6 +137,66 @@ describe("create workspace dialog", () => {
     expect(view.container.textContent).toContain(
       "Volumes are not supported by this machine provider.",
     );
+    await view.unmount();
+  });
+
+
+  it("collapses the form when a template is selected and submits the template body", async () => {
+    const submit = vi.fn();
+    const onNewTemplate = vi.fn();
+    const template = {
+      id: "template-1",
+      name: "analysis starter",
+      machineTypeId: "cx23@fsn1",
+      createdAt: 1,
+      createdBy: { name: "Ada Park", avatarUrl: null },
+      folders: [
+        { id: "folder-a", name: "datasets", role: "viewer" as const },
+        { id: "folder-b", name: "private", role: null },
+      ],
+    };
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        listTemplates={async () => [template]}
+        onNewTemplate={onNewTemplate}
+        listMachineTypes={async () => machines}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain("analysis starter");
+    expect(view.container.textContent).toContain("by Ada Park");
+    expect(view.container.textContent).toContain("1 folder you cannot access yet");
+    expect(view.container.querySelector('input[name="name"]')).not.toBeNull();
+
+    const tile = [...view.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("analysis starter"))!;
+    await act(async () => {
+      tile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(view.container.querySelector('input[name="name"]')).toBeNull();
+    expect(view.container.querySelector('select[name="orgShareRole"]')).toBeNull();
+    expect(view.container.textContent).toContain("no access yet, will not sync");
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith({ templateId: "template-1", orgShareRole: "editor" });
+
+    const newTile = [...view.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("New template"))!;
+    await act(async () => {
+      newTile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onNewTemplate).toHaveBeenCalledOnce();
     await view.unmount();
   });
 });

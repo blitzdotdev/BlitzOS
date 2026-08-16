@@ -22,6 +22,7 @@ export interface FolderView {
   id: string;
   name: string;
   role: FolderRole | null;
+  orgRole: "editor" | "viewer" | null;
   owner: { name: string; avatarUrl: string | null };
   attachedWorkspaceIds: string[];
   createdAt: number;
@@ -124,10 +125,35 @@ export interface WorkspaceView {
   volumeId: string | null;
   error: string | null;
   role: WorkspaceRole | null;
+  orgShareRole: "editor" | "viewer" | null;
   owner: {
     name: string;
     avatarUrl: string | null;
   };
+}
+
+export interface WorkspaceTemplateView {
+  id: string;
+  name: string;
+  machineTypeId: string;
+  createdAt: number;
+  createdBy: { name: string; avatarUrl: string | null };
+  /** Role is the viewer's access; null flags a folder they cannot reach yet. */
+  folders: { id: string; name: string; role: FolderRole | null }[];
+}
+
+export interface ListWorkspaceTemplatesResponse {
+  templates: WorkspaceTemplateView[];
+}
+
+export interface CreateWorkspaceTemplateRequest {
+  name: string;
+  machineTypeId: string;
+  folderIds: string[];
+}
+
+export interface CreateWorkspaceTemplateResponse {
+  template: WorkspaceTemplateView;
 }
 
 export interface ListMachineTypesResponse {
@@ -136,7 +162,12 @@ export interface ListMachineTypesResponse {
 }
 
 export interface CreateWorkspaceRequest {
-  machineTypeId: string;
+  /** Required unless templateId is set; then the template's machine type is the default. */
+  machineTypeId?: string;
+  /** Creates from a workspace template: its folders attach automatically. */
+  templateId?: string;
+  /** Shares the new workspace with every active org member at this role. */
+  orgShareRole?: "editor" | "viewer";
   name?: string;
   sshPublicKey?: string;
   volumeId?: string;

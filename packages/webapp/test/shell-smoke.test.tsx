@@ -88,6 +88,7 @@ const creating: WorkspaceView = {
   volumeId: null,
   error: null,
   role: "owner",
+  orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
 };
 
@@ -109,6 +110,7 @@ const running: WorkspaceView = {
   volumeId: null,
   error: null,
   role: "owner",
+  orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
 };
 
@@ -166,6 +168,11 @@ function client(): ControlPlaneClient {
     attachFolder: vi.fn(async () => { throw new Error("unused"); }),
     detachFolder: vi.fn(async () => undefined),
     renameFolder: vi.fn(async () => undefined),
+  setFolderOrgRole: vi.fn(async () => undefined),
+  listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
+  createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
+  deleteWorkspaceTemplate: vi.fn(async () => undefined),
+  setWorkspaceOrgRole: vi.fn(async () => undefined),
     deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),

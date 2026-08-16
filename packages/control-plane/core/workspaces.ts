@@ -20,6 +20,7 @@ import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-rec
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
+import { attachTemplateFolders, workspaceTemplateForCreate } from "./workspace-templates.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -80,9 +81,19 @@ function providerForVmId(runtime: CoreRuntime, vmId: string): VmProvider {
 
 function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
-  const result: CreateWorkspaceRequest = {
-    machineTypeId: requiredString(value.machineTypeId, "machineTypeId", 256),
-  };
+  const result: CreateWorkspaceRequest = {};
+  if (value.templateId !== undefined) {
+    result.templateId = requiredString(value.templateId, "templateId", 256);
+  }
+  if (value.machineTypeId !== undefined || result.templateId === undefined) {
+    result.machineTypeId = requiredString(value.machineTypeId, "machineTypeId", 256);
+  }
+  if (value.orgShareRole !== undefined && value.orgShareRole !== null) {
+    if (value.orgShareRole !== "editor" && value.orgShareRole !== "viewer") {
+      throw new HttpError(400, "orgShareRole must be editor or viewer");
+    }
+    result.orgShareRole = value.orgShareRole;
+  }
   if (value.name !== undefined) {
     const name = isString(value.name)
       ? value.name.trim()
@@ -309,14 +320,21 @@ export function addWorkspaceRoutes(
     }
     const input = parseCreateWorkspace(await readJson(context.req.raw));
     const runtime = runtimeFactory(context);
-    const vmProvider = runtime.providers.vmRegistry.forMachineType(
-      input.machineTypeId,
-    );
+    const template = input.templateId === undefined
+      ? null
+      : await workspaceTemplateForCreate(runtime.db, input.templateId, principal.orgId);
+    // The template's machine type is the default; an explicit machineTypeId
+    // in the request still wins so a template create can be customized.
+    const machineTypeId = input.machineTypeId ?? template?.machine_type_id;
+    if (machineTypeId === undefined) {
+      throw new HttpError(400, "machineTypeId is required");
+    }
+    const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
     const providerCapabilities = vmProvider.capabilities();
     if (input.volumeId !== undefined && !providerCapabilities.volumes) {
       throw new HttpError(
         400,
-        `machine type ${input.machineTypeId} does not support volumes`,
+        `machine type ${machineTypeId} does not support volumes`,
       );
     }
     if (input.volumeId !== undefined) {
@@ -335,8 +353,9 @@ export function addWorkspaceRoutes(
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO workspaces
           (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
-           phase, revision, volume_id, phone_home_hash, manifest, created_at, updated_at)
-          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?10
+           phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
+           created_at, updated_at)
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?11
           WHERE (
             SELECT COUNT(*) FROM workspaces
             WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
@@ -348,10 +367,11 @@ export function addWorkspaceRoutes(
         principal.id,
         principal.orgId,
         principal.membershipId,
-        input.machineTypeId,
+        machineTypeId,
         input.volumeId ?? null,
         await hashSecret(capability),
         input.manifest === undefined ? null : manifestJson(input.manifest),
+        input.orgShareRole ?? null,
         now,
       ],
     });
@@ -360,6 +380,9 @@ export function addWorkspaceRoutes(
         409,
         "organization workspace quota reached; destroy an existing workspace before creating another",
       );
+    }
+    if (template !== null) {
+      await attachTemplateFolders(runtime.db, template.id, id, principal, now);
     }
 
     try {
@@ -409,7 +432,7 @@ export function addWorkspaceRoutes(
           );
       const vm = await vmProvider.createVm({
         workspaceId: id,
-        machineTypeId: input.machineTypeId,
+        machineTypeId,
         sshPublicKey: input.sshPublicKey,
         phoneHomeUrl,
         userData,

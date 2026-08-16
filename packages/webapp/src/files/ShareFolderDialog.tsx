@@ -8,6 +8,7 @@ export function ShareFolderDialog({
   client,
   folder,
   viewerEmail,
+  orgName,
   onClose,
   onChanged,
   onSnack,
@@ -15,6 +16,7 @@ export function ShareFolderDialog({
   client: ControlPlaneClient;
   folder: FolderView;
   viewerEmail: string;
+  orgName: string;
   onClose: () => void;
   onChanged: () => Promise<void>;
   onSnack: (message: React.ReactNode) => void;
@@ -93,6 +95,45 @@ export function ShareFolderDialog({
               )}
             </div>
           )}
+          <div className="drive-dialog-section">
+            <p className="drive-field-label">General access</p>
+            <div className="drive-people">
+              <div className="drive-person">
+                <span className="drive-org-glyph" aria-hidden="true">{orgName.charAt(0).toUpperCase()}</span>
+                <span className="drive-person-copy">
+                  <strong>Everyone at {orgName}</strong>
+                  <span>{folder.orgRole === null
+                    ? 'No general access'
+                    : folder.orgRole === 'editor' ? 'Anyone in the org can edit' : 'Anyone in the org can view'}</span>
+                </span>
+                {manage ? (
+                  <select
+                    className="drive-role-select"
+                    aria-label={`Access for everyone at ${orgName}`}
+                    value={folder.orgRole ?? 'off'}
+                    onChange={(event) => {
+                      const value = event.currentTarget.value;
+                      const next = value === 'editor' || value === 'viewer' ? value : null;
+                      run(
+                        client.setFolderOrgRole(folder.id, next),
+                        next === null
+                          ? <span><b>General access removed</b> — only invited people keep access to {folder.name}</span>
+                          : <span><b>Everyone at {orgName}</b> can now {next === 'editor' ? 'edit' : 'view'} {folder.name}</span>,
+                      );
+                    }}
+                  >
+                    <option value="off">Off</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="editor">Editor</option>
+                  </select>
+                ) : (
+                  <span className="drive-role-static">
+                    {folder.orgRole === null ? 'Off' : folder.orgRole === 'editor' ? 'Editor' : 'Viewer'}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
           <div className="drive-dialog-section">
             <p className="drive-field-label">People with access</p>
             <div className="drive-people">
