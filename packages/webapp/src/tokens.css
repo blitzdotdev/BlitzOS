@@ -7,6 +7,16 @@
   --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
   --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
   --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+  --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  --sunken: color-mix(in oklab, var(--ink) 5%, var(--paper));
+  --selected: color-mix(in oklab, var(--accent) 20%, var(--paper));
+
+  /* Drive shape scale (plans/mockups/folders-v1-library.html). */
+  --r-card: 12px;
+  --r-control: 10px;
+  --r-item: 8px;
+  --r-pill: 999px;
+  --lift: 0 10px 30px color-mix(in oklab, #000 34%, transparent);
   --terminal-selection: color-mix(in oklab, var(--accent) 25%, transparent);
 
   --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;

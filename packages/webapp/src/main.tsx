@@ -8,6 +8,7 @@ import './webapp-base.css';
 import './webapp-shell.css';
 import './webapp-workspace.css';
 import './chat-panel.css';
+import './files-drive.css';
 import './files.css';
 import './confirmation-dialog.css';
 import './loading-skeleton.css';

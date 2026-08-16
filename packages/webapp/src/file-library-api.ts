@@ -20,6 +20,7 @@ export type { FolderGrantView, FolderObjectView, FolderRole, FolderView };
 export interface FileLibraryClient {
   listFolders(): Promise<{ folders: FolderView[] }>;
   createFolder(name: string): Promise<{ folder: FolderView }>;
+  renameFolder(folderId: string, name: string): Promise<void>;
   deleteFolder(folderId: string): Promise<void>;
   createFolderGrant(
     folderId: string,
@@ -29,12 +30,19 @@ export interface FileLibraryClient {
   revokeFolderGrant(folderId: string, grantId: string): Promise<void>;
   listFolderObjects(folderId: string): Promise<ListFolderObjectsResponse>;
   downloadFolderObject(folderId: string, key: string): Promise<Blob>;
-  uploadFolderObject(folderId: string, key: string, file: File): Promise<void>;
+  uploadFolderObject(
+    folderId: string,
+    key: string,
+    file: File,
+    onProgress?: (sentBytes: number, totalBytes: number) => void,
+  ): Promise<void>;
+  deleteFolderObject(folderId: string, key: string): Promise<void>;
   listWorkspaceFolders(workspaceId: string): Promise<{ folders: FolderAttachmentView[] }>;
   attachFolder(
     workspaceId: string,
     folderId: string,
   ): Promise<{ folder: FolderAttachmentView }>;
+  detachFolder(workspaceId: string, folderId: string): Promise<void>;
 }
 
 export type RawControlPlaneRequest = (
@@ -75,6 +83,16 @@ function grant(value: JsonValue, label: string): FolderGrantView {
   };
 }
 
+function folderOwner(value: JsonValue | undefined, label: string): FolderView['owner'] {
+  const object = asJsonObject(value ?? null);
+  if (
+    object === null
+    || !isString(object.name)
+    || !(object.avatarUrl === null || isString(object.avatarUrl))
+  ) throw new Error(`${label} returned an invalid folder owner`);
+  return { name: object.name, avatarUrl: object.avatarUrl };
+}
+
 function folder(value: JsonValue, label: string): FolderView {
   const object = asJsonObject(value);
   const role = object?.role;
@@ -86,12 +104,16 @@ function folder(value: JsonValue, label: string): FolderView {
     || !(role === null || role === 'owner' || role === 'admin' || role === 'editor' || role === 'viewer')
     || !isNumber(object.createdAt)
     || !isNumber(object.updatedAt)
+    || !Array.isArray(object.attachedWorkspaceIds)
+    || !object.attachedWorkspaceIds.every(isString)
     || (controlled ? !Array.isArray(object.grants) : object.grants !== undefined)
   ) throw new Error(`${label} returned an invalid folder`);
   const result: FolderView = {
     id: object.id,
     name: object.name,
     role,
+    owner: folderOwner(object.owner, label),
+    attachedWorkspaceIds: object.attachedWorkspaceIds,
     createdAt: object.createdAt,
     updatedAt: object.updatedAt,
   };
@@ -192,6 +214,11 @@ export function createFileLibraryClient(
       const object = asJsonObject(value);
       return { folder: folder(object?.folder ?? null, 'create folder') };
     },
+    renameFolder: (folderId, name) => rawRequest(`/folders/${encodeURIComponent(folderId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then(() => undefined),
     deleteFolder: (folderId) => rawRequest(`/folders/${encodeURIComponent(folderId)}`, {
       method: 'DELETE',
     }).then(() => undefined),
@@ -215,8 +242,13 @@ export function createFileLibraryClient(
     downloadFolderObject: (folderId, key) => rawRequest(
       encodedObjectPath(folderId, key),
     ).then((response) => response.blob()),
-    async uploadFolderObject(folderId, key, file) {
+    deleteFolderObject: (folderId, key) => rawRequest(
+      encodedObjectPath(folderId, key),
+      { method: 'DELETE' },
+    ).then(() => undefined),
+    async uploadFolderObject(folderId, key, file, onProgress) {
       const path = encodedObjectPath(folderId, key);
+      onProgress?.(0, file.size);
       if (file.size <= FILES_MULTIPART_CHUNK_BYTES) {
         await rawRequest(path, {
           method: 'PUT',
@@ -226,6 +258,7 @@ export function createFileLibraryClient(
           },
           body: file,
         });
+        onProgress?.(file.size, file.size);
         return;
       }
       const createdValue = await jsonObject(await rawRequest(`${path}/multipart`, {
@@ -266,6 +299,10 @@ export function createFileLibraryClient(
           return { partNumber, etag: part.etag };
         }));
         uploaded.push(...completed);
+        onProgress?.(
+          Math.min(uploaded.length * FILES_MULTIPART_CHUNK_BYTES, file.size),
+          file.size,
+        );
       }
       uploaded.sort((left, right) => left.partNumber - right.partNumber);
       await rawRequest(`${path}/multipart/${encodeURIComponent(uploadId)}/complete`, {
@@ -273,6 +310,7 @@ export function createFileLibraryClient(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parts: uploaded }),
       });
+      onProgress?.(file.size, file.size);
     },
     async listWorkspaceFolders(workspaceId) {
       const value = await jsonObject(await rawRequest(
@@ -298,5 +336,9 @@ export function createFileLibraryClient(
       const object = asJsonObject(value);
       return { folder: attachment(object?.folder ?? null, 'attach folder') };
     },
+    detachFolder: (workspaceId, folderId) => rawRequest(
+      `/workspaces/${encodeURIComponent(workspaceId)}/folders/${encodeURIComponent(folderId)}`,
+      { method: 'DELETE' },
+    ).then(() => undefined),
   };
 }
