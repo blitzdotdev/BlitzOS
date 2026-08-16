@@ -753,6 +753,7 @@
 }
 
 .tplf-main {
+  position: relative;
   display: flex;
   min-height: 300px;
   max-height: 380px;
@@ -871,26 +872,39 @@
   text-align: center;
 }
 
-.tplf-drop {
-  margin: 6px;
+.tplf-status {
+  margin: 0;
   flex: none;
-  padding: 13px 14px;
-  border: 1.5px dashed var(--rule);
-  border-radius: var(--r-item);
+  padding: 8px 14px;
+  border-top: 1px solid var(--rule);
   color: var(--muted);
   font-size: 12.5px;
-  text-align: center;
-  transition: border-color 80ms ease, background 80ms ease;
 }
 
-.tplf-drop--active {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 8%, transparent);
+.tplf-status b { color: var(--ink); }
+
+.tplf-dropover {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inset: 4px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-item);
+  background: color-mix(in oklab, var(--accent) 8%, var(--paper));
+  pointer-events: none;
+}
+
+.tplf-dropover span {
+  padding: 8px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  background: var(--paper);
   color: var(--ink);
+  font-size: 12.5px;
+  box-shadow: var(--lift);
 }
-
-.tplf-drop span { pointer-events: none; }
-.tplf-drop b { color: var(--ink); }
 
 .tplf-side {
   display: flex;

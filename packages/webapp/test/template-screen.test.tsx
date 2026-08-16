@@ -230,7 +230,7 @@ describe('create template screen', () => {
       return null;
     });
     const { view } = await screenWith(fetcher);
-    const strip = view.container.querySelector('.tplf-drop')!;
+    const pane = view.container.querySelector('.tplf-main')!;
     const entry = {
       isFile: false,
       isDirectory: true,
@@ -255,7 +255,7 @@ describe('create template screen', () => {
       value: { types: ['Files'], items: [{ webkitGetAsEntry: () => entry }], files: [] },
     });
     await act(async () => {
-      strip.dispatchEvent(event);
+      pane.dispatchEvent(event);
     });
     await settle();
 
