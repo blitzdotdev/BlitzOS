@@ -42,8 +42,33 @@ export interface WorkspaceView {
   volumeId: string | null;
   error: string | null;
   role: WorkspaceRole | null;
+  orgShareRole: "editor" | "viewer" | null;
   owner: {
     name: string;
     avatarUrl: string | null;
   };
+}
+
+export interface WorkspaceTemplateView {
+  id: string;
+  name: string;
+  machineTypeId: string;
+  createdAt: number;
+  createdBy: { name: string; avatarUrl: string | null };
+  /** Role is the viewer's access; null flags a folder they cannot reach yet. */
+  folders: { id: string; name: string; role: "owner" | "admin" | "editor" | "viewer" | null }[];
+}
+
+export interface ListWorkspaceTemplatesResponse {
+  templates: WorkspaceTemplateView[];
+}
+
+export interface CreateWorkspaceTemplateRequest {
+  name: string;
+  machineTypeId: string;
+  folderIds: string[];
+}
+
+export interface CreateWorkspaceTemplateResponse {
+  template: WorkspaceTemplateView;
 }

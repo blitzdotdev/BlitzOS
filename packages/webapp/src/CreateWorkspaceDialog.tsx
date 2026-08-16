@@ -1,15 +1,18 @@
-import type { CreateWorkspaceRequest, MachineType, Volume } from '@blitzos/schema';
+import type { CreateWorkspaceRequest, MachineType, Volume, WorkspaceTemplateView } from '@blitzos/schema';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
-import { MachineCatalogGrid } from './MachineCatalogGrid';
+import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
 type CreateWorkspaceDialogProps = {
   busy: boolean;
   error: string | null;
+  orgName: string;
   listMachineTypes: () => Promise<MachineType[]>;
   listVolumes: () => Promise<Volume[]>;
+  listTemplates: () => Promise<WorkspaceTemplateView[]>;
+  onNewTemplate: () => void;
   onCancel: () => void;
   onSubmit: (input: CreateWorkspaceDialogInput) => void;
 };
@@ -17,13 +20,18 @@ type CreateWorkspaceDialogProps = {
 export function CreateWorkspaceDialog({
   busy,
   error,
+  orgName,
   listMachineTypes,
   listVolumes,
+  listTemplates,
+  onNewTemplate,
   onCancel,
   onSubmit,
 }: CreateWorkspaceDialogProps) {
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
+  const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -39,8 +47,13 @@ export function CreateWorkspaceDialog({
     let mounted = true;
     setLoading(true);
     setLoadError(null);
-    void Promise.allSettled([listMachineTypes(), listVolumes()]).then(([machineResult, volumeResult]) => {
+    void Promise.allSettled([
+      listMachineTypes(),
+      listVolumes(),
+      listTemplates(),
+    ]).then(([machineResult, volumeResult, templateResult]) => {
       if (!mounted) return;
+      setTemplates(templateResult.status === 'fulfilled' ? templateResult.value : []);
       if (machineResult.status === 'rejected') {
         setLoadError(machineResult.reason instanceof Error
           ? machineResult.reason.message
@@ -54,15 +67,24 @@ export function CreateWorkspaceDialog({
       setLoading(false);
     });
     return () => { mounted = false; };
-  }, [listMachineTypes, listVolumes]);
+  }, [listMachineTypes, listVolumes, listTemplates]);
+
+  const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId) ?? null;
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (busy || submitted.current || selectedMachineType === '') return;
+    if (busy || submitted.current) return;
+    if (selectedTemplate !== null) {
+      submitted.current = true;
+      onSubmit({ templateId: selectedTemplate.id, orgShareRole: 'editor' });
+      return;
+    }
+    if (selectedMachineType === '') return;
     const data = new FormData(event.currentTarget);
     const name = String(data.get('name') ?? '').trim();
     const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
     const volumeId = String(data.get('volumeId') ?? '');
+    const orgShareRole = String(data.get('orgShareRole') ?? '');
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
@@ -70,6 +92,7 @@ export function CreateWorkspaceDialog({
     if (name) input.name = name;
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
+    if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
     onSubmit(input);
   };
 
@@ -94,6 +117,67 @@ export function CreateWorkspaceDialog({
 
           <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
+              <h2>Templates</h2>
+              <p>Start from a shared setup. Its machine type and Drive folders come attached.</p>
+            </div>
+            <div className="template-grid">
+              {templates.map((template) => {
+                const missing = template.folders.filter(({ role }) => role === null).length;
+                const active = template.id === selectedTemplateId;
+                return (
+                  <button
+                    className={`template-tile${active ? ' template-tile--selected' : ''}`}
+                    type="button"
+                    key={template.id}
+                    aria-pressed={active}
+                    onClick={() => setSelectedTemplateId(active ? null : template.id)}
+                  >
+                    <strong>{template.name}</strong>
+                    <span>{machineTypeLabel(template.machineTypeId)}</span>
+                    <span>
+                      {template.folders.length === 1 ? '1 folder' : `${template.folders.length} folders`}
+                      {' · by '}{template.createdBy.name}
+                    </span>
+                    {missing > 0 && (
+                      <span className="template-tile__warn">
+                        {missing === 1 ? '1 folder' : `${missing} folders`} you cannot access yet
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+              <button className="template-tile template-tile--new" type="button" onClick={onNewTemplate}>
+                <strong>+ New template</strong>
+                <span>Name it, pick folders, share it with {orgName}</span>
+              </button>
+            </div>
+          </section>
+
+          {selectedTemplate !== null && (
+            <section className="blueprint-selection">
+              <div className="blueprint-selection__heading">
+                <h2>{selectedTemplate.name}</h2>
+                <p>
+                  {machineTypeLabel(selectedTemplate.machineTypeId)}
+                  {' · shared with everyone at '}{orgName}
+                  {' · a random name is picked for you'}
+                </p>
+              </div>
+              {selectedTemplate.folders.length > 0 && (
+                <ul className="template-folder-list">
+                  {selectedTemplate.folders.map((folder) => (
+                    <li key={folder.id}>
+                      {folder.name}
+                      {folder.role === null ? ' — no access yet, will not sync' : ''}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+
+          {selectedTemplate === null && <section className="blueprint-selection">
+            <div className="blueprint-selection__heading">
               <h2>Name</h2>
               <p>Optional. Leave blank to get a random name.</p>
             </div>
@@ -109,9 +193,9 @@ export function CreateWorkspaceDialog({
                 spellCheck={false}
               />
             </label>
-          </section>
+          </section>}
 
-          <section className="blueprint-selection">
+          {selectedTemplate === null && <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
               <h2>Machine type</h2>
               <p>Select the compute location and size for this workspace.</p>
@@ -127,9 +211,9 @@ export function CreateWorkspaceDialog({
             ) : (
               <div className="blueprint-selection__empty">No machine types are available.</div>
             )}
-          </section>
+          </section>}
 
-          <section className="blueprint-selection">
+          {selectedTemplate === null && <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
               <h2>Volume</h2>
               <p>Optionally attach an available volume.</p>
@@ -148,9 +232,24 @@ export function CreateWorkspaceDialog({
                 <span>Volumes are not supported by this machine provider.</span>
               )}
             </label>
-          </section>
+          </section>}
 
-          <section className="blueprint-selection blueprint-setup-script">
+          {selectedTemplate === null && <section className="blueprint-selection">
+            <div className="blueprint-selection__heading">
+              <h2>Sharing</h2>
+              <p>Who at {orgName} can open this workspace. You can change it later.</p>
+            </div>
+            <label className="blueprint-field">
+              Access
+              <select name="orgShareRole" defaultValue="editor" aria-label="Workspace sharing">
+                <option value="editor">Everyone at {orgName} can edit</option>
+                <option value="viewer">Everyone at {orgName} can view</option>
+                <option value="">Only me and people I invite</option>
+              </select>
+            </label>
+          </section>}
+
+          {selectedTemplate === null && <section className="blueprint-selection blueprint-setup-script">
             <div className="blueprint-selection__heading">
               <h2>SSH public key (optional)</h2>
               <p>Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.</p>
@@ -162,7 +261,7 @@ export function CreateWorkspaceDialog({
               autoCorrect="off"
               spellCheck={false}
             />
-          </section>
+          </section>}
         </div>
 
         <footer className="create-workspace-actions">
@@ -170,9 +269,9 @@ export function CreateWorkspaceDialog({
           <button
             className="create-workspace-primary"
             type="submit"
-            disabled={busy || loading || selectedMachineType === ''}
+            disabled={busy || (selectedTemplate === null && (loading || selectedMachineType === ''))}
           >
-            {busy ? 'Creating…' : 'Create workspace'}
+            {busy ? 'Creating…' : selectedTemplate === null ? 'Create workspace' : `Create from ${selectedTemplate.name}`}
           </button>
         </footer>
       </form>

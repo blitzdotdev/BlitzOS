@@ -29,12 +29,19 @@ export function canControlWorkspace(
 
 export function workspaceRole(
   principal: Principal,
-  workspace: WorkspaceAccessRow & { grant_role?: "editor" | "viewer" | null },
+  workspace: WorkspaceAccessRow & {
+    grant_role?: "editor" | "viewer" | null;
+    org_share_role?: "editor" | "viewer" | null;
+  },
 ): WorkspaceRole | null {
   if (principal.orgId === null || workspace.org_id !== principal.orgId) return null;
   if (workspace.owner_membership_id === principal.membershipId) return "owner";
   if (principal.role === "admin") return "admin";
-  return workspace.grant_role ?? null;
+  // A personal grant and org-wide sharing combine to the stronger role.
+  const grant = workspace.grant_role ?? null;
+  const orgWide = workspace.org_share_role ?? null;
+  if (grant === "editor" || orgWide === "editor") return "editor";
+  return grant ?? orgWide;
 }
 
 export interface WebAppWorkspaceAccess {

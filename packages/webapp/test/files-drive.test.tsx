@@ -1,3 +1,4 @@
+import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createControlPlaneClient } from '../src/api.js';
 import type { TenantMe } from '../src/api-adapter.js';
@@ -17,6 +18,7 @@ const ownedFolder = {
   id: 'folder-mine',
   name: 'shared-notes',
   role: 'owner',
+  orgRole: null,
   owner: { name: 'Min Song', avatarUrl: null },
   attachedWorkspaceIds: [],
   createdAt: 1,
@@ -28,6 +30,7 @@ const grantedFolder = {
   id: 'folder-ada',
   name: 'ada-datasets',
   role: 'editor',
+  orgRole: null,
   owner: { name: 'Ada Park', avatarUrl: null },
   attachedWorkspaceIds: [],
   createdAt: 1,
@@ -141,6 +144,7 @@ describe('files drive surface', () => {
           id: 'private-folder',
           name: 'private-notes',
           role: null,
+          orgRole: null,
           owner: { name: 'Dana Whitfield', avatarUrl: null },
           attachedWorkspaceIds: [],
           createdAt: 1,
@@ -240,6 +244,37 @@ function dropEntries(view: { container: HTMLElement }, entries: FakeEntry[], fil
   page?.dispatchEvent(event);
 }
 
+describe('drive sharing', () => {
+  it('turns on org-wide access from the share dialog', async () => {
+    const fetcher = stubFolders((url, init) => {
+      if (url.pathname === '/members') return Response.json({ members: [] });
+      if (url.pathname === '/folders/folder-mine' && init?.method === 'PATCH') {
+        return new Response(null, { status: 204 });
+      }
+      return null;
+    });
+    const view = await render(<FilesDrive {...props(drive('mine'))} />);
+    await settle();
+    clickButton(view, 'Share shared-notes');
+    await settle();
+    expect(view.container.textContent).toContain('Everyone at acme');
+
+    const select = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Access for everyone at acme"]',
+    )!;
+    const setSelect = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    expect(setSelect).toBeDefined();
+    await act(async () => {
+      setSelect?.call(select, 'viewer');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+    const patch = fetcher.mock.calls.find(([, init]) => init?.method === 'PATCH');
+    expect(patch?.[1]?.body).toBe(JSON.stringify({ orgRole: 'viewer' }));
+    await view.unmount();
+  });
+});
+
 describe('drive drag-and-drop', () => {
   it('uploads dropped files and directories into the open folder at the current path', async () => {
     const fetcher = stubFolders((url, init) => {
@@ -274,6 +309,7 @@ describe('drive drag-and-drop', () => {
       id: 'folder-new',
       name: 'field-photos',
       role: 'owner',
+      orgRole: null,
       owner: { name: 'Min Song', avatarUrl: null },
       attachedWorkspaceIds: [],
       createdAt: 3,

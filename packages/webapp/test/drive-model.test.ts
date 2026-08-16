@@ -11,6 +11,7 @@ function folder(id: string, role: FolderView['role']): FolderView {
     id,
     name: id,
     role,
+    orgRole: null,
     owner: { name: 'Owner', avatarUrl: null },
     attachedWorkspaceIds: [],
     createdAt: 1,

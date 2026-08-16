@@ -8,7 +8,7 @@ const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
-  "/sessions", "/workspaces", "/folders", "/volumes", "/machine-types", "/webapp-state",
+  "/sessions", "/workspaces", "/workspace-templates", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
   "/hosts/", "/oauth/", "/boxes/", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
@@ -37,7 +37,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/types.ts",
   "core/volumes.ts",
   "core/webapp-state.ts",
-  "core/workspace-access.ts", "core/workspace-records.ts",
+  "core/workspace-access.ts", "core/workspace-records.ts", "core/workspace-templates.ts",
   "core/workspaces.ts",
   "core/providers/registry.ts", "core/providers/types.ts", "core/providers/hetzner.ts", "core/providers/microvm-hosts.js",
   "core/providers/microvm-config.ts", "core/providers/microvm-agent.ts", "core/providers/microvm-host-registry.ts", "core/providers/microvm.ts",
@@ -151,6 +151,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "manifest", type: "text", sqlType: "text" }, { name: "tunnel_id", type: "text", sqlType: "text" },
         { name: "tunnel_hostname", type: "text", sqlType: "text" }, { name: "dns_record_id", type: "text", sqlType: "text" },
         { name: "org_id", type: "text", sqlType: "text", foreignKey: { table: "orgs", column: "id" } }, { name: "owner_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } },
+        { name: "org_share_role", type: "text", sqlType: "text", check: "org_share_role IN ('editor', 'viewer')" },
       ],
       indexes: [{ name: "owner", fields: ["owner_id", "created_at"] }, { name: "phase", fields: ["phase", "updated_at"] }],
       extensions: [DENY_ALL_RULES],
@@ -184,9 +185,11 @@ export const BLITZDEV_CONFIG = Object.freeze({
       indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }],
       extensions: [DENY_ALL_RULES],
     },
-    { name: "folders", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
+    { name: "folders", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }, { name: "org_role", type: "text", sqlType: "text", check: "org_role IN ('editor', 'viewer')" }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
     { name: "folder_grants", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" }, { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["folder_id", "membership_id"] }, { name: "membership", fields: ["membership_id", "folder_id"] }], extensions: [DENY_ALL_RULES] },
     { name: "folder_attachments", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "attached_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "guest_path", type: "text", sqlType: "text" }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
+    { name: "workspace_templates", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "machine_type_id", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
+    { name: "workspace_template_folders", fields: [{ name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["template_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "template_id"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",
       fields: [

@@ -27,6 +27,7 @@ export interface WorkspaceRow {
   dns_record_id: string | null;
   org_id: string | null;
   owner_membership_id: string | null;
+  org_share_role?: "editor" | "viewer" | null;
   owner_name?: string | null;
   owner_avatar_url?: string | null;
   grant_role?: "editor" | "viewer" | null;
@@ -74,6 +75,7 @@ export function workspaceView(
     volumeId: row.volume_id,
     error: row.error,
     role,
+    orgShareRole: row.org_share_role ?? null,
     owner: {
       name: row.owner_name ?? row.owner_id,
       avatarUrl: row.owner_avatar_url ?? null,

@@ -647,6 +647,7 @@ export function FilesDrive({
             client={client}
             folder={target}
             viewerEmail={viewer.identity.email}
+            orgName={viewer.org.name}
             onClose={() => setDialog(null)}
             onChanged={loadFolders}
             onSnack={showSnack}

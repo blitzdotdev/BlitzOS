@@ -14,7 +14,12 @@ export interface ListMachineTypesResponse {
 }
 
 export interface CreateWorkspaceRequest {
-  machineTypeId: string;
+  /** Required unless templateId is set; then the template's machine type is the default. */
+  machineTypeId?: string;
+  /** Creates from a workspace template: its folders attach automatically. */
+  templateId?: string;
+  /** Shares the new workspace with every active org member at this role. */
+  orgShareRole?: "editor" | "viewer";
   /** Optional display name; blank means the server picks a random one. */
   name?: string;
   sshPublicKey?: string;

@@ -17,6 +17,7 @@ interface FolderAccessRow {
   created_at: number;
   updated_at: number;
   grant_role: "editor" | "viewer" | null;
+  org_role: "editor" | "viewer" | null;
 }
 
 export type FolderRole = "owner" | "admin" | "editor" | "viewer";
@@ -39,12 +40,14 @@ export async function filesActorForRequest(
 
 export function folderRole(
   principal: Principal,
-  folder: Pick<FolderAccessRow, "org_id" | "created_by_membership_id" | "grant_role">,
+  folder: Pick<FolderAccessRow, "org_id" | "created_by_membership_id" | "grant_role" | "org_role">,
 ): FolderRole | null {
   if (principal.orgId === null || folder.org_id !== principal.orgId) return null;
   if (folder.created_by_membership_id === principal.membershipId) return "owner";
   if (principal.role === "admin") return "admin";
-  return folder.grant_role;
+  // A personal grant and org-wide sharing combine to the stronger role.
+  if (folder.grant_role === "editor" || folder.org_role === "editor") return "editor";
+  return folder.grant_role ?? folder.org_role;
 }
 
 export async function requireFolderAccess(
@@ -56,7 +59,7 @@ export async function requireFolderAccess(
   const folder = await first<FolderAccessRow>(db, {
     q: `SELECT f.id, f.org_id, f.name,
                f.created_by_membership_id, f.created_at, f.updated_at,
-               grant.role AS grant_role
+               f.org_role, grant.role AS grant_role
         FROM folders f
         LEFT JOIN folder_grants grant
           ON grant.folder_id = f.id AND grant.membership_id = ?2

@@ -182,6 +182,26 @@ export function addGrantRoutes(
     return context.json({ grant: grantView(grant) }, 201);
   });
 
+  router.put("/workspaces/:id/org-role", async (context) => {
+    const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
+    const workspace = await controlledWorkspace(runtime, context.req.param("id"), principal);
+    const value = await readJson(context.req.raw);
+    if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+    if (value.role !== null && value.role !== "editor" && value.role !== "viewer") {
+      throw new HttpError(400, "role must be editor, viewer, or null");
+    }
+    // Removal applies on the next request; unlike a personal grant revoke
+    // there is no single member to drain.
+    await rows(runtime.db, {
+      q: `UPDATE workspaces
+          SET org_share_role = ?1, revision = revision + 1, updated_at = ?2
+          WHERE id = ?3`,
+      v: [value.role, Date.now(), workspace.id],
+    });
+    return context.body(null, 204);
+  });
+
   router.delete("/workspaces/:id/grants/:grantId", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);

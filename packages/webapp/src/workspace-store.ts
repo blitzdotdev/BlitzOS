@@ -14,6 +14,7 @@ export type CloudWorkspaceModel = {
   shared: boolean;
   owner: WorkspaceRecord['owner'] | null;
   accessRole: WorkspaceRecord['accessRole'];
+  orgShareRole: 'editor' | 'viewer' | null;
   serverName: string;
   title: string;
   machineType: string | null;
@@ -60,6 +61,7 @@ function createWorkspaceModel(
     shared: record.shared === true,
     owner: record.owner ?? null,
     accessRole: record.accessRole ?? null,
+    orgShareRole: record.orgShareRole ?? null,
     serverName: record.name,
     title: record.canControl ? preference?.title || record.name : record.name,
     machineType: record.machineType ?? null,
@@ -102,6 +104,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
           shared: record.shared === true,
           owner: record.owner ?? existing.owner,
           accessRole: record.accessRole ?? null,
+    orgShareRole: record.orgShareRole ?? null,
           serverName: record.name,
           title: record.canControl ? existing.title : record.name,
           machineType: record.machineType ?? null,
@@ -144,6 +147,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
             shared: record.shared === true,
             owner: record.owner ?? workspace.owner,
             accessRole: record.accessRole ?? null,
+    orgShareRole: record.orgShareRole ?? null,
             serverName: record.name,
             title: record.canControl ? workspace.title : record.name,
             machineType: record.machineType ?? null,

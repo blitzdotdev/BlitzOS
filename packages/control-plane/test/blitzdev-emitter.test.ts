@@ -62,6 +62,7 @@ const expected = [
   "core/webapp-state.ts",
   "core/workspace-access.ts",
   "core/workspace-records.ts",
+  "core/workspace-templates.ts",
   "core/workspaces.ts",
   "core/providers/registry.ts",
   "core/providers/types.ts",
@@ -88,7 +89,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(56);
+    expect(first.files).toHaveLength(57);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

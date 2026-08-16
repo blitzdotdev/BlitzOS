@@ -16,6 +16,7 @@ const workspace: WorkspaceView = {
   volumeId: null,
   error: null,
   role: "owner",
+  orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
 };
 

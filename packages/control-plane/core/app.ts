@@ -11,6 +11,7 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
+import { addWorkspaceTemplateRoutes } from "./workspace-templates.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
 
 export function installControlPlaneRoutes(
@@ -39,6 +40,7 @@ export function installControlPlaneRoutes(
   addIdentityRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);

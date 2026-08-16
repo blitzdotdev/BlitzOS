@@ -6,6 +6,7 @@ export type AppRoute =
   | { workspaceId: string; page: 'webApp' }
   | { workspaceId: null; page: 'drive'; scope: DriveScope }
   | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
+  | { workspaceId: null; page: 'template-new' }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
 const HOME: AppRoute = { workspaceId: null, page: 'drive', scope: 'mine' };
@@ -22,6 +23,9 @@ export function parseAppRoute(pathname: string): AppRoute {
   }
   if (/^\/shared\/?$/u.test(pathname)) {
     return { workspaceId: null, page: 'drive', scope: 'shared' };
+  }
+  if (/^\/templates\/new\/?$/u.test(pathname)) {
+    return { workspaceId: null, page: 'template-new' };
   }
   const folder = pathname.match(/^\/folder\/([^/]+)((?:\/[^/]+)*)\/?$/u);
   if (folder) {
@@ -61,6 +65,10 @@ export function settingsPath(section: SettingsSection): string {
 
 export function drivePath(scope: DriveScope): string {
   return scope === 'shared' ? '/shared' : '/';
+}
+
+export function templateNewPath(): string {
+  return '/templates/new';
 }
 
 export function folderPagePath(folderId: string, folderPath: string[] = []): string {

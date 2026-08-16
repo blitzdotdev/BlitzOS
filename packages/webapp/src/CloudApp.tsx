@@ -21,6 +21,7 @@ import {
 } from './WebAppHeader';
 import { FileIcon } from './WebAppIcons';
 import { DriveHome } from './files/DriveHome';
+import { CreateTemplateScreen } from './files/CreateTemplateScreen';
 import { DriveRail } from './files/DriveRail';
 import { WorkspaceSharedFolders } from './files/WorkspaceSharedFolders';
 import { DriveAvatar } from './files/DriveAvatar';
@@ -50,6 +51,7 @@ import {
   settingsPath,
   workspacePath,
   type SettingsSection,
+  templateNewPath,
 } from './sessions-page-state';
 import {
   defaultWorkspaceFiles,
@@ -317,6 +319,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
   const listVolumes = useCallback(() => api.listVolumes(), [api]);
+  const listTemplates = useCallback(
+    () => client.listWorkspaceTemplates().then(({ templates }) => templates),
+    [client],
+  );
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
       const records = await api.listWorkspaces();
@@ -1144,8 +1150,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           <CreateWorkspaceDialog
             busy={createWorkspaceBusy}
             error={createWorkspaceError}
+            orgName={store.viewer?.org.name ?? 'your org'}
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
+            listTemplates={listTemplates}
+            onNewTemplate={() => navigateTo(templateNewPath())}
             onCancel={() => {
               if (!createWorkspaceBusy) setShowCreateWorkspace(false);
             }}
@@ -1162,6 +1171,31 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             onConfirm={confirmWebAppAction}
           />
         )}
+      </main>
+    );
+  }
+
+  if (route.page === 'template-new') {
+    const leaveToCreate = () => {
+      navigateTo(drivePath('mine'));
+      setShowCreateWorkspace(true);
+    };
+    return (
+      <main className="drive-shell" aria-busy={!loaded}>
+        {railFor(null, null)}
+        {loaded && store.viewer ? (
+          <CreateTemplateScreen
+            client={client}
+            orgName={store.viewer.org.name}
+            onCreated={leaveToCreate}
+            onCancel={leaveToCreate}
+          />
+        ) : (
+          <div className="drive-content">
+            <div className="drive-empty" role="status">Loading…</div>
+          </div>
+        )}
+        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       </main>
     );
   }
@@ -1247,7 +1281,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {railFor(null, activeWorkspaceId)}
       {shareWorkspaceId && (() => {
         const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
-        return workspace ? <ShareWorkspaceDialog client={client} workspaceId={workspace.id} workspaceName={workspace.title} onClose={() => setShareWorkspaceId(null)} /> : null;
+        return workspace ? <ShareWorkspaceDialog client={client} workspaceId={workspace.id} workspaceName={workspace.title} orgName={store.viewer?.org.name ?? 'your org'} orgShareRole={workspace.orgShareRole} onClose={() => setShareWorkspaceId(null)} /> : null;
       })()}
 
       <div className="drive-ws-frame">
@@ -1717,8 +1751,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         <CreateWorkspaceDialog
           busy={createWorkspaceBusy}
           error={createWorkspaceError}
+          orgName={store.viewer?.org.name ?? 'your org'}
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
+          listTemplates={listTemplates}
+          onNewTemplate={() => navigateTo(templateNewPath())}
           onCancel={() => {
             if (!createWorkspaceBusy) {
               setShowCreateWorkspace(false);
