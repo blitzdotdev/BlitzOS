@@ -1,7 +1,8 @@
 # M2 live integration report
 
 Date: 2026-08-13 (America/Los_Angeles)  
-Agent: `http://192.168.5.25:8086` (Bearer token omitted)  
+Agent: protected test host (address omitted; Bearer token omitted)
+
 Guest image: `blitz-box-base-m2-v2.ext4`
 
 ## Full lifecycle

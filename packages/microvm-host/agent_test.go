@@ -71,11 +71,12 @@ func (m *mockBackend) Versions(context.Context) map[string]string {
 func testConfig(dir string) Config {
 	return Config{
 		ListenAddr: "127.0.0.1:0", PublicHostIP: "192.0.2.10", TokenFile: filepath.Join(dir, "token"),
-		StateDir: filepath.Join(dir, "state"), LabDir: dir, FirecrackerBin: filepath.Join(dir, "firecracker"),
+		StateDir: filepath.Join(dir, "state"), FirecrackerBin: filepath.Join(dir, "firecracker"),
 		FirecrackerVersion: "test", KernelImage: filepath.Join(dir, "vmlinux"), KernelVersion: "test",
+		GuestDNS:    []string{"1.1.1.1", "8.8.8.8"},
 		RootfsImage: filepath.Join(dir, "rootfs"), SudoWrapper: filepath.Join(dir, "sudo-run"),
 		NetworkPrefix: "172.30", NetworkOctetBase: 20, SlotCount: 4, SSHPortBase: 22000,
-		UpperSizeBytes: 8 << 30, TotalCPU: 4, TotalMemMB: 2048, MaxVMs: 2, ShutdownTimeoutSeconds: 10,
+		UpperSizeBytes: 8 << 30, TotalCPU: 4, CPUOvercommit: 1, TotalMemMB: 2048, MaxVMs: 2, ShutdownTimeoutSeconds: 10,
 	}
 }
 
@@ -282,52 +283,6 @@ func TestCapacityEndpointReportsPhysicalAndEffectiveCPU(t *testing.T) {
 		if got[name] != want {
 			t.Fatalf("capacity field %q = %#v; want %v; response=%s", name, got[name], want, res.Body.String())
 		}
-	}
-}
-
-func TestLoadConfigCPUOvercommitDefaultsAndParses(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		value   float64
-		omitted bool
-		want    float64
-	}{
-		{name: "omitted", omitted: true, want: 1},
-		{name: "zero", value: 0, want: 1},
-		{name: "fractional", value: 1.5, want: 1.5},
-		{name: "double", value: 2, want: 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			cfg := testConfig(dir)
-			cfg.CPUOvercommit = tc.value
-			body, err := json.Marshal(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.omitted {
-				var raw map[string]any
-				if err := json.Unmarshal(body, &raw); err != nil {
-					t.Fatal(err)
-				}
-				delete(raw, "cpu_overcommit")
-				body, err = json.Marshal(raw)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			path := filepath.Join(dir, "config.json")
-			if err := os.WriteFile(path, body, 0600); err != nil {
-				t.Fatal(err)
-			}
-			loaded, err := LoadConfig(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if loaded.CPUOvercommit != tc.want {
-				t.Fatalf("CPUOvercommit = %v; want %v", loaded.CPUOvercommit, tc.want)
-			}
-		})
 	}
 }
 

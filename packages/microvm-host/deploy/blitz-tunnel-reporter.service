@@ -5,10 +5,10 @@ Wants=network-online.target blitz-microvm-tunnel.service
 
 [Service]
 Type=simple
-User=minjune
-Group=minjune
+User=blitz-microvm
+Group=blitz-microvm
 SupplementaryGroups=systemd-journal
-EnvironmentFile=/etc/blitz/tunnel-reporter.env
+EnvironmentFile=/etc/blitz/env.defaults
 ExecStart=/usr/local/libexec/blitz-tunnel-reporter.sh
 Restart=always
 RestartSec=2

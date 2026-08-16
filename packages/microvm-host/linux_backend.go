@@ -144,6 +144,7 @@ func (b *LinuxBackend) configure(ctx context.Context, vm *VM, req CreateRequest)
 	bootArgs := strings.Join([]string{
 		"console=ttyS0", "reboot=k", "panic=1", "pci=off", "root=/dev/vda", "ro", "init=/microvm-init",
 		"random.trust_cpu=on", "ipv6.disable=1", "quiet", "blitz_ip=" + guestIP, "blitz_gw=" + hostIP,
+		"blitz_dns=" + strings.Join(b.cfg.GuestDNS, ","),
 		"blitz_prefix=30", "blitz_name=" + vm.VMID, "blitz_phone_home_b64=" + encode(req.PhoneHomeURL),
 		"blitz_cp_origin_b64=" + encode(req.CPOrigin), "blitz_workspace_b64=" + encode(req.WorkspaceID),
 	}, " ")
