@@ -28,9 +28,11 @@ session_type=$1
 session_key=$2
 mode=${3:-rw}
 
+# Tabs are workspace-scoped: agents always run with permission prompts off.
 case "$session_type" in
-  terminal) session_prefix=term ;;
-  claude|codex) session_prefix=$session_type ;;
+  terminal) session_prefix=term; session_cmd=() ;;
+  claude) session_prefix=claude; session_cmd=(claude --dangerously-skip-permissions) ;;
+  codex) session_prefix=codex; session_cmd=(codex --dangerously-bypass-approvals-and-sandbox) ;;
   *) echo "terminal: unsupported session type: $session_type" >&2; exit 2 ;;
 esac
 case "$session_key" in
@@ -51,11 +53,7 @@ fi
 session="$session_prefix-$session_key"
 
 new_session() {
-  case "$session_type" in
-    terminal) tmux -u new-session -d -s "$session" -c "$workspace" ;;
-    claude) tmux -u new-session -d -s "$session" -c "$workspace" claude ;;
-    codex) tmux -u new-session -d -s "$session" -c "$workspace" codex ;;
-  esac
+  tmux -u new-session -d -s "$session" -c "$workspace" "${session_cmd[@]}"
 }
 
 if [ "$mode" = ro ]; then
@@ -65,8 +63,4 @@ if [ "$mode" = ro ]; then
   exec tmux -u attach-session -r -t "=$session"
 fi
 
-case "$session_type" in
-  terminal) exec tmux -u new-session -A -s "$session" -c "$workspace" ;;
-  claude) exec tmux -u new-session -A -s "$session" -c "$workspace" claude ;;
-  codex) exec tmux -u new-session -A -s "$session" -c "$workspace" codex ;;
-esac
+exec tmux -u new-session -A -s "$session" -c "$workspace" "${session_cmd[@]}"
