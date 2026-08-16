@@ -42,6 +42,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
     if (row.vm_id === null) continue;
     const provider = runtime.providers.vmRegistry.forVmId(row.vm_id);
     if (provider === undefined) {
+      // TODO(house-canon): Route structured core logs through the canonical logger.
       console.error(JSON.stringify({
         message: "orphan sweep skipped VM with no owning provider",
         workspaceId: row.id,

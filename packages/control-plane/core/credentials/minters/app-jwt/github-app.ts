@@ -144,6 +144,7 @@ export const githubAppMinter: Minter = {
     const body: GithubTokenRequestBody = {};
     if (config.repositories !== undefined) body.repositories = config.repositories;
     if (config.permissions !== undefined) body.permissions = config.permissions;
+    // TODO(house-canon): Route this legacy raw request through the canonical fetch boundary.
     const response = await fetch(
       `https://api.github.com/app/installations/${config.installation_id}/access_tokens`,
       {

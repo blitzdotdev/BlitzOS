@@ -211,6 +211,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       serverTypeIds(message).map(async (id) => {
         if (this.serverTypeNames.has(id)) return;
         try {
+          // TODO(house-canon): Route this legacy raw request through the canonical fetch boundary.
           const response = await fetch(`${API}/server_types/${id}`, {
             headers: { Authorization: `Bearer ${this.token}` },
           });

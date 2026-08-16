@@ -52,6 +52,7 @@ export function installControlPlaneRoutes(
             error.status,
           );
     }
+    // TODO(house-canon): Route structured core logs through the canonical logger.
     console.error(
       JSON.stringify({
         message: "request failed",

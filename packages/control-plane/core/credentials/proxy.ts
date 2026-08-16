@@ -211,6 +211,7 @@ async function handleProxyRequest(
     credential.tokenHeader,
     `${credential.tokenPrefix}${credential.root}`,
   );
+  // TODO(house-canon): Route this legacy raw request through the canonical fetch boundary.
   const response = await fetch(destination, {
     method: request.method,
     headers,

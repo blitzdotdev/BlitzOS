@@ -22,12 +22,17 @@
     "**/integration/results/**",
     "packages/box/test/.smoke-tmp/**",
     "packages/broker/internal/vendor/**",
-    "tools/oxlint/anti-slop/**"
+    "tools/oxlint/anti-slop/**",
+    "tools/oxlint/blitz-house/**"
   ],
   "jsPlugins": [
     {
       "name": "anti-slop",
       "specifier": "./tools/oxlint/anti-slop/index.ts"
+    },
+    {
+      "name": "blitz-house",
+      "specifier": "./tools/oxlint/blitz-house/index.ts"
     }
   ],
   "rules": {
@@ -51,5 +56,58 @@
     "anti-slop/no-unsafe-dictionary-type": "error",
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "error"
-  }
+  },
+  "overrides": [
+    {
+      "files": [
+        "packages/control-plane/core/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      ],
+      "rules": {
+        "blitz-house/no-raw-fetch": [
+          "error",
+          {
+            "allowFiles": [
+              "packages/control-plane/core/providers/json-fetch.ts",
+              "packages/control-plane/core/credentials/proxy.ts",
+              "packages/control-plane/core/credentials/minters/app-jwt/github-app.ts",
+              "packages/control-plane/core/providers/hetzner.ts"
+            ]
+          }
+        ],
+        "blitz-house/no-console-in-core": [
+          "error",
+          {
+            "allowFiles": [
+              "packages/control-plane/core/app.ts",
+              "packages/control-plane/core/janitors.ts",
+              "packages/control-plane/core/providers/microvm-host-registry.ts",
+              "packages/control-plane/core/providers/microvm.ts"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"
+      ],
+      "excludeFiles": [
+        "packages/**/test/**",
+        "packages/**/tests/**",
+        "packages/**/tools/**",
+        "packages/**/*.test.*",
+        "packages/**/*.spec.*"
+      ],
+      "rules": {
+        "max-lines": [
+          "warn",
+          {
+            "max": 700,
+            "skipBlankLines": false,
+            "skipComments": false
+          }
+        ]
+      }
+    }
+  ]
 }

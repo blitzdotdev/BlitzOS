@@ -104,6 +104,7 @@ export async function prepareMicrovmHostRegistration(
     ]);
     const previousUrl = previousRows?.[0]?.url ?? null;
     if (previousUrl !== url) {
+      // TODO(house-canon): Route structured core logs through the canonical logger.
       console.log(
         JSON.stringify({
           message: "microVM host URL changed",
@@ -152,4 +153,3 @@ export async function resolveMicrovmHost(
     throw unavailableMicrovmHost(host);
   }
 }
-

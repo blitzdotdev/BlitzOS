@@ -168,6 +168,7 @@ export class MicrovmPoolProvider implements VmProvider {
     );
     settled.forEach((result, index) => {
       if (result.status !== "rejected") return;
+      // TODO(house-canon): Route structured core logs through the canonical logger.
       console.warn(
         JSON.stringify({
           message: "microVM host capacity unavailable",
