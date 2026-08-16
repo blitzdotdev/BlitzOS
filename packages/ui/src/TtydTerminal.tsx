@@ -47,6 +47,7 @@ export function TtydTerminal({
   url,
   sessionType = 'claude',
   sessionKey = '0',
+  active = true,
   readOnly = false,
   onSignInUrl,
   onOpenPreview,
@@ -54,6 +55,7 @@ export function TtydTerminal({
   url: string;
   sessionType?: TerminalSessionType;
   sessionKey?: string;
+  active?: boolean;
   /** Observer mode: render the session without ever sending input or resizes. */
   readOnly?: boolean;
   onSignInUrl?: (url: string | null) => void;
@@ -62,10 +64,12 @@ export function TtydTerminal({
   const hostRef = useRef<HTMLDivElement>(null);
   const sendRef = useRef<((command: '0' | '1', data: string) => void) | null>(null);
   const choiceMenuActiveRef = useRef(false);
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const [terminalInstance, setTerminalInstance] = useState<Terminal | null>(null);
   const [connected, setConnected] = useState(false);
   const sendInput = useCallback((data: string) => {
-    if (readOnly) return;
+    if (readOnly || !activeRef.current) return;
     sendRef.current?.('0', data);
   }, [readOnly]);
   const {
@@ -77,7 +81,7 @@ export function TtydTerminal({
     terminal: terminalInstance,
     surface: hostRef.current,
     sendInput,
-    active: true,
+    active,
     choiceMenuActiveRef,
     onOpenPreview,
   });
@@ -96,6 +100,7 @@ export function TtydTerminal({
   useEffect(() => {
     if (readOnly) return;
     const handleSubmit = (event: Event) => {
+      if (!activeRef.current) return;
       // SAFETY: Only the shared event name is assumed here; payload shape is not checked. TODO(deslop-tier-c): validate the CustomEvent detail before reading data and enters.
       const detail = (event as CustomEvent<{ data?: string; enters?: number }>).detail;
       if (!detail?.data) return;
@@ -124,14 +129,24 @@ export function TtydTerminal({
   }, [readOnly, sendInput]);
 
   useEffect(() => {
-    if (!terminalInstance) {
-      onSignInUrl?.(null);
+    if (!terminalInstance) return;
+    if (!active) {
+      terminalInstance.blur();
+      return;
+    }
+    if (!isTouchInputDevice()) terminalInstance.focus();
+  }, [active, terminalInstance]);
+
+  useEffect(() => {
+    if (!terminalInstance || !active) {
+      if (active) onSignInUrl?.(null);
       choiceMenuActiveRef.current = false;
       return;
     }
 
     let renderTimer: number | null = null;
     const scanBuffer = () => {
+      if (!activeRef.current) return;
       const buffer = terminalInstance.buffer.active;
       const firstRow = Math.max(0, buffer.length - 60);
       const rows: string[] = [];
@@ -183,10 +198,10 @@ export function TtydTerminal({
       if (renderTimer !== null) window.clearTimeout(renderTimer);
       window.clearInterval(armedTick);
       renderSubscription.dispose();
-      onSignInUrl?.(null);
+      if (active) onSignInUrl?.(null);
       choiceMenuActiveRef.current = false;
     };
-  }, [onSignInUrl, terminalInstance]);
+  }, [active, onSignInUrl, terminalInstance]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -227,8 +242,8 @@ export function TtydTerminal({
       webgl.dispose();
       // WebGL2 unavailable — DOM renderer remains active.
     }
-    fit.fit();
-    if (!isTouchInputDevice()) terminal.focus();
+    if (activeRef.current) fit.fit();
+    if (activeRef.current && !isTouchInputDevice()) terminal.focus();
 
     let socket: WebSocket | null = null;
     let reconnectTimer: number | null = null;
@@ -241,6 +256,7 @@ export function TtydTerminal({
     };
     if (!readOnly) {
       terminal.attachCustomKeyEventHandler((event) => {
+        if (!activeRef.current) return false;
         if (
           event.type === 'keydown'
           && event.key === 'Enter'
@@ -262,8 +278,10 @@ export function TtydTerminal({
     // presenting make WebKit abort the keyboard. Fit once the geometry settles.
     let resizeTimer: number | null = null;
     const resize = () => {
+      if (!activeRef.current) return;
       if (resizeTimer !== null) window.clearTimeout(resizeTimer);
       resizeTimer = window.setTimeout(() => {
+        if (!activeRef.current) return;
         fit.fit();
         // Observers must not resize the tenant's pty.
         if (readOnly) return;
@@ -289,13 +307,17 @@ export function TtydTerminal({
       next.binaryType = 'arraybuffer';
 
       next.onopen = () => {
-        fit.fit();
+        if (activeRef.current) fit.fit();
         // blitz-session's tmux attach -r client is read-only,ignore-size (proved
         // with a real tmux client in golden.test.mjs), so omit observer geometry
         // here as well and leave the active tenant client in sole control.
-        const handshake = ttydHandshake(readOnly, terminal.cols, terminal.rows);
+        const handshake = ttydHandshake(
+          readOnly || !activeRef.current,
+          terminal.cols,
+          terminal.rows,
+        );
         next.send(JSON.stringify(handshake));
-        if (!isTouchInputDevice()) terminal.focus();
+        if (activeRef.current && !isTouchInputDevice()) terminal.focus();
       };
 
       next.onmessage = (event) => {
@@ -319,7 +341,9 @@ export function TtydTerminal({
 
     const input = readOnly
       ? { dispose: () => undefined }
-      : terminal.onData((data) => send('0', data));
+      : terminal.onData((data) => {
+          if (activeRef.current) send('0', data);
+        });
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     connect();

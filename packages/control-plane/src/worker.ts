@@ -13,7 +13,9 @@ import {
   runLeaseSweep,
   runOrphanSweep,
   runSessionSweep,
+  runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
+  workspaceTunnelsFromEnv,
   VmProviderRegistry,
   type BlobStore,
   type CoreContext,
@@ -31,6 +33,8 @@ type WorkerBindings = Env & {
   SESSION_TTL_DAYS: string;
   MAX_CONCURRENT_WORKSPACES: string;
   CRED_MASTER_KEY: string;
+  CLOUDFLARE_API_TOKEN?: string;
+  SURFACE_TOKEN_SECRET?: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
 };
@@ -64,6 +68,7 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
     vmRegistry: new VmProviderRegistry([hetzner, microvm]),
     volume: hetzner,
     microvm,
+    workspaceTunnels: workspaceTunnelsFromEnv(env),
   };
 }
 
@@ -169,6 +174,7 @@ export default {
         await runLeaseSweep(runtime);
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
+        await runWorkspaceTunnelSweep(runtime);
       })(),
     );
   },

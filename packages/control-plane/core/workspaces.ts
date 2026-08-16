@@ -50,6 +50,9 @@ export interface WorkspaceRow {
   created_at: number;
   updated_at: number;
   manifest: string | null;
+  tunnel_id: string | null;
+  surface_hostname: string | null;
+  dns_record_id: string | null;
 }
 
 const retryActions = {
@@ -364,27 +367,6 @@ export function addWorkspaceRoutes(
     const capability = randomToken();
     const now = Date.now();
     const phoneHomeUrl = `${new URL(context.req.url).origin}/workspaces/${id}/phone-home/${capability}`;
-    const userData = buildUserData(
-      input.sshPublicKey,
-      phoneHomeUrl,
-      runtime.vars.boxImageRef,
-      input.userData,
-      runtime.vars.boxImageTag,
-      runtime.vars.boxImageSha256,
-    );
-    const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
-    if (maxUserDataBytes !== null) {
-      const encoder = new TextEncoder();
-      const callerBytes = encoder.encode(input.userData ?? "").byteLength;
-      const totalBytes = encoder.encode(userData).byteLength;
-      const generatedBytes = totalBytes - callerBytes;
-      if (totalBytes > maxUserDataBytes) {
-        throw new HttpError(
-          413,
-          `userData exceeds the provider limit: caller UTF-8 bytes ${callerBytes} + generated bootstrap bytes ${generatedBytes} = ${totalBytes} > ${maxUserDataBytes}`,
-        );
-      }
-    }
 
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO workspaces
@@ -415,6 +397,50 @@ export function addWorkspaceRoutes(
     }
 
     try {
+      // The size check runs on a surface-less build so a 413 always fires
+      // before any Cloudflare resource exists (the deleted row then owes
+      // nothing). The surface install part we append afterwards is small
+      // and ours; a razor-edge overflow surfaces as a provider error and
+      // the janitor reclaims the tunnel.
+      const baseUserData = buildUserData(
+        input.sshPublicKey,
+        phoneHomeUrl,
+        runtime.vars.boxImageRef,
+        input.userData,
+        runtime.vars.boxImageTag,
+        runtime.vars.boxImageSha256,
+      );
+      const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
+      if (maxUserDataBytes !== null) {
+        const encoder = new TextEncoder();
+        const callerBytes = encoder.encode(input.userData ?? "").byteLength;
+        const totalBytes = encoder.encode(baseUserData).byteLength;
+        const generatedBytes = totalBytes - callerBytes;
+        if (totalBytes > maxUserDataBytes) {
+          throw new HttpError(
+            413,
+            `userData exceeds the provider limit: caller UTF-8 bytes ${callerBytes} + generated bootstrap bytes ${generatedBytes} = ${totalBytes} > ${maxUserDataBytes}`,
+          );
+        }
+      }
+      // Providers that cannot proxy their own surface (cloud VMs) get a
+      // per-workspace tunnel; identifiers persist onto the row before the
+      // VM exists so a crash can never orphan Cloudflare resources.
+      const workspaceTunnels = runtime.providers.workspaceTunnels;
+      const tunnel = workspaceTunnels !== undefined && vmProvider.proxySurface === undefined
+        ? await workspaceTunnels.provision(runtime.db, id)
+        : undefined;
+      const userData = tunnel === undefined
+        ? baseUserData
+        : buildUserData(
+            input.sshPublicKey,
+            phoneHomeUrl,
+            runtime.vars.boxImageRef,
+            input.userData,
+            runtime.vars.boxImageTag,
+            runtime.vars.boxImageSha256,
+            tunnel,
+          );
       const vm = await vmProvider.createVm({
         workspaceId: id,
         machineTypeId: input.machineTypeId,
@@ -439,7 +465,10 @@ export function addWorkspaceRoutes(
         v: [vm.host, vm.port, vm.user, Date.now(), id],
       });
     } catch (error) {
-      if (error instanceof HttpError && error.status === 503) {
+      if (
+        error instanceof HttpError &&
+        (error.status === 503 || error.status === 413)
+      ) {
         await rows(runtime.db, {
           q: "DELETE FROM workspaces WHERE id = ?1 AND phase = 'creating' RETURNING id",
           v: [id],
@@ -478,12 +507,9 @@ export function addWorkspaceRoutes(
       throw new HttpError(404, "workspace not found");
     }
     if (row.vm_id === null) {
-      throw new HttpError(409, "microVM workspace is not ready for surface access");
+      throw new HttpError(409, "workspace is not ready for surface access");
     }
     const provider = providerForVmId(runtime, row.vm_id);
-    if (provider.id !== "microvm") {
-      throw new HttpError(400, "workspace is not backed by the microVM provider");
-    }
     const rawPort = context.req.param("port");
     if (rawPort !== "7444" && rawPort !== "7445") {
       throw new HttpError(400, "surface port must be 7444 or 7445");
@@ -496,24 +522,34 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
-    if (provider.proxySurface === undefined) {
-      throw new HttpError(400, "microVM surface proxy is unavailable");
-    }
+    const workspaceTunnels = runtime.providers.workspaceTunnels;
     let upstream: Response | null;
     try {
-      upstream = await provider.proxySurface(
-        row.vm_id,
-        port,
-        pathAndQuery,
-        context.req.raw,
-      );
+      if (provider.proxySurface !== undefined) {
+        upstream = await provider.proxySurface(
+          row.vm_id,
+          port,
+          pathAndQuery,
+          context.req.raw,
+        );
+      } else if (workspaceTunnels !== undefined && row.surface_hostname !== null) {
+        upstream = await workspaceTunnels.proxy(
+          row.surface_hostname,
+          row.id,
+          port,
+          pathAndQuery,
+          context.req.raw,
+        );
+      } else {
+        throw new HttpError(503, "workspace has no surface tunnel");
+      }
     } catch (error) {
       if (error instanceof HttpError && error.status === 503) throw error;
       const detail = error instanceof Error ? error.message : String(error);
-      throw new HttpError(502, `microVM surface proxy is unavailable: ${detail}`);
+      throw new HttpError(502, `workspace surface proxy is unavailable: ${detail}`);
     }
     if (upstream === null) {
-      throw new HttpError(400, "workspace is not owned by the microVM provider");
+      throw new HttpError(409, "workspace VM is not owned by its resolved provider");
     }
     if (!isWebSocketUpgrade(context.req.raw)) return upstream;
     if (upstream.status !== 101 || upstream.webSocket === null) return upstream;
@@ -554,6 +590,18 @@ export function addWorkspaceRoutes(
         await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
       }
       await vmProvider.destroy(row.vm_id);
+    }
+
+    const workspaceTunnels = runtime.providers.workspaceTunnels;
+    if (workspaceTunnels !== undefined) {
+      const cleanup = await workspaceTunnels.cleanup(runtime.db, row);
+      if (cleanup.errors.length > 0) {
+        // Honest destroy: the row stays in destroying with its remaining
+        // identifiers; the janitor retries until Cloudflare cleanup lands.
+        const pending = await workspaceById(runtime.db, id);
+        if (pending === null) throw new Error("workspace disappeared during destroy");
+        return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(pending) });
+      }
     }
 
     await transaction(runtime.db, [

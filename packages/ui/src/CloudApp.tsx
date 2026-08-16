@@ -80,7 +80,6 @@ import {
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
 import type { EndpointResolver } from './resolver';
-import { isMicrovmWorkspace } from './resolver';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
 import {
   rememberWorkspaceEndpoints,
@@ -228,12 +227,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [portsMenuOpen, setPortsMenuOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
-  const [sshCopied, setSshCopied] = useState(false);
   const shellRef = useRef<HTMLElement>(null);
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
   const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
   const firstWorkspacePrompted = useRef(false);
+  // Visit once, then retain: tab switches preserve live state without eagerly
+  // opening every saved terminal, WebGL surface, and chat SDK connection.
+  const retainedSessionIdsRef = useRef<{ workspaceId: string; ids: Set<string> }>({
+    workspaceId: '',
+    ids: new Set(),
+  });
   storeRef.current = store;
 
   useEffect(() => {
@@ -323,7 +327,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeIngressEntry = activeWorkspace
     ? workspaceEndpoints.current.get(activeWorkspace.id) ?? null
     : null;
-  const activeIngressLabel = activeIngressEntry?.label ?? null;
   const activeWorkspaceRunning = activeWorkspace?.lifecycleStatus === 'running';
   const activeSessionUrl = activeWorkspaceRunning
     ? activeIngressEntry?.terminalUrl ?? null
@@ -409,14 +412,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     };
   }, [activeWorkspaceId, client, filesOpen, route.page, signedOut]);
 
-  useEffect(() => {
-    setSshCopied(false);
-  }, [activeWorkspaceId]);
-
   const filesClient = useMemo<WebDAVClient | null>(() => {
     if (!activeFilesBase) return null;
     return createClient(activeFilesBase, { withCredentials: true });
   }, [activeFilesBase]);
+  const getFilesClient = useCallback((): WebDAVClient | null => {
+    const workspaceId = activeWorkspaceIdRef.current;
+    const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
+    const filesBase = workspaceEndpoints.current.get(workspaceId)?.filesBase;
+    if (workspace?.lifecycleStatus !== 'running' || !filesBase) return null;
+    return createClient(filesBase, { withCredentials: true });
+  }, []);
   const [dropActive, setDropActive] = useState(false);
   const [dropBusy, setDropBusy] = useState(false);
   // Drop a screenshot on a tab and its path lands in the TUI. Upload reuses the
@@ -796,6 +802,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     || activeWorkspaceTabs?.activeId === undefined
     ? null
     : String(activeWorkspaceTabs.activeId);
+  useEffect(() => {
+    if (retainedSessionIdsRef.current.workspaceId !== activeWorkspaceId) {
+      retainedSessionIdsRef.current = { workspaceId: activeWorkspaceId, ids: new Set() };
+    }
+    if (ttydActiveId !== null) retainedSessionIdsRef.current.ids.add(ttydActiveId);
+  }, [activeWorkspaceId, ttydActiveId]);
   const tabsLoaded = activeWorkspaceTabs !== null;
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
@@ -1005,20 +1017,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const statusWorkspace = activeWorkspace
     ? `workspace ${activeWorkspace.lifecycleStatus}`
     : 'workspace pending';
-  const activeSshCommand = activeIngressEntry?.wire.ssh
-    && !isMicrovmWorkspace(activeIngressEntry.wire)
-    ? `ssh -L 7445:localhost:7445 -L 7444:localhost:7444 -N blitz@${activeIngressEntry.wire.ssh.host} -p ${activeIngressEntry.wire.ssh.port}`
-    : null;
-  const copySshCommand = async () => {
-    if (!activeSshCommand) return;
-    try {
-      await navigator.clipboard.writeText(activeSshCommand);
-      setSshCopied(true);
-      window.setTimeout(() => setSshCopied(false), 1_500);
-    } catch {
-      setError('Could not copy the SSH command.');
-    }
-  };
   const hasControllableWorkspace = store.workspaces.some(({ canControl }) => canControl);
   const cockpitBooting = !loaded || (!isSettingsRoute && (
     hasControllableWorkspace
@@ -1033,7 +1031,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       ? 'waking · requesting compute'
       : 'waking · reattaching drive'
     : undefined;
-  const activeChatSession = ttydActiveSession?.type === 'chat' ? ttydActiveSession : null;
   const activeFilePane = ttydActiveType === 'file' && filesClient !== null;
   const updateNotice = updateAvailableHash && (
     <div className="cockpit-notice cockpit-notice--update" role="status">
@@ -1241,30 +1238,49 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                       ariaLabel="Loading workspace"
                       stage="loading · local tabs"
                     />
-                  ) : ttydActiveType === 'chat' ? (
-                    <ChatPanel
-                      key={`chat:${activeIngressLabel}:${ttydActiveId}`}
-                      url={activeAcpUrl ?? ''}
-                      workspaceId={activeWorkspaceId}
-                      initialSessionId={activeChatSession?.chatSessionId ?? null}
-                      onSessionId={(_workspaceId, sessionId) => {
-                        if (ttydActiveId !== null) {
-                          rememberChatSession(ttydActiveId, sessionId, 'claude');
+                  ) : (
+                    ttydSessions
+                      .filter((session) => (
+                        String(session.id) === ttydActiveId
+                        || (
+                          retainedSessionIdsRef.current.workspaceId === activeWorkspaceId
+                          && retainedSessionIdsRef.current.ids.has(String(session.id))
+                        )
+                      ))
+                      .sort((left, right) => Number(String(right.id) === ttydActiveId)
+                        - Number(String(left.id) === ttydActiveId))
+                      .map((session) => {
+                        const sessionId = String(session.id);
+                        const active = ttydActiveId === sessionId;
+                        if (session.type === 'chat') {
+                          return (
+                            <div key={sessionId} hidden={!active} className="cockpit-workspace-session">
+                              <ChatPanel
+                                url={activeAcpUrl ?? ''}
+                                workspaceId={activeWorkspaceId}
+                                initialSessionId={session.chatSessionId ?? null}
+                                onSessionId={(_workspaceId, chatSessionId) => {
+                                  rememberChatSession(sessionId, chatSessionId, 'claude');
+                                }}
+                                onOpenPreview={openPreviewPort}
+                              />
+                            </div>
+                          );
                         }
-                      }}
-                      onOpenPreview={openPreviewPort}
-                    />
-                  ) : ttydActiveTerminalType && (
-                    <TtydTerminal
-                      key={`${activeIngressLabel}:${ttydActiveId}`}
-                      url={activeSessionUrl}
-                      sessionType={ttydActiveTerminalType}
-                      sessionKey={ttydActiveSession?.type === ttydActiveTerminalType
-                        ? String(ttydActiveSession.id)
-                        : ''}
-                      onSignInUrl={setTerminalSignInUrl}
-                      onOpenPreview={openPreviewPort}
-                    />
+                        if (session.type === 'file' || session.type === 'preview') return null;
+                        return (
+                          <div key={sessionId} hidden={!active} className="cockpit-workspace-session">
+                            <TtydTerminal
+                              url={activeSessionUrl}
+                              sessionType={session.type}
+                              sessionKey={sessionId}
+                              active={active}
+                              onSignInUrl={setTerminalSignInUrl}
+                              onOpenPreview={openPreviewPort}
+                            />
+                          </div>
+                        );
+                      })
                   )
                 ) : activeWorkspace ? (
                   <CockpitLoadingPane
@@ -1344,9 +1360,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                     key={activeWorkspace.id}
                     client={filesClient}
                     expanded={activeFiles.expanded}
+                    getClient={getFilesClient}
                     mobile={mobileCockpit}
                     open={filesOpen}
+                    ready={activeWorkspaceRunning}
                     refreshVersion={filesRefreshVersion}
+                    visible={filesOpen && activeFiles.segment === 'files'}
                     wakingStage={workspaceWakingStage}
                     width={activeFiles.width}
                     onClose={() => {
@@ -1400,14 +1419,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   >
                     {activeWorkspace?.title ?? 'workspace pending'}
                   </span>
-                  {activeSshCommand && (
-                    <button
-                      className="cockpit-statusline__ssh"
-                      type="button"
-                      title="Copy SSH forward command"
-                      onClick={() => { void copySshCommand(); }}
-                    >{sshCopied ? 'copied' : activeSshCommand}</button>
-                  )}
                   {activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl && (
                     <>
                       <button
@@ -1468,35 +1479,22 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                       </button>
                     </div>
                   )}
-                  {(activeSshCommand || (
-                    activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl
-                  )) && <div className="cockpit-statusline__dynamic-actions">
-                    {activeSshCommand && (
-                      <button
-                        className="cockpit-statusline__ssh"
-                        type="button"
-                        title="Copy SSH forward command"
-                        onClick={() => { void copySshCommand(); }}
-                      >{sshCopied ? 'copied' : activeSshCommand}</button>
-                    )}
-                    {activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl && (
-                      <>
-                        <button
-                          className="cockpit-statusline__sign-in"
-                          type="button"
-                          onClick={() => window.open(terminalSignInUrl, '_blank', 'noopener')}
-                        >
-                          Open sign-in link
-                        </button>
-                        <button
-                          className="cockpit-statusline__paste-code"
-                          type="button"
-                          onClick={() => setShowPasteCodeModal(true)}
-                        >
-                          Paste code
-                        </button>
-                      </>
-                    )}
+                  {activeSessionUrl && ttydActiveTerminalType && terminalSignInUrl
+                    && <div className="cockpit-statusline__dynamic-actions">
+                    <button
+                      className="cockpit-statusline__sign-in"
+                      type="button"
+                      onClick={() => window.open(terminalSignInUrl, '_blank', 'noopener')}
+                    >
+                      Open sign-in link
+                    </button>
+                    <button
+                      className="cockpit-statusline__paste-code"
+                      type="button"
+                      onClick={() => setShowPasteCodeModal(true)}
+                    >
+                      Paste code
+                    </button>
                   </div>}
                   {activeSessionUrl && ttydActiveTerminalType && (
                     <div className="cockpit-statusline__right-actions">

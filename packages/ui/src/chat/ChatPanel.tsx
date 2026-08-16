@@ -38,10 +38,12 @@ export function ChatPanel({
   const [modes, setModes] = useState<SessionModeState | null>(null);
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
+  const onSessionIdRef = useRef(onSessionId);
   const runningRef = useRef(false);
   const turnRef = useRef(0);
   const permissionResolvers = useRef(new Map<string, Set<PermissionResolver>>());
   const permissionAnswers = useRef(new Map<string, RequestPermissionResponse>());
+  onSessionIdRef.current = onSessionId;
 
   useEffect(() => {
     runningRef.current = state.running;
@@ -104,7 +106,7 @@ export function ChatPanel({
               mcpServers: [],
             });
             sessionIdRef.current = created.sessionId;
-            onSessionId(workspaceId, created.sessionId);
+            onSessionIdRef.current(workspaceId, created.sessionId);
             setModes(created.modes ?? null);
           } else {
             dispatch({ type: "begin-replay" });
@@ -141,7 +143,7 @@ export function ChatPanel({
       connection?.close();
       connectionRef.current = null;
     };
-  }, [onSessionId, requestPermission, url, workspaceId]);
+  }, [requestPermission, url, workspaceId]);
 
   const answerPermission = (toolCallId: string, optionId: string): void => {
     if (permissionAnswers.current.has(toolCallId)) return;

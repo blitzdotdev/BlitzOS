@@ -1,0 +1,15 @@
+#!/command/with-contenv bash
+set -euo pipefail
+tunnel_token_file=/var/lib/blitz/tunnel-token
+surface_token_file=/var/lib/blitz/surface-token
+if [ ! -f "$tunnel_token_file" ] || [ ! -s "$tunnel_token_file" ] || \
+  [ ! -f "$surface_token_file" ] || [ ! -s "$surface_token_file" ]; then
+  echo "cloudflared: waiting for tunnel and surface tokens"
+fi
+while [ ! -f "$tunnel_token_file" ] || [ ! -s "$tunnel_token_file" ] || \
+  [ ! -f "$surface_token_file" ] || [ ! -s "$surface_token_file" ]; do
+  sleep 5
+done
+exec /command/s6-setuidgid blitz /usr/bin/env \
+  HOME=/var/lib/blitz/home USER=blitz \
+  /usr/local/bin/cloudflared --no-autoupdate tunnel run --token-file "$tunnel_token_file"

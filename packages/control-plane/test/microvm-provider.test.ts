@@ -881,7 +881,7 @@ describe("microVM pool provider", () => {
     }]);
   });
 
-  it("rejects surface access for non-microVM workspaces with a clear 400", async () => {
+  it("rejects surface access for tunnel-less cloud workspaces with a clear 503", async () => {
     const cloud = new FakeProviders();
     const app = appWithProviders(cloud, cloud);
     const cookie = await operatorSession(app);
@@ -896,9 +896,9 @@ describe("microVM pool provider", () => {
       `/workspaces/${workspace.id}/surface/7445/ports`,
       { headers: { Cookie: cookie } },
     );
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
-      error: "workspace is not backed by the microVM provider",
+      error: "workspace has no surface tunnel",
     });
   });
 

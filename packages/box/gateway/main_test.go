@@ -42,7 +42,7 @@ func TestParsePreviewPath(t *testing.T) {
 	}
 }
 
-func TestGatewayRoutesPortsPreviewAndDufs(t *testing.T) {
+func TestGatewayLegacyRoutesWhenBothTokensAbsent(t *testing.T) {
 	preview := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		_, _ = io.WriteString(response, strings.Join([]string{
 			request.URL.RequestURI(),
@@ -62,10 +62,13 @@ func TestGatewayRoutesPortsPreviewAndDufs(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	authDir := t.TempDir()
 	handler := &gateway{
-		dufs:      httputil.NewSingleHostReverseProxy(dufsURL),
-		discover:  func() ([]portInfo, error) { return []portInfo{{Port: 3000, Process: "node"}}, nil },
-		transport: http.DefaultTransport,
+		dufs:             httputil.NewSingleHostReverseProxy(dufsURL),
+		surfaceTokenPath: filepath.Join(authDir, "surface-token"),
+		tunnelTokenPath:  filepath.Join(authDir, "tunnel-token"),
+		discover:         func() ([]portInfo, error) { return []portInfo{{Port: 3000, Process: "node"}}, nil },
+		transport:        http.DefaultTransport,
 	}
 
 	portsRequest := httptest.NewRequest(http.MethodGet, "http://box/ports", nil)
@@ -73,6 +76,12 @@ func TestGatewayRoutesPortsPreviewAndDufs(t *testing.T) {
 	handler.ServeHTTP(portsResponse, portsRequest)
 	if portsResponse.Code != http.StatusOK || portsResponse.Body.String() != "{\"ports\":[{\"port\":3000,\"process\":\"node\"}]}\n" {
 		t.Fatalf("unexpected /ports response: %d %q", portsResponse.Code, portsResponse.Body.String())
+	}
+	if got := portsResponse.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("/ports Cache-Control = %q, want no-store", got)
+	}
+	if got := portsResponse.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("/ports Content-Type = %q, want application/json", got)
 	}
 
 	previewRequest := httptest.NewRequest(http.MethodGet, "http://box/preview/"+strconv.Itoa(previewPort)+"/nested?q=1", nil)
@@ -88,6 +97,325 @@ func TestGatewayRoutesPortsPreviewAndDufs(t *testing.T) {
 	handler.ServeHTTP(dufsResponse, dufsRequest)
 	if dufsResponse.Code != http.StatusOK || dufsResponse.Body.String() != "dufs:/workspace/file.txt" {
 		t.Fatalf("unexpected dufs response: %d %q", dufsResponse.Code, dufsResponse.Body.String())
+	}
+}
+
+func TestGatewaySurfaceTokenAuthentication(t *testing.T) {
+	upstreamRequests := 0
+	dufs := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		upstreamRequests++
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer dufs.Close()
+	dufsURL, err := url.Parse(dufs.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokenPath := filepath.Join(t.TempDir(), "surface-token")
+	handler := &gateway{
+		dufs:             httputil.NewSingleHostReverseProxy(dufsURL),
+		surfaceTokenPath: tokenPath,
+		tunnelTokenPath:  filepath.Join(filepath.Dir(tokenPath), "tunnel-token"),
+		transport:        http.DefaultTransport,
+	}
+	request := func(token *string, webSocket bool) *httptest.ResponseRecorder {
+		t.Helper()
+		gatewayRequest := httptest.NewRequest(http.MethodGet, "http://box/workspace/file.txt", nil)
+		if token != nil {
+			gatewayRequest.Header.Set(surfaceTokenHeader, *token)
+		}
+		if webSocket {
+			gatewayRequest.Header.Set("Connection", "Upgrade")
+			gatewayRequest.Header.Set("Upgrade", "websocket")
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, gatewayRequest)
+		return response
+	}
+
+	t.Run("absent file keeps current behavior", func(t *testing.T) {
+		response := request(nil, false)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+		}
+	})
+
+	const token = "opaque-surface-token"
+	if err := os.WriteFile(tokenPath, []byte("  "+token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("missing header is forbidden", func(t *testing.T) {
+		response := request(nil, false)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+		}
+	})
+
+	t.Run("websocket missing header is forbidden", func(t *testing.T) {
+		response := request(nil, true)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+		}
+	})
+
+	t.Run("wrong header is forbidden", func(t *testing.T) {
+		wrongToken := token + "-wrong"
+		response := request(&wrongToken, false)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+		}
+	})
+
+	t.Run("correct header passes", func(t *testing.T) {
+		response := request(stringPointer(token), false)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+		}
+	})
+
+	if err := os.Remove(tokenPath); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("deleted file keeps enforcing the last valid token", func(t *testing.T) {
+		response := request(stringPointer(token), false)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+		}
+	})
+
+	t.Run("deleted file does not allow a missing header", func(t *testing.T) {
+		response := request(nil, false)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+		}
+	})
+
+	const rotatedToken = "rotated-surface-token"
+	if err := os.WriteFile(tokenPath, []byte(rotatedToken), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("new valid file value rotates the token", func(t *testing.T) {
+		response := request(stringPointer(rotatedToken), false)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+		}
+		response = request(stringPointer(token), false)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("old token status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+		}
+	})
+
+	if upstreamRequests != 4 {
+		t.Fatalf("upstream request count = %d, want legacy and three authenticated requests", upstreamRequests)
+	}
+}
+
+func TestGatewayEmptySurfaceTokenFailsClosedEveryRoute(t *testing.T) {
+	upstreamRequests := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		upstreamRequests++
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreamPort := mustServerPort(t, upstream.URL)
+
+	authDir := t.TempDir()
+	surfacePath := filepath.Join(authDir, "surface-token")
+	if err := os.WriteFile(surfacePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	discoverCalls := 0
+	handler := &gateway{
+		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
+		terminal:               upstreamURL,
+		actor:                  upstreamURL,
+		controlPlaneOriginPath: writeOriginFile(t, "https://blitz-control-plane.example"),
+		surfaceTokenPath:       surfacePath,
+		tunnelTokenPath:        filepath.Join(authDir, "tunnel-token"),
+		discover: func() ([]portInfo, error) {
+			discoverCalls++
+			return nil, nil
+		},
+		transport: http.DefaultTransport,
+	}
+
+	tests := []struct {
+		name      string
+		method    string
+		path      string
+		configure func(*http.Request)
+	}{
+		{name: "ports", method: http.MethodGet, path: "/ports"},
+		{name: "dufs", method: http.MethodGet, path: "/workspace/file.txt"},
+		{name: "preview", method: http.MethodGet, path: "/preview/" + strconv.Itoa(upstreamPort) + "/"},
+		{name: "acp", method: http.MethodGet, path: "/acp"},
+		{
+			name:   "terminal websocket",
+			method: http.MethodGet,
+			path:   "/terminal/ws",
+			configure: func(request *http.Request) {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			},
+		},
+		{
+			name:   "CORS preflight",
+			method: http.MethodOptions,
+			path:   "/workspace/file.txt",
+			configure: func(request *http.Request) {
+				request.Header.Set("Origin", "https://blitz-control-plane.example")
+				request.Header.Set("Access-Control-Request-Method", http.MethodGet)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, "http://box"+test.path, nil)
+			if test.configure != nil {
+				test.configure(request)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusServiceUnavailable, response.Body.String())
+			}
+		})
+	}
+	if upstreamRequests != 0 {
+		t.Errorf("upstream requests = %d, want 0", upstreamRequests)
+	}
+	if discoverCalls != 0 {
+		t.Errorf("port discovery calls = %d, want 0", discoverCalls)
+	}
+}
+
+func TestGatewayInvalidSurfaceTokenFailsClosed(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string, string)
+	}{
+		{
+			name: "whitespace only",
+			setup: func(t *testing.T, surfacePath, _ string) {
+				if err := os.WriteFile(surfacePath, []byte(" \n\t"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "surface path is a directory",
+			setup: func(t *testing.T, surfacePath, _ string) {
+				if err := os.Mkdir(surfacePath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "tunnel token only",
+			setup: func(t *testing.T, _, tunnelPath string) {
+				if err := os.WriteFile(tunnelPath, []byte("tunnel-token"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			authDir := t.TempDir()
+			surfacePath := filepath.Join(authDir, "surface-token")
+			tunnelPath := filepath.Join(authDir, "tunnel-token")
+			test.setup(t, surfacePath, tunnelPath)
+			handler := &gateway{
+				surfaceTokenPath: surfacePath,
+				tunnelTokenPath:  tunnelPath,
+			}
+			request := httptest.NewRequest(http.MethodGet, "http://box/ports", nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusServiceUnavailable, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestGatewayStripsSurfaceTokenFromAllUpstreams(t *testing.T) {
+	type observation struct {
+		requestURI      string
+		hasSurfaceToken bool
+	}
+	observed := make(chan observation, 4)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		hasSurfaceToken := false
+		for name := range request.Header {
+			if strings.EqualFold(name, surfaceTokenHeader) {
+				hasSurfaceToken = true
+			}
+		}
+		observed <- observation{requestURI: request.URL.RequestURI(), hasSurfaceToken: hasSurfaceToken}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstreamPort := mustServerPort(t, upstream.URL)
+
+	authDir := t.TempDir()
+	surfacePath := filepath.Join(authDir, "surface-token")
+	const token = "opaque-surface-token"
+	if err := os.WriteFile(surfacePath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{
+		dufs:             httputil.NewSingleHostReverseProxy(upstreamURL),
+		terminal:         upstreamURL,
+		actor:            upstreamURL,
+		surfaceTokenPath: surfacePath,
+		tunnelTokenPath:  filepath.Join(authDir, "tunnel-token"),
+		transport:        http.DefaultTransport,
+	}
+	tests := []struct {
+		name        string
+		path        string
+		upstreamURI string
+		webSocket   bool
+	}{
+		{name: "dufs", path: "/workspace/file.txt", upstreamURI: "/workspace/file.txt"},
+		{name: "preview", path: "/preview/" + strconv.Itoa(upstreamPort) + "/asset.js?x=1", upstreamURI: "/asset.js?x=1"},
+		{name: "acp", path: "/acp/v1/sessions?resume=true", upstreamURI: "/v1/sessions?resume=true"},
+		{name: "terminal websocket", path: "/terminal/ws?arg=terminal", upstreamURI: "/ws?arg=terminal", webSocket: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "http://box"+test.path, nil)
+			request.Header.Set(surfaceTokenHeader, token)
+			if test.webSocket {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+			}
+			got := <-observed
+			if got.requestURI != test.upstreamURI {
+				t.Errorf("upstream request URI = %q, want %q", got.requestURI, test.upstreamURI)
+			}
+			if got.hasSurfaceToken {
+				t.Error("upstream request contains the surface token header")
+			}
+		})
 	}
 }
 
@@ -162,6 +490,22 @@ func TestCORSPreflight(t *testing.T) {
 		}
 	})
 
+	t.Run("surface token header is filtered case-insensitively", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodOptions, "http://box/workspace/", nil)
+		request.Header.Set("Origin", controlPlaneOrigin)
+		request.Header.Set("Access-Control-Request-Method", "PROPFIND")
+		request.Header.Set("Access-Control-Request-Headers", "Depth, x-blitz-surface-token, Content-Type")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+		}
+		if got := response.Header().Get("Access-Control-Allow-Headers"); got != "Depth, Content-Type" {
+			t.Errorf("Access-Control-Allow-Headers = %q", got)
+		}
+	})
+
 	t.Run("OPTIONS without requested method follows normal routing", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodOptions, "http://box/workspace/", nil)
 		request.Header.Set("Origin", controlPlaneOrigin)
@@ -195,6 +539,64 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	if discoverCalls != 0 {
 		t.Errorf("discover call count = %d, want preflight to bypass /ports", discoverCalls)
+	}
+}
+
+func TestAuthenticatedCORSPreflightNeverAllowsSurfaceToken(t *testing.T) {
+	const (
+		controlPlaneOrigin = "https://blitz-control-plane.example"
+		token              = "opaque-surface-token"
+	)
+	authDir := t.TempDir()
+	surfacePath := filepath.Join(authDir, "surface-token")
+	if err := os.WriteFile(surfacePath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		surfaceTokenPath:       surfacePath,
+		tunnelTokenPath:        filepath.Join(authDir, "tunnel-token"),
+	}
+
+	tests := []struct {
+		name             string
+		requestedHeaders string
+		wantAllowHeaders string
+	}{
+		{name: "no requested headers"},
+		{
+			name:             "mixed requested headers",
+			requestedHeaders: "Depth, X-BLITZ-SURFACE-TOKEN, Content-Type",
+			wantAllowHeaders: "Depth, Content-Type",
+		},
+		{
+			name:             "surface token only",
+			requestedHeaders: "x-blitz-surface-token",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodOptions, "http://box/workspace/", nil)
+			request.Header.Set(surfaceTokenHeader, token)
+			request.Header.Set("Origin", controlPlaneOrigin)
+			request.Header.Set("Access-Control-Request-Method", "PROPFIND")
+			if test.requestedHeaders != "" {
+				request.Header.Set("Access-Control-Request-Headers", test.requestedHeaders)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+			}
+			got := response.Header().Get("Access-Control-Allow-Headers")
+			if got != test.wantAllowHeaders {
+				t.Errorf("Access-Control-Allow-Headers = %q, want %q", got, test.wantAllowHeaders)
+			}
+			if got == "*" || strings.Contains(strings.ToLower(got), strings.ToLower(surfaceTokenHeader)) {
+				t.Errorf("unsafe Access-Control-Allow-Headers = %q", got)
+			}
+		})
 	}
 }
 
@@ -422,6 +824,144 @@ func TestTerminalProxyHandshakeContract(t *testing.T) {
 	}
 }
 
+func TestACPProxyHTTPAndWebSocketContract(t *testing.T) {
+	type observedRequest struct {
+		method      string
+		requestURI  string
+		host        string
+		origin      string
+		prefix      string
+		webSocket   bool
+		subprotocol string
+	}
+	observed := make(chan observedRequest, 2)
+	actor := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		observed <- observedRequest{
+			method:      request.Method,
+			requestURI:  request.URL.RequestURI(),
+			host:        request.Host,
+			origin:      request.Header.Get("Origin"),
+			prefix:      request.Header.Get("X-Forwarded-Prefix"),
+			webSocket:   isWebSocketUpgrade(request),
+			subprotocol: request.Header.Get("Sec-WebSocket-Protocol"),
+		}
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer actor.Close()
+	actorURL, err := url.Parse(actor.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const controlPlaneOrigin = "https://blitz-control-plane.example"
+	handler := &gateway{
+		actor:                  actorURL,
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		transport:              http.DefaultTransport,
+	}
+
+	httpRequest := httptest.NewRequest(http.MethodPost, "http://box/acp/v1/sessions?resume=true", strings.NewReader("prompt"))
+	httpRequest.Header.Set("Origin", controlPlaneOrigin)
+	httpResponse := httptest.NewRecorder()
+	handler.ServeHTTP(httpResponse, httpRequest)
+	if httpResponse.Code != http.StatusNoContent {
+		t.Fatalf("HTTP status = %d, want %d; body = %q", httpResponse.Code, http.StatusNoContent, httpResponse.Body.String())
+	}
+
+	webSocketRequest := httptest.NewRequest(http.MethodGet, "http://box/acp/socket?session=go-test", nil)
+	webSocketRequest.Header.Set("Connection", "Upgrade")
+	webSocketRequest.Header.Set("Upgrade", "websocket")
+	webSocketRequest.Header.Set("Origin", controlPlaneOrigin)
+	webSocketRequest.Header.Set("Sec-WebSocket-Protocol", "acp")
+	webSocketResponse := httptest.NewRecorder()
+	handler.ServeHTTP(webSocketResponse, webSocketRequest)
+	if webSocketResponse.Code != http.StatusNoContent {
+		t.Fatalf("WebSocket status = %d, want %d; body = %q", webSocketResponse.Code, http.StatusNoContent, webSocketResponse.Body.String())
+	}
+
+	httpObserved := <-observed
+	if httpObserved.method != http.MethodPost {
+		t.Errorf("HTTP upstream method = %q, want %q", httpObserved.method, http.MethodPost)
+	}
+	if httpObserved.requestURI != "/v1/sessions?resume=true" {
+		t.Errorf("HTTP upstream request URI = %q", httpObserved.requestURI)
+	}
+	if httpObserved.webSocket {
+		t.Error("HTTP upstream request unexpectedly upgraded")
+	}
+	assertACPUpstreamHeaders(t, httpObserved.host, httpObserved.origin, httpObserved.prefix)
+
+	webSocketObserved := <-observed
+	if webSocketObserved.requestURI != "/socket?session=go-test" {
+		t.Errorf("WebSocket upstream request URI = %q", webSocketObserved.requestURI)
+	}
+	if !webSocketObserved.webSocket {
+		t.Error("WebSocket upstream request lost upgrade headers")
+	}
+	if webSocketObserved.subprotocol != "acp" {
+		t.Errorf("WebSocket upstream subprotocol = %q, want acp", webSocketObserved.subprotocol)
+	}
+	assertACPUpstreamHeaders(t, webSocketObserved.host, webSocketObserved.origin, webSocketObserved.prefix)
+}
+
+func TestACPExactPathAndQueryRouteToActor(t *testing.T) {
+	actorRequests := make(chan string, 2)
+	actor := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		actorRequests <- request.URL.RequestURI()
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer actor.Close()
+	actorURL, err := url.Parse(actor.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dufsRequests := make(chan string, 1)
+	dufs := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		dufsRequests <- request.URL.RequestURI()
+		response.WriteHeader(http.StatusAccepted)
+	}))
+	defer dufs.Close()
+	dufsURL, err := url.Parse(dufs.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	handler := &gateway{
+		dufs:      httputil.NewSingleHostReverseProxy(dufsURL),
+		actor:     actorURL,
+		transport: http.DefaultTransport,
+	}
+	for _, test := range []struct {
+		path        string
+		upstreamURI string
+	}{
+		{path: "/acp", upstreamURI: "/"},
+		{path: "/acp?x=1", upstreamURI: "/?x=1"},
+	} {
+		t.Run(test.path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "http://box"+test.path, nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+			}
+			if got := <-actorRequests; got != test.upstreamURI {
+				t.Errorf("actor request URI = %q, want %q", got, test.upstreamURI)
+			}
+		})
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "http://box/acpx?x=1", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("/acpx status = %d, want %d; body = %q", response.Code, http.StatusAccepted, response.Body.String())
+	}
+	if got := <-dufsRequests; got != "/acpx?x=1" {
+		t.Errorf("dufs request URI = %q, want %q", got, "/acpx?x=1")
+	}
+}
+
 func TestLoadControlPlaneOriginTrimsWhitespace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "origin")
 	if err := os.WriteFile(path, []byte("  https://blitz-control-plane.example\n\t"), 0o644); err != nil {
@@ -556,6 +1096,19 @@ func mustServerPort(t *testing.T, rawURL string) int {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func assertACPUpstreamHeaders(t *testing.T, host, origin, prefix string) {
+	t.Helper()
+	if host != actorHost {
+		t.Errorf("upstream Host = %q, want %q", host, actorHost)
+	}
+	if origin != actorOrigin {
+		t.Errorf("upstream Origin = %q, want %q", origin, actorOrigin)
+	}
+	if prefix != "/acp" {
+		t.Errorf("upstream X-Forwarded-Prefix = %q, want /acp", prefix)
+	}
 }
 
 func assertActualCORS(t *testing.T, header http.Header, origin string) {

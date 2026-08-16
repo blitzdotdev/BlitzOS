@@ -117,6 +117,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "manifest", type: "text", sqlType: "text" },
+        { name: "tunnel_id", type: "text", sqlType: "text" },
+        { name: "surface_hostname", type: "text", sqlType: "text" },
+        { name: "dns_record_id", type: "text", sqlType: "text" },
       ],
       indexes: [
         { name: "owner", fields: ["owner_id", "created_at"] },

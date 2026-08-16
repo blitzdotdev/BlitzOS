@@ -17,32 +17,22 @@ const workspace: WorkspaceView = {
 };
 
 describe("standalone endpoint resolver", () => {
-  it("routes the terminal through the configured files origin", () => {
-    const resolver = standaloneResolver({ acp: 8444, files: 8445 });
-    expect(resolver.resolve(workspace)).toEqual({
-      terminalUrl: "http://localhost:8445/terminal/",
-      acpUrl: "ws://localhost:8444",
-      filesBase: "http://localhost:8445/workspace/",
-    });
-    expect(resolver.previewUrl(workspace, 3000)).toBe("http://localhost:8445/preview/3000/");
-  });
-
-  it("routes microVM surfaces through the control-plane origin without forwards", () => {
+  it("routes all workspace surfaces through the control-plane origin", () => {
     const resolver = standaloneResolver(
       { acp: 8444, files: 8445 },
       "https://cp.example.test/",
     );
-    const microvm = { ...workspace, id: "micro vm/one", machineTypeId: "mv-2c2g@lab" };
-    expect(resolver.resolve(microvm)).toEqual({
-      terminalUrl: "https://cp.example.test/workspaces/micro%20vm%2Fone/surface/7445/terminal/",
-      acpUrl: "wss://cp.example.test/workspaces/micro%20vm%2Fone/surface/7444",
-      filesBase: "https://cp.example.test/workspaces/micro%20vm%2Fone/surface/7445/workspace/",
+    const target = { ...workspace, id: "workspace one/two" };
+    expect(resolver.resolve(target)).toEqual({
+      terminalUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/surface/7445/terminal/",
+      acpUrl: "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/surface/7444",
+      filesBase: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/surface/7445/workspace/",
     });
-    expect(resolver.previewUrl(microvm, 3000)).toBe(
-      "https://cp.example.test/workspaces/micro%20vm%2Fone/surface/7445/preview/3000/",
+    expect(resolver.previewUrl(target, 3000)).toBe(
+      "https://cp.example.test/workspaces/workspace%20one%2Ftwo/surface/7445/preview/3000/",
     );
-    expect(terminalWebSocketUrl(resolver.resolve(microvm).terminalUrl)).toBe(
-      "wss://cp.example.test/workspaces/micro%20vm%2Fone/surface/7445/terminal/ws",
+    expect(terminalWebSocketUrl(resolver.resolve(target).terminalUrl)).toBe(
+      "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/surface/7445/terminal/ws",
     );
   });
 

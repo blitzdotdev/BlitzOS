@@ -83,6 +83,33 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
   return destroyed;
 }
 
+export async function runWorkspaceTunnelSweep(runtime: CoreRuntime): Promise<number> {
+  const workspaceTunnels = runtime.providers.workspaceTunnels;
+  if (workspaceTunnels === undefined) return 0;
+  const result = await rows<WorkspaceRow>(runtime.db, {
+    q: `SELECT * FROM workspaces
+        WHERE (tunnel_id IS NOT NULL OR dns_record_id IS NOT NULL)
+          AND phase IN ('destroying', 'destroyed', 'error')
+        ORDER BY updated_at, id`,
+    v: [],
+  });
+  let cleaned = 0;
+  for (const row of result) {
+    const cleanup = await workspaceTunnels.cleanup(runtime.db, row);
+    if (cleanup.errors.length > 0) {
+      // TODO(house-canon): Route structured core logs through the canonical logger.
+      console.error(JSON.stringify({
+        message: "workspace tunnel sweep left Cloudflare resources for retry",
+        workspaceId: row.id,
+        errors: cleanup.errors,
+      }));
+      continue;
+    }
+    cleaned += 1;
+  }
+  return cleaned;
+}
+
 export async function runInvariantSweep(
   runtime: CoreRuntime,
   now = Date.now(),
@@ -122,6 +149,7 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
       await runLeaseSweep(runtime);
       await runInvariantSweep(runtime);
       await runOrphanSweep(runtime);
+      await runWorkspaceTunnelSweep(runtime);
     } catch (error) {
       console.error(
         JSON.stringify({
