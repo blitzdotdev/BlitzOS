@@ -505,6 +505,70 @@
   white-space: nowrap;
 }
 
+.files-library-toolbar,
+.files-library-share form {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  margin: 18px 0;
+}
+
+.files-library-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: var(--faint);
+  font: 700 9.5px/1.4 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.files-library-toolbar select,
+.files-library-share select,
+.files-library-share button {
+  min-height: 34px;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.files-library-toolbar .webapp-action input {
+  display: none;
+}
+
+.files-library-share {
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid var(--rule);
+}
+
+.files-library-share h2,
+.files-library-share p {
+  margin: 0 0 6px;
+}
+
+.files-library-share p {
+  color: var(--faint);
+  font: 10.5px/1.5 var(--font-mono);
+}
+
+.files-library-share ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.files-library-share li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.files-library-list {
+  margin-top: 18px;
+}
+
 .settings-custody-section + .settings-custody-section {
   margin-top: 28px;
 }

@@ -85,6 +85,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
+    fileObjects: env.BOX_IMAGES,
     // SAFETY: Authentication middleware installs the imported CryptoKey under $credentialMasterKey.
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
@@ -117,6 +118,7 @@ function runtimeForScheduled(
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
+    fileObjects: env.BOX_IMAGES,
     credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,

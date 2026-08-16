@@ -18,8 +18,14 @@ describe('settings routes', () => {
       page: 'settings',
       settingsSection: 'requests',
     });
+    expect(parseAppRoute('/settings/files')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'files',
+    });
     expect(settingsPath('profile')).toBe('/settings');
     expect(settingsPath('integrations')).toBe('/settings/integrations');
     expect(settingsPath('requests')).toBe('/settings/requests');
+    expect(settingsPath('files')).toBe('/settings/files');
   });
 });

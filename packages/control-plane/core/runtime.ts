@@ -79,6 +79,7 @@ export function maxConcurrentWorkspacesFromEnv(value: string | number | null | u
 export interface CoreRuntime {
   db: Db;
   blobs: BlobStore;
+  fileObjects: R2Bucket;
   credentialMasterKey: CryptoKey;
   vars: RuntimeVariables;
   providers: {

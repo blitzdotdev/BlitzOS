@@ -177,6 +177,7 @@ export function appWithVmProviders(
   const runtimeFor = (context: CoreContext): CoreRuntime => ({
     db: context.get("$db") as Db,
     blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
+    fileObjects: (context.env as TestBindings).BOX_IMAGES,
     credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
     vars: {
       boxImageRef: (context.env as TestBindings).BOX_IMAGE_REF,
@@ -219,6 +220,7 @@ export function testRuntime(
   return {
     db: new $DatabaseRawImpl(env.DB),
     blobs: env.BOX_IMAGES as BlobStore,
+    fileObjects: env.BOX_IMAGES,
     credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
@@ -400,6 +402,8 @@ export async function enrollBox(
 export async function resetDatabase(): Promise<void> {
   const tables = [
     "microvm_hosts",
+    "folder_grants",
+    "folders",
     "credential_events",
     "credential_requests",
     "credential_leases",
