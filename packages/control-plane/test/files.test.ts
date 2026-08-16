@@ -2,8 +2,10 @@ import { FILES_MULTIPART_CHUNK_BYTES } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashSecret, randomToken } from "../core/crypto.js";
+import { issueBoxTokens } from "../core/oauth.js";
 import {
   appRequest,
+  createWorkspace,
   harness,
   operatorSession,
   resetDatabase,
@@ -94,6 +96,13 @@ describe("organization file library", () => {
       "membership_id",
       "role",
       "granted_by_membership_id",
+      "created_at",
+    ]);
+    const attachmentColumns = await env.DB.prepare("PRAGMA table_info(folder_attachments)").all<{ name: string }>();
+    expect(attachmentColumns.results.map(({ name }) => name)).toEqual([
+      "workspace_id",
+      "folder_id",
+      "attached_by_membership_id",
       "created_at",
     ]);
   });
@@ -199,6 +208,43 @@ describe("organization file library", () => {
     expect(nextPart.status).toBe(403);
   });
 
+  it("completes an R2 binding multipart upload with an eight MiB part and a short last part", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const folderId = await createFolder(app, owner);
+    const base = `${objectPath(folderId, "binding.bin")}/multipart`;
+    const created = await appRequest(app, base, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ mtime: 777 }),
+    });
+    const { uploadId } = await created.json<{ uploadId: string }>();
+    const parts: Array<{ partNumber: number; etag: string }> = [];
+    for (const [partNumber, body] of [
+      [1, new Uint8Array(FILES_MULTIPART_CHUNK_BYTES)],
+      [2, new Uint8Array([7])],
+    ] as const) {
+      const response = await appRequest(
+        app,
+        `${base}/${encodeURIComponent(uploadId)}/${partNumber}`,
+        { method: "PUT", headers: { Cookie: owner }, body },
+      );
+      expect(response.status).toBe(200);
+      parts.push(await response.json<{ partNumber: number; etag: string }>());
+    }
+    expect((await appRequest(app, `${base}/${encodeURIComponent(uploadId)}/complete`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ parts }),
+    })).status).toBe(204);
+    const downloaded = await appRequest(app, objectPath(folderId, "binding.bin"), {
+      headers: { Cookie: owner },
+    });
+    expect((await downloaded.arrayBuffer()).byteLength).toBe(FILES_MULTIPART_CHUNK_BYTES + 1);
+    expect(downloaded.headers.get("x-blitz-mtime")).toBe("777");
+    expect(downloaded.headers.get("x-blitz-edited-by")).toBe("Operator");
+  });
+
   it("deletes grants, every paginated object page, and the folder row", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
@@ -219,5 +265,70 @@ describe("organization file library", () => {
     expect((await env.BOX_IMAGES.list({ prefix })).objects).toEqual([]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM folders WHERE id = ?1").bind(folderId).first<number>("count")).toBe(0);
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM folder_grants WHERE folder_id = ?1").bind(folderId).first<number>("count")).toBe(0);
+  });
+
+  it("attaches an accessible folder to a controlled workspace and box sync dies on revoke", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const collaborator = await sameOrgSession("workspace-owner");
+    const workspace = await createWorkspace(app, collaborator.cookie);
+    const folderId = await createFolder(app, owner, "Agent Notes");
+
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: collaborator.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    })).status).toBe(403);
+    const grantId = await grant(app, owner, folderId, collaborator.membershipId, "editor");
+    const attached = await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: collaborator.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    });
+    expect(attached.status).toBe(201);
+    await expect(attached.json()).resolves.toMatchObject({
+      folder: { id: folderId, name: "Agent Notes", role: "editor", version: 1 },
+    });
+
+    const tokens = await issueBoxTokens();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
+         VALUES ('files-box', 'workspace-owner', ?1, ?2)`,
+      ).bind(workspace.id, Date.now()),
+      env.DB.prepare(
+        `INSERT INTO box_token_families
+         (box_id, access_hash, refresh_hash, access_issued_at, generation)
+         VALUES ('files-box', ?1, ?2, ?3, 1)`,
+      ).bind(tokens.accessHash, tokens.refreshHash, Date.now()),
+    ]);
+    const authorization = { Authorization: `Bearer ${tokens.accessToken}` };
+    const boxList = await appRequest(app, "/workspaces/self/folders", {
+      headers: authorization,
+    });
+    await expect(boxList.json()).resolves.toMatchObject({
+      folders: [{ id: folderId, name: "Agent Notes", role: "editor" }],
+    });
+    expect((await appRequest(app, objectPath(folderId, "agent.txt"), {
+      method: "PUT",
+      headers: { ...authorization, "x-blitz-mtime": "500" },
+      body: "from agent",
+    })).status).toBe(204);
+    await expect(appRequest(app, `/folders/${folderId}/objects`, {
+      headers: { Cookie: owner },
+    }).then((response) => response.json())).resolves.toMatchObject({
+      objects: [{ key: "agent.txt", editedBy: "workspace-owner" }],
+    });
+
+    expect((await appRequest(app, `/folders/${folderId}/grants/${grantId}`, {
+      method: "DELETE",
+      headers: { Cookie: owner },
+    })).status).toBe(204);
+    expect((await appRequest(app, "/workspaces/self/folders", {
+      headers: authorization,
+    })).status).toBe(403);
+    expect((await appRequest(app, objectPath(folderId, "agent.txt"), {
+      headers: authorization,
+    })).status).toBe(403);
   });
 });

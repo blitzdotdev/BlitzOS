@@ -162,6 +162,8 @@ function client(): ControlPlaneClient {
     listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
     downloadFolderObject: vi.fn(async () => new Blob()),
     uploadFolderObject: vi.fn(async () => undefined),
+    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
+    attachFolder: vi.fn(async () => { throw new Error("unused"); }),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),
     createOrg: vi.fn(async () => ({

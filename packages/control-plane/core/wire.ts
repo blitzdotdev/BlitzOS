@@ -41,6 +41,18 @@ export interface ListFolderObjectsResponse {
   truncated: boolean;
 }
 
+export interface FolderAttachmentView {
+  id: string;
+  name: string;
+  role: FolderRole;
+  version: number;
+  attachedAt: number;
+}
+
+export interface ListFolderAttachmentsResponse {
+  folders: FolderAttachmentView[];
+}
+
 export interface CredentialManifest {
   integrations: Record<string, JsonObject>;
 }

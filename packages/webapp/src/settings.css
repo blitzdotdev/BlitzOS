@@ -506,6 +506,7 @@
 }
 
 .files-library-toolbar,
+.files-library-attach,
 .files-library-share form {
   display: flex;
   align-items: end;
@@ -522,7 +523,17 @@
   text-transform: uppercase;
 }
 
+.files-library-attach label {
+  display: grid;
+  gap: 5px;
+  color: var(--faint);
+  font: 700 9.5px/1.4 var(--font-mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
 .files-library-toolbar select,
+.files-library-attach select,
 .files-library-share select,
 .files-library-share button {
   min-height: 34px;

@@ -1,6 +1,7 @@
 import {
   FILES_MULTIPART_CHUNK_BYTES,
   type FolderGrantView,
+  type FolderAttachmentView,
   type FolderObjectView,
   type FolderRole,
   type FolderView,
@@ -29,6 +30,11 @@ export interface FileLibraryClient {
   listFolderObjects(folderId: string): Promise<ListFolderObjectsResponse>;
   downloadFolderObject(folderId: string, key: string): Promise<Blob>;
   uploadFolderObject(folderId: string, key: string, file: File): Promise<void>;
+  listWorkspaceFolders(workspaceId: string): Promise<{ folders: FolderAttachmentView[] }>;
+  attachFolder(
+    workspaceId: string,
+    folderId: string,
+  ): Promise<{ folder: FolderAttachmentView }>;
 }
 
 export type RawControlPlaneRequest = (
@@ -110,6 +116,28 @@ function folderObject(value: JsonValue): FolderObjectView {
     size: object.size,
     mtime: object.mtime,
     editedBy: object.editedBy,
+  };
+}
+
+function attachment(value: JsonValue, label: string): FolderAttachmentView {
+  const object = asJsonObject(value);
+  const role = object?.role;
+  if (
+    object === null
+    || !isString(object.id)
+    || !isString(object.name)
+    || (role !== 'owner' && role !== 'admin' && role !== 'editor' && role !== 'viewer')
+    || !isNumber(object.version)
+    || !Number.isSafeInteger(object.version)
+    || !isNumber(object.attachedAt)
+    || !Number.isSafeInteger(object.attachedAt)
+  ) throw new Error(`${label} returned an invalid attachment`);
+  return {
+    id: object.id,
+    name: object.name,
+    role,
+    version: object.version,
+    attachedAt: object.attachedAt,
   };
 }
 
@@ -247,6 +275,30 @@ export function createFileLibraryClient(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parts: uploaded }),
       });
+    },
+    async listWorkspaceFolders(workspaceId) {
+      const value = await jsonObject(await rawRequest(
+        `/workspaces/${encodeURIComponent(workspaceId)}/folders`,
+      ), 'workspace folders');
+      const object = asJsonObject(value);
+      if (object === null || !Array.isArray(object.folders)) {
+        throw new Error('workspace folders returned an invalid list');
+      }
+      return {
+        folders: object.folders.map((item) => attachment(item, 'workspace folders')),
+      };
+    },
+    async attachFolder(workspaceId, folderId) {
+      const value = await jsonObject(await rawRequest(
+        `/workspaces/${encodeURIComponent(workspaceId)}/folders`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderId }),
+        },
+      ), 'attach folder');
+      const object = asJsonObject(value);
+      return { folder: attachment(object?.folder ?? null, 'attach folder') };
     },
   };
 }

@@ -29,7 +29,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/credentials/mint.ts",
   "core/credentials/proxy.ts",
   "core/http.ts",
-  "core/files/access.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/routes.ts",
+  "core/files/access.ts", "core/files/attachments.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/routes.ts",
   "core/identity/google.ts",
   "core/identity/grants.ts",
   "core/identity/invites.ts",
@@ -66,7 +66,6 @@ export const UPLOAD_ORDER = Object.freeze([
   "teenybase.ts",
   "worker.ts",
 ]);
-
 export const DENY_ALL_RULES = Object.freeze({
   name: "rules",
   listRule: null,
@@ -201,6 +200,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
     },
     { name: "folders", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "version", type: "integer", sqlType: "integer", notNull: true, default: { l: 1 }, check: "version > 0" }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
     { name: "folder_grants", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" }, { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["folder_id", "membership_id"] }, { name: "membership", fields: ["membership_id", "folder_id"] }], extensions: [DENY_ALL_RULES] },
+    { name: "folder_attachments", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "attached_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",
       fields: [

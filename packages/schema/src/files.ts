@@ -36,3 +36,15 @@ export interface ListFolderObjectsResponse {
   cursor: string | null;
   truncated: boolean;
 }
+
+export interface FolderAttachmentView {
+  id: string;
+  name: string;
+  role: FolderRole;
+  version: number;
+  attachedAt: number;
+}
+
+export interface ListFolderAttachmentsResponse {
+  folders: FolderAttachmentView[];
+}

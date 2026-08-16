@@ -7,6 +7,7 @@ import type {
   FolderObjectView,
   FolderView,
 } from '../file-library-api';
+import type { WorkspaceView } from '@blitzos/schema';
 
 function readableSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -19,6 +20,9 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
   const [selectedId, setSelectedId] = useState('');
   const [objects, setObjects] = useState<FolderObjectView[]>([]);
   const [members, setMembers] = useState<MemberView[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
+  const [workspaceId, setWorkspaceId] = useState('');
+  const [attachedFolderIds, setAttachedFolderIds] = useState<Set<string>>(new Set());
   const [name, setName] = useState('');
   const [membershipId, setMembershipId] = useState('');
   const [shareRole, setShareRole] = useState<'editor' | 'viewer'>('editor');
@@ -57,6 +61,24 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
 
   useEffect(() => { void loadFolders(); }, [loadFolders]);
   useEffect(() => { void loadObjects(); }, [loadObjects]);
+  useEffect(() => {
+    void client.poll().then(({ workspaces: loaded }) => {
+      const controllable = loaded.filter(({ role }) => role === 'owner' || role === 'admin');
+      setWorkspaces(controllable);
+      setWorkspaceId((current) => controllable.some(({ id }) => id === current)
+        ? current
+        : controllable[0]?.id ?? '');
+    }).catch((caught: Error) => setError(caught.message));
+  }, [client]);
+  useEffect(() => {
+    if (!workspaceId) {
+      setAttachedFolderIds(new Set());
+      return;
+    }
+    void client.listWorkspaceFolders(workspaceId).then(({ folders: attached }) => {
+      setAttachedFolderIds(new Set(attached.map(({ id }) => id)));
+    }).catch((caught: Error) => setError(caught.message));
+  }, [client, workspaceId]);
   useEffect(() => {
     if (!canControl) return;
     void client.listMembers().then(({ members: loaded }) => setMembers(loaded)).catch((caught: Error) => {
@@ -122,6 +144,16 @@ export function FilesPanel({ client }: { client: ControlPlaneClient }) {
               void client.deleteFolder(selected.id).then(loadFolders).catch((caught: Error) => setError(caught.message)).finally(() => setBusy(false));
             }}>Delete folder</button>}
           </div>
+          {selected && workspaces.length > 0 && (
+            <div className="files-library-attach">
+              <label>Add to workspace<select aria-label="Workspace" value={workspaceId} onChange={(event) => setWorkspaceId(event.currentTarget.value)}>{workspaces.map((workspace) => <option value={workspace.id} key={workspace.id}>{workspace.name}</option>)}</select></label>
+              <button className="webapp-action" type="button" disabled={!workspaceId || attachedFolderIds.has(selected.id)} onClick={() => {
+                void client.attachFolder(workspaceId, selected.id).then(() => {
+                  setAttachedFolderIds((current) => new Set(current).add(selected.id));
+                }).catch((caught: Error) => setError(caught.message));
+              }}>{attachedFolderIds.has(selected.id) ? 'Attached' : 'Add folder'}</button>
+            </div>
+          )}
           {canControl && selected && (
             <section className="files-library-share" aria-label={`Share ${selected.name}`}>
               <h2>Sharing</h2>

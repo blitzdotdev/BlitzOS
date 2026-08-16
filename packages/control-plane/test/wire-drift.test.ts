@@ -173,6 +173,22 @@ const folderObjects: SharedShape<
   schema.ListFolderObjectsResponse
 > = { objects: [folderObject], cursor: null, truncated: false };
 
+const folderAttachment: SharedShape<
+  wire.FolderAttachmentView,
+  schema.FolderAttachmentView
+> = {
+  id: "folder",
+  name: "Shared",
+  role: "editor",
+  version: 2,
+  attachedAt: 3,
+};
+
+const folderAttachments: SharedShape<
+  wire.ListFolderAttachmentsResponse,
+  schema.ListFolderAttachmentsResponse
+> = { folders: [folderAttachment] };
+
 const fullFieldValues = [
   machineType,
   machineTypeFailure,
@@ -195,6 +211,8 @@ const fullFieldValues = [
   folder,
   folderObject,
   folderObjects,
+  folderAttachment,
+  folderAttachments,
 ];
 
 describe("local wire copies", () => {
@@ -223,6 +241,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.FolderView>().toEqualTypeOf<schema.FolderView>();
     expectTypeOf<wire.FolderObjectView>().toEqualTypeOf<schema.FolderObjectView>();
     expectTypeOf<wire.ListFolderObjectsResponse>().toEqualTypeOf<schema.ListFolderObjectsResponse>();
+    expectTypeOf<wire.FolderAttachmentView>().toEqualTypeOf<schema.FolderAttachmentView>();
+    expectTypeOf<wire.ListFolderAttachmentsResponse>().toEqualTypeOf<schema.ListFolderAttachmentsResponse>();
   });
 
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {

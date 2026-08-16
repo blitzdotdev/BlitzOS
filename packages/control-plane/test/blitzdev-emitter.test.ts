@@ -39,6 +39,7 @@ const expected = [
   "core/credentials/proxy.ts",
   "core/http.ts",
   "core/files/access.ts",
+  "core/files/attachments.ts",
   "core/files/folders.ts",
   "core/files/keys.ts",
   "core/files/objects.ts",
@@ -86,7 +87,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(54);
+    expect(first.files).toHaveLength(55);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

@@ -43,7 +43,16 @@ interface CreateGrantInput { membershipId: string; role: "editor" | "viewer" }
 
 function parseCreateFolder(value: JsonValue): CreateFolderInput {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
-  return { name: requiredString(value.name, "name", 128).trim() };
+  const name = requiredString(value.name, "name", 128).trim();
+  if (
+    name === ""
+    || name === "."
+    || name === ".."
+    || name.includes("/")
+    || name.includes("\\")
+    || name.includes("\u0000")
+  ) throw new HttpError(400, "name must be safe for workspace materialization");
+  return { name };
 }
 
 function parseCreateGrant(value: JsonValue): CreateGrantInput {
@@ -85,7 +94,6 @@ export function addFolderRoutes(
       throw new HttpError(403, "active membership required");
     }
     const input = parseCreateFolder(await readJson(context.req.raw));
-    if (input.name === "") throw new HttpError(400, "name must be a non-empty string");
     const now = Date.now();
     const id = crypto.randomUUID();
     await rows(runtime.db, {
@@ -169,6 +177,10 @@ export function addFolderRoutes(
     );
     await rows(runtime.db, {
       q: "DELETE FROM folder_grants WHERE folder_id = ?1",
+      v: [folder.id],
+    });
+    await rows(runtime.db, {
+      q: "DELETE FROM folder_attachments WHERE folder_id = ?1",
       v: [folder.id],
     });
     await deleteFolderObjects(

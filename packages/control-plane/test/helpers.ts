@@ -403,6 +403,7 @@ export async function resetDatabase(): Promise<void> {
   const tables = [
     "microvm_hosts",
     "folder_grants",
+    "folder_attachments",
     "folders",
     "credential_events",
     "credential_requests",

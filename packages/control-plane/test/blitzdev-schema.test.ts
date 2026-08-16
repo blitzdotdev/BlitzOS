@@ -18,6 +18,7 @@ const expectedTables = [
   "workspace_grants",
   "folders",
   "folder_grants",
+  "folder_attachments",
   "webapp_state",
   "device_authorizations",
   "boxes",
@@ -41,9 +42,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the twenty-three domain tables plus the deny-all file support table", () => {
+  it("contains the twenty-four domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(24);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(25);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -152,6 +153,18 @@ describe("blitz.dev managed schema", () => {
         { name: "membership", fields: ["membership_id", "folder_id"] },
       ],
     });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "folder_attachments")).toMatchObject({
+      fields: [
+        expect.objectContaining({ name: "workspace_id" }),
+        expect.objectContaining({ name: "folder_id" }),
+        expect.objectContaining({ name: "attached_by_membership_id" }),
+        expect.objectContaining({ name: "created_at" }),
+      ],
+      indexes: [
+        { name: "identity", unique: true, fields: ["workspace_id", "folder_id"] },
+        { name: "folder", fields: ["folder_id", "workspace_id"] },
+      ],
+    });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "webapp_state")).toMatchObject({
       fields: [
         expect.objectContaining({ name: "principal_id" }),
@@ -202,6 +215,8 @@ describe("blitz.dev managed schema", () => {
       "idx_folders_org",
       "idx_folder_grants_identity",
       "idx_folder_grants_membership",
+      "idx_folder_attachments_identity",
+      "idx_folder_attachments_folder",
       "idx_webapp_state_identity",
       "idx_boxes_broker",
       "idx_boxes_principal",

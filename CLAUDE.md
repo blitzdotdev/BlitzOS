@@ -56,6 +56,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/providers/microvm-hosts.js` imported by both |
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/providers/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
+| files sync | control-plane folder list/attachment routes ↔ guest `blitz-files` | `fixtures/files-sync/` | `test/files-sync-conformance.test.ts`, `box/test/blitz-files.test.mjs` |
 
 Legacy phone-home shapes are accepted ONLY inside
 `adaptLegacyPhoneHomeRequestForInFlightImages` in `core/workspaces.ts`.

@@ -1,0 +1,130 @@
+import { first, rows } from "../db.js";
+import {
+  HttpError,
+  isRecord,
+  readJson,
+  requiredString,
+} from "../http.js";
+import type { Principal } from "../principals.js";
+import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import { canControlWorkspace } from "../workspace-access.js";
+import type {
+  FolderAttachmentView,
+  ListFolderAttachmentsResponse,
+} from "../wire.js";
+import {
+  filesActorForRequest,
+  folderRole,
+  requireFolderAccess,
+  type FilesActor,
+} from "./access.js";
+
+interface AttachmentWorkspaceRow {
+  id: string;
+  org_id: string;
+  owner_membership_id: string;
+}
+
+interface AttachmentRow {
+  id: string;
+  org_id: string;
+  name: string;
+  version: number;
+  created_by_membership_id: string;
+  grant_role: "editor" | "viewer" | null;
+  attached_at: number;
+}
+
+async function controlledWorkspace(
+  runtime: ReturnType<RuntimeFactory>,
+  id: string,
+  actor: FilesActor,
+): Promise<AttachmentWorkspaceRow> {
+  const workspace = await first<AttachmentWorkspaceRow>(runtime.db, {
+    q: `SELECT id, org_id, owner_membership_id
+        FROM workspaces WHERE id = ?1 AND phase != 'destroyed' LIMIT 1`,
+    v: [id],
+  });
+  if (workspace === null || workspace.org_id !== actor.principal.orgId) {
+    throw new HttpError(404, "workspace not found");
+  }
+  if (!canControlWorkspace(actor.principal, workspace)) {
+    throw new HttpError(403, "forbidden");
+  }
+  return workspace;
+}
+
+export function addFolderAttachmentRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
+): void {
+  router.get("/workspaces/:id/folders", async (context) => {
+    const runtime = runtimeFactory(context);
+    const actor = await filesActorForRequest(runtime, context, requirePrincipal);
+    const idParam = context.req.param("id");
+    const workspaceId = idParam === "self" ? actor.workspaceId : idParam;
+    if (workspaceId === null || (actor.workspaceId !== null && actor.workspaceId !== workspaceId)) {
+      throw new HttpError(403, "a box may only list its own workspace folders");
+    }
+    const workspace = await controlledWorkspace(runtime, workspaceId, actor);
+    const attached = await rows<AttachmentRow>(runtime.db, {
+      q: `SELECT folder.id, folder.org_id, folder.name, folder.version,
+                 folder.created_by_membership_id, grant.role AS grant_role,
+                 attachment.created_at AS attached_at
+          FROM folder_attachments attachment
+          JOIN folders folder ON folder.id = attachment.folder_id
+          LEFT JOIN folder_grants grant
+            ON grant.folder_id = folder.id AND grant.membership_id = ?2
+          WHERE attachment.workspace_id = ?1
+          ORDER BY attachment.created_at, folder.id`,
+      v: [workspace.id, actor.principal.membershipId],
+    });
+    const folders: FolderAttachmentView[] = attached.map((folder) => {
+      const role = folderRole(actor.principal, folder);
+      if (role === null) throw new HttpError(403, "folder attachment is no longer accessible");
+      return {
+        id: folder.id,
+        name: folder.name,
+        role,
+        version: folder.version,
+        attachedAt: folder.attached_at,
+      };
+    });
+    const response: ListFolderAttachmentsResponse = { folders };
+    return context.json(response);
+  });
+
+  router.post("/workspaces/:id/folders", async (context) => {
+    const runtime = runtimeFactory(context);
+    const principal = await requirePrincipal(context);
+    const actor: FilesActor = {
+      principal,
+      editedBy: principal.id,
+      workspaceId: null,
+    };
+    const workspace = await controlledWorkspace(runtime, context.req.param("id"), actor);
+    const value = await readJson(context.req.raw);
+    if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+    const folderId = requiredString(value.folderId, "folderId", 256);
+    const folder = await requireFolderAccess(runtime.db, folderId, actor, "read");
+    if (folder.org_id !== workspace.org_id) throw new HttpError(404, "folder not found");
+    const now = Date.now();
+    await rows(runtime.db, {
+      q: `INSERT INTO folder_attachments
+          (workspace_id, folder_id, attached_by_membership_id, created_at)
+          VALUES (?1, ?2, ?3, ?4)
+          ON CONFLICT(workspace_id, folder_id) DO NOTHING`,
+      v: [workspace.id, folder.id, principal.membershipId, now],
+    });
+    return context.json({
+      folder: {
+        id: folder.id,
+        name: folder.name,
+        role: folder.role,
+        version: folder.version,
+        attachedAt: now,
+      } satisfies FolderAttachmentView,
+    }, 201);
+  });
+}

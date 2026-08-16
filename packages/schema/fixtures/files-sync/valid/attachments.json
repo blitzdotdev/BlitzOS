@@ -1,0 +1,11 @@
+{
+  "folders": [
+    {
+      "id": "folder-one",
+      "name": "Shared Notes",
+      "role": "editor",
+      "version": 4,
+      "attachedAt": 1700000000100
+    }
+  ]
+}

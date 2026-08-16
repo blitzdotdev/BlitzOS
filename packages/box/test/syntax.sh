@@ -8,7 +8,7 @@ while IFS= read -r script; do
   bash -n "$script"
 done < <(
   find "$box_dir/rootfs/usr/local/libexec" "$box_dir/rootfs/etc/s6-overlay/s6-rc.d" \
-    -type f \( -name 'blitz-*' -o -name run \) -print
+    -type f \( \( -name 'blitz-*' ! -name '*.mjs' \) -o -name run \) -print
   find "$script_dir" -maxdepth 1 -type f -name '*.sh' -print
 )
 
