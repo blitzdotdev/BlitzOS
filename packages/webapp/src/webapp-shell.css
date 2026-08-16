@@ -1,0 +1,751 @@
+.webapp-shell {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-rows: var(--headerH) minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  color: var(--ink);
+  background: var(--terminal-background);
+  font: 13.5px/1.6 var(--font-ui);
+}
+
+.webapp-shell--box-offline {
+  grid-template-rows: auto var(--headerH) minmax(0, 1fr) auto;
+}
+
+.webapp-shell--box-offline .webapp-rail,
+.webapp-shell--box-offline .webapp-loading-rail {
+  grid-row: 2 / 5;
+}
+
+.webapp-shell--box-offline .webapp-header,
+.webapp-shell--box-offline .webapp-loading-header {
+  grid-row: 2;
+}
+
+.webapp-shell--box-offline .webapp-workspace-view {
+  grid-row: 3;
+}
+
+.webapp-shell--box-offline .webapp-statusline,
+.webapp-shell--box-offline .webapp-loading-status {
+  grid-row: 4;
+}
+
+.webapp-box-offline {
+  z-index: 12;
+  display: flex;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 22px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--faint);
+  background: var(--paper);
+  font-size: 11.5px;
+}
+
+.webapp-box-offline__icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--faint);
+}
+
+.webapp-box-offline__copy {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-box-offline button {
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.webapp-box-offline button:hover:not(:disabled),
+.webapp-box-offline button:focus-visible:not(:disabled) {
+  color: var(--ink);
+}
+
+.webapp-box-offline button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
+.webapp-rail {
+  z-index: 10;
+  display: flex;
+  grid-column: 1;
+  grid-row: 1 / 4;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
+  user-select: none;
+}
+
+.webapp-rail button {
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.webapp-org-wrap {
+  position: relative;
+  display: flex;
+  height: var(--headerH);
+  flex: none;
+  align-items: stretch;
+  border-bottom: 1px solid var(--rule);
+}
+
+.webapp-org-button {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  padding: 0 0 0 22px;
+  text-align: left;
+}
+
+.webapp-org-button strong {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-org-chevron {
+  margin-top: 1px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.webapp-org-button:hover .webapp-org-chevron,
+.webapp-org-button:focus-visible .webapp-org-chevron {
+  color: var(--ink);
+}
+
+.webapp-workspace-add {
+  width: 48px;
+  flex: none;
+  color: var(--faint) !important;
+  font-size: 17px;
+}
+
+.webapp-workspace-add:hover,
+.webapp-workspace-add:focus-visible {
+  color: var(--ink) !important;
+}
+
+.webapp-org-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 4px);
+  right: 16px;
+  left: 16px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.webapp-org-menu-label {
+  padding: 8px 12px 4px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.webapp-org-menu-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.webapp-org-menu-current span:last-child {
+  color: var(--accent);
+}
+
+.webapp-tree {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.webapp-tree-empty {
+  padding: 18px 22px;
+  color: var(--faint);
+  font-size: 12.5px;
+  font-family: var(--font-mono);
+}
+
+.webapp-workspace {
+  padding: 6px 0 7px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.webapp-workspace--active {
+  background: color-mix(in oklab, var(--ink) 5%, var(--paper));
+}
+
+.webapp-workspace:first-child {
+  padding-top: 4px;
+}
+
+.webapp-workspace-button {
+  display: flex;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 2px 22px 0;
+  color: var(--ink) !important;
+  text-align: left;
+}
+
+.webapp-workspace-button--disclosable {
+  grid-column: 1 / 4;
+}
+
+.webapp-workspace-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto auto;
+  min-height: var(--touchTarget);
+  align-items: center;
+}
+
+.webapp-workspace-item--error .webapp-workspace-name,
+.webapp-workspace-item--error .webapp-tree-icon {
+  color: var(--accent);
+}
+
+.webapp-workspace-disclosure {
+  display: grid;
+  grid-column: 4;
+  grid-row: 1;
+  width: 36px;
+  min-width: 36px;
+  min-height: 24px;
+  place-items: center;
+  align-self: stretch;
+  padding: 0 16px 0 0;
+  color: var(--faint) !important;
+}
+
+.webapp-workspace-disclosure span {
+  display: block;
+  font: 13px/1 var(--font-mono);
+  transform: rotate(0);
+  transition: transform 100ms ease, color 100ms ease;
+}
+
+.webapp-workspace-disclosure[aria-expanded='false'] span {
+  transform: rotate(-90deg);
+}
+
+.webapp-workspace-disclosure:hover,
+.webapp-workspace-disclosure:focus-visible {
+  color: var(--ink) !important;
+}
+
+.webapp-workspace-delete {
+  display: grid;
+  grid-column: 4;
+  grid-row: 2;
+  min-width: 32px;
+  min-height: 20px;
+  place-items: center;
+  align-self: stretch;
+  padding: 0 16px 0 6px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--faint) !important;
+  font: 11px/1 var(--font-ui) !important;
+}
+
+.webapp-workspace-delete .mi-trash {
+  width: 14px;
+  height: 14px;
+}
+
+.webapp-workspace--expanded .webapp-workspace-delete {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.webapp-workspace-delete:hover:not(:disabled),
+.webapp-workspace-delete:focus-visible:not(:disabled) {
+  color: var(--accent) !important;
+}
+
+.webapp-workspace-delete:disabled {
+  cursor: default;
+}
+
+.webapp-workspace-button:focus-visible {
+  outline: 1px solid var(--rule);
+  outline-offset: -1px;
+}
+
+.webapp-workspace-button--readonly {
+  cursor: default;
+}
+
+.webapp-workspace-button--readonly:hover {
+  background: none;
+}
+
+.webapp-workspace-button--shared {
+  cursor: pointer;
+}
+
+.webapp-workspace-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-workspace-copy {
+  min-width: 0;
+  display: grid;
+  flex: 1;
+  gap: 1px;
+}
+
+.webapp-workspace-meta {
+  display: flex;
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  min-height: 20px;
+  padding: 0 4px 0 41px;
+  color: var(--faint);
+  font: 9.5px/1.5 var(--font-mono);
+}
+
+.webapp-workspace--collapsed .webapp-workspace-meta {
+  grid-column: 1 / -1;
+  padding-right: 22px;
+}
+
+.webapp-workspace-session-count {
+  flex: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.webapp-workspace-details {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.webapp-workspace-machine {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-workspace-owner {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding-left: 5px;
+  border-left: 1px solid var(--rule);
+  color: var(--muted);
+  font-family: var(--font-ui);
+}
+
+.webapp-workspace-owner img,
+.webapp-workspace-owner-fallback {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.webapp-workspace-owner img {
+  object-fit: cover;
+}
+
+.webapp-workspace-owner-fallback {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  font: 8px/1 var(--font-ui);
+}
+
+.webapp-workspace-owner > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-workspace-status-badge {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid var(--rule);
+}
+
+.webapp-workspace-status-badge--online {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.webapp-workspace-status-badge--creating,
+.webapp-workspace-status-badge--provisioning,
+.webapp-workspace-status-badge--parking,
+.webapp-workspace-status-badge--waking {
+  animation: webapp-loading-step 800ms steps(2, end) infinite;
+}
+
+.webapp-workspace--parked .webapp-workspace-name,
+.webapp-workspace-status-badge--parked,
+.webapp-tree-icon--asleep {
+  color: var(--faint);
+}
+
+.webapp-workspace-status-badge--parked {
+  border-color: var(--rule);
+}
+
+.webapp-workspace-status-badge--failed {
+  color: var(--accent);
+}
+
+.webapp-workspace-error-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--accent);
+  font: 9px/1.4 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-workspace-sessions[hidden] {
+  display: none;
+}
+
+.webapp-tree-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.webapp-tree-icon--online {
+  color: var(--accent);
+}
+
+.webapp-session {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 22px 2px 41px;
+  color: var(--faint) !important;
+  font: 12.5px/1.7 var(--font-mono) !important;
+  text-align: left;
+}
+
+.webapp-session .webapp-tree-icon {
+  width: 12px;
+  height: 12px;
+  margin-top: 0;
+  color: currentColor;
+}
+
+.webapp-session:hover,
+.webapp-session:focus-visible,
+.webapp-session--active {
+  color: var(--ink) !important;
+}
+
+.webapp-session--active .webapp-tree-icon {
+  color: var(--accent);
+}
+
+.webapp-support {
+  flex: none;
+  padding: 12px 22px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+
+.webapp-support:hover,
+.webapp-support:focus-visible {
+  color: var(--ink);
+  background: color-mix(in oklab, var(--ink) 5%, var(--paper));
+}
+
+.webapp-user {
+  display: flex;
+  width: 100%;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px;
+  border-top: 1px solid var(--rule) !important;
+  text-align: left;
+}
+
+.webapp-user:hover,
+.webapp-user:focus-visible {
+  background: color-mix(in oklab, var(--ink) 5%, var(--paper));
+}
+
+.webapp-user:disabled {
+  cursor: default;
+}
+
+.webapp-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.webapp-avatar circle {
+  fill: var(--ink);
+}
+
+.webapp-avatar text {
+  fill: var(--paper);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.webapp-user-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.webapp-user-copy > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-user-org {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.webapp-drawer-close,
+.webapp-drawer-scrim {
+  display: none;
+}
+
+@media (max-width: 899px) {
+  .webapp-shell {
+    position: fixed;
+    top: var(--mobile-viewport-top, 0);
+    left: 0;
+    width: 100%;
+    height: var(--mobile-viewport-height, 100dvh);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .webapp-shell--box-offline {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .webapp-shell--box-offline .webapp-workspace-view {
+    grid-column: 1;
+  }
+
+  .webapp-shell--box-offline .webapp-statusline {
+    grid-column: 1;
+  }
+
+  .webapp-rail,
+  .webapp-shell--box-offline .webapp-rail {
+    position: fixed;
+    z-index: 50;
+    top: var(--mobile-viewport-top, 0);
+    bottom: auto;
+    left: 0;
+    display: flex;
+    width: min(84vw, 320px);
+    height: var(--mobile-viewport-height, 100dvh);
+    transform: translateX(-101%);
+    transition: transform 100ms ease-out;
+    border-right: 1px solid var(--rule);
+  }
+
+  .webapp-shell .webapp-rail.webapp-rail--drawer-open {
+    transform: translateX(0);
+  }
+
+  .webapp-drawer-scrim {
+    position: fixed;
+    z-index: 40;
+    top: var(--mobile-viewport-top, 0);
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: 100%;
+    height: var(--mobile-viewport-height, 100dvh);
+    padding: 0;
+    border: 0;
+    background: color-mix(in oklab, var(--paper) 72%, transparent);
+  }
+
+  .webapp-drawer-scrim--open {
+    display: block;
+  }
+
+  .webapp-drawer-close {
+    display: grid;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    flex: none;
+    place-items: center;
+    color: var(--faint) !important;
+    font-size: 17px;
+  }
+
+  .webapp-org-button {
+    min-height: 44px;
+    padding-left: 16px;
+  }
+
+  .webapp-workspace-add {
+    min-width: 48px;
+    min-height: 44px;
+  }
+
+  .webapp-org-menu-current,
+  .webapp-workspace-button,
+  .webapp-session {
+    min-height: 44px;
+  }
+
+  .webapp-workspace {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .webapp-workspace:first-child {
+    padding-top: 8px;
+  }
+
+  .webapp-workspace-button {
+    padding: 0 16px;
+  }
+
+  .webapp-workspace-disclosure {
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    padding-right: 16px;
+  }
+
+  .webapp-workspace-meta {
+    padding-right: 16px;
+    padding-left: 38px;
+  }
+
+  .webapp-workspace--expanded .webapp-workspace-delete {
+    min-height: var(--touchTarget);
+  }
+
+  .webapp-session {
+    padding: 0 16px 0 38px;
+  }
+
+  .webapp-support {
+    min-height: var(--touchTarget);
+    padding: 13px 16px;
+  }
+
+  .webapp-user {
+    min-height: 58px;
+    padding: 8px 16px;
+  }
+
+  .webapp-box-offline {
+    grid-column: 1;
+    min-height: 44px;
+    padding: 0 10px;
+  }
+
+  .webapp-box-offline button {
+    min-height: 44px;
+    padding: 0 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .webapp-rail,
+  .webapp-workspace-disclosure span {
+    transition: none;
+  }
+}
+
+/* Drag a screenshot anywhere over the webapp: the overlay is the only signal
+   that the drop will be accepted, so it must sit above the terminal, which
+   xterm.js paints into its own canvas layer. */
+.webapp-shell--drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+
+.webapp-drop-overlay {
+  /* fixed, not absolute: .webapp-shell is an unpositioned grid container, so
+     absolute would resolve against the initial containing block by accident. */
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  /* Same scrim recipe as .webapp-drawer-scrim: tokens only, no raw colour. */
+  background: color-mix(in oklab, var(--paper) 72%, transparent);
+  color: var(--ink);
+  font-size: 0.95rem;
+  letter-spacing: 0.01em;
+}

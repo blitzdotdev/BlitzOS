@@ -1,8 +1,8 @@
 # Workspace connectivity: eliminate manual SSH tunnels
 
 Problem: every non-microVM workspace needs manual SSH forwards to reach its
-terminal, ACP chat, files, and previews from the cockpit. MicroVM workspaces
-already ride the control-plane surface proxy. Cloud-VM workspaces (Hetzner
+terminal, ACP chat, files, and previews from the webApp. MicroVM workspaces
+already ride the control-plane webApp proxy. Cloud-VM workspaces (Hetzner
 today, any `VmProvider` tomorrow) do not. This must work automatically, at
 fleet scale, with low multi-region latency.
 
@@ -24,7 +24,7 @@ production products), researched 2026-08-15.
 
 **Named Cloudflare Tunnel per workspace, with the control plane remaining the
 authenticated front door.** The box dials out; nothing inbound opens. The
-surface proxy the microVM leg already uses becomes the single data path for
+webApp proxy the microVM leg already uses becomes the single data path for
 every provider.
 
 ```
@@ -51,7 +51,7 @@ Why this shape:
 2. **The relay fleet is rented, not built.** Cloudflare Tunnel is the regional
    relay + routing catalog that Replit (Eval) and Coder (wsproxy) had to
    build themselves. It is free on all plans and fully API-automatable.
-3. **One data path for all providers.** The CP surface route already
+3. **One data path for all providers.** The CP webApp route already
    authenticates, checks ownership, and passes WebSockets for microVMs. Cloud
    VMs plug into the same route; only the upstream URL differs. Future
    workspace sharing enforces grants in exactly one place, for every
@@ -82,17 +82,17 @@ MicroVM guests skip it (host path already covers them).
 Destroy: delete the DNS record and the tunnel with the workspace. Tunnel
 count therefore tracks *concurrent* workspaces, not historical ones.
 
-Surface resolution: the provider records the workspace's surface base URL
-(`https://ws-<id>.<zone>`). `proxySurface` for cloud VMs fetches it exactly
+WebApp resolution: the provider records the workspace's webApp base URL
+(`https://ws-<id>.<zone>`). `proxyWebApp` for cloud VMs fetches it exactly
 like the microVM path fetches the host agent, maps port 7444 to the
 gateway's `/acp/*` route, strips cookies, and injects
-`X-Blitz-Surface-Token` = HMAC-SHA256(`SURFACE_TOKEN_SECRET`, workspaceId).
+`X-Blitz-WebApp-Token` = HMAC-SHA256(`WEBAPP_TOKEN_SECRET`, workspaceId).
 The tunnel hostname is publicly reachable, so the gateway REQUIRES that
-header on every route whenever `/var/lib/blitz/surface-token` exists
+header on every route whenever `/var/lib/blitz/webapp-token` exists
 (constant-time compare; absent file keeps microVM/local behavior). Tunnel
 deletion uses `?cascade=true` — a plain DELETE fails while edge connections
 are still draining. Expect ~10–20 s between workspace ready and first
-tunnel connect; the cockpit's reconnect covers it.
+tunnel connect; the webApp's reconnect covers it.
 
 ## Scale and limits (verified numbers)
 
@@ -102,7 +102,7 @@ tunnel connect; the cockpit's reconnect covers it.
 | DNS records per zone | 200 Free (new) / 3,500 Pro+Biz / ~unbounded Ent | Same ceiling, cheaper to raise |
 | CF API | 1,200 req / 5 min | ~4 calls per create, 2 per destroy → hundreds of lifecycle ops per 5 min |
 | WS message | 32 MiB | ttyd/ACP frames are KB-scale; fine |
-| Worker WS duration | no wall-clock cap; restarts possible (30 s grace) | cockpit already auto-reconnects; ACP journal replays |
+| Worker WS duration | no wall-clock cap; restarts possible (30 s grace) | webApp already auto-reconnects; ACP journal replays |
 | Worker CPU per connection | accumulates over the WS lifetime (no per-message reset outside DOs); breach = error 1102, socket cancelled | set `limits.cpu_ms` to the 300,000 max; passthrough stays dumb (no per-frame parsing); reconnect gets a fresh budget ([evidence](evidence/worker-cpu-websockets.md)) |
 | Quick tunnels | 200 in-flight, no SLA | lab/dev only — never production |
 
@@ -121,26 +121,26 @@ or graduate to phase 3 (below). Do not build a relay fleet before that.
 | 7 | Regional Envoy/HAProxy/nginx fleet | Option 3 without the outbound leg; requires inbound to boxes or morphs into 3. Same standing-fleet cost. |
 | 8 | Managed relays (Fly/AWS/GCP/K8s) | A second cloud vendor to run what Cloudflare Tunnel already provides as a service on the account we require anyway. |
 | 9 | WebRTC + TURN | No surveyed product uses it for workspace ingress. Bypasses the CP, so ownership/grant enforcement would move into every box; TURN fleet + signaling complexity. |
-| 10 | SSH-over-WebSocket gateways | Still a gateway fleet, plus an SSH indirection our surfaces do not need — they are already HTTP/WS behind the gateway. |
+| 10 | SSH-over-WebSocket gateways | Still a gateway fleet, plus an SSH indirection our webApp endpoints do not need — they are already HTTP/WS behind the gateway. |
 
 ## Phases
 
-1. **Tunnel-per-workspace + unified surface path.** SHIPPED 2026-08-16.
+1. **Tunnel-per-workspace + unified webApp path.** SHIPPED 2026-08-16.
    - CP: tunnel/DNS lifecycle in the cloud-VM provider; migration 0006
-     (`tunnel_id`, `surface_hostname`, `dns_record_id`); `proxySurface` for
+     (`tunnel_id`, `tunnel_hostname`, `dns_record_id`); `proxyWebApp` for
      cloud VMs; janitor sweep for orphaned tunnels; vars/secrets
-     `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `WORKSPACE_SURFACE_ZONE`,
-     `CLOUDFLARE_API_TOKEN` (Tunnel + DNS edit), `SURFACE_TOKEN_SECRET`.
+     `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ZONE_ID`, `WORKSPACE_TUNNEL_ZONE`,
+     `CLOUDFLARE_API_TOKEN` (Tunnel + DNS edit), `WEBAPP_TOKEN_SECRET`.
    - Box: `cloudflared` 2026.7.3 pinned in the image, s6 unit gated on the
-     token file, gateway surface-token auth + `/acp` route. Note: global
+     token file, gateway webapp-token auth + `/acp` route. Note: global
      flags precede the subcommand (`cloudflared --no-autoupdate tunnel run`).
-   - UI: resolver returns CP-origin surface URLs for every workspace; the
+   - UI: resolver returns CP-origin webApp URLs for every workspace; the
      localhost-forward hint path is gone.
    - E2E (live, 2026-08-16): create cpx11@ash → terminal echo, ACP
      initialize, files listing, preview fetch, leases — all through the
      tunnel with zero local forwards; destroy removed tunnel + DNS.
      Zone: blitzos.app. Setup guide: docs/TUNNEL.md.
-2. **Sharing integration.** Grants enforced at the one surface route (see the
+2. **Sharing integration.** Grants enforced at the one webApp route (see the
    collaborative-platform plan). Viewer `ro` forcing and file-write blocking
    happen at the CP for all providers.
 3. **Only if scale demands:** direct edge path with CP-minted signed tickets

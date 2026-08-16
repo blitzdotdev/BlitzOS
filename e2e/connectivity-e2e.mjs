@@ -102,11 +102,11 @@ const findDns = async () => {
 const dnsBefore = await findDns();
 log("STEP4/6 dns records matching workspace:", JSON.stringify(dnsBefore.map((r) => r.name)));
 
-// 7. terminal through CP surface proxy: run a real command, capture output.
-// The tunnel registers seconds after ready; retry like the cockpit's
+// 7. terminal through CP webapp proxy: run a real command, capture output.
+// The tunnel registers seconds after ready; retry like the webapp's
 // auto-reconnect does instead of failing on the first 530.
 const terminalOnce = () => new Promise((resolve, reject) => {
-  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/surface/7445/terminal/ws?arg=terminal&arg=e2e1`;
+  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/webapp/7445/terminal/ws?arg=terminal&arg=e2e1`;
   const chunks = [];
   const w = new WebSocket(url, ["tty"], { headers: { Cookie: cookie, Origin: CP } });
   const timer = setTimeout(() => { w.close(); resolve(Buffer.concat(chunks).toString("utf8")); }, 20_000);
@@ -135,9 +135,9 @@ const terminalOnce = () => new Promise((resolve, reject) => {
   log("STEP7 terminal echo ok (blitz-42-proof seen)");
 }
 
-// 8. ACP chat handshake through CP surface proxy (port 7444 -> /acp)
+// 8. ACP chat handshake through CP webapp proxy (port 7444 -> /acp)
 {
-  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/surface/7444/`;
+  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/webapp/7444/`;
   const reply = await new Promise((resolve, reject) => {
     const w = new WebSocket(url, { headers: { Cookie: cookie, Origin: CP } });
     const timer = setTimeout(() => { w.close(); reject(new Error("acp timeout")); }, 15_000);
@@ -150,9 +150,9 @@ const terminalOnce = () => new Promise((resolve, reject) => {
   log("STEP8 acp initialize ok:", JSON.stringify(reply.result ?? {}).slice(0, 120));
 }
 
-// 9. files through CP surface proxy (dufs JSON listing)
+// 9. files through CP webapp proxy (dufs JSON listing)
 {
-  const res = await api(`/workspaces/${id}/surface/7445/?json`, { headers: { Accept: "application/json" } });
+  const res = await api(`/workspaces/${id}/webapp/7445/?json`, { headers: { Accept: "application/json" } });
   const text = await res.text();
   if (res.status !== 200) fail(`files ${res.status}: ${text.slice(0, 200)}`);
   log("STEP9 files listing ok:", text.slice(0, 100).replace(/\n/g, " "));
@@ -160,7 +160,7 @@ const terminalOnce = () => new Promise((resolve, reject) => {
 
 // 10. preview: start a server in the terminal, then fetch through /preview
 {
-  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/surface/7445/terminal/ws?arg=terminal&arg=e2e1`;
+  const url = `${CP.replace("https://", "wss://")}/workspaces/${id}/webapp/7445/terminal/ws?arg=terminal&arg=e2e1`;
   await new Promise((resolve, reject) => {
     const w = new WebSocket(url, ["tty"], { headers: { Cookie: cookie, Origin: CP } });
     const timer = setTimeout(() => { w.close(); resolve(); }, 8000);
@@ -171,13 +171,13 @@ const terminalOnce = () => new Promise((resolve, reject) => {
     });
   });
   await new Promise((r) => setTimeout(r, 4000));
-  const res = await api(`/workspaces/${id}/surface/7445/preview/4321/`);
+  const res = await api(`/workspaces/${id}/webapp/7445/preview/4321/`);
   const text = await res.text();
   if (res.status !== 200 || !text.includes("tunnel-preview-proof")) fail(`preview ${res.status}: ${text.slice(0, 200)}`);
   log("STEP10 preview ok through tunnel");
 }
 
-// 11. leases panel API (drawer surface)
+// 11. leases panel API (drawer)
 {
   const res = await api(`/workspaces/${id}/leases`);
   if (res.status !== 200) fail(`leases ${res.status}`);

@@ -10,7 +10,7 @@ export interface BlobStore {
 }
 
 export interface LogicalBlobLookup {
-  get(kind: "box-image" | "cockpit", logicalPath: string): Promise<BlobObject | null>;
+  get(kind: "box-image" | "webApp", logicalPath: string): Promise<BlobObject | null>;
 }
 
 export const NullBlobStore: BlobStore = {

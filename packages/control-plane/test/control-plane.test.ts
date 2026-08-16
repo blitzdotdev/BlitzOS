@@ -208,9 +208,9 @@ describe("control plane security and lifecycle", () => {
       .bind(workspace.id)
       .run();
 
-    const surface = await appRequest(
+    const webApp = await appRequest(
       app,
-      `/workspaces/${workspace.id}/surface/7445/ports`,
+      `/workspaces/${workspace.id}/webapp/7445/ports`,
       { headers: { Cookie: cookie } },
     );
     const destroy = await appRequest(app, `/workspaces/${workspace.id}`, {
@@ -218,7 +218,7 @@ describe("control plane security and lifecycle", () => {
       headers: { Cookie: cookie },
     });
 
-    for (const response of [surface, destroy]) {
+    for (const response of [webApp, destroy]) {
       expect(response.status).toBe(409);
       await expect(response.json()).resolves.toEqual({
         error: "no VM provider owns VM ID unowned",
@@ -433,7 +433,7 @@ describe("control plane security and lifecycle", () => {
     ]);
   });
 
-  it("maps numeric Hetzner type IDs back to names in surfaced provider errors", async () => {
+  it("maps numeric Hetzner type IDs back to names in webAppd provider errors", async () => {
     vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(
         Response.json({

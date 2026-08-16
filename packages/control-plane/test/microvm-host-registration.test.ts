@@ -323,7 +323,7 @@ describe("microVM host registration", () => {
     ).resolves.toBe(0);
   });
 
-  it("returns 503 when a dynamic host registration disappears before surface access", async () => {
+  it("returns 503 when a dynamic host registration disappears before webapp access", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         vm_id: "vm-1-abcdef123456",
@@ -355,7 +355,7 @@ describe("microVM host registration", () => {
 
     const response = await workerRequest(
       dynamicHosts(),
-      `/workspaces/${workspace.workspace.id}/surface/7445/ports`,
+      `/workspaces/${workspace.workspace.id}/webapp/7445/ports`,
       { headers: { Cookie: cookie } },
     );
     expect(response.status).toBe(503);

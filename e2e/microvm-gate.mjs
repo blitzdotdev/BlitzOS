@@ -52,7 +52,7 @@ let publicKey = null;
 let workspaceId = null;
 let sshInfo = null;
 let sshConnected = false;
-let surfaceTunnel = null;
+let quickTunnel = null;
 let createStartedAt = null;
 let createToReadyMs = null;
 
@@ -154,11 +154,11 @@ function sshArgs(info, knownHostsPath, remoteCommand) {
 }
 
 function stopSurfaceTunnel() {
-  if (surfaceTunnel === null) return;
-  if (surfaceTunnel.exitCode === null && surfaceTunnel.signalCode === null) {
-    surfaceTunnel.kill("SIGTERM");
+  if (quickTunnel === null) return;
+  if (quickTunnel.exitCode === null && quickTunnel.signalCode === null) {
+    quickTunnel.kill("SIGTERM");
   }
-  surfaceTunnel = null;
+  quickTunnel = null;
 }
 
 async function mintSession() {
@@ -413,7 +413,7 @@ try {
   });
   if (ssh.ok) sshConnected = true;
 
-  await runStep("s7", "box-surfaces", async () => {
+  await runStep("s7", "box-webapp", async () => {
     if (!sshConnected || sshInfo === null || ssh.value?.knownHostsPath === undefined) {
       return fail("successful SSH prerequisite failed");
     }
@@ -425,14 +425,14 @@ try {
       "-L", "17445:127.0.0.1:7445",
     );
     args.pop();
-    surfaceTunnel = spawn("ssh", args, { stdio: ["ignore", "ignore", "pipe"] });
+    quickTunnel = spawn("ssh", args, { stdio: ["ignore", "ignore", "pipe"] });
     let tunnelError = "";
-    surfaceTunnel.stderr.on("data", (chunk) => { tunnelError += String(chunk); });
+    quickTunnel.stderr.on("data", (chunk) => { tunnelError += String(chunk); });
     try {
       const tunnelDeadline = Date.now() + 20_000;
       let tunnelReady = false;
       while (Date.now() < tunnelDeadline) {
-        if (surfaceTunnel.exitCode !== null || surfaceTunnel.signalCode !== null) {
+        if (quickTunnel.exitCode !== null || quickTunnel.signalCode !== null) {
           return fail(`SSH tunnel failed: ${safeText(tunnelError)}`);
         }
         tunnelReady = await new Promise((resolve) => {

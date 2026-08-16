@@ -139,7 +139,7 @@ export class CloudflareTunnels {
     return { tunnelId, dnsRecordId, tunnelToken };
   }
 
-  /** Deletes both surface resources, tolerating already-deleted ones.
+  /** Deletes both tunnel resources, tolerating already-deleted ones.
    * Never throws: the caller decides what a partial failure means. */
   async cleanup(
     tunnelId: string | null,

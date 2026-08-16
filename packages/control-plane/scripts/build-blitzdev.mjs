@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   createBoxImageAssetSet,
-  createCockpitAssetSet,
+  createWebAppAssetSet,
 } from "./lib/asset-pack.mjs";
 import {
   projectAccess,
@@ -23,7 +23,7 @@ export * from "./lib/worker-source.mjs";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "..");
 const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
-const DEFAULT_UI_DIST_DIR = path.resolve(PACKAGE_DIR, "../ui/dist");
+const DEFAULT_UI_DIST_DIR = path.resolve(PACKAGE_DIR, "../webapp/dist");
 
 function printManifest(uploadSet) {
   for (const file of uploadSet.files) {
@@ -37,7 +37,7 @@ function parseCli(argv) {
     upload: false,
     noCommit: false,
     commit: false,
-    uploadCockpit: false,
+    uploadWebApp: false,
     attemptBoxImage: false,
     probeFile: undefined,
     projectPasswordFile: undefined,
@@ -51,7 +51,7 @@ function parseCli(argv) {
     if (arg === "--upload") options.upload = true;
     else if (arg === "--no-commit") options.noCommit = true;
     else if (arg === "--commit") options.commit = true;
-    else if (arg === "--upload-cockpit") options.uploadCockpit = true;
+    else if (arg === "--upload-webapp") options.uploadWebApp = true;
     else if (arg === "--attempt-box-image") options.attemptBoxImage = true;
     else if (["--probe-file", "--project-password-file", "--box-image-manifest", "--dist", "--ui-dist"].includes(arg)) {
       const value = argv[index + 1];
@@ -70,16 +70,16 @@ function parseCli(argv) {
     throw new Error("--upload requires exactly one of --no-commit or --commit");
   }
   if (options.upload && options.probeFile === undefined) throw new Error("--upload requires --probe-file");
-  if ((options.uploadCockpit || options.attemptBoxImage) && options.probeFile === undefined) {
+  if ((options.uploadWebApp || options.attemptBoxImage) && options.probeFile === undefined) {
     throw new Error("managed file upload requires --probe-file");
   }
-  if ((options.uploadCockpit || options.attemptBoxImage) && options.projectPasswordFile === undefined) {
+  if ((options.uploadWebApp || options.attemptBoxImage) && options.projectPasswordFile === undefined) {
     throw new Error("managed file upload requires --project-password-file");
   }
   if (options.attemptBoxImage && options.boxImageManifest === undefined) {
     throw new Error("--attempt-box-image requires --box-image-manifest");
   }
-  if (options.noCommit && (options.uploadCockpit || options.attemptBoxImage)) {
+  if (options.noCommit && (options.uploadWebApp || options.attemptBoxImage)) {
     throw new Error("data uploads cannot run before the schema is committed");
   }
   return options;
@@ -90,13 +90,13 @@ export async function main(argv = process.argv.slice(2)) {
   const emitted = await emitUploadSet({ distDir: options.distDir });
   printManifest(emitted);
   if (options.upload) await uploadManagedSet(emitted, options.probeFile, { commit: options.commit });
-  if (options.uploadCockpit || options.attemptBoxImage) {
+  if (options.uploadWebApp || options.attemptBoxImage) {
     const access = await projectAccess(options.probeFile);
     const projectPassword = (await readFile(options.projectPasswordFile, "utf8")).replace(/[\r\n]+$/u, "");
-    if (options.uploadCockpit) {
-      const cockpit = await createCockpitAssetSet(options.uiDistDir);
-      const result = await uploadManagedAssets(cockpit, access, projectPassword);
-      process.stdout.write(`cockpit-assets\t${cockpit.files.length}\t${cockpit.releaseId}\t${JSON.stringify(result)}\n`);
+    if (options.uploadWebApp) {
+      const webApp = await createWebAppAssetSet(options.uiDistDir);
+      const result = await uploadManagedAssets(webApp, access, projectPassword);
+      process.stdout.write(`webapp-assets\t${webApp.files.length}\t${webApp.releaseId}\t${JSON.stringify(result)}\n`);
     }
     if (options.attemptBoxImage) {
       process.stdout.write("box-image-attempt\texplicit\texternal-fallback-retained\n");

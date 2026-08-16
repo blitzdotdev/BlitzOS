@@ -66,7 +66,7 @@ const operatorKey = process.env.OPERATOR_API_KEY ?? readEnvValue("OPERATOR_API_K
 const sensitiveValues = [operatorKey].filter(Boolean);
 const timings = [];
 const errors = [];
-const surfaceCodes = { terminal: null, acp: null, files: null };
+const webAppCodes = { terminal: null, acp: null, files: null };
 const tunnels = [];
 
 let cookie = null;
@@ -902,12 +902,12 @@ function curlCode(args, expected) {
   return Number(code);
 }
 
-async function verifySurfaces() {
-  surfaceCodes.terminal = curlCode(
+async function verifyWebApp() {
+  webAppCodes.terminal = curlCode(
     ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", `http://127.0.0.1:${terminalPort}/`],
     "200",
   );
-  surfaceCodes.acp = curlCode(
+  webAppCodes.acp = curlCode(
     [
       "-sS",
       "-o",
@@ -929,11 +929,11 @@ async function verifySurfaces() {
     ],
     "101",
   );
-  surfaceCodes.files = curlCode(
+  webAppCodes.files = curlCode(
     ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", `http://127.0.0.1:${filesPort}/workspace/`],
     "200",
   );
-  console.log(`SURFACES terminal=${surfaceCodes.terminal} acp=${surfaceCodes.acp} files=${surfaceCodes.files}`);
+  console.log(`WEBAPP terminal=${webAppCodes.terminal} acp=${webAppCodes.acp} files=${webAppCodes.files}`);
 }
 
 async function stopTunnels() {
@@ -1021,7 +1021,7 @@ function writeResult(ok) {
     cloudInitExitCode,
     dockerSetupMode,
     createToEndSeconds: createStartedAt === null ? null : (Date.now() - createStartedAt) / 1_000,
-    surfaceCodes,
+    webAppCodes,
     uploadStats,
     preTeardownEvidence,
     controlPlaneTeardownProof,
@@ -1052,7 +1052,7 @@ async function main() {
     await timed("outer SSH tunnel", startOuterTunnel);
     await timed("pin box host key", pinBoxHostKey);
     await timed("inner SSH tunnel", startInnerTunnel);
-    await timed("Mac surface checks", verifySurfaces);
+    await timed("Mac webapp checks", verifyWebApp);
     succeeded = true;
   } finally {
     try {

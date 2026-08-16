@@ -21,7 +21,7 @@ export type { Principal, PrincipalSource } from "./principals.js";
 export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
 export { VmProviderRegistry } from "./providers/registry.js";
-export { WorkspaceTunnels, workspaceTunnelsFromEnv, SURFACE_TOKEN_HEADER } from "./workspace-tunnels.js";
+export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
 export type { VmProviderListResult } from "./providers/registry.js";
 export {
   addMicrovmHostRoutes,
@@ -42,7 +42,7 @@ export type {
   CreateVmInput,
   ProviderMachineType,
   ProviderCapabilities,
-  SurfacePort,
+  WebAppPort,
   VmInspection,
   VmProvider,
   VolumeProvider,

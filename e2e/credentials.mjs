@@ -1086,7 +1086,7 @@ try {
           }
         }
       } catch {
-        // Best effort; leftovers stay visible in the cockpit inbox.
+        // Best effort; leftovers stay visible in the webapp inbox.
       }
     }
 

@@ -6,7 +6,7 @@ Status: Phase 1 implementation contract. No runtime code is changed by this docu
 
 1. There is one control-plane implementation under `packages/control-plane/core/`. It contains no bare-package imports: every import in that tree begins with `./` or `../` and resolves to another file in `core/`.
 2. Both targets use teenybase's Hono instance, database wrapper, raw-query API, migration model, and file-field/R2 machinery. The port does not introduce a second router, query builder, migration engine, object-store format, auth framework, or scheduler.
-3. Target A is the current Wrangler Worker. It binds native D1/R2, serves the cockpit with Wrangler Assets, retains both current cron triggers, and uses `tables: []` during this cutover.
+3. Target A is the current Wrangler Worker. It binds native D1/R2, serves the webApp with Wrangler Assets, retains both current cron triggers, and uses `tables: []` during this cutover.
 4. Target B is a source upload to a blitz.dev managed project. Its Phase 3 schema has the eight existing domain tables. Phase 4 adds one support table, `blitz_files`, because teenybase file fields require a database row to own each file reference.
 5. Managed imports obey the platform briefing: `teenybase` and `virtual:teenybase` are the only non-relative runtime imports. npm package imports are forbidden. Target A may use the normal package's documented `teenybase` and `teenybase/worker` export paths.
 6. Domain endpoints, wire formats, cookies, OAuth-device behavior, token rotation, Hetzner calls, and cleanup semantics remain behaviorally compatible with the 23 current tests and 9 current end-to-end checks.
@@ -136,7 +136,7 @@ Responsibilities are fixed:
 
 - `runtime.ts`: structural router/context types, `CoreRuntime`, and `RuntimeFactory`; no Hono import.
 - `db.ts`: the exact `Db` contract above and query-result helpers.
-- `blobs.ts`: the exact read contract above, range/conditional streaming response helpers, and logical cockpit/box lookup contracts.
+- `blobs.ts`: the exact read contract above, range/conditional streaming response helpers, and logical webApp/box lookup contracts.
 - `wire.ts`: local copies of only the API/broker/machine/volume/workspace wire types and constants currently imported from `@blitzos/schema`.
 - `app.ts`: `installControlPlaneRoutes(router, runtimeFactory)` and error/not-found registration.
 - Remaining files retain their current named domain responsibilities; `providers/hetzner.ts` remains an implementation of the relative `providers/types.ts` interface.
@@ -218,7 +218,7 @@ export default {
 
 The final implementation supplies explicit Worker types and typed helper bodies; it does not change the imports, constructor choices, hook placement, or the ordered pair of scheduled calls. `$Database` accepts context, settings, a native D1 binding/adapter, and optional R2 (`src/worker/$Database.ts:42-77`). `teenyHono` requires an async database factory and supports the option and request-hook positions shown (`src/worker/honoApp.ts:11-20`).
 
-### 4.2 Cockpit assets and crons
+### 4.2 WebApp assets and crons
 
 Keep the current `DB` D1 binding, `BOX_IMAGES` R2 binding, and both current cron expressions in `packages/control-plane/wrangler.toml`. Add:
 
@@ -238,7 +238,7 @@ run_worker_first = [
 ]
 ```
 
-Wrangler supports `directory`, `not_found_handling`, and `run_worker_first` in its installed config schema (`node_modules/wrangler/config-schema.json:3837-3887`). API prefixes therefore reach the Worker; other paths use the SPA fallback. Build the cockpit first with `npm --workspace @blitzos/ui run build` so `packages/ui/dist` exists.
+Wrangler supports `directory`, `not_found_handling`, and `run_worker_first` in its installed config schema (`node_modules/wrangler/config-schema.json:3837-3887`). API prefixes therefore reach the Worker; other paths use the SPA fallback. Build the webApp first with `npm --workspace @blitzos/ui run build` so `packages/webapp/dist` exists.
 
 ### 4.3 Deploy decision
 
@@ -478,7 +478,7 @@ let inFlight: Promise<void> | undefined;
 
 The five-minute limiter is per isolate, not a global lease. There is no teenybase cron/lease primitive for managed projects and no need to create a bespoke coordination table merely to suppress harmless duplicate idempotent work. Target A uses the same hook as defense in depth and retains both exact cron triggers as the primary schedule.
 
-### 5.5 Phase 4 cockpit file table and exact upload/serve flow
+### 5.5 Phase 4 webApp file table and exact upload/serve flow
 
 Phase 4 appends this ninth support table to `tables`. The eight domain definitions above do not change:
 
@@ -490,7 +490,7 @@ Phase 4 appends this ninth support table to `tables`. The eight domain definitio
   allowMultipleFileRef: true,
   fields: [
     { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-    { name: "kind", type: "text", sqlType: "text", notNull: true, check: "kind IN ('cockpit', 'box-image')" },
+    { name: "kind", type: "text", sqlType: "text", notNull: true, check: "kind IN ('webapp', 'box-image')" },
     { name: "logical_path", type: "text", sqlType: "text", notNull: true },
     { name: "object", type: "file", sqlType: "text", notNull: true },
     { name: "media_type", type: "text", sqlType: "text", notNull: true },
@@ -509,16 +509,16 @@ Phase 4 appends this ninth support table to `tables`. The eight domain definitio
 
 `allowMultipleFileRef: true` requires `idInR2` false and `autoDeleteR2Files` false (`src/types/table.ts:13-34`; validation/default handling in `src/worker/$Table.ts:121-127`). Immutable file generations also avoid the managed RPC multi-delete defect recorded as platform ask 5.
 
-Cockpit upload is exact:
+WebApp upload is exact:
 
-1. Build `packages/ui/dist`. Walk regular files in lexical order and form a manifest with normalized leading-slash `logical_path`, detected `media_type`, `size_bytes`, SHA-256, and one `release_id`.
-2. Derive stable row id as lowercase hex SHA-256 of `"cockpit\0" + logical_path`. Read it with `GET $BASE/exec/blitz_files/view/<url-encoded-id>` using the agent token; a missing record is the insert case. The managed proxy explicitly permits `/view/:id` as a read-safe admin call (`backend/src/routes/project-exec.ts:14-23,87-143`).
-3. For a missing row, send `POST $BASE/exec_write/blitz_files/insert` with `Authorization: Bearer <agent-token>`, `X-Project-Password`, and `FormData`. `@jsonPayload` is a JSON string containing `{ "values": { "id": ..., "kind": "cockpit", "logical_path": ..., "object": "@filePayload.0", "media_type": ..., "size_bytes": ..., "sha256": ..., "release_id": ..., "created_at": ... }, "returning": ["id", "object", "sha256"] }`; append the asset `File` as `@filePayload`. Do not set `Content-Type` manually.
+1. Build `packages/webapp/dist`. Walk regular files in lexical order and form a manifest with normalized leading-slash `logical_path`, detected `media_type`, `size_bytes`, SHA-256, and one `release_id`.
+2. Derive stable row id as lowercase hex SHA-256 of `"webApp\0" + logical_path`. Read it with `GET $BASE/exec/blitz_files/view/<url-encoded-id>` using the agent token; a missing record is the insert case. The managed proxy explicitly permits `/view/:id` as a read-safe admin call (`backend/src/routes/project-exec.ts:14-23,87-143`).
+3. For a missing row, send `POST $BASE/exec_write/blitz_files/insert` with `Authorization: Bearer <agent-token>`, `X-Project-Password`, and `FormData`. `@jsonPayload` is a JSON string containing `{ "values": { "id": ..., "kind": "webApp", "logical_path": ..., "object": "@filePayload.0", "media_type": ..., "size_bytes": ..., "sha256": ..., "release_id": ..., "created_at": ... }, "returning": ["id", "object", "sha256"] }`; append the asset `File` as `@filePayload`. Do not set `Content-Type` manually.
 4. For an existing row with the same hash, skip. For a changed row, send `POST $BASE/exec_write/blitz_files/edit/<id>` with `@jsonPayload` equal to `{ "object": "@filePayload.0", "media_type": ..., "size_bytes": ..., "sha256": ..., "release_id": ... }` and the replacement `File` as `@filePayload`. The standard `/edit/:id` handler treats that body as `setValues` (`src/worker/extensions/tableCrudExtention.ts:117-135`). Keep `autoDeleteR2Files: false`; never construct direct R2 writes.
 5. Teenybase parses `@jsonPayload` plus numbered `@filePayload` parts (`src/worker/util/parseRequestBody.ts:6-49,83-104`), and the standard insert endpoint is `/api/v1/table/<table>/insert` (`src/worker/extensions/tableCrudExtention.ts:102-114`). Managed `/exec_write` streams the request body after validating `X-Project-Password` and injects admin authorization (`backend/src/routes/project-exec.ts:43-85,87-143,150-152`), which is the sanctioned way to bypass the table's deny-all rules.
 6. After every write, read the row again through `/view/<id>` and verify logical path, returned physical `object`, SHA, and size. Do not switch the active `release_id`/manifest until all files verify.
 
-Managed serving is a custom logical-path route because the platform does not provide an Assets binding. `/assets/*` selects `kind='cockpit'`; `/` and non-API routes select cockpit `/index.html`; API and box-image paths never fall through to the SPA. The route obtains the file with `$db.getFileObject("blitz-files/" + row.object)`, copies stored HTTP metadata, sets the manifest media type, ETag, and content length, and streams `object.body`. Hashed assets get `Cache-Control: public,max-age=31536000,immutable`; HTML gets `Cache-Control: no-cache`. The built-in teeny file route addresses table/record/file names and is not rules-aware (`src/worker/$Database.ts:1182-1207`), so it cannot implement stable cockpit URLs.
+Managed serving is a custom logical-path route because the platform does not provide an Assets binding. `/assets/*` selects `kind='webApp'`; `/` and non-API routes select webApp `/index.html`; API and box-image paths never fall through to the SPA. The route obtains the file with `$db.getFileObject("blitz-files/" + row.object)`, copies stored HTTP metadata, sets the manifest media type, ETag, and content length, and streams `object.body`. Hashed assets get `Cache-Control: public,max-age=31536000,immutable`; HTML gets `Cache-Control: no-cache`. The built-in teeny file route addresses table/record/file names and is not rules-aware (`src/worker/$Database.ts:1182-1207`), so it cannot implement stable webApp URLs.
 
 The uploader never deletes old physical objects until platform ask 5 is fixed and an audited generation-GC operation exists. This is bounded operational debt, not a hidden direct-R2 workaround.
 
@@ -539,7 +539,7 @@ Managed build computes schema changes from `DatabaseSettings`, with user migrati
 3. P3 ends after step 2. In P4, human confirms the nine-table probe diff contains no drops, renames, or unexpected alterations.
 4. Invoke the managed commit endpoint once with the expected source/build version.
 5. Poll commit/build status; verify migration applied, active version matches, health endpoint passes, and a privileged raw smoke query sees the expected tables.
-6. Only after the P4 schema commit upload cockpit/box files. Data writes never precede their schema migration.
+6. Only after the P4 schema commit upload webApp/box files. Data writes never precede their schema migration.
 
 ## 6. Primitives-first audit
 
@@ -590,7 +590,7 @@ Gates before deploy:
 1. Existing 23 tests green plus the three new contract tests.
 2. Typecheck green; `core-imports.test.ts` proves every `core/**` import is relative.
 3. Migration file SHA-256 equals its pre-P2 hash.
-4. Cockpit production build green; `wrangler deploy --dry-run` green with the Assets configuration.
+4. WebApp production build green; `wrangler deploy --dry-run` green with the Assets configuration.
 5. Local/miniflare smoke covers API-first routing, SPA fallback, native R2 box image, both scheduled callbacks, and lazy-sweep error isolation.
 6. After staged deploy, all 9 existing end-to-end checks green. No Target B work begins from a regressed core.
 
@@ -616,12 +616,12 @@ Gates:
 4. Against a disposable managed project, `--upload --no-commit` yields successful client/server builds and an `@migration` preview containing exactly the expected creates. Dry run is the default.
 5. Do not invoke `--commit` in P3. Preserve the eight-table preview and build evidence for P4; existing core and Target A gates remain green.
 
-### P4 — cockpit assets in both pipes and box-image attempt
+### P4 — webApp assets in both pipes and box-image attempt
 
 Files changed:
 
 - Append `blitz_files` to `packages/control-plane/targets/blitzdev/teenybase.ts`.
-- Extend `packages/control-plane/targets/blitzdev/worker.ts` with the managed blob adapter and cockpit/box logical serving routes.
+- Extend `packages/control-plane/targets/blitzdev/worker.ts` with the managed blob adapter and webApp/box logical serving routes.
 - Extend `packages/control-plane/scripts/build-blitzdev.mjs` with asset manifest, multipart insert/edit, verify, and box-image attempt subcommands.
 - Finalize `packages/control-plane/wrangler.toml` `[assets]` configuration and `src/worker.ts` Target A routing if P2 smoke found a precedence issue.
 - Update `worker-configuration.d.ts`, `package.json`, lockfile, and the Phase 4 tests only as required. UI source remains unchanged unless a real same-origin path bug is proven.
@@ -632,7 +632,7 @@ Gates:
 1. Target A serves hashed UI assets and SPA deep links while every API prefix reaches the Worker; cookies and same-origin requests work in a browser.
 2. Managed P4 migration preview on the uncommitted P3 probe creates the eight domain tables plus `blitz_files` and all declared indexes, with no drops/alters. After explicit review, the disposable probe commit and health/raw-table smoke pass before data upload.
 3. Multipart insert, replacement/edit, row verification, logical lookup, `getFileObject`, ETag/content type/cache headers, missing-file behavior, and SPA/API precedence pass against a disposable managed project.
-4. A browser can load and use the cockpit against both Target A and Target B.
+4. A browser can load and use the webApp against both Target A and Target B.
 5. Tiny box fixture passes end-to-end. The real immutable part set is attempted once; all parts verify before activation, otherwise the external immutable reference remains active and the exact platform failure is attached to ask 3.
 6. All P2/P3 tests, current 23 tests, and current 9 end-to-end checks remain green.
 
@@ -640,4 +640,4 @@ Gates:
 
 No constraint blocks P2 or the P3 source/schema upload dry run; P3 performs no commit. P4 may commit the reviewed nine-table migration to the disposable probe solely to validate file-field integration. Production promotion of Target B has one determinism blocker: the managed gateway/build currently resolves the latest teenybase bundle rather than the project-recorded version (platform ask 4). There is no atomic way for the emitter to pin what commit and runtime will load, so a production Target B commit waits for that lift; version observation and post-commit smoke tests are evidence, not a substitute for pinning.
 
-P4 serving is implementable with immutable file generations. Safe replacement cleanup is blocked by the managed R2 RPC single-key/multi-key delete mismatch (platform ask 5), so `autoDeleteR2Files` stays false and no GC runs. Large box-image ingestion remains an explicit capability attempt governed by existing ask 3 and never blocks the cockpit or control-plane cutover.
+P4 serving is implementable with immutable file generations. Safe replacement cleanup is blocked by the managed R2 RPC single-key/multi-key delete mismatch (platform ask 5), so `autoDeleteR2Files` stays false and no GC runs. Large box-image ingestion remains an explicit capability attempt governed by existing ask 3 and never blocks the webApp or control-plane cutover.

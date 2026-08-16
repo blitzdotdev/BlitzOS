@@ -7,7 +7,7 @@ import { sha256 } from "./source-utils.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "../..");
-const DEFAULT_UI_DIST_DIR = path.resolve(PACKAGE_DIR, "../ui/dist");
+const DEFAULT_UI_DIST_DIR = path.resolve(PACKAGE_DIR, "../webapp/dist");
 
 const MEDIA_TYPES = Object.freeze({
   ".css": "text/css; charset=utf-8",
@@ -33,7 +33,7 @@ export function mediaTypeForPath(filePath) {
 }
 
 export function managedFileId(kind, logicalPath) {
-  if (kind !== "cockpit" && kind !== "box-image") throw new Error(`unsupported file kind: ${kind}`);
+  if (kind !== "webapp" && kind !== "box-image") throw new Error(`unsupported file kind: ${kind}`);
   return sha256(`${kind}\0${logicalPath}`);
 }
 
@@ -62,14 +62,14 @@ function assetReleaseId(files) {
     `${file.logicalPath}\0${file.sizeBytes}\0${file.sha256}\0${file.mediaType}\n`).join(""));
 }
 
-export async function createCockpitAssetSet(distDir = DEFAULT_UI_DIST_DIR) {
+export async function createWebAppAssetSet(distDir = DEFAULT_UI_DIST_DIR) {
   const relativePaths = await walkRegularFiles(distDir);
-  if (!relativePaths.includes("index.html")) throw new Error(`cockpit build is missing ${path.join(distDir, "index.html")}`);
+  if (!relativePaths.includes("index.html")) throw new Error(`webApp build is missing ${path.join(distDir, "index.html")}`);
   const files = await Promise.all(relativePaths.map(async (relativePath) => {
     const sourcePath = path.join(distDir, relativePath);
     const metadata = await stat(sourcePath);
     return {
-      kind: "cockpit",
+      kind: "webapp",
       logicalPath: `/${relativePath.split(path.sep).join("/")}`,
       mediaType: mediaTypeForPath(relativePath),
       sizeBytes: metadata.size,
@@ -83,7 +83,7 @@ export async function createCockpitAssetSet(distDir = DEFAULT_UI_DIST_DIR) {
     ...files.filter(({ logicalPath }) => logicalPath === "/index.html"),
   ];
   return {
-    kind: "cockpit",
+    kind: "webapp",
     releaseId,
     files: uploadFiles.map((file) => ({ ...file, releaseId })),
   };

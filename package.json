@@ -15,7 +15,7 @@
     "packages/schema",
     "packages/control-plane",
     "packages/box/actor",
-    "packages/ui"
+    "packages/webapp"
   ],
   "scripts": {
     "lint": "oxlint .",

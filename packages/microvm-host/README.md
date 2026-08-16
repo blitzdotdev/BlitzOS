@@ -28,7 +28,7 @@ Every endpoint requires `Authorization: Bearer <token>`. The token is read once 
 - `GET /v1/vms` returns the persisted VM array.
 - `GET /v1/capacity` returns `{total_cpu,physical_cpu,effective_cpu,total_mem_mb,used_cpu,used_mem_mb,vm_count,max_vms}`. `total_cpu` remains the allocatable ceiling used by existing clients and matches `effective_cpu`; `physical_cpu` reports the configured host CPU count.
 - `GET /v1/healthz` returns `{ok,versions}` with agent, Firecracker, and kernel versions.
-- `ANY /vms/:id/surface/:port/*` streams HTTP and WebSocket traffic to the
+- `ANY /vms/:id/webapp/:port/*` streams HTTP and WebSocket traffic to the
   named guest, with `port` restricted to `7444` (ACP) or `7445` (box gateway).
   The agent bearer credential and control-plane cookie are removed before the
   request reaches the guest. Missing VMs return HTTP 404.
@@ -43,7 +43,7 @@ microVM boot, `/microvm-init` enables `route_localnet` on `eth0` and installs
 guest-side NAT rules that translate only traffic from the TAP gateway address,
 to the guest address, on ports 7444/7445 back to `127.0.0.1`. This avoids public
 host-port allocation and preserves the box image's loopback contract while
-making the surfaces reachable solely across each VM's host-only `/30`.
+making the webApp endpoints reachable solely across each VM's host-only `/30`.
 
 ## Lifecycle and recovery
 
@@ -151,7 +151,7 @@ go test -race ./...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/blitz-microvm-agent-linux-amd64 ./cmd/blitz-microvm-agent
 ```
 
-`integration/live-test.sh` performs the Mac-to-host health/capacity/create/enroll/SSH/surfaces/delete test, verifies idempotent deletion and every resource class, then runs ten create/destroy timing cycles. It requires a temporary local mode-0600 copy of the deployed token through `BLITZ_AGENT_TOKEN_FILE`; neither the script nor agent prints token or key contents.
+`integration/live-test.sh` performs the Mac-to-host health/capacity/create/enroll/SSH/webApp/delete test, verifies idempotent deletion and every resource class, then runs ten create/destroy timing cycles. It requires a temporary local mode-0600 copy of the deployed token through `BLITZ_AGENT_TOKEN_FILE`; neither the script nor agent prints token or key contents.
 
 ## M3 vendoring notes
 

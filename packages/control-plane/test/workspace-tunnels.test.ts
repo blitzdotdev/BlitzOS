@@ -29,8 +29,8 @@ describe("workspace tunnels", () => {
     const proxied: { request?: Request } = {};
     const workspaceTunnels = new WorkspaceTunnels(
       new CloudflareTunnels({ accountId: "test-account", zoneId: "test-zone-id", apiToken: "test-api-token", fetcher: cfFetcher }),
-      "surface.test",
-      "test-surface-secret",
+      "webapp.test",
+      "test-webApp-secret",
       async (input, init) => {
         proxied.request = new Request(String(input), init);
         return Response.json({ ok: true });
@@ -56,16 +56,16 @@ describe("workspace tunnels", () => {
     ]);
     const userData = providers.userData.get(workspace.id) ?? "";
     expect(userData).toContain("TUNNEL-RUN-TOKEN");
-    expect(userData.indexOf("/var/lib/blitz/surface-token"))
+    expect(userData.indexOf("/var/lib/blitz/webapp-token"))
       .toBeLessThan(userData.indexOf("/var/lib/blitz/tunnel-token"));
 
-    const ports = await appRequest(app, `/workspaces/${workspace.id}/surface/7444/session?x=1`, {
+    const ports = await appRequest(app, `/workspaces/${workspace.id}/webapp/7444/session?x=1`, {
       headers: { Cookie: cookie },
     });
     expect(ports.status).toBe(200);
-    expect(proxied.request?.url).toBe(`https://ws-${workspace.id}.surface.test/acp/session?x=1`);
-    expect(proxied.request?.headers.get("X-Blitz-Surface-Token"))
-      .toBe(await workspaceTunnels.surfaceTokenFor(workspace.id));
+    expect(proxied.request?.url).toBe(`https://ws-${workspace.id}.webapp.test/acp/session?x=1`);
+    expect(proxied.request?.headers.get("X-Blitz-WebApp-Token"))
+      .toBe(await workspaceTunnels.webAppTokenFor(workspace.id));
     expect(proxied.request?.headers.get("Cookie")).toBeNull();
 
     const destroyed = await appRequest(app, `/workspaces/${workspace.id}`, {

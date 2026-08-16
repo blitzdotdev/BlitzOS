@@ -294,7 +294,7 @@ describe("microVM pool provider", () => {
         if (url.endsWith("/v1/vms/vm-1-abcdef123456")) {
           return new Response(null, { status: 204 });
         }
-        if (url.includes("/surface/7445/")) return new Response("surface");
+        if (url.includes("/webapp/7445/")) return new Response("webApp");
         throw new Error(`unexpected request ${init?.method ?? "GET"} ${url}`);
       },
       undefined,
@@ -314,11 +314,11 @@ describe("microVM pool provider", () => {
     await pointAt("https://three.trycloudflare.com");
     await microvm.inspect(created.id);
     await pointAt("https://four.trycloudflare.com");
-    await microvm.proxySurface(
+    await microvm.proxyWebApp(
       created.id,
       7445,
       "/ports",
-      new Request("https://cp.example/surface"),
+      new Request("https://cp.example/webApp"),
     );
     await pointAt("https://five.trycloudflare.com");
     await microvm.destroy(created.id);
@@ -327,7 +327,7 @@ describe("microVM pool provider", () => {
       "https://one.trycloudflare.com/v1/capacity",
       "https://two.trycloudflare.com/v1/vms",
       "https://three.trycloudflare.com/v1/vms",
-      "https://four.trycloudflare.com/vms/vm-1-abcdef123456/surface/7445/ports",
+      "https://four.trycloudflare.com/vms/vm-1-abcdef123456/webapp/7445/ports",
       "https://five.trycloudflare.com/v1/vms/vm-1-abcdef123456",
     ]);
   });
@@ -348,11 +348,11 @@ describe("microVM pool provider", () => {
       message: "dynamic microVM host home is unavailable; waiting for registration",
     });
     await expect(
-      microvm.proxySurface(
+      microvm.proxyWebApp(
         "microvm:v1:home:vm-1-abcdef123456",
         7445,
         "/",
-        new Request("https://cp.example/surface"),
+        new Request("https://cp.example/webApp"),
       ),
     ).rejects.toMatchObject({ status: 503 });
   });
@@ -640,7 +640,7 @@ describe("microVM pool provider", () => {
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(2);
   });
 
-  it("surfaces an agent create message through the control plane with the exact provider error prefix", async () => {
+  it("webApps an agent create message through the control plane with the exact provider error prefix", async () => {
     const microvm = provider(
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       async () => Response.json({ error: "insufficient microVM capacity" }, { status: 409 }),
@@ -793,8 +793,8 @@ describe("microVM pool provider", () => {
     });
   });
 
-  it("session-authenticates and streams allowed HTTP surface requests to the agent", async () => {
-    const surfaceCalls: Array<{
+  it("session-authenticates and streams allowed HTTP webapp requests to the agent", async () => {
+    const webAppCalls: Array<{
       url: string;
       method: string;
       authorization: string | null;
@@ -810,9 +810,9 @@ describe("microVM pool provider", () => {
           ssh_port: 22_001,
         }, { status: 201 });
       }
-      if (url.includes("/vms/vm-1-abcdef123456/surface/7445/")) {
+      if (url.includes("/vms/vm-1-abcdef123456/webapp/7445/")) {
         const headers = new Headers(init?.headers);
-        surfaceCalls.push({
+        webAppCalls.push({
           url,
           method: init?.method ?? "GET",
           authorization: headers.get("authorization"),
@@ -823,7 +823,7 @@ describe("microVM pool provider", () => {
         });
         return new Response("guest-response", {
           status: 207,
-          headers: { "X-Guest-Surface": "7445" },
+          headers: { "X-Guest-WebApp": "7445" },
         });
       }
       throw new Error(`unexpected request ${init?.method ?? "GET"} ${url}`);
@@ -844,25 +844,25 @@ describe("microVM pool provider", () => {
 
     const unauthorized = await appRequest(
       app,
-      `/workspaces/${workspace.id}/surface/7445/ports`,
+      `/workspaces/${workspace.id}/webapp/7445/ports`,
     );
     expect(unauthorized.status).toBe(401);
     const disallowed = await appRequest(
       app,
-      `/workspaces/${workspace.id}/surface/7443/ports`,
+      `/workspaces/${workspace.id}/webapp/7443/ports`,
       { headers: { Cookie: cookie } },
     );
     expect(disallowed.status).toBe(400);
     const missing = await appRequest(
       app,
-      "/workspaces/missing/surface/7445/ports",
+      "/workspaces/missing/webapp/7445/ports",
       { headers: { Cookie: cookie } },
     );
     expect(missing.status).toBe(404);
 
     const response = await appRequest(
       app,
-      `/workspaces/${workspace.id}/surface/7445/workspace/a%20b?arg=one&arg=two`,
+      `/workspaces/${workspace.id}/webapp/7445/workspace/a%20b?arg=one&arg=two`,
       {
         method: "PATCH",
         headers: { Cookie: cookie, "Content-Type": "text/plain" },
@@ -870,10 +870,10 @@ describe("microVM pool provider", () => {
       },
     );
     expect(response.status).toBe(207);
-    expect(response.headers.get("x-guest-surface")).toBe("7445");
+    expect(response.headers.get("x-guest-webApp")).toBe("7445");
     expect(await response.text()).toBe("guest-response");
-    expect(surfaceCalls).toEqual([{
-      url: "https://lab.example/vms/vm-1-abcdef123456/surface/7445/workspace/a%20b?arg=one&arg=two",
+    expect(webAppCalls).toEqual([{
+      url: "https://lab.example/vms/vm-1-abcdef123456/webapp/7445/workspace/a%20b?arg=one&arg=two",
       method: "PATCH",
       authorization: `Bearer ${LAB_TOKEN}`,
       cookie: null,
@@ -881,7 +881,7 @@ describe("microVM pool provider", () => {
     }]);
   });
 
-  it("rejects surface access for tunnel-less cloud workspaces with a clear 503", async () => {
+  it("rejects webapp access for tunnel-less cloud workspaces with a clear 503", async () => {
     const cloud = new FakeProviders();
     const app = appWithProviders(cloud, cloud);
     const cookie = await operatorSession(app);
@@ -893,12 +893,12 @@ describe("microVM pool provider", () => {
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
     const response = await appRequest(
       app,
-      `/workspaces/${workspace.id}/surface/7445/ports`,
+      `/workspaces/${workspace.id}/webapp/7445/ports`,
       { headers: { Cookie: cookie } },
     );
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
-      error: "workspace has no surface tunnel",
+      error: "workspace has no webapp tunnel",
     });
   });
 
@@ -912,7 +912,7 @@ describe("microVM pool provider", () => {
           ssh_port: 22_001,
         }, { status: 201 });
       }
-      if (url.endsWith("/vms/vm-1-abcdef123456/surface/7444/?arg=kept")) {
+      if (url.endsWith("/vms/vm-1-abcdef123456/webapp/7444/?arg=kept")) {
         const headers = new Headers(init?.headers);
         expect(headers.get("authorization")).toBe(`Bearer ${LAB_TOKEN}`);
         expect(headers.get("cookie")).toBeNull();
@@ -946,7 +946,7 @@ describe("microVM pool provider", () => {
 
     const response = await appRequest(
       app,
-      `/workspaces/${workspace.id}/surface/7444?arg=kept`,
+      `/workspaces/${workspace.id}/webapp/7444?arg=kept`,
       {
         headers: {
           Cookie: cookie,

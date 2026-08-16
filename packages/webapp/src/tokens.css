@@ -1,0 +1,41 @@
+:root {
+  --paper: #16181d;
+  --ink: #dfe2e8;
+  --accent: #7e95d7;
+  --terminal-background: var(--paper);
+
+  --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
+  --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+  --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+  --terminal-selection: color-mix(in oklab, var(--accent) 25%, transparent);
+
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --headerH: 56px;
+  --mobileStatusH: 34px;
+  --touchTarget: 44px;
+
+  /* ANSI ramp v1 — founder calibration pending
+   * Muted chroma keeps Claude Code's semantic color legible without turning
+   * the terminal into a second visual system beside the paper webapp.
+   */
+  --ansi-black: #292c33;
+  --ansi-red: #c47f86;
+  --ansi-green: #8fa879;
+  --ansi-yellow: #b7a06b;
+  --ansi-blue: #7e95d7;
+  --ansi-magenta: #a88abb;
+  --ansi-cyan: #78a7ad;
+  --ansi-white: #c4c8d0;
+  --ansi-bright-black: #6f747f;
+  --ansi-bright-red: #d59299;
+  --ansi-bright-green: #a3ba8d;
+  --ansi-bright-yellow: #c9b37c;
+  --ansi-bright-blue: #9aace3;
+  --ansi-bright-magenta: #bc9bca;
+  --ansi-bright-cyan: #8ebbc0;
+  --ansi-bright-white: #e7e9ee;
+
+  /* Founder screenshot 2026-07-22: reconnect status uses the ANSI-ramp gold. */
+  --status-warm-yellow: var(--ansi-yellow);
+}

@@ -28,9 +28,9 @@ const (
 	actorHost              = "localhost:7444"
 	actorOrigin            = "http://localhost:7444"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
-	surfaceTokenPath       = "/var/lib/blitz/surface-token"
+	webAppTokenPath        = "/var/lib/blitz/webapp-token"
 	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
-	surfaceTokenHeader     = "X-Blitz-Surface-Token"
+	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
 )
@@ -53,13 +53,13 @@ type gateway struct {
 	terminal               *url.URL
 	actor                  *url.URL
 	controlPlaneOriginPath string
-	surfaceTokenPath       string
+	webAppTokenPath        string
 	tunnelTokenPath        string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
 	authRequired           bool
-	lastSurfaceToken       string
+	lastWebAppToken        string
 	authFailureLogged      bool
 }
 
@@ -73,7 +73,7 @@ func main() {
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
 		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
 		controlPlaneOriginPath: controlPlaneOriginPath,
-		surfaceTokenPath:       surfaceTokenPath,
+		webAppTokenPath:        webAppTokenPath,
 		tunnelTokenPath:        tunnelTokenPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
@@ -90,16 +90,16 @@ func main() {
 }
 
 func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	surfaceToken, authRequired, available := g.currentSurfaceToken()
+	webAppToken, authRequired, available := g.currentWebAppToken()
 	if !available {
 		http.Error(response, "surface authentication unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if authRequired && !surfaceTokenAllowed(request, surfaceToken) {
-		http.Error(response, "surface token forbidden", http.StatusForbidden)
+	if authRequired && !webAppTokenAllowed(request, webAppToken) {
+		http.Error(response, "webApp token forbidden", http.StatusForbidden)
 		return
 	}
-	removeSurfaceTokenHeader(request.Header)
+	removeWebAppTokenHeader(request.Header)
 
 	controlPlaneOrigin := loadControlPlaneOrigin(g.controlPlaneOriginPath)
 	if isCORSPreflight(request) {
@@ -260,7 +260,7 @@ func filterCORSRequestHeaders(requested string) string {
 	allowed := make([]string, 0)
 	for _, name := range strings.Split(requested, ",") {
 		name = strings.TrimSpace(name)
-		if name != "" && !strings.EqualFold(name, surfaceTokenHeader) {
+		if name != "" && !strings.EqualFold(name, webAppTokenHeader) {
 			allowed = append(allowed, name)
 		}
 	}
@@ -342,34 +342,34 @@ func loadControlPlaneOrigin(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func (g *gateway) currentSurfaceToken() (token string, authRequired bool, available bool) {
+func (g *gateway) currentWebAppToken() (token string, authRequired bool, available bool) {
 	g.authMu.Lock()
 	defer g.authMu.Unlock()
 
-	data, err := os.ReadFile(g.surfaceTokenPath)
+	data, err := os.ReadFile(g.webAppTokenPath)
 	token = strings.TrimSpace(string(data))
 	if err == nil && token != "" {
 		g.authRequired = true
-		g.lastSurfaceToken = token
+		g.lastWebAppToken = token
 		return token, true, true
 	}
 
 	if g.authRequired {
 		if !g.authFailureLogged {
 			if err != nil {
-				log.Printf("surface token unavailable after authentication was enabled; continuing with last valid token: %v", err)
+				log.Printf("webApp token unavailable after authentication was enabled; continuing with last valid token: %v", err)
 			} else {
-				log.Printf("surface token empty after authentication was enabled; continuing with last valid token")
+				log.Printf("webApp token empty after authentication was enabled; continuing with last valid token")
 			}
 			g.authFailureLogged = true
 		}
-		return g.lastSurfaceToken, true, true
+		return g.lastWebAppToken, true, true
 	}
 
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
 		return "", true, false
 	}
-	if _, surfaceErr := os.Lstat(g.surfaceTokenPath); !errors.Is(surfaceErr, os.ErrNotExist) {
+	if _, surfaceErr := os.Lstat(g.webAppTokenPath); !errors.Is(surfaceErr, os.ErrNotExist) {
 		return "", true, false
 	}
 	if _, tunnelErr := os.Lstat(g.tunnelTokenPath); !errors.Is(tunnelErr, os.ErrNotExist) {
@@ -378,14 +378,14 @@ func (g *gateway) currentSurfaceToken() (token string, authRequired bool, availa
 	return "", false, true
 }
 
-func surfaceTokenAllowed(request *http.Request, surfaceToken string) bool {
-	values := request.Header.Values(surfaceTokenHeader)
-	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), []byte(surfaceToken)) == 1
+func webAppTokenAllowed(request *http.Request, webAppToken string) bool {
+	values := request.Header.Values(webAppTokenHeader)
+	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), []byte(webAppToken)) == 1
 }
 
-func removeSurfaceTokenHeader(header http.Header) {
+func removeWebAppTokenHeader(header http.Header) {
 	for name := range header {
-		if strings.EqualFold(name, surfaceTokenHeader) {
+		if strings.EqualFold(name, webAppTokenHeader) {
 			delete(header, name)
 		}
 	}

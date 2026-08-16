@@ -136,12 +136,12 @@ Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
 ## Standalone connectivity (no closed ingress)
 
 - OSS v1 = SSH forwarding only. Publish key-only 22. ttyd/ACP/files stay
-  loopback. The cockpit/orchestrator owns
+  loopback. The webApp/orchestrator owns
   `ssh -N -L 7443:… -L 7444:… -L 7445:…` and the pinned host key.
 - Browser on another device, no tunnel there: the user brings their own edge.
   Decided 2026-08-11: this is docs, not an open ingress package. The open docs
   ship a reference recipe: one Caddyfile (host label → box:port, wildcard TLS,
-  WS), or `tailscale serve` per box. It plugs into the cockpit endpoint
+  WS), or `tailscale serve` per box. It plugs into the webApp endpoint
   resolver. Our ingress stays closed. Its custom parts (WG mesh, syncd on the
   closed map feed, forward_auth) do not run in a self-host world.
 

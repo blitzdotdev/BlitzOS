@@ -34,7 +34,7 @@ type WorkerBindings = Env & {
   MAX_CONCURRENT_WORKSPACES: string;
   CRED_MASTER_KEY: string;
   CLOUDFLARE_API_TOKEN?: string;
-  SURFACE_TOKEN_SECRET?: string;
+  WEBAPP_TOKEN_SECRET?: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
 };

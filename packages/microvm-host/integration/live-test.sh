@@ -103,10 +103,10 @@ wait_ready() {
   SSH_MS=$(( $(now_ms) - REQUEST_START ))
   while ! ssh "${ssh_opts[@]}" -p "$VM_PORT" "blitz@$VM_HOST" \
     'for p in 7443 7444 7445; do ss -ltnH "sport = :$p" | grep -q LISTEN || exit 1; done' >/dev/null 2>&1; do
-    (( $(now_ms) < deadline )) || { echo "timeout waiting for surfaces" >&2; return 1; }
+    (( $(now_ms) < deadline )) || { echo "timeout waiting for webapps" >&2; return 1; }
     sleep 0.02
   done
-  SURFACES_MS=$(( $(now_ms) - REQUEST_START ))
+  WEBAPPS_MS=$(( $(now_ms) - REQUEST_START ))
 }
 
 assert_enrollment() {
@@ -137,9 +137,9 @@ assert_no_leak() {
 create_vm "m2-integration-main" "$TMP/create-main.json"
 wait_ready
 assert_enrollment
-echo "create status=201 vm_id=$VM_ID host=$VM_HOST ssh_port=$VM_PORT request_to_ssh_ms=$SSH_MS request_to_surfaces_ms=$SURFACES_MS"
+echo "create status=201 vm_id=$VM_ID host=$VM_HOST ssh_port=$VM_PORT request_to_ssh_ms=$SSH_MS request_to_webapps_ms=$WEBAPPS_MS"
 ssh "${ssh_opts[@]}" -p "$VM_PORT" "blitz@$VM_HOST" \
-  'printf "credential="; stat -c "%a %U:%G" /var/lib/blitz/box-credential.json; printf "origin="; stat -c "%a %U:%G" /var/lib/blitz/origin; node -e "const c=require(\"/var/lib/blitz/box-credential.json\"); console.log(\"credential_fields=\"+Object.keys(c).sort().join(\",\"))"; printf "origin_value="; cat /var/lib/blitz/origin; printf "surfaces="; for p in 7443 7444 7445; do ss -ltnH "sport = :$p" | grep -q LISTEN && printf "%s " "$p"; done; echo'
+  'printf "credential="; stat -c "%a %U:%G" /var/lib/blitz/box-credential.json; printf "origin="; stat -c "%a %U:%G" /var/lib/blitz/origin; node -e "const c=require(\"/var/lib/blitz/box-credential.json\"); console.log(\"credential_fields=\"+Object.keys(c).sort().join(\",\"))"; printf "origin_value="; cat /var/lib/blitz/origin; printf "webapps="; for p in 7443 7444 7445; do ss -ltnH "sport = :$p" | grep -q LISTEN && printf "%s " "$p"; done; echo'
 ssh -o BatchMode=yes "$REMOTE" "head -n 1 '$REMOTE_LAB/agent/integration/receiver-events.jsonl'"
 delete_vm
 first_vm=$VM_ID
@@ -150,11 +150,11 @@ echo "delete status=$DELETE_STATUS idempotent_delete_status=$idempotent leak_aud
 [[ "$idempotent" == 204 ]]
 
 TIMINGS="$RESULT_DIR/timings.tsv"
-printf 'cycle\trequest_ssh_ms\trequest_surfaces_ms\n' >"$TIMINGS"
+printf 'cycle\trequest_ssh_ms\trequest_webapps_ms\n' >"$TIMINGS"
 for cycle in $(seq 1 10); do
   create_vm "m2-benchmark-$cycle" "$TMP/create-$cycle.json"
   wait_ready
-  printf '%s\t%s\t%s\n' "$cycle" "$SSH_MS" "$SURFACES_MS" | tee -a "$TIMINGS"
+  printf '%s\t%s\t%s\n' "$cycle" "$SSH_MS" "$WEBAPPS_MS" | tee -a "$TIMINGS"
   delete_vm
   assert_no_leak
   VM_ID=
@@ -170,9 +170,9 @@ function percentile(values, p) {
   return Math.round(sorted[low] + (sorted[high] - sorted[low]) * (index - low));
 }
 const ssh = rows.map((row) => row[1]);
-const surfaces = rows.map((row) => row[2]);
+const webapps = rows.map((row) => row[2]);
 console.log(`percentiles request_to_ssh_ms p50=${percentile(ssh, .5)} p95=${percentile(ssh, .95)} max=${Math.max(...ssh)}`);
-console.log(`percentiles request_to_surfaces_ms p50=${percentile(surfaces, .5)} p95=${percentile(surfaces, .95)} max=${Math.max(...surfaces)}`);
+console.log(`percentiles request_to_webapps_ms p50=${percentile(webapps, .5)} p95=${percentile(webapps, .95)} max=${Math.max(...webapps)}`);
 NODE
 
 final_capacity=$(auth_curl "http://$HOST:$API_PORT/v1/capacity")

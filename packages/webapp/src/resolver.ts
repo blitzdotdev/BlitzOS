@@ -1,0 +1,50 @@
+import type { WorkspaceView } from "@blitzos/schema";
+
+export interface BoxEndpoints {
+  terminalUrl: string;
+  acpUrl: string;
+  filesBase: string;
+}
+
+export interface EndpointResolver {
+  resolve(workspace: WorkspaceView): BoxEndpoints;
+  previewUrl(workspace: WorkspaceView, port: number): string;
+}
+
+export interface StandalonePorts {
+  acp: number;
+  files: number;
+}
+
+export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
+export function standaloneResolver(
+  _ports: StandalonePorts,
+  controlPlaneOrigin = globalThis.location?.origin ?? "",
+): EndpointResolver {
+  const cpOrigin = controlPlaneOrigin.replace(/\/+$/u, "");
+  const endpoints = (workspace: WorkspaceView): BoxEndpoints => {
+    if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
+    const prefix = `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp`;
+    const acp = new URL(`${prefix}/7444`);
+    acp.protocol = acp.protocol === "https:" ? "wss:" : "ws:";
+    return {
+      terminalUrl: `${prefix}/7445/terminal/`,
+      acpUrl: acp.toString(),
+      filesBase: `${prefix}/7445/workspace/`,
+    };
+  };
+  return {
+    resolve: endpoints,
+    previewUrl: (workspace, port) => `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp/7445/preview/${port}/`,
+  };
+}
+
+export function endpointTarget(url: string): string {
+  const parsed = new URL(url);
+  const defaultPort = parsed.protocol === "https:" || parsed.protocol === "wss:" ? "443" : "80";
+  return `${parsed.hostname}:${parsed.port || defaultPort}`;
+}
+
+export function validPort(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= 65_535;
+}

@@ -118,7 +118,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "manifest", type: "text", sqlType: "text" },
         { name: "tunnel_id", type: "text", sqlType: "text" },
-        { name: "surface_hostname", type: "text", sqlType: "text" },
+        { name: "tunnel_hostname", type: "text", sqlType: "text" },
         { name: "dns_record_id", type: "text", sqlType: "text" },
       ],
       indexes: [
@@ -291,7 +291,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       allowMultipleFileRef: true,
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "kind", type: "text", sqlType: "text", notNull: true, check: "kind IN ('cockpit', 'box-image')" },
+        { name: "kind", type: "text", sqlType: "text", notNull: true, check: "kind IN ('webapp', 'box-image')" },
         { name: "logical_path", type: "text", sqlType: "text", notNull: true },
         { name: "object", type: "file", sqlType: "text", notNull: true },
         { name: "media_type", type: "text", sqlType: "text", notNull: true },
@@ -389,7 +389,7 @@ interface ManagedContext {
   readonly executionCtx: { waitUntil(promise: Promise<unknown>): void };
 }
 
-interface CockpitContext {
+interface WebAppContext {
   readonly req: { readonly raw: Request };
   get(name: "$db"): $Database;
   json(value: { error: string; retryAction: null }, status: number): Response;
@@ -435,7 +435,7 @@ const API_PREFIXES = [
   "/api/",
 ];
 
-function managedBlobStore(db: $Database, kind: "box-image" | "cockpit"): BlobStore {
+function managedBlobStore(db: $Database, kind: "box-image" | "webapp"): BlobStore {
   return {
     async get(logicalPath): Promise<BlobObject | null> {
       const row = await first<ManagedFileRow>(db, {
@@ -462,8 +462,8 @@ function isApiPath(pathname: string): boolean {
   return API_PREFIXES.some((prefix) => pathname === (prefix.endsWith("/") ? prefix.slice(0, -1) : prefix) || pathname.startsWith(prefix));
 }
 
-async function cockpitResponse(context: CockpitContext, logicalPath: string): Promise<Response> {
-  const object = await managedBlobStore(context.get("$db"), "cockpit").get(logicalPath);
+async function webAppResponse(context: WebAppContext, logicalPath: string): Promise<Response> {
+  const object = await managedBlobStore(context.get("$db"), "webapp").get(logicalPath);
   if (object === null) return context.json({ error: "not found", retryAction: null }, 404);
   const response = blobResponse(object, context.req.raw);
   response.headers.set(
@@ -512,11 +512,11 @@ const app = teenyHono<ManagedEnv>(
 );
 
 installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
-app.get("/assets/*", (c) => cockpitResponse(c, c.req.path));
-app.get("/", (c) => cockpitResponse(c, "/index.html"));
+app.get("/assets/*", (c) => webAppResponse(c, c.req.path));
+app.get("/", (c) => webAppResponse(c, "/index.html"));
 app.get("*", (c) => isApiPath(c.req.path)
   ? c.json({ error: "not found", retryAction: null }, 404)
-  : cockpitResponse(c, "/index.html"));
+  : webAppResponse(c, "/index.html"));
 export default app;
 `);
 

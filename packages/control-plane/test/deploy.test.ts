@@ -178,7 +178,7 @@ describe("control-plane deploy command", () => {
       ["wrangler", "d1", "list", "--json", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "d1", "migrations", "apply", "DB", "--remote", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "secret", "list", "--format", "json", "--config", "packages/control-plane/wrangler.toml"],
-      ["npm", "run", "build", "-w", "@blitzos/ui"],
+      ["npm", "run", "build", "-w", "@blitzos/webapp"],
       ["wrangler", "deploy", "--config", "packages/control-plane/wrangler.toml"],
     ]);
     expect(calls.every(({ options }) => options.env.CI === "1")).toBe(true);

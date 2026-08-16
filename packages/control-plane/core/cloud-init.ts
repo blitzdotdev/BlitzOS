@@ -37,11 +37,11 @@ ${content}`;
 
 export interface TunnelTokens {
   tunnelToken: string;
-  surfaceToken: string;
+  webAppToken: string;
 }
 
 /** Installs the workspace tunnel credentials as a standalone cloud-init
- * part so the pinned bootstrap script bytes stay untouched. The surface
+ * part so the pinned bootstrap script bytes stay untouched. The webApp
  * token lands first: the box gateway arms itself fail-closed the moment a
  * tunnel token exists, and cloudflared waits for both files. */
 function tunnelTokenScript(tokens: TunnelTokens): string {
@@ -49,9 +49,9 @@ function tunnelTokenScript(tokens: TunnelTokens): string {
 set -euo pipefail
 install -d -m 0755 /var/lib/blitz
 umask 077
-printf '%s\\n' ${JSON.stringify(tokens.surfaceToken)} >/var/lib/blitz/surface-token.tmp
-chown 1000:1000 /var/lib/blitz/surface-token.tmp
-mv /var/lib/blitz/surface-token.tmp /var/lib/blitz/surface-token
+printf '%s\\n' ${JSON.stringify(tokens.webAppToken)} >/var/lib/blitz/webapp-token.tmp
+chown 1000:1000 /var/lib/blitz/webapp-token.tmp
+mv /var/lib/blitz/webapp-token.tmp /var/lib/blitz/webapp-token
 printf '%s\\n' ${JSON.stringify(tokens.tunnelToken)} >/var/lib/blitz/tunnel-token.tmp
 chown 1000:1000 /var/lib/blitz/tunnel-token.tmp
 mv /var/lib/blitz/tunnel-token.tmp /var/lib/blitz/tunnel-token

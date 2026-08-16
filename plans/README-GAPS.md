@@ -42,11 +42,11 @@ view/edit/resume access.
 - A workspace has one `owner_id`; the schema has no organization, membership,
   invite, workspace ACL, or role table
   (`packages/control-plane/migrations/0001_initial.sql:3-33`).
-- List, surface, and destroy routes enforce owner equality
+- List, webApp, and destroy routes enforce owner equality
   (`packages/control-plane/core/workspaces.ts:299-315,362-368`).
 - The UI synthesizes a personal tenant and forces every workspace to
   `canControl: true` and `shared: false`
-  (`packages/ui/src/api-adapter.ts:58-74,96-113`).
+  (`packages/webapp/src/api-adapter.ts:58-74,96-113`).
 - The actor can fan a session out to multiple subscribers, and ttyd can attach a
   read-only tmux client. These are transport primitives, not an access model.
 - Concurrent file saves are last-write-wins; there is no CRDT, conflict merge,
@@ -60,8 +60,8 @@ not in core (`packages/control-plane/TODO.md:80-85`).
 1. Identity and membership records exist for more than one user.
 2. Workspace grants model at least owner/editor/viewer access.
 3. Invite, accept/revoke, list, and authorization paths are implemented.
-4. Control-plane workspace reads and surfaces enforce grants server-side.
-5. The cockpit exposes sharing and read-only modes without synthetic tenant
+4. Control-plane workspace reads and webApp endpoints enforce grants server-side.
+5. The webApp exposes sharing and read-only modes without synthetic tenant
    state.
 6. Concurrent editing semantics are documented honestly; “like Google Docs” is
    used only if presence and conflict-safe editing are actually provided.
@@ -113,7 +113,7 @@ disconnects, and can be resumed later from any device (`README.md:22`).
 - ACP exposes session new/load/prompt/cancel but no session list or discovery
   operation (`packages/box/actor/src/server.ts:54-70`).
 - Chat session IDs and tab layout live only in browser `localStorage`
-  (`packages/ui/src/storage.ts:74-76,109-132,200-289`).
+  (`packages/webapp/src/storage.ts:74-76,109-132,200-289`).
 - Control-plane `sessions` are login cookies, not agent-session records
   (`packages/control-plane/core/sessions.ts:13-40`).
 - On actor restart, an unfinished turn is marked terminal `refusal`; it does not
@@ -148,7 +148,7 @@ the default and product surface:
   authorization (`packages/control-plane/core/credentials/mint.ts:224-238`).
 - The create API accepts a manifest (`packages/schema/src/api.ts:9-18`), but the
   browser create form sends only machine type, SSH key, and optional volume
-  (`packages/ui/src/CreateWorkspaceDialog.tsx:57-68`).
+  (`packages/webapp/src/CreateWorkspaceDialog.tsx:57-68`).
 
 **Tool/data implementation:** there is no workspace-level tool allow-list,
 dataset entitlement, repository policy, or data-source manifest. The box ships a
@@ -159,7 +159,7 @@ are caller-controlled coarse inputs, not enforced per-task policy.
 
 1. Workspace creation requires an explicit deny-by-default credential manifest,
    or an equally visible deliberate broad-access choice.
-2. The cockpit can inspect and configure the manifest before launch.
+2. The webApp can inspect and configure the manifest before launch.
 3. Tool and data scoping have concrete enforcement models, or the README is
    narrowed to describe VM isolation and credential scoping only.
 4. Tests prove a workspace cannot discover or mint an undeclared integration,
@@ -173,14 +173,14 @@ The integrated provider type is exactly `claude | codex`
 (`packages/box/actor/src/types.ts:9`). Actor startup rejects other providers
 (`packages/box/actor/src/main.ts:11-20`), the ttyd launcher accepts only Claude,
 Codex, or a terminal (`packages/box/rootfs/usr/local/libexec/blitz-term:22-35`),
-and those are the only harness choices exposed by the cockpit
-(`packages/ui/src/CockpitHeader.tsx:7-22`).
+and those are the only harness choices exposed by the webApp
+(`packages/webapp/src/WebAppHeader.tsx:7-22`).
 
 Any other CLI can be installed and run manually in the Linux terminal, but it
 does not receive ACP chat, managed resume, credential-provider integration, or a
 typed launcher. The normal browser chat path also records Claude as the provider
 even though the actor contains a Codex adapter
-(`packages/ui/src/CloudApp.tsx:1373-1382`).
+(`packages/webapp/src/CloudApp.tsx:1373-1382`).
 
 **Done when:** either add a documented provider/launcher extension contract and
 prove it with a third harness, or narrow the README to “integrated Claude and
@@ -192,16 +192,16 @@ allow selection of every provider claimed as integrated.
 **README claim:** create, watch, and steer workspaces from the browser with chat,
 terminal, files, and previews (`README.md:19`).
 
-Those surfaces are implemented. MicroVM ACP/files/terminal/preview traffic is
+Those webApp endpoints are implemented. MicroVM ACP/files/terminal/preview traffic is
 proxied through the control plane. For a normal cloud VM, however, the standalone
 resolver ignores the workspace SSH endpoint and points every workspace at the
-same localhost ports (`packages/ui/src/resolver.ts:25-53`). The user must run and
+same localhost ports (`packages/webapp/src/resolver.ts:25-53`). The user must run and
 retarget an SSH tunnel or provide an external edge. The open packages explicitly
 exclude hosted ingress (`packages/box/TODO.md:136-146`).
 
 **Done when:**
 
-1. The cockpit owns a per-workspace SSH-forward lifecycle with pinned host-key
+1. The webApp owns a per-workspace SSH-forward lifecycle with pinned host-key
    verification, or an open authenticated ingress/reference edge is shipped.
 2. Two remote workspaces can be open concurrently without manually remapping
    the same local ports.
@@ -292,7 +292,7 @@ included in a release.
 The audit should not be read as discounting these implemented capabilities:
 
 - Workspace create/poll/destroy and readiness transitions.
-- Hetzner VMs and Firecracker microVM allocation/networking/surface proxying.
+- Hetzner VMs and Firecracker microVM allocation/networking/webApp proxying.
 - Linux, key-only SSH, Docker-in-Docker, terminal, Claude, and Codex.
 - ACP chat, replay journal, permission requests, and multi-subscriber fan-out.
 - File browsing/editing/upload, port discovery, and HTTP/WebSocket previews.

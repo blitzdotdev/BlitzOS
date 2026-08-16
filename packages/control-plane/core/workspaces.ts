@@ -16,7 +16,7 @@ import {
 import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { isMicrovmProviderId } from "./providers/microvm.js";
-import type { SurfacePort, VmProvider } from "./providers/types.js";
+import type { WebAppPort, VmProvider } from "./providers/types.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -51,7 +51,7 @@ export interface WorkspaceRow {
   updated_at: number;
   manifest: string | null;
   tunnel_id: string | null;
-  surface_hostname: string | null;
+  tunnel_hostname: string | null;
   dns_record_id: string | null;
 }
 
@@ -397,10 +397,10 @@ export function addWorkspaceRoutes(
     }
 
     try {
-      // The size check runs on a surface-less build so a 413 always fires
+      // The size check runs on a tunnel-less build so a 413 always fires
       // before any Cloudflare resource exists (the deleted row then owes
-      // nothing). The surface install part we append afterwards is small
-      // and ours; a razor-edge overflow surfaces as a provider error and
+      // nothing). The token install part we append afterwards is small
+      // and ours; a razor-edge overflow webApps as a provider error and
       // the janitor reclaims the tunnel.
       const baseUserData = buildUserData(
         input.sshPublicKey,
@@ -423,11 +423,11 @@ export function addWorkspaceRoutes(
           );
         }
       }
-      // Providers that cannot proxy their own surface (cloud VMs) get a
+      // Providers that cannot proxy their own webApp endpoints (cloud VMs) get a
       // per-workspace tunnel; identifiers persist onto the row before the
       // VM exists so a crash can never orphan Cloudflare resources.
       const workspaceTunnels = runtime.providers.workspaceTunnels;
-      const tunnel = workspaceTunnels !== undefined && vmProvider.proxySurface === undefined
+      const tunnel = workspaceTunnels !== undefined && vmProvider.proxyWebApp === undefined
         ? await workspaceTunnels.provision(runtime.db, id)
         : undefined;
       const userData = tunnel === undefined
@@ -498,7 +498,7 @@ export function addWorkspaceRoutes(
     return context.json<PollResponse>({ workspaces: result.map(workspaceView) });
   });
 
-  const surface = async (context: CoreContext): Promise<Response> => {
+  const webApp = async (context: CoreContext): Promise<Response> => {
     const principal = await requirePrincipal(context);
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
@@ -507,46 +507,46 @@ export function addWorkspaceRoutes(
       throw new HttpError(404, "workspace not found");
     }
     if (row.vm_id === null) {
-      throw new HttpError(409, "workspace is not ready for surface access");
+      throw new HttpError(409, "workspace is not ready for webapp access");
     }
     const provider = providerForVmId(runtime, row.vm_id);
     const rawPort = context.req.param("port");
     if (rawPort !== "7444" && rawPort !== "7445") {
-      throw new HttpError(400, "surface port must be 7444 or 7445");
+      throw new HttpError(400, "webApp port must be 7444 or 7445");
     }
-    const port: SurfacePort = rawPort === "7444" ? 7444 : 7445;
+    const port: WebAppPort = rawPort === "7444" ? 7444 : 7445;
     const requestURL = new URL(context.req.url);
-    const routePrefix = `/workspaces/${encodeURIComponent(id)}/surface/${rawPort}`;
+    const routePrefix = `/workspaces/${encodeURIComponent(id)}/webapp/${rawPort}`;
     if (!requestURL.pathname.startsWith(routePrefix)) {
-      throw new HttpError(400, "invalid workspace surface path");
+      throw new HttpError(400, "invalid workspace webApp path");
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
     const workspaceTunnels = runtime.providers.workspaceTunnels;
     let upstream: Response | null;
     try {
-      if (provider.proxySurface !== undefined) {
-        upstream = await provider.proxySurface(
+      if (provider.proxyWebApp !== undefined) {
+        upstream = await provider.proxyWebApp(
           row.vm_id,
           port,
           pathAndQuery,
           context.req.raw,
         );
-      } else if (workspaceTunnels !== undefined && row.surface_hostname !== null) {
+      } else if (workspaceTunnels !== undefined && row.tunnel_hostname !== null) {
         upstream = await workspaceTunnels.proxy(
-          row.surface_hostname,
+          row.tunnel_hostname,
           row.id,
           port,
           pathAndQuery,
           context.req.raw,
         );
       } else {
-        throw new HttpError(503, "workspace has no surface tunnel");
+        throw new HttpError(503, "workspace has no webapp tunnel");
       }
     } catch (error) {
       if (error instanceof HttpError && error.status === 503) throw error;
       const detail = error instanceof Error ? error.message : String(error);
-      throw new HttpError(502, `workspace surface proxy is unavailable: ${detail}`);
+      throw new HttpError(502, `workspace webApp proxy is unavailable: ${detail}`);
     }
     if (upstream === null) {
       throw new HttpError(409, "workspace VM is not owned by its resolved provider");
@@ -556,8 +556,8 @@ export function addWorkspaceRoutes(
     return websocketProxyResponse(upstream);
   };
 
-  router.all("/workspaces/:id/surface/:port", surface);
-  router.all("/workspaces/:id/surface/:port/*", surface);
+  router.all("/workspaces/:id/webapp/:port", webApp);
+  router.all("/workspaces/:id/webapp/:port/*", webApp);
 
   router.delete("/workspaces/:id", async (context) => {
     const principal = await requirePrincipal(context);
@@ -720,8 +720,8 @@ function pipeWebSocket(source: WebSocket, target: WebSocket): void {
     try {
       target.send(event.data);
     } catch {
-      closeWebSocket(source, 1011, "surface proxy send failed");
-      closeWebSocket(target, 1011, "surface proxy send failed");
+      closeWebSocket(source, 1011, "webapp proxy send failed");
+      closeWebSocket(target, 1011, "webapp proxy send failed");
     }
   });
   source.addEventListener("close", (event) => {
@@ -729,8 +729,8 @@ function pipeWebSocket(source: WebSocket, target: WebSocket): void {
     closeWebSocket(source, event.code, event.reason);
   });
   source.addEventListener("error", () => {
-    closeWebSocket(source, 1011, "surface proxy error");
-    closeWebSocket(target, 1011, "surface proxy error");
+    closeWebSocket(source, 1011, "webapp proxy error");
+    closeWebSocket(target, 1011, "webapp proxy error");
   });
 }
 

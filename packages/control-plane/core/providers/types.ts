@@ -29,7 +29,7 @@ export interface VmInspection extends CreatedVm {
   state: "running" | "stopped";
 }
 
-export type SurfacePort = 7444 | 7445;
+export type WebAppPort = 7444 | 7445;
 
 export interface VmProvider {
   readonly id: string;
@@ -41,9 +41,9 @@ export interface VmProvider {
   shutdown(id: string): Promise<void>;
   destroy(id: string): Promise<void>;
   inspect(id: string): Promise<VmInspection | null>;
-  proxySurface?(
+  proxyWebApp?(
     id: string,
-    port: SurfacePort,
+    port: WebAppPort,
     pathAndQuery: string,
     request: Request,
   ): Promise<Response | null>;

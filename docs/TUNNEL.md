@@ -2,10 +2,10 @@
 
 ## Context
 
-Cloud-VM workspaces connect to the browser cockpit automatically. At create
+Cloud-VM workspaces connect to the browser webApp automatically. At create
 time the control plane makes a named Cloudflare Tunnel for the workspace, a
 proxied DNS record `ws-<workspace-id>.<your-zone>`, and hands the box a tunnel
-token. The box dials out; it opens no inbound port. The cockpit talks only to
+token. The box dials out; it opens no inbound port. The webApp talks only to
 the control plane, which proxies terminal, chat, files, and previews through
 the tunnel and authenticates every hop. Destroying the workspace removes the
 tunnel and the DNS record.
@@ -69,7 +69,7 @@ In `packages/control-plane/wrangler.toml`:
 ```toml
 CLOUDFLARE_ACCOUNT_ID = "<your account id>"
 CLOUDFLARE_ZONE_ID = "<zone id from step 3>"
-WORKSPACE_SURFACE_ZONE = "<your-domain>"
+WORKSPACE_TUNNEL_ZONE = "<your-domain>"
 ```
 
 Leave all three empty to disable the feature; the control plane then behaves
@@ -82,9 +82,9 @@ npx wrangler secret put CLOUDFLARE_API_TOKEN --config packages/control-plane/wra
 # paste the token from step 2
 
 openssl rand -base64 32
-npx wrangler secret put SURFACE_TOKEN_SECRET --config packages/control-plane/wrangler.toml
+npx wrangler secret put WEBAPP_TOKEN_SECRET --config packages/control-plane/wrangler.toml
 # paste the random string; the control plane derives per-workspace
-# surface-auth tokens from it
+# webapp-auth tokens from it
 ```
 
 ### 6. Migrate and deploy
@@ -97,7 +97,7 @@ npx wrangler deploy --config packages/control-plane/wrangler.toml
 
 ### 7. Verify
 
-1. Create a cloud-VM workspace in the cockpit.
+1. Create a cloud-VM workspace in the webApp.
 2. A proxied DNS record `ws-<workspace-id>.<your-domain>` appears in the
    zone, and the workspace terminal, chat, files, and preview tabs work with
    no SSH forwards.
@@ -112,5 +112,5 @@ npx wrangler deploy --config packages/control-plane/wrangler.toml
   account, or the zone is not Active yet.
 - Workspace creation fails with a tunnel error: confirm the token has
   Account → Cloudflare Tunnel → Edit, on the same account as the zone.
-- Surfaces return 503 `workspace has no surface tunnel`: the workspace was
+- WebApp endpoints return 503 `workspace has no webApp tunnel`: the workspace was
   created before this feature was configured. Recreate it.

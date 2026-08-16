@@ -5,7 +5,7 @@ Target buyer: platform teams at ~100–500-eng companies (Duolingo/Zocdoc/Faire 
 ## A. Distribution — the locked front door (first, mostly owner keys)
 
 Gap: ghcr images private; `teenybase@0.0.15` unpublished; platform PR #11 unmerged. A stranger cannot install anything today.
-Solution: merge + deploy PR #11; publish teenybase to npm; tag a release so CI pushes public multi-arch images; then the one-pass mode-(b) finish (fresh probe, commit, managed cockpit). All the code exists.
+Solution: merge + deploy PR #11; publish teenybase to npm; tag a release so CI pushes public multi-arch images; then the one-pass mode-(b) finish (fresh probe, commit, managed webApp). All the code exists.
 
 ## B. Agent IAM — the moat, zero code today (the sale)
 
@@ -13,7 +13,7 @@ Gap: no scoped tokens, no issuance log, site-claims-audit contradiction (broker 
 Solution, GitHub-App shape (v2 already contains the hard part):
 1. **Token service in the control plane**: `POST /workspaces/:id/tokens` mints short-lived, scoped, per-task tokens. First integration: GitHub App — port v2's flow single-tenant (`github_installations` tables; 9-minute RS256 App JWT; narrowed installation access tokens). AWS STS shape second.
 2. **Injection**: deliver into the workspace over the existing box-token channel; extend `blitz-cred token <integration>` to call the CP. No long-lived credentials on disk, ever.
-3. **Append-only issuance log**: who/task/scope/TTL per mint; cockpit view. Reverses the broker event-log deletion. This is the CloudTrail claim made true.
+3. **Append-only issuance log**: who/task/scope/TTL per mint; webApp view. Reverses the broker event-log deletion. This is the CloudTrail claim made true.
 4. **Manifest v0** in `packages/schema`: per-workspace declared scopes = the mint ceiling. Spec-grade doc; CP enforces mint ≤ manifest.
 5. Invariants (load-bearing): identity-per-task upstream; short TTL + re-mint as kill switch; approvals stay at the ACP layer.
 Broker repositions as the optional high-assurance backend ("credential never touches the box") — the Drata angle.
@@ -31,7 +31,7 @@ Solution — copy v2, drop orgs (per scan, file:line in the scan report):
 Gap: no machine path to the actor (loopback + origin-allowlist-that-allows-missing-Origin is not auth); no task runner; no Slack/Discord.
 Solution, dependency order:
 1. Actor bearer auth (small; prerequisite to any exposure).
-2. Task-runner primitive: ensure-workspace → ACP session → prompt → stream → complete, as CP route + small SDK, through the journal (trust = visibility, runs show in the cockpit).
+2. Task-runner primitive: ensure-workspace → ACP session → prompt → stream → complete, as CP route + small SDK, through the journal (trust = visibility, runs show in the webApp).
 3. Slack connector first: signing-secret verify, 3 s ack + async continue, thread↔session mapping, in-thread approvals from ACP permission events. Discord second. Connector stays plain-Node portable.
 
 ## E. Substrate fit for the ICP

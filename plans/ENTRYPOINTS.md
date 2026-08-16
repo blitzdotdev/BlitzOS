@@ -2,7 +2,7 @@
 
 2026-08-12. Status: known gap, not scheduled. Nothing in this repo implements any of it yet.
 Principle: one runner, N thin connectors — an agent run is one session with many subscribers,
-and every surface (Slack thread, cockpit UI, future CLI/cron) is just another subscriber.
+and every surface (Slack thread, webApp UI, future CLI/cron) is just another subscriber.
 
 ## The gap today
 
@@ -21,7 +21,7 @@ commands; no code pushes events outward.
 2. **Task-runner primitive** (structural). One reusable path: ensure workspace → open ACP
    session → prompt → stream → complete. Build it once (small SDK or control-plane route); each
    surface is then a thin connector. Runs go through the actor journal — never headless agent
-   CLI over SSH exec — so every run is visible and replayable from the cockpit.
+   CLI over SSH exec — so every run is visible and replayable from the webApp.
 3. **Webhook receivers** (thin). Slack: signing-secret verify, 3s ack, async continue. Discord:
    interactions endpoint, ed25519 verify, answer PING (incoming webhooks only post messages;
    command intake needs a Discord app). The control-plane worker can host both; `phone_home`
@@ -41,12 +41,12 @@ land after it. Once 1+2 exist, each connector is days of work.
 
 ## E2E target (the acceptance test)
 
-Drive one agent session from Slack and interact with THE SAME run from the cockpit UI:
+Drive one agent session from Slack and interact with THE SAME run from the webApp UI:
 
 1. A Slack slash command starts a task: the runner acquires a workspace, opens an ACP session,
    sends the prompt.
 2. Turn events stream into the Slack thread as they happen.
-3. Mid-run, open the cockpit: the same session is live there — full transcript via journal
+3. Mid-run, open the webApp: the same session is live there — full transcript via journal
    replay — and the next prompt can be sent from either surface.
 4. A permission request raised by the agent appears in BOTH surfaces; answering in one resolves
    it in the other.
@@ -56,9 +56,9 @@ Drive one agent session from Slack and interact with THE SAME run from the cockp
 Why this is cheap: the actor is already one-to-many. SQLite journal, replay, and multiple
 concurrent ACP subscribers are implemented and unit-tested
 (`packages/box/actor/test/actor.test.ts`). The e2e test proves that fan-out across real
-surfaces: Slack and the cockpit are just two subscribers of one session. This is also the
+surfaces: Slack and the webApp are just two subscribers of one session. This is also the
 product story — default surfaces work out of the box, and an operator can later customize or
-replace the cockpit without losing the Slack lane.
+replace the webApp without losing the Slack lane.
 
 ## Non-goals
 

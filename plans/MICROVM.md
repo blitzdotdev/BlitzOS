@@ -30,7 +30,7 @@ Cold budget: ~2–3 s. With Firecracker snapshot-restore (warm pool of pre-boote
 
 ## What does not change
 
-Schema, cockpit, auth, broker, ACP, bootstrap enrollment contract, the gate e2e (s5 just gets fast). The whole 9/9 suite remains the acceptance test, plus a new latency assertion and density/failure suites.
+Schema, webApp, auth, broker, ACP, bootstrap enrollment contract, the gate e2e (s5 just gets fast). The whole 9/9 suite remains the acceptance test, plus a new latency assertion and density/failure suites.
 
 ## Order of work (dependencies, no estimates)
 

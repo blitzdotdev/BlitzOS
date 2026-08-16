@@ -8,7 +8,7 @@ The parts work. The seams are broken.
 
 - Control plane deploys and manages VMs correctly.
 - The box image works — locally and on a Hetzner VM.
-- The cockpit works end to end.
+- The webApp works end to end.
 - But: a new VM never gets the box installed. The customer gets empty Ubuntu.
 - And: the box never receives its credentials. Images are not downloadable. Docs drift from reality.
 
@@ -40,7 +40,7 @@ CI builds amd64 + arm64, pushes public ghcr, writes digests into release notes. 
 **3. Harden the control plane.**
 Sessions expire. Machine types filter by real availability. One `npm run deploy` command replaces the manual D1/secrets dance. Add create quotas.
 
-**4. Ship the cockpit properly.**
+**4. Ship the webApp properly.**
 Serve the ui from the same Worker (same origin = no CORS problems, ever). Make each tab say which box it talks to. Stop showing dead workspaces.
 
 **5. Docs, CI, remaining tests.**
@@ -51,7 +51,7 @@ Steps 2–5 run in parallel behind step 1.
 ## Done means
 
 1. Fresh accounts, clean machine: `selfhost.mjs` fully green.
-2. Real-browser cockpit tests green in CI.
+2. Real-browser webApp tests green in CI.
 3. Broker flow tested live.
 4. An agent follows the READMEs word for word and gets a working box. Zero secret knowledge.
 5. Chaos run leaves zero orphan servers.
@@ -66,10 +66,10 @@ The control plane becomes a teenybase app with ONE codebase and TWO targets:
 
 **Target B — instant hosting (blitz.dev).** A build step emits `teenybase.ts` (8 tables + deny-all CRUD rules) + `worker.ts` + relative core files, uploaded via `PUT $BASE/files` (1 MB/file) + `POST $BASE/commit`. Platform facts from the probe: no crons, no WebSockets, no npm imports, no native bindings, secrets API exists, outbound fetch works, `<slug>.app.blitz.dev`, anonymous projects expire in 12 h unless claimed.
 
-**One origin rule (both targets): the same worker serves the API and the cockpit.**
+**One origin rule (both targets): the same worker serves the API and the webApp.**
 
-- Target A: cockpit built into worker static assets (`[assets]`, the proven v2 pattern).
-- Target B: cockpit files live in the project's own R2 bucket (file-field table + one authed upload pass), streamed by an asset route via `$db.getFileObject()`. Same origin, same cookies, no CORS anywhere.
+- Target A: webApp built into worker static assets (`[assets]`, the proven v2 pattern).
+- Target B: webApp files live in the project's own R2 bucket (file-field table + one authed upload pass), streamed by an asset route via `$db.getFileObject()`. Same origin, same cookies, no CORS anywhere.
 - Core hides the difference behind one assets interface with two pipes.
 - Platform follow-up (we own blitz.dev): add first-class static assets to managed projects; the R2 asset route is the interim shape of exactly that feature.
 

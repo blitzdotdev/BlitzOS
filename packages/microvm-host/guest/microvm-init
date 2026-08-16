@@ -73,14 +73,14 @@ ip addr add "$guest_ip/$guest_prefix" dev eth0
 ip route add default via "$guest_gw" dev eth0
 hostname "$guest_name"
 
-# Box surfaces remain bound to loopback. Permit only the host endpoint of this
+# Box webApps remain bound to loopback. Permit only the host endpoint of this
 # VM's private TAP /30 to reach the gateway and ACP by translating those two
 # guest-IP destinations back to loopback inside the guest network namespace.
 printf '1\n' > /proc/sys/net/ipv4/conf/eth0/route_localnet
-for surface_port in 7444 7445; do
+for webapp_port in 7444 7445; do
   chroot /mnt/root /usr/sbin/iptables -t nat -A PREROUTING \
-    -i eth0 -p tcp -s "$guest_gw" -d "$guest_ip" --dport "$surface_port" \
-    -j DNAT --to-destination "127.0.0.1:$surface_port"
+    -i eth0 -p tcp -s "$guest_gw" -d "$guest_ip" --dport "$webapp_port" \
+    -j DNAT --to-destination "127.0.0.1:$webapp_port"
 done
 
 mkdir -p /mnt/root/etc

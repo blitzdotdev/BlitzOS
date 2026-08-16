@@ -12,7 +12,7 @@ Format: constraint → where it is enforced → proposed lift → what blitz-cor
 ## 2. No static asset serving for managed projects
 - Enforced: source-files-only bundle contract (1 MB/file) in the build pipeline (`backend/src/build/pipeline.ts`); no assets mechanism in the loader environment.
 - Lift: first-class assets — an upload channel that lands files in the project R2 under an assets prefix plus default serving (or an `[assets]`-equivalent in the loader env).
-- Until then: blitz-core stores cockpit files via file fields in the project R2 and streams them through its own asset route (`$db.getFileObject()`), which is the interim shape of this exact feature.
+- Until then: blitz-core stores webApp files via file fields in the project R2 and streams them through its own asset route (`$db.getFileObject()`), which is the interim shape of this exact feature.
 
 ## 3. No raw/large R2 object API (640 MB box-image archive)
 - Enforced: R2 reachable only through file fields / `$Database` RPC adapter; no documented large-object or multipart upload path; briefing documents only the 1 MB source-file limit.
@@ -27,7 +27,7 @@ Format: constraint → where it is enforced → proposed lift → what blitz-cor
 ## 5. Managed R2 RPC accepts one delete key while teenybase can issue a key array
 - Enforced: the backend's managed bundle includes the teenybase Worker runtime (`backend/src/build/bundle-entry.ts:6-8`), and the gateway supplies its project R2 RPC adapter (`project-gateway/src/index.ts:286-291`). `$Database` accepts `string | string[]` in its delete helper and passes arrays when removing file fields (`src/worker/$Database.ts:903-918,1033-1041`), but `R2RestRPC.delete` and `R2RestAdapter.delete` accept only one string (`src/worker/storage/R2RestRPC.ts:54-56`; `src/worker/storage/R2RestAdapter.ts:108-114`).
 - Lift: support `string | string[]` end-to-end in the managed R2 RPC protocol and adapter, preserving batch semantics, and add integration coverage for editing/deleting rows containing one and multiple file fields.
-- Until then: blitz-core uses immutable file generations with `autoDeleteR2Files: false` and performs no managed file GC. Old cockpit and box-image objects remain retained until the platform path is fixed and an audited cleanup operation is available.
+- Until then: blitz-core uses immutable file generations with `autoDeleteR2Files: false` and performs no managed file GC. Old webApp and box-image objects remain retained until the platform path is fixed and an audited cleanup operation is available.
 
 ## 6. Agent tokens cannot read managed-preview runtime diagnostics
 - Enforced: the gateway writes the underlying worker exception only to its own `console.error` and returns the generic `WORKER_RUNTIME_ERROR` response (`project-gateway/src/index.ts:311-316`); the agent capability list has no logs endpoint (`backend/src/routes/agent-briefing.ts:162-176`) even though the briefing directs runtime failures to dashboard logs that require a human session.

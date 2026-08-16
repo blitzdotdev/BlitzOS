@@ -164,6 +164,6 @@ export async function deployControlPlane({
   const missing = requiredSecretsForConfig(rawConfig).filter((name) => !present.has(name));
   if (missing.length > 0) throw new Error(missingSecretsMessage(missing));
 
-  await invoke("npm", ["run", "build", "-w", "@blitzos/ui"]);
+  await invoke("npm", ["run", "build", "-w", "@blitzos/webapp"]);
   await wrangler(["deploy"]);
 }

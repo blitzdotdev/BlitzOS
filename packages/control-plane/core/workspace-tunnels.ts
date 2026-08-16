@@ -5,33 +5,33 @@ import {
   type SurfaceCleanupResult,
 } from "./providers/cloudflare-tunnels.js";
 import type { Fetcher } from "./providers/json-fetch.js";
-import type { SurfacePort } from "./providers/types.js";
+import type { WebAppPort } from "./providers/types.js";
 
-export const SURFACE_TOKEN_HEADER = "X-Blitz-Surface-Token";
+export const WEBAPP_TOKEN_HEADER = "X-Blitz-WebApp-Token";
 
 export interface WorkspaceTunnelsEnv {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_ZONE_ID?: string;
-  WORKSPACE_SURFACE_ZONE?: string;
+  WORKSPACE_TUNNEL_ZONE?: string;
   CLOUDFLARE_API_TOKEN?: string;
-  SURFACE_TOKEN_SECRET?: string;
+  WEBAPP_TOKEN_SECRET?: string;
 }
 
 export interface WorkspaceTunnelRow {
   id: string;
   tunnel_id: string | null;
-  surface_hostname: string | null;
+  tunnel_hostname: string | null;
   dns_record_id: string | null;
 }
 
 export interface ProvisionedTunnel {
   hostname: string;
   tunnelToken: string;
-  surfaceToken: string;
+  webAppToken: string;
 }
 
 /** Per-workspace tunnels for providers that cannot proxy their own
- * surfaces (cloud VMs). Everything Cloudflare-specific stays behind this
+ * webApp endpoints (cloud VMs). Everything Cloudflare-specific stays behind this
  * module. */
 export class WorkspaceTunnels {
   private readonly client: CloudflareTunnels;
@@ -42,12 +42,12 @@ export class WorkspaceTunnels {
   constructor(
     client: CloudflareTunnels,
     zone: string,
-    surfaceTokenSecret: string,
+    webAppTokenSecret: string,
     fetcher: Fetcher = fetch,
   ) {
     this.client = client;
     this.zone = zone;
-    this.secret = surfaceTokenSecret;
+    this.secret = webAppTokenSecret;
     this.fetcher = fetcher;
   }
 
@@ -55,7 +55,7 @@ export class WorkspaceTunnels {
     return `ws-${workspaceId}.${this.zone}`;
   }
 
-  async surfaceTokenFor(workspaceId: string): Promise<string> {
+  async webAppTokenFor(workspaceId: string): Promise<string> {
     const key = await crypto.subtle.importKey(
       "raw",
       new TextEncoder().encode(this.secret),
@@ -84,7 +84,7 @@ export class WorkspaceTunnels {
     );
     await rows(db, {
       q: `UPDATE workspaces
-          SET tunnel_id = ?1, surface_hostname = ?2, dns_record_id = ?3,
+          SET tunnel_id = ?1, tunnel_hostname = ?2, dns_record_id = ?3,
               updated_at = ?4
           WHERE id = ?5`,
       v: [created.tunnelId, hostname, created.dnsRecordId, Date.now(), workspaceId],
@@ -92,11 +92,11 @@ export class WorkspaceTunnels {
     return {
       hostname,
       tunnelToken: created.tunnelToken,
-      surfaceToken: await this.surfaceTokenFor(workspaceId),
+      webAppToken: await this.webAppTokenFor(workspaceId),
     };
   }
 
-  /** Deletes surface resources, clearing each column only after its
+  /** Deletes tunnel resources, clearing each column only after its
    * confirmed deletion. Callers log the returned errors; anything left
    * behind stays on the row for the janitor to retry. */
   async cleanup(db: Db, row: WorkspaceTunnelRow): Promise<SurfaceCleanupResult> {
@@ -110,7 +110,7 @@ export class WorkspaceTunnels {
     const assignments: string[] = [];
     if (result.dnsDeleted) assignments.push("dns_record_id = NULL");
     if (result.tunnelDeleted) {
-      assignments.push("tunnel_id = NULL", "surface_hostname = NULL");
+      assignments.push("tunnel_id = NULL", "tunnel_hostname = NULL");
     }
     if (assignments.length > 0) {
       await rows(db, {
@@ -122,12 +122,12 @@ export class WorkspaceTunnels {
     return result;
   }
 
-  /** Proxies one surface request through the workspace tunnel. Port 7444
+  /** Proxies one webapp request through the workspace tunnel. Port 7444
    * maps to the gateway's /acp prefix; 7445 passes through unchanged. */
   async proxy(
     hostname: string,
     workspaceId: string,
-    port: SurfacePort,
+    port: WebAppPort,
     pathAndQuery: string,
     request: Request,
   ): Promise<Response> {
@@ -136,7 +136,7 @@ export class WorkspaceTunnels {
     headers.delete("Cookie");
     headers.delete("Host");
     headers.delete("Authorization");
-    headers.set(SURFACE_TOKEN_HEADER, await this.surfaceTokenFor(workspaceId));
+    headers.set(WEBAPP_TOKEN_HEADER, await this.webAppTokenFor(workspaceId));
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
     const fetcher = this.fetcher;
     return fetcher(`https://${hostname}${upstreamPath}`, {
@@ -154,9 +154,9 @@ export function workspaceTunnelsFromEnv(
 ): WorkspaceTunnels | undefined {
   const accountId = env.CLOUDFLARE_ACCOUNT_ID ?? "";
   const zoneId = env.CLOUDFLARE_ZONE_ID ?? "";
-  const zone = env.WORKSPACE_SURFACE_ZONE ?? "";
+  const zone = env.WORKSPACE_TUNNEL_ZONE ?? "";
   const apiToken = env.CLOUDFLARE_API_TOKEN ?? "";
-  const secret = env.SURFACE_TOKEN_SECRET ?? "";
+  const secret = env.WEBAPP_TOKEN_SECRET ?? "";
   if (accountId === "" || zoneId === "" || zone === "" || apiToken === "" || secret === "") {
     return undefined;
   }

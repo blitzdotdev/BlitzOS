@@ -64,11 +64,11 @@ func TestGatewayLegacyRoutesWhenBothTokensAbsent(t *testing.T) {
 
 	authDir := t.TempDir()
 	handler := &gateway{
-		dufs:             httputil.NewSingleHostReverseProxy(dufsURL),
-		surfaceTokenPath: filepath.Join(authDir, "surface-token"),
-		tunnelTokenPath:  filepath.Join(authDir, "tunnel-token"),
-		discover:         func() ([]portInfo, error) { return []portInfo{{Port: 3000, Process: "node"}}, nil },
-		transport:        http.DefaultTransport,
+		dufs:            httputil.NewSingleHostReverseProxy(dufsURL),
+		webAppTokenPath: filepath.Join(authDir, "webapp-token"),
+		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
+		discover:        func() ([]portInfo, error) { return []portInfo{{Port: 3000, Process: "node"}}, nil },
+		transport:       http.DefaultTransport,
 	}
 
 	portsRequest := httptest.NewRequest(http.MethodGet, "http://box/ports", nil)
@@ -100,7 +100,7 @@ func TestGatewayLegacyRoutesWhenBothTokensAbsent(t *testing.T) {
 	}
 }
 
-func TestGatewaySurfaceTokenAuthentication(t *testing.T) {
+func TestGatewayWebAppTokenAuthentication(t *testing.T) {
 	upstreamRequests := 0
 	dufs := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		upstreamRequests++
@@ -112,18 +112,18 @@ func TestGatewaySurfaceTokenAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tokenPath := filepath.Join(t.TempDir(), "surface-token")
+	tokenPath := filepath.Join(t.TempDir(), "webapp-token")
 	handler := &gateway{
-		dufs:             httputil.NewSingleHostReverseProxy(dufsURL),
-		surfaceTokenPath: tokenPath,
-		tunnelTokenPath:  filepath.Join(filepath.Dir(tokenPath), "tunnel-token"),
-		transport:        http.DefaultTransport,
+		dufs:            httputil.NewSingleHostReverseProxy(dufsURL),
+		webAppTokenPath: tokenPath,
+		tunnelTokenPath: filepath.Join(filepath.Dir(tokenPath), "tunnel-token"),
+		transport:       http.DefaultTransport,
 	}
 	request := func(token *string, webSocket bool) *httptest.ResponseRecorder {
 		t.Helper()
 		gatewayRequest := httptest.NewRequest(http.MethodGet, "http://box/workspace/file.txt", nil)
 		if token != nil {
-			gatewayRequest.Header.Set(surfaceTokenHeader, *token)
+			gatewayRequest.Header.Set(webAppTokenHeader, *token)
 		}
 		if webSocket {
 			gatewayRequest.Header.Set("Connection", "Upgrade")
@@ -141,7 +141,7 @@ func TestGatewaySurfaceTokenAuthentication(t *testing.T) {
 		}
 	})
 
-	const token = "opaque-surface-token"
+	const token = "opaque-webapp-token"
 	if err := os.WriteFile(tokenPath, []byte("  "+token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestGatewaySurfaceTokenAuthentication(t *testing.T) {
 		}
 	})
 
-	const rotatedToken = "rotated-surface-token"
+	const rotatedToken = "rotated-webapp-token"
 	if err := os.WriteFile(tokenPath, []byte(rotatedToken), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestGatewaySurfaceTokenAuthentication(t *testing.T) {
 	}
 }
 
-func TestGatewayEmptySurfaceTokenFailsClosedEveryRoute(t *testing.T) {
+func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 	upstreamRequests := 0
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		upstreamRequests++
@@ -228,8 +228,8 @@ func TestGatewayEmptySurfaceTokenFailsClosedEveryRoute(t *testing.T) {
 	upstreamPort := mustServerPort(t, upstream.URL)
 
 	authDir := t.TempDir()
-	surfacePath := filepath.Join(authDir, "surface-token")
-	if err := os.WriteFile(surfacePath, nil, 0o600); err != nil {
+	webAppPath := filepath.Join(authDir, "webapp-token")
+	if err := os.WriteFile(webAppPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	discoverCalls := 0
@@ -238,7 +238,7 @@ func TestGatewayEmptySurfaceTokenFailsClosedEveryRoute(t *testing.T) {
 		terminal:               upstreamURL,
 		actor:                  upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, "https://blitz-control-plane.example"),
-		surfaceTokenPath:       surfacePath,
+		webAppTokenPath:        webAppPath,
 		tunnelTokenPath:        filepath.Join(authDir, "tunnel-token"),
 		discover: func() ([]portInfo, error) {
 			discoverCalls++
@@ -297,23 +297,23 @@ func TestGatewayEmptySurfaceTokenFailsClosedEveryRoute(t *testing.T) {
 	}
 }
 
-func TestGatewayInvalidSurfaceTokenFailsClosed(t *testing.T) {
+func TestGatewayInvalidWebAppTokenFailsClosed(t *testing.T) {
 	tests := []struct {
 		name  string
 		setup func(*testing.T, string, string)
 	}{
 		{
 			name: "whitespace only",
-			setup: func(t *testing.T, surfacePath, _ string) {
-				if err := os.WriteFile(surfacePath, []byte(" \n\t"), 0o600); err != nil {
+			setup: func(t *testing.T, webAppPath, _ string) {
+				if err := os.WriteFile(webAppPath, []byte(" \n\t"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 			},
 		},
 		{
-			name: "surface path is a directory",
-			setup: func(t *testing.T, surfacePath, _ string) {
-				if err := os.Mkdir(surfacePath, 0o700); err != nil {
+			name: "webApp path is a directory",
+			setup: func(t *testing.T, webAppPath, _ string) {
+				if err := os.Mkdir(webAppPath, 0o700); err != nil {
 					t.Fatal(err)
 				}
 			},
@@ -330,12 +330,12 @@ func TestGatewayInvalidSurfaceTokenFailsClosed(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			authDir := t.TempDir()
-			surfacePath := filepath.Join(authDir, "surface-token")
+			webAppPath := filepath.Join(authDir, "webapp-token")
 			tunnelPath := filepath.Join(authDir, "tunnel-token")
-			test.setup(t, surfacePath, tunnelPath)
+			test.setup(t, webAppPath, tunnelPath)
 			handler := &gateway{
-				surfaceTokenPath: surfacePath,
-				tunnelTokenPath:  tunnelPath,
+				webAppTokenPath: webAppPath,
+				tunnelTokenPath: tunnelPath,
 			}
 			request := httptest.NewRequest(http.MethodGet, "http://box/ports", nil)
 			response := httptest.NewRecorder()
@@ -347,20 +347,20 @@ func TestGatewayInvalidSurfaceTokenFailsClosed(t *testing.T) {
 	}
 }
 
-func TestGatewayStripsSurfaceTokenFromAllUpstreams(t *testing.T) {
+func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 	type observation struct {
-		requestURI      string
-		hasSurfaceToken bool
+		requestURI     string
+		hasWebAppToken bool
 	}
 	observed := make(chan observation, 4)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		hasSurfaceToken := false
+		hasWebAppToken := false
 		for name := range request.Header {
-			if strings.EqualFold(name, surfaceTokenHeader) {
-				hasSurfaceToken = true
+			if strings.EqualFold(name, webAppTokenHeader) {
+				hasWebAppToken = true
 			}
 		}
-		observed <- observation{requestURI: request.URL.RequestURI(), hasSurfaceToken: hasSurfaceToken}
+		observed <- observation{requestURI: request.URL.RequestURI(), hasWebAppToken: hasWebAppToken}
 		response.WriteHeader(http.StatusNoContent)
 	}))
 	defer upstream.Close()
@@ -371,18 +371,18 @@ func TestGatewayStripsSurfaceTokenFromAllUpstreams(t *testing.T) {
 	upstreamPort := mustServerPort(t, upstream.URL)
 
 	authDir := t.TempDir()
-	surfacePath := filepath.Join(authDir, "surface-token")
-	const token = "opaque-surface-token"
-	if err := os.WriteFile(surfacePath, []byte(token), 0o600); err != nil {
+	webAppPath := filepath.Join(authDir, "webapp-token")
+	const token = "opaque-webapp-token"
+	if err := os.WriteFile(webAppPath, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	handler := &gateway{
-		dufs:             httputil.NewSingleHostReverseProxy(upstreamURL),
-		terminal:         upstreamURL,
-		actor:            upstreamURL,
-		surfaceTokenPath: surfacePath,
-		tunnelTokenPath:  filepath.Join(authDir, "tunnel-token"),
-		transport:        http.DefaultTransport,
+		dufs:            httputil.NewSingleHostReverseProxy(upstreamURL),
+		terminal:        upstreamURL,
+		actor:           upstreamURL,
+		webAppTokenPath: webAppPath,
+		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
+		transport:       http.DefaultTransport,
 	}
 	tests := []struct {
 		name        string
@@ -398,7 +398,7 @@ func TestGatewayStripsSurfaceTokenFromAllUpstreams(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "http://box"+test.path, nil)
-			request.Header.Set(surfaceTokenHeader, token)
+			request.Header.Set(webAppTokenHeader, token)
 			if test.webSocket {
 				request.Header.Set("Connection", "Upgrade")
 				request.Header.Set("Upgrade", "websocket")
@@ -412,8 +412,8 @@ func TestGatewayStripsSurfaceTokenFromAllUpstreams(t *testing.T) {
 			if got.requestURI != test.upstreamURI {
 				t.Errorf("upstream request URI = %q, want %q", got.requestURI, test.upstreamURI)
 			}
-			if got.hasSurfaceToken {
-				t.Error("upstream request contains the surface token header")
+			if got.hasWebAppToken {
+				t.Error("upstream request contains the webApp token header")
 			}
 		})
 	}
@@ -490,11 +490,11 @@ func TestCORSPreflight(t *testing.T) {
 		}
 	})
 
-	t.Run("surface token header is filtered case-insensitively", func(t *testing.T) {
+	t.Run("webApp token header is filtered case-insensitively", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodOptions, "http://box/workspace/", nil)
 		request.Header.Set("Origin", controlPlaneOrigin)
 		request.Header.Set("Access-Control-Request-Method", "PROPFIND")
-		request.Header.Set("Access-Control-Request-Headers", "Depth, x-blitz-surface-token, Content-Type")
+		request.Header.Set("Access-Control-Request-Headers", "Depth, x-blitz-webapp-token, Content-Type")
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 
@@ -542,19 +542,19 @@ func TestCORSPreflight(t *testing.T) {
 	}
 }
 
-func TestAuthenticatedCORSPreflightNeverAllowsSurfaceToken(t *testing.T) {
+func TestAuthenticatedCORSPreflightNeverAllowsWebAppToken(t *testing.T) {
 	const (
 		controlPlaneOrigin = "https://blitz-control-plane.example"
-		token              = "opaque-surface-token"
+		token              = "opaque-webapp-token"
 	)
 	authDir := t.TempDir()
-	surfacePath := filepath.Join(authDir, "surface-token")
-	if err := os.WriteFile(surfacePath, []byte(token), 0o600); err != nil {
+	webAppPath := filepath.Join(authDir, "webapp-token")
+	if err := os.WriteFile(webAppPath, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	handler := &gateway{
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
-		surfaceTokenPath:       surfacePath,
+		webAppTokenPath:        webAppPath,
 		tunnelTokenPath:        filepath.Join(authDir, "tunnel-token"),
 	}
 
@@ -566,18 +566,18 @@ func TestAuthenticatedCORSPreflightNeverAllowsSurfaceToken(t *testing.T) {
 		{name: "no requested headers"},
 		{
 			name:             "mixed requested headers",
-			requestedHeaders: "Depth, X-BLITZ-SURFACE-TOKEN, Content-Type",
+			requestedHeaders: "Depth, X-BLITZ-WEBAPP-TOKEN, Content-Type",
 			wantAllowHeaders: "Depth, Content-Type",
 		},
 		{
-			name:             "surface token only",
-			requestedHeaders: "x-blitz-surface-token",
+			name:             "webApp token only",
+			requestedHeaders: "x-blitz-webapp-token",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodOptions, "http://box/workspace/", nil)
-			request.Header.Set(surfaceTokenHeader, token)
+			request.Header.Set(webAppTokenHeader, token)
 			request.Header.Set("Origin", controlPlaneOrigin)
 			request.Header.Set("Access-Control-Request-Method", "PROPFIND")
 			if test.requestedHeaders != "" {
@@ -593,7 +593,7 @@ func TestAuthenticatedCORSPreflightNeverAllowsSurfaceToken(t *testing.T) {
 			if got != test.wantAllowHeaders {
 				t.Errorf("Access-Control-Allow-Headers = %q, want %q", got, test.wantAllowHeaders)
 			}
-			if got == "*" || strings.Contains(strings.ToLower(got), strings.ToLower(surfaceTokenHeader)) {
+			if got == "*" || strings.Contains(strings.ToLower(got), strings.ToLower(webAppTokenHeader)) {
 				t.Errorf("unsafe Access-Control-Allow-Headers = %q", got)
 			}
 		})

@@ -126,7 +126,7 @@ done
 published=$(docker port "$container")
 grep -q '^22/tcp' <<<"$published" || fail "sshd was not published"
 if grep -Eq '^744[345]/tcp' <<<"$published"; then
-  fail "a loopback-only surface was published"
+  fail "a loopback-only webapp was published"
 fi
 echo "PASS port bindings"
 
@@ -287,6 +287,6 @@ done
 docker exec "$unprivileged_container" /command/s6-svstat /run/service/dockerd | grep -q '^up' \
   || fail "unprivileged dockerd placeholder is not supervised"
 docker exec "$unprivileged_container" ss -ltnH | grep -q '127.0.0.1:7445' \
-  || fail "unprivileged mode lost a box surface"
+  || fail "unprivileged mode lost a box webapp"
 echo "PASS unprivileged dockerd degradation"
 echo "PASS box smoke"

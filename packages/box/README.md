@@ -44,7 +44,7 @@ The long `--mount` form fails when a bind-mount source is missing; short `-v`
 can silently create a directory instead.
 
 `--privileged` enables the inner Docker daemon. Without it, the other four
-surfaces still start and dockerd reports a clean skip.
+webApp endpoints still start and dockerd reports a clean skip.
 
 The box works without BlitzOS accounts or a control plane. Sign in to an agent
 once over SSH with `claude login` or `codex login`; HOME persists on the state
@@ -97,7 +97,7 @@ origin, so they need no additional SSH forward or ingress route.
 
 ### Terminal URL contract
 
-ttyd accepts the v2 cockpit's ordered, repeated `arg` query parameters:
+ttyd accepts the v2 webApp's ordered, repeated `arg` query parameters:
 
 ```text
 http://127.0.0.1:7443/?arg=<terminal|claude|codex>&arg=<session-key>[&arg=ro]
@@ -109,7 +109,7 @@ be 1–128 characters from `A-Z`, `a-z`, `0-9`, `_`, or `-`. The launcher maps
 the types to persistent tmux sessions named `term-<session-key>`,
 `claude-<session-key>`, and `codex-<session-key>`. `ro` attaches a tmux client
 read-only. Omitting the query entirely opens one non-tmux login shell for
-older cockpit clients.
+older webApp clients.
 
 ### Ports and preview URL contract
 
@@ -130,7 +130,7 @@ http://127.0.0.1:7445/preview/<port>/<path>?<query>
 
 The gateway strips `/preview/<port>` and forwards HTTP and WebSocket traffic
 to `localhost:<port>`. Under hosted ingress, replace
-`http://127.0.0.1:7445` with the resolver's files-surface origin; TLS,
+`http://127.0.0.1:7445` with the resolver's files origin; TLS,
 authentication, and WebSocket handling remain those of that existing route.
 
 Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar saves are last-write-wins.

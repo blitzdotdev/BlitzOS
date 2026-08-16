@@ -32,7 +32,7 @@ import type {
   CreateVmInput,
   ProviderMachineType,
   ProviderCapabilities,
-  SurfacePort,
+  WebAppPort,
   VmInspection,
   VmProvider,
 } from "./types.js";
@@ -262,9 +262,9 @@ export class MicrovmPoolProvider implements VmProvider {
     };
   }
 
-  async proxySurface(
+  async proxyWebApp(
     id: string,
-    port: SurfacePort,
+    port: WebAppPort,
     pathAndQuery: string,
     request: Request,
   ): Promise<Response | null> {
@@ -278,7 +278,7 @@ export class MicrovmPoolProvider implements VmProvider {
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
     const fetcher = this.fetcher;
     return fetcher(
-      `${activeHost.url}/vms/${encodeURIComponent(agentVmId)}/surface/${port}${pathAndQuery}`,
+      `${activeHost.url}/vms/${encodeURIComponent(agentVmId)}/webapp/${port}${pathAndQuery}`,
       {
         method: request.method,
         headers,

@@ -15,7 +15,7 @@ All `file:line` references point at branch `feat/microvm` (worktree `../blitz-co
 ## 1. Architecture
 
 ```text
-      cockpit / CLI  (session cookie)                agent inside the box
+      webApp / CLI  (session cookie)                agent inside the box
       config + audit views                           (box access token, 15 min; oauth.ts:48)
            │                                               │
            │ PUT /integrations/:name                       │ blitz-cred token <integration>
@@ -72,7 +72,7 @@ Why mint-in-CP is the foundation and not a proxy, gateway, or external service: 
 | `packages/control-plane/migrations/0003_credentials.sql` | schema below |
 | `packages/schema/src/credential.ts` | wire types shared by CP, box, ui (export from `src/index.ts:1-5`) |
 | `packages/broker/internal/workspace/cp.go` | box-side CP mint call + placement apply (env / file / unset-env) |
-| `packages/ui/src/settings/IntegrationsPanel.tsx` + leases view | cockpit config + audit surfaces; built-in provider templates + the access-request inbox (phase 4) |
+| `packages/webapp/src/settings/IntegrationsPanel.tsx` + leases view | webApp config + audit surfaces; built-in provider templates + the access-request inbox (phase 4) |
 | `e2e/credentials.mjs` (or `coverage.mjs --suite credentials`) | the gates in §4 |
 
 ### Modified files
@@ -97,7 +97,7 @@ DELETE /leases/:id                       session-authed; revoke now
 GET    /integrations                     session-authed; names + status, never values
 PUT    /integrations/:name               session-authed; provider + kind + config + one pasted secret
 DELETE /integrations/:name               session-authed; kill switch for the whole integration
-GET    /requests?state=pending           session-authed; the approval feed — cockpit, §D connectors, webhooks all poll this (phase 4)
+GET    /requests?state=pending           session-authed; the approval feed — webApp, §D connectors, webhooks all poll this (phase 4)
 POST   /requests/:id/approve             session-authed; widens the workspace ceiling within usable_by; `approved` event (phase 4)
 POST   /requests/:id/deny                session-authed (phase 4)
 GET    /connect/:integration             session-authed; 3LO start (phase 6)
@@ -235,7 +235,7 @@ The OAuth descriptor (in `config`) carries everything a real provider needs — 
 }
 ```
 
-Descriptors for known providers ship as built-in cockpit templates (phase 4); pasting a descriptor by hand is the escape hatch, not the norm.
+Descriptors for known providers ship as built-in webApp templates (phase 4); pasting a descriptor by hand is the escape hatch, not the norm.
 
 Per-provider cost by kind (machinery is written once; providers are mostly declarations):
 
@@ -303,7 +303,7 @@ The box already has everything: `blitz-cred` is in the image (`Dockerfile:98-103
 The agent-visible surface is **nothing**. The agent reaches for `git push`, `wrangler deploy`, `gws drive files list`, or an SDK env var — and it works. One lazy rule makes that true, in two places:
 
 1. **The profile hook syncs at shell spawn.** `/etc/profile.d/blitz-creds.sh` checks one local cache file. Fresh → source `/var/lib/blitz/creds/env.d/` and go (~0 ms). Stale or missing → `blitz-cred sync` mints the ceiling's integrations (one CP call — `POST /workspaces/:id/credentials` with no `integration` field), rewrites `env.d/`, then sources (~200 ms, once per TTL window). Env can enter a process only at spawn, and agents run discrete commands — so the spawn is the one moment that matters, and the freshness check lives exactly there. `flock` on the cache file settles concurrent spawns; a 2-second timeout falls back to stale values so the hook can never hang a shell.
-2. **git mints lazily.** The image gitconfig routes `https://github.com` through `blitz-cred git-helper`: plain `git clone`/`push` triggers the mint at call time, cached for the lease lifetime. The helper mints the integration named exactly `github` — a naming convention, not discovery machinery; the phase-4 cockpit tile uses that name by default. `gh` reads `GH_TOKEN` from the same env.d.
+2. **git mints lazily.** The image gitconfig routes `https://github.com` through `blitz-cred git-helper`: plain `git clone`/`push` triggers the mint at call time, cached for the lease lifetime. The helper mints the integration named exactly `github` — a naming convention, not discovery machinery; the phase-4 webApp tile uses that name by default. `gh` reads `GH_TOKEN` from the same env.d.
 
 There is no delivery daemon and no boot pre-mint. Both would do work no process can observe before its next spawn; the first command after boot or after expiry pays one ~200 ms sync instead — and boot gets faster. `file` placements (ADC-style JSON, kubeconfig) refresh in the same sync. Proxy-custody integrations deliver the same way — a base-URL env plus a token env; the tool never knows a proxy exists. Failure UX: a denied or unconfigured integration surfaces as the tool's own auth error — and the mint path has already filed an access request; the approval loop is §3.13. Approval recovery is the same rule: the next command's sync mints, and the retry works.
 
@@ -317,8 +317,8 @@ Placements always come from the CP (`MintResult.placements`, values filled at mi
 
 ### 3.8 Inherit mode — Alice's agents act as Alice (AgentCore shape)
 
-- One-time 3LO consent per provider in the cockpit → her refresh token is vaulted in `user_connections` keyed `(user, integration)`.
-- The callback is the **fixed public path** `GET /connect/:integration/callback`; the cockpit shows it verbatim so the user can paste it into the vendor's redirect-URI field.
+- One-time 3LO consent per provider in the webApp → her refresh token is vaulted in `user_connections` keyed `(user, integration)`.
+- The callback is the **fixed public path** `GET /connect/:integration/callback`; the webApp shows it verbatim so the user can paste it into the vendor's redirect-URI field.
 - Her workspace carries `owner_id`; mint exchanges **her** refresh token; the lease records `user_id`.
 - Upstream, the agent **is** Alice — vendor audit logs show her; our lease adds the task/workspace join.
 - Ceilings compose, with a review-forced correction: consent scopes are the outer bound, and narrowing at exchange works only where the vendor honors it. **Google returns the full consent bundle on refresh — no per-task narrowing.** So the mint verifies the token's actually-granted scopes against (manifest ∩ allow-list) and denies — or records the wider grant honestly on the lease. `credential_leases.scopes` always stores what was *granted*, not what was asked.
@@ -335,7 +335,7 @@ Boundaries. `proxy` is the default for kind `static` only — for every other ki
 
 ### 3.10 Dual-target constraints (the decisive ones)
 
-- **No npm imports (mode b)**: every minter uses `fetch` + WebCrypto only. RS256 = `crypto.subtle.importKey("pkcs8") → sign("RSASSA-PKCS1-v1_5")`. GitHub ships PKCS#1 PEMs; the cockpit converts to PKCS#8 at paste time.
+- **No npm imports (mode b)**: every minter uses `fetch` + WebCrypto only. RS256 = `crypto.subtle.importKey("pkcs8") → sign("RSASSA-PKCS1-v1_5")`. GitHub ships PKCS#1 PEMs; the webApp converts to PKCS#8 at paste time.
 - **No crons (mode b)**: lease sweep joins the existing lazy-sweep hook. Real cron in mode (a).
 - **Explicit emit list**: `CORE_MANIFEST` (`build-blitzdev.mjs:16-40`) must name every `core/credentials/` file, the emitted `teenybase.ts` must add the five new tables deny-all, and the pinned test counts (`blitzdev-schema.test.ts`, `blitzdev-emitter.test.ts`) must move — nothing is picked up automatically.
 - **Root storage, one shape**: roots are AES-256-GCM ciphertext columns on the rows that own them, one key, the owning name as `additionalData` — identical in both modes. The platform secrets API cannot serve runtime roots — a write only reaches the worker as an env binding at isolate load, and the loader cache key is the bundle hash, so a freshly pasted secret is invisible until eviction (verified: loader id is `project-${slug}-${bundleHash}`, `project-gateway/src/index.ts:267-294`). It carries exactly one deploy-time constant: `CRED_MASTER_KEY` (passes `NAME_RE`, `backend/src/routes/project-vars.ts:26`). This makes `PUT /integrations/:name` the same code path in both modes.
@@ -369,11 +369,11 @@ The box side speaks two protocol-free channels, so an arbitrary harness needs ze
 - **stderr on the failing command.** `blitz-cred` and the git helper print one line: `access to github requested (R-123), awaiting approval`. Every harness reads command output — the message lives where the failure lives.
 - **Silent recovery closes the loop.** On approval, the next command's sync mints and refreshes the placements, so the harness's natural retry succeeds — even a harness that understood nothing.
 
-The human side is one feed: `GET /requests?state=pending`. Every surface is a poll subscriber — the cockpit inbox (phase 4), Slack/Discord through the ENTRYPOINTS §D connectors (approve/deny buttons posting back to `POST /requests/:id/approve|deny`), any webhook, and — optionally, for interactive models — the ACP actor dropping a notice into the session. ACP is one subscriber among several, never the transport. No WebSockets needed in either hosting mode.
+The human side is one feed: `GET /requests?state=pending`. Every surface is a poll subscriber — the webApp inbox (phase 4), Slack/Discord through the ENTRYPOINTS §D connectors (approve/deny buttons posting back to `POST /requests/:id/approve|deny`), any webhook, and — optionally, for interactive models — the ACP actor dropping a notice into the session. ACP is one subscriber among several, never the transport. No WebSockets needed in either hosting mode.
 
 Approval is a real grant, not a nudge: it widens `workspaces.manifest` by exactly the requested slice — still bounded by `integrations.usable_by` and the template base — and writes an `approved` event recording who and why. The approver passes the same `authorize()` check. Deny leaves the wall standing; stale requests stay pending until a human denies them — the dedup index bounds the pile.
 
-Two walls this loop does not cover, honestly. A vendor-side 403 on a validly narrowed vendor-native token is invisible to the mint path — the agent reports it wherever it reports errors, and the human widens the ceiling in the cockpit, recording the same `approved` event. (Under proxy custody the CP *does* see the 403 — a small extra argument for the static-key proxy default.) And a brand-new provider stays a human act: the request names the missing integration and the inbox card deep-links to the add-integration form, but the paste is yours.
+Two walls this loop does not cover, honestly. A vendor-side 403 on a validly narrowed vendor-native token is invisible to the mint path — the agent reports it wherever it reports errors, and the human widens the ceiling in the webApp, recording the same `approved` event. (Under proxy custody the CP *does* see the 403 — a small extra argument for the static-key proxy default.) And a brand-new provider stays a human act: the request names the missing integration and the inbox card deep-links to the add-integration form, but the paste is yours.
 
 Why a table and not events: a request is a state machine (`pending → approved | denied`) with pending-dedup — an append-only log cannot hold "still pending."
 
@@ -386,7 +386,7 @@ No policy language. No central gateway. No universal credential proxy. No SPIFFE
 1. **Skeleton + static (inject floor)**: migration 0003, `types/registry/mint/leases/manifest/root-crypto`, `static.ts`, routes, `blitz-cred` CP branch + placements + passive delivery (env.d + the sync hook), emit-list update. Gate: paste the Hetzner key once; a fresh shell in a live box sees `HCLOUD_TOKEN` with zero agent action; lease + `minted` event visible; **destroy succeeds while an active lease exists — the `boxes` row and its token family are gone, the lease row survives with `box_id` NULL and state `revoked`**; a non-allow-listed mint is denied with a `denied` event.
 2. **GitHub App minter** (WebCrypto RS256; port the v2 flow single-tenant). Gate: in-box **plain** `git clone` of a private repo — the helper mints on demand, token narrowed to one repo; lease shows the granted scopes.
 3. **Static-key proxy**: `proxy.ts` on `credential_leases.token_hash`; kind `static` defaults to `custody: proxy`. Gate: the box calls the vendor through `/proxy/:leaseId/*` with the token in the header; the real key never appears in the box; a captured console/tail transcript contains no token substring; a leaked token dies at expiry.
-4. **Cockpit surfaces**: Integrations panel with built-in provider templates (add → paste → test-mint → green dot), the exact `/connect/:integration/callback` URL displayed for OAuth providers, Anthropic/OpenAI tiles that paste a console-minted key (kind `static`, proxy custody, labeled honestly), named error states ("API disabled", "OAuth app blocked by admin", "refresh revoked"), workspace Leases view, and the **access-request inbox** (`requests.ts` + routes land here; Slack/Discord subscribe via the ENTRYPOINTS §D connectors, the ACP actor optionally in-chat). CLI parity `npx blitz integration add`.
+4. **WebApp surfaces**: Integrations panel with built-in provider templates (add → paste → test-mint → green dot), the exact `/connect/:integration/callback` URL displayed for OAuth providers, Anthropic/OpenAI tiles that paste a console-minted key (kind `static`, proxy custody, labeled honestly), named error states ("API disabled", "OAuth app blocked by admin", "refresh revoked"), workspace Leases view, and the **access-request inbox** (`requests.ts` + routes land here; Slack/Discord subscribe via the ENTRYPOINTS §D connectors, the ACP actor optionally in-chat). CLI parity `npx blitz integration add`.
 5. **Mode-(b) parity**: emit `core/credentials/`; set `CRED_MASTER_KEY` once via the platform secrets API before the commit; probe validation. (Blocked on the user-owned unlocks: PR #11 deployed, `teenybase@0.0.15` published.)
 6. **Inherit mode**: `user_connections` + 3LO routes + fixed callback path + granted-scope verification + owner-root selection. First descriptors: Google Workspace (the `gws` persona case), Slack. (Blocked on identity plane C.)
 

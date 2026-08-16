@@ -56,7 +56,7 @@
 - [`box`](packages/box/README.md) — the complete workspace runtime: SSH, Docker, agent harnesses, terminal, chat, files, and previews.
 - [`control-plane`](packages/control-plane/README.md) — workspace lifecycle, sessions, access, credential injection, volumes, and compute providers.
 - [`microvm-host`](packages/microvm-host/README.md) — the Go host agent that runs and networks Firecracker workspaces.
-- [`ui`](packages/ui/README.md) — the browser cockpit for creating, configuring, sharing, and working inside workspaces.
+- [`webApp`](packages/webapp/README.md) — the browser webApp for creating, configuring, sharing, and working inside workspaces.
 - [`broker`](packages/broker/README.md) — short-lived Claude and Codex credential delivery for workspace fleets.
 - [`schema`](packages/schema/README.md) — shared wire types and ACP conformance fixtures.
 

@@ -37,7 +37,7 @@ The command is prompt-free and repeatable. It checks Wrangler authentication,
 looks up the configured D1 name using JSON output, creates it if absent,
 patches the exact `DB` binding through Wrangler's structured config helper,
 applies remote migrations, checks required secret names without reading their
-values, builds the cockpit, and deploys. The `blitz-box-images` R2 bucket must
+values, builds the webApp, and deploys. The `blitz-box-images` R2 bucket must
 already exist; create it once with
 `npx wrangler r2 bucket create blitz-box-images` if needed.
 

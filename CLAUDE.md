@@ -39,8 +39,8 @@ npm test              # control-plane, box actor, ui, guest node:test,
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 3 files exceed the 700-line warn: `core/workspaces.ts`, `ui/src/CloudApp.tsx`,
-  `ui/src/terminal-touch-controller.ts`. Split on touch, never big-bang.
+- 3 files exceed the 700-line warn: `core/workspaces.ts`, `webapp/src/CloudApp.tsx`,
+  `webapp/src/terminal-touch-controller.ts`. Split on touch, never big-bang.
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -65,7 +65,7 @@ Do not add aliases anywhere else.
 
 - The plugin contract is `VmProvider` in `core/providers/types.ts`:
   `id`, `ownsMachineType`, `ownsVmId`, capabilities, lifecycle, optional
-  `proxySurface`. New backends implement it and register in
+  `proxyWebApp`. New backends implement it and register in
   `VmProviderRegistry` (`core/providers/registry.ts`). That is all.
 - Routing rules: resolve by registry lookup, never by string prefix.
   Exactly-one-claimant or fail loudly (400 unknown/ambiguous type, 409

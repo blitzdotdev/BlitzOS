@@ -13,7 +13,7 @@ MAX_CONCURRENT_WORKSPACES = "10"
 MICROVM_HOSTS = '[{"name":"lab","tokenVar":"MICROVM_LAB_TOKEN","dynamic":true}]'
 CLOUDFLARE_ACCOUNT_ID = "d25a778b256fb6ef6eea554d77c40f27"
 CLOUDFLARE_ZONE_ID = "52fcb3a8adc81b791ea918d3bde25a39"
-WORKSPACE_SURFACE_ZONE = "blitzos.app"
+WORKSPACE_TUNNEL_ZONE = "blitzos.app"
 
 [[r2_buckets]]
 binding = "BOX_IMAGES"
@@ -29,7 +29,7 @@ migrations_dir = "migrations"
 enabled = true
 
 [assets]
-directory = "../ui/dist"
+directory = "../webapp/dist"
 not_found_handling = "single-page-application"
 run_worker_first = [
   "/sessions*",

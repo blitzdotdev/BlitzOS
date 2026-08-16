@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   WORKER_SOURCE,
-  createCockpitAssetSet,
+  createWebAppAssetSet,
   managedFileId,
   uploadManagedAssets,
 } from "../scripts/build-blitzdev.mjs";
@@ -15,21 +15,21 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
-async function cockpitFixture(): Promise<string> {
-  const directory = await mkdtemp(path.join(tmpdir(), "blitz-cockpit-assets-"));
+async function webAppFixture(): Promise<string> {
+  const directory = await mkdtemp(path.join(tmpdir(), "blitz-webapp-assets-"));
   temporaryDirectories.push(directory);
   await mkdir(path.join(directory, "assets"));
-  await writeFile(path.join(directory, "index.html"), "<main>cockpit</main>");
+  await writeFile(path.join(directory, "index.html"), "<main>webapp</main>");
   await writeFile(path.join(directory, "assets", "index-12345678.js"), "export default 1;");
   await writeFile(path.join(directory, "assets", "index-12345678.css"), "main{display:block}");
   return directory;
 }
 
-describe("managed cockpit assets", () => {
+describe("managed webapp assets", () => {
   it("builds a deterministic manifest with normalized paths and activates index last", async () => {
-    const directory = await cockpitFixture();
-    const first = await createCockpitAssetSet(directory);
-    const second = await createCockpitAssetSet(directory);
+    const directory = await webAppFixture();
+    const first = await createWebAppAssetSet(directory);
+    const second = await createWebAppAssetSet(directory);
 
     expect(first).toEqual(second);
     expect(first.files.map(({ logicalPath }) => logicalPath)).toEqual([
@@ -46,7 +46,7 @@ describe("managed cockpit assets", () => {
   });
 
   it("inserts, skips identical content, replaces changed content, and verifies every row", async () => {
-    const directory = await cockpitFixture();
+    const directory = await webAppFixture();
     const rows = new Map<string, Record<string, unknown>>();
     const physicalObjects: string[] = [];
     const multipartContentTypes: Array<string | null> = [];
@@ -80,7 +80,7 @@ describe("managed cockpit assets", () => {
       return Response.json(rows.get(id));
     };
 
-    const first = await createCockpitAssetSet(directory);
+    const first = await createWebAppAssetSet(directory);
     await expect(uploadManagedAssets(first, access, "project-password", { fetcher })).resolves.toEqual({
       inserted: 3,
       replaced: 0,
@@ -94,7 +94,7 @@ describe("managed cockpit assets", () => {
       verified: 3,
     });
     await writeFile(path.join(directory, "index.html"), "<main>changed</main>");
-    const changed = await createCockpitAssetSet(directory);
+    const changed = await createWebAppAssetSet(directory);
     await expect(uploadManagedAssets(changed, access, "project-password", { fetcher })).resolves.toEqual({
       inserted: 0,
       replaced: 1,
@@ -105,8 +105,8 @@ describe("managed cockpit assets", () => {
     expect(physicalObjects).toHaveLength(4);
     expect(new Set(physicalObjects)).toHaveLength(4);
     expect(multipartContentTypes).toEqual([null, null, null, null]);
-    expect(rows.get(managedFileId("cockpit", "/index.html"))).toMatchObject({
-      kind: "cockpit",
+    expect(rows.get(managedFileId("webapp", "/index.html"))).toMatchObject({
+      kind: "webapp",
       logical_path: "/index.html",
       sha256: changed.files.at(-1)?.sha256,
     });

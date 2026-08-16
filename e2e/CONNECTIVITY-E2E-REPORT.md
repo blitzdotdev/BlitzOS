@@ -11,19 +11,19 @@ browser flow; zero SSH forwards; no special headers from the client).
 | Step | Proof |
 |---|---|
 | Login | `POST /sessions` with operator key → `blitz_session` cookie |
-| Create | `cpx11@ash` workspace `a45d6f80…`; control plane provisioned tunnel + ingress + proxied CNAME `ws-a45d6f80….blitzos.app`, delivered tunnel + surface tokens via user-data |
+| Create | `cpx11@ash` workspace `a45d6f80…`; control plane provisioned tunnel + ingress + proxied CNAME `ws-a45d6f80….blitzos.app`, delivered tunnel + webApp tokens via user-data |
 | Ready | phase `ready` after ~102 s (VM boot + image pull + phone-home) |
-| Terminal | ttyd over `/workspaces/:id/surface/7445/terminal/ws`; typed a command, received `blitz-42-proof` output. One 530 retry at ready+0.5 s; connected by ready+25 s (tunnel startup race, absorbed by cockpit-style reconnect) |
-| Chat | ACP `initialize` over `/surface/7444` (gateway `/acp` route) → `{"protocolVersion":1,…,"agentInfo":{"name":"BlitzOS box"}}` |
-| Files | dufs JSON index over `/surface/7445/?json` |
-| Preview | started a node HTTP server on port 4321 through the terminal, fetched `tunnel-preview-proof` via `/surface/7445/preview/4321/` |
+| Terminal | ttyd over `/workspaces/:id/webapp/7445/terminal/ws`; typed a command, received `blitz-42-proof` output. One 530 retry at ready+0.5 s; connected by ready+25 s (tunnel startup race, absorbed by webapp-style reconnect) |
+| Chat | ACP `initialize` over `/webapp/7444` (gateway `/acp` route) → `{"protocolVersion":1,…,"agentInfo":{"name":"BlitzOS box"}}` |
+| Files | dufs JSON index over `/webapp/7445/?json` |
+| Preview | started a node HTTP server on port 4321 through the terminal, fetched `tunnel-preview-proof` via `/webapp/7445/preview/4321/` |
 | Leases | `GET /workspaces/:id/leases` → `{"leases":[]}` |
 | Destroy | `DELETE` → 20 s later the DNS record and the tunnel are both gone from Cloudflare (cascade delete) |
 
 Security spot-checks during the run:
 
 - Direct unauthenticated hit on the tunnel hostname (`/ports`) → 403 from
-  the gateway surface-token check.
+  the gateway webapp-token check.
 - Before the flag-order fix, a dead tunnel returned 530 at the edge; the
   gateway was never reachable without the tunnel.
 
@@ -35,7 +35,7 @@ Security spot-checks during the run:
 2. Tunnel deletion with active edge connections is rejected. Fixed with
    `DELETE …/cfd_tunnel/{id}?cascade=true`.
 3. Expected behavior, documented: the tunnel registers ~10–20 s after the
-   workspace reports ready. The cockpit's auto-reconnect covers the gap.
+   workspace reports ready. The webApp's auto-reconnect covers the gap.
 
 ## Residue
 
