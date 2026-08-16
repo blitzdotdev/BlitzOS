@@ -50,7 +50,7 @@ export interface MeResponse {
   membership: {
     id: string;
     role: "admin" | "member";
-    status: "invited" | "active" | "disabled";
+    status: "active";
   } | null;
   org: {
     id: string;
@@ -70,8 +70,7 @@ export interface MemberView {
   name: string;
   avatarUrl: string | null;
   role: "admin" | "member";
-  status: "invited" | "active" | "disabled";
-  bound: boolean;
+  status: "active" | "disabled";
 }
 
 export interface InviteView {
@@ -115,9 +114,7 @@ export interface ControlPlaneClient {
   createOrg(name: string): Promise<CreateOrgResponse>;
   switchOrg(orgId: string): Promise<void>;
   listMembers(): Promise<{ members: MemberView[] }>;
-  createMember(email: string, role: "admin" | "member"): Promise<{ member: MemberView }>;
   updateMember(id: string, input: { role?: "admin" | "member"; status?: "disabled" | "active" }): Promise<{ member: MemberView }>;
-  deleteMember(id: string): Promise<void>;
   listInvites(): Promise<{ invites: InviteView[]; ttlDays: number }>;
   createInvite(input: { email?: string; role: "admin" | "member" }): Promise<{ invite: InviteView; code: string; ttlDays: number }>;
   revokeInvite(id: string): Promise<void>;
@@ -207,11 +204,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         candidate === null
         || !isString(candidate.id)
         || (candidate.role !== "admin" && candidate.role !== "member")
-        || (
-          candidate.status !== "invited"
-          && candidate.status !== "active"
-          && candidate.status !== "disabled"
-        )
+        || candidate.status !== "active"
       ) throw new Error("/me returned an invalid membership");
       membership = {
         id: candidate.id,
@@ -296,11 +289,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       || membership === null
       || !isString(membership.id)
       || (membership.role !== "admin" && membership.role !== "member")
-      || (
-        membership.status !== "invited"
-        && membership.status !== "active"
-        && membership.status !== "disabled"
-      )
+      || membership.status !== "active"
     ) throw new Error("create-org returned an invalid organization");
     return {
       org: { id: org.id, slug: org.slug, name: org.name, vmLimit: org.vmLimit },
@@ -333,8 +322,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       || !isString(member.name)
       || !(member.avatarUrl === null || isString(member.avatarUrl))
       || (member.role !== "admin" && member.role !== "member")
-      || (member.status !== "invited" && member.status !== "active" && member.status !== "disabled")
-      || !isBoolean(member.bound)
+      || (member.status !== "active" && member.status !== "disabled")
     ) throw new Error(`${label} returned an invalid member`);
     return {
       id: member.id,
@@ -343,7 +331,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       avatarUrl: member.avatarUrl,
       role: member.role,
       status: member.status,
-      bound: member.bound,
     };
   }
 
@@ -463,17 +450,11 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       body: JSON.stringify({ orgId }),
     }),
     listMembers: () => request<{ members: MemberView[] }>("/members", {}, decodeMembers),
-    createMember: (email, role) => request<{ member: MemberView }>("/members", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, role }),
-    }, decodeMember),
     updateMember: (id, input) => request<{ member: MemberView }>(`/members/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     }, decodeMember),
-    deleteMember: (id) => request<void>(`/members/${encodeURIComponent(id)}`, { method: "DELETE" }),
     listInvites: () => request<{ invites: InviteView[]; ttlDays: number }>("/invites", {}, decodeInvites),
     createInvite: (input) => request<{ invite: InviteView; code: string; ttlDays: number }>("/invites", {
       method: "POST",

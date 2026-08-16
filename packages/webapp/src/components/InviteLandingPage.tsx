@@ -12,7 +12,7 @@ export function InviteLandingPage({ client, code }: { client: ControlPlaneClient
       <p className="eyebrow">BlitzOS invitation</p>
       {error && <p role="alert">{error}</p>}
       {!error && invite === null && <p>Loading invitation…</p>}
-      {invite && <><h1>Join {invite.org?.name ?? 'organization'}</h1><p>This invitation grants the {invite.role} role. Status: {invite.state}.</p>{invite.state === 'ready' && <a className="webapp-action webapp-action--primary" href={client.inviteGoogleLoginUrl(code)}>Continue with Google</a>}</>}
+      {invite && <><h1>Join {invite.org?.name ?? 'organization'}</h1><p>This invitation grants the {invite.role} role. Status: {invite.state}.</p>{invite.email !== null && <p>Sign in with the verified Google account for {invite.email}.</p>}{invite.state === 'ready' && <a className="webapp-action webapp-action--primary" href={client.inviteGoogleLoginUrl(code)}>Continue with Google</a>}</>}
     </div></main>
   );
 }

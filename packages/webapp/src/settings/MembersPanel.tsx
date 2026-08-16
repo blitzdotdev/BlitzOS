@@ -5,6 +5,7 @@ export function MembersPanel({ client, admin }: { client: ControlPlaneClient; ad
   const [members, setMembers] = useState<MemberView[]>([]);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
+  const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
@@ -22,9 +23,9 @@ export function MembersPanel({ client, admin }: { client: ControlPlaneClient; ad
       {admin && (
         <form className="settings-credential-form" onSubmit={(event) => {
           event.preventDefault();
-          void client.createMember(email, role).then(() => {
+          void client.createInvite({ email, role }).then((created) => {
+            setOneTimeLink(`${window.location.origin}/invite/${created.code}`);
             setEmail('');
-            return load();
           }).catch((caught: Error) => setError(caught.message));
         }}>
           <label>Email<input type="email" required value={email} onChange={(event) => setEmail(event.currentTarget.value)} /></label>
@@ -32,6 +33,7 @@ export function MembersPanel({ client, admin }: { client: ControlPlaneClient; ad
           <button className="webapp-action" type="submit">Add member</button>
         </form>
       )}
+      {oneTimeLink && <div className="webapp-form-message"><strong>Copy this link now—it is shown once.</strong><input readOnly value={oneTimeLink} aria-label="Member invite link" /><button type="button" onClick={() => void navigator.clipboard.writeText(oneTimeLink)}>Copy</button></div>}
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="settings-definition-list">
         {members.map((member) => (
@@ -46,7 +48,6 @@ export function MembersPanel({ client, admin }: { client: ControlPlaneClient; ad
                   }}><option value="member">member</option><option value="admin">admin</option></select>
                   {member.status === 'active' && <button type="button" onClick={() => void client.updateMember(member.id, { status: 'disabled' }).then(load).catch((caught: Error) => setError(caught.message))}>Disable</button>}
                   {member.status === 'disabled' && <button type="button" onClick={() => void client.updateMember(member.id, { status: 'active' }).then(load).catch((caught: Error) => setError(caught.message))}>Enable</button>}
-                  {member.status === 'invited' && !member.bound && <button type="button" onClick={() => void client.deleteMember(member.id).then(load).catch((caught: Error) => setError(caught.message))}>Remove</button>}
                 </>
               ) : `${member.role} · ${member.status}`}
             </dd>
