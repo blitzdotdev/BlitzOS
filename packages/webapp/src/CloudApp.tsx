@@ -20,7 +20,12 @@ import {
   type SpawnSessionType,
 } from './WebAppHeader';
 import { FileIcon } from './WebAppIcons';
-import { WebAppRail } from './WebAppRail';
+import { DriveHome } from './files/DriveHome';
+import { DriveRail } from './files/DriveRail';
+import { WorkspaceSharedFolders } from './files/WorkspaceSharedFolders';
+import { DriveAvatar } from './files/DriveAvatar';
+import { KebabGlyph, ShareGlyph, TrashGlyph } from './files/DriveIcons';
+import type { DriveCommand } from './files/FilesDrive';
 import {
   CreateWorkspaceDialog,
   type CreateWorkspaceDialogInput,
@@ -39,6 +44,8 @@ import {
   useMobileWebApp,
 } from './mobile-webapp';
 import {
+  drivePath,
+  folderPagePath,
   parseAppRoute,
   settingsPath,
   workspacePath,
@@ -208,6 +215,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
+  const [driveCommand, setDriveCommand] = useState<DriveCommand | null>(null);
+  const [driveUploadTarget, setDriveUploadTarget] = useState<string | null>(null);
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -619,6 +629,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setRoute({ workspaceId, page: 'webApp' });
   }, []);
 
+  const navigateTo = useCallback((path: string) => {
+    window.history.pushState({}, '', path);
+    setRoute(parseAppRoute(path));
+  }, []);
+
   const navigateToSettings = useCallback((
     section: SettingsSection,
     requestedIntegrationName?: string,
@@ -638,7 +653,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return;
     }
     window.history.pushState({}, '', '/');
-    setRoute({ workspaceId: null, page: 'webApp' });
+    setRoute({ workspaceId: null, page: 'drive', scope: 'mine' });
   }, [navigateToWorkspacePage]);
 
   const deleteWorkspace = useCallback((workspaceId: string) => {
@@ -659,7 +674,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (nextId) navigateToWorkspacePage(nextId);
       else {
         window.history.pushState({}, '', '/');
-        setRoute({ workspaceId: null, page: 'webApp' });
+        setRoute({ workspaceId: null, page: 'drive', scope: 'mine' });
       }
     }
     void api.deleteWorkspace(workspaceId)
@@ -1031,10 +1046,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ? `workspace ${activeWorkspace.lifecycleStatus}`
     : 'workspace pending';
   const hasControllableWorkspace = store.workspaces.some(({ canControl }) => canControl);
-  const webAppBooting = !loaded || (!isSettingsRoute && (
-    hasControllableWorkspace
-    && !activeWorkspace
-  ));
+  const isDriveRoute = route.page === 'drive' || route.page === 'folder';
+  const webAppBooting = route.page === 'webApp' && (
+    !loaded || (hasControllableWorkspace && !activeWorkspace)
+  );
   const workspaceProvisioning = activeWorkspace?.lifecycleStatus === 'creating'
     || activeWorkspace?.lifecycleStatus === 'provisioning';
   const workspaceWaking = activeWorkspace?.lifecycleStatus === 'parked'
@@ -1060,6 +1075,33 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     </div>
   );
 
+  const railFor = (scope: 'mine' | 'shared' | null, railActiveWorkspaceId: string | null) => (
+    <DriveRail
+      workspaces={store.workspaces}
+      activeWorkspaceId={railActiveWorkspaceId}
+      driveScope={scope}
+      identity={store.viewer?.identity ?? null}
+      org={store.viewer?.org ?? null}
+      organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
+      uploadTargetName={driveUploadTarget}
+      onOpenDrive={(nextScope) => navigateTo(drivePath(nextScope))}
+      onSelectWorkspace={selectWorkspace}
+      onCreateWorkspace={() => setShowCreateWorkspace(true)}
+      onNewFolder={() => {
+        if (isDriveRoute) setDriveCommand({ kind: 'new-folder', nonce: Date.now() });
+        else navigateTo(drivePath('mine'));
+      }}
+      onUploadFile={() => setDriveCommand({ kind: 'upload', nonce: Date.now() })}
+      onSwitchOrg={(orgId) => {
+        void client.switchOrg(orgId).then(() => window.location.reload());
+      }}
+      onOpenSettings={() => navigateToSettings('profile')}
+      onSignOut={() => { void signOut(); }}
+      drawerOpen={drawerOpen}
+      onCloseDrawer={() => setDrawerOpen(false)}
+    />
+  );
+
   if (signedOut) {
     return <LoginForm loginUrl={api.googleLoginUrl()} />;
   }
@@ -1074,6 +1116,53 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           setBootstrapVersion((version) => version + 1);
         }}
       />
+    );
+  }
+
+  if (isDriveRoute && (route.page === 'drive' || route.page === 'folder')) {
+    return (
+      <main className="drive-shell" aria-busy={!loaded}>
+        {railFor(route.page === 'drive' ? route.scope : null, null)}
+        {loaded && store.viewer ? (
+          <DriveHome
+            client={client}
+            viewer={store.viewer}
+            route={route}
+            command={driveCommand}
+            onNavigate={navigateTo}
+            onUploadTarget={setDriveUploadTarget}
+            onOpenRail={() => setDrawerOpen(true)}
+          />
+        ) : (
+          <div className="drive-content">
+            <div className="drive-empty" role="status">Loading…</div>
+          </div>
+        )}
+        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {updateNotice}
+        {showCreateWorkspace && (
+          <CreateWorkspaceDialog
+            busy={createWorkspaceBusy}
+            error={createWorkspaceError}
+            listMachineTypes={listMachineTypes}
+            listVolumes={listVolumes}
+            onCancel={() => {
+              if (!createWorkspaceBusy) setShowCreateWorkspace(false);
+            }}
+            onSubmit={(input) => { void createWorkspace(input); }}
+          />
+        )}
+        {confirmation && (
+          <ConfirmationDialog
+            title="Delete workspace?"
+            description={`Are you sure you want to delete “${confirmation.label}”? This destroys the workspace and cannot be undone.`}
+            confirmLabel="Yes, delete"
+            cancelLabel="No"
+            onCancel={cancelConfirmation}
+            onConfirm={confirmWebAppAction}
+          />
+        )}
+      </main>
     );
   }
 
@@ -1128,11 +1217,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   return (
     <main
       ref={shellRef}
-      className={[
-        'webapp-shell',
-        drawerOpen ? 'webapp-shell--drawer-open' : '',
-        dropActive ? 'webapp-shell--drop-active' : '',
-      ].filter(Boolean).join(' ')}
+      className="drive-shell drive-shell--workspace"
       onDragOver={(event) => {
         if (filesClient === null) return;
         if (!event.dataTransfer.types.includes('Files')) return;
@@ -1159,42 +1244,81 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           {dropBusy ? 'Uploading…' : 'Drop to upload into this workspace'}
         </div>
       )}
-      <WebAppRail
-        workspaces={store.workspaces}
-        activeWorkspaceId={activeWorkspaceId}
-        activeSessionId={ttydActiveId ?? ''}
-        activeSessions={ttydTabs}
-        identity={store.viewer?.identity ?? null}
-        org={store.viewer?.org ?? null}
-        organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
-        onSwitchOrg={(orgId) => {
-          void client.switchOrg(orgId).then(() => window.location.reload());
-        }}
-        onSelectWorkspace={selectWorkspace}
-        onSelectSession={(_workspaceId, sessionId) => selectTtydSession(sessionId)}
-        onCreateWorkspace={() => {
-          setShowCreateWorkspace(true);
-        }}
-        onOpenSettings={() => navigateToSettings('profile')}
-        onDeleteWorkspace={requestDeleteWorkspace}
-        onShareWorkspace={setShareWorkspaceId}
-        mobile={mobileWebApp}
-        drawerOpen={drawerOpen}
-        onCloseDrawer={() => setDrawerOpen(false)}
-      />
+      {railFor(null, activeWorkspaceId)}
       {shareWorkspaceId && (() => {
         const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
         return workspace ? <ShareWorkspaceDialog client={client} workspaceId={workspace.id} workspaceName={workspace.title} onClose={() => setShareWorkspaceId(null)} /> : null;
       })()}
-      <button
-        className={`webapp-drawer-scrim${drawerOpen ? ' webapp-drawer-scrim--open' : ''}`}
-        type="button"
-        aria-label="Close workspace navigation"
-        tabIndex={-1}
-        onClick={() => setDrawerOpen(false)}
-      />
 
-      <>
+      <div className="drive-ws-frame">
+          {activeWorkspace && (
+            <div className="drive-ws-head">
+              <button
+                className="drive-icon-button drive-topbar-menu"
+                type="button"
+                aria-label="Open navigation"
+                onClick={() => setDrawerOpen(true)}
+              >
+                <span className="mi-menu" aria-hidden="true" />
+              </button>
+              <h1>{activeWorkspace.title}</h1>
+              <span
+                className={`drive-ws-dot${activeWorkspace.lifecycleStatus === 'running' ? ' drive-ws-dot--online' : ''}`}
+              />
+              <span className="drive-ws-meta">
+                {activeWorkspace.lifecycleStatus}
+                {activeWorkspace.machineType ? ` · ${machineTypeLabel(activeWorkspace.machineType)}` : ''}
+              </span>
+              {activeWorkspace.accessRole !== 'owner' && activeWorkspace.owner && (
+                <span className="drive-ws-owner">
+                  <DriveAvatar name={activeWorkspace.owner.name} avatarUrl={activeWorkspace.owner.avatarUrl} />
+                  shared by {activeWorkspace.owner.name}
+                </span>
+              )}
+              {(activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin') && (
+                <button
+                  className="drive-icon-button"
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={wsMenuOpen}
+                  aria-label={`Actions for ${activeWorkspace.title}`}
+                  style={activeWorkspace.accessRole === 'owner' && !activeWorkspace.owner ? { marginLeft: 'auto' } : undefined}
+                  onClick={() => setWsMenuOpen((open) => !open)}
+                >
+                  <KebabGlyph />
+                </button>
+              )}
+              {wsMenuOpen && activeWorkspace && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Close menu"
+                    style={{ position: 'fixed', inset: 0, zIndex: 190, border: 0, background: 'transparent', cursor: 'default' }}
+                    onClick={() => setWsMenuOpen(false)}
+                  />
+                  <div className="drive-menu" role="menu" style={{ right: 24, top: 52 }}>
+                    <button
+                      className="drive-menu-item"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setWsMenuOpen(false); setShareWorkspaceId(activeWorkspace.id); }}
+                    >
+                      <ShareGlyph /><span>Share workspace</span>
+                    </button>
+                    <div className="drive-menu-divider" />
+                    <button
+                      className="drive-menu-item drive-menu-item--danger"
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { setWsMenuOpen(false); requestDeleteWorkspace(activeWorkspace.id); }}
+                    >
+                      <TrashGlyph /><span>Delete workspace</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <WebAppHeader
             tabs={ttydTabs}
             activeSessionId={ttydActiveId ?? ''}
@@ -1385,6 +1509,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 }}
                 onResolveRequest={resolveWorkspaceRequest}
                 files={(
+                  <>
                   <FilesSidebar
                     key={activeWorkspace.id}
                     client={filesClient}
@@ -1418,6 +1543,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         : current);
                     }}
                   />
+                    <WorkspaceSharedFolders
+                      client={client}
+                      workspaceId={activeWorkspace.id}
+                      filesClient={filesClient}
+                      canControl={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
+                      visible={filesOpen && activeFiles.segment === 'files'}
+                      onOpenFolder={(folderId) => navigateTo(folderPagePath(folderId))}
+                    />
+                  </>
                 )}
               />
             )}
@@ -1575,7 +1709,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               }}
             />
           )}
-      </>
+      </div>
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}

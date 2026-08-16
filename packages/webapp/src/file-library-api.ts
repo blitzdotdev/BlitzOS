@@ -41,6 +41,7 @@ export interface FileLibraryClient {
   attachFolder(
     workspaceId: string,
     folderId: string,
+    guestPath?: string,
   ): Promise<{ folder: FolderAttachmentView }>;
   detachFolder(workspaceId: string, folderId: string): Promise<void>;
 }
@@ -150,6 +151,7 @@ function attachment(value: JsonValue, label: string): FolderAttachmentView {
     || !isString(object.id)
     || !isString(object.name)
     || (role !== 'owner' && role !== 'admin' && role !== 'editor' && role !== 'viewer')
+    || !(object.guestPath === null || isString(object.guestPath))
     || !isNumber(object.attachedAt)
     || !Number.isSafeInteger(object.attachedAt)
   ) throw new Error(`${label} returned an invalid attachment`);
@@ -157,6 +159,7 @@ function attachment(value: JsonValue, label: string): FolderAttachmentView {
     id: object.id,
     name: object.name,
     role,
+    guestPath: object.guestPath,
     attachedAt: object.attachedAt,
   };
 }
@@ -324,13 +327,13 @@ export function createFileLibraryClient(
         folders: object.folders.map((item) => attachment(item, 'workspace folders')),
       };
     },
-    async attachFolder(workspaceId, folderId) {
+    async attachFolder(workspaceId, folderId, guestPath) {
       const value = await jsonObject(await rawRequest(
         `/workspaces/${encodeURIComponent(workspaceId)}/folders`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderId }),
+          body: JSON.stringify(guestPath === undefined ? { folderId } : { folderId, guestPath }),
         },
       ), 'attach folder');
       const object = asJsonObject(value);

@@ -1,0 +1,389 @@
+/* ==========================================================================
+   App shell (plans/mockups/folders-v1-library.html): rail + topbar + content.
+   ========================================================================== */
+
+.drive-shell {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-rows: 64px minmax(0, 1fr);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ------------------------------------------------------------------- rail */
+.drive-rail {
+  z-index: 10;
+  display: flex;
+  grid-column: 1;
+  grid-row: 1 / 3;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  padding: 0 8px 8px;
+  border-right: 1px solid var(--rule);
+  background: var(--paper);
+  user-select: none;
+}
+
+.drive-rail-brand {
+  display: flex;
+  height: 64px;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+}
+
+.drive-rail-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--paper);
+  background: var(--accent);
+}
+
+.drive-rail-mark svg { width: 15px; height: 15px; }
+
+.drive-rail-brand strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-rail-new {
+  display: flex;
+  height: 42px;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 12px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--r-pill);
+  color: var(--paper);
+  background: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.drive-rail-new:hover { opacity: 0.86; }
+.drive-rail-new svg { width: 16px; height: 16px; }
+
+/* Shared with me has no New button; the placeholder holds its space so the
+   nav rows do not jump when you switch between the two locations. */
+.drive-rail-new-placeholder {
+  height: 42px;
+  flex: none;
+  margin: 2px 0 12px;
+}
+
+.drive-rail-nav {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  padding-bottom: 10px;
+}
+
+.drive-rail-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-control);
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drive-rail-row svg { width: 17px; height: 17px; flex: none; color: var(--faint); }
+.drive-rail-row:hover { color: var(--ink); background: var(--hover); }
+.drive-rail-row:hover svg { color: var(--muted); }
+
+.drive-rail-row--active {
+  color: var(--ink);
+  background: var(--hover);
+  font-weight: 600;
+}
+
+.drive-rail-row--active svg { color: var(--accent); }
+
+.drive-rail-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-rail-scroll {
+  min-height: 0;
+  flex: 1;
+  padding-top: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-top: 1px solid var(--rule);
+  scrollbar-color: var(--rule) transparent;
+  scrollbar-width: thin;
+}
+
+.drive-rail-section {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px 6px;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.drive-rail-section button {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.drive-rail-section button:hover { color: var(--ink); background: var(--hover); }
+.drive-rail-section button svg { width: 13px; height: 13px; }
+
+.drive-rail-ws {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  grid-template-columns: 17px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--r-control);
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drive-rail-ws:hover { color: var(--ink); background: var(--hover); }
+.drive-rail-ws svg { width: 17px; height: 17px; color: var(--faint); }
+
+.drive-rail-ws span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-ws-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+}
+
+.drive-ws-dot--online { background: var(--accent); }
+
+.drive-rail-account {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  flex: none;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.drive-rail-account:hover { background: var(--hover); }
+.drive-rail-account-copy { display: grid; min-width: 0; }
+
+.drive-rail-account-copy strong,
+.drive-rail-account-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-rail-account-copy strong { color: var(--ink); font-size: 13px; font-weight: 600; }
+.drive-rail-account-copy span { color: var(--faint); font-size: 11.5px; }
+
+/* ----------------------------------------------------------------- topbar */
+.drive-topbar {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  padding: 0 24px;
+  background: var(--paper);
+}
+
+.drive-topbar .drive-search { width: min(680px, 100%); }
+.drive-topbar .drive-search input { height: 44px; }
+
+.drive-icon-button {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.drive-icon-button:hover { color: var(--ink); background: var(--hover); }
+.drive-icon-button svg { width: 18px; height: 18px; }
+.drive-topbar > .drive-icon-button:last-child { margin-left: auto; }
+
+/* ---------------------------------------------------------------- content */
+.drive-content {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: var(--rule) transparent;
+  scrollbar-width: thin;
+}
+
+.drive-page { padding: 4px 24px 48px; }
+
+/* -------------------------------------------------------------- workspace */
+.drive-ws-frame {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+
+.drive-ws-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 12px 24px 0;
+}
+
+.drive-ws-head h1 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drive-ws-head .drive-ws-dot { width: 8px; height: 8px; flex: none; }
+.drive-ws-meta { flex: none; color: var(--faint); font-size: 12.5px; }
+
+.drive-ws-owner {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.drive-ws-body {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+/* ------------------------------------------------------------- responsive */
+.drive-rail-close,
+.drive-rail-scrim,
+.drive-topbar-menu { display: none; }
+
+@media (max-width: 899px) {
+  .drive-shell { grid-template-columns: minmax(0, 1fr); }
+  .drive-topbar, .drive-content, .drive-ws-frame { grid-column: 1; }
+
+  .drive-rail {
+    position: fixed;
+    z-index: 400;
+    top: 0;
+    left: 0;
+    width: min(86vw, 300px);
+    height: 100dvh;
+    transform: translateX(-102%);
+    transition: transform 140ms ease;
+  }
+
+  .drive-rail--open { transform: translateX(0); }
+  .drive-rail-close { display: grid; margin-left: auto; }
+
+  .drive-rail-scrim {
+    position: fixed;
+    z-index: 380;
+    inset: 0;
+    display: none;
+    border: 0;
+    background: color-mix(in oklab, var(--paper) 68%, transparent);
+  }
+
+  .drive-rail-scrim--open { display: block; }
+  .drive-topbar-menu { display: grid; }
+  .drive-topbar { gap: 8px; padding: 0 14px; }
+  .drive-page { padding: 4px 14px 40px; }
+  .drive-ws-head { padding: 10px 14px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drive-shell * { transition: none !important; }
+}
+
+/* Legacy workspace internals hosted inside the ws frame: the old grid
+ * children become flex rows. Grid placement props are inert under flex. */
+.drive-ws-frame > .webapp-header { flex: none; }
+.drive-ws-frame > .webapp-workspace-view { flex: 1 1 0; min-height: 0; }
+.drive-ws-frame > .webapp-statusline { flex: none; }

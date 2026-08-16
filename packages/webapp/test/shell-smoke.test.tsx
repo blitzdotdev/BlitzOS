@@ -293,7 +293,7 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelector(".webapp-rail")?.textContent).toContain("workspace-running");
+    expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
     expect(view.container.textContent).toContain("Example");
     await view.unmount();
   });
@@ -337,7 +337,7 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(createOrg).toHaveBeenCalledWith("Example");
-    expect(view.container.querySelector(".webapp-rail")?.textContent).toContain("workspace-running");
+    expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
     await view.unmount();
   });
 
@@ -528,7 +528,7 @@ describe("webapp shell smoke", () => {
     const first = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
     const firstMountId = first.dataset.mountId;
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-workspace[data-workspace-id="workspace-two"] .webapp-workspace-button',
+      '.drive-rail-ws[data-workspace-id="workspace-two"]',
     )?.click());
     await settle();
 

@@ -3,25 +3,20 @@ import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
 import type { WorkspaceView } from '@blitzos/schema';
 import type { FolderObjectView, FolderView } from '../file-library-api';
+import { drivePath, folderPagePath, type DriveScope } from '../sessions-page-state';
 import { AttachFolderDialog } from './AttachFolderDialog';
 import { DriveAvatar } from './DriveAvatar';
 import {
   CloseGlyph,
   CheckGlyph,
   DownloadGlyph,
-  DriveGlyph,
   FileGlyph,
   FolderGlyph,
-  FolderPlusGlyph,
   KebabGlyph,
   LinkGlyph,
   PencilGlyph,
-  PlusGlyph,
-  SearchGlyph,
   ShareGlyph,
-  SharedGlyph,
   TrashGlyph,
-  UploadGlyph,
 } from './DriveIcons';
 import {
   canManageFolder,
@@ -34,7 +29,11 @@ import {
 } from './drive-model';
 import { ShareFolderDialog } from './ShareFolderDialog';
 
-type DriveScope = 'mine' | 'shared';
+export type DrivePageRoute =
+  | { page: 'drive'; scope: DriveScope }
+  | { page: 'folder'; folderId: string; folderPath: string[] };
+
+export type DriveCommand = { kind: 'new-folder' | 'upload'; nonce: number };
 
 interface MenuItem {
   label: string;
@@ -66,17 +65,23 @@ const SNACK_MS = 7_000;
 export function FilesDrive({
   client,
   viewer,
+  route,
+  query,
+  command,
+  onNavigate,
+  onUploadTarget,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
+  route: DrivePageRoute;
+  query: string;
+  command: DriveCommand | null;
+  onNavigate: (path: string) => void;
+  onUploadTarget: (folderName: string | null) => void;
 }) {
   const [folders, setFolders] = useState<FolderView[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
-  const [scope, setScope] = useState<DriveScope>('mine');
-  const [folderId, setFolderId] = useState<string | null>(null);
-  const [path, setPath] = useState<string[]>([]);
   const [objects, setObjects] = useState<FolderObjectView[]>([]);
-  const [query, setQuery] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [dialog, setDialog] = useState<DriveDialog | null>(null);
@@ -86,6 +91,13 @@ export function FilesDrive({
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const snackTimer = useRef<number | null>(null);
+
+  const folderId = route.page === 'folder' ? route.folderId : null;
+  const path = route.page === 'folder' ? route.folderPath : [];
+  const folder = folders.find(({ id }) => id === folderId) ?? null;
+  const scope: DriveScope = route.page === 'drive'
+    ? route.scope
+    : folder === null || folder.role === 'owner' ? 'mine' : 'shared';
 
   const showSnack = useCallback((message: React.ReactNode) => {
     setSnack(message);
@@ -126,39 +138,70 @@ export function FilesDrive({
     void loadObjects(folderId);
   }, [folderId, loadObjects]);
 
+  const uploadTargetName = folder !== null && canWriteFolder(folder.role) ? folder.name : null;
+  useEffect(() => {
+    onUploadTarget(uploadTargetName);
+    return () => onUploadTarget(null);
+  }, [onUploadTarget, uploadTargetName]);
+
+  useEffect(() => {
+    if (command === null) return;
+    if (command.kind === 'new-folder') {
+      setNameField('');
+      setDialog({ kind: 'new-folder' });
+      return;
+    }
+    fileInput.current?.click();
+  }, [command]);
+
   const { mine, shared } = useMemo(() => splitFolders(folders), [folders]);
   const scoped = scope === 'mine' ? mine : shared;
   const trimmedQuery = query.trim().toLowerCase();
-  const visible = scoped.filter((folder) =>
-    trimmedQuery === '' || folder.name.toLowerCase().includes(trimmedQuery));
-  const folder = folders.find(({ id }) => id === folderId) ?? null;
+  const visible = scoped.filter((candidate) =>
+    trimmedQuery === '' || candidate.name.toLowerCase().includes(trimmedQuery));
   const controllable = workspaces.filter(({ role }) => role === 'owner' || role === 'admin');
   const workspaceName = useCallback(
     (id: string) => workspaces.find((workspace) => workspace.id === id)?.name ?? id,
     [workspaces],
   );
 
-  const goDrive = (nextScope?: DriveScope) => {
-    if (nextScope !== undefined) setScope(nextScope);
-    setFolderId(null);
-    setPath([]);
+  const goDrive = useCallback(
+    (nextScope: DriveScope) => onNavigate(drivePath(nextScope)),
+    [onNavigate],
+  );
+  const openFolder = (target: FolderView) => onNavigate(folderPagePath(target.id));
+  const openPath = (target: string, nextPath: string[]) => {
     setSelectedKey(null);
-    setQuery('');
+    onNavigate(folderPagePath(target, nextPath));
   };
 
-  const openFolder = (target: FolderView) => {
-    setScope(target.role === 'owner' ? 'mine' : 'shared');
-    setFolderId(target.id);
-    setPath([]);
-    setSelectedKey(null);
-    setQuery('');
-  };
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (menu !== null) { setMenu(null); return; }
+      if (dialog !== null) { setDialog(null); return; }
+      if (selectedKey !== null) { setSelectedKey(null); return; }
+      if (route.page === 'folder' && route.folderPath.length > 0) {
+        onNavigate(folderPagePath(route.folderId, route.folderPath.slice(0, -1)));
+        return;
+      }
+      if (route.page === 'folder') goDrive(scope);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [dialog, goDrive, menu, onNavigate, route, scope, selectedKey]);
 
-  const openMenuAt = (event: React.MouseEvent<HTMLElement>, items: MenuItem[]) => {
+  const openMenuFrom = (event: React.MouseEvent<HTMLElement>, items: MenuItem[]) => {
     event.preventDefault();
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setMenu({ x: rect.right - 216, y: rect.bottom + 6, items });
+  };
+
+  const openMenuAtPointer = (event: React.MouseEvent, items: MenuItem[]) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setMenu({ x: event.clientX, y: event.clientY + 4, items });
   };
 
   const uploadFiles = async (target: FolderView, files: File[]) => {
@@ -209,6 +252,15 @@ export function FilesDrive({
     return items;
   };
 
+  const tileContextItems = (target: FolderView): MenuItem[] => [
+    {
+      label: 'Share…',
+      icon: <ShareGlyph />,
+      run: () => setDialog({ kind: 'share', folderId: target.id }),
+    },
+    ...folderMenuItems(target),
+  ];
+
   const download = (name: string, key: string) => {
     if (folder === null) return;
     void client.downloadFolderObject(folder.id, key).then((blob) => {
@@ -221,6 +273,16 @@ export function FilesDrive({
     }).catch((caught: Error) => setError(caught.message));
   };
 
+  const fileMenuItems = (name: string, key: string): MenuItem[] => [
+    { label: 'Download', icon: <DownloadGlyph />, run: () => download(name, key) },
+    ...(folder !== null && canWriteFolder(folder.role) ? [{
+      label: 'Delete',
+      icon: <TrashGlyph />,
+      danger: true,
+      run: () => setDialog({ kind: 'delete-object', key, name }),
+    }] : []),
+  ];
+
   const scopeTitle = scope === 'mine' ? 'My Drive' : 'Shared with me';
   const entries = folder === null ? null : entriesAt(
     trimmedQuery === ''
@@ -230,7 +292,11 @@ export function FilesDrive({
   );
 
   const renderTile = (target: FolderView) => (
-    <div className="drive-tile" key={target.id}>
+    <div
+      className="drive-tile"
+      key={target.id}
+      onContextMenu={(event) => openMenuAtPointer(event, tileContextItems(target))}
+    >
       <button
         className="drive-tile-open"
         type="button"
@@ -269,7 +335,7 @@ export function FilesDrive({
           type="button"
           title="More actions"
           aria-label={`More actions for ${target.name}`}
-          onClick={(event) => openMenuAt(event, folderMenuItems(target))}
+          onClick={(event) => openMenuFrom(event, folderMenuItems(target))}
         >
           <KebabGlyph />
         </button>
@@ -278,64 +344,7 @@ export function FilesDrive({
   );
 
   return (
-    <section className="settings-panel drive" role="tabpanel" aria-label="Files">
-      <div className="drive-chrome">
-        <nav className="drive-nav" aria-label="Drive locations">
-          <button
-            className={`drive-nav-row${scope === 'mine' && folderId === null ? ' drive-nav-row--active' : ''}`}
-            type="button"
-            aria-current={scope === 'mine' ? 'page' : undefined}
-            onClick={() => goDrive('mine')}
-          >
-            <DriveGlyph /><span>My Drive</span>
-          </button>
-          <button
-            className={`drive-nav-row${scope === 'shared' && folderId === null ? ' drive-nav-row--active' : ''}`}
-            type="button"
-            aria-current={scope === 'shared' ? 'page' : undefined}
-            onClick={() => goDrive('shared')}
-          >
-            <SharedGlyph /><span>Shared with me</span>
-          </button>
-        </nav>
-        <div className="drive-search">
-          <SearchGlyph />
-          <input
-            type="search"
-            placeholder={folder === null ? `Search in ${scopeTitle}` : `Search in ${folder.name}`}
-            aria-label="Search"
-            value={query}
-            onChange={(event) => setQuery(event.currentTarget.value)}
-          />
-        </div>
-        {scope === 'mine' && (
-          <button
-            className="drive-new"
-            type="button"
-            aria-haspopup="menu"
-            onClick={(event) => openMenuAt(event, [
-              {
-                label: 'New folder',
-                icon: <FolderPlusGlyph />,
-                run: () => {
-                  setNameField('');
-                  setDialog({ kind: 'new-folder' });
-                },
-              },
-              {
-                label: 'Upload file',
-                icon: <UploadGlyph />,
-                disabled: folder === null || !canWriteFolder(folder.role),
-                title: folder === null ? 'Open a folder first' : undefined,
-                run: () => fileInput.current?.click(),
-              },
-            ])}
-          >
-            <PlusGlyph />New
-          </button>
-        )}
-      </div>
-
+    <div className="drive-page drive">
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       {folder === null ? (
@@ -359,18 +368,18 @@ export function FilesDrive({
       ) : (
         <div>
           <nav className="drive-crumbs" aria-label="Breadcrumb">
-            <button type="button" onClick={() => goDrive()}>{scopeTitle}</button>
+            <button type="button" onClick={() => goDrive(scope)}>{scopeTitle}</button>
             <i>›</i>
             {path.length === 0
               ? <b>{folder.name}</b>
-              : <button type="button" onClick={() => { setPath([]); setSelectedKey(null); }}>{folder.name}</button>}
+              : <button type="button" onClick={() => openPath(folder.id, [])}>{folder.name}</button>}
             {path.map((segment, index) => (
               <span key={`${segment}-${String(index)}`} style={{ display: 'contents' }}>
                 <i>›</i>
                 {index === path.length - 1
                   ? <b>{segment}</b>
                   : (
-                    <button type="button" onClick={() => { setPath(path.slice(0, index + 1)); setSelectedKey(null); }}>
+                    <button type="button" onClick={() => openPath(folder.id, path.slice(0, index + 1))}>
                       {segment}
                     </button>
                   )}
@@ -396,7 +405,7 @@ export function FilesDrive({
                       className="drive-tile-open"
                       type="button"
                       aria-label={`Open ${dir.name}`}
-                      onClick={() => { setPath([...path, dir.name]); setSelectedKey(null); }}
+                      onClick={() => openPath(folder.id, [...path, dir.name])}
                     />
                     <FolderGlyph />
                     <span className="drive-tile-name"><span>{dir.name}</span></span>
@@ -418,6 +427,7 @@ export function FilesDrive({
               <div
                 className={`drive-file-row${selectedKey === entry.key ? ' drive-file-row--selected' : ''}`}
                 key={entry.key}
+                onContextMenu={(event) => openMenuAtPointer(event, fileMenuItems(entry.name, entry.key))}
               >
                 <button
                   className="drive-row-open"
@@ -444,15 +454,7 @@ export function FilesDrive({
                     type="button"
                     title="More actions"
                     aria-label={`More actions for ${entry.name}`}
-                    onClick={(event) => openMenuAt(event, [
-                      { label: 'Download', icon: <DownloadGlyph />, run: () => download(entry.name, entry.key) },
-                      ...(canWriteFolder(folder.role) ? [{
-                        label: 'Delete',
-                        icon: <TrashGlyph />,
-                        danger: true,
-                        run: () => setDialog({ kind: 'delete-object', key: entry.key, name: entry.name }),
-                      }] : []),
-                    ])}
+                    onClick={(event) => openMenuFrom(event, fileMenuItems(entry.name, entry.key))}
                   >
                     <KebabGlyph />
                   </button>
@@ -612,7 +614,7 @@ export function FilesDrive({
                   onClick={() => {
                     const action = objectDelete
                       ? client.deleteFolderObject(target.id, dialog.key).then(() => loadObjects(target.id))
-                      : client.deleteFolder(target.id).then(() => { goDrive(); });
+                      : client.deleteFolder(target.id).then(() => goDrive(scope));
                     void action
                       .then(() => loadFolders())
                       .then(() => {
@@ -668,6 +670,6 @@ export function FilesDrive({
           <button type="button" onClick={() => setSnack(null)}>Dismiss</button>
         </div>
       )}
-    </section>
+    </div>
   );
 }
