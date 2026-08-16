@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -61,6 +63,37 @@ type gateway struct {
 	authRequired           bool
 	lastWebAppToken        string
 	authFailureLogged      bool
+	connectionsMu          sync.Mutex
+	connections            map[net.Conn]struct{}
+}
+
+type trackedConn struct {
+	net.Conn
+	onClose func()
+	once    sync.Once
+}
+
+func (connection *trackedConn) Close() error {
+	connection.once.Do(connection.onClose)
+	return connection.Conn.Close()
+}
+
+type trackingResponseWriter struct {
+	http.ResponseWriter
+	gateway *gateway
+}
+
+func (writer *trackingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := writer.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	connection, buffered, err := hijacker.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	tracked := writer.gateway.trackConnection(connection)
+	return tracked, buffered, nil
 }
 
 func main() {
@@ -100,6 +133,10 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	removeWebAppTokenHeader(request.Header)
+	if request.URL.Path == "/admin/drain" {
+		g.serveDrain(response, request)
+		return
+	}
 
 	controlPlaneOrigin := loadControlPlaneOrigin(g.controlPlaneOriginPath)
 	if isCORSPreflight(request) {
@@ -107,6 +144,9 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	webSocket := isWebSocketUpgrade(request)
+	if webSocket {
+		response = &trackingResponseWriter{ResponseWriter: response, gateway: g}
+	}
 	if webSocket && !originAllowed(request, controlPlaneOrigin) {
 		http.Error(response, "websocket origin forbidden", http.StatusForbidden)
 		return
@@ -132,6 +172,40 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	g.dufs.ServeHTTP(response, request)
+}
+
+func (g *gateway) trackConnection(connection net.Conn) net.Conn {
+	tracked := &trackedConn{Conn: connection}
+	tracked.onClose = func() {
+		g.connectionsMu.Lock()
+		delete(g.connections, tracked)
+		g.connectionsMu.Unlock()
+	}
+	g.connectionsMu.Lock()
+	if g.connections == nil {
+		g.connections = make(map[net.Conn]struct{})
+	}
+	g.connections[tracked] = struct{}{}
+	g.connectionsMu.Unlock()
+	return tracked
+}
+
+func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	g.connectionsMu.Lock()
+	connections := make([]net.Conn, 0, len(g.connections))
+	for connection := range g.connections {
+		connections = append(connections, connection)
+	}
+	g.connectionsMu.Unlock()
+	for _, connection := range connections {
+		_ = connection.Close()
+	}
+	response.WriteHeader(http.StatusNoContent)
 }
 
 func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request) {

@@ -4,6 +4,7 @@ import { HttpError, isString } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
 import type { Lease, MintResult } from "./types.js";
+import { canControlWorkspace } from "../workspace-access.js";
 
 interface LeaseRow {
   id: string;
@@ -18,6 +19,8 @@ interface LeaseRow {
   expires_at: number;
   state: Lease["state"];
   owner_id: string;
+  org_id: string | null;
+  owner_membership_id: string | null;
 }
 
 interface CreateLeaseInput {
@@ -118,19 +121,22 @@ export async function listLeases(
   workspaceId: string,
   principal: Principal,
 ): Promise<Lease[]> {
-  const workspace = await first<{ owner_id: string }>(db, {
-    q: "SELECT owner_id FROM workspaces WHERE id = ?1 LIMIT 1",
+  const workspace = await first<{
+    owner_id: string;
+    org_id: string | null;
+    owner_membership_id: string | null;
+    id: string;
+  }>(db, {
+    q: "SELECT id, owner_id, org_id, owner_membership_id FROM workspaces WHERE id = ?1 LIMIT 1",
     v: [workspaceId],
   });
-  if (
-    workspace === null ||
-    (!principal.platformOperator && workspace.owner_id !== principal.id)
-  ) {
+  if (workspace === null || workspace.org_id !== principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
+  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
   const result = await rows<LeaseRow>(db, {
-    q: `SELECT lease.*, integration.name AS integration_name,
-               workspace.owner_id
+    q: `SELECT lease.*, integration.scoped_name AS integration_name,
+               workspace.owner_id, workspace.org_id, workspace.owner_membership_id
         FROM credential_leases lease
         JOIN integrations integration ON integration.id = lease.integration_id
         JOIN workspaces workspace ON workspace.id = lease.workspace_id
@@ -148,20 +154,18 @@ export async function revokeLease(
   now = Date.now(),
 ): Promise<void> {
   const row = await first<LeaseRow>(db, {
-    q: `SELECT lease.*, integration.name AS integration_name,
-               workspace.owner_id
+    q: `SELECT lease.*, integration.scoped_name AS integration_name,
+               workspace.owner_id, workspace.org_id, workspace.owner_membership_id
         FROM credential_leases lease
         JOIN integrations integration ON integration.id = lease.integration_id
         JOIN workspaces workspace ON workspace.id = lease.workspace_id
         WHERE lease.id = ?1 LIMIT 1`,
     v: [id],
   });
-  if (
-    row === null ||
-    (!principal.platformOperator && row.owner_id !== principal.id)
-  ) {
+  if (row === null || row.org_id !== principal.orgId) {
     throw new HttpError(404, "credential lease not found");
   }
+  if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
   if (row.state !== "active") return;
   await transaction(db, [
     {

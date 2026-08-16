@@ -1,10 +1,13 @@
 import { hashSecret } from "../crypto.js";
-import { first, transaction } from "../db.js";
+import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, type JsonValue, readJson, requiredString } from "../http.js";
 import type { Principal } from "../principals.js";
 import { cookieValue, SESSION_COOKIE } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { addGoogleAuthRoutes } from "./google.js";
+import { addGrantRoutes } from "./grants.js";
+import { addInviteRoutes } from "./invites.js";
+import { addMemberRoutes } from "./members.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
 
 interface MeRow {
@@ -15,7 +18,7 @@ interface MeRow {
   platform_operator: number;
   membership_id: string | null;
   role: "admin" | "member" | null;
-  status: "invited" | "active" | "disabled" | null;
+  status: "active" | null;
   org_id: string | null;
   slug: string | null;
   org_name: string | null;
@@ -25,7 +28,7 @@ interface MeRow {
 interface MembershipView {
   id: string;
   role: "admin" | "member";
-  status: "invited" | "active" | "disabled";
+  status: "active";
 }
 
 interface OrgView {
@@ -45,6 +48,7 @@ export interface MeResponse {
   };
   membership: MembershipView | null;
   org: OrgView | null;
+  organizations: Array<{ membership: MembershipView; org: OrgView }>;
 }
 
 function meResponse(row: MeRow): MeResponse {
@@ -65,7 +69,7 @@ function meResponse(row: MeRow): MeResponse {
       platformOperator: row.platform_operator === 1,
     },
     membership: hasMembership
-      ? { id: row.membership_id ?? "", role: row.role ?? "member", status: row.status ?? "disabled" }
+      ? { id: row.membership_id ?? "", role: row.role ?? "member", status: "active" }
       : null,
     org: hasMembership
       ? {
@@ -75,6 +79,7 @@ function meResponse(row: MeRow): MeResponse {
           vmLimit: row.vm_limit ?? DEFAULT_ORG_VM_LIMIT,
         }
       : null,
+    organizations: [],
   };
 }
 
@@ -94,7 +99,35 @@ async function loadMe(
     v: [principal.id, principal.membershipId],
   });
   if (row === null) throw new HttpError(401, "unauthorized");
-  return meResponse(row);
+  const response = meResponse(row);
+  const organizations = await rows<{
+    membership_id: string;
+    role: "admin" | "member";
+    status: "active";
+    org_id: string;
+    slug: string;
+    org_name: string;
+    vm_limit: number;
+  }>(runtimeFactory(context).db, {
+    q: `SELECT m.id AS membership_id, m.role, m.status, o.id AS org_id,
+               o.slug, o.name AS org_name, o.vm_limit
+        FROM memberships m JOIN orgs o ON o.id = m.org_id
+        WHERE m.user_id = ?1 AND m.status = 'active'
+        ORDER BY o.name, o.id`,
+    v: [principal.id],
+  });
+  return {
+    ...response,
+    organizations: organizations.map((item) => ({
+      membership: { id: item.membership_id, role: item.role, status: item.status },
+      org: {
+        id: item.org_id,
+        slug: item.slug,
+        name: item.org_name,
+        vmLimit: item.vm_limit,
+      },
+    })),
+  };
 }
 
 function parseOrgName(value: JsonValue): string {
@@ -110,6 +143,9 @@ export function addIdentityRoutes(
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
   addGoogleAuthRoutes(router, runtimeFactory);
+  addInviteRoutes(router, runtimeFactory, requirePrincipal);
+  addMemberRoutes(router, runtimeFactory, requirePrincipal);
+  addGrantRoutes(router, runtimeFactory, requirePrincipal);
 
   router.get("/me", async (context) => {
     const principal = await requirePrincipal(context);

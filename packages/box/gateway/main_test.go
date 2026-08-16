@@ -15,6 +15,34 @@ import (
 	"testing"
 )
 
+func TestDrainRequiresTokenAndClosesTrackedConnections(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "webapp-token")
+	if err := os.WriteFile(tokenPath, []byte("drain-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{webAppTokenPath: tokenPath, tunnelTokenPath: filepath.Join(t.TempDir(), "tunnel-token")}
+	client, peer := net.Pipe()
+	defer peer.Close()
+	handler.trackConnection(client)
+
+	forbidden := httptest.NewRecorder()
+	handler.ServeHTTP(forbidden, httptest.NewRequest(http.MethodPost, "/admin/drain", nil))
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("unauthorized drain status = %d, want %d", forbidden.Code, http.StatusForbidden)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/admin/drain", nil)
+	request.Header.Set(webAppTokenHeader, "drain-secret")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("authorized drain status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if _, err := peer.Write([]byte("closed")); err == nil {
+		t.Fatal("tracked peer remained writable after drain")
+	}
+}
+
 func TestParsePreviewPath(t *testing.T) {
 	tests := []struct {
 		path         string

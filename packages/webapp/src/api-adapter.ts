@@ -38,12 +38,14 @@ export type TenantMe = {
   identity: IdentityRecord;
   membership: MembershipRecord;
   org: OrgRecord;
+  organizations: Array<{ membership: MembershipRecord; org: OrgRecord }>;
 };
 
 export type Me = {
   identity: IdentityRecord;
   membership: MembershipRecord | null;
   org: OrgRecord | null;
+  organizations: Array<{ membership: MembershipRecord; org: OrgRecord }>;
 };
 
 export type V2WorkspaceRecord = WorkspaceRecord & {
@@ -89,6 +91,15 @@ function meFromWire(me: MeResponse): Me {
     org: me.org === null
       ? null
       : { id: me.org.id, slug: me.org.slug, name: me.org.name, vmLimit: me.org.vmLimit },
+    organizations: me.organizations.map((item) => ({
+      membership: { id: item.membership.id, role: item.membership.role },
+      org: {
+        id: item.org.id,
+        slug: item.org.slug,
+        name: item.org.name,
+        vmLimit: item.org.vmLimit,
+      },
+    })),
   };
 }
 
@@ -106,9 +117,11 @@ export function workspaceFromWire(
   if (workspace.phase === "destroying" || workspace.phase === "destroyed") return null;
   return {
     id: workspace.id,
-    ownerMembershipId,
-    canControl: true,
-    shared: false,
+    ownerMembershipId: workspace.role === "owner" ? ownerMembershipId : "",
+    canControl: workspace.role !== null,
+    shared: workspace.role === "editor",
+    accessRole: workspace.role,
+    owner: workspace.owner,
     machineType: workspace.machineTypeId,
     name: workspace.name,
     status: statusFromWire(workspace),

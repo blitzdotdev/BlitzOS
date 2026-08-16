@@ -26,6 +26,9 @@ const expected = [
   "db.ts",
   "http.ts",
   "identity/google.ts",
+  "identity/grants.ts",
+  "identity/invites.ts",
+  "identity/members.ts",
   "identity/oauth-state.ts",
   "identity/orgs.ts",
   "identity/routes.ts",
@@ -47,6 +50,8 @@ const expected = [
   "runtime.ts",
   "sessions.ts",
   "workspace-names.ts",
+  "workspace-access.ts",
+  "workspace-records.ts",
   "workspace-tunnels.ts",
   "types.ts",
   "volumes.ts",
@@ -71,6 +76,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(46);
+    expect(expected).toHaveLength(51);
   });
 });

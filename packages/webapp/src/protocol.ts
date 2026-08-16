@@ -21,6 +21,7 @@ export type WorkspaceRecord = {
     name: string;
     avatarUrl: string | null;
   };
+  accessRole?: 'owner' | 'admin' | 'editor' | null;
   machineType?: string | null;
   name: string;
   status: RestWorkspaceStatus;

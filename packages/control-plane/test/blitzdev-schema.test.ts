@@ -14,6 +14,7 @@ const expectedTables = [
   "sessions",
   "workspaces",
   "invites",
+  "volume_ownership",
   "workspace_grants",
   "webapp_state",
   "device_authorizations",
@@ -38,9 +39,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the twenty domain tables plus the deny-all file support table", () => {
+  it("contains the twenty-one domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(21);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(22);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -86,7 +87,7 @@ describe("blitz.dev managed schema", () => {
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "users")).toMatchObject({
       fields: expect.arrayContaining([
-        expect.objectContaining({ name: "google_user_id", unique: true }),
+        expect.objectContaining({ name: "google_user_id", notNull: true, unique: true }),
         expect.objectContaining({ name: "email", unique: true, check: "email = lower(email)" }),
         expect.objectContaining({
           name: "platform_operator",
@@ -175,6 +176,8 @@ describe("blitz.dev managed schema", () => {
       "idx_boxes_principal",
       "idx_broker_keys_box",
       "idx_broker_keys_identity",
+      "idx_integrations_org_name",
+      "idx_integrations_org",
       "idx_user_connections_identity",
       "idx_credential_leases_workspace",
       "idx_credential_leases_expiry",

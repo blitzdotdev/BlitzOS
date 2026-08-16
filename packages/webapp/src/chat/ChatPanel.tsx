@@ -137,6 +137,8 @@ export function ChatPanel({
               cwd: "/workspace",
               mcpServers: [],
             });
+            dispatch({ type: "reconcile-running" });
+            runningRef.current = false;
             setConfigOptions(loaded.configOptions ?? []);
           }
           if (!active) break;

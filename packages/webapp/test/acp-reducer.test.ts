@@ -18,6 +18,14 @@ function replay(name: string, state: ChatState = initialChatState): ChatState {
 }
 
 describe("ACP fixture reducer", () => {
+  it("reconciles an in-flight prompt after session replay on reconnect", () => {
+    const running = chatReducer(initialChatState, { type: "turn-started", turnId: "turn-1" });
+    expect(running.running).toBe(true);
+    const reconciled = chatReducer(running, { type: "reconcile-running" });
+    expect(reconciled.running).toBe(false);
+    expect(reconciled.pendingCalls).toEqual({});
+  });
+
   it("replays every shared fixture file", () => {
     expect(fixtureNames).toEqual([
       "malformed.jsonl",

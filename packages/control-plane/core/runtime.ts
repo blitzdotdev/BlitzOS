@@ -38,6 +38,7 @@ export interface CoreRouter {
   all(path: string, handler: CoreHandler): CoreRouter;
   get(path: string, handler: CoreHandler): CoreRouter;
   post(path: string, handler: CoreHandler): CoreRouter;
+  patch(path: string, handler: CoreHandler): CoreRouter;
   put(path: string, handler: CoreHandler): CoreRouter;
   delete(path: string, handler: CoreHandler): CoreRouter;
   notFound(handler: CoreHandler): CoreRouter;
@@ -88,6 +89,7 @@ export interface CoreRuntime {
   };
   principalSource: PrincipalSource;
   waitUntil(promise: Promise<unknown>): void;
+  reportError(event: string, error: Error): void;
 }
 
 export type RuntimeFactory = (context: CoreContext) => CoreRuntime;

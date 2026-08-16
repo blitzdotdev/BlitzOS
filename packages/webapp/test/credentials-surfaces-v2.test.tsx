@@ -7,11 +7,23 @@ import {
   WorkspaceDrawer,
   WorkspaceLeasesPanel,
 } from '../src/WorkspaceDrawer.js';
+import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
     googleLoginUrl: () => '/auth/google/start',
+    inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
+    inviteStatus: vi.fn(async () => { throw new Error('unused'); }),
+    switchOrg: vi.fn(async () => undefined),
+    listMembers: vi.fn(async () => ({ members: [] })),
+    updateMember: vi.fn(async () => { throw new Error('unused'); }),
+    listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
+    createInvite: vi.fn(async () => { throw new Error('unused'); }),
+    revokeInvite: vi.fn(async () => undefined),
+    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
+    createWorkspaceGrant: vi.fn(async () => { throw new Error('unused'); }),
+    revokeWorkspaceGrant: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new Error('unused'); }),
     createOrg: vi.fn(async () => { throw new Error('unused'); }),
@@ -41,6 +53,43 @@ function click(button: Element): void {
 }
 
 describe('v2 credential surfaces', () => {
+  it('mints an email-pinned invite from the members panel and shows its link once', async () => {
+    const createInvite = vi.fn(async () => ({
+      invite: {
+        id: 'invite-one',
+        email: 'person@example.com',
+        role: 'member' as const,
+        state: 'ready' as const,
+        createdAt: 1,
+        expiresAt: 2,
+        redeemedAt: null,
+      },
+      code: 'one-time-code',
+      ttlDays: 7,
+    }));
+    const view = await render(<MembersPanel client={client({ createInvite })} admin />);
+    await settle();
+    const input = view.container.querySelector<HTMLInputElement>('input[type="email"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    if (setInputValue === undefined) throw new Error('input value setter is unavailable');
+    await act(async () => {
+      setInputValue.call(input, 'person@example.com');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    expect(createInvite).toHaveBeenCalledWith({ email: 'person@example.com', role: 'member' });
+    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Member invite link"]')?.value)
+      .toBe(`${window.location.origin}/invite/one-time-code`);
+    await view.unmount();
+  });
+
   it('switches drawer segments under controlled workspace state', async () => {
     const wire = client();
     function Harness() {

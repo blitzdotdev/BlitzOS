@@ -15,6 +15,8 @@ const workspace: WorkspaceView = {
   ssh: null,
   volumeId: null,
   error: null,
+  role: "owner",
+  owner: { name: "Owner", avatarUrl: null },
 };
 
 describe("standalone endpoint resolver", () => {

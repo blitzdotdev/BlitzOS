@@ -78,6 +78,7 @@ export const initialChatState: ChatState = {
 export type ChatAction =
   | { type: "update"; update: unknown }
   | { type: "begin-replay" }
+  | { type: "reconcile-running" }
   | { type: "permission-request"; request: RequestPermissionRequest }
   | { type: "permission-answered"; toolCallId: string; optionId: string | null }
   | { type: "turn-started"; turnId: string }
@@ -88,6 +89,13 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
     case "begin-replay":
       return { ...state, streamText: {} };
+    case "reconcile-running": {
+      if (!state.running) return state;
+      const pendingCalls = Object.fromEntries(
+        Object.entries(state.pendingCalls).filter(([, call]) => call.method !== "prompt"),
+      );
+      return { ...state, running: false, pendingCalls };
+    }
     case "update":
       return applyUpdate(state, action.update);
     case "permission-request":

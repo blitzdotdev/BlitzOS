@@ -64,3 +64,5 @@ export interface ListVolumesResponse {
 export interface DeleteVolumeResponse {
   id: string;
 }
+
+export const INVITE_TTL_DAYS = 7;

@@ -19,7 +19,12 @@ export class ActorServer {
     extraOrigins?: string,
   ) {
     const origins = allowedOrigins(extraOrigins);
-    this.http = createServer((_request, response) => {
+    this.http = createServer((request, response) => {
+      if (request.method === "POST" && request.url === "/admin/drain") {
+        this.drain();
+        response.writeHead(204).end();
+        return;
+      }
       response.writeHead(404).end();
     });
     this.websocket = new WebSocketServer({ noServer: true, maxPayload: FRAME_BYTES, perMessageDeflate: false });
@@ -48,6 +53,10 @@ export class ActorServer {
     for (const socket of this.sockets) socket.close(1001, "Server shutting down");
     await new Promise<void>((resolve, reject) => this.websocket.close((error) => (error ? reject(error) : resolve())));
     await new Promise<void>((resolve, reject) => this.http.close((error) => (error ? reject(error) : resolve())));
+  }
+
+  private drain(): void {
+    for (const socket of this.sockets) socket.close(1001, "Workspace access revoked");
   }
 
   private accept(socket: WebSocket): void {

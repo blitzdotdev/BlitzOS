@@ -200,6 +200,7 @@ export function appWithVmProviders(
     },
     principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+    reportError: () => undefined,
   });
   installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
   return app;
@@ -238,6 +239,7 @@ export function testRuntime(
     },
     principalSource: createSessionPrincipalSource(),
     waitUntil: () => undefined,
+    reportError: () => undefined,
   };
 }
 
@@ -402,6 +404,7 @@ export async function resetDatabase(): Promise<void> {
     "credential_requests",
     "credential_leases",
     "workspace_grants",
+    "volume_ownership",
     "user_connections",
     "integrations",
     "broker_keys",

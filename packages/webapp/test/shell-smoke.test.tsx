@@ -87,6 +87,8 @@ const creating: WorkspaceView = {
   ssh: null,
   volumeId: null,
   error: null,
+  role: "owner",
+  owner: { name: "Owner", avatarUrl: null },
 };
 
 const running: WorkspaceView = {
@@ -106,6 +108,8 @@ const running: WorkspaceView = {
   },
   volumeId: null,
   error: null,
+  role: "owner",
+  owner: { name: "Owner", avatarUrl: null },
 };
 
 const runningTwo: WorkspaceView = {
@@ -127,6 +131,10 @@ const tenantMe = {
   },
   membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
   org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+  organizations: [{
+    membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
+    org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+  }],
 };
 
 let deviceStorageValues: Map<string, string>;
@@ -135,6 +143,17 @@ let serverWorkspaceStates: Map<string, WorkspaceWebAppStateV1>;
 function client(): ControlPlaneClient {
   return {
     googleLoginUrl: () => "/auth/google/start",
+    inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
+    inviteStatus: vi.fn(async () => { throw new Error("unused"); }),
+    switchOrg: vi.fn(async () => undefined),
+    listMembers: vi.fn(async () => ({ members: [] })),
+    updateMember: vi.fn(async () => { throw new Error("unused"); }),
+    listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
+    createInvite: vi.fn(async () => { throw new Error("unused"); }),
+    revokeInvite: vi.fn(async () => undefined),
+    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
+    createWorkspaceGrant: vi.fn(async () => { throw new Error("unused"); }),
+    revokeWorkspaceGrant: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),
     createOrg: vi.fn(async () => ({

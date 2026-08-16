@@ -102,6 +102,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+    reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
   };
 }
 
@@ -132,6 +133,7 @@ function runtimeForScheduled(
     providers,
     principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => executionContext.waitUntil(promise),
+    reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
   };
 }
 

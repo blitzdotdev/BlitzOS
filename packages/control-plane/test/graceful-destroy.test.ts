@@ -47,8 +47,9 @@ async function seedWorkspace(volumeId: string | null): Promise<void> {
   await env.DB
     .prepare(
       `INSERT INTO workspaces
-       (id, owner_id, phase, revision, vm_id, volume_id, created_at, updated_at)
-       VALUES ('workspace-id', 'operator', 'ready', 1, ?1, ?2, 1, 1)`,
+       (id, owner_id, org_id, owner_membership_id, phase, revision, vm_id,
+        volume_id, created_at, updated_at)
+       VALUES ('workspace-id', 'operator', 'personal', 'personal', 'ready', 1, ?1, ?2, 1, 1)`,
     )
     .bind(SERVER_ID, volumeId)
     .run();

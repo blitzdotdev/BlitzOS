@@ -101,7 +101,7 @@ Newly resolved (previously open questions 1, 3, 4, 5):
   field and a create button. `POST /orgs` (deliberately absent in v2)
   exists here, gated to users with no active membership; it creates the
   org with a default `vm_limit`, an active admin membership, and rebinds
-  the session. Invite and stub-claim logins skip the page. TODO.md's e2e
+  the session. Invite-redemption logins skip the page. TODO.md's e2e
   branch (b) — "types one prompt and sets it up" — requires self-serve.
   Cut with this decision: untargeted org-creating invites, invite-gated
   signup, silent auto-created orgs, and v2's paid-claim path. If signup
@@ -140,10 +140,13 @@ Port exactly: `users`(=identities)/`orgs`/`memberships` shapes and enums
 `UNIQUE(user_id, org_id)`, no org-type column, `platform_operator` flag);
 hash-only invite codes (32 random bytes → base64url, 43-char SHA-256 hash
 stored, states `'ready'|'redeemed'|'revoked'|'expired'`, one shared TTL
-constant, redemption inside the OAuth callback, atomic); stub memberships
-claimed at first login; last-active-admin protection;
+constant, redemption inside the OAuth callback, atomic);
+last-active-admin protection;
 `canControlWorkspace` = same org AND (admin OR owner membership); error
-convention cross-org → 404, same-org unauthorized → 403.
+convention cross-org → 404, same-org unauthorized → 403. Deliberate
+deviation: v2's stub-membership claim (admin-created user rows bound at
+first login) is **not** ported — email-pinned invites replace it, so
+there is exactly one join mechanism.
 
 Do not copy v2's defects: UI/server TTL drift, missing members UI, owner
 badge with no data, client-derived capabilities, the incomplete observe
@@ -217,7 +220,8 @@ each migration keeps the three-places rule to a single sync: migration +
 assertions, index names per [PORT-DESIGN.md](PORT-DESIGN.md)).
 
 ```
-users              id, google_user_id UNIQUE, email UNIQUE (lowercased),
+users              id, google_user_id UNIQUE NOT NULL,
+                   email UNIQUE (lowercased),
                    name, avatar_url, platform_operator INTEGER CHECK(0,1),
                    created_at, updated_at
 orgs               id, slug UNIQUE, name, vm_limit, created_at, updated_at
@@ -225,7 +229,8 @@ memberships        id, user_id, org_id,
                    role CHECK('admin','member'),
                    status CHECK('invited','active','disabled'),
                    UNIQUE(user_id, org_id)
-invites            id, code_hash (43-char b64url SHA-256), email NULL,
+invites            id, code_hash (43-char b64url SHA-256),
+                   email NULL (optional pin),
                    target_org_id NOT NULL, role,
                    state CHECK('ready','redeemed','revoked','expired'),
                    created_by_membership_id, redeemed_by_user_id,
@@ -246,6 +251,9 @@ workspaces         + org_id, + owner_membership_id (nullable, backfilled at
 - Quota moves from per-owner to per-org `vm_limit`.
 - Grants hold only `editor`/`viewer`. Owner and org-admin rights come from
   the membership (`canControlWorkspace`), never from grant rows.
+- `google_user_id` is `NOT NULL` because stub users no longer exist:
+  every `users` row comes from a real Google login. (v2 needed nullable
+  ids for its claim-at-login stubs.)
 
 ### Authentication (Google, in v2's shape)
 
@@ -253,18 +261,22 @@ workspaces         + org_id, + owner_membership_id (nullable, backfilled at
   state compare; ID-token/userinfo used transiently, never persisted.
   Identity key is Google `sub` → `users.google_user_id`; profile refreshed
   each login.
-- **Stub-claim by verified email**: `POST /members` creates a user stub
-  keyed on lowercased email + an `'invited'` membership; first Google login
-  with a matching **verified** email binds and activates it. Unverified
-  emails never claim. (This is TODO.md's "add members by email" without
-  needing email-sending infrastructure.)
+- **Add member by email = an email-pinned invite.** The members page
+  mints an invite with `email` set; only a Google login with that
+  **verified** email can redeem it. No stub users, no claim-on-login
+  binding, no bound/unbound member states. The admin shares the link out
+  of band, same as an open invite. (Keeps TODO.md's "add members by
+  email" with one join mechanism and no email-sending infra. Future
+  option, not v1: match ready pinned invites by email at login so no
+  link is needed.)
 - **Invite links**: org-targeted only, v2 mechanics (hash-only storage,
   shared TTL constant, status page `/invite/:code`, redemption inside the
-  OAuth callback, atomic membership+redeem+session).
+  OAuth callback, atomic membership+redeem+session; the optional `email`
+  pin restricts redemption to that verified address).
 - **Onboarding**: a login with no active membership gets an identity-only
   session (`membership_id NULL`) and the webApp routes to the create-org
-  page (see decision). Invite redemption and stub claims bind a membership
-  inside the callback and skip that page.
+  page (see decision). Invite redemption binds a membership inside the
+  callback and skips that page.
 - **Bootstrap demotion**: `OPERATOR_API_KEY` stops authenticating routes;
   it becomes a one-shot bootstrap secret that marks the first Google login
   `platform_operator = 1`, seeds its org + admin membership, and backfills
@@ -372,7 +384,7 @@ Upgrade the shipped static token, same header, same secret, same verifier:
 | TODO.md bullet | Covered by | Notes |
 |---|---|---|
 | Org admin does Google SSO | Phase 1 | first login lands on create-org (name field + create button) |
-| Adds members by email or invite link | Phase 2 | email = stub-claim; link = org-targeted invite |
+| Adds members by email or invite link | Phase 2 | one mechanism: org-targeted invites; email add = email-pinned invite |
 | Any member creates a dedicated workspace | Phase 2 | org quota |
 | Share `/workspace` with members XYZ | Phase 2 (editor), phase 3 (viewer) | |
 | Revoke access | Phase 2 | immediate: grant delete + ws drain |
@@ -407,10 +419,9 @@ ever lands, it keys on `users`, not memberships.
 
 ## Phases (dependency order)
 
-1. **One real human.** In order: the timeboxed teenybase auth audit
-   (use/skip table appended here; gaps filed in
-   [BLITZDEV-PLATFORM-ASKS.md](BLITZDEV-PLATFORM-ASKS.md); default per v2
-   evidence: hand-rolled on D1); server-side webApp state
+1. **One real human.** In order: the teenybase auth audit — **complete,
+   2026-08-16: all seven primitives skip (table above)**, so identity is
+   hand-rolled on D1 as v2 evidence predicted; server-side webApp state
    (`0008_webapp_state`, GET/PUT state routes, webApp drops localStorage
    for tabs, chat session ids, titles, order, active workspace, drawer);
    then identity (`0009_identity` with the three-places sync, Google OAuth
@@ -427,8 +438,9 @@ ever lands, it keys on `users`, not memberships.
    with share + revoke UI, the grant check at the webapp proxy, the
    gateway drain endpoint for immediate revoke (box-image re-pin), and
    the chat `running`-state reconcile on reconnect. Done when:
-   **TODO.md's e2e passes** — a second human joins via email stub or
-   invite link, sees org workspaces as metadata only (cross-org is 404),
+   **TODO.md's e2e passes** — a second human joins via an invite link
+   (email-pinned or open), sees org workspaces as metadata only
+   (cross-org is 404),
    gets an editor grant, works in the shared workspace's terminal and
    chat, and loses all access on revoke immediately — live terminal and
    chat sockets included, with the others reconnecting seamlessly.
