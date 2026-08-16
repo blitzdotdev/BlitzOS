@@ -6,8 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 APP_URL = "https://blitz-control-plane.blitzapp.workers.dev"
 BOX_IMAGE_REF = "https://blitz-control-plane.blitzapp.workers.dev/box-image/manifest.json"
-BOX_IMAGE_TAG = "blitz-box:20260816b-amd64"
-BOX_IMAGE_SHA256 = "994e746a202a703803743a0e4a3a2523b8f6c127dfe4eff09ceaf0695e7e71af"
+BOX_IMAGE_TAG = "blitz-box:20260816c-amd64"
+BOX_IMAGE_SHA256 = "e99c629d91d60a1928b3d0b9af1135d20fc5deec5c0fc5d967b8b6304307753f"
 SESSION_TTL_DAYS = "30"
 MAX_CONCURRENT_WORKSPACES = "10"
 MICROVM_HOSTS = '[{"name":"lab","tokenVar":"MICROVM_LAB_TOKEN","dynamic":true}]'
