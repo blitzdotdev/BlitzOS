@@ -249,7 +249,7 @@ async function globalState(db: Db, principalId: string): Promise<StateRow> {
 
 async function workspaceState(
   db: Db,
-  principalId: string,
+  principal: Principal,
   workspaceId: string,
 ): Promise<StateRow | null> {
   return first<StateRow>(db, {
@@ -257,10 +257,28 @@ async function workspaceState(
         FROM workspaces w
         LEFT JOIN webapp_state s
           ON s.principal_id = ?1 AND s.workspace_id = w.id
-        WHERE w.id = ?2 AND w.owner_id = ?1
+        LEFT JOIN workspace_grants grant
+          ON grant.workspace_id = w.id AND grant.membership_id = ?3
+        WHERE w.id = ?2 AND w.org_id = ?4
+          AND (w.owner_membership_id = ?3 OR ?5 = 'admin' OR grant.role = 'editor')
         LIMIT 1`,
-    v: [principalId, workspaceId],
+    v: [principal.id, workspaceId, principal.membershipId, principal.orgId, principal.role],
   });
+}
+
+async function throwWorkspaceAccessError(
+  db: Db,
+  workspaceId: string,
+  orgId: string | null,
+): Promise<never> {
+  const workspace = await first<{ org_id: string | null }>(db, {
+    q: "SELECT org_id FROM workspaces WHERE id = ?1 AND phase != 'destroyed' LIMIT 1",
+    v: [workspaceId],
+  });
+  if (workspace === null || workspace.org_id !== orgId) {
+    throw new HttpError(404, "workspace not found");
+  }
+  throw new HttpError(403, "forbidden");
 }
 
 export function addWebAppStateRoutes(
@@ -296,11 +314,15 @@ export function addWebAppStateRoutes(
     const principal = await requirePrincipal(context);
     const row = await workspaceState(
       runtimeFactory(context).db,
-      principal.id,
+      principal,
       context.req.param("id"),
     );
-    if (row === null) throw new HttpError(404, "workspace not found");
-    return context.json(parseStoredDoc(row, parseWorkspaceDoc));
+    const found = row ?? await throwWorkspaceAccessError(
+        runtimeFactory(context).db,
+        context.req.param("id"),
+        principal.orgId,
+      );
+    return context.json(parseStoredDoc(found, parseWorkspaceDoc));
   });
 
   router.put("/workspaces/:id/webapp-state", async (context) => {
@@ -309,14 +331,31 @@ export function addWebAppStateRoutes(
     const now = Date.now();
     const updated = await rows(runtimeFactory(context).db, {
       q: `INSERT INTO webapp_state (principal_id, workspace_id, doc, updated_at)
-          SELECT ?1, id, ?3, ?4 FROM workspaces
-          WHERE id = ?2 AND owner_id = ?1
+          SELECT ?1, w.id, ?3, ?4 FROM workspaces w
+          LEFT JOIN workspace_grants grant
+            ON grant.workspace_id = w.id AND grant.membership_id = ?5
+          WHERE w.id = ?2 AND w.org_id = ?6
+            AND (w.owner_membership_id = ?5 OR ?7 = 'admin' OR grant.role = 'editor')
           ON CONFLICT(principal_id, workspace_id) DO UPDATE
           SET doc = excluded.doc, updated_at = excluded.updated_at
           RETURNING principal_id`,
-      v: [principal.id, context.req.param("id"), JSON.stringify(doc), now],
+      v: [
+        principal.id,
+        context.req.param("id"),
+        JSON.stringify(doc),
+        now,
+        principal.membershipId,
+        principal.orgId,
+        principal.role,
+      ],
     });
-    if (updated.length !== 1) throw new HttpError(404, "workspace not found");
+    if (updated.length !== 1) {
+      await throwWorkspaceAccessError(
+        runtimeFactory(context).db,
+        context.req.param("id"),
+        principal.orgId,
+      );
+    }
     return context.json<StateResponse<WorkspaceWebAppStateV1>>({ doc, updatedAt: now });
   });
 }

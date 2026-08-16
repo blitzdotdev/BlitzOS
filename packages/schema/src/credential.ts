@@ -36,6 +36,7 @@ export interface IntegrationView {
   kind: MintKind;
   custody: Custody;
   status: "active" | "revoked";
+  createdBy: string;
 }
 
 export interface ListIntegrationsResponse {

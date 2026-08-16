@@ -50,6 +50,8 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   },
   volumeId: volume.id,
   error: null,
+  role: "owner",
+  owner: { name: "Owner", avatarUrl: null },
 };
 
 const listMachineTypesResponse: SharedShape<
@@ -190,6 +192,7 @@ describe("local wire copies", () => {
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
+    expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);
     for (const value of fullFieldValues) {
       expect(JSON.parse(JSON.stringify(value))).toEqual(value);
     }

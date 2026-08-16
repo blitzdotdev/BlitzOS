@@ -5,6 +5,7 @@ import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { parseManifest, usableByAllows } from "./manifest.js";
 import { integrationByName } from "./registry.js";
+import { canControlWorkspace } from "../workspace-access.js";
 
 type RequestState = "pending" | "approved" | "denied";
 
@@ -22,6 +23,8 @@ interface CredentialRequestRow {
 interface RequestResolutionRow extends CredentialRequestRow {
   owner_id: string;
   manifest: string | null;
+  org_id: string | null;
+  owner_membership_id: string | null;
 }
 
 export interface CredentialRequestView {
@@ -87,18 +90,17 @@ async function requestForResolution(
   principal: Principal,
 ): Promise<RequestResolutionRow> {
   const request = await first<RequestResolutionRow>(db, {
-    q: `SELECT request.*, workspace.owner_id, workspace.manifest
+    q: `SELECT request.*, workspace.owner_id, workspace.manifest,
+               workspace.org_id, workspace.owner_membership_id
         FROM credential_requests request
         JOIN workspaces workspace ON workspace.id = request.workspace_id
         WHERE request.id = ?1 LIMIT 1`,
     v: [requestId],
   });
-  if (
-    request === null ||
-    (!principal.platformOperator && request.owner_id !== principal.id)
-  ) {
+  if (request === null || request.org_id !== principal.orgId) {
     throw new HttpError(404, "credential request not found");
   }
+  if (!canControlWorkspace(principal, request)) throw new HttpError(403, "forbidden");
   if (request.state !== "pending") {
     throw new HttpError(409, "credential request is not pending");
   }
@@ -109,7 +111,8 @@ async function requireGrantableIntegration(
   db: Db,
   request: RequestResolutionRow,
 ): Promise<void> {
-  const integration = await integrationByName(db, request.integration_name);
+  if (request.org_id === null) throw new HttpError(409, "workspace has no organization");
+  const integration = await integrationByName(db, request.integration_name, request.org_id);
   if (integration === null) {
     throw new HttpError(409, "integration is not configured");
   }
@@ -225,9 +228,10 @@ export async function listRequests(
         FROM credential_requests request
         JOIN workspaces workspace ON workspace.id = request.workspace_id
         WHERE request.state = ?1
-          AND (?2 = 1 OR workspace.owner_id = ?3)
+          AND workspace.org_id = ?2
+          AND (?3 = 'admin' OR workspace.owner_membership_id = ?4)
         ORDER BY request.created_at, request.id`,
-    v: [state, principal.platformOperator ? 1 : 0, principal.id],
+    v: [state, principal.orgId, principal.role, principal.membershipId],
   });
   return requests.map((request) => ({
     id: request.id,

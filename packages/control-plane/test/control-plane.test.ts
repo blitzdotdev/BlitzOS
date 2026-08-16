@@ -522,7 +522,7 @@ describe("control plane security and lifecycle", () => {
     );
   });
 
-  it("enforces the default 10-workspace per-principal concurrent quota", async () => {
+  it("enforces the default 10-workspace per-organization concurrent quota", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     for (let index = 0; index < 10; index += 1) {
@@ -541,13 +541,13 @@ describe("control plane security and lifecycle", () => {
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toEqual({
       error:
-        "concurrent workspace quota of 10 reached; destroy an existing workspace before creating another",
+        "organization workspace quota reached; destroy an existing workspace before creating another",
       retryAction: null,
     });
     expect(providers.createCalls).toBe(10);
   });
 
-  it("honors MAX_CONCURRENT_WORKSPACES and counts every non-destroyed lifecycle state", async () => {
+  it("honors org vm_limit and counts every non-destroyed lifecycle state", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const now = Date.now();
@@ -555,8 +555,8 @@ describe("control plane security and lifecycle", () => {
       await env.DB
         .prepare(
           `INSERT INTO workspaces
-           (id, owner_id, phase, revision, created_at, updated_at)
-           VALUES (?1, 'operator', ?2, 1, ?3, ?3)`,
+           (id, owner_id, org_id, owner_membership_id, phase, revision, created_at, updated_at)
+           VALUES (?1, 'operator', 'personal', 'personal', ?2, 1, ?3, ?3)`,
         )
         .bind(`quota-${index}`, phase, now)
         .run();
@@ -564,8 +564,8 @@ describe("control plane security and lifecycle", () => {
     await env.DB
       .prepare(
         `INSERT INTO workspaces
-         (id, owner_id, phase, revision, created_at, updated_at)
-         VALUES ('old-tombstone', 'operator', 'destroyed', 1, ?1, ?1)`,
+         (id, owner_id, org_id, owner_membership_id, phase, revision, created_at, updated_at)
+         VALUES ('old-tombstone', 'operator', 'personal', 'personal', 'destroyed', 1, ?1, ?1)`,
       )
       .bind(now)
       .run();
@@ -581,8 +581,9 @@ describe("control plane security and lifecycle", () => {
             sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
           }),
         },
-        { MAX_CONCURRENT_WORKSPACES: "4" },
       );
+
+    await env.DB.prepare("UPDATE orgs SET vm_limit = 4 WHERE id = 'personal'").run();
 
     const rejected = await request();
     expect(rejected.status).toBe(409);
@@ -598,6 +599,7 @@ describe("control plane security and lifecycle", () => {
   it("atomically enforces concurrent quota requests without leaking a workspace row", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
+    await env.DB.prepare("UPDATE orgs SET vm_limit = 1 WHERE id = 'personal'").run();
     const request = () =>
       appRequest(
         app,
@@ -610,7 +612,6 @@ describe("control plane security and lifecycle", () => {
             sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
           }),
         },
-        { MAX_CONCURRENT_WORKSPACES: "1" },
       );
 
     const responses = await Promise.all([request(), request()]);

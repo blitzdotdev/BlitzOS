@@ -2,7 +2,6 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeSource, sha256 } from "./source-utils.mjs";
-
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
@@ -32,6 +31,9 @@ export const CORE_MANIFEST = Object.freeze([
   "core/credentials/proxy.ts",
   "core/http.ts",
   "core/identity/google.ts",
+  "core/identity/grants.ts",
+  "core/identity/invites.ts",
+  "core/identity/members.ts",
   "core/identity/oauth-state.ts",
   "core/identity/orgs.ts",
   "core/identity/routes.ts",
@@ -43,6 +45,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/types.ts",
   "core/volumes.ts",
   "core/webapp-state.ts",
+  "core/workspace-access.ts", "core/workspace-records.ts",
   "core/workspaces.ts",
   "core/providers/registry.ts",
   "core/providers/types.ts",
@@ -95,7 +98,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "google_user_id", type: "text", sqlType: "text", unique: true },
         { name: "email", type: "email", sqlType: "text", notNull: true, unique: true, check: "email = lower(email)" },
-        { name: "name", type: "text", sqlType: "text", notNull: true },
+        { name: "name", type: "text", sqlType: "text", notNull: true, unique: true },
         { name: "avatar_url", type: "url", sqlType: "text" },
         { name: "platform_operator", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "platform_operator IN (0, 1)" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true, check: "created_at >= 0" },
@@ -162,49 +165,40 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "phone_home_used", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "phone_home_used IN (0, 1)" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
-        { name: "manifest", type: "text", sqlType: "text" },
-        { name: "tunnel_id", type: "text", sqlType: "text" },
-        { name: "tunnel_hostname", type: "text", sqlType: "text" },
-        { name: "dns_record_id", type: "text", sqlType: "text" },
-        { name: "org_id", type: "text", sqlType: "text", foreignKey: { table: "orgs", column: "id" } },
-        { name: "owner_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } },
+        { name: "manifest", type: "text", sqlType: "text" }, { name: "tunnel_id", type: "text", sqlType: "text" },
+        { name: "tunnel_hostname", type: "text", sqlType: "text" }, { name: "dns_record_id", type: "text", sqlType: "text" },
+        { name: "org_id", type: "text", sqlType: "text", foreignKey: { table: "orgs", column: "id" } }, { name: "owner_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } },
       ],
-      indexes: [
-        { name: "owner", fields: ["owner_id", "created_at"] },
-        { name: "phase", fields: ["phase", "updated_at"] },
-      ],
+      indexes: [{ name: "owner", fields: ["owner_id", "created_at"] }, { name: "phase", fields: ["phase", "updated_at"] }],
       extensions: [DENY_ALL_RULES],
     },
     {
       name: "invites",
       fields: [
-        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "code_hash", type: "text", sqlType: "text", notNull: true, unique: true, check: "length(code_hash) = 43" },
-        { name: "email", type: "email", sqlType: "text", check: "email IS NULL OR email = lower(email)" },
-        { name: "target_org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
-        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member')" },
-        { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('ready', 'redeemed', 'revoked', 'expired')" },
-        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
-        { name: "redeemed_by_user_id", type: "text", sqlType: "text", foreignKey: { table: "users", column: "id" } },
-        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
-        { name: "expires_at", type: "integer", sqlType: "integer", notNull: true },
-        { name: "redeemed_at", type: "integer", sqlType: "integer" },
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "code_hash", type: "text", sqlType: "text", notNull: true, unique: true, check: "length(code_hash) = 43" },
+        { name: "email", type: "email", sqlType: "text", check: "email IS NULL OR email = lower(email)" }, { name: "target_org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
+        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member')" }, { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('ready', 'redeemed', 'revoked', 'expired')" },
+        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "redeemed_by_user_id", type: "text", sqlType: "text", foreignKey: { table: "users", column: "id" } },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "expires_at", type: "integer", sqlType: "integer", notNull: true }, { name: "redeemed_at", type: "integer", sqlType: "integer" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "volume_ownership",
+      fields: [
+        { name: "volume_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
+        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
       ],
       extensions: [DENY_ALL_RULES],
     },
     {
       name: "workspace_grants",
       fields: [
-        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
-        { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
-        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" },
-        { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
-        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
+        { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('editor', 'viewer')" },
+        { name: "granted_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
       ],
-      indexes: [
-        { name: "identity", unique: true, fields: ["workspace_id", "membership_id"] },
-      ],
+      indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "membership_id"] }],
       extensions: [DENY_ALL_RULES],
     },
     {
@@ -288,7 +282,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       name: "integrations",
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "name", type: "text", sqlType: "text", notNull: true, unique: true },
+        { name: "name", type: "text", sqlType: "text", notNull: true },
         { name: "provider", type: "text", sqlType: "text", notNull: true },
         { name: "kind", type: "text", sqlType: "text", notNull: true },
         { name: "custody", type: "text", sqlType: "text", notNull: true, default: { l: "cp" } },
@@ -298,7 +292,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "created_by", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "revoked_at", type: "integer", sqlType: "integer" },
+        { name: "org_id", type: "text", sqlType: "text", foreignKey: { table: "orgs", column: "id" } }, { name: "created_by_membership_id", type: "text", sqlType: "text", foreignKey: { table: "memberships", column: "id" } }, { name: "scoped_name", type: "text", sqlType: "text" },
       ],
+      indexes: [{ name: "org_name", unique: true, fields: ["org_id", "scoped_name"] }, { name: "org", fields: ["org_id", "created_at", "scoped_name"] }],
       extensions: [DENY_ALL_RULES],
     },
     {
@@ -596,6 +592,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+    reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
   };
 }
 

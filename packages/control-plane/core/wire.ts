@@ -74,6 +74,11 @@ export interface WorkspaceView {
   } | null;
   volumeId: string | null;
   error: string | null;
+  role: "owner" | "admin" | "editor" | null;
+  owner: {
+    name: string;
+    avatarUrl: string | null;
+  };
 }
 
 export interface ListMachineTypesResponse {
@@ -129,6 +134,8 @@ export interface ListVolumesResponse {
 export interface DeleteVolumeResponse {
   id: string;
 }
+
+export const INVITE_TTL_DAYS = 7;
 
 export interface FeedResponse {
   version: string;

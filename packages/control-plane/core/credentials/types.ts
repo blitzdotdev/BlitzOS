@@ -31,6 +31,8 @@ export interface Integration {
   created_by: string;
   created_at: number;
   revoked_at: number | null;
+  org_id: string | null;
+  created_by_membership_id: string | null;
 }
 
 export interface MintRequest {

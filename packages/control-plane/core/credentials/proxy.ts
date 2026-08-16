@@ -67,7 +67,7 @@ async function proxyLease(
     .join(", ");
   const nowParameter = candidates.length + 2;
   return first<ProxyLeaseRow>(db, {
-    q: `SELECT lease.token_hash, integration.name AS integration_name,
+    q: `SELECT lease.token_hash, integration.scoped_name AS integration_name,
                integration.root_ciphertext, integration.config
         FROM credential_leases lease
         JOIN integrations integration ON integration.id = lease.integration_id

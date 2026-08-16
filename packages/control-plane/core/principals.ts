@@ -1,7 +1,6 @@
 import { DUMMY_HASH, hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
-import { isString } from "./http.js";
 
 export interface Principal {
   id: string;

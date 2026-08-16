@@ -281,20 +281,27 @@ export function resolveMinter(integration: Integration): Minter | null {
 export async function integrationByName(
   db: Db,
   name: string,
+  orgId: string,
   activeOnly = true,
 ): Promise<Integration | null> {
   return first<Integration>(db, {
-    q: `SELECT * FROM integrations
-        WHERE name = ?1${activeOnly ? " AND revoked_at IS NULL" : ""}
+    q: `SELECT id, scoped_name AS name, provider, kind, custody, config,
+               root_ciphertext, usable_by, created_by, created_at, revoked_at,
+               org_id, created_by_membership_id
+        FROM integrations
+        WHERE scoped_name = ?1 AND org_id = ?2${activeOnly ? " AND revoked_at IS NULL" : ""}
         LIMIT 1`,
-    v: [name],
+    v: [name, orgId],
   });
 }
 
-export async function activeIntegrations(db: Db): Promise<Integration[]> {
+export async function activeIntegrations(db: Db, orgId: string): Promise<Integration[]> {
   return rows<Integration>(db, {
-    q: "SELECT * FROM integrations WHERE revoked_at IS NULL ORDER BY created_at, name",
-    v: [],
+    q: `SELECT id, scoped_name AS name, provider, kind, custody, config,
+               root_ciphertext, usable_by, created_by, created_at, revoked_at,
+               org_id, created_by_membership_id FROM integrations
+        WHERE org_id = ?1 AND revoked_at IS NULL ORDER BY created_at, scoped_name`,
+    v: [orgId],
   });
 }
 
@@ -315,6 +322,8 @@ function validateServedIntegration(
     created_by: "",
     created_at: 0,
     revoked_at: null,
+    org_id: null,
+    created_by_membership_id: null,
   };
   if (resolveMinter(candidate) === null) {
     throw new HttpError(400, `credential kind ${kind} is not available`);
@@ -330,13 +339,14 @@ export function addIntegrationRoutes(
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
   router.get("/integrations", async (context) => {
-    await requirePrincipal(context);
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const integrations = await rows<
-      Pick<Integration, "name" | "provider" | "kind" | "custody" | "revoked_at">
+      Pick<Integration, "name" | "provider" | "kind" | "custody" | "revoked_at" | "created_by">
     >(runtimeFactory(context).db, {
-      q: `SELECT name, provider, kind, custody, revoked_at
-          FROM integrations ORDER BY created_at, name`,
-      v: [],
+      q: `SELECT scoped_name AS name, provider, kind, custody, revoked_at, created_by
+          FROM integrations WHERE org_id = ?1 ORDER BY created_at, scoped_name`,
+      v: [principal.orgId],
     });
     return context.json({
       integrations: integrations.map((integration) => ({
@@ -345,12 +355,16 @@ export function addIntegrationRoutes(
         kind: integration.kind,
         custody: integration.custody,
         status: integration.revoked_at === null ? "active" : "revoked",
+        createdBy: integration.created_by,
       })),
     });
   });
 
   router.put("/integrations/:name", async (context) => {
     const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null || principal.role !== "admin") {
+      throw new HttpError(403, "organization admin required");
+    }
     const name = requiredString(context.req.param("name"), "name", 256);
     const value = await readJson(context.req.raw);
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
@@ -368,22 +382,25 @@ export function addIntegrationRoutes(
     await validateRoot(value.kind, root);
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);
-    const existing = await integrationByName(runtime.db, name, false);
+    const existing = await integrationByName(runtime.db, name, principal.orgId, false);
     const id = existing?.id ?? crypto.randomUUID();
     const now = Date.now();
     const rootCiphertext = await sealRoot(runtime.credentialMasterKey, name, root);
     await rows(runtime.db, {
       q: `INSERT INTO integrations
-          (id, name, provider, kind, custody, config, root_ciphertext,
-           usable_by, created_by, created_at, revoked_at)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)
-          ON CONFLICT(name) DO UPDATE SET
+          (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
+           usable_by, created_by, created_at, revoked_at, org_id,
+           created_by_membership_id)
+          VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
+          ON CONFLICT(org_id, scoped_name) DO UPDATE SET
             provider = excluded.provider,
             kind = excluded.kind,
             custody = excluded.custody,
             config = excluded.config,
             root_ciphertext = excluded.root_ciphertext,
             usable_by = excluded.usable_by,
+            created_by = excluded.created_by,
+            created_by_membership_id = excluded.created_by_membership_id,
             revoked_at = NULL`,
       v: [
         id,
@@ -396,16 +413,21 @@ export function addIntegrationRoutes(
         usableBy,
         principal.id,
         now,
+        principal.orgId,
+        principal.membershipId,
       ],
     });
     return context.body(null, 204);
   });
 
   router.delete("/integrations/:name", async (context) => {
-    await requirePrincipal(context);
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.role !== "admin") {
+      throw new HttpError(403, "organization admin required");
+    }
     const name = requiredString(context.req.param("name"), "name", 256);
     const runtime = runtimeFactory(context);
-    const integration = await integrationByName(runtime.db, name, false);
+    const integration = await integrationByName(runtime.db, name, principal.orgId, false);
     if (integration === null) throw new HttpError(404, "integration not found");
     await transaction(runtime.db, [
       {

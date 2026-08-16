@@ -23,12 +23,15 @@ import {
   resolveMinter,
 } from "./registry.js";
 import type { Integration, MintResult } from "./types.js";
+import { canControlWorkspace } from "../workspace-access.js";
 
 interface WorkspaceCredentialRow {
   id: string;
   owner_id: string;
   phase: string;
   manifest: string | null;
+  org_id: string | null;
+  owner_membership_id: string | null;
 }
 
 interface ParsedMintBody {
@@ -60,16 +63,15 @@ function parseMintBody(value: unknown): ParsedMintBody {
 }
 
 export function authorize(
-  principalId: string,
-  platformOperator: boolean,
+  principal: Principal,
   workspace: WorkspaceCredentialRow,
   integration: Integration,
   requestedScopes: readonly string[],
 ): boolean {
-  const callerIsAdminOrOwner = platformOperator || workspace.owner_id === principalId;
+  const callerIsAdminOrOwner = canControlWorkspace(principal, workspace);
   const requestFitsCeiling =
     manifestAllows(workspace.manifest, integration.name, requestedScopes) &&
-    usableByAllows(integration, principalId);
+    usableByAllows(integration, principal.id);
   return callerIsAdminOrOwner && requestFitsCeiling;
 }
 
@@ -101,15 +103,14 @@ async function mintOne(
   runtime: ReturnType<RuntimeFactory>,
   workspace: WorkspaceCredentialRow,
   boxId: string,
-  principalId: string,
-  platformOperator: boolean,
+  principal: Principal,
   origin: string,
   integration: Integration,
   scopes: string[],
   denied: "error" | "skip",
 ): Promise<MintResult | null> {
   const now = Date.now();
-  if (!authorize(principalId, platformOperator, workspace, integration, scopes)) {
+  if (!authorize(principal, workspace, integration, scopes)) {
     if (denied === "skip") return null;
     await recordDenied(
       runtime,
@@ -148,7 +149,7 @@ async function mintOne(
   const minted = await minter.mint(root, integration, {
     workspaceId: workspace.id,
     boxId,
-    principalId,
+    principalId: principal.id,
     scopes,
     now,
     origin,
@@ -188,16 +189,32 @@ export function addCredentialRoutes(
       throw new HttpError(403, "a box may only mint for its own workspace");
     }
     const workspace = await first<WorkspaceCredentialRow>(runtime.db, {
-      q: "SELECT id, owner_id, phase, manifest FROM workspaces WHERE id = ?1 LIMIT 1",
+      q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
+          FROM workspaces WHERE id = ?1 LIMIT 1`,
       v: [workspaceId],
     });
     if (workspace === null || workspace.phase !== "ready") {
       throw new HttpError(409, "workspace is not ready for credential minting");
     }
+    if (workspace.org_id === null) throw new HttpError(409, "workspace has no organization");
+    const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
+      q: `SELECT id, role FROM memberships
+          WHERE user_id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
+      v: [box.principalId, workspace.org_id],
+    });
+    const boxPrincipal: Principal = {
+      id: box.principalId,
+      unixName: "blitz",
+      harnesses: [],
+      membershipId: membership?.id ?? null,
+      orgId: membership === null ? null : workspace.org_id,
+      role: membership?.role ?? null,
+      platformOperator: box.platformOperator,
+    };
     const input = parseMintBody(await readJson(context.req.raw));
     const origin = new URL(context.req.url).origin;
     if (input.integration !== undefined) {
-      const integration = await integrationByName(runtime.db, input.integration);
+      const integration = await integrationByName(runtime.db, input.integration, workspace.org_id);
       if (integration === null) {
         const requestId = await fileRequest(
           runtime.db,
@@ -212,8 +229,7 @@ export function addCredentialRoutes(
         runtime,
         workspace,
         box.id,
-        box.principalId,
-        box.platformOperator,
+        boxPrincipal,
         origin,
         integration,
         scopes,
@@ -224,13 +240,12 @@ export function addCredentialRoutes(
     }
 
     const results: MintResult[] = [];
-    for (const integration of await activeIntegrations(runtime.db)) {
+    for (const integration of await activeIntegrations(runtime.db, workspace.org_id)) {
       const result = await mintOne(
         runtime,
         workspace,
         box.id,
-        box.principalId,
-        box.platformOperator,
+        boxPrincipal,
         origin,
         integration,
         integrationDefaultScopes(integration),

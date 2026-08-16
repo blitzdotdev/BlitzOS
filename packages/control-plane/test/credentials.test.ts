@@ -480,7 +480,7 @@ describe("credential control plane", () => {
       `{"kind":"file","path":"/run/credentials/default","value":"${ROOT}"}`,
     );
     const stored = await env.DB
-      .prepare("SELECT config, root_ciphertext FROM integrations WHERE name = ?1")
+      .prepare("SELECT config, root_ciphertext FROM integrations WHERE scoped_name = ?1")
       .bind("hetzner-prod")
       .first<{ config: string; root_ciphertext: string }>();
     expect(stored?.root_ciphertext).not.toBe(ROOT);
@@ -1088,6 +1088,7 @@ describe("credential control plane", () => {
           kind: "static",
           custody: "cp",
           status: "active",
+          createdBy: "operator",
         },
       ],
     });
@@ -1116,7 +1117,7 @@ describe("credential control plane", () => {
     expect(
       await env.DB
         .prepare(
-          "SELECT revoked_at IS NOT NULL AS revoked, root_ciphertext FROM integrations WHERE name = ?1",
+          "SELECT revoked_at IS NOT NULL AS revoked, root_ciphertext FROM integrations WHERE scoped_name = ?1",
         )
         .bind("hetzner-prod")
         .first(),

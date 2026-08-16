@@ -10,6 +10,7 @@ export interface GoogleOAuthStateV1 {
   codeVerifier: string;
   expiresAt: number;
   bootstrap?: true;
+  inviteCode?: string;
 }
 
 export interface CreatedGoogleOAuthState {
@@ -67,6 +68,7 @@ function parseState(value: string): GoogleOAuthStateV1 | null {
     || !isNumber(parsed.expiresAt)
     || !Number.isSafeInteger(parsed.expiresAt)
     || (parsed.bootstrap !== undefined && parsed.bootstrap !== true)
+    || (parsed.inviteCode !== undefined && (!isString(parsed.inviteCode) || !/^[A-Za-z0-9_-]{43}$/u.test(parsed.inviteCode)))
   ) return null;
   const state: GoogleOAuthStateV1 = {
     version: 1,
@@ -75,6 +77,7 @@ function parseState(value: string): GoogleOAuthStateV1 | null {
     expiresAt: parsed.expiresAt,
   };
   if (parsed.bootstrap === true) state.bootstrap = true;
+  if (isString(parsed.inviteCode)) state.inviteCode = parsed.inviteCode;
   return state;
 }
 
@@ -86,6 +89,7 @@ export async function createGoogleOAuthState(
   signingSecret: string,
   now = Date.now(),
   bootstrap = false,
+  inviteCode?: string,
 ): Promise<CreatedGoogleOAuthState> {
   const state: GoogleOAuthStateV1 = {
     version: 1,
@@ -94,6 +98,7 @@ export async function createGoogleOAuthState(
     expiresAt: now + OAUTH_STATE_TTL_MS,
   };
   if (bootstrap) state.bootstrap = true;
+  if (inviteCode !== undefined) state.inviteCode = inviteCode;
   const payload = base64Url(new TextEncoder().encode(JSON.stringify(state)));
   const signature = await hmac(payload, signingSecret);
   const verifierDigest = await crypto.subtle.digest(

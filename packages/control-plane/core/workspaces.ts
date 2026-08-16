@@ -15,8 +15,8 @@ import {
 } from "./http.js";
 import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
-import { cookieValue, SESSION_COOKIE } from "./principals.js";
-import { isMicrovmProviderId } from "./providers/microvm.js";
+import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
+import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
 import type {
@@ -28,43 +28,9 @@ import type {
 import type {
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
-  Phase,
   PollResponse,
-  RetryAction,
-  WorkspaceView,
 } from "./wire.js";
-
-export interface WorkspaceRow {
-  id: string;
-  name: string | null;
-  machine_type_id: string;
-  owner_id: string;
-  phase: Phase;
-  revision: number;
-  vm_id: string | null;
-  volume_id: string | null;
-  ssh_host: string | null;
-  ssh_port: number | null;
-  ssh_user: string | null;
-  ssh_host_public_key: string | null;
-  error: string | null;
-  phone_home_hash: string | null;
-  phone_home_used: number;
-  created_at: number;
-  updated_at: number;
-  manifest: string | null;
-  tunnel_id: string | null;
-  tunnel_hostname: string | null;
-  dns_record_id: string | null;
-}
-
-const retryActions = {
-  creating: "poll",
-  ready: null,
-  destroying: "poll",
-  destroyed: "create",
-  error: "destroy",
-} satisfies Record<Phase, RetryAction>;
+export type { WorkspaceRow } from "./workspace-records.js";
 
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
@@ -100,81 +66,6 @@ export interface PhoneHomeResponse {
   refresh_token: string;
 }
 
-function machineTypeIdForRow(row: WorkspaceRow): string {
-  return row.machine_type_id === "unknown"
-      && row.vm_id !== null
-      && isMicrovmProviderId(row.vm_id)
-    ? "mv-legacy"
-    : row.machine_type_id;
-}
-
-export function workspaceView(row: WorkspaceRow): WorkspaceView {
-  const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
-  return {
-    id: row.id,
-    name: row.name ?? row.id,
-    machineTypeId: machineTypeIdForRow(row),
-    phase: row.phase,
-    retryAction: retryActions[row.phase],
-    canObserve: row.phase === "ready",
-    launchable: row.phase === "ready",
-    revision: row.revision,
-    ssh:
-      hasSsh && row.phase !== "destroyed"
-        ? {
-            host: row.ssh_host ?? "",
-            port: row.ssh_port ?? 22,
-            user: row.ssh_user ?? "root",
-            hostPublicKey: row.ssh_host_public_key,
-          }
-        : null,
-    volumeId: row.volume_id,
-    error: row.error,
-  };
-}
-
-async function workspaceById(db: Db, id: string): Promise<WorkspaceRow | null> {
-  return first<WorkspaceRow>(db, {
-    q: "SELECT * FROM workspaces WHERE id = ?1 LIMIT 1",
-    v: [id],
-  });
-}
-
-/** One-read auth + ownership + row fetch for the hot webApp proxy path.
- * Falls back to the ordinary principal lookup only on a miss, so the
- * 401-versus-404 contract stays byte-identical. */
-async function webAppWorkspaceForRequest(
-  runtime: CoreRuntime,
-  requirePrincipal: (context: CoreContext) => Promise<Principal>,
-  context: CoreContext,
-  id: string,
-): Promise<WorkspaceRow> {
-  const token = cookieValue(context.req.raw, SESSION_COOKIE);
-  if (token !== null) {
-    const hash = await hashSecret(token);
-    const row = await first<WorkspaceRow & { session_token_hash: string }>(runtime.db, {
-      q: `SELECT w.*, s.token_hash AS session_token_hash
-          FROM sessions s
-          JOIN memberships m
-            ON m.id = s.membership_id
-           AND m.user_id = s.principal_id
-           AND m.status = 'active'
-          JOIN workspaces w ON w.owner_id = s.principal_id
-          WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND w.id = ?3
-          LIMIT 1`,
-      v: [hash, Date.now(), id],
-    });
-    if (row !== null && (await matchesStoredHash(token, row.session_token_hash))) {
-      return row;
-    }
-  }
-  const principal = await requirePrincipal(context);
-  const row = await workspaceById(runtime.db, id);
-  if (row === null || row.owner_id !== principal.id) {
-    throw new HttpError(404, "workspace not found");
-  }
-  return row;
-}
 
 function providerForVmId(runtime: CoreRuntime, vmId: string): VmProvider {
   const provider = runtime.providers.vmRegistry.forVmId(vmId);
@@ -397,6 +288,9 @@ export function addWorkspaceRoutes(
 ): void {
   router.post("/workspaces", async (context) => {
     const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
     const input = parseCreateWorkspace(await readJson(context.req.raw));
     const runtime = runtimeFactory(context);
     const vmProvider = runtime.providers.vmRegistry.forMachineType(
@@ -409,6 +303,14 @@ export function addWorkspaceRoutes(
         `machine type ${input.machineTypeId} does not support volumes`,
       );
     }
+    if (input.volumeId !== undefined) {
+      const owned = await first<{ volume_id: string }>(runtime.db, {
+        q: `SELECT volume_id FROM volume_ownership
+            WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1`,
+        v: [input.volumeId, principal.orgId],
+      });
+      if (owned === null) throw new HttpError(404, "volume not found");
+    }
     const id = crypto.randomUUID();
     const capability = randomToken();
     const now = Date.now();
@@ -416,30 +318,31 @@ export function addWorkspaceRoutes(
 
     const inserted = await rows(runtime.db, {
       q: `INSERT INTO workspaces
-          (id, name, owner_id, machine_type_id, phase, revision, volume_id,
-           phone_home_hash, manifest, created_at, updated_at)
-          SELECT ?1, ?2, ?3, ?4, 'creating', 1, ?5, ?6, ?7, ?8, ?8
+          (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
+           phase, revision, volume_id, phone_home_hash, manifest, created_at, updated_at)
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?10
           WHERE (
             SELECT COUNT(*) FROM workspaces
-            WHERE owner_id = ?3 AND phase IN ('creating', 'ready', 'destroying', 'error')
-          ) < ?9
+            WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
+          ) < (SELECT vm_limit FROM orgs WHERE id = ?4)
           RETURNING id`,
       v: [
         id,
         input.name ?? randomWorkspaceName(),
         principal.id,
+        principal.orgId,
+        principal.membershipId,
         input.machineTypeId,
         input.volumeId ?? null,
         await hashSecret(capability),
         input.manifest === undefined ? null : manifestJson(input.manifest),
         now,
-        runtime.vars.maxConcurrentWorkspaces,
       ],
     });
     if (inserted.length !== 1) {
       throw new HttpError(
         409,
-        `concurrent workspace quota of ${runtime.vars.maxConcurrentWorkspaces} reached; destroy an existing workspace before creating another`,
+        "organization workspace quota reached; destroy an existing workspace before creating another",
       );
     }
 
@@ -528,21 +431,54 @@ export function addWorkspaceRoutes(
         providerOperationError(error),
         Date.now(),
       );
-      return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) }, 201);
+      return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
     }
 
     const row = await workspaceById(runtime.db, id);
     if (row === null) throw new Error("workspace disappeared during create");
-    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) }, 201);
+    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
   });
 
   router.get("/workspaces", async (context) => {
     const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
     const result = await rows<WorkspaceRow>(runtimeFactory(context).db, {
-      q: "SELECT * FROM workspaces WHERE owner_id = ?1 ORDER BY created_at, id",
-      v: [principal.id],
+      q: `SELECT w.*, grant.role AS grant_role,
+                 owner_user.name AS owner_name,
+                 owner_user.avatar_url AS owner_avatar_url
+          FROM workspaces w
+          JOIN memberships owner ON owner.id = w.owner_membership_id
+          JOIN users owner_user ON owner_user.id = owner.user_id
+          LEFT JOIN workspace_grants grant
+            ON grant.workspace_id = w.id AND grant.membership_id = ?1
+          WHERE w.org_id = ?2 AND w.phase != 'destroyed'
+          ORDER BY w.created_at, w.id`,
+      v: [principal.membershipId, principal.orgId],
     });
-    return context.json<PollResponse>({ workspaces: result.map(workspaceView) });
+    return context.json<PollResponse>({
+      workspaces: result.map((row) => workspaceView(row, workspaceRole(principal, row))),
+    });
+  });
+
+  router.get("/workspaces/:id", async (context) => {
+    const principal = await requirePrincipal(context);
+    const row = await workspaceById(runtimeFactory(context).db, context.req.param("id"));
+    if (row === null || row.org_id !== principal.orgId || row.phase === "destroyed") {
+      throw new HttpError(404, "workspace not found");
+    }
+    const grant = principal.membershipId === null
+      ? null
+      : await first<{ role: "editor" | "viewer" }>(runtimeFactory(context).db, {
+          q: `SELECT role FROM workspace_grants
+              WHERE workspace_id = ?1 AND membership_id = ?2 LIMIT 1`,
+          v: [row.id, principal.membershipId],
+        });
+    row.grant_role = grant?.role ?? null;
+    const role = workspaceRole(principal, row);
+    if (role === null) throw new HttpError(403, "forbidden");
+    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, role) });
   });
 
   const webApp = async (context: CoreContext): Promise<Response> => {
@@ -607,11 +543,14 @@ export function addWorkspaceRoutes(
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
     let row = await workspaceById(runtime.db, id);
-    if (row === null || row.owner_id !== principal.id) {
+    if (row === null || row.org_id !== principal.orgId) {
       throw new HttpError(404, "workspace not found");
     }
+    if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
     if (row.phase === "destroyed") {
-      return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row) });
+      return context.json<CreateWorkspaceResponse>({
+        workspace: workspaceView(row, workspaceRole(principal, row)),
+      });
     }
     const vmProvider = row.vm_id === null
       ? undefined
@@ -643,7 +582,9 @@ export function addWorkspaceRoutes(
         // identifiers; the janitor retries until Cloudflare cleanup lands.
         const pending = await workspaceById(runtime.db, id);
         if (pending === null) throw new Error("workspace disappeared during destroy");
-        return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(pending) });
+        return context.json<CreateWorkspaceResponse>({
+          workspace: workspaceView(pending, workspaceRole(principal, pending)),
+        });
       }
     }
 
@@ -662,7 +603,9 @@ export function addWorkspaceRoutes(
     ]);
     const destroyed = await workspaceById(runtime.db, id);
     if (destroyed === null) throw new Error("workspace disappeared after destroy");
-    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(destroyed) });
+    return context.json<CreateWorkspaceResponse>({
+      workspace: workspaceView(destroyed, workspaceRole(principal, destroyed)),
+    });
   });
 
   router.post("/workspaces/:id/phone-home/:token", async (context) => {

@@ -1,10 +1,9 @@
-import { randomToken, safeEqualSecret } from "../crypto.js";
+import { hashSecret, randomToken, safeEqualSecret } from "../crypto.js";
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, isString } from "../http.js";
 import {
   cookieValue,
-  mintUserSession,
   sessionCookie,
 } from "../principals.js";
 import { fetchBoundedJson, type JsonValue } from "../providers/json-fetch.js";
@@ -16,6 +15,7 @@ import {
   verifyGoogleOAuthStateCookie,
 } from "./oauth-state.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
+import { redeemInviteSession } from "./invites.js";
 
 const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -145,9 +145,18 @@ async function resolveUser(
       v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
     });
   } else {
-    const id = crypto.randomUUID();
-    await rows(db, {
-      q: `INSERT INTO users
+    const stub = await first<UserRow & { google_user_id: string | null }>(db, {
+      q: `SELECT id, platform_operator, name, google_user_id
+          FROM users WHERE email = ?1 LIMIT 1`,
+      v: [profile.email],
+    });
+    if (stub?.google_user_id !== null && stub !== null) {
+      throw new HttpError(409, "email is already bound to another Google identity");
+    }
+    const id = stub?.id ?? crypto.randomUUID();
+    if (stub === null) {
+      await rows(db, {
+        q: `INSERT INTO users
           (id, google_user_id, email, name, avatar_url, platform_operator,
            created_at, updated_at)
           VALUES (?1, ?2, ?3, ?4, ?5,
@@ -155,16 +164,30 @@ async function resolveUser(
                    AND NOT EXISTS (SELECT 1 FROM users WHERE platform_operator = 1)
                  THEN 1 ELSE 0 END,
             ?7, ?7)`,
-      v: [
-        id,
-        profile.googleUserId,
-        profile.email,
-        profile.name,
-        profile.avatarUrl,
-        bootstrapEnabled ? 1 : 0,
-        now,
-      ],
-    });
+        v: [
+          id,
+          profile.googleUserId,
+          profile.email,
+          profile.name,
+          profile.avatarUrl,
+          bootstrapEnabled ? 1 : 0,
+          now,
+        ],
+      });
+    } else {
+      await transaction(db, [
+        {
+          q: `UPDATE users SET google_user_id = ?1, email = ?2, name = ?3,
+                  avatar_url = ?4, updated_at = ?5 WHERE id = ?6 AND google_user_id IS NULL`,
+          v: [profile.googleUserId, profile.email, profile.name, profile.avatarUrl, now, id],
+        },
+        {
+          q: `UPDATE memberships SET status = 'active'
+              WHERE user_id = ?1 AND status = 'invited'`,
+          v: [id],
+        },
+      ]);
+    }
     user = { id, platform_operator: 0, name: profile.name };
   }
   await rows(db, {
@@ -224,6 +247,19 @@ async function bootstrapMembership(
       q: "UPDATE webapp_state SET principal_id = ?1 WHERE principal_id = 'operator'",
       v: [user.id],
     },
+    {
+      q: `UPDATE integrations SET org_id = ?1, created_by = ?2,
+              created_by_membership_id = ?3
+          WHERE created_by = 'operator' AND org_id IS NULL`,
+      v: [orgId, user.id, membershipId],
+    },
+    {
+      q: `INSERT OR IGNORE INTO volume_ownership
+          (volume_id, org_id, created_by_membership_id, created_at)
+          SELECT DISTINCT volume_id, ?1, ?2, ?3 FROM workspaces
+          WHERE owner_id = ?4 AND volume_id IS NOT NULL`,
+      v: [orgId, membershipId, now, user.id],
+    },
   ]);
   if (result[0]?.length !== 1 || result[1]?.length !== 1) {
     const existing = await activeMembership(db, user.id);
@@ -241,6 +277,10 @@ export function addGoogleAuthRoutes(
     const runtime = runtimeFactory(context);
     const requestUrl = new URL(context.req.url);
     const presentedBootstrap = requestUrl.searchParams.get("bootstrap");
+    const inviteCode = requestUrl.searchParams.get("invite") ?? undefined;
+    if (inviteCode !== undefined && !/^[A-Za-z0-9_-]{43}$/u.test(inviteCode)) {
+      throw new HttpError(400, "invalid invite code");
+    }
     const bootstrap = presentedBootstrap !== null;
     if (presentedBootstrap !== null) {
       const matches = await safeEqualSecret(
@@ -255,6 +295,7 @@ export function addGoogleAuthRoutes(
       runtime.vars.googleClientSecret,
       Date.now(),
       bootstrap,
+      inviteCode,
     );
     const redirectUri = `${requestUrl.origin}/auth/google/callback`;
     const authorize = new URL(GOOGLE_AUTHORIZE_URL);
@@ -307,13 +348,31 @@ export function addGoogleAuthRoutes(
     if (membership === null && user.platform_operator === 1) {
       membership = await bootstrapMembership(runtime.db, user, now);
     }
-    const token = await mintUserSession(
-      runtime.db,
-      user.id,
-      membership?.id ?? null,
-      runtime.vars.sessionTtlMs,
-      now,
-    );
+    const token = randomToken();
+    if (state.inviteCode !== undefined) {
+      await redeemInviteSession(
+        runtime.db,
+        state.inviteCode,
+        user.id,
+        profile.email,
+        await hashSecret(token),
+        runtime.vars.sessionTtlMs,
+        now,
+      );
+    } else {
+      await rows(runtime.db, {
+        q: `INSERT INTO sessions
+            (token_hash, principal_id, created_at, expires_at, membership_id)
+            VALUES (?1, ?2, ?3, ?4, ?5)`,
+        v: [
+          await hashSecret(token),
+          user.id,
+          now,
+          now + runtime.vars.sessionTtlMs,
+          membership?.id ?? null,
+        ],
+      });
+    }
     context.header("Set-Cookie", sessionCookie(token, runtime.vars.sessionTtlMs));
     context.header("Set-Cookie", clearGoogleOAuthStateCookie(), { append: true });
     return context.body(null, 302, { Location: "/" });

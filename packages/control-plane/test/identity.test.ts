@@ -178,6 +178,7 @@ describe("identity phase 1", () => {
       },
       membership: null,
       org: null,
+      organizations: [],
     });
     expect(await env.DB.prepare(
       "SELECT membership_id FROM sessions WHERE principal_id = (SELECT id FROM users WHERE google_user_id = 'google-no-membership') ORDER BY created_at DESC LIMIT 1",
