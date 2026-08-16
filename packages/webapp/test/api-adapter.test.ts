@@ -20,12 +20,27 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     ssh: null,
     volumeId: null,
     error: phase === "error" ? "provider failed" : null,
+    role: "owner",
+    owner: { name: "Owner", avatarUrl: null },
   };
 }
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
     googleLoginUrl: () => "/auth/google/start",
+    inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
+    inviteStatus: vi.fn(async () => { throw new Error("unused"); }),
+    switchOrg: vi.fn(async () => undefined),
+    listMembers: vi.fn(async () => ({ members: [] })),
+    createMember: vi.fn(async () => { throw new Error("unused"); }),
+    updateMember: vi.fn(async () => { throw new Error("unused"); }),
+    deleteMember: vi.fn(async () => undefined),
+    listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
+    createInvite: vi.fn(async () => { throw new Error("unused"); }),
+    revokeInvite: vi.fn(async () => undefined),
+    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
+    createWorkspaceGrant: vi.fn(async () => { throw new Error("unused"); }),
+    revokeWorkspaceGrant: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => ({
       user: {
@@ -37,6 +52,10 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
       },
       membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
       org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+      organizations: [{
+        membership: { id: "membership-one", role: "admin" as const, status: "active" as const },
+        org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },
+      }],
     })),
     createOrg: vi.fn(async () => ({
       org: { id: "org-one", slug: "example", name: "Example", vmLimit: 10 },

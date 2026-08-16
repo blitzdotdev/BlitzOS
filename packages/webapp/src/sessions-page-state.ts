@@ -1,16 +1,16 @@
-export type SettingsSection = 'profile' | 'integrations' | 'requests';
+export type SettingsSection = 'profile' | 'members' | 'invites' | 'integrations' | 'requests';
 
 export type AppRoute =
   | { workspaceId: string | null; page: 'webApp' }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|integrations|requests))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,
       page: 'settings',
-      // SAFETY: The regular expression captures only profile, integrations, or requests in group 1.
+      // SAFETY: The regular expression captures only the SettingsSection literals in group 1.
       settingsSection: (settings[1] as SettingsSection | undefined) ?? 'profile',
     };
   }

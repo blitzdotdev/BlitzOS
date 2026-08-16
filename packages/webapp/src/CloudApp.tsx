@@ -33,6 +33,7 @@ import {
 } from './LoadingSkeleton';
 import { machineTypeLabel } from './MachineCatalogGrid';
 import { SettingsHeader, SettingsPage } from './SettingsPage';
+import { ShareWorkspaceDialog } from './ShareWorkspaceDialog';
 import {
   bindVisualViewportGeometry,
   useMobileWebApp,
@@ -206,6 +207,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [signedOut, setSignedOut] = useState(false);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -1164,6 +1166,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         activeSessions={ttydTabs}
         identity={store.viewer?.identity ?? null}
         org={store.viewer?.org ?? null}
+        organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
+        onSwitchOrg={(orgId) => {
+          void client.switchOrg(orgId).then(() => window.location.reload());
+        }}
         onSelectWorkspace={selectWorkspace}
         onSelectSession={(_workspaceId, sessionId) => selectTtydSession(sessionId)}
         onCreateWorkspace={() => {
@@ -1171,10 +1177,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         }}
         onOpenSettings={() => navigateToSettings('profile')}
         onDeleteWorkspace={requestDeleteWorkspace}
+        onShareWorkspace={setShareWorkspaceId}
         mobile={mobileWebApp}
         drawerOpen={drawerOpen}
         onCloseDrawer={() => setDrawerOpen(false)}
       />
+      {shareWorkspaceId && (() => {
+        const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
+        return workspace ? <ShareWorkspaceDialog client={client} workspaceId={workspace.id} workspaceName={workspace.title} onClose={() => setShareWorkspaceId(null)} /> : null;
+      })()}
       <button
         className={`webapp-drawer-scrim${drawerOpen ? ' webapp-drawer-scrim--open' : ''}`}
         type="button"

@@ -17,11 +17,14 @@ type WebAppRailProps = {
   activeSessions: RailSession[];
   identity: IdentityRecord | null;
   org: OrgRecord | null;
+  organizations?: OrgRecord[];
+  onSwitchOrg?: (orgId: string) => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectSession: (workspaceId: string, sessionId: string) => void;
   onCreateWorkspace: () => void;
   onOpenSettings: () => void;
   onDeleteWorkspace?: (workspaceId: string) => void;
+  onShareWorkspace?: (workspaceId: string) => void;
   mobile?: boolean;
   drawerOpen?: boolean;
   onCloseDrawer?: () => void;
@@ -88,11 +91,14 @@ export function WebAppRail({
   activeSessions,
   identity,
   org,
+  organizations = [],
+  onSwitchOrg = () => undefined,
   onSelectWorkspace,
   onSelectSession,
   onCreateWorkspace,
   onOpenSettings,
   onDeleteWorkspace = () => undefined,
+  onShareWorkspace = () => undefined,
   mobile = false,
   drawerOpen = false,
   onCloseDrawer = () => undefined,
@@ -131,9 +137,20 @@ export function WebAppRail({
       inert={mobile && !drawerOpen}
     >
       <div className="webapp-org-wrap">
-        <div className="webapp-org-button">
-          <strong>{orgLabel}</strong>
-        </div>
+        {organizations.length > 1 ? (
+          <select
+            className="webapp-org-button"
+            aria-label="Switch organization"
+            value={org?.id ?? ''}
+            onChange={(event) => onSwitchOrg(event.currentTarget.value)}
+          >
+            {organizations.map((candidate) => (
+              <option key={candidate.id} value={candidate.id}>{candidate.name || candidate.slug}</option>
+            ))}
+          </select>
+        ) : (
+          <div className="webapp-org-button"><strong>{orgLabel}</strong></div>
+        )}
         <button
           className="webapp-workspace-add"
           type="button"
@@ -256,20 +273,23 @@ export function WebAppRail({
                         {machineTypeLabel(workspace.machineType)}
                       </span>
                     )}
-                    {!workspace.canControl && <OwnerTag workspace={workspace} />}
+                    {workspace.accessRole !== 'owner' && <OwnerTag workspace={workspace} />}
                   </span>
                 </div>
-                {workspace.canControl && (
-                  <button
-                    className="webapp-workspace-delete"
-                    type="button"
-                    aria-label={`Delete ${workspace.title}`}
-                    title={`Delete ${workspace.title}`}
-                    tabIndex={sessionsCollapsed ? -1 : undefined}
-                    onClick={() => onDeleteWorkspace(workspace.id)}
-                  >
-                    <span className="mi-trash" aria-hidden="true" />
-                  </button>
+                {(workspace.accessRole === 'owner' || workspace.accessRole === 'admin') && (
+                  <>
+                    <button type="button" aria-label={`Share ${workspace.title}`} title={`Share ${workspace.title}`} onClick={() => onShareWorkspace(workspace.id)}>Share</button>
+                    <button
+                      className="webapp-workspace-delete"
+                      type="button"
+                      aria-label={`Delete ${workspace.title}`}
+                      title={`Delete ${workspace.title}`}
+                      tabIndex={sessionsCollapsed ? -1 : undefined}
+                      onClick={() => onDeleteWorkspace(workspace.id)}
+                    >
+                      <span className="mi-trash" aria-hidden="true" />
+                    </button>
+                  </>
                 )}
               </div>
               {canDiscloseSessions && (
