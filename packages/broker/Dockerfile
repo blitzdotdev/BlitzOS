@@ -1,9 +1,9 @@
 FROM golang:1.26.5-bookworm@sha256:53eeac89074db483fdf0ab3be1df32bf6e47562263d2d0d6baa7f26acb4957dd AS build
 
 WORKDIR /src
-COPY go.mod ./
-COPY cmd ./cmd
-COPY internal ./internal
+COPY packages/broker/go.mod ./
+COPY packages/broker/cmd ./cmd
+COPY packages/broker/internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/blitz-broker ./cmd/blitz-broker
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
@@ -35,8 +35,9 @@ RUN set -eux; \
 
 COPY --from=vendors /usr/local/ /usr/local/
 COPY --from=build /out/blitz-broker /usr/local/bin/blitz-broker
-COPY sshd_config /etc/ssh/sshd_config
-COPY --chmod=0755 entrypoint.sh /usr/local/bin/blitz-broker-entrypoint
+COPY env.defaults /etc/blitz/env.defaults
+COPY packages/broker/sshd_config /etc/ssh/sshd_config
+COPY --chmod=0755 packages/broker/entrypoint.sh /usr/local/bin/blitz-broker-entrypoint
 
 VOLUME ["/var/lib/blitz-broker"]
 EXPOSE 22

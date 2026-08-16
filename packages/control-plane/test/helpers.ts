@@ -40,8 +40,8 @@ interface TestApp {
 
 type TestBindings = Env & {
   JWT_SECRET_MAIN?: string;
-  SESSION_TTL_DAYS?: string;
-  MAX_CONCURRENT_WORKSPACES?: string;
+  SESSION_TTL_DAYS: string;
+  MAX_CONCURRENT_WORKSPACES: string;
   CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
@@ -180,10 +180,11 @@ export function appWithVmProviders(
       boxImageSha256: (context.env as TestBindings).BOX_IMAGE_SHA256,
       boxImageTag: (context.env as TestBindings).BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(
-        (context.env as TestBindings).SESSION_TTL_DAYS,
+        (context.env as TestBindings).SESSION_TTL_DAYS ?? env.SESSION_TTL_DAYS,
       ),
       maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES,
+        (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES ??
+          env.MAX_CONCURRENT_WORKSPACES,
       ),
     },
     providers: {
@@ -212,8 +213,10 @@ export function testRuntime(providers: FakeProviders): CoreRuntime {
       boxImageRef: env.BOX_IMAGE_REF,
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
-      sessionTtlMs: sessionTtlMsFromEnv(undefined),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(undefined),
+      sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
+      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
+        env.MAX_CONCURRENT_WORKSPACES,
+      ),
     },
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),
@@ -235,6 +238,8 @@ export async function appRequest(
     BOX_IMAGE_REF: env.BOX_IMAGE_REF,
     BOX_IMAGE_SHA256: env.BOX_IMAGE_SHA256,
     BOX_IMAGE_TAG: env.BOX_IMAGE_TAG,
+    SESSION_TTL_DAYS: env.SESSION_TTL_DAYS,
+    MAX_CONCURRENT_WORKSPACES: env.MAX_CONCURRENT_WORKSPACES,
     DB: env.DB,
     CRED_MASTER_KEY,
     ...bindings,

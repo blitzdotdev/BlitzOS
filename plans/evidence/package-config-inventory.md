@@ -8,7 +8,7 @@ Cloudflare Worker binding reads, shell parameter expansion, Docker
 
 Classifications used below:
 
-- **declared env**: belongs in the package's `config.json` contract;
+- **declared env**: belongs in the repository-root `env.defaults` contract;
 - **non-env**: OS identity, build/test/command input, persisted state, or a
   platform resource binding rather than package configuration;
 - **obsolete**: retained for now but scheduled for removal by migration step
@@ -27,8 +27,9 @@ by the resolution rules.
 | `BLITZ_ALLOWED_ORIGINS` | `actor/src/config.ts` | declared env | Optional comma-separated string; empty intentionally means no extra origins |
 | `BLITZ_CP_ORIGIN` | `rootfs/usr/local/libexec/blitz-init-state` | declared env | Optional control-plane origin written to the box state directory |
 | `BLITZ_GID` | `rootfs/usr/local/libexec/blitz-init-state`, smoke launch | declared env | `integer`, default 1000, range 1–60000 |
-| `BLITZ_STATE_DIR` | actor, init/enroll/register/profile scripts, Docker `ENV`, s6 child environments; `blitz-cred` reads it | declared env | `string`, default `/var/lib/blitz` |
+| `BLITZ_STATE_DIR` | actor, init/enroll/register/profile scripts, s6 child environments; `blitz-cred` reads it | declared env | `string`, default `/var/lib/blitz` |
 | `BLITZ_UID` | `rootfs/usr/local/libexec/blitz-init-state`, smoke launch | declared env | `integer`, default 1000, range 1–60000 |
+| `S6_KEEP_ENV` | s6-overlay service launcher | declared env | `boolean`, default 1 so empty values injected by Docker remain present for box services |
 | `HOME`, `USER`, `LANG`, `LC_ALL` | Docker and s6 fixed child environments | non-env | Runtime OS identity/locale; system users are outside the package contract |
 | `SHELL` | `rootfs/usr/local/libexec/blitz-term` | non-env | Login-account input with passwd-database fallback |
 | `BUILDPLATFORM`, `TARGETARCH` | Docker build stages | non-env | Docker/BuildKit build inputs |
@@ -39,7 +40,7 @@ by the resolution rules.
 | `TMPDIR` | smoke/files test temporary-directory creation | non-env | Standard test-runner ambient input |
 | ambient `process.env` and `creds/env.d/*.sh` names | actor adapters and credential loader | non-env | Provider credentials are command inputs persisted in state; the package forwards/sources them without owning concrete names |
 
-Summary: **6 declared env, 14 non-env, 0 obsolete** (unique rows; the
+Summary: **7 declared env, 14 non-env, 0 obsolete** (unique rows; the
 ambient provider row represents an intentionally open set).
 
 Notable boundary: `blitz-cred` is built from the broker Go module but runs in
@@ -50,7 +51,7 @@ to the box declaration, while the broker daemon's default is different.
 
 | Name | Read or surface | Classification | Declaration / reason |
 | --- | --- | --- | --- |
-| `BLITZ_STATE_DIR` | both Go commands and `entrypoint.sh` | declared env | `string`, default `/var/lib/blitz-broker` for the broker daemon |
+| `BLITZ_BROKER_STATE_DIR` | `cmd/blitz-broker/main.go` and `entrypoint.sh` | declared env | `string`, default `/var/lib/blitz-broker` for the broker daemon; the distinct name avoids colliding with the box-owned `BLITZ_STATE_DIR` default |
 | `SSH_CONNECTION` | `cmd/blitz-broker/main.go` forced-command guard | non-env | OpenSSH protocol input, not operator configuration |
 | `SSH_ORIGINAL_COMMAND` | `cmd/blitz-broker/main.go` harness selection | non-env | OpenSSH command input, validated against persisted member policy |
 | `PATH` | `internal/broker/security_test.go` | non-env | Test-only inherited tool-search path extended with a fixture binary directory |
@@ -76,7 +77,7 @@ Summary: **1 declared env, 4 non-env, 0 obsolete**.
 | `RESPOND_WITH_ERRORS` | Teenybase Worker binding | declared env | `boolean`, default false |
 | `RESPOND_WITH_QUERY_LOG` | Teenybase Worker binding | declared env | `boolean`, default false |
 | `SESSION_TTL_DAYS` | Worker runtime; Wrangler var | declared env | `integer`, default 30, range 1–3650 |
-| `DB`, `BOX_IMAGES` | Worker and tests; Wrangler D1/R2 bindings | non-env | Provider resource bindings, explicitly outside `config.json` |
+| `DB`, `BOX_IMAGES` | Worker and tests; Wrangler D1/R2 bindings | non-env | Provider resource bindings, explicitly outside the process environment contract |
 | `TEENY_PRIMARY_DB`, `TEENY_PRIMARY_R2` | generated Blitz target | non-env | Provider resource bindings in generated output |
 | `TEST_MIGRATIONS` | Vitest Worker binding | non-env | Test-only data binding |
 | `CI` and ambient `process.env` | deploy script child environment | non-env | Command execution environment, not control-plane runtime configuration |
@@ -92,9 +93,9 @@ while arbitrary test-only token names are fixtures.
 
 ## microvm-host
 
-The Go agent now loads the declared names below at startup through the shared
-helper. The former `-config deploy/config.host.json` path and the obsolete
-`lab_dir` setting have been removed.
+The Go agent reads the declared names below directly from the process
+environment at startup. The former `-config deploy/config.host.json` path and
+the obsolete `lab_dir` setting have been removed.
 
 | Former file input / name | Declared name | Classification at inventory | Declaration / reason |
 | --- | --- | --- | --- |
@@ -154,5 +155,5 @@ systemd, s6, Vite, or Wrangler environment read exists. The `kind: "env"`
 credential-placement union is protocol data describing command inputs, not a
 schema-package environment read.
 
-Summary: **0 declared env, 1 non-env protocol concept, 0 obsolete**. Per the
-plan, `packages/schema/config.json` must not be created.
+Summary: **0 declared env, 1 non-env protocol concept, 0 obsolete**. The schema
+package therefore has no section entries in `env.defaults`.

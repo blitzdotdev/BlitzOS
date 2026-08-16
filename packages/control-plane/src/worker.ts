@@ -27,9 +27,9 @@ type WorkerBindings = Env & {
   HETZNER_API_TOKEN: string;
   JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
-  MICROVM_HOSTS?: string;
-  SESSION_TTL_DAYS?: string;
-  MAX_CONCURRENT_WORKSPACES?: string;
+  MICROVM_HOSTS: string;
+  SESSION_TTL_DAYS: string;
+  MAX_CONCURRENT_WORKSPACES: string;
   CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;

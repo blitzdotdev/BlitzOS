@@ -20,8 +20,6 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 )
 
-const defaultStateDir = "/var/lib/blitz-broker"
-
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -33,9 +31,9 @@ func run(args []string, output io.Writer, input io.Reader) error {
 	if len(args) == 0 {
 		return errors.New("usage: blitz-broker enroll|sync|mint|deposit")
 	}
-	stateDir := os.Getenv("BLITZ_STATE_DIR")
+	stateDir := os.Getenv("BLITZ_BROKER_STATE_DIR")
 	if stateDir == "" {
-		stateDir = defaultStateDir
+		return errors.New("BLITZ_BROKER_STATE_DIR is required")
 	}
 	switch args[0] {
 	case "enroll":

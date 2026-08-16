@@ -1,7 +1,7 @@
 #!/command/with-contenv bash
 set -euo pipefail
 
-state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+state_dir=$BLITZ_STATE_DIR
 if [ ! -s "$state_dir/origin" ]; then
   echo "enroll: skipped (no control-plane origin)"
   exit 0

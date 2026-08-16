@@ -69,6 +69,7 @@ docker volume create "$state_volume" >/dev/null
 docker run -d \
   --name "$container" \
   --privileged \
+  --env-file "$repo_root/env.defaults" \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
   --mount "type=volume,source=$state_volume,target=/var/lib/blitz" \
@@ -267,6 +268,7 @@ echo "PASS privilege boundary, DinD, and inspect secret check"
 docker volume create "$unprivileged_volume" >/dev/null
 docker run -d \
   --name "$unprivileged_container" \
+  --env-file "$repo_root/env.defaults" \
   --env "BLITZ_UID=$(id -u)" \
   --env "BLITZ_GID=$(id -g)" \
   --mount "type=volume,source=$unprivileged_volume,target=/var/lib/blitz" \

@@ -8,8 +8,9 @@ import { Journal } from "./journal.js";
 import { ActorServer } from "./server.js";
 import type { Provider } from "./types.js";
 
-const stateDir = process.env.BLITZ_STATE_DIR ?? "/var/lib/blitz";
-const provider = process.env.BLITZ_AGENT ?? "claude";
+const stateDir = process.env.BLITZ_STATE_DIR;
+if (!stateDir) throw new Error("BLITZ_STATE_DIR is required");
+const provider = process.env.BLITZ_AGENT;
 if (provider !== "claude" && provider !== "codex") throw new Error("BLITZ_AGENT must be claude or codex");
 mkdirSync(stateDir, { recursive: true, mode: 0o700 });
 const journal = new Journal(join(stateDir, "journal.db"));

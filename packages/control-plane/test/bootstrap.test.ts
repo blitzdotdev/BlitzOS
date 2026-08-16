@@ -72,6 +72,7 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain('retry docker pull "$BOX_IMAGE_REF"');
     expect(userData).toContain("--privileged");
     expect(userData).toContain("--restart unless-stopped");
+    expect(userData).toContain("--env-file /etc/blitz/env.defaults");
     expect(userData).toContain("-e BLITZ_UID=1000");
     expect(userData).toContain("-e BLITZ_GID=1000");
     expect(userData).toContain("src=/var/lib/blitz,dst=/var/lib/blitz");
@@ -331,13 +332,9 @@ describe("production VM bootstrap", () => {
     );
     const dockerExec = userData.indexOf("docker exec", outerTimeout);
     const containerUser = userData.indexOf("--user 1000:1000", dockerExec);
-    const stateEnv = userData.indexOf(
-      "--env BLITZ_STATE_DIR=/var/lib/blitz",
-      containerUser,
-    );
     const homeEnv = userData.indexOf(
       "--env HOME=/var/lib/blitz/home",
-      stateEnv,
+      containerUser,
     );
     const userEnv = userData.indexOf("--env USER=blitz", homeEnv);
     const container = userData.indexOf("blitz-box", userEnv);
@@ -356,8 +353,7 @@ describe("production VM bootstrap", () => {
     expect(outerTimeout).toBeGreaterThan(registerStart);
     expect(dockerExec).toBeGreaterThan(outerTimeout);
     expect(containerUser).toBeGreaterThan(dockerExec);
-    expect(stateEnv).toBeGreaterThan(containerUser);
-    expect(homeEnv).toBeGreaterThan(stateEnv);
+    expect(homeEnv).toBeGreaterThan(containerUser);
     expect(userEnv).toBeGreaterThan(homeEnv);
     expect(container).toBeGreaterThan(userEnv);
     expect(innerTimeout).toBeGreaterThan(container);

@@ -46,7 +46,7 @@ jobs:
         id: broker
         uses: docker/build-push-action@v6
         with:
-          context: packages/broker
+          context: .
           file: packages/broker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true

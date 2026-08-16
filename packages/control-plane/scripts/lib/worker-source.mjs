@@ -365,9 +365,9 @@ type ManagedBindings = {
   BOX_IMAGE_REF: string;
   BOX_IMAGE_SHA256: string;
   BOX_IMAGE_TAG: string;
-  SESSION_TTL_DAYS?: string;
-  MAX_CONCURRENT_WORKSPACES?: string;
-  MICROVM_HOSTS?: string;
+  SESSION_TTL_DAYS: string;
+  MAX_CONCURRENT_WORKSPACES: string;
+  MICROVM_HOSTS: string;
   CRED_MASTER_KEY: string;
 };
 

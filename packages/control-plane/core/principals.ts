@@ -9,7 +9,6 @@ import {
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 import { isString } from "./http.js";
-import { DEFAULT_SESSION_TTL_MS } from "./runtime.js";
 
 export interface Principal {
   id: string;
@@ -99,7 +98,7 @@ export async function ensurePrincipal(db: Db, principal: Principal): Promise<voi
 export async function mintSession(
   db: Db,
   principal: Principal,
-  ttlMs = DEFAULT_SESSION_TTL_MS,
+  ttlMs: number,
   now = Date.now(),
 ): Promise<string> {
   await ensurePrincipal(db, principal);
@@ -112,7 +111,7 @@ export async function mintSession(
   return token;
 }
 
-export function sessionCookie(token: string, ttlMs = DEFAULT_SESSION_TTL_MS): string {
+export function sessionCookie(token: string, ttlMs: number): string {
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(ttlMs / 1000)}`;
 }
 

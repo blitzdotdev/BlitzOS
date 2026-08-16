@@ -77,7 +77,6 @@ export function normalizeMicrovmHostUrl(raw) {
  * @returns {MicrovmHostConfig[]}
  */
 export function parseMicrovmHosts(rawHosts) {
-  if (rawHosts === undefined || rawHosts === null || rawHosts === "") return [];
   if (typeof rawHosts !== "string") {
     throw new Error("MICROVM_HOSTS must be a JSON array");
   }

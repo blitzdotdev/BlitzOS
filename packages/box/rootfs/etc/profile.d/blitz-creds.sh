@@ -1,5 +1,5 @@
 _blitz_load_credentials() {
-	_blitz_state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+	_blitz_state_dir=$BLITZ_STATE_DIR
 	_blitz_creds_dir=$_blitz_state_dir/creds
 	_blitz_sync_state=$_blitz_creds_dir/sync-state.json
 	_blitz_fresh=false
