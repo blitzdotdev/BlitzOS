@@ -23,6 +23,13 @@ export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
 export { VmProviderRegistry } from "./providers/registry.js";
 export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
+export {
+  requireWorkspaceWebAppAuth,
+  WEBAPP_TICKET_TTL_SECONDS,
+  WorkspaceWebAppAuth,
+  workspaceWebAppAuthFromEnv,
+} from "./webapp-tickets.js";
+export type { WebAppRole, WebAppSurface, WebAppTicketClaims } from "./webapp-tickets.js";
 export type { VmProviderListResult } from "./providers/registry.js";
 export {
   addMicrovmHostRoutes,

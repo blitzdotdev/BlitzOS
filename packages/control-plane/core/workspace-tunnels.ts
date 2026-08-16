@@ -6,8 +6,9 @@ import {
 } from "./providers/cloudflare-tunnels.js";
 import type { Fetcher } from "./providers/json-fetch.js";
 import type { WebAppPort } from "./providers/types.js";
+import { WEBAPP_TOKEN_HEADER, WorkspaceWebAppAuth } from "./webapp-tickets.js";
 
-export const WEBAPP_TOKEN_HEADER = "X-Blitz-WebApp-Token";
+export { WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 
 export interface WorkspaceTunnelsEnv {
   CLOUDFLARE_ACCOUNT_ID?: string;
@@ -25,6 +26,7 @@ export interface WorkspaceTunnelRow {
 }
 
 export interface ProvisionedTunnel {
+  workspaceId: string;
   hostname: string;
   tunnelToken: string;
   webAppToken: string;
@@ -36,7 +38,7 @@ export interface ProvisionedTunnel {
 export class WorkspaceTunnels {
   private readonly client: CloudflareTunnels;
   private readonly zone: string;
-  private readonly secret: string;
+  private readonly auth: WorkspaceWebAppAuth;
   private readonly fetcher: Fetcher;
 
   constructor(
@@ -47,7 +49,7 @@ export class WorkspaceTunnels {
   ) {
     this.client = client;
     this.zone = zone;
-    this.secret = webAppTokenSecret;
+    this.auth = new WorkspaceWebAppAuth(webAppTokenSecret);
     this.fetcher = fetcher;
   }
 
@@ -56,22 +58,7 @@ export class WorkspaceTunnels {
   }
 
   async webAppTokenFor(workspaceId: string): Promise<string> {
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(this.secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
-    const mac = await crypto.subtle.sign(
-      "HMAC",
-      key,
-      new TextEncoder().encode(workspaceId),
-    );
-    return btoa(String.fromCharCode(...new Uint8Array(mac)))
-      .replaceAll("+", "-")
-      .replaceAll("/", "_")
-      .replaceAll("=", "");
+    return this.auth.tokenFor(workspaceId);
   }
 
   /** Creates tunnel + DNS for the workspace and persists the identifiers on
@@ -90,6 +77,7 @@ export class WorkspaceTunnels {
       v: [created.tunnelId, hostname, created.dnsRecordId, Date.now(), workspaceId],
     });
     return {
+      workspaceId,
       hostname,
       tunnelToken: created.tunnelToken,
       webAppToken: await this.webAppTokenFor(workspaceId),
@@ -130,13 +118,14 @@ export class WorkspaceTunnels {
     port: WebAppPort,
     pathAndQuery: string,
     request: Request,
+    credential?: string,
   ): Promise<Response> {
     const upstreamPath = port === 7444 ? `/acp${pathAndQuery}` : pathAndQuery;
     const headers = new Headers(request.headers);
     headers.delete("Cookie");
     headers.delete("Host");
     headers.delete("Authorization");
-    headers.set(WEBAPP_TOKEN_HEADER, await this.webAppTokenFor(workspaceId));
+    headers.set(WEBAPP_TOKEN_HEADER, credential ?? await this.webAppTokenFor(workspaceId));
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
     const fetcher = this.fetcher;
     return fetcher(`https://${hostname}${upstreamPath}`, {

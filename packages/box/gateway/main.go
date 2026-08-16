@@ -2,10 +2,15 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -31,6 +36,7 @@ const (
 	actorOrigin            = "http://localhost:7444"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
 	webAppTokenPath        = "/var/lib/blitz/webapp-token"
+	workspaceIDPath        = "/var/lib/blitz/workspace-id"
 	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
@@ -56,6 +62,7 @@ type gateway struct {
 	actor                  *url.URL
 	controlPlaneOriginPath string
 	webAppTokenPath        string
+	workspaceIDPath        string
 	tunnelTokenPath        string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
@@ -64,7 +71,27 @@ type gateway struct {
 	lastWebAppToken        string
 	authFailureLogged      bool
 	connectionsMu          sync.Mutex
-	connections            map[net.Conn]struct{}
+	connections            map[net.Conn]webAppIdentity
+}
+
+type webAppIdentity struct {
+	UserID       string `json:"userId"`
+	MembershipID string `json:"membershipId"`
+	Role         string `json:"role"`
+}
+
+type webAppTicketClaims struct {
+	WorkspaceID  string `json:"workspaceId"`
+	UserID       string `json:"userId"`
+	MembershipID string `json:"membershipId"`
+	Role         string `json:"role"`
+	Surface      string `json:"surface"`
+	Exp          int64  `json:"exp"`
+}
+
+type drainTarget struct {
+	MembershipID string `json:"membershipId"`
+	UserID       string `json:"userId"`
 }
 
 type trackedConn struct {
@@ -80,7 +107,8 @@ func (connection *trackedConn) Close() error {
 
 type trackingResponseWriter struct {
 	http.ResponseWriter
-	gateway *gateway
+	gateway  *gateway
+	identity webAppIdentity
 }
 
 func (writer *trackingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -92,7 +120,7 @@ func (writer *trackingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, err
 	if err != nil {
 		return nil, nil, err
 	}
-	tracked := writer.gateway.trackConnection(connection)
+	tracked := writer.gateway.trackConnection(connection, writer.identity)
 	return tracked, buffered, nil
 }
 
@@ -107,6 +135,7 @@ func main() {
 		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
 		controlPlaneOriginPath: controlPlaneOriginPath,
 		webAppTokenPath:        webAppTokenPath,
+		workspaceIDPath:        workspaceIDPath,
 		tunnelTokenPath:        tunnelTokenPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
@@ -123,29 +152,35 @@ func main() {
 }
 
 func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	webAppToken, authRequired, available := g.currentWebAppToken()
+	webAppToken, workspaceID, authRequired, available := g.currentWebAppAuth()
 	if !available {
 		http.Error(response, "surface authentication unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if authRequired && !webAppTokenAllowed(request, webAppToken) {
-		http.Error(response, "webApp token forbidden", http.StatusForbidden)
-		return
+	identity := webAppIdentity{UserID: "legacy-owner", MembershipID: "legacy-owner", Role: "owner"}
+	if authRequired {
+		var allowed bool
+		identity, allowed = webAppCredential(request, webAppToken, workspaceID, surfaceForRequest(request), time.Now().Unix())
+		if !allowed {
+			http.Error(response, "webApp token forbidden", http.StatusForbidden)
+			return
+		}
 	}
-	removeWebAppTokenHeader(request.Header)
 	if request.URL.Path == "/admin/drain" {
+		removeWebAppTokenHeader(request.Header)
 		g.serveDrain(response, request)
 		return
 	}
 
 	controlPlaneOrigin := loadControlPlaneOrigin(g.controlPlaneOriginPath)
 	if isCORSPreflight(request) {
+		removeWebAppTokenHeader(request.Header)
 		serveCORSPreflight(response, request, controlPlaneOrigin, authRequired)
 		return
 	}
 	webSocket := isWebSocketUpgrade(request)
 	if webSocket {
-		response = &trackingResponseWriter{ResponseWriter: response, gateway: g}
+		response = &trackingResponseWriter{ResponseWriter: response, gateway: g, identity: identity}
 	}
 	if webSocket && !originAllowed(request, controlPlaneOrigin) {
 		http.Error(response, "websocket origin forbidden", http.StatusForbidden)
@@ -156,10 +191,12 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		response = &corsResponseWriter{ResponseWriter: response, origin: origin, allowed: allowed}
 	}
 	if request.URL.Path == "/ports" {
+		removeWebAppTokenHeader(request.Header)
 		g.servePorts(response, request)
 		return
 	}
 	if request.URL.Path == "/terminal/ws" {
+		removeWebAppTokenHeader(request.Header)
 		g.serveTerminal(response, request)
 		return
 	}
@@ -167,14 +204,20 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.serveACP(response, request)
 		return
 	}
+	removeWebAppTokenHeader(request.Header)
 	if strings.HasPrefix(request.URL.Path, "/preview/") {
 		g.servePreview(response, request)
+		return
+	}
+	if identity.Role == "viewer" && !filesReadMethod(request.Method) {
+		response.Header().Set("Allow", "GET, HEAD, OPTIONS, PROPFIND")
+		http.Error(response, "viewer file access is read-only", http.StatusForbidden)
 		return
 	}
 	g.dufs.ServeHTTP(response, request)
 }
 
-func (g *gateway) trackConnection(connection net.Conn) net.Conn {
+func (g *gateway) trackConnection(connection net.Conn, identity webAppIdentity) net.Conn {
 	tracked := &trackedConn{Conn: connection}
 	tracked.onClose = func() {
 		g.connectionsMu.Lock()
@@ -183,9 +226,9 @@ func (g *gateway) trackConnection(connection net.Conn) net.Conn {
 	}
 	g.connectionsMu.Lock()
 	if g.connections == nil {
-		g.connections = make(map[net.Conn]struct{})
+		g.connections = make(map[net.Conn]webAppIdentity)
 	}
-	g.connections[tracked] = struct{}{}
+	g.connections[tracked] = identity
 	g.connectionsMu.Unlock()
 	return tracked
 }
@@ -196,9 +239,24 @@ func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	target := drainTarget{}
+	if request.Body != nil && request.ContentLength != 0 {
+		decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, 4<<10))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&target); err != nil || requireJSONEOF(decoder) != nil || (target.MembershipID != "" && target.UserID != "") {
+			http.Error(response, "invalid drain target", http.StatusBadRequest)
+			return
+		}
+	}
 	g.connectionsMu.Lock()
 	connections := make([]net.Conn, 0, len(g.connections))
-	for connection := range g.connections {
+	for connection, identity := range g.connections {
+		if target.MembershipID != "" && identity.MembershipID != target.MembershipID {
+			continue
+		}
+		if target.UserID != "" && identity.UserID != target.UserID {
+			continue
+		}
 		connections = append(connections, connection)
 	}
 	g.connectionsMu.Unlock()
@@ -209,6 +267,9 @@ func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request
 }
 
 func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request) {
+	if identity, ok := request.Context().Value(webAppIdentityContextKey{}).(webAppIdentity); ok && identity.Role == "viewer" {
+		forceReadOnlyTerminalArgs(request.URL)
+	}
 	target := g.terminal
 	if target == nil {
 		target = &url.URL{Scheme: "http", Host: terminalAddress}
@@ -416,7 +477,18 @@ func loadControlPlaneOrigin(path string) string {
 	return strings.TrimSpace(string(data))
 }
 
-func (g *gateway) currentWebAppToken() (token string, authRequired bool, available bool) {
+func readOptionalFile(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authRequired bool, available bool) {
 	g.authMu.Lock()
 	defer g.authMu.Unlock()
 
@@ -425,7 +497,7 @@ func (g *gateway) currentWebAppToken() (token string, authRequired bool, availab
 	if err == nil && token != "" {
 		g.authRequired = true
 		g.lastWebAppToken = token
-		return token, true, true
+		return token, strings.TrimSpace(readOptionalFile(g.workspaceIDPath)), true, true
 	}
 
 	if g.authRequired {
@@ -437,24 +509,111 @@ func (g *gateway) currentWebAppToken() (token string, authRequired bool, availab
 			}
 			g.authFailureLogged = true
 		}
-		return g.lastWebAppToken, true, true
+		return g.lastWebAppToken, strings.TrimSpace(readOptionalFile(g.workspaceIDPath)), true, true
 	}
 
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
-		return "", true, false
+		return "", "", true, false
 	}
 	if _, surfaceErr := os.Lstat(g.webAppTokenPath); !errors.Is(surfaceErr, os.ErrNotExist) {
-		return "", true, false
+		return "", "", true, false
 	}
 	if _, tunnelErr := os.Lstat(g.tunnelTokenPath); !errors.Is(tunnelErr, os.ErrNotExist) {
-		return "", true, false
+		return "", "", true, false
 	}
-	return "", false, true
+	return "", "", false, true
 }
 
-func webAppTokenAllowed(request *http.Request, webAppToken string) bool {
+type webAppIdentityContextKey struct{}
+
+func webAppCredential(request *http.Request, secret, workspaceID, surface string, now int64) (webAppIdentity, bool) {
 	values := request.Header.Values(webAppTokenHeader)
-	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), []byte(webAppToken)) == 1
+	if len(values) != 1 {
+		return webAppIdentity{}, false
+	}
+	credential := values[0]
+	if !strings.HasPrefix(credential, "v1.") {
+		// TODO(identity-phase-4): Remove static-token acceptance after every box image is re-pinned.
+		if subtle.ConstantTimeCompare([]byte(credential), []byte(secret)) != 1 {
+			return webAppIdentity{}, false
+		}
+		identity := webAppIdentity{UserID: "legacy-owner", MembershipID: "legacy-owner", Role: "owner"}
+		*request = *request.WithContext(context.WithValue(request.Context(), webAppIdentityContextKey{}, identity))
+		return identity, true
+	}
+	parts := strings.Split(credential, ".")
+	if len(parts) != 3 || parts[0] != "v1" || workspaceID == "" {
+		return webAppIdentity{}, false
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return webAppIdentity{}, false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte("v1." + parts[1]))
+	if !hmac.Equal(signature, mac.Sum(nil)) {
+		return webAppIdentity{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return webAppIdentity{}, false
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.DisallowUnknownFields()
+	var claims webAppTicketClaims
+	if err := decoder.Decode(&claims); err != nil || requireJSONEOF(decoder) != nil || claims.Exp <= now || claims.WorkspaceID != workspaceID || claims.Surface != surface {
+		return webAppIdentity{}, false
+	}
+	if claims.UserID == "" || claims.MembershipID == "" || !validWebAppRole(claims.Role) {
+		return webAppIdentity{}, false
+	}
+	identity := webAppIdentity{UserID: claims.UserID, MembershipID: claims.MembershipID, Role: claims.Role}
+	*request = *request.WithContext(context.WithValue(request.Context(), webAppIdentityContextKey{}, identity))
+	return identity, true
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("multiple JSON values")
+	}
+	return err
+}
+
+func validWebAppRole(role string) bool {
+	return role == "owner" || role == "admin" || role == "editor" || role == "viewer"
+}
+
+func surfaceForRequest(request *http.Request) string {
+	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
+		return "chat"
+	}
+	if request.URL.Path == "/terminal/ws" {
+		return "terminal"
+	}
+	return "files"
+}
+
+func filesReadMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions || method == "PROPFIND"
+}
+
+func forceReadOnlyTerminalArgs(target *url.URL) {
+	query := target.Query()
+	args := append([]string(nil), query["arg"]...)
+	if len(args) > 2 {
+		args = args[:2]
+	}
+	query.Del("arg")
+	for _, value := range args {
+		query.Add("arg", value)
+	}
+	query.Add("arg", "ro")
+	target.RawQuery = query.Encode()
 }
 
 func removeWebAppTokenHeader(header http.Header) {
@@ -481,9 +640,6 @@ func isWebSocketUpgrade(request *http.Request) bool {
 
 func originAllowed(request *http.Request, controlPlaneOrigin string) bool {
 	origins := request.Header.Values("Origin")
-	if len(origins) == 0 {
-		return true
-	}
 	if len(origins) != 1 {
 		return false
 	}

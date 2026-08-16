@@ -31,6 +31,7 @@ function bindings(microvmHosts: string): Record<string, unknown> {
     HETZNER_API_TOKEN: "test-only-hetzner-token",
     JWT_SECRET_MAIN: "test-only-jwt-secret",
     OPERATOR_API_KEY: OPERATOR_KEY,
+    WEBAPP_TOKEN_SECRET: "test-webapp-root-secret",
     RESPOND_WITH_ERRORS: false,
     RESPOND_WITH_QUERY_LOG: false,
   };

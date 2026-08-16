@@ -140,6 +140,7 @@ func (a *API) webApp(w http.ResponseWriter, r *http.Request) {
 		Transport:     a.webAppTransport,
 		FlushInterval: -1,
 		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
+			webAppCredential := proxyRequest.Out.Header.Values("X-Blitz-WebApp-Token")
 			proxyRequest.SetURL(upstream)
 			proxyRequest.Out.URL.Path = target.path
 			proxyRequest.Out.URL.RawPath = target.rawPath
@@ -147,6 +148,12 @@ func (a *API) webApp(w http.ResponseWriter, r *http.Request) {
 			proxyRequest.Out.Header.Del("Authorization")
 			proxyRequest.Out.Header.Del("Proxy-Authorization")
 			proxyRequest.Out.Header.Del("Cookie")
+			// X-Blitz-WebApp-Token is guest authentication, not host API
+			// authentication. Preserve exactly one value across the host-auth strip.
+			proxyRequest.Out.Header.Del("X-Blitz-WebApp-Token")
+			if len(webAppCredential) == 1 {
+				proxyRequest.Out.Header.Set("X-Blitz-WebApp-Token", webAppCredential[0])
+			}
 			if target.port == 7444 {
 				// The authenticated webApp proxy is the ACP security boundary. The
 				// loopback-only actor intentionally accepts only loopback origins.

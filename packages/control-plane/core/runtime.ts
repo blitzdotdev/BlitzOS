@@ -6,6 +6,7 @@ import type { MicrovmPoolProvider } from "./providers/microvm.js";
 import type { VmProviderRegistry } from "./providers/registry.js";
 import type { VolumeProvider } from "./providers/types.js";
 import type { WorkspaceTunnels } from "./workspace-tunnels.js";
+import type { WorkspaceWebAppAuth } from "./webapp-tickets.js";
 
 export interface CoreRequest {
   readonly raw: Request;
@@ -86,6 +87,7 @@ export interface CoreRuntime {
     volume: VolumeProvider;
     microvm?: MicrovmPoolProvider;
     workspaceTunnels?: WorkspaceTunnels;
+    webAppAuth?: WorkspaceWebAppAuth;
   };
   principalSource: PrincipalSource;
   waitUntil(promise: Promise<unknown>): void;

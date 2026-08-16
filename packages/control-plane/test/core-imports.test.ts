@@ -56,6 +56,7 @@ const expected = [
   "types.ts",
   "volumes.ts",
   "webapp-state.ts",
+  "webapp-tickets.ts",
   "wire.ts",
   "workspaces.ts",
 ] as const;
@@ -76,6 +77,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(51);
+    expect(expected).toHaveLength(52);
   });
 });

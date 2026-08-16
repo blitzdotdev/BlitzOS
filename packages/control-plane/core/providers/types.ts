@@ -8,6 +8,7 @@ export type ProviderMachineType = Omit<
 export interface ProviderCapabilities {
   volumes: boolean;
   maxUserDataBytes?: number | null;
+  webAppActorBypassesGateway?: boolean;
 }
 
 export interface CreateVmInput {

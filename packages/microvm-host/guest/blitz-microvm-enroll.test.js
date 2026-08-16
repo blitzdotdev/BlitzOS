@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const os = require('node:os');
 const {
   buildPhoneHomeFailurePayload,
   buildPhoneHomePayload,
   parsePhoneHomeResponse,
+  storePhoneHomeResponse,
 } = require('./blitz-microvm-enroll.js');
 
 const fixturesDirectory = path.resolve(
@@ -60,4 +62,38 @@ test('guest accepts and rejects every shared phone-home response fixture', () =>
   console.log(
     `phone-home guest response conformance: ${validNames.length} valid + ${invalidNames.length} invalid fixtures`,
   );
+});
+
+test('guest stores new webapp identity fields without changing the box credential contract', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blitz-enroll-test-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const response = fixture('responses/valid/success.json').body;
+
+  storePhoneHomeResponse(parsePhoneHomeResponse(response), directory);
+
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(path.join(directory, 'box-credential.json'), 'utf8')),
+    {
+      box_id: response.box_id,
+      access_token: response.access_token,
+      refresh_token: response.refresh_token,
+    },
+  );
+  assert.equal(fs.readFileSync(path.join(directory, 'webapp-token'), 'utf8'), `${response.webapp_token}\n`);
+  assert.equal(fs.readFileSync(path.join(directory, 'workspace-id'), 'utf8'), `${response.workspace_id}\n`);
+  assert.equal(fs.statSync(path.join(directory, 'webapp-token')).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(directory, 'workspace-id')).mode & 0o777, 0o600);
+});
+
+test('legacy phone-home response leaves webapp identity files absent', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'blitz-enroll-legacy-test-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+
+  storePhoneHomeResponse(
+    parsePhoneHomeResponse(fixture('responses/valid/legacy-without-webapp-token.json').body),
+    directory,
+  );
+
+  assert.equal(fs.existsSync(path.join(directory, 'webapp-token')), false);
+  assert.equal(fs.existsSync(path.join(directory, 'workspace-id')), false);
 });

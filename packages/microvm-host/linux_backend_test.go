@@ -199,7 +199,7 @@ func TestMicroVMEnrollmentPokesRegisterAfterAtomicWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(contents)
-	credential := strings.Index(script, "atomicWrite(path.join(stateDir, 'box-credential.json')")
+	credential := strings.Index(script, "storePhoneHomeResponse(stored)")
 	origin := strings.Index(script, "atomicWrite(path.join(stateDir, 'origin')")
 	register := strings.Index(script, "await pokeRegister()")
 	complete := strings.Index(script, "microvm-enroll: complete")

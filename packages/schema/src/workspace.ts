@@ -39,7 +39,7 @@ export interface WorkspaceView {
   } | null;
   volumeId: string | null;
   error: string | null;
-  role: "owner" | "admin" | "editor" | null;
+  role: "owner" | "admin" | "editor" | "viewer" | null;
   owner: {
     name: string;
     avatarUrl: string | null;

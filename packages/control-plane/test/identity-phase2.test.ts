@@ -4,6 +4,7 @@ import type { WorkspaceView } from "@blitzos/schema";
 import { hashSecret, randomToken } from "../core/crypto.js";
 import { INVITE_TTL_MS, inviteCodeHash } from "../core/identity/invites.js";
 import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
+import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 import {
   FakeProviders,
   appRequest,
@@ -85,7 +86,13 @@ async function googleCallback(
 
 class ProxyProviders extends FakeProviders {
   readonly proxyCalls: Array<{ port: WebAppPort; path: string }> = [];
+  readonly drainTargets: Array<{ port: WebAppPort; membershipId: string; credential: string }> = [];
+  readonly webAppCredentials: string[] = [];
   drainStatus = 204;
+
+  override capabilities() {
+    return { ...super.capabilities(), webAppActorBypassesGateway: true };
+  }
 
   override async createVm(input: CreateVmInput) {
     return super.createVm(input);
@@ -95,9 +102,19 @@ class ProxyProviders extends FakeProviders {
     _id: string,
     port: WebAppPort,
     pathAndQuery: string,
-    _request: Request,
+    request: Request,
   ): Promise<Response> {
     this.proxyCalls.push({ port, path: pathAndQuery });
+    if (pathAndQuery === "/admin/drain") {
+      const target = await request.clone().json<{ membershipId: string }>();
+      this.drainTargets.push({
+        port,
+        membershipId: target.membershipId,
+        credential: request.headers.get("X-Blitz-WebApp-Token") ?? "",
+      });
+    } else {
+      this.webAppCredentials.push(request.headers.get("X-Blitz-WebApp-Token") ?? "");
+    }
     return new Response(null, { status: pathAndQuery === "/admin/drain" ? this.drainStatus : 200 });
   }
 }
@@ -138,7 +155,7 @@ describe("identity phase 2", () => {
     await expect(appRequest(app, "/workspaces", { headers: { Cookie: outsiderCookie } }).then((response) => response.json())).resolves.toEqual({ workspaces: [] });
   });
 
-  it("grants editors only, authorizes the proxy, forbids editor destroy, and drains best-effort", async () => {
+  it("grants viewers and editors, authorizes the proxy, forbids destroy, and drains best-effort", async () => {
     const providers = new ProxyProviders();
     const app = appWithProviders(providers, providers);
     const ownerCookie = await operatorSession(app);
@@ -149,7 +166,20 @@ describe("identity phase 2", () => {
       ...json({ membershipId: editor.membershipId, role: "viewer" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
-    expect(viewer.status).toBe(400);
+    expect(viewer.status).toBe(201);
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
+    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
+      providers.webAppCredentials.at(-1) ?? "",
+      workspace.id,
+      "files",
+    )).resolves.toMatchObject({
+      kind: "ticket",
+      claims: {
+        userId: "collaborator",
+        membershipId: editor.membershipId,
+        role: "viewer",
+      },
+    });
     const created = await appRequest(app, `/workspaces/${workspace.id}/grants`, {
       ...json({ membershipId: editor.membershipId, role: "editor" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
@@ -164,7 +194,14 @@ describe("identity phase 2", () => {
       headers: { Cookie: ownerCookie },
     });
     expect(revoked.status).toBe(204);
-    expect(providers.proxyCalls).toContainEqual({ port: 7445, path: "/admin/drain" });
+    await vi.waitFor(() => {
+      expect(providers.proxyCalls).toContainEqual({ port: 7445, path: "/admin/drain" });
+      expect(providers.proxyCalls).toContainEqual({ port: 7444, path: "/admin/drain" });
+      expect(providers.drainTargets).toEqual([
+        { port: 7445, membershipId: editor.membershipId, credential: expect.any(String) },
+        { port: 7444, membershipId: editor.membershipId, credential: expect.any(String) },
+      ]);
+    });
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_grants").first<number>("count")).toBe(0);
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
   });

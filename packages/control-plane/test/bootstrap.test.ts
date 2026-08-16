@@ -396,7 +396,6 @@ describe("production VM bootstrap", () => {
 
   it("persists exactly the three broker credential fields", () => {
     const userData = registryUserData();
-    const fixture = phoneHomeFixture("responses/valid/success.json");
     const projection = userData.match(
       /credential = \{\n(?<fields>(?:    "[^"]+": response\["[^"]+"\],\n)+)\}/u,
     );
@@ -406,7 +405,7 @@ describe("production VM bootstrap", () => {
       (projection?.groups?.fields ?? "").matchAll(/^    "([^"]+)":/gmu),
       (match) => match[1],
     );
-    expect(fields).toEqual(fixture.expect.canonicalKeys);
+    expect(fields).toEqual(["box_id", "access_token", "refresh_token"]);
     expect(userData).toContain(
       'with open(credential_path, "w", encoding="utf-8") as credential_file:',
     );
