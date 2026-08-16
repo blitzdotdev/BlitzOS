@@ -4,6 +4,7 @@ import {
   isRecord,
   readJson,
   requiredString,
+  type JsonValue,
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
@@ -31,7 +32,22 @@ interface AttachmentRow {
   name: string;
   created_by_membership_id: string;
   grant_role: "editor" | "viewer" | null;
+  guest_path: string | null;
   attached_at: number;
+}
+
+/** Published directories sync at their original /workspace-relative path; it
+ * must stay a safe relative path that MKCOL/PUT can address. */
+function parseGuestPath(value: JsonValue | undefined): string | null {
+  if (value === undefined || value === null) return null;
+  const path = requiredString(value, "guestPath", 512).replace(/^\/+|\/+$/gu, "");
+  if (
+    path === ""
+    || path.includes("\\")
+    || path.includes("\u0000")
+    || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) throw new HttpError(400, "guestPath must be a safe workspace-relative path");
+  return path;
 }
 
 async function controlledWorkspace(
@@ -65,7 +81,7 @@ export function addFolderAttachmentRoutes(
     const attached = await rows<AttachmentRow>(runtime.db, {
       q: `SELECT folder.id, folder.org_id, folder.name,
                  folder.created_by_membership_id, grant.role AS grant_role,
-                 attachment.created_at AS attached_at
+                 attachment.guest_path, attachment.created_at AS attached_at
           FROM folder_attachments attachment
           JOIN folders folder ON folder.id = attachment.folder_id
           LEFT JOIN folder_grants grant
@@ -80,6 +96,7 @@ export function addFolderAttachmentRoutes(
         id: folder.id,
         name: folder.name,
         role,
+        guestPath: folder.guest_path,
         attachedAt: folder.attached_at,
       }];
     });
@@ -98,21 +115,24 @@ export function addFolderAttachmentRoutes(
     const value = await readJson(context.req.raw);
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
     const folderId = requiredString(value.folderId, "folderId", 256);
+    const guestPath = parseGuestPath(value.guestPath);
     const folder = await requireFolderAccess(runtime.db, folderId, actor, "read");
     if (folder.org_id !== workspace.org_id) throw new HttpError(404, "folder not found");
     const now = Date.now();
     await rows(runtime.db, {
       q: `INSERT INTO folder_attachments
-          (workspace_id, folder_id, attached_by_membership_id, created_at)
-          VALUES (?1, ?2, ?3, ?4)
-          ON CONFLICT(workspace_id, folder_id) DO NOTHING`,
-      v: [workspace.id, folder.id, principal.membershipId, now],
+          (workspace_id, folder_id, attached_by_membership_id, created_at, guest_path)
+          VALUES (?1, ?2, ?3, ?4, ?5)
+          ON CONFLICT(workspace_id, folder_id) DO UPDATE SET
+            guest_path = excluded.guest_path`,
+      v: [workspace.id, folder.id, principal.membershipId, now, guestPath],
     });
     return context.json({
       folder: {
         id: folder.id,
         name: folder.name,
         role: folder.role,
+        guestPath,
         attachedAt: now,
       } satisfies FolderAttachmentView,
     }, 201);

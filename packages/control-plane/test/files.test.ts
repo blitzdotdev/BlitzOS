@@ -102,6 +102,7 @@ describe("organization file library", () => {
       "folder_id",
       "attached_by_membership_id",
       "created_at",
+      "guest_path",
     ]);
   });
 
@@ -347,6 +348,32 @@ describe("organization file library", () => {
     await expect(appRequest(app, `/workspaces/${workspace.id}/folders`, {
       headers: { Cookie: owner },
     }).then((response) => response.json())).resolves.toEqual({ folders: [] });
+  });
+
+  it("publishes with a guest path and rejects traversal", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const workspace = await createWorkspace(app, owner);
+    const folderId = await createFolder(app, owner, "published-api");
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId, guestPath: "../etc" }),
+    })).status).toBe(400);
+    const attached = await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId, guestPath: "api/server" }),
+    });
+    expect(attached.status).toBe(201);
+    await expect(attached.json()).resolves.toMatchObject({
+      folder: { id: folderId, guestPath: "api/server" },
+    });
+    await expect(appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      headers: { Cookie: owner },
+    }).then((response) => response.json())).resolves.toMatchObject({
+      folders: [{ id: folderId, guestPath: "api/server" }],
+    });
   });
 
   it("renames a folder for controllers only and rejects unsafe names", async () => {
