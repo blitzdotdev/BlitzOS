@@ -7,6 +7,12 @@ const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
+export const API_PREFIXES = Object.freeze([
+  "/sessions", "/workspaces", "/folders", "/volumes", "/machine-types", "/webapp-state",
+  "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
+  "/hosts/", "/oauth/", "/boxes/", "/integrations", "/leases/", "/requests",
+  "/proxy/", "/box-image", "/api/",
+]);
 export const CORE_MANIFEST = Object.freeze([
   "core/index.ts",
   "core/app.ts",
@@ -493,25 +499,7 @@ function providersFor(env: ManagedBindings, db: Db): CoreRuntime["providers"] {
   };
 }
 
-const API_PREFIXES = [
-  "/sessions",
-  "/workspaces",
-  "/volumes",
-  "/machine-types",
-  "/webapp-state",
-  "/auth/",
-  "/me",
-  "/orgs",
-  "/hosts/",
-  "/oauth/",
-  "/boxes/",
-  "/integrations",
-  "/leases/",
-  "/requests",
-  "/proxy/",
-  "/box-image",
-  "/api/",
-];
+const API_PREFIXES = ${JSON.stringify(API_PREFIXES, null, 2)};
 
 function managedBlobStore(db: $Database, kind: "box-image" | "webapp"): BlobStore {
   return {
