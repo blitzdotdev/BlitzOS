@@ -9,8 +9,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "vite build",
-    "dev": "vite",
+    "build": "node --env-file=../../env.defaults ../../node_modules/vite/bin/vite.js build",
+    "dev": "node --env-file=../../env.defaults ../../node_modules/vite/bin/vite.js",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

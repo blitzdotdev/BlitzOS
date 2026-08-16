@@ -154,6 +154,7 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig: {
         name: "blitz-control-plane",
+        vars: { MICROVM_HOSTS: "[]" },
         d1_databases: [
           {
             binding: "DB",
@@ -223,6 +224,7 @@ describe("control-plane deploy command", () => {
         configPath: "packages/control-plane/wrangler.toml",
         rawConfig: {
           name: "blitz-control-plane",
+          vars: { MICROVM_HOSTS: "[]" },
           d1_databases: [
             {
               binding: "DB",

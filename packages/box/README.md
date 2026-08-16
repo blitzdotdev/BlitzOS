@@ -30,6 +30,7 @@ docker run -d \
   --name blitz-box \
   --restart unless-stopped \
   --privileged \
+  --env-file env.defaults \
   -e BLITZ_UID="$(id -u)" \
   -e BLITZ_GID="$(id -g)" \
   --mount type=volume,source=blitz-box-state,target=/var/lib/blitz \

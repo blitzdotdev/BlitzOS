@@ -54,13 +54,8 @@ export interface RuntimeVariables {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-export const DEFAULT_SESSION_TTL_MS = 30 * DAY_MS;
-export const DEFAULT_MAX_CONCURRENT_WORKSPACES = 10;
 
 export function sessionTtlMsFromEnv(value: string | number | null | undefined): number {
-  if (value === undefined || value === null || value === "") {
-    return DEFAULT_SESSION_TTL_MS;
-  }
   const days = isNumber(value) ? value : Number(value);
   if (!Number.isSafeInteger(days) || days < 1 || days > 3_650) {
     throw new Error("SESSION_TTL_DAYS must be an integer from 1 through 3650");
@@ -69,9 +64,6 @@ export function sessionTtlMsFromEnv(value: string | number | null | undefined): 
 }
 
 export function maxConcurrentWorkspacesFromEnv(value: string | number | null | undefined): number {
-  if (value === undefined || value === null || value === "") {
-    return DEFAULT_MAX_CONCURRENT_WORKSPACES;
-  }
   const limit = isNumber(value) ? value : Number(value);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
     throw new Error("MAX_CONCURRENT_WORKSPACES must be an integer from 1 through 1000");

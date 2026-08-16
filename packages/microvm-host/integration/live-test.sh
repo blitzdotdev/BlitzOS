@@ -1,14 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REMOTE=${BLITZ_AGENT_REMOTE:-minjune@192.168.5.25}
-HOST=${BLITZ_AGENT_HOST:-192.168.5.25}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(cd -- "$script_dir/../../.." && pwd)
+if [[ -z ${BLITZ_MICROVM_STATE_DIR+x} && -z ${BLITZ_MICROVM_SUDO_WRAPPER+x} && -z ${BLITZ_MICROVM_SSH_PORT_BASE+x} ]]; then
+  set -a
+  source "$repo_root/env.defaults"
+  set +a
+fi
+
+REMOTE=${BLITZ_AGENT_REMOTE:?set BLITZ_AGENT_REMOTE to the SSH target in user@host form}
+HOST=${BLITZ_AGENT_HOST:?set BLITZ_AGENT_HOST to the agent host name or address}
 API_PORT=${BLITZ_AGENT_PORT:-8086}
 TOKEN_FILE=${BLITZ_AGENT_TOKEN_FILE:?set BLITZ_AGENT_TOKEN_FILE to a local mode-0600 token copy}
-REMOTE_LAB=${BLITZ_REMOTE_LAB:-/home/minjune/blitz-microvm-lab}
+REMOTE_LAB=${BLITZ_REMOTE_LAB:?set BLITZ_REMOTE_LAB to the remote integration fixture directory}
+REMOTE_STATE_DIR=${BLITZ_MICROVM_STATE_DIR:?set all three host settings or leave all unset to load env.defaults}
+REMOTE_SUDO_WRAPPER=${BLITZ_MICROVM_SUDO_WRAPPER:?set all three host settings or leave all unset to load env.defaults}
+SSH_PORT_BASE=${BLITZ_MICROVM_SSH_PORT_BASE:?set all three host settings or leave all unset to load env.defaults}
 RECEIVER_PORT=${BLITZ_RECEIVER_PORT:-39123}
 CP_ORIGIN=${BLITZ_TEST_CP_ORIGIN:-https://cp.m2.invalid}
 RESULT_DIR=${BLITZ_RESULT_DIR:-integration/results}
+
+for port_name in API_PORT RECEIVER_PORT SSH_PORT_BASE; do
+  port=${!port_name}
+  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || {
+    echo "$port_name must be an integer from 1 to 65535" >&2
+    exit 1
+  }
+done
+(( SSH_PORT_BASE >= 1024 )) || { echo "SSH_PORT_BASE must be at least 1024" >&2; exit 1; }
 
 TOKEN=$(tr -d '\r\n' <"$TOKEN_FILE")
 [[ ${#TOKEN} -ge 32 ]] || { echo "token file is invalid" >&2; exit 1; }
@@ -108,9 +128,10 @@ delete_vm() {
 }
 
 assert_no_leak() {
-  local slot=$(( VM_PORT - 22000 )) tag="blitz-microvm:slot-$(( VM_PORT - 22000 ))"
+  local slot=$(( VM_PORT - SSH_PORT_BASE )) tag="blitz-microvm:slot-$(( VM_PORT - SSH_PORT_BASE ))"
+  (( slot >= 1 )) || { echo "invalid SSH port $VM_PORT for configured base $SSH_PORT_BASE" >&2; return 1; }
   ssh -o BatchMode=yes "$REMOTE" \
-    "test ! -e '$REMOTE_LAB/agent/state/runtime/$VM_ID' && test ! -e '$REMOTE_LAB/agent/state/vms/$VM_ID.json' && test ! -e '/sys/class/net/blitz-tap$slot' && ! ps -eo args | grep -F '$REMOTE_LAB/agent/state/runtime/$VM_ID/firecracker.sock' | grep -v grep >/dev/null && ! '$REMOTE_LAB/bin/sudo-run.sh' iptables-save | grep -F '$tag' >/dev/null"
+    "test ! -e '$REMOTE_STATE_DIR/runtime/$VM_ID' && test ! -e '$REMOTE_STATE_DIR/vms/$VM_ID.json' && test ! -e '/sys/class/net/blitz-tap$slot' && ! ps -eo args | grep -F '$REMOTE_STATE_DIR/runtime/$VM_ID/firecracker.sock' | grep -v grep >/dev/null && ! '$REMOTE_SUDO_WRAPPER' iptables-save | grep -F '$tag' >/dev/null"
 }
 
 create_vm "m2-integration-main" "$TMP/create-main.json"

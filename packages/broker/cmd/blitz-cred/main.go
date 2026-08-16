@@ -13,8 +13,6 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
 
-const defaultStateDir = "/var/lib/blitz"
-
 func main() {
 	if err := runWithInput(os.Args[1:], os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -32,7 +30,7 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 	}
 	stateDir := os.Getenv("BLITZ_STATE_DIR")
 	if stateDir == "" {
-		stateDir = defaultStateDir
+		return errors.New("BLITZ_STATE_DIR is required")
 	}
 	switch args[0] {
 	case "enroll":

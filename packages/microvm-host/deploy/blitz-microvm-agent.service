@@ -5,13 +5,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=minjune
-Group=minjune
-WorkingDirectory=/home/minjune/blitz-microvm-lab
-Environment=HOME=/home/minjune
-Environment=USER=minjune
-Environment=BLITZ_LAB=/home/minjune/blitz-microvm-lab
-ExecStart=/home/minjune/blitz-microvm-lab/agent/bin/blitz-microvm-agent -config /home/minjune/blitz-microvm-lab/agent/config.json
+User=blitz-microvm
+Group=blitz-microvm
+WorkingDirectory=/var/lib/blitz-microvm
+Environment=HOME=/var/lib/blitz-microvm
+Environment=USER=blitz-microvm
+EnvironmentFile=/etc/blitz/env.defaults
+ExecStart=/usr/local/bin/blitz-microvm-agent
 Restart=always
 RestartSec=1
 KillMode=process

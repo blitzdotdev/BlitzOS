@@ -47,6 +47,7 @@ guest_ip=
 guest_gw=
 guest_prefix=30
 guest_name=blitz-vm
+guest_dns=
 phone_home_b64=
 cp_origin_b64=
 workspace_b64=
@@ -56,6 +57,7 @@ for arg in $(cat /proc/cmdline); do
     blitz_gw=*) guest_gw=${arg#blitz_gw=} ;;
     blitz_prefix=*) guest_prefix=${arg#blitz_prefix=} ;;
     blitz_name=*) guest_name=${arg#blitz_name=} ;;
+    blitz_dns=*) guest_dns=${arg#blitz_dns=} ;;
     blitz_phone_home_b64=*) phone_home_b64=${arg#blitz_phone_home_b64=} ;;
     blitz_cp_origin_b64=*) cp_origin_b64=${arg#blitz_cp_origin_b64=} ;;
     blitz_workspace_b64=*) workspace_b64=${arg#blitz_workspace_b64=} ;;
@@ -63,6 +65,7 @@ for arg in $(cat /proc/cmdline); do
 done
 [ -n "$guest_ip" ] || die "missing blitz_ip kernel argument"
 [ -n "$guest_gw" ] || die "missing blitz_gw kernel argument"
+[ -n "$guest_dns" ] || die "missing blitz_dns kernel argument"
 
 ip link set lo up
 ip link set eth0 up
@@ -82,11 +85,13 @@ done
 
 mkdir -p /mnt/root/etc
 rm -f /mnt/root/etc/resolv.conf
-printf '%s\n' \
-  'nameserver 1.1.1.1' \
-  'nameserver 8.8.8.8' \
-  'options timeout:1 attempts:2' \
-  > /mnt/root/etc/resolv.conf
+old_ifs=$IFS
+IFS=,
+for nameserver in $guest_dns; do
+  printf 'nameserver %s\n' "$nameserver" >> /mnt/root/etc/resolv.conf
+done
+IFS=$old_ifs
+printf '%s\n' 'options timeout:1 attempts:2' >> /mnt/root/etc/resolv.conf
 
 mkdir -p /mnt/root/run/blitz /mnt/root/var/lib/blitz
 if [ -s /mnt/rw/seed/authorized_key ]; then
@@ -114,5 +119,5 @@ fi
 say "kernel_init_ready ip=$guest_ip"
 exec chroot /mnt/root /usr/bin/env -i \
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/command \
-  HOME=/var/lib/blitz/home USER=blitz BLITZ_STATE_DIR=/var/lib/blitz \
-  /init
+  HOME=/var/lib/blitz/home USER=blitz \
+  /bin/bash -c 'set -a; source /etc/blitz/env.defaults; set +a; exec /init'

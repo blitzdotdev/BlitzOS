@@ -285,10 +285,14 @@ systemctl enable ssh
 systemctl restart ssh
 
 ${imageSetup}
+install -d -m 0755 /etc/blitz
+docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults
+chmod 0644 /etc/blitz/env.defaults
 docker run --detach \
   --name blitz-box \
   --restart unless-stopped \
   --privileged \
+  --env-file /etc/blitz/env.defaults \
   -e BLITZ_UID=1000 \
   -e BLITZ_GID=1000 \
   --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
@@ -367,7 +371,6 @@ register_status=0
 timeout --foreground --kill-after=5s 40s \
   docker exec \
     --user 1000:1000 \
-    --env BLITZ_STATE_DIR=/var/lib/blitz \
     --env HOME=/var/lib/blitz/home \
     --env USER=blitz \
     blitz-box \

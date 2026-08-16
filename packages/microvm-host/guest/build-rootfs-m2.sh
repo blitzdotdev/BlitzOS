@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LAB=${BLITZ_LAB:-"$HOME/blitz-microvm-lab"}
-SOURCE=${BLITZ_BASE_SOURCE:-"$LAB/rootfs/blitz-box-base.ext4"}
-OUTPUT=${BLITZ_M2_BASE_OUTPUT:-"$LAB/rootfs/blitz-box-base-m2-v4.ext4"}
-INIT=${BLITZ_M2_INIT:-"$LAB/recipe/m2/microvm-init"}
-ENROLL=${BLITZ_M2_ENROLL:-"$LAB/recipe/m2/blitz-microvm-enroll.js"}
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+SOURCE=${BLITZ_BASE_SOURCE:?set BLITZ_BASE_SOURCE to the existing base image}
+OUTPUT=${BLITZ_M2_BASE_OUTPUT:?set BLITZ_M2_BASE_OUTPUT to the new versioned image path}
+INIT=${BLITZ_M2_INIT:-"$script_dir/microvm-init"}
+ENROLL=${BLITZ_M2_ENROLL:-"$script_dir/blitz-microvm-enroll.js"}
 
 for required in "$SOURCE" "$INIT" "$ENROLL"; do
   [[ -f "$required" ]] || { echo "missing $required" >&2; exit 1; }

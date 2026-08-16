@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"flag"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -15,13 +16,51 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "", "absolute path to agent JSON config")
-	flag.Parse()
-	if *configPath == "" {
-		log.Fatal("-config is required")
+	cfg := agent.Config{
+		ListenAddr:         os.Getenv("BLITZ_MICROVM_LISTEN_ADDR"),
+		PublicHostIP:       os.Getenv("BLITZ_MICROVM_PUBLIC_HOST_IP"),
+		TokenFile:          os.Getenv("BLITZ_MICROVM_TOKEN_FILE"),
+		StateDir:           os.Getenv("BLITZ_MICROVM_STATE_DIR"),
+		FirecrackerBin:     os.Getenv("BLITZ_MICROVM_FIRECRACKER_BIN"),
+		FirecrackerVersion: os.Getenv("BLITZ_MICROVM_FIRECRACKER_VERSION"),
+		KernelImage:        os.Getenv("BLITZ_MICROVM_KERNEL_IMAGE"),
+		KernelVersion:      os.Getenv("BLITZ_MICROVM_KERNEL_VERSION"),
+		RootfsImage:        os.Getenv("BLITZ_MICROVM_ROOTFS_IMAGE"),
+		SudoWrapper:        os.Getenv("BLITZ_MICROVM_SUDO_WRAPPER"),
+		NetworkPrefix:      os.Getenv("BLITZ_MICROVM_NETWORK_PREFIX"),
 	}
-	cfg, err := agent.LoadConfig(*configPath)
-	if err != nil {
+	if err := json.Unmarshal([]byte(os.Getenv("BLITZ_MICROVM_GUEST_DNS")), &cfg.GuestDNS); err != nil {
+		log.Fatalf("BLITZ_MICROVM_GUEST_DNS: %v", err)
+	}
+	var err error
+	if cfg.NetworkOctetBase, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_NETWORK_OCTET_BASE")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_NETWORK_OCTET_BASE: %v", err)
+	}
+	if cfg.SlotCount, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_SLOT_COUNT")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_SLOT_COUNT: %v", err)
+	}
+	if cfg.SSHPortBase, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_SSH_PORT_BASE")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_SSH_PORT_BASE: %v", err)
+	}
+	if cfg.UpperSizeBytes, err = strconv.ParseInt(os.Getenv("BLITZ_MICROVM_UPPER_SIZE_BYTES"), 10, 64); err != nil {
+		log.Fatalf("BLITZ_MICROVM_UPPER_SIZE_BYTES: %v", err)
+	}
+	if cfg.TotalCPU, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_TOTAL_CPU")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_TOTAL_CPU: %v", err)
+	}
+	if cfg.CPUOvercommit, err = strconv.ParseFloat(os.Getenv("BLITZ_MICROVM_CPU_OVERCOMMIT"), 64); err != nil {
+		log.Fatalf("BLITZ_MICROVM_CPU_OVERCOMMIT: %v", err)
+	}
+	if cfg.TotalMemMB, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_TOTAL_MEM_MB")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_TOTAL_MEM_MB: %v", err)
+	}
+	if cfg.MaxVMs, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_MAX_VMS")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_MAX_VMS: %v", err)
+	}
+	if cfg.ShutdownTimeoutSeconds, err = strconv.Atoi(os.Getenv("BLITZ_MICROVM_SHUTDOWN_TIMEOUT_SECONDS")); err != nil {
+		log.Fatalf("BLITZ_MICROVM_SHUTDOWN_TIMEOUT_SECONDS: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
 		log.Fatalf("config: %v", err)
 	}
 	token, err := agent.ReadBearerToken(cfg.TokenFile)

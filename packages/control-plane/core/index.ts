@@ -55,8 +55,6 @@ export type {
   RuntimeVariables,
 } from "./runtime.js";
 export {
-  DEFAULT_MAX_CONCURRENT_WORKSPACES,
-  DEFAULT_SESSION_TTL_MS,
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
 } from "./runtime.js";

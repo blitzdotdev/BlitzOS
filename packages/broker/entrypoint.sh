@@ -1,13 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-state_dir="${BLITZ_STATE_DIR:-/var/lib/blitz-broker}"
+if [[ -z ${BLITZ_BROKER_STATE_DIR+x} ]]; then
+  set -a
+  source /etc/blitz/env.defaults
+  set +a
+fi
+state_dir="$BLITZ_BROKER_STATE_DIR"
 case "$state_dir" in
   /*) ;;
-  *) echo "BLITZ_STATE_DIR must be absolute" >&2; exit 1 ;;
+  *) echo "BLITZ_BROKER_STATE_DIR must be absolute" >&2; exit 1 ;;
 esac
 if [[ "$state_dir" == "/" ]]; then
-  echo "BLITZ_STATE_DIR cannot be /" >&2
+  echo "BLITZ_BROKER_STATE_DIR cannot be /" >&2
   exit 1
 fi
 

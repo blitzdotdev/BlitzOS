@@ -114,6 +114,7 @@ COPY --from=actor-build /src/packages/box/actor/package.json /opt/blitz/actor/pa
 COPY --from=actor-build /src/packages/box/actor/package-lock.json /opt/blitz/actor/package-lock.json
 COPY --from=actor-build /src/packages/box/actor/dist /opt/blitz/actor/dist
 COPY --from=actor-build /src/packages/box/actor/node_modules /opt/blitz/actor/node_modules
+COPY env.defaults /etc/blitz/env.defaults
 COPY packages/box/rootfs/ /
 RUN set -eux; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
@@ -121,8 +122,7 @@ RUN set -eux; \
     ln -s /workspace /srv/blitz-files/workspace; \
     ln -s /var/lib/blitz/home /srv/blitz-files/home
 
-ENV BLITZ_STATE_DIR=/var/lib/blitz \
-    HOME=/var/lib/blitz/home \
+ENV HOME=/var/lib/blitz/home \
     USER=blitz
 
 VOLUME ["/var/lib/blitz"]

@@ -178,13 +178,18 @@ func TestMicroVMInitWritesRegularResolvConfBeforeEnrollment(t *testing.T) {
 	}
 	script := string(contents)
 	remove := strings.Index(script, "rm -f /mnt/root/etc/resolv.conf")
-	write := strings.Index(script, "'nameserver 1.1.1.1' \\\n  'nameserver 8.8.8.8' \\\n  'options timeout:1 attempts:2' \\\n  > /mnt/root/etc/resolv.conf")
+	write := strings.Index(script, "printf 'nameserver %s\\n' \"$nameserver\" >> /mnt/root/etc/resolv.conf")
 	enroll := strings.Index(script, "/usr/local/libexec/blitz-microvm-enroll.js")
 	if remove < 0 || write < 0 || enroll < 0 {
 		t.Fatalf("resolver replacement or enrollment command missing from guest init")
 	}
 	if remove >= write || write >= enroll {
 		t.Fatalf("resolver replacement must occur before enrollment: remove=%d write=%d enroll=%d", remove, write, enroll)
+	}
+	for _, required := range []string{"blitz_dns=*) guest_dns=", "[ -n \"$guest_dns\" ]", "IFS=,"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("guest init is missing configured DNS handling %q", required)
+		}
 	}
 }
 

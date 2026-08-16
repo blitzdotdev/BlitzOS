@@ -1,9 +1,9 @@
 #!/command/with-contenv bash
 set -euo pipefail
 
-state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
-uid=${BLITZ_UID:-1000}
-gid=${BLITZ_GID:-1000}
+state_dir=$BLITZ_STATE_DIR
+uid=$BLITZ_UID
+gid=$BLITZ_GID
 
 case "$state_dir" in
   /*) ;;
@@ -74,7 +74,7 @@ else
   rm -f "$state_dir/authorized_keys"
 fi
 
-if [ -n "${BLITZ_CP_ORIGIN:-}" ]; then
+if [ -n "$BLITZ_CP_ORIGIN" ]; then
   case "$BLITZ_CP_ORIGIN" in
     *$'\n'*|*$'\r'*) echo "BLITZ_CP_ORIGIN must be one line" >&2; exit 1 ;;
   esac
