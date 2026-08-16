@@ -13,6 +13,7 @@ export {
   maybeScheduleLazySweep,
   runInvariantSweep,
   runOrphanSweep,
+  runWorkspaceTunnelSweep,
   runSessionSweep,
 } from "./janitors.js";
 export { createOperatorPrincipalSource } from "./principals.js";
@@ -20,6 +21,7 @@ export type { Principal, PrincipalSource } from "./principals.js";
 export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
 export { VmProviderRegistry } from "./providers/registry.js";
+export { WorkspaceTunnels, workspaceTunnelsFromEnv, SURFACE_TOKEN_HEADER } from "./workspace-tunnels.js";
 export type { VmProviderListResult } from "./providers/registry.js";
 export {
   addMicrovmHostRoutes,

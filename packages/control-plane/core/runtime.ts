@@ -5,6 +5,7 @@ import type { PrincipalSource } from "./principals.js";
 import type { MicrovmPoolProvider } from "./providers/microvm.js";
 import type { VmProviderRegistry } from "./providers/registry.js";
 import type { VolumeProvider } from "./providers/types.js";
+import type { WorkspaceTunnels } from "./workspace-tunnels.js";
 
 export interface CoreRequest {
   readonly raw: Request;
@@ -80,6 +81,7 @@ export interface CoreRuntime {
     vmRegistry: VmProviderRegistry;
     volume: VolumeProvider;
     microvm?: MicrovmPoolProvider;
+    workspaceTunnels?: WorkspaceTunnels;
   };
   principalSource: PrincipalSource;
   waitUntil(promise: Promise<unknown>): void;

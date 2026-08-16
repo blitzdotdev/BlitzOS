@@ -29,6 +29,7 @@ const expected = [
   "janitors.ts",
   "oauth.ts",
   "principals.ts",
+  "providers/cloudflare-tunnels.ts",
   "providers/hetzner.ts",
   "providers/json-fetch.ts",
   "providers/microvm-agent.ts",
@@ -41,6 +42,7 @@ const expected = [
   "registry.ts",
   "runtime.ts",
   "sessions.ts",
+  "workspace-tunnels.ts",
   "types.ts",
   "volumes.ts",
   "wire.ts",
@@ -63,6 +65,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(38);
+    expect(expected).toHaveLength(40);
   });
 });

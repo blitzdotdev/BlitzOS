@@ -9,6 +9,7 @@ import {
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
   VmProviderRegistry,
+  type WorkspaceTunnels,
   type BlobStore,
   type CoreContext,
   type CoreRouter,
@@ -162,6 +163,7 @@ export function appWithProviders(
 export function appWithVmProviders(
   vmProviders: readonly VmProvider[],
   volumeProvider: VolumeProvider,
+  workspaceTunnels?: WorkspaceTunnels,
 ): TestApp {
   const app = teenyHono<TestEnv>(
     async (context) => {
@@ -190,6 +192,7 @@ export function appWithVmProviders(
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),
       volume: volumeProvider,
+      workspaceTunnels,
     },
     principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
@@ -204,7 +207,10 @@ export function harness() {
   return { app, providers };
 }
 
-export function testRuntime(providers: FakeProviders): CoreRuntime {
+export function testRuntime(
+  providers: FakeProviders,
+  workspaceTunnels?: WorkspaceTunnels,
+): CoreRuntime {
   return {
     db: new $DatabaseRawImpl(env.DB),
     blobs: env.BOX_IMAGES as BlobStore,
@@ -221,6 +227,7 @@ export function testRuntime(providers: FakeProviders): CoreRuntime {
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),
       volume: providers,
+      workspaceTunnels,
     },
     principalSource: createOperatorPrincipalSource(OPERATOR_KEY),
     waitUntil: () => undefined,

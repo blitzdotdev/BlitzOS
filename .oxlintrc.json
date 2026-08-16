@@ -70,7 +70,8 @@
               "packages/control-plane/core/providers/json-fetch.ts",
               "packages/control-plane/core/credentials/proxy.ts",
               "packages/control-plane/core/credentials/minters/app-jwt/github-app.ts",
-              "packages/control-plane/core/providers/hetzner.ts"
+              "packages/control-plane/core/providers/hetzner.ts",
+              "packages/control-plane/core/workspace-tunnels.ts"
             ]
           }
         ],
