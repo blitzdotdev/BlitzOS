@@ -65,11 +65,13 @@ RUN set -eux; \
       iproute2=6.1.0-3 \
       iptables=1.8.9-2 \
       libstdc++6=12.2.0-14+deb12u1 \
+      nano=7.2-1+deb12u1 \
       openssh-client=1:9.2p1-2+deb12u10 \
       openssh-server=1:9.2p1-2+deb12u10 \
       passwd=1:4.13+dfsg1-1+deb12u2 \
       procps=2:4.0.2-3 \
       tmux=3.3a-3 \
+      vim=2:9.0.1378-2+deb12u2 \
       xz-utils=5.4.1-1+deb12u1; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
@@ -89,6 +91,8 @@ ADD --checksum=sha256:8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7
 ADD --checksum=sha256:b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165 https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.aarch64 /tmp/ttyd-aarch64
 ADD --checksum=sha256:817769f726613194bcff9d0e3e481eaccc86ac11208857614f36a8c02f410977 https://github.com/sigoden/dufs/releases/download/v0.46.0/dufs-v0.46.0-x86_64-unknown-linux-musl.tar.gz /tmp/dufs-x86_64.tgz
 ADD --checksum=sha256:1472123ae3aa07e49404d16b20305c2dec90c59883ebda9308717f7205e6511b https://github.com/sigoden/dufs/releases/download/v0.46.0/dufs-v0.46.0-aarch64-unknown-linux-musl.tar.gz /tmp/dufs-aarch64.tgz
+ADD --checksum=sha256:9d71c677db00134c1bd4144b7783486b654ad281b1ea62b4972098d19f770f17 https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-amd64 /tmp/cloudflared-x86_64
+ADD --checksum=sha256:65259e652a7bea08bf5df603233ab22b8bf3116af8df9f9206209af6a1b955c0 https://github.com/cloudflare/cloudflared/releases/download/2026.7.3/cloudflared-linux-arm64 /tmp/cloudflared-aarch64
 ADD --checksum=sha256:b0df4a43a98d7ecb708acbdb5a34a3416e13b6e39bcbbdf296f51f0f3442b29f https://download.docker.com/linux/static/stable/x86_64/docker-29.6.1.tgz /tmp/docker-x86_64.tgz
 ADD --checksum=sha256:917a4bb83565bcacb38c430f08daae8b59db3256331ac23f22394f0542509881 https://download.docker.com/linux/static/stable/aarch64/docker-29.6.1.tgz /tmp/docker-aarch64.tgz
 RUN set -eux; \
@@ -101,6 +105,7 @@ RUN set -eux; \
     esac; \
     tar -C /out/root -Jxpf "/tmp/s6-overlay-$artifact_arch.tar.xz"; \
     install -m 0755 "/tmp/ttyd-$artifact_arch" /out/root/usr/local/bin/ttyd; \
+    install -m 0755 "/tmp/cloudflared-$artifact_arch" /out/root/usr/local/bin/cloudflared; \
     tar -C /out/root/usr/local/bin -xzpf "/tmp/dufs-$artifact_arch.tgz" dufs; \
     tar -C /out/root/usr/local/bin --strip-components=1 -xzpf "/tmp/docker-$artifact_arch.tgz"
 

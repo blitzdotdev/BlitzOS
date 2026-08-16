@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,7 +24,13 @@ const (
 	terminalAddress        = "127.0.0.1:7443"
 	terminalHost           = "localhost:7443"
 	terminalOrigin         = "http://localhost:7443"
+	actorAddress           = "127.0.0.1:7444"
+	actorHost              = "localhost:7444"
+	actorOrigin            = "http://localhost:7444"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
+	surfaceTokenPath       = "/var/lib/blitz/surface-token"
+	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
+	surfaceTokenHeader     = "X-Blitz-Surface-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
 )
@@ -43,9 +51,16 @@ type portInfo struct {
 type gateway struct {
 	dufs                   *httputil.ReverseProxy
 	terminal               *url.URL
+	actor                  *url.URL
 	controlPlaneOriginPath string
+	surfaceTokenPath       string
+	tunnelTokenPath        string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
+	authMu                 sync.Mutex
+	authRequired           bool
+	lastSurfaceToken       string
+	authFailureLogged      bool
 }
 
 func main() {
@@ -56,7 +71,10 @@ func main() {
 	handler := &gateway{
 		dufs:                   dufsProxy,
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
+		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
 		controlPlaneOriginPath: controlPlaneOriginPath,
+		surfaceTokenPath:       surfaceTokenPath,
+		tunnelTokenPath:        tunnelTokenPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -72,9 +90,20 @@ func main() {
 }
 
 func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	surfaceToken, authRequired, available := g.currentSurfaceToken()
+	if !available {
+		http.Error(response, "surface authentication unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if authRequired && !surfaceTokenAllowed(request, surfaceToken) {
+		http.Error(response, "surface token forbidden", http.StatusForbidden)
+		return
+	}
+	removeSurfaceTokenHeader(request.Header)
+
 	controlPlaneOrigin := loadControlPlaneOrigin(g.controlPlaneOriginPath)
 	if isCORSPreflight(request) {
-		serveCORSPreflight(response, request, controlPlaneOrigin)
+		serveCORSPreflight(response, request, controlPlaneOrigin, authRequired)
 		return
 	}
 	webSocket := isWebSocketUpgrade(request)
@@ -92,6 +121,10 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}
 	if request.URL.Path == "/terminal/ws" {
 		g.serveTerminal(response, request)
+		return
+	}
+	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
+		g.serveACP(response, request)
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/preview/") {
@@ -112,6 +145,25 @@ func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Requ
 		previousRewrite(proxyRequest)
 		proxyRequest.Out.Host = terminalHost
 		proxyRequest.Out.Header.Set("Origin", terminalOrigin)
+	}
+	proxy.ServeHTTP(response, request)
+}
+
+func (g *gateway) serveACP(response http.ResponseWriter, request *http.Request) {
+	target := g.actor
+	if target == nil {
+		target = &url.URL{Scheme: "http", Host: actorAddress}
+	}
+	upstreamPath := strings.TrimPrefix(request.URL.Path, "/acp")
+	if upstreamPath == "" {
+		upstreamPath = "/"
+	}
+	proxy := g.reverseProxy(target, upstreamPath, "/acp", request)
+	previousRewrite := proxy.Rewrite
+	proxy.Rewrite = func(proxyRequest *httputil.ProxyRequest) {
+		previousRewrite(proxyRequest)
+		proxyRequest.Out.Host = actorHost
+		proxyRequest.Out.Header.Set("Origin", actorOrigin)
 	}
 	proxy.ServeHTTP(response, request)
 }
@@ -187,20 +239,32 @@ func isCORSPreflight(request *http.Request) bool {
 	return request.Method == http.MethodOptions && request.Header.Get("Access-Control-Request-Method") != ""
 }
 
-func serveCORSPreflight(response http.ResponseWriter, request *http.Request, controlPlaneOrigin string) {
+func serveCORSPreflight(response http.ResponseWriter, request *http.Request, controlPlaneOrigin string, authRequired bool) {
 	removeAccessControlHeaders(response.Header())
 	if origin, allowed := allowedCORSOrigin(request, controlPlaneOrigin); allowed {
-		requestedHeaders := request.Header.Get("Access-Control-Request-Headers")
-		if requestedHeaders == "" {
-			requestedHeaders = "*"
-		}
 		response.Header().Set("Access-Control-Allow-Origin", origin)
 		response.Header().Set("Access-Control-Allow-Methods", corsAllowMethods)
-		response.Header().Set("Access-Control-Allow-Headers", requestedHeaders)
+		requestedHeaders := strings.Join(request.Header.Values("Access-Control-Request-Headers"), ",")
+		if allowedHeaders := filterCORSRequestHeaders(requestedHeaders); allowedHeaders != "" {
+			response.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
+		} else if requestedHeaders == "" && !authRequired {
+			response.Header().Set("Access-Control-Allow-Headers", "*")
+		}
 		response.Header().Set("Access-Control-Max-Age", "600")
 		addVaryOrigin(response.Header())
 	}
 	response.WriteHeader(http.StatusNoContent)
+}
+
+func filterCORSRequestHeaders(requested string) string {
+	allowed := make([]string, 0)
+	for _, name := range strings.Split(requested, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" && !strings.EqualFold(name, surfaceTokenHeader) {
+			allowed = append(allowed, name)
+		}
+	}
+	return strings.Join(allowed, ", ")
 }
 
 func allowedCORSOrigin(request *http.Request, controlPlaneOrigin string) (string, bool) {
@@ -276,6 +340,55 @@ func loadControlPlaneOrigin(path string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+func (g *gateway) currentSurfaceToken() (token string, authRequired bool, available bool) {
+	g.authMu.Lock()
+	defer g.authMu.Unlock()
+
+	data, err := os.ReadFile(g.surfaceTokenPath)
+	token = strings.TrimSpace(string(data))
+	if err == nil && token != "" {
+		g.authRequired = true
+		g.lastSurfaceToken = token
+		return token, true, true
+	}
+
+	if g.authRequired {
+		if !g.authFailureLogged {
+			if err != nil {
+				log.Printf("surface token unavailable after authentication was enabled; continuing with last valid token: %v", err)
+			} else {
+				log.Printf("surface token empty after authentication was enabled; continuing with last valid token")
+			}
+			g.authFailureLogged = true
+		}
+		return g.lastSurfaceToken, true, true
+	}
+
+	if err == nil || !errors.Is(err, os.ErrNotExist) {
+		return "", true, false
+	}
+	if _, surfaceErr := os.Lstat(g.surfaceTokenPath); !errors.Is(surfaceErr, os.ErrNotExist) {
+		return "", true, false
+	}
+	if _, tunnelErr := os.Lstat(g.tunnelTokenPath); !errors.Is(tunnelErr, os.ErrNotExist) {
+		return "", true, false
+	}
+	return "", false, true
+}
+
+func surfaceTokenAllowed(request *http.Request, surfaceToken string) bool {
+	values := request.Header.Values(surfaceTokenHeader)
+	return len(values) == 1 && subtle.ConstantTimeCompare([]byte(values[0]), []byte(surfaceToken)) == 1
+}
+
+func removeSurfaceTokenHeader(header http.Header) {
+	for name := range header {
+		if strings.EqualFold(name, surfaceTokenHeader) {
+			delete(header, name)
+		}
+	}
 }
 
 func isWebSocketUpgrade(request *http.Request) bool {
