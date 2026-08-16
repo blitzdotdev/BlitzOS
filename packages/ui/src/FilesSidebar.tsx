@@ -34,9 +34,12 @@ type FileNode = {
 type FilesSidebarProps = {
   client: WebDAVClient | null;
   expanded: string[];
+  getClient: () => WebDAVClient | null;
   mobile: boolean;
   open: boolean;
+  ready: boolean;
   refreshVersion: number;
+  visible: boolean;
   wakingStage?: string;
   width: number;
   onClose: () => void;
@@ -45,6 +48,19 @@ type FilesSidebarProps = {
   onUnauthorized: () => void;
   onWidthChange: (width: number) => void;
 };
+
+type DirectoryLoadResult = 'loaded' | 'error' | 'transient-error' | 'unavailable' | 'superseded';
+
+export const ROOT_RETRY_INTERVAL_MS = 2_500;
+export const ROOT_RETRY_WINDOW_MS = 60_000;
+
+function transientDavStatus(status: number | undefined): boolean {
+  return status === undefined
+    || status === 408
+    || status === 425
+    || status === 429
+    || status >= 500;
+}
 
 type FilesContextMenu = {
   x: number;
@@ -197,9 +213,12 @@ function FileTreeNode({
 export function FilesSidebar({
   client,
   expanded,
+  getClient,
   mobile,
   open,
+  ready,
   refreshVersion,
+  visible,
   wakingStage,
   width,
   onClose,
@@ -223,6 +242,8 @@ export function FilesSidebar({
   const createInput = useRef<HTMLInputElement>(null);
   const expandedRef = useRef(expanded);
   const requestTokens = useRef(new Map<string, symbol>());
+  const rootRetryCycle = useRef(0);
+  const rootRetryTimer = useRef<number | null>(null);
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
   const initialOpenState = useRef(Object.fromEntries(expanded.map((path) => [path, true])));
   const lastFocusRefresh = useRef(0);
@@ -258,8 +279,17 @@ export function FilesSidebar({
     return () => observer.disconnect();
   }, []);
 
-  const loadDirectory = useCallback(async (path: string) => {
-    if (!client) return false;
+  const currentClient = useCallback(
+    () => client ?? getClient(),
+    [client, getClient],
+  );
+
+  const loadDirectory = useCallback(async (
+    path: string,
+    rootFailureState: 'loading' | 'error' = 'error',
+  ): Promise<DirectoryLoadResult> => {
+    const requestClient = currentClient();
+    if (!requestClient) return 'unavailable';
     const token = Symbol(path);
     requestTokens.current.set(path, token);
     setLoadingPaths((current) => new Set(current).add(path));
@@ -272,8 +302,8 @@ export function FilesSidebar({
       ));
     }
     try {
-      const result = await client.getDirectoryContents(path || '/');
-      if (requestTokens.current.get(path) !== token) return false;
+      const result = await requestClient.getDirectoryContents(path || '/');
+      if (requestTokens.current.get(path) !== token) return 'superseded';
       const children = listedNodes(path, result);
       if (path) {
         setData((current) => replaceDirectory(
@@ -285,12 +315,12 @@ export function FilesSidebar({
         setData(children);
         setRootState('ready');
       }
-      return true;
+      return 'loaded';
     } catch (loadError) {
-      if (requestTokens.current.get(path) !== token) return false;
+      if (requestTokens.current.get(path) !== token) return 'superseded';
       if (davErrorStatus(loadError) === 401) {
         onUnauthorized();
-        return false;
+        return 'error';
       }
       if (path) {
         setData((current) => replaceDirectory(
@@ -300,9 +330,9 @@ export function FilesSidebar({
         ));
       } else {
         setData([]);
-        setRootState('error');
+        setRootState(rootFailureState);
       }
-      return false;
+      return transientDavStatus(davErrorStatus(loadError)) ? 'transient-error' : 'error';
     } finally {
       if (requestTokens.current.get(path) === token) {
         requestTokens.current.delete(path);
@@ -313,19 +343,10 @@ export function FilesSidebar({
         });
       }
     }
-  }, [client, onUnauthorized]);
-
-  const refreshAllExpanded = useCallback(async () => {
-    if (!client) return;
-    await loadDirectory('');
-    const paths = [...expandedRef.current].sort(
-      (left, right) => left.split('/').length - right.split('/').length,
-    );
-    for (const path of paths) await loadDirectory(path);
-  }, [client, loadDirectory]);
+  }, [currentClient, onUnauthorized]);
 
   const openContextMenu = useCallback((event: ReactMouseEvent, directory: string) => {
-    if (!client) return;
+    if (!currentClient()) return;
     event.preventDefault();
     event.stopPropagation();
     setCreateName('');
@@ -335,7 +356,7 @@ export function FilesSidebar({
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - 164)),
       directory,
     });
-  }, [client]);
+  }, [currentClient]);
 
   const chooseCreateKind = (createKind: 'file' | 'folder') => {
     setCreateName('');
@@ -345,7 +366,8 @@ export function FilesSidebar({
 
   const createEntry = async (event: FormEvent) => {
     event.preventDefault();
-    if (!client || !contextMenu?.createKind || creating) return;
+    const requestClient = currentClient();
+    if (!requestClient || !contextMenu?.createKind || creating) return;
     const name = createName.trim();
     if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0')) {
       setCreateError('Enter a name without “/”.');
@@ -356,8 +378,8 @@ export function FilesSidebar({
     setCreateError(null);
     try {
       if (contextMenu.createKind === 'folder') {
-        await client.createDirectory(path);
-      } else if (!await client.putFileContents(path, '', { overwrite: false })) {
+        await requestClient.createDirectory(path);
+      } else if (!await requestClient.putFileContents(path, '', { overwrite: false })) {
         setCreateError('A file or folder with that name already exists.');
         return;
       }
@@ -381,45 +403,88 @@ export function FilesSidebar({
     }
   };
 
+  const cancelRootRetry = useCallback(() => {
+    rootRetryCycle.current += 1;
+    requestTokens.current.clear();
+    if (rootRetryTimer.current !== null) {
+      window.clearTimeout(rootRetryTimer.current);
+      rootRetryTimer.current = null;
+    }
+  }, []);
+
+  const startRootRetry = useCallback(() => {
+    cancelRootRetry();
+    if (!ready || !visible) return;
+    setLoadingPaths(new Set());
+    const cycle = rootRetryCycle.current;
+    const startedAt = Date.now();
+    setRootState('loading');
+
+    const attempt = async () => {
+      if (rootRetryCycle.current !== cycle || !ready || !visible) return;
+      const result = await loadDirectory('', 'loading');
+      if (rootRetryCycle.current !== cycle) return;
+      if (result === 'loaded') {
+        const paths = [...expandedRef.current].sort(
+          (left, right) => left.split('/').length - right.split('/').length,
+        );
+        for (const path of paths) {
+          if (rootRetryCycle.current !== cycle || !ready || !visible) return;
+          await loadDirectory(path);
+        }
+        return;
+      }
+      if (result !== 'transient-error' && result !== 'unavailable') {
+        if (result === 'error') setRootState('error');
+        return;
+      }
+      const remaining = ROOT_RETRY_WINDOW_MS - (Date.now() - startedAt);
+      if (remaining <= 0) {
+        setRootState('error');
+        return;
+      }
+      rootRetryTimer.current = window.setTimeout(() => {
+        rootRetryTimer.current = null;
+        void attempt();
+      }, Math.min(ROOT_RETRY_INTERVAL_MS, remaining));
+    };
+
+    void attempt();
+  }, [cancelRootRetry, loadDirectory, ready, visible]);
+
   useEffect(() => {
-    if (!client) {
-      requestTokens.current.clear();
+    if (!ready) {
+      cancelRootRetry();
+      setLoadingPaths(new Set());
       setData([]);
       setRootState('loading');
       return;
     }
-    let cancelled = false;
-    void (async () => {
-      const rootLoaded = await loadDirectory('');
-      if (!rootLoaded || cancelled) return;
-      const paths = [...expandedRef.current].sort(
-        (left, right) => left.split('/').length - right.split('/').length,
-      );
-      for (const path of paths) {
-        if (cancelled) return;
-        await loadDirectory(path);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [client]);
+    if (!visible) {
+      cancelRootRetry();
+      setLoadingPaths(new Set());
+      return;
+    }
+    startRootRetry();
+    return cancelRootRetry;
+  }, [cancelRootRetry, client, ready, startRootRetry, visible]);
 
   useEffect(() => {
     if (lastRefreshVersion.current === refreshVersion) return;
     lastRefreshVersion.current = refreshVersion;
-    void refreshAllExpanded();
-  }, [refreshAllExpanded, refreshVersion]);
+    startRootRetry();
+  }, [refreshVersion, startRootRetry]);
 
   useEffect(() => {
     const refreshOnFocus = () => {
+      if (!ready || !visible) return;
       if (Date.now() - lastFocusRefresh.current < 5_000) return;
       lastFocusRefresh.current = Date.now();
-      void refreshAllExpanded();
+      startRootRetry();
     };
     window.addEventListener('focus', refreshOnFocus);
     return () => window.removeEventListener('focus', refreshOnFocus);
-  }, [refreshAllExpanded]);
+  }, [ready, startRootRetry, visible]);
 
   const renderNode = useCallback((props: NodeRendererProps<FileNode>) => (
     <FileTreeNode
@@ -478,8 +543,8 @@ export function FilesSidebar({
           type="button"
           aria-label="Refresh files"
           title="Refresh files"
-          disabled={!client}
-          onClick={() => { void refreshAllExpanded(); }}
+          disabled={!ready}
+          onClick={startRootRetry}
         >
           {loadingPaths.has('')
             ? <span className="cockpit-inline-spinner files-tree-spinner" />
@@ -507,7 +572,7 @@ export function FilesSidebar({
           else onOpenFile(selected.data.path);
         }}
       >
-        {!client ? (
+        {!ready ? (
           <div className="files-sidebar-loading">
             {wakingStage && <span className="files-sidebar-stage">{wakingStage}</span>}
             <OutlinedLoadingRows ariaLabel="Loading workspace files" count={3} />
@@ -517,7 +582,7 @@ export function FilesSidebar({
         ) : rootState === 'error' ? (
           <div className="files-tree-root-state">
             <span>couldn&apos;t list · </span>
-            <button type="button" onClick={() => { void loadDirectory(''); }}>retry</button>
+            <button type="button" onClick={startRootRetry}>retry</button>
           </div>
         ) : data.length === 0 ? (
           <div className="files-tree-root-state">(empty)</div>
@@ -547,7 +612,7 @@ export function FilesSidebar({
               if (tree.current?.isOpen(path)) {
                 paths.add(path);
                 void (async () => {
-                  if (!await loadDirectory(path)) return;
+                  if (await loadDirectory(path) !== 'loaded') return;
                   const descendants = [...paths]
                     .filter((candidate) => candidate.startsWith(`${path}/`))
                     .sort((left, right) => left.split('/').length - right.split('/').length);

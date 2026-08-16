@@ -7,6 +7,11 @@ import { standaloneResolver } from "../src/resolver.js";
 import { render, settle } from "./dom.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
+const cockpitHarness = vi.hoisted(() => ({
+  mounts: vi.fn(),
+  nextMountId: 0,
+  unmounts: vi.fn(),
+}));
 
 vi.mock("webdav", async () => {
   const actual = await vi.importActual<typeof import("webdav")>("webdav");
@@ -19,12 +24,51 @@ vi.mock("webdav", async () => {
   };
 });
 
-vi.mock("../src/TtydTerminal.js", () => ({
-  TERMINAL_SUBMIT_EVENT: "blitz:terminal-submit",
-  TtydTerminal: ({ sessionType }: { sessionType: string }) => (
-    <div data-testid="terminal-session">{sessionType}</div>
-  ),
-}));
+vi.mock("../src/TtydTerminal.js", async () => {
+  const React = await vi.importActual<typeof import("react")>("react");
+  return {
+    TERMINAL_SUBMIT_EVENT: "blitz:terminal-submit",
+    TtydTerminal: ({ active, sessionKey, sessionType }: {
+      active?: boolean;
+      sessionKey: string;
+      sessionType: string;
+    }) => {
+      const [mountId] = React.useState(() => `terminal-${++cockpitHarness.nextMountId}`);
+      React.useEffect(() => {
+        cockpitHarness.mounts("terminal", mountId);
+        return () => cockpitHarness.unmounts("terminal", mountId);
+      }, [mountId]);
+      return (
+        <div
+          data-testid="terminal-session"
+          data-active={String(active)}
+          data-mount-id={mountId}
+          data-session-key={sessionKey}
+        >{sessionType}</div>
+      );
+    },
+  };
+});
+
+vi.mock("../src/chat/ChatPanel.js", async () => {
+  const React = await vi.importActual<typeof import("react")>("react");
+  return {
+    ChatPanel: ({ initialSessionId }: { initialSessionId: string | null }) => {
+      const [mountId] = React.useState(() => `chat-${++cockpitHarness.nextMountId}`);
+      React.useEffect(() => {
+        cockpitHarness.mounts("chat", mountId);
+        return () => cockpitHarness.unmounts("chat", mountId);
+      }, [mountId]);
+      return (
+        <div
+          data-testid="chat-session"
+          data-initial-session-id={initialSessionId ?? ""}
+          data-mount-id={mountId}
+        />
+      );
+    },
+  };
+});
 
 const creating: WorkspaceView = {
   id: "workspace-one",
@@ -55,6 +99,15 @@ const running: WorkspaceView = {
   },
   volumeId: null,
   error: null,
+};
+
+const runningTwo: WorkspaceView = {
+  ...running,
+  id: "workspace-two",
+  ssh: {
+    ...running.ssh!,
+    host: "box-two.example.test",
+  },
 };
 
 let storageValues: Map<string, string>;
@@ -88,8 +141,24 @@ function runningClient(): ControlPlaneClient {
   };
 }
 
+function saveTabs(
+  workspaceId: string,
+  tabs: Array<Record<string, unknown>>,
+  activeId: number,
+): void {
+  storageValues.set(`personal:personal:blitz-cockpit-tabs-v1:${workspaceId}`, JSON.stringify({
+    version: 1,
+    tabs,
+    activeId,
+    nextId: Math.max(...tabs.map((tab) => Number(tab.id))) + 1,
+  }));
+}
+
 beforeEach(() => {
   createClientSpy.mockClear();
+  cockpitHarness.mounts.mockClear();
+  cockpitHarness.nextMountId = 0;
+  cockpitHarness.unmounts.mockClear();
   window.history.replaceState({}, "", "/");
   storageValues = new Map<string, string>();
   Object.defineProperty(globalThis, "localStorage", {
@@ -255,6 +324,119 @@ describe("cockpit shell smoke", () => {
     expect(activeTab?.closest<HTMLElement>(".cockpit-tab-cell")?.dataset.sessionId).toBe("2");
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/chat/layout")))
       .toBe(false);
+
+    await view.unmount();
+  });
+
+  it("retains visited terminal and chat panes while hiding inactive panes", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "terminal" },
+      { id: 2, type: "chat", chatProvider: "claude", chatSessionId: "chat-two" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const terminal = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
+    expect(view.container.querySelector('[data-testid="chat-session"]')).toBeNull();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.cockpit-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    const chat = view.container.querySelector<HTMLElement>('[data-testid="chat-session"]')!;
+    expect(chat.dataset.initialSessionId).toBe("chat-two");
+    expect(terminal.closest<HTMLElement>(".cockpit-workspace-session")?.hidden).toBe(true);
+    expect(chat.closest<HTMLElement>(".cockpit-workspace-session")?.hidden).toBe(false);
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.cockpit-tab-cell[data-session-id="1"] [role="tab"]',
+    )?.click());
+    expect(view.container.querySelector('[data-testid="terminal-session"]')).toBe(terminal);
+    expect(view.container.querySelector('[data-testid="chat-session"]')).toBe(chat);
+    expect(terminal.closest<HTMLElement>(".cockpit-workspace-session")?.hidden).toBe(false);
+    expect(chat.closest<HTMLElement>(".cockpit-workspace-session")?.hidden).toBe(true);
+    expect(cockpitHarness.mounts).toHaveBeenCalledTimes(2);
+
+    await view.unmount();
+  });
+
+  it("reuses retained terminal instances and unmounts a visited tab when closed", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "terminal" },
+      { id: 2, type: "claude" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const first = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="1"]',
+    )!;
+    const firstMountId = first.dataset.mountId;
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.cockpit-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.cockpit-tab-cell[data-session-id="1"] [role="tab"]',
+    )?.click());
+
+    expect(view.container.querySelector(
+      '[data-testid="terminal-session"][data-session-key="1"]',
+    )).toBe(first);
+    expect(first.dataset.mountId).toBe(firstMountId);
+    expect(cockpitHarness.mounts).toHaveBeenCalledTimes(2);
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close Terminal"]',
+    )?.click());
+    expect(first.isConnected).toBe(false);
+    expect(cockpitHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
+    expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
+
+    await view.unmount();
+  });
+
+  it("tears down retained panes when switching workspaces", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+    saveTabs("workspace-two", [{ id: 1, type: "terminal" }], 1);
+    const wire = {
+      ...client(),
+      poll: vi.fn(async () => ({ workspaces: [running, runningTwo] })),
+    };
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const first = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
+    const firstMountId = first.dataset.mountId;
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.cockpit-workspace[data-workspace-id="workspace-two"] .cockpit-workspace-button',
+    )?.click());
+    await settle();
+
+    const second = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
+    expect(first.isConnected).toBe(false);
+    expect(second).not.toBe(first);
+    expect(cockpitHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
+    expect(cockpitHarness.mounts).toHaveBeenCalledTimes(2);
 
     await view.unmount();
   });
