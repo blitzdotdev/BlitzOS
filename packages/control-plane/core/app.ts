@@ -3,7 +3,6 @@ import { addCredentialRoutes } from "./credentials/mint.js";
 import { HttpError } from "./http.js";
 import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
-import { ensurePrincipal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./providers/microvm.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
@@ -22,7 +21,8 @@ export function installControlPlaneRoutes(
     const runtime = runtimeFactory(context);
     const principal = await runtime.principalSource.authenticate(context.req.raw, runtime.db);
     if (principal === null) throw new HttpError(401, "unauthorized");
-    await ensurePrincipal(runtime.db, principal);
+    // Login (mintSession) already upserts the principal; re-upserting here
+    // added a D1 write to every authenticated request.
     return principal;
   }
 

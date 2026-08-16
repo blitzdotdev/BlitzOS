@@ -127,6 +127,8 @@ function runtimeForScheduled(
   };
 }
 
+let lastSyncedHostsConfig: string | undefined;
+
 const app = teenyHono<WorkerEnv>(
   async (context) => {
     context.set(
@@ -139,7 +141,14 @@ const app = teenyHono<WorkerEnv>(
   { cors: false, logger: true },
   async (context) => {
     const runtime = runtimeFor(context);
-    await runtime.providers.microvm?.syncStaticHosts();
+    // Static host URLs only move when MICROVM_HOSTS changes, so sync once
+    // per isolate per config value instead of paying D1 on every request.
+    // SAFETY: teenyHono routes this app with the declared WorkerBindings environment.
+    const hostsConfig = (context.env as WorkerBindings).MICROVM_HOSTS;
+    if (hostsConfig !== lastSyncedHostsConfig) {
+      lastSyncedHostsConfig = hostsConfig;
+      await runtime.providers.microvm?.syncStaticHosts();
+    }
     maybeScheduleLazySweep(runtime, context.req.path);
   },
 );

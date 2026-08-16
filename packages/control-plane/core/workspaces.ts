@@ -15,6 +15,7 @@ import {
 } from "./http.js";
 import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
+import { cookieValue, SESSION_COOKIE } from "./principals.js";
 import { isMicrovmProviderId } from "./providers/microvm.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
 import type {
@@ -134,6 +135,38 @@ async function workspaceById(db: Db, id: string): Promise<WorkspaceRow | null> {
     q: "SELECT * FROM workspaces WHERE id = ?1 LIMIT 1",
     v: [id],
   });
+}
+
+/** One-read auth + ownership + row fetch for the hot webApp proxy path.
+ * Falls back to the ordinary principal lookup only on a miss, so the
+ * 401-versus-404 contract stays byte-identical. */
+async function webAppWorkspaceForRequest(
+  runtime: CoreRuntime,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
+  context: CoreContext,
+  id: string,
+): Promise<WorkspaceRow> {
+  const token = cookieValue(context.req.raw, SESSION_COOKIE);
+  if (token !== null) {
+    const hash = await hashSecret(token);
+    const row = await first<WorkspaceRow & { session_token_hash: string }>(runtime.db, {
+      q: `SELECT w.*, s.token_hash AS session_token_hash
+          FROM sessions s
+          JOIN workspaces w ON w.owner_id = s.principal_id
+          WHERE s.token_hash = ?1 AND s.expires_at > ?2 AND w.id = ?3
+          LIMIT 1`,
+      v: [hash, Date.now(), id],
+    });
+    if (row !== null && (await matchesStoredHash(token, row.session_token_hash))) {
+      return row;
+    }
+  }
+  const principal = await requirePrincipal(context);
+  const row = await workspaceById(runtime.db, id);
+  if (row === null || row.owner_id !== principal.id) {
+    throw new HttpError(404, "workspace not found");
+  }
+  return row;
 }
 
 function providerForVmId(runtime: CoreRuntime, vmId: string): VmProvider {
@@ -499,13 +532,9 @@ export function addWorkspaceRoutes(
   });
 
   const webApp = async (context: CoreContext): Promise<Response> => {
-    const principal = await requirePrincipal(context);
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
-    const row = await workspaceById(runtime.db, id);
-    if (row === null || row.owner_id !== principal.id) {
-      throw new HttpError(404, "workspace not found");
-    }
+    const row = await webAppWorkspaceForRequest(runtime, requirePrincipal, context, id);
     if (row.vm_id === null) {
       throw new HttpError(409, "workspace is not ready for webapp access");
     }
