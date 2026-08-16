@@ -189,3 +189,143 @@ describe('files drive surface', () => {
     expect(remove).toBeUndefined();
   });
 });
+
+interface FakeEntry {
+  isFile: boolean;
+  isDirectory: boolean;
+  name: string;
+  file?: (resolve: (file: File) => void) => void;
+  createReader?: () => {
+    readEntries: (resolve: (entries: FakeEntry[]) => void) => void;
+  };
+}
+
+function fakeFileEntry(name: string): FakeEntry {
+  return {
+    isFile: true,
+    isDirectory: false,
+    name,
+    file: (resolve) => resolve(new File(['payload'], name)),
+  };
+}
+
+function fakeDirEntry(name: string, children: FakeEntry[]): FakeEntry {
+  return {
+    isFile: false,
+    isDirectory: true,
+    name,
+    createReader: () => {
+      let drained = false;
+      return {
+        readEntries: (resolve) => {
+          resolve(drained ? [] : children);
+          drained = true;
+        },
+      };
+    },
+  };
+}
+
+function dropEntries(view: { container: HTMLElement }, entries: FakeEntry[], files: File[] = []) {
+  const page = view.container.querySelector('.drive-page');
+  expect(page).not.toBeNull();
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', {
+    value: {
+      types: ['Files'],
+      items: entries.map((entry) => ({ webkitGetAsEntry: () => entry })),
+      files,
+    },
+  });
+  page?.dispatchEvent(event);
+}
+
+describe('drive drag-and-drop', () => {
+  it('uploads dropped files and directories into the open folder at the current path', async () => {
+    const fetcher = stubFolders((url, init) => {
+      if (url.pathname === '/folders/folder-mine/objects') {
+        return Response.json({ objects: [], cursor: null, truncated: false });
+      }
+      if (init?.method === 'PUT' && url.pathname.startsWith('/folders/folder-mine/objects/')) {
+        return new Response(null, { status: 200 });
+      }
+      return null;
+    });
+    const view = await render(<FilesDrive {...props(folderRoute('folder-mine', ['docs']))} />);
+    await settle();
+
+    dropEntries(view, [
+      fakeFileEntry('report.pdf'),
+      fakeDirEntry('assets', [fakeFileEntry('logo.svg')]),
+    ]);
+    await settle();
+
+    const putKeys = fetcher.mock.calls
+      .filter(([, init]) => init?.method === 'PUT')
+      .map(([input]) => new URL(String(input)).pathname.split('/objects/')[1]);
+    expect(putKeys).toEqual(['docs%2Freport.pdf', 'docs%2Fassets%2Flogo.svg']);
+    expect(view.container.textContent).toContain('2 files');
+    expect(view.container.textContent).toContain('uploaded to shared-notes');
+    await view.unmount();
+  });
+
+  it('turns a directory dropped on My Drive into a new Drive folder with its contents', async () => {
+    const created = {
+      id: 'folder-new',
+      name: 'field-photos',
+      role: 'owner',
+      owner: { name: 'Min Song', avatarUrl: null },
+      attachedWorkspaceIds: [],
+      createdAt: 3,
+      updatedAt: 3,
+      grants: [],
+    };
+    const fetcher = stubFolders((url, init) => {
+      if (url.pathname === '/folders' && init?.method === 'POST') {
+        return Response.json({ folder: created }, { status: 201 });
+      }
+      if (init?.method === 'PUT' && url.pathname.startsWith('/folders/folder-new/objects/')) {
+        return new Response(null, { status: 200 });
+      }
+      return null;
+    });
+    const view = await render(<FilesDrive {...props(drive('mine'))} />);
+    await settle();
+
+    dropEntries(view, [fakeDirEntry('Field Photos', [
+      fakeFileEntry('one.jpg'),
+      fakeDirEntry('raw', [fakeFileEntry('two.dng')]),
+    ])]);
+    await settle();
+
+    const createCall = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/folders' && init?.method === 'POST'
+    ));
+    expect(createCall?.[1]?.body).toBe(JSON.stringify({ name: 'field-photos' }));
+    const putKeys = fetcher.mock.calls
+      .filter(([, init]) => init?.method === 'PUT')
+      .map(([input]) => new URL(String(input)).pathname.split('/objects/')[1]);
+    expect(putKeys).toEqual(['one.jpg', 'raw%2Ftwo.dng']);
+    expect(view.container.textContent).toContain('uploaded to field-photos');
+    await view.unmount();
+  });
+
+  it('refuses drops where nothing can be created or written', async () => {
+    const fetcher = stubFolders();
+    const shared = await render(<FilesDrive {...props(drive('shared'))} />);
+    await settle();
+    dropEntries(shared, [fakeDirEntry('anything', [fakeFileEntry('a.txt')])]);
+    await settle();
+    expect(shared.container.textContent).toContain('Shared with me is read-only');
+    await shared.unmount();
+
+    const mine = await render(<FilesDrive {...props(drive('mine'))} />);
+    await settle();
+    dropEntries(mine, [fakeFileEntry('loose.txt')]);
+    await settle();
+    expect(mine.container.textContent).toContain('Drop a folder to add it to My Drive');
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST' || init?.method === 'PUT'))
+      .toBe(false);
+    await mine.unmount();
+  });
+});
