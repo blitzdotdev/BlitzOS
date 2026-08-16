@@ -306,8 +306,7 @@ export function WorkspaceDrawer({
 
   const tabs: Array<{ id: WorkspaceDrawerSegment; label: string }> = [{ id: 'files', label: 'Files' }];
   if (canManageCredentials) tabs.push(
-    { id: 'leases', label: 'Leases' },
-    { id: 'requests', label: 'Requests' },
+    { id: 'credentials', label: 'Credentials' },
     { id: 'events', label: 'Events' },
   );
   const effectiveSegment = canManageCredentials ? segment : 'files';
@@ -350,7 +349,7 @@ export function WorkspaceDrawer({
             onClick={() => onSegmentChange(tab.id)}
           >
             {tab.label}
-            {tab.id === 'requests' && pendingRequests.length > 0 && (
+            {tab.id === 'credentials' && pendingRequests.length > 0 && (
               <span className="workspace-pending-badge" aria-label={`${pendingRequests.length} pending`}>
                 {pendingRequests.length}
               </span>
@@ -360,18 +359,16 @@ export function WorkspaceDrawer({
       </header>
       <div className="workspace-drawer-body">
         <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>
-        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'leases'}>
-          <WorkspaceLeasesPanel
-            client={client}
-            workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'leases'}
-          />
-        </div>}
-        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'requests'}>
+        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'credentials'}>
           <WorkspaceRequestsPanel
             requests={pendingRequests}
             loadError={pendingRequestsError}
             onResolve={onResolveRequest}
+          />
+          <WorkspaceLeasesPanel
+            client={client}
+            workspaceId={workspaceId}
+            visible={open && effectiveSegment === 'credentials'}
           />
         </div>}
         {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'events'}>

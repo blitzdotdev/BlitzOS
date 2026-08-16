@@ -84,6 +84,31 @@ describe("server-side webApp state", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("normalizes legacy drawer segments to the merged credentials tab", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const legacy = {
+      ...workspaceDoc,
+      drawer: { ...workspaceDoc.drawer, segment: "leases" },
+    };
+    const put = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(legacy),
+    });
+    expect(put.status).toBe(200);
+    await expect(put.json()).resolves.toMatchObject({
+      doc: { drawer: { segment: "credentials" } },
+    });
+    const got = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(got.json()).resolves.toMatchObject({
+      doc: { drawer: { segment: "credentials" } },
+    });
+  });
+
   it("deletes per-workspace state on explicit destroy while preserving globals", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
