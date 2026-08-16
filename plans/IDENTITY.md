@@ -310,10 +310,29 @@ tunnel hostname/token or host bearer, so every guest-bound request passes
 the CP's grant check first. Editors share the owner's tmux session, agent
 sessions, and permission prompts un-attributed — acceptable for
 mutually-trusting collaborators; attribution and guest enforcement are
-phase 3. Revocation: delete the grant row; the next request 403s (webapp
-requests are per-request-authenticated at the CP; live WebSockets die on
-next reconnect — the e2e revoke check should assert new-connection denial,
-not in-flight teardown).
+phase 3.
+
+**Revocation is immediate** (decision). Two moves in one action: the CP
+deletes the grant row — every HTTP request re-checks, so non-ws surfaces
+403 at once — and calls a new gateway endpoint (`POST …/admin/drain`,
+authenticated by the existing webapp token, reached over the existing
+proxy path) that closes every live WebSocket on that workspace. Clients
+already recover from a forced close unaided (verified 2026-08-16): the
+terminal auto-reconnects with backoff and reattaches the same tmux
+session with a full redraw (`webapp/src/TtydTerminal.tsx:333`,
+`box/rootfs/.../blitz-term:66`, proven by `box/test/smoke.sh:157-175`),
+and chat reconnects, re-issues `session/load` with the kept session id,
+and merges the replay without duplicates
+(`webapp/src/chat/ChatPanel.tsx:94-130`). The revoked user's reconnect
+fails the grant check. Coarse but immediate — revokes are rare. Phase 3
+tickets identify connections and turn the drain into a per-user
+disconnect. The drain is a small gateway addition, so phase 2 carries a
+box-image re-pin. One known fix ships with it: a close during an
+in-flight prompt strands chat in `running`/"Working…"
+(`ChatPanel.tsx:182-197`, `chat/reducer.ts:97-107`) — reconcile `running`
+on reconnect. Implementation check: confirm the microvm 7444 path passes
+the gateway; if it proxies straight to the actor, the actor needs the
+same drain hook.
 
 ### Tickets — guest-verified identity (phase 3)
 
@@ -356,8 +375,8 @@ Upgrade the shipped static token, same header, same secret, same verifier:
 | Adds members by email or invite link | Phase 2 | email = stub-claim; link = org-targeted invite |
 | Any member creates a dedicated workspace | Phase 2 | org quota |
 | Share `/workspace` with members XYZ | Phase 2 (editor), phase 3 (viewer) | |
-| Revoke access | Phase 2 | next request 403s |
-| Share a folder/file, Drive-like last-edit model | **Not this plan** | see below |
+| Revoke access | Phase 2 | immediate: grant delete + ws drain |
+| Share a folder/file, Drive-like last-edit model | [FILES.md](FILES.md) | folder-unit shares |
 | Sign up → new workspace → open claude → log in | Phase 1 | harness login unchanged; boxes bind the owner user |
 
 Answers to TODO.md's inline questions:
@@ -370,7 +389,7 @@ Answers to TODO.md's inline questions:
   credential actions, no grant management.
 - *"do shared folders/files sync into /workspace/shared?"* Storage-plane
   decision, deliberately outside this plan; either answer works on this
-  model (see next paragraph). Needs its own plan (FILES/STORAGE).
+  model (see next paragraph). Specified in [FILES.md](FILES.md).
 
 **Drive-like file sharing — why this model stays flexible.** Identity
 deliberately fixes only the invariants file sharing will need: (a) the
@@ -405,16 +424,20 @@ ever lands, it keys on `users`, not memberships.
    `GET /workspaces/:id`; volume and integration scoping; role-annotated
    DTOs; webApp sheds the synthetic tenant; members/invites UI;
    last-active-admin protection; org switcher; grants live (editor only)
-   with share + revoke UI and the grant check at the webapp proxy. Done
-   when: **TODO.md's e2e passes** — a second human joins via email stub or
+   with share + revoke UI, the grant check at the webapp proxy, the
+   gateway drain endpoint for immediate revoke (box-image re-pin), and
+   the chat `running`-state reconcile on reconnect. Done when:
+   **TODO.md's e2e passes** — a second human joins via email stub or
    invite link, sees org workspaces as metadata only (cross-org is 404),
    gets an editor grant, works in the shared workspace's terminal and
-   chat, and loses all access on revoke.
+   chat, and loses all access on revoke immediately — live terminal and
+   chat sockets included, with the others reconnecting seamlessly.
 3. **Guest identity + attribution.** Tickets (upgrade the static token);
    microvm token delivery (phone-home fixture rev + box-image re-pin);
    gateway role enforcement with server-side `arg=ro`; actor ACL,
    `session/list`, attributed permission decisions; viewer becomes
-   grantable; `authRequired` unconditional and missing-Origin acceptance
+   grantable; revoke drain becomes a per-user disconnect; `authRequired`
+   unconditional and missing-Origin acceptance
    removed; credential-attribution columns, events, and the event-list
    view. Done when: the guest enforces role without trusting the proxy
    path; a viewer gets ro terminal + replay-only chat; every permission
@@ -425,8 +448,8 @@ ever lands, it keys on `users`, not memberships.
 
 1. Viewer chat "replay-only" transport detail — resolved inside phase 3
    design (ticket-gated subscribe vs. actor-side op filtering).
-2. Storage architecture for folder/file sharing — separate plan; this doc
-   only guarantees the identity invariants above.
+2. Storage architecture for folder/file sharing — resolved in
+   [FILES.md](FILES.md); this doc only guarantees the identity invariants.
 3. Preview-port access rule — v2's same-org default, decided when preview
    ports exist at all.
 
