@@ -17,20 +17,13 @@ export interface StandalonePorts {
 }
 
 export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
-const LEGACY_MICROVM_MACHINE_TYPE_PREFIX = "mv-";
-
-export function isMicrovmWorkspace(workspace: WorkspaceView): boolean {
-  return workspace.machineTypeId.startsWith(LEGACY_MICROVM_MACHINE_TYPE_PREFIX);
-}
-
 export function standaloneResolver(
-  ports: StandalonePorts,
+  _ports: StandalonePorts,
   controlPlaneOrigin = globalThis.location?.origin ?? "",
 ): EndpointResolver {
-  const filesOrigin = `http://localhost:${ports.files}`;
   const cpOrigin = controlPlaneOrigin.replace(/\/+$/u, "");
-  const microvmEndpoints = (workspace: WorkspaceView): BoxEndpoints => {
-    if (cpOrigin === "") throw new Error("control-plane origin is required for microVM surfaces");
+  const endpoints = (workspace: WorkspaceView): BoxEndpoints => {
+    if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
     const prefix = `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/surface`;
     const acp = new URL(`${prefix}/7444`);
     acp.protocol = acp.protocol === "https:" ? "wss:" : "ws:";
@@ -41,16 +34,8 @@ export function standaloneResolver(
     };
   };
   return {
-    resolve: (workspace) => isMicrovmWorkspace(workspace)
-      ? microvmEndpoints(workspace)
-      : {
-          terminalUrl: `${filesOrigin}/terminal/`,
-          acpUrl: `ws://localhost:${ports.acp}`,
-          filesBase: `${filesOrigin}/workspace/`,
-        },
-    previewUrl: (workspace, port) => isMicrovmWorkspace(workspace)
-      ? `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/surface/7445/preview/${port}/`
-      : `${filesOrigin}/preview/${port}/`,
+    resolve: endpoints,
+    previewUrl: (workspace, port) => `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/surface/7445/preview/${port}/`,
   };
 }
 

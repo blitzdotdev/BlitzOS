@@ -58,7 +58,6 @@ const running: WorkspaceView = {
 };
 
 let storageValues: Map<string, string>;
-let writeClipboard: ReturnType<typeof vi.fn>;
 
 function client(): ControlPlaneClient {
   return {
@@ -101,11 +100,6 @@ beforeEach(() => {
       removeItem: (key: string) => storageValues.delete(key),
       clear: () => storageValues.clear(),
     },
-  });
-  writeClipboard = vi.fn(async () => undefined);
-  Object.defineProperty(navigator, "clipboard", {
-    configurable: true,
-    value: { writeText: writeClipboard },
   });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("<html></html>", {
     headers: { "content-type": "text/html" },
@@ -158,7 +152,7 @@ describe("cockpit shell smoke", () => {
     await view.unmount();
   });
 
-  it("opens a workspace with local terminal tabs enabled and shows the SSH forward hint", async () => {
+  it("opens a workspace with terminal tabs enabled through control-plane surfaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     storageValues.set("personal:personal:blitz-cockpit-files-v1:workspace-running", JSON.stringify({
       version: 1,
@@ -196,23 +190,14 @@ describe("cockpit shell smoke", () => {
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/chat/layout")))
       .toBe(false);
 
-    const forwardCommand = "ssh -L 7445:localhost:7445 -L 7444:localhost:7444 -N blitz@box.example.test -p 2222";
-    const copyForward = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === forwardCommand);
-    expect(copyForward).toBeDefined();
-    await act(async () => copyForward?.click());
-    expect(writeClipboard).toHaveBeenCalledWith(forwardCommand);
-
     await view.unmount();
   });
 
-  it("hides the SSH forward hint for a microVM workspace", async () => {
+  it("routes non-microVM workspace files through the control plane", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
-    const microvm = { ...running, machineTypeId: "mv-2c2g@lab" };
-    const wire = { ...runningClient(), poll: vi.fn(async () => ({ workspaces: [microvm] })) };
     const view = await render(
       <CloudApp
-        client={wire}
+        client={runningClient()}
         resolver={standaloneResolver(
           { acp: 7444, files: 7445 },
           "https://cp.example.test",
@@ -222,8 +207,6 @@ describe("cockpit shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.textContent).not.toContain("ssh -L 7445:");
-    expect(view.container.querySelector('[title="Copy SSH forward command"]')).toBeNull();
     expect(createClientSpy).toHaveBeenCalledWith(
       "https://cp.example.test/workspaces/workspace-running/surface/7445/workspace/",
       { withCredentials: true },
@@ -231,7 +214,7 @@ describe("cockpit shell smoke", () => {
     await view.unmount();
   });
 
-  it("shows and copies the full SSH forward command on mobile with a local preview tab active", async () => {
+  it("shows a control-plane preview tab on mobile", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -270,12 +253,6 @@ describe("cockpit shell smoke", () => {
     const activeTab = view.container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
     expect(activeTab?.textContent).toBe(":3000");
     expect(activeTab?.closest<HTMLElement>(".cockpit-tab-cell")?.dataset.sessionId).toBe("2");
-    const forwardCommand = "ssh -L 7445:localhost:7445 -L 7444:localhost:7444 -N blitz@box.example.test -p 2222";
-    const copyForward = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === forwardCommand);
-    expect(copyForward).toBeDefined();
-    await act(async () => copyForward?.click());
-    expect(writeClipboard).toHaveBeenCalledWith(forwardCommand);
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes("/chat/layout")))
       .toBe(false);
 
