@@ -4,10 +4,8 @@ import { createControlPlaneClient } from "../src/api.js";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("wire API client", () => {
-  it("logs in with x-operator-key and omits an absent SSH key from create", async () => {
+  it("uses Google login and omits an absent SSH key from create", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = new URL(String(input)).pathname;
-      if (path === "/sessions") return new Response(null, { status: 204 });
       return new Response(JSON.stringify({
         workspace: {
           id: "one",
@@ -25,11 +23,10 @@ describe("wire API client", () => {
     vi.stubGlobal("fetch", fetcher);
     const client = createControlPlaneClient("https://control.example");
 
-    await client.login("operator-secret");
+    expect(client.googleLoginUrl()).toBe("https://control.example/auth/google/start");
     await client.create({ machineTypeId: "cx23@fsn1" });
 
-    const loginInit = fetcher.mock.calls[0]?.[1];
-    expect(new Headers(loginInit?.headers).get("x-operator-key")).toBe("operator-secret");
-    expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ machineTypeId: "cx23@fsn1" }));
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("x-operator-key")).toBeNull();
+    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ machineTypeId: "cx23@fsn1" }));
   });
 });

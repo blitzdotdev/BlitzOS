@@ -31,7 +31,8 @@ export type WorkspaceRecord = {
 };
 
 export type IdentityRecord = {
-  githubLogin: string;
+  id: string;
+  email: string;
   name: string;
   avatarUrl: string | null;
   platformOperator?: boolean;
@@ -46,5 +47,6 @@ export type OrgRecord = {
   id: string;
   slug: string;
   name: string;
+  vmLimit: number;
 };
 import type { RetryAction } from '@blitzos/schema';

@@ -1,18 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  createStorageNamespace,
-  loadWorkspaceTabs,
+  decodeWorkspaceWebAppStateResponse,
   storedWorkspacePreference,
 } from "../src/storage.js";
 import { ttydHandshake } from "../src/TtydTerminal.js";
-
-function storageWithTabs(value: string) {
-  return {
-    getItem: () => value,
-    setItem: () => undefined,
-    removeItem: () => undefined,
-  };
-}
 
 describe("UI protocol and persistence object contracts", () => {
   it("preserves ttyd observer geometry omission and tenant key order", () => {
@@ -42,22 +33,34 @@ describe("UI protocol and persistence object contracts", () => {
   });
 
   it("preserves restored chat optional-key absence, order, and serialization", () => {
-    const namespace = createStorageNamespace("org", "member");
-    const absent = loadWorkspaceTabs(
-      namespace,
-      "workspace",
-      storageWithTabs('{"version":1,"tabs":[{"id":1,"type":"chat"}],"activeId":1,"nextId":2}'),
-    ).tabs[0];
+    const absent = decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs: { version: 1, tabs: [{ id: 1, type: "chat" }], activeId: 1, nextId: 2 },
+        drawer: { version: 1, open: true, width: 264, expanded: [], segment: "files" },
+      },
+      updatedAt: 1,
+    })).doc?.tabs.tabs[0];
     expect(Object.keys(absent ?? {})).toEqual(["id", "type"]);
     expect(absent && "chatSessionId" in absent).toBe(false);
     expect(absent && "chatProvider" in absent).toBe(false);
     expect(JSON.stringify(absent)).toBe('{"id":1,"type":"chat"}');
 
-    const present = loadWorkspaceTabs(
-      namespace,
-      "workspace",
-      storageWithTabs('{"version":1,"tabs":[{"id":1,"type":"chat","chatSessionId":"session-1","chatProvider":"codex"}],"activeId":1,"nextId":2}'),
-    ).tabs[0];
+    const present = decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs: {
+          version: 1,
+          tabs: [{ id: 1, type: "chat", chatSessionId: "session-1", chatProvider: "codex" }],
+          activeId: 1,
+          nextId: 2,
+        },
+        drawer: { version: 1, open: true, width: 264, expanded: [], segment: "files" },
+      },
+      updatedAt: 1,
+    })).doc?.tabs.tabs[0];
     expect(Object.keys(present ?? {})).toEqual(["id", "type", "chatSessionId", "chatProvider"]);
     expect(present && "chatSessionId" in present).toBe(true);
     expect(present && "chatProvider" in present).toBe(true);

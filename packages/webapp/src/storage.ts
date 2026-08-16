@@ -1,11 +1,15 @@
 import type { Agent, TerminalAgent } from './protocol';
 import { isPreviewPort } from './preview';
-import { hasObjectType, isBoolean, isNumber, isString } from './type-guards';
+import {
+  asJsonObject,
+  isBoolean,
+  type JsonValue,
+  isNumber,
+  isString,
+} from './type-guards';
 
-const UI_STORAGE_KEY = 'blitz-webapp-ui-v1';
-const TABS_KEY_PREFIX = 'blitz-webapp-tabs-v1:';
-const FILES_KEY_PREFIX = 'blitz-webapp-files-v1:';
 const CHAT_AUTH_DISMISSALS_KEY_PREFIX = 'blitz-chat-auth-dismissals-v1:';
+type OptionalJsonValue = JsonValue | undefined;
 
 export type StorageNamespace = {
   orgId: string;
@@ -14,106 +18,10 @@ export type StorageNamespace = {
 
 type StorageBackend = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
-const STORED_VIEW_MODE_KEYS = new Set(['view', 'viewmode', 'sessionview', 'panelview']);
-
-function storedViewModeKey(key: string): string {
-  return key.toLowerCase().replace(/[-_]/gu, '');
-}
-
-interface NormalizedStoredViewModes {
-  value: unknown;
-  migrated: boolean;
-}
-
-function normalizeStoredViewModes(value: unknown): NormalizedStoredViewModes {
-  if (Array.isArray(value)) {
-    let migrated = false;
-    const normalized = value.map((entry) => {
-      const result = normalizeStoredViewModes(entry);
-      migrated ||= result.migrated;
-      return result.value;
-    });
-    return { value: migrated ? normalized : value, migrated };
-  }
-  if (!value || !hasObjectType(value)) return { value, migrated: false };
-
-  let migrated = false;
-  const normalized = Object.fromEntries(Object.entries(value).map(([key, entry]) => {
-    if (
-      STORED_VIEW_MODE_KEYS.has(storedViewModeKey(key))
-      && (entry === 'doc' || entry === 'document')
-    ) {
-      migrated = true;
-      return [key, 'chat'];
-    }
-    const result = normalizeStoredViewModes(entry);
-    migrated ||= result.migrated;
-    return [key, result.value];
-  }));
-  return { value: migrated ? normalized : value, migrated };
-}
-
-function loadStoredJson(storage: StorageBackend, key: string, fallback: string): unknown {
-  const result = normalizeStoredViewModes(JSON.parse(storage.getItem(key) ?? fallback));
-  if (result.migrated) {
-    try {
-      storage.setItem(key, JSON.stringify(result.value));
-    } catch {
-      // A write-back failure must never make otherwise restorable tab state unreadable.
-    }
-  }
-  return result.value;
-}
-
-export function createStorageNamespace(orgId: string, membershipId: string): StorageNamespace {
-  return { orgId, membershipId };
-}
-
-function namespacePrefix(namespace: StorageNamespace): string {
-  return `${namespace.orgId}:${namespace.membershipId}:`;
-}
-
-function uiStorageKey(namespace: StorageNamespace): string {
-  return `${namespacePrefix(namespace)}${UI_STORAGE_KEY}`;
-}
-
-function tabsStorageKey(namespace: StorageNamespace, workspaceId: string): string {
-  return `${namespacePrefix(namespace)}${TABS_KEY_PREFIX}${workspaceId}`;
-}
-
-function filesStorageKey(namespace: StorageNamespace, workspaceId: string): string {
-  return `${namespacePrefix(namespace)}${FILES_KEY_PREFIX}${workspaceId}`;
-}
-
-function chatAuthDismissalsStorageKey(
-  namespace: StorageNamespace,
-  workspaceId: string,
-): string {
-  return `${namespacePrefix(namespace)}${CHAT_AUTH_DISMISSALS_KEY_PREFIX}${workspaceId}`;
-}
-
-function isSafeRelativePath<Value>(value: Value): value is Value & string {
-  return isString(value)
-    && value.length > 0
-    && !value.startsWith('/')
-    && !value.split('/').includes('..');
-}
-
 export type WorkspacePreference = {
   title?: string;
   agentDefault?: Agent;
 };
-
-export function storedWorkspacePreference(
-  title: string,
-  serverName: string,
-  agentDefault: Agent,
-): WorkspacePreference {
-  const preference: WorkspacePreference = {};
-  if (title !== serverName) preference.title = title;
-  preference.agentDefault = agentDefault;
-  return preference;
-}
 
 export type UiPreferences = {
   version: 1;
@@ -141,13 +49,6 @@ export type WorkspaceTab = {
   port: number;
 };
 
-interface RestoredSessionTab {
-  id: number;
-  type: TerminalAgent | 'terminal' | 'chat';
-  chatSessionId?: string;
-  chatProvider?: Agent;
-}
-
 export type WorkspaceTabs = {
   version: 1;
   tabs: WorkspaceTab[];
@@ -164,6 +65,65 @@ export type WorkspaceFiles = {
 };
 
 export type WorkspaceDrawerSegment = 'files' | 'leases' | 'requests';
+
+export type GlobalWebAppStateV1 = {
+  version: 1;
+  activeWorkspaceId: string;
+  order: string[];
+};
+
+export type WorkspaceWebAppStateV1 = {
+  version: 1;
+  title?: string;
+  agentDefault: Agent;
+  tabs: WorkspaceTabs;
+  drawer: WorkspaceFiles;
+};
+
+export type WebAppStateResponse<Doc> = {
+  doc: Doc | null;
+  updatedAt: number | null;
+};
+
+interface RestoredSessionTab {
+  id: number;
+  type: TerminalAgent | 'terminal' | 'chat';
+  chatSessionId?: string;
+  chatProvider?: Agent;
+}
+
+export function createStorageNamespace(orgId: string, membershipId: string): StorageNamespace {
+  return { orgId, membershipId };
+}
+
+function namespacePrefix(namespace: StorageNamespace): string {
+  return `${namespace.orgId}:${namespace.membershipId}:`;
+}
+
+function chatAuthDismissalsStorageKey(
+  namespace: StorageNamespace,
+  workspaceId: string,
+): string {
+  return `${namespacePrefix(namespace)}${CHAT_AUTH_DISMISSALS_KEY_PREFIX}${workspaceId}`;
+}
+
+function isSafeRelativePath<Value>(value: Value): value is Value & string {
+  return isString(value)
+    && value.length > 0
+    && !value.startsWith('/')
+    && !value.split('/').includes('..');
+}
+
+export function storedWorkspacePreference(
+  title: string,
+  serverName: string,
+  agentDefault: Agent,
+): WorkspacePreference {
+  const preference: WorkspacePreference = {};
+  if (title !== serverName) preference.title = title;
+  preference.agentDefault = agentDefault;
+  return preference;
+}
 
 export function defaultWorkspaceTabs(): WorkspaceTabs {
   return {
@@ -184,194 +144,217 @@ export function defaultWorkspaceFiles(): WorkspaceFiles {
   };
 }
 
-export function defaultUiPreferences(): UiPreferences {
+export function defaultGlobalWebAppState(): GlobalWebAppStateV1 {
+  return { version: 1, activeWorkspaceId: '', order: [] };
+}
+
+export function defaultWorkspaceWebAppState(): WorkspaceWebAppStateV1 {
   return {
     version: 1,
-    activeWorkspaceId: '',
-    railWidth: 240,
-    order: [],
-    workspaces: {},
+    agentDefault: 'claude',
+    tabs: defaultWorkspaceTabs(),
+    drawer: defaultWorkspaceFiles(),
   };
 }
 
-export function loadUiPreferences(
-  namespace: StorageNamespace,
-  storage: StorageBackend = localStorage,
+export function workspaceWebAppState(
+  title: string,
+  serverName: string,
+  agentDefault: Agent,
+  tabs: WorkspaceTabs,
+  drawer: WorkspaceFiles,
+): WorkspaceWebAppStateV1 {
+  const doc: WorkspaceWebAppStateV1 = {
+    version: 1,
+    agentDefault,
+    tabs,
+    drawer,
+  };
+  if (title !== serverName) doc.title = title;
+  return doc;
+}
+
+export function reconcileUiPreferences(
+  global: GlobalWebAppStateV1,
+  workspaceStates: ReadonlyMap<string, WorkspaceWebAppStateV1>,
+  liveWorkspaceIds: readonly string[],
 ): UiPreferences {
-  try {
-    // SAFETY: loadStoredJson returns parsed storage data without shape validation. TODO(deslop-tier-c): validate the full UiPreferences object, including nested workspace metadata, before use.
-    const value = loadStoredJson(storage, uiStorageKey(namespace), '') as Partial<UiPreferences>;
-    if (value.version !== 1) return defaultUiPreferences();
-    return {
-      version: 1,
-      activeWorkspaceId: isString(value.activeWorkspaceId) ? value.activeWorkspaceId : '',
-      railWidth: Math.max(190, Math.min(600, Number(value.railWidth) || 240)),
-      order: Array.isArray(value.order) ? value.order.filter((id): id is string => isString(id)) : [],
-      workspaces: value.workspaces && hasObjectType(value.workspaces) ? value.workspaces : {},
-    };
-  } catch {
-    return defaultUiPreferences();
+  const live = new Set(liveWorkspaceIds);
+  const order = [
+    ...global.order.filter((id, index) => live.has(id) && global.order.indexOf(id) === index),
+    ...liveWorkspaceIds.filter((id) => !global.order.includes(id)),
+  ];
+  return {
+    version: 1,
+    activeWorkspaceId: live.has(global.activeWorkspaceId) ? global.activeWorkspaceId : '',
+    railWidth: 240,
+    order,
+    workspaces: Object.fromEntries([...workspaceStates].flatMap(([id, state]) => {
+      if (!live.has(id)) return [];
+      const preference: WorkspacePreference = { agentDefault: state.agentDefault };
+      if (state.title !== undefined) preference.title = state.title;
+      return [[id, preference]];
+    })),
+  };
+}
+
+function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | null {
+  const object = asJsonObject(entry);
+  if (object === null) return null;
+  const id = isNumber(object.id) && Number.isSafeInteger(object.id) ? object.id : 0;
+  if (id < 1 || seen.has(id) || !isString(object.type)) return null;
+  seen.add(id);
+  if (object.type === 'file') {
+    return isSafeRelativePath(object.filePath)
+      ? { id, type: 'file', filePath: object.filePath }
+      : null;
   }
-}
-
-export function saveUiPreferences(
-  namespace: StorageNamespace,
-  value: UiPreferences,
-  storage: StorageBackend = localStorage,
-): void {
-  storage.setItem(uiStorageKey(namespace), JSON.stringify(value));
-}
-
-export function loadWorkspaceTabs(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  storage: StorageBackend = localStorage,
-): WorkspaceTabs {
-  try {
-    const value = JSON.parse(storage.getItem(tabsStorageKey(namespace, workspaceId)) ?? 'null');
-    if (!value || value.version !== 1 || !Array.isArray(value.tabs)) {
-      return defaultWorkspaceTabs();
+  if (object.type === 'preview') {
+    return isNumber(object.port) && isPreviewPort(object.port)
+      ? { id, type: 'preview', port: object.port }
+      : null;
+  }
+  if (object.type === 'chat') {
+    const tab: RestoredSessionTab = { id, type: 'chat' };
+    if (isString(object.chatSessionId)) tab.chatSessionId = object.chatSessionId;
+    if (object.chatProvider === 'claude' || object.chatProvider === 'codex') {
+      tab.chatProvider = object.chatProvider;
     }
-    const seen = new Set<number>();
-    // SAFETY: Array.isArray establishes an array container; each external entry remains validated by the mapping body.
-    const tabs: WorkspaceTab[] = (value.tabs as unknown[]).flatMap(
-      (entry: unknown): WorkspaceTab[] => {
-        if (!entry || !hasObjectType(entry)) return [];
-        // SAFETY: The preceding check establishes a non-null object; consumed tab fields are checked below.
-        const tab = entry as Partial<WorkspaceTab>;
-        const type = String(tab.type);
-        if (
-          !Number.isSafeInteger(tab.id)
-          || Number(tab.id) < 1
-          || seen.has(Number(tab.id))
-          || ![
-            'claude',
-            'codex',
-            'opencode',
-            'pi',
-            'kimi',
-            'prime',
-            'terminal',
-            'chat',
-            'file',
-            'preview',
-          ].includes(type)
-        ) return [];
-        const filePath = 'filePath' in tab ? tab.filePath : undefined;
-        if (
-          type === 'file'
-          && !isSafeRelativePath(filePath)
-        ) return [];
-        const port = 'port' in tab ? tab.port : undefined;
-        if (
-          type === 'preview'
-          && (!isNumber(port) || !isPreviewPort(port))
-        ) return [];
-        const id = Number(tab.id);
-        seen.add(id);
-        if (type === 'file') {
-          // SAFETY: The file branch above requires filePath to be a string.
-          return [{ id, type: 'file', filePath: filePath as string }];
-        }
-        if (type === 'preview') {
-          // SAFETY: The preview branch above requires port to be a valid numeric preview port.
-          return [{ id, type: 'preview', port: port as number }];
-        }
-        const restored: RestoredSessionTab = {
-          id,
-          // SAFETY: The accepted-type check above limits type to terminal, chat, claude, or codex.
-          type: type as TerminalAgent | 'terminal' | 'chat',
-        };
-        if (type === 'chat' && 'chatSessionId' in tab && isString(tab.chatSessionId)) {
-          restored.chatSessionId = tab.chatSessionId;
-        }
-        if (
-          type === 'chat' && 'chatProvider' in tab
-          && (tab.chatProvider === 'claude' || tab.chatProvider === 'codex')
-        ) {
-          restored.chatProvider = tab.chatProvider;
-        }
-        // SAFETY: The accepted-type and chat-only optional-field checks above establish a WorkspaceTab variant.
-        return [restored as WorkspaceTab];
-      },
-    );
-    if (tabs.length === 0) return defaultWorkspaceTabs();
-    const activeId = tabs.some(({ id }) => id === value.activeId)
-      ? Number(value.activeId)
-      : tabs[0]?.id ?? null;
-    const minimumNextId = Math.max(0, ...tabs.map(({ id }) => id)) + 1;
-    return {
-      version: 1,
-      tabs,
-      activeId,
-      nextId: Number.isSafeInteger(value.nextId) && value.nextId >= minimumNextId
-        ? value.nextId
-        : minimumNextId,
-    };
-  } catch {
-    return defaultWorkspaceTabs();
+    // SAFETY: The chat branch and checked optional fields establish the chat tab variant.
+    return tab as WorkspaceTab;
   }
+  if (
+    object.type === 'terminal'
+    || object.type === 'claude'
+    || object.type === 'codex'
+    || object.type === 'opencode'
+    || object.type === 'pi'
+    || object.type === 'kimi'
+    || object.type === 'prime'
+  ) {
+    // SAFETY: The branch checks every TerminalAgent literal plus terminal.
+    return { id, type: object.type as TerminalAgent | 'terminal' };
+  }
+  return null;
 }
 
-export function saveWorkspaceTabs(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  value: WorkspaceTabs,
-  storage: StorageBackend = localStorage,
-): void {
-  storage.setItem(tabsStorageKey(namespace, workspaceId), JSON.stringify(value));
+function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
+  const object = asJsonObject(value);
+  if (object === null || object.version !== 1 || !Array.isArray(object.tabs)) {
+    return null;
+  }
+  const seen = new Set<number>();
+  const tabs = object.tabs.flatMap((entry) => {
+    const tab = parseTab(entry, seen);
+    return tab === null ? [] : [tab];
+  });
+  if (tabs.length === 0 || tabs.length !== object.tabs.length) return null;
+  const activeId = object.activeId === null
+    ? null
+    : isNumber(object.activeId) && Number.isSafeInteger(object.activeId)
+      ? object.activeId
+      : -1;
+  if (activeId !== null && !tabs.some(({ id }) => id === activeId)) return null;
+  const minimumNextId = Math.max(...tabs.map(({ id }) => id)) + 1;
+  if (
+    !isNumber(object.nextId)
+    || !Number.isSafeInteger(object.nextId)
+    || object.nextId < minimumNextId
+  ) {
+    return null;
+  }
+  return { version: 1, tabs, activeId, nextId: object.nextId };
 }
 
-export function removeWorkspaceTabs(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  storage: StorageBackend = localStorage,
-): void {
-  storage.removeItem(tabsStorageKey(namespace, workspaceId));
+function parseDrawer(value: OptionalJsonValue): WorkspaceFiles | null {
+  const object = asJsonObject(value);
+  if (
+    object === null
+    || object.version !== 1
+    || !isBoolean(object.open)
+    || !isNumber(object.width)
+    || object.width < 200
+    || object.width > 480
+    || !Array.isArray(object.expanded)
+  ) return null;
+  const expanded = object.expanded.filter(isSafeRelativePath);
+  if (expanded.length !== object.expanded.length) return null;
+  const segment = object.segment === 'leases' || object.segment === 'requests'
+    ? object.segment
+    : object.segment === 'files'
+      ? 'files'
+      : null;
+  return segment === null
+    ? null
+    : { version: 1, open: object.open, width: object.width, expanded, segment };
 }
 
-export function loadWorkspaceFiles(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  storage: StorageBackend = localStorage,
-): WorkspaceFiles {
+function parseGlobalDoc(value: OptionalJsonValue): GlobalWebAppStateV1 | null {
+  const object = asJsonObject(value);
+  if (
+    object === null
+    || object.version !== 1
+    || !isString(object.activeWorkspaceId)
+    || !Array.isArray(object.order)
+    || !object.order.every(isString)
+  ) return null;
+  return { version: 1, activeWorkspaceId: object.activeWorkspaceId, order: object.order };
+}
+
+function parseWorkspaceDoc(value: OptionalJsonValue): WorkspaceWebAppStateV1 | null {
+  const object = asJsonObject(value);
+  if (object === null || object.version !== 1) return null;
+  if (object.agentDefault !== 'claude' && object.agentDefault !== 'codex') return null;
+  const tabs = parseTabs(object.tabs);
+  const drawer = parseDrawer(object.drawer);
+  if (tabs === null || drawer === null) return null;
+  const doc: WorkspaceWebAppStateV1 = {
+    version: 1,
+    agentDefault: object.agentDefault,
+    tabs,
+    drawer,
+  };
+  if (object.title !== undefined) {
+    if (!isString(object.title)) return null;
+    doc.title = object.title;
+  }
+  return doc;
+}
+
+function decodeStateResponse<Doc>(
+  json: string,
+  parseDoc: (value: OptionalJsonValue) => Doc | null,
+): WebAppStateResponse<Doc> {
+  let value: JsonValue;
   try {
-    // SAFETY: JSON parsing establishes valid JSON only; the partial WorkspaceFiles fields are normalized below.
-    const value = JSON.parse(
-      storage.getItem(filesStorageKey(namespace, workspaceId)) ?? 'null',
-    ) as Partial<WorkspaceFiles> | null;
-    if (!value || value.version !== 1) return defaultWorkspaceFiles();
-    return {
-      version: 1,
-      open: isBoolean(value.open) ? value.open : true,
-      width: Math.max(200, Math.min(480, Number(value.width) || 264)),
-      expanded: Array.isArray(value.expanded)
-        ? [...new Set(value.expanded.filter(isSafeRelativePath))]
-        : [],
-      segment: value.segment === 'leases' || value.segment === 'requests'
-        ? value.segment
-        : 'files',
-    };
+    value = JSON.parse(json);
   } catch {
-    return defaultWorkspaceFiles();
+    throw new Error('webApp state response is invalid JSON');
   }
+  const object = asJsonObject(value);
+  if (object === null) throw new Error('webApp state response is invalid');
+  const updatedAt = object.updatedAt === null
+    ? null
+    : isNumber(object.updatedAt) && Number.isSafeInteger(object.updatedAt)
+      ? object.updatedAt
+      : undefined;
+  if (updatedAt === undefined) throw new Error('webApp state response has invalid updatedAt');
+  if (object.doc === null) return { doc: null, updatedAt };
+  const doc = parseDoc(object.doc);
+  if (doc === null) throw new Error('webApp state response has invalid doc');
+  return { doc, updatedAt };
 }
 
-export function saveWorkspaceFiles(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  value: WorkspaceFiles,
-  storage: StorageBackend = localStorage,
-): void {
-  storage.setItem(filesStorageKey(namespace, workspaceId), JSON.stringify(value));
+export function decodeGlobalWebAppStateResponse(
+  json: string,
+): WebAppStateResponse<GlobalWebAppStateV1> {
+  return decodeStateResponse(json, parseGlobalDoc);
 }
 
-export function removeWorkspaceFiles(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  storage: StorageBackend = localStorage,
-): void {
-  storage.removeItem(filesStorageKey(namespace, workspaceId));
+export function decodeWorkspaceWebAppStateResponse(
+  json: string,
+): WebAppStateResponse<WorkspaceWebAppStateV1> {
+  return decodeStateResponse(json, parseWorkspaceDoc);
 }
 
 export function loadDismissedChatAuthProviders(
@@ -380,12 +363,14 @@ export function loadDismissedChatAuthProviders(
   storage: StorageBackend = localStorage,
 ): Agent[] {
   try {
-    // SAFETY: JSON parsing establishes valid JSON only; version and providers are checked before use.
     const value = JSON.parse(
       storage.getItem(chatAuthDismissalsStorageKey(namespace, workspaceId)) ?? 'null',
-    ) as { version?: unknown; providers?: unknown } | null;
-    if (!value || value.version !== 1 || !Array.isArray(value.providers)) return [];
-    return [...new Set(value.providers.filter(
+    );
+    const object = asJsonObject(value);
+    if (object === null || object.version !== 1 || !Array.isArray(object.providers)) {
+      return [];
+    }
+    return [...new Set(object.providers.filter(
       (provider): provider is Agent => provider === 'claude' || provider === 'codex',
     ))];
   } catch {

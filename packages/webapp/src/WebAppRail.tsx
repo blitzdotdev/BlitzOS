@@ -28,7 +28,7 @@ type WebAppRailProps = {
 };
 
 function identityLabel(identity: IdentityRecord | null): string {
-  return identity?.name || identity?.githubLogin || 'Cloud control plane';
+  return identity?.name || identity?.email || 'Cloud control plane';
 }
 
 export function workspaceStateLabel(workspace: CloudWorkspaceModel): string {

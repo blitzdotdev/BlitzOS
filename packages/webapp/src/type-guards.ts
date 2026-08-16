@@ -14,6 +14,17 @@ export function hasObjectType<Value>(value: Value): value is Value & (object | n
   return typeof value === 'object';
 }
 
+export function asJsonObject<Value>(value: Value): JsonObject | null {
+  if (!value || !hasObjectType(value) || Array.isArray(value)) return null;
+  // SAFETY: The checks above establish a non-null, non-array object with JSON properties.
+  return value as JsonObject;
+}
+
 export function isDefined<Value>(value: Value): value is Exclude<Value, undefined> {
   return typeof value !== 'undefined';
+}
+export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
+
+export interface JsonObject {
+  [key: string]: JsonValue;
 }
