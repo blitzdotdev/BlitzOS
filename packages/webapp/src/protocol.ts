@@ -21,7 +21,7 @@ export type WorkspaceRecord = {
     name: string;
     avatarUrl: string | null;
   };
-  accessRole?: 'owner' | 'admin' | 'editor' | null;
+  accessRole?: WorkspaceRole | null;
   machineType?: string | null;
   name: string;
   status: RestWorkspaceStatus;
@@ -50,4 +50,4 @@ export type OrgRecord = {
   name: string;
   vmLimit: number;
 };
-import type { RetryAction } from '@blitzos/schema';
+import type { RetryAction, WorkspaceRole } from '@blitzos/schema';

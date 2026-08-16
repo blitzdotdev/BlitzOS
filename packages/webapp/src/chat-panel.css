@@ -875,6 +875,11 @@
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
 }
 
+.chat-composer--readonly {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .chat-command-palette {
   position: absolute;
   right: 16px;

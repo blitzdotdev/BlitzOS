@@ -1,4 +1,4 @@
-import type { CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
+import type { CredentialEventView, CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
 import {
   useEffect,
   useRef,
@@ -11,6 +11,7 @@ import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
 import type { WorkspaceDrawerSegment } from './storage';
+import { asJsonObject, isString } from './type-guards';
 
 export const CREDENTIAL_POLL_INTERVAL_MS = 5_000;
 
@@ -211,6 +212,54 @@ export function WorkspaceRequestsPanel({
   );
 }
 
+function eventActor(event: CredentialEventView): string | null {
+  const detail = asJsonObject(event.detail);
+  const acting = detail === null ? null : asJsonObject(detail.acting_principal);
+  return acting !== null && isString(acting.userId) ? acting.userId : null;
+}
+
+function WorkspaceEventsPanel({
+  client,
+  workspaceId,
+  visible,
+}: {
+  client: ControlPlaneClient;
+  workspaceId: string;
+  visible: boolean;
+}) {
+  const [events, setEvents] = useState<CredentialEventView[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    const request = new AbortController();
+    void client.listCredentialEvents(workspaceId, request.signal).then(
+      (response) => setEvents(response.events),
+      (caught) => {
+        if (!request.signal.aborted) setError(caughtErrorMessage(caught, 'Credential events failed to load.'));
+      },
+    );
+    return () => request.abort();
+  }, [client, visible, workspaceId]);
+  return (
+    <section className="workspace-drawer-panel" aria-label="Workspace credential events">
+      {error && <p className="webapp-form-message" role="alert">{error}</p>}
+      {events.length === 0 ? <p className="workspace-drawer-state">No credential events for this workspace.</p> : (
+        <div className="workspace-credential-rows">
+          {events.map((event) => (
+            <article className="workspace-credential-row" key={event.id}>
+              <div className="workspace-credential-row__title"><strong>{event.event}</strong></div>
+              <div className="workspace-credential-row__meta">
+                <span>{eventActor(event) ?? 'system'}</span>
+                <time dateTime={new Date(event.createdAt).toISOString()}>{new Date(event.createdAt).toLocaleString()}</time>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function WorkspaceDrawer({
   client,
   workspaceId,
@@ -224,6 +273,7 @@ export function WorkspaceDrawer({
   onWidthChange,
   onSegmentChange,
   onResolveRequest,
+  canManageCredentials,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
@@ -240,6 +290,7 @@ export function WorkspaceDrawer({
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
+  canManageCredentials: boolean;
 }) {
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -253,11 +304,13 @@ export function WorkspaceDrawer({
     onWidthChange(Math.max(200, Math.min(480, origin.width + origin.x - event.clientX)));
   };
 
-  const tabs: Array<{ id: WorkspaceDrawerSegment; label: string }> = [
-    { id: 'files', label: 'Files' },
+  const tabs: Array<{ id: WorkspaceDrawerSegment; label: string }> = [{ id: 'files', label: 'Files' }];
+  if (canManageCredentials) tabs.push(
     { id: 'leases', label: 'Leases' },
     { id: 'requests', label: 'Requests' },
-  ];
+    { id: 'events', label: 'Events' },
+  );
+  const effectiveSegment = canManageCredentials ? segment : 'files';
 
   return (
     <aside
@@ -289,10 +342,10 @@ export function WorkspaceDrawer({
       <header className="workspace-drawer-segments" role="tablist" aria-label="Workspace drawer sections">
         {tabs.map((tab) => (
           <button
-            className={segment === tab.id ? 'workspace-drawer-segment workspace-drawer-segment--active' : 'workspace-drawer-segment'}
+            className={effectiveSegment === tab.id ? 'workspace-drawer-segment workspace-drawer-segment--active' : 'workspace-drawer-segment'}
             type="button"
             role="tab"
-            aria-selected={segment === tab.id}
+            aria-selected={effectiveSegment === tab.id}
             key={tab.id}
             onClick={() => onSegmentChange(tab.id)}
           >
@@ -306,21 +359,28 @@ export function WorkspaceDrawer({
         ))}
       </header>
       <div className="workspace-drawer-body">
-        <div role="tabpanel" hidden={segment !== 'files'}>{files}</div>
-        <div role="tabpanel" hidden={segment !== 'leases'}>
+        <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>
+        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'leases'}>
           <WorkspaceLeasesPanel
             client={client}
             workspaceId={workspaceId}
-            visible={open && segment === 'leases'}
+            visible={open && effectiveSegment === 'leases'}
           />
-        </div>
-        <div role="tabpanel" hidden={segment !== 'requests'}>
+        </div>}
+        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'requests'}>
           <WorkspaceRequestsPanel
             requests={pendingRequests}
             loadError={pendingRequestsError}
             onResolve={onResolveRequest}
           />
-        </div>
+        </div>}
+        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'events'}>
+          <WorkspaceEventsPanel
+            client={client}
+            workspaceId={workspaceId}
+            visible={open && effectiveSegment === 'events'}
+          />
+        </div>}
       </div>
     </aside>
   );

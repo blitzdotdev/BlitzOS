@@ -49,7 +49,12 @@ npx wrangler secret put HETZNER_API_TOKEN --config packages/control-plane/wrangl
 npx wrangler secret put OPERATOR_API_KEY --config packages/control-plane/wrangler.toml
 npx wrangler secret put GOOGLE_CLIENT_ID --config packages/control-plane/wrangler.toml
 npx wrangler secret put GOOGLE_CLIENT_SECRET --config packages/control-plane/wrangler.toml
+npx wrangler secret put WEBAPP_TOKEN_SECRET --config packages/control-plane/wrangler.toml
 ```
+
+`WEBAPP_TOKEN_SECRET` derives the per-workspace guest credential and signs
+the per-request webApp tickets. Every webApp surface request 503s without
+it — it is required for tunnel and microVM deployments alike.
 
 `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` configure Google OAuth.
 `OPERATOR_API_KEY` is no longer an API credential: it is only the bootstrap

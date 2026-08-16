@@ -72,6 +72,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     putIntegration: vi.fn(async () => undefined),
     deleteIntegration: vi.fn(async () => undefined),
     listLeases: vi.fn(async () => ({ leases: [] })),
+    listCredentialEvents: vi.fn(async () => ({ events: [] })),
     revokeLease: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),

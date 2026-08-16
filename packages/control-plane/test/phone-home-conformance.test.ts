@@ -103,20 +103,29 @@ describe("phone-home shared fixtures", () => {
   it("emits exactly the canonical response fixture fields", () => {
     const validPaths = fixturePaths("responses/valid");
     const invalidPaths = fixturePaths("responses/invalid");
-    const descriptor = fixture(validPaths[0] ?? "");
-    if (typeof descriptor.body !== "object" || descriptor.body === null || Array.isArray(descriptor.body)) {
-      throw new Error("valid phone-home response fixture must have an object body");
+    for (const relativePath of validPaths) {
+      const descriptor = fixture(relativePath);
+      if (typeof descriptor.body !== "object" || descriptor.body === null || Array.isArray(descriptor.body)) {
+        throw new Error("valid phone-home response fixture must have an object body");
+      }
+      const fields = descriptor.expect.canonicalKeys ?? [];
+      const current = fields.includes("webapp_token");
+      const response = createPhoneHomeResponse(
+        String(descriptor.body.box_id),
+        String(descriptor.body.access_token),
+        String(descriptor.body.refresh_token),
+        current ? String(descriptor.body.workspace_id) : undefined,
+        current ? String(descriptor.body.webapp_token) : undefined,
+      );
+      expect(response, relativePath).toEqual(descriptor.body);
+      expect(canonicalResponse(response, fields), relativePath).toBe(true);
     }
-    const fields = descriptor.expect.canonicalKeys ?? [];
-    const response = createPhoneHomeResponse(
-      String(descriptor.body.box_id),
-      String(descriptor.body.access_token),
-      String(descriptor.body.refresh_token),
-    );
-    expect(response).toEqual(descriptor.body);
-    expect(canonicalResponse(response, fields)).toBe(true);
     for (const relativePath of invalidPaths) {
-      expect(canonicalResponse(fixture(relativePath).body, fields), relativePath).toBe(false);
+      const descriptor = fixture(relativePath);
+      const fields = descriptor.expect.canonicalKeys ?? [
+        "box_id", "access_token", "refresh_token", "workspace_id", "webapp_token",
+      ];
+      expect(canonicalResponse(descriptor.body, fields), relativePath).toBe(false);
     }
     console.info(
       `phone-home server response conformance: ${validPaths.length} valid + ${invalidPaths.length} invalid fixtures`,

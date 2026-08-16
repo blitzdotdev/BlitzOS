@@ -19,6 +19,7 @@ import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from ".
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
+import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -64,6 +65,8 @@ export interface PhoneHomeResponse {
   box_id: string;
   access_token: string;
   refresh_token: string;
+  workspace_id?: string;
+  webapp_token?: string;
 }
 
 
@@ -266,12 +269,25 @@ export function createPhoneHomeResponse(
   boxId: string,
   accessToken: string,
   refreshToken: string,
+  workspaceId?: string,
+  webAppToken?: string,
 ): PhoneHomeResponse {
-  return {
+  const response: PhoneHomeResponse = {
     box_id: boxId,
     access_token: accessToken,
     refresh_token: refreshToken,
   };
+  if (workspaceId !== undefined && webAppToken !== undefined) {
+    response.workspace_id = workspaceId;
+    response.webapp_token = webAppToken;
+  }
+  return response;
+}
+
+function requestWithWebAppCredential(request: Request, credential: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set(WEBAPP_TOKEN_HEADER, credential);
+  return new Request(request, { headers });
 }
 
 async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
@@ -484,7 +500,8 @@ export function addWorkspaceRoutes(
   const webApp = async (context: CoreContext): Promise<Response> => {
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
-    const row = await webAppWorkspaceForRequest(runtime, requirePrincipal, context, id);
+    const access = await webAppWorkspaceForRequest(runtime, requirePrincipal, context, id);
+    const row = access.workspace;
     if (row.vm_id === null) {
       throw new HttpError(409, "workspace is not ready for webapp access");
     }
@@ -501,6 +518,13 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
+    const credential = await requireWorkspaceWebAppAuth(runtime.providers.webAppAuth).mint({
+      workspaceId: row.id,
+      userId: access.userId,
+      membershipId: access.membershipId,
+      role: access.role,
+    });
+    const authenticatedRequest = requestWithWebAppCredential(context.req.raw, credential);
     const workspaceTunnels = runtime.providers.workspaceTunnels;
     let upstream: Response | null;
     try {
@@ -509,7 +533,7 @@ export function addWorkspaceRoutes(
           row.vm_id,
           port,
           pathAndQuery,
-          context.req.raw,
+          authenticatedRequest,
         );
       } else if (workspaceTunnels !== undefined && row.tunnel_hostname !== null) {
         upstream = await workspaceTunnels.proxy(
@@ -517,7 +541,8 @@ export function addWorkspaceRoutes(
           row.id,
           port,
           pathAndQuery,
-          context.req.raw,
+          authenticatedRequest,
+          credential,
         );
       } else {
         throw new HttpError(503, "workspace has no webapp tunnel");
@@ -611,7 +636,8 @@ export function addWorkspaceRoutes(
   router.post("/workspaces/:id/phone-home/:token", async (context) => {
     const id = context.req.param("id");
     const token = context.req.param("token");
-    const db = runtimeFactory(context).db;
+    const runtime = runtimeFactory(context);
+    const db = runtime.db;
     const row = await workspaceById(db, id);
     if (row === null) throw new HttpError(404, "workspace not found");
     if (row.phone_home_used === 1) {
@@ -681,10 +707,15 @@ export function addWorkspaceRoutes(
     if (results[2]?.length !== 1) {
       throw new HttpError(409, "phone_home capability already used");
     }
+    const webAppToken = runtime.providers.webAppAuth === undefined
+      ? undefined
+      : await runtime.providers.webAppAuth.tokenFor(id);
     return context.json<PhoneHomeResponse>(createPhoneHomeResponse(
       boxId,
       credentials.accessToken,
       credentials.refreshToken,
+      webAppToken === undefined ? undefined : id,
+      webAppToken,
     ));
   });
 }

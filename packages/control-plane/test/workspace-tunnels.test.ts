@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rows } from "../core/db.js";
 import { CloudflareTunnels } from "../core/providers/cloudflare-tunnels.js";
 import { WorkspaceTunnels } from "../core/workspace-tunnels.js";
+import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 import type { WorkspaceRow } from "../core/workspaces.js";
 import type { WorkspaceView } from "../core/wire.js";
 import {
@@ -30,7 +31,7 @@ describe("workspace tunnels", () => {
     const workspaceTunnels = new WorkspaceTunnels(
       new CloudflareTunnels({ accountId: "test-account", zoneId: "test-zone-id", apiToken: "test-api-token", fetcher: cfFetcher }),
       "webapp.test",
-      "test-webApp-secret",
+      "test-webapp-root-secret",
       async (input, init) => {
         proxied.request = new Request(String(input), init);
         return Response.json({ ok: true });
@@ -64,8 +65,15 @@ describe("workspace tunnels", () => {
     });
     expect(ports.status).toBe(200);
     expect(proxied.request?.url).toBe(`https://ws-${workspace.id}.webapp.test/acp/session?x=1`);
-    expect(proxied.request?.headers.get("X-Blitz-WebApp-Token"))
-      .toBe(await workspaceTunnels.webAppTokenFor(workspace.id));
+    const credential = proxied.request?.headers.get("X-Blitz-WebApp-Token") ?? "";
+    expect(credential).toMatch(/^v1\./u);
+    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
+      credential,
+      workspace.id,
+    )).resolves.toMatchObject({
+      kind: "ticket",
+      claims: { role: "owner", userId: "operator" },
+    });
     expect(proxied.request?.headers.get("Cookie")).toBeNull();
 
     const destroyed = await appRequest(app, `/workspaces/${workspace.id}`, {

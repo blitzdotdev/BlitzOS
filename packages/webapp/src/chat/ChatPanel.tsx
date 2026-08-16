@@ -10,10 +10,19 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { isString } from "../type-guards.js";
 import { ChatTranscript } from "./ChatTranscript.js";
 import { chatReducer, initialChatState } from "./reducer.js";
+import type { ChatActor } from "./reducer.js";
 
 interface RawSessionNotification {
   sessionId: string;
   update: Record<string, unknown>;
+  actor?: ChatActor;
+}
+
+interface PermissionAnsweredNotification {
+  sessionId: string;
+  toolCallId: string;
+  optionId: string | null;
+  actor?: ChatActor;
 }
 
 const SHOW_THINKING_KEY = "blitz-chat-show-thinking";
@@ -44,12 +53,14 @@ export function ChatPanel({
   initialSessionId,
   onSessionId,
   onOpenPreview,
+  readOnly = false,
 }: {
   url: string;
   workspaceId: string;
   initialSessionId: string | null;
   onSessionId: (workspaceId: string, sessionId: string) => void;
   onOpenPreview?: (port: number) => boolean;
+  readOnly?: boolean;
 }): React.JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState("Connecting…");
@@ -72,6 +83,7 @@ export function ChatPanel({
   }, [state.running]);
 
   const requestPermission = useCallback((request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+    if (readOnly) return Promise.resolve({ outcome: { outcome: "cancelled" } });
     dispatch({ type: "permission-request", request });
     const id = request.toolCall.toolCallId;
     const answered = permissionAnswers.current.get(id);
@@ -81,7 +93,7 @@ export function ChatPanel({
       resolvers.add(resolve);
       permissionResolvers.current.set(id, resolvers);
     });
-  }, []);
+  }, [readOnly]);
 
   useEffect(() => {
     let active = true;
@@ -109,7 +121,24 @@ export function ChatPanel({
             parseSessionNotification,
             ({ params }) => {
               if (sessionIdRef.current === null || params.sessionId === sessionIdRef.current) {
-                dispatch({ type: "update", update: params.update });
+                if (params.actor === undefined) dispatch({ type: "update", update: params.update });
+                else dispatch({ type: "update", update: params.update, actor: params.actor });
+              }
+            },
+          )
+          .onNotification<PermissionAnsweredNotification>(
+            "blitz/permission_answered",
+            parsePermissionAnsweredNotification,
+            ({ params }) => {
+              if (sessionIdRef.current === params.sessionId) {
+                const answer = {
+                  type: "permission-answered" as const,
+                  toolCallId: params.toolCallId,
+                  optionId: params.optionId,
+                  actor: params.actor,
+                };
+                if (params.actor === undefined) dispatch({ ...answer, actor: undefined });
+                else dispatch(answer);
               }
             },
           );
@@ -121,8 +150,20 @@ export function ChatPanel({
             clientCapabilities: {},
             clientInfo: { name: "BlitzOS webapp", version: "0.0.0" },
           });
-          const existingSession = sessionIdRef.current;
+          let existingSession = sessionIdRef.current;
           if (existingSession === null) {
+            try {
+              const listed = await context.request(acp.methods.agent.session.list, { cwd: "/workspace" });
+              existingSession = listed.sessions[0]?.sessionId ?? null;
+            } catch {
+              // Compatibility window: an already-pinned actor may predate session/list.
+            }
+            if (existingSession !== null) {
+              sessionIdRef.current = existingSession;
+              onSessionIdRef.current(workspaceId, existingSession);
+            }
+          }
+          if (existingSession === null && !readOnly) {
             const created = await context.request(acp.methods.agent.session.new, {
               cwd: "/workspace",
               mcpServers: [],
@@ -130,7 +171,7 @@ export function ChatPanel({
             sessionIdRef.current = created.sessionId;
             onSessionIdRef.current(workspaceId, created.sessionId);
             setConfigOptions(created.configOptions ?? []);
-          } else {
+          } else if (existingSession !== null) {
             dispatch({ type: "begin-replay" });
             const loaded = await context.request(acp.methods.agent.session.load, {
               sessionId: existingSession,
@@ -144,7 +185,7 @@ export function ChatPanel({
           if (!active) break;
           attempts = 0;
           connectionRef.current = context;
-          setStatus("Connected");
+          setStatus(readOnly ? "Connected · replay only" : "Connected");
           await connection.closed;
         } catch {
           // A reconnect loads the session journal. Prompts are never resent.
@@ -167,9 +208,10 @@ export function ChatPanel({
       connection?.close();
       connectionRef.current = null;
     };
-  }, [requestPermission, url, workspaceId]);
+  }, [readOnly, requestPermission, url, workspaceId]);
 
   const answerPermission = (toolCallId: string, optionId: string): void => {
+    if (readOnly) return;
     if (permissionAnswers.current.has(toolCallId)) return;
     const response: RequestPermissionResponse = {
       outcome: { outcome: "selected", optionId },
@@ -282,7 +324,11 @@ export function ChatPanel({
           </button>
         )}
       </div>
-      <form
+      {readOnly ? (
+        <div className="chat-composer chat-composer--readonly" role="status">
+          Replay only · viewers can follow this session but cannot prompt, cancel, or answer permissions.
+        </div>
+      ) : <form
         className="chat-composer"
         onSubmit={(event) => {
           event.preventDefault();
@@ -353,16 +399,44 @@ export function ChatPanel({
             )}
           </div>
         </div>
-      </form>
+      </form>}
     </section>
   );
 }
 
-function parseSessionNotification(value: unknown): RawSessionNotification {
+function parseSessionNotification<Value>(value: Value): RawSessionNotification {
   if (!isRecord(value) || !isString(value.sessionId) || !isRecord(value.update)) {
     throw new Error("Malformed session update");
   }
-  return { sessionId: value.sessionId, update: value.update };
+  const actor = parseActor(value.actor);
+  const notification: RawSessionNotification = { sessionId: value.sessionId, update: value.update };
+  if (actor !== undefined) notification.actor = actor;
+  return notification;
+}
+
+function parsePermissionAnsweredNotification<Value>(value: Value): PermissionAnsweredNotification {
+  if (
+    !isRecord(value)
+    || !isString(value.sessionId)
+    || !isString(value.toolCallId)
+    || !(value.optionId === null || isString(value.optionId))
+  ) throw new Error("Malformed permission answer");
+  const actor = parseActor(value.actor);
+  const notification: PermissionAnsweredNotification = {
+    sessionId: value.sessionId,
+    toolCallId: value.toolCallId,
+    optionId: value.optionId,
+  };
+  if (actor !== undefined) notification.actor = actor;
+  return notification;
+}
+
+function parseActor<Value>(value: Value): ChatActor | undefined {
+  if (!isRecord(value) || !isString(value.userId)) return undefined;
+  if (!(value.name === undefined || isString(value.name))) return undefined;
+  const actor: ChatActor = { userId: value.userId };
+  if (isString(value.name)) actor.name = value.name;
+  return actor;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

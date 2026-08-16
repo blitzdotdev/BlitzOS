@@ -356,6 +356,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "resolved_at", type: "integer", sqlType: "integer" },
         { name: "resolved_by", type: "text", sqlType: "text" },
+        { name: "requester", type: "text", sqlType: "text" },
       ],
       indexes: [
         { name: "pending", fields: ["state", "created_at"] },

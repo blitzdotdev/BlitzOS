@@ -363,6 +363,7 @@ export function TtydTerminal({
   return (
     <div className="terminal-panel">
       <div ref={hostRef} className="terminal-surface" />
+      {readOnly && <div className="terminal-read-only-indicator" role="status">Read-only viewer</div>}
       {!connected && (
         <div className="webapp-loading-overlay">
           <WebAppLoadingPane ariaLabel="Connecting terminal" stage="connecting · terminal" />

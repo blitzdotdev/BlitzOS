@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":"list-sessions","method":"session/list","params":{"cwd":"/workspace"}}
+{"jsonrpc":"2.0","id":"list-sessions","result":{"sessions":[{"sessionId":"session-attributed","cwd":"/workspace","updatedAt":"2026-08-16T00:00:00.000Z","_meta":{"id":"session-attributed","provider":"claude","createdBy":"user-alice"}}]}}

@@ -25,6 +25,7 @@ describe("control-plane deploy command", () => {
       "OPERATOR_API_KEY",
       "GOOGLE_CLIENT_ID",
       "GOOGLE_CLIENT_SECRET",
+      "WEBAPP_TOKEN_SECRET",
       "CRED_MASTER_KEY",
       "MICROVM_LAB_TOKEN",
       "MICROVM_EDGE_TOKEN",
@@ -147,6 +148,7 @@ describe("control-plane deploy command", () => {
             { name: "OPERATOR_API_KEY", type: "secret_text" },
             { name: "GOOGLE_CLIENT_ID", type: "secret_text" },
             { name: "GOOGLE_CLIENT_SECRET", type: "secret_text" },
+            { name: "WEBAPP_TOKEN_SECRET", type: "secret_text" },
             { name: "CRED_MASTER_KEY", type: "secret_text" },
           ]),
         };
@@ -247,6 +249,7 @@ describe("control-plane deploy command", () => {
       "OPERATOR_API_KEY",
       "GOOGLE_CLIENT_ID",
       "GOOGLE_CLIENT_SECRET",
+      "WEBAPP_TOKEN_SECRET",
       "CRED_MASTER_KEY",
     ]));
     expect(calls.some(([tool]) => tool === "npm")).toBe(false);

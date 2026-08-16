@@ -36,6 +36,7 @@ ${content}`;
 }
 
 export interface TunnelTokens {
+  workspaceId: string;
   tunnelToken: string;
   webAppToken: string;
 }
@@ -52,6 +53,9 @@ umask 077
 printf '%s\\n' ${JSON.stringify(tokens.webAppToken)} >/var/lib/blitz/webapp-token.tmp
 chown 1000:1000 /var/lib/blitz/webapp-token.tmp
 mv /var/lib/blitz/webapp-token.tmp /var/lib/blitz/webapp-token
+printf '%s\\n' ${JSON.stringify(tokens.workspaceId)} >/var/lib/blitz/workspace-id.tmp
+chown 1000:1000 /var/lib/blitz/workspace-id.tmp
+mv /var/lib/blitz/workspace-id.tmp /var/lib/blitz/workspace-id
 printf '%s\\n' ${JSON.stringify(tokens.tunnelToken)} >/var/lib/blitz/tunnel-token.tmp
 chown 1000:1000 /var/lib/blitz/tunnel-token.tmp
 mv /var/lib/blitz/tunnel-token.tmp /var/lib/blitz/tunnel-token
