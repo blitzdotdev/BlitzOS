@@ -159,6 +159,11 @@ describe("blitz.dev managed schema", () => {
         expect.objectContaining({ name: "token_hash", unique: true }),
       ]),
     });
+    expect(
+      BLITZDEV_CONFIG.tables.find(({ name }) => name === "credential_requests"),
+    ).toMatchObject({
+      fields: expect.arrayContaining([expect.objectContaining({ name: "requester" })]),
+    });
   });
 
   it("generates only the expected table and index creates from an empty schema", () => {

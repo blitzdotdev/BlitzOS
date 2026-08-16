@@ -5,6 +5,7 @@ import { HttpError, isRecord, isString, readJson, requiredString } from "../http
 import { authenticateBox } from "../oauth.js";
 import {
   createLease,
+  listCredentialEvents,
   listLeases,
   revokeLease,
 } from "./leases.js";
@@ -82,6 +83,7 @@ async function recordDenied(
   integrationName: string,
   scopes: readonly string[],
   now: number,
+  principal: Principal,
 ): Promise<void> {
   await rows(runtime.db, {
     q: `INSERT INTO credential_events (lease_id, event, detail, created_at)
@@ -93,6 +95,10 @@ async function recordDenied(
         box_id: boxId,
         workspace_id: workspaceId,
         reason: "outside credential ceiling",
+        acting_principal: {
+          userId: principal.id,
+          membershipId: principal.membershipId,
+        },
       }),
       now,
     ],
@@ -119,12 +125,14 @@ async function mintOne(
       integration.name,
       scopes,
       now,
+      principal,
     );
     const requestId = await fileRequest(
       runtime.db,
       workspace.id,
       integration.name,
       scopes,
+      { boxId, userId: principal.id },
       now,
     );
     throw new HttpError(
@@ -166,6 +174,7 @@ async function mintOne(
     result,
     tokenHash,
     now,
+    principal,
   });
   return result;
 }
@@ -221,6 +230,7 @@ export function addCredentialRoutes(
           workspace.id,
           input.integration,
           input.scopes ?? [],
+          { boxId: box.id, userId: boxPrincipal.id },
         );
         throw new HttpError(404, "integration not found", requestId);
       }
@@ -260,6 +270,17 @@ export function addCredentialRoutes(
     const principal = await requirePrincipal(context);
     return context.json({
       leases: await listLeases(
+        runtimeFactory(context).db,
+        context.req.param("id"),
+        principal,
+      ),
+    });
+  });
+
+  router.get("/workspaces/:id/credential-events", async (context) => {
+    const principal = await requirePrincipal(context);
+    return context.json({
+      events: await listCredentialEvents(
         runtimeFactory(context).db,
         context.req.param("id"),
         principal,
