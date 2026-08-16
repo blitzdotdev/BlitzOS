@@ -114,6 +114,8 @@ export function ChatPanel({
               cwd: "/workspace",
               mcpServers: [],
             });
+            dispatch({ type: "reconcile-running" });
+            runningRef.current = false;
             setModes(loaded.modes ?? null);
           }
           if (!active) break;

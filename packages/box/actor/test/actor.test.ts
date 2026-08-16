@@ -124,6 +124,21 @@ function fixtureUpdates(): SessionUpdate[] {
 }
 
 describe("ACP actor", () => {
+  test("admin drain closes every active websocket", async () => {
+    const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } });
+    const first = await Client.open(item.url);
+    const second = await Client.open(item.url);
+    const closed = Promise.all([
+      new Promise<void>((resolve) => first.socket.once("close", () => resolve())),
+      new Promise<void>((resolve) => second.socket.once("close", () => resolve())),
+    ]);
+    const response = await fetch(item.url.replace("ws://", "http://") + "/admin/drain", {
+      method: "POST",
+    });
+    expect(response.status).toBe(204);
+    await closed;
+  });
+
   test("uses fixture update order, preserves request IDs, and journals monotonic seq", async () => {
     const updates = fixtureUpdates();
     const adapter: AgentAdapter = {
