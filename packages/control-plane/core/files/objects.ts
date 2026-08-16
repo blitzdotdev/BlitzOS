@@ -216,4 +216,16 @@ export function addFolderObjectRoutes(
     scheduleFolderSync(runtime, folder.id);
     return context.body(null, 204);
   });
+
+  router.delete("/folders/:id/objects/:key", async (context) => {
+    const runtime = runtimeFactory(context);
+    const actor = await filesActorForRequest(runtime, context, requirePrincipal);
+    const folder = await requireFolderAccess(runtime.db, context.req.param("id"), actor, "write");
+    const key = folderObjectKey(folder.org_id, folder.id, routeKey(context));
+    const existing = await runtime.fileObjects.head(key);
+    if (existing === null) throw new HttpError(404, "object not found");
+    await runtime.fileObjects.delete(key);
+    await touchFolder(runtime, folder.id);
+    return context.body(null, 204);
+  });
 }

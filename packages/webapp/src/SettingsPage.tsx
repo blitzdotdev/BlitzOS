@@ -148,7 +148,7 @@ export function SettingsPage({
       <div className="settings-content">
         {section === 'profile' && <ProfilePanel viewer={viewer} onSignOut={onSignOut} />}
         {section === 'members' && <MembersPanel client={client} admin={viewer.membership.role === 'admin'} />}
-        {section === 'files' && <FilesPanel client={client} />}
+        {section === 'files' && <FilesPanel client={client} viewer={viewer} />}
         {section === 'invites' && viewer.membership.role === 'admin' && <InvitesPanel client={client} />}
         {section === 'integrations' && (
           <IntegrationsPanel client={client} requestedName={requestedIntegrationName} />

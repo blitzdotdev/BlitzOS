@@ -24,6 +24,13 @@ interface FolderListRow {
   created_at: number;
   updated_at: number;
   grant_role: "editor" | "viewer" | null;
+  owner_name: string;
+  owner_avatar_url: string | null;
+}
+
+interface AttachmentIdRow {
+  folder_id: string;
+  workspace_id: string;
 }
 
 interface GrantRow {
@@ -101,10 +108,19 @@ export function addFolderRoutes(
           VALUES (?1, ?2, ?3, ?4, ?5, ?5)`,
       v: [id, actor.principal.orgId, input.name, actor.principal.membershipId, now],
     });
+    const creator = await first<{ name: string; avatar_url: string | null }>(runtime.db, {
+      q: "SELECT name, avatar_url FROM users WHERE id = ?1 LIMIT 1",
+      v: [actor.principal.id],
+    });
     const folder: FolderView = {
       id,
       name: input.name,
       role: "owner",
+      owner: {
+        name: creator?.name ?? actor.editedBy,
+        avatarUrl: creator?.avatar_url ?? null,
+      },
+      attachedWorkspaceIds: [],
       createdAt: now,
       updatedAt: now,
       grants: [],
@@ -118,14 +134,34 @@ export function addFolderRoutes(
     const folderRows = await rows<FolderListRow>(runtime.db, {
       q: `SELECT f.id, f.org_id, f.name,
                  f.created_by_membership_id, f.created_at, f.updated_at,
-                 grant.role AS grant_role
+                 grant.role AS grant_role,
+                 owner_user.name AS owner_name,
+                 owner_user.avatar_url AS owner_avatar_url
           FROM folders f
+          JOIN memberships owner ON owner.id = f.created_by_membership_id
+          JOIN users owner_user ON owner_user.id = owner.user_id
           LEFT JOIN folder_grants grant
             ON grant.folder_id = f.id AND grant.membership_id = ?2
           WHERE f.org_id = ?1
           ORDER BY f.created_at, f.id`,
       v: [actor.principal.orgId, actor.principal.membershipId],
     });
+    const attachmentRows = folderRows.length === 0 ? [] : await rows<AttachmentIdRow>(runtime.db, {
+      q: `SELECT attachment.folder_id, attachment.workspace_id
+          FROM folder_attachments attachment
+          JOIN workspaces workspace
+            ON workspace.id = attachment.workspace_id
+           AND workspace.phase != 'destroyed'
+          WHERE attachment.folder_id IN (${folderRows.map((_, index) => `?${index + 1}`).join(",")})
+          ORDER BY attachment.created_at, attachment.workspace_id`,
+      v: folderRows.map(({ id }) => id),
+    });
+    const attachmentsByFolder = new Map<string, string[]>();
+    for (const row of attachmentRows) {
+      const existing = attachmentsByFolder.get(row.folder_id) ?? [];
+      existing.push(row.workspace_id);
+      attachmentsByFolder.set(row.folder_id, existing);
+    }
     const controlledIds = folderRows
       .filter((row) => {
         const role = folderRole(actor.principal, row);
@@ -154,6 +190,8 @@ export function addFolderRoutes(
         id: row.id,
         name: row.name,
         role,
+        owner: { name: row.owner_name, avatarUrl: row.owner_avatar_url },
+        attachedWorkspaceIds: attachmentsByFolder.get(row.id) ?? [],
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       };
@@ -163,6 +201,23 @@ export function addFolderRoutes(
       return folder;
     });
     return context.json({ folders });
+  });
+
+  router.patch("/folders/:id", async (context) => {
+    const runtime = runtimeFactory(context);
+    const actor = await filesActorForRequest(runtime, context, requirePrincipal);
+    const folder = await requireFolderAccess(
+      runtime.db,
+      context.req.param("id"),
+      actor,
+      "control",
+    );
+    const input = parseCreateFolder(await readJson(context.req.raw));
+    await rows(runtime.db, {
+      q: "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3",
+      v: [input.name, Date.now(), folder.id],
+    });
+    return context.body(null, 204);
   });
 
   router.delete("/folders/:id", async (context) => {
