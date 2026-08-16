@@ -30,6 +30,7 @@ const expected = [
   "files/keys.ts",
   "files/objects.ts",
   "files/routes.ts",
+  "files/sync.ts",
   "http.ts",
   "identity/google.ts",
   "identity/grants.ts",
@@ -82,6 +83,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(57);
+    expect(expected).toHaveLength(58);
   });
 });

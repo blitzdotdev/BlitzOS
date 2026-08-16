@@ -2,7 +2,6 @@ import { FILES_MULTIPART_CHUNK_BYTES } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashSecret, randomToken } from "../core/crypto.js";
-import { issueBoxTokens } from "../core/oauth.js";
 import {
   appRequest,
   createWorkspace,
@@ -85,7 +84,6 @@ describe("organization file library", () => {
       "id",
       "org_id",
       "name",
-      "version",
       "created_by_membership_id",
       "created_at",
       "updated_at",
@@ -107,7 +105,7 @@ describe("organization file library", () => {
     ]);
   });
 
-  it("applies 404/403 boundaries and viewer/editor access while hiding ungranted folders", async () => {
+  it("lists every org folder while preserving 404/403 and viewer/editor boundaries", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
     const member = await sameOrgSession("member");
@@ -115,11 +113,31 @@ describe("organization file library", () => {
     const folderId = await createFolder(app, owner);
     const path = objectPath(folderId, "notes/today.txt");
 
-    await expect(appRequest(app, "/folders", { headers: { Cookie: member.cookie } }).then((response) => response.json())).resolves.toEqual({ folders: [] });
+    await expect(appRequest(app, "/folders", { headers: { Cookie: member.cookie } }).then((response) => response.json())).resolves.toEqual({ folders: [{
+      id: folderId,
+      name: "Shared",
+      role: null,
+      createdAt: expect.any(Number),
+      updatedAt: expect.any(Number),
+    }] });
     expect((await appRequest(app, `/folders/${folderId}/objects`, { headers: { Cookie: member.cookie } })).status).toBe(403);
     expect((await appRequest(app, `/folders/${folderId}/objects`, { headers: { Cookie: outsider } })).status).toBe(404);
 
     await grant(app, owner, folderId, member.membershipId, "viewer");
+    const viewerList = await appRequest(app, "/folders", { headers: { Cookie: member.cookie } });
+    await expect(viewerList.json()).resolves.toEqual({ folders: [{
+      id: folderId,
+      name: "Shared",
+      role: "viewer",
+      createdAt: expect.any(Number),
+      updatedAt: expect.any(Number),
+    }] });
+    const ownerList = await appRequest(app, "/folders", { headers: { Cookie: owner } });
+    await expect(ownerList.json()).resolves.toMatchObject({ folders: [{
+      id: folderId,
+      role: "owner",
+      grants: [{ membershipId: member.membershipId, role: "viewer" }],
+    }] });
     expect((await appRequest(app, path, {
       method: "PUT",
       headers: { Cookie: member.cookie, "x-blitz-mtime": "10" },
@@ -267,7 +285,7 @@ describe("organization file library", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM folder_grants WHERE folder_id = ?1").bind(folderId).first<number>("count")).toBe(0);
   });
 
-  it("attaches an accessible folder to a controlled workspace and box sync dies on revoke", async () => {
+  it("attaches an accessible folder and hides the attachment after revoke", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
     const collaborator = await sameOrgSession("workspace-owner");
@@ -287,48 +305,15 @@ describe("organization file library", () => {
     });
     expect(attached.status).toBe(201);
     await expect(attached.json()).resolves.toMatchObject({
-      folder: { id: folderId, name: "Agent Notes", role: "editor", version: 1 },
-    });
-
-    const tokens = await issueBoxTokens();
-    await env.DB.batch([
-      env.DB.prepare(
-        `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
-         VALUES ('files-box', 'workspace-owner', ?1, ?2)`,
-      ).bind(workspace.id, Date.now()),
-      env.DB.prepare(
-        `INSERT INTO box_token_families
-         (box_id, access_hash, refresh_hash, access_issued_at, generation)
-         VALUES ('files-box', ?1, ?2, ?3, 1)`,
-      ).bind(tokens.accessHash, tokens.refreshHash, Date.now()),
-    ]);
-    const authorization = { Authorization: `Bearer ${tokens.accessToken}` };
-    const boxList = await appRequest(app, "/workspaces/self/folders", {
-      headers: authorization,
-    });
-    await expect(boxList.json()).resolves.toMatchObject({
-      folders: [{ id: folderId, name: "Agent Notes", role: "editor" }],
-    });
-    expect((await appRequest(app, objectPath(folderId, "agent.txt"), {
-      method: "PUT",
-      headers: { ...authorization, "x-blitz-mtime": "500" },
-      body: "from agent",
-    })).status).toBe(204);
-    await expect(appRequest(app, `/folders/${folderId}/objects`, {
-      headers: { Cookie: owner },
-    }).then((response) => response.json())).resolves.toMatchObject({
-      objects: [{ key: "agent.txt", editedBy: "workspace-owner" }],
+      folder: { id: folderId, name: "Agent Notes", role: "editor" },
     });
 
     expect((await appRequest(app, `/folders/${folderId}/grants/${grantId}`, {
       method: "DELETE",
       headers: { Cookie: owner },
     })).status).toBe(204);
-    expect((await appRequest(app, "/workspaces/self/folders", {
-      headers: authorization,
-    })).status).toBe(403);
-    expect((await appRequest(app, objectPath(folderId, "agent.txt"), {
-      headers: authorization,
-    })).status).toBe(403);
+    await expect(appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      headers: { Cookie: collaborator.cookie },
+    }).then((response) => response.json())).resolves.toEqual({ folders: [] });
   });
 });

@@ -29,7 +29,6 @@ interface AttachmentRow {
   id: string;
   org_id: string;
   name: string;
-  version: number;
   created_by_membership_id: string;
   grant_role: "editor" | "viewer" | null;
   attached_at: number;
@@ -62,14 +61,9 @@ export function addFolderAttachmentRoutes(
   router.get("/workspaces/:id/folders", async (context) => {
     const runtime = runtimeFactory(context);
     const actor = await filesActorForRequest(runtime, context, requirePrincipal);
-    const idParam = context.req.param("id");
-    const workspaceId = idParam === "self" ? actor.workspaceId : idParam;
-    if (workspaceId === null || (actor.workspaceId !== null && actor.workspaceId !== workspaceId)) {
-      throw new HttpError(403, "a box may only list its own workspace folders");
-    }
-    const workspace = await controlledWorkspace(runtime, workspaceId, actor);
+    const workspace = await controlledWorkspace(runtime, context.req.param("id"), actor);
     const attached = await rows<AttachmentRow>(runtime.db, {
-      q: `SELECT folder.id, folder.org_id, folder.name, folder.version,
+      q: `SELECT folder.id, folder.org_id, folder.name,
                  folder.created_by_membership_id, grant.role AS grant_role,
                  attachment.created_at AS attached_at
           FROM folder_attachments attachment
@@ -80,16 +74,14 @@ export function addFolderAttachmentRoutes(
           ORDER BY attachment.created_at, folder.id`,
       v: [workspace.id, actor.principal.membershipId],
     });
-    const folders: FolderAttachmentView[] = attached.map((folder) => {
+    const folders: FolderAttachmentView[] = attached.flatMap((folder) => {
       const role = folderRole(actor.principal, folder);
-      if (role === null) throw new HttpError(403, "folder attachment is no longer accessible");
-      return {
+      return role === null ? [] : [{
         id: folder.id,
         name: folder.name,
         role,
-        version: folder.version,
         attachedAt: folder.attached_at,
-      };
+      }];
     });
     const response: ListFolderAttachmentsResponse = { folders };
     return context.json(response);
@@ -101,7 +93,6 @@ export function addFolderAttachmentRoutes(
     const actor: FilesActor = {
       principal,
       editedBy: principal.id,
-      workspaceId: null,
     };
     const workspace = await controlledWorkspace(runtime, context.req.param("id"), actor);
     const value = await readJson(context.req.raw);
@@ -122,7 +113,6 @@ export function addFolderAttachmentRoutes(
         id: folder.id,
         name: folder.name,
         role: folder.role,
-        version: folder.version,
         attachedAt: now,
       } satisfies FolderAttachmentView,
     }, 201);

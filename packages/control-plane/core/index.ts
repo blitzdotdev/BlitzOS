@@ -6,6 +6,11 @@ export type { Db, Query, RawRun, TransactionRun } from "./db.js";
 export { changed, first, rows, transaction } from "./db.js";
 export { runLeaseSweep } from "./credentials/leases.js";
 export {
+  FILE_SYNC_MAX_BYTES_PER_TICK,
+  FILE_SYNC_MAX_FILES_PER_TICK,
+  runFileSyncSweep,
+} from "./files/sync.js";
+export {
   credentialMasterKeyFor,
   importCredentialMasterKey,
 } from "./credentials/root-crypto.js";

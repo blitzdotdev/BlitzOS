@@ -21,11 +21,10 @@ export interface FolderGrantView {
 export interface FolderView {
   id: string;
   name: string;
-  role: FolderRole;
-  version: number;
+  role: FolderRole | null;
   createdAt: number;
   updatedAt: number;
-  grants: FolderGrantView[];
+  grants?: FolderGrantView[];
 }
 
 export interface FolderObjectView {
@@ -45,7 +44,6 @@ export interface FolderAttachmentView {
   id: string;
   name: string;
   role: FolderRole;
-  version: number;
   attachedAt: number;
 }
 

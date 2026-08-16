@@ -1,2 +1,0 @@
-#!/bin/sh
-exec /usr/local/bin/node /usr/local/libexec/blitz-files.mjs "$@"

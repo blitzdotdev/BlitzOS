@@ -16,6 +16,7 @@ import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { filesActorForRequest, requireFolderAccess } from "./access.js";
 import { folderObjectKey, folderObjectPrefix, relativeObjectKey } from "./keys.js";
+import { scheduleFolderSync } from "./sync.js";
 
 const MTIME_METADATA = "mtime";
 const EDITED_BY_METADATA = "edited-by";
@@ -90,17 +91,15 @@ function objectView(object: R2Object, prefix: string): FolderObjectView {
   return { key: object.key.slice(prefix.length), size: object.size, mtime, editedBy };
 }
 
-async function bumpFolderVersion(runtime: ReturnType<RuntimeFactory>, folderId: string): Promise<void> {
-  await rows(runtime.db, {
-    q: `UPDATE folders
-        SET version = version + 1, updated_at = ?1
-        WHERE id = ?2`,
-    v: [Date.now(), folderId],
-  });
-}
-
 function routeKey(context: CoreContext): string {
   return relativeObjectKey(context.req.param("key"));
+}
+
+async function touchFolder(runtime: ReturnType<RuntimeFactory>, folderId: string): Promise<void> {
+  await rows(runtime.db, {
+    q: "UPDATE folders SET updated_at = ?1 WHERE id = ?2",
+    v: [Date.now(), folderId],
+  });
 }
 
 export function addFolderObjectRoutes(
@@ -177,7 +176,8 @@ export function addFolderObjectRoutes(
         context.req.param("uploadId"),
       );
       await upload.complete(input.parts);
-      await bumpFolderVersion(runtime, folder.id);
+      await touchFolder(runtime, folder.id);
+      scheduleFolderSync(runtime, folder.id);
       return context.body(null, 204);
     },
   );
@@ -212,7 +212,8 @@ export function addFolderObjectRoutes(
         [EDITED_BY_METADATA]: actor.editedBy,
       },
     });
-    await bumpFolderVersion(runtime, folder.id);
+    await touchFolder(runtime, folder.id);
+    scheduleFolderSync(runtime, folder.id);
     return context.body(null, 204);
   });
 }

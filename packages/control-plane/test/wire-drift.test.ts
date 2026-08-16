@@ -155,7 +155,6 @@ const folder: SharedShape<wire.FolderView, schema.FolderView> = {
   id: "folder",
   name: "Shared",
   role: "owner",
-  version: 2,
   createdAt: 1,
   updatedAt: 2,
   grants: [folderGrant],
@@ -180,7 +179,6 @@ const folderAttachment: SharedShape<
   id: "folder",
   name: "Shared",
   role: "editor",
-  version: 2,
   attachedAt: 3,
 };
 

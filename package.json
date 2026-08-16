@@ -21,7 +21,7 @@
     "lint": "oxlint .",
     "lint:gate": "node scripts/lint-gate.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present && node --test packages/microvm-host/guest/blitz-microvm-enroll.test.js packages/box/test/blitz-files.test.mjs tools/oxlint/blitz-house/*.test.mjs"
+    "test": "npm run test --workspaces --if-present && node --test packages/microvm-host/guest/blitz-microvm-enroll.test.js tools/oxlint/blitz-house/*.test.mjs"
   },
   "devDependencies": {
     "@oxlint/plugins": "^1.78.0",

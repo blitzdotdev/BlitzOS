@@ -2,7 +2,6 @@ CREATE TABLE folders (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL REFERENCES orgs(id),
   name TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
   created_by_membership_id TEXT NOT NULL REFERENCES memberships(id),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

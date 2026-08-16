@@ -1,8 +1,0 @@
-#!/command/with-contenv bash
-set -euo pipefail
-while true; do
-  /command/s6-setuidgid blitz /usr/bin/env \
-    HOME=/var/lib/blitz/home USER=blitz BLITZ_STATE_DIR="$BLITZ_STATE_DIR" \
-    /usr/local/bin/blitz-files sync --update || echo "files-sync: sync failed; retrying"
-  sleep 300
-done

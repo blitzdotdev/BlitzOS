@@ -10,6 +10,7 @@ import {
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
   runInvariantSweep,
+  runFileSyncSweep,
   runLeaseSweep,
   runOrphanSweep,
   runSessionSweep,
@@ -196,6 +197,7 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
+        await runFileSyncSweep(runtime);
       })(),
     );
   },

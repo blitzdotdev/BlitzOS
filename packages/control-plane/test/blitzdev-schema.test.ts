@@ -132,7 +132,6 @@ describe("blitz.dev managed schema", () => {
         expect.objectContaining({ name: "id" }),
         expect.objectContaining({ name: "org_id" }),
         expect.objectContaining({ name: "name" }),
-        expect.objectContaining({ name: "version", default: { l: 1 } }),
         expect.objectContaining({ name: "created_by_membership_id" }),
         expect.objectContaining({ name: "created_at" }),
         expect.objectContaining({ name: "updated_at" }),

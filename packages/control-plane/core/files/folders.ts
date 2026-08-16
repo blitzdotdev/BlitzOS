@@ -20,7 +20,6 @@ interface FolderListRow {
   id: string;
   org_id: string;
   name: string;
-  version: number;
   created_by_membership_id: string;
   created_at: number;
   updated_at: number;
@@ -98,15 +97,14 @@ export function addFolderRoutes(
     const id = crypto.randomUUID();
     await rows(runtime.db, {
       q: `INSERT INTO folders
-          (id, org_id, name, version, created_by_membership_id, created_at, updated_at)
-          VALUES (?1, ?2, ?3, 1, ?4, ?5, ?5)`,
+          (id, org_id, name, created_by_membership_id, created_at, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?5)`,
       v: [id, actor.principal.orgId, input.name, actor.principal.membershipId, now],
     });
     const folder: FolderView = {
       id,
       name: input.name,
       role: "owner",
-      version: 1,
       createdAt: now,
       updatedAt: now,
       grants: [],
@@ -118,16 +116,15 @@ export function addFolderRoutes(
     const runtime = runtimeFactory(context);
     const actor = await filesActorForRequest(runtime, context, requirePrincipal);
     const folderRows = await rows<FolderListRow>(runtime.db, {
-      q: `SELECT f.id, f.org_id, f.name, f.version,
+      q: `SELECT f.id, f.org_id, f.name,
                  f.created_by_membership_id, f.created_at, f.updated_at,
                  grant.role AS grant_role
           FROM folders f
           LEFT JOIN folder_grants grant
             ON grant.folder_id = f.id AND grant.membership_id = ?2
           WHERE f.org_id = ?1
-            AND (?3 = 'admin' OR f.created_by_membership_id = ?2 OR grant.id IS NOT NULL)
           ORDER BY f.created_at, f.id`,
-      v: [actor.principal.orgId, actor.principal.membershipId, actor.principal.role],
+      v: [actor.principal.orgId, actor.principal.membershipId],
     });
     const controlledIds = folderRows
       .filter((row) => {
@@ -151,17 +148,19 @@ export function addFolderRoutes(
       existing.push(grantView(row));
       grantsByFolder.set(row.folder_id, existing);
     }
-    const folders: FolderView[] = folderRows.flatMap((row) => {
+    const folders: FolderView[] = folderRows.map((row) => {
       const role = folderRole(actor.principal, row);
-      return role === null ? [] : [{
+      const folder: FolderView = {
         id: row.id,
         name: row.name,
         role,
-        version: row.version,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
-        grants: grantsByFolder.get(row.id) ?? [],
-      }];
+      };
+      if (role === "owner" || role === "admin") {
+        folder.grants = grantsByFolder.get(row.id) ?? [];
+      }
+      return folder;
     });
     return context.json({ folders });
   });
