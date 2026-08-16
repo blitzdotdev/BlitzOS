@@ -13,7 +13,6 @@ export interface ConnectionIdentity {
 
 interface TicketClaims extends ConnectionIdentity {
   workspaceId: string;
-  surface: "chat";
   exp: number;
 }
 
@@ -25,14 +24,13 @@ function claimsFromJson(value: JsonValue): TicketClaims | null {
   const record = asJsonObject(value);
   if (record === null) return null;
   const keys = Object.keys(record).sort();
-  if (keys.join(",") !== "exp,membershipId,role,surface,userId,workspaceId") return null;
+  if (keys.join(",") !== "exp,membershipId,role,userId,workspaceId") return null;
   if (
     !isString(record.workspaceId)
     || !isString(record.userId)
     || !isString(record.membershipId)
     || !isNumber(record.exp)
     || !Number.isSafeInteger(record.exp)
-    || record.surface !== "chat"
     || !isConnectionRole(record.role)
   ) return null;
   return {
@@ -40,7 +38,6 @@ function claimsFromJson(value: JsonValue): TicketClaims | null {
     userId: record.userId,
     membershipId: record.membershipId,
     role: record.role,
-    surface: record.surface,
     exp: record.exp,
   };
 }

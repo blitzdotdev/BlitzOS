@@ -19,11 +19,7 @@ import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from ".
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
-import {
-  requireWorkspaceWebAppAuth,
-  WEBAPP_TOKEN_HEADER,
-  type WebAppSurface,
-} from "./webapp-tickets.js";
+import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -288,11 +284,6 @@ export function createPhoneHomeResponse(
   return response;
 }
 
-function webAppSurface(port: WebAppPort, path: string): WebAppSurface {
-  if (port === 7444) return "chat";
-  return path === "/terminal/ws" ? "terminal" : "files";
-}
-
 function requestWithWebAppCredential(request: Request, credential: string): Request {
   const headers = new Headers(request.headers);
   headers.set(WEBAPP_TOKEN_HEADER, credential);
@@ -527,13 +518,11 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
-    const surface = webAppSurface(port, suffix === "" ? "/" : suffix);
     const credential = await requireWorkspaceWebAppAuth(runtime.providers.webAppAuth).mint({
       workspaceId: row.id,
       userId: access.userId,
       membershipId: access.membershipId,
       role: access.role,
-      surface,
     });
     const authenticatedRequest = requestWithWebAppCredential(context.req.raw, credential);
     const workspaceTunnels = runtime.providers.workspaceTunnels;

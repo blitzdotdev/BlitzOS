@@ -70,7 +70,7 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 	}
 	viewer := webAppTicketClaims{
 		WorkspaceID: workspaceID, UserID: "viewer-user", MembershipID: "viewer-member",
-		Role: "viewer", Surface: "terminal", Exp: time.Now().Unix() + 60,
+		Role: "viewer", Exp: time.Now().Unix() + 60,
 	}
 	request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws?arg=terminal&arg=tab&arg=client-value", nil)
 	request.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
@@ -84,7 +84,6 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 		t.Fatalf("viewer terminal URI = %q", got)
 	}
 
-	viewer.Surface = "files"
 	writeRequest := httptest.NewRequest(http.MethodPut, "http://box/workspace/file.txt", strings.NewReader("write"))
 	writeRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
 	writeResponse := httptest.NewRecorder()

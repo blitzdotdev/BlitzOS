@@ -70,10 +70,9 @@ describe("workspace tunnels", () => {
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       credential,
       workspace.id,
-      "chat",
     )).resolves.toMatchObject({
       kind: "ticket",
-      claims: { role: "owner", userId: "operator", surface: "chat" },
+      claims: { role: "owner", userId: "operator" },
     });
     expect(proxied.request?.headers.get("Cookie")).toBeNull();
 

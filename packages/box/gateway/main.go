@@ -85,7 +85,6 @@ type webAppTicketClaims struct {
 	UserID       string `json:"userId"`
 	MembershipID string `json:"membershipId"`
 	Role         string `json:"role"`
-	Surface      string `json:"surface"`
 	Exp          int64  `json:"exp"`
 }
 
@@ -160,7 +159,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	identity := webAppIdentity{UserID: "legacy-owner", MembershipID: "legacy-owner", Role: "owner"}
 	if authRequired {
 		var allowed bool
-		identity, allowed = webAppCredential(request, webAppToken, workspaceID, surfaceForRequest(request), time.Now().Unix())
+		identity, allowed = webAppCredential(request, webAppToken, workspaceID, time.Now().Unix())
 		if !allowed {
 			http.Error(response, "webApp token forbidden", http.StatusForbidden)
 			return
@@ -526,7 +525,7 @@ func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authReq
 
 type webAppIdentityContextKey struct{}
 
-func webAppCredential(request *http.Request, secret, workspaceID, surface string, now int64) (webAppIdentity, bool) {
+func webAppCredential(request *http.Request, secret, workspaceID string, now int64) (webAppIdentity, bool) {
 	values := request.Header.Values(webAppTokenHeader)
 	if len(values) != 1 {
 		return webAppIdentity{}, false
@@ -561,7 +560,7 @@ func webAppCredential(request *http.Request, secret, workspaceID, surface string
 	decoder := json.NewDecoder(strings.NewReader(string(payload)))
 	decoder.DisallowUnknownFields()
 	var claims webAppTicketClaims
-	if err := decoder.Decode(&claims); err != nil || requireJSONEOF(decoder) != nil || claims.Exp <= now || claims.WorkspaceID != workspaceID || claims.Surface != surface {
+	if err := decoder.Decode(&claims); err != nil || requireJSONEOF(decoder) != nil || claims.Exp <= now || claims.WorkspaceID != workspaceID {
 		return webAppIdentity{}, false
 	}
 	if claims.UserID == "" || claims.MembershipID == "" || !validWebAppRole(claims.Role) {
@@ -586,16 +585,6 @@ func requireJSONEOF(decoder *json.Decoder) error {
 
 func validWebAppRole(role string) bool {
 	return role == "owner" || role == "admin" || role == "editor" || role == "viewer"
-}
-
-func surfaceForRequest(request *http.Request) string {
-	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
-		return "chat"
-	}
-	if request.URL.Path == "/terminal/ws" {
-		return "terminal"
-	}
-	return "files"
 }
 
 func filesReadMethod(method string) bool {

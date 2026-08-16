@@ -33,7 +33,6 @@ function actorTicket(role: "editor" | "viewer", exp = Math.floor(Date.now() / 1_
     userId: `${role}-user`,
     membershipId: `${role}-member`,
     role,
-    surface: "chat",
     exp,
   })).toString("base64url");
   const input = `v1.${payload}`;

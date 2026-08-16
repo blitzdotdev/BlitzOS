@@ -1,17 +1,14 @@
 import { HttpError, isNumber, isRecord, isString, type JsonValue } from "./http.js";
+import type { WorkspaceRole } from "./wire.js";
 
 export const WEBAPP_TOKEN_HEADER = "X-Blitz-WebApp-Token";
 export const WEBAPP_TICKET_TTL_SECONDS = 60;
-
-export type WebAppRole = "owner" | "admin" | "editor" | "viewer";
-export type WebAppSurface = "terminal" | "files" | "chat";
 
 export interface WebAppTicketClaims {
   workspaceId: string;
   userId: string;
   membershipId: string;
-  role: WebAppRole;
-  surface: WebAppSurface;
+  role: WorkspaceRole;
   exp: number;
 }
 
@@ -49,33 +46,27 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-function isWebAppRole(value: JsonValue | undefined): value is WebAppRole {
+function isWorkspaceRole(value: JsonValue | undefined): value is WorkspaceRole {
   return value === "owner" || value === "admin" || value === "editor" || value === "viewer";
-}
-
-function isWebAppSurface(value: JsonValue | undefined): value is WebAppSurface {
-  return value === "terminal" || value === "files" || value === "chat";
 }
 
 function parseClaims(value: JsonValue): WebAppTicketClaims | null {
   if (!isRecord(value)) return null;
   const keys = Object.keys(value).sort();
-  if (keys.join(",") !== "exp,membershipId,role,surface,userId,workspaceId") return null;
+  if (keys.join(",") !== "exp,membershipId,role,userId,workspaceId") return null;
   if (
     !isString(value.workspaceId)
     || !isString(value.userId)
     || !isString(value.membershipId)
     || !isNumber(value.exp)
     || !Number.isSafeInteger(value.exp)
-    || !isWebAppRole(value.role)
-    || !isWebAppSurface(value.surface)
+    || !isWorkspaceRole(value.role)
   ) return null;
   return {
     workspaceId: value.workspaceId,
     userId: value.userId,
     membershipId: value.membershipId,
     role: value.role,
-    surface: value.surface,
     exp: value.exp,
   };
 }
@@ -103,7 +94,6 @@ export class WorkspaceWebAppAuth {
       userId: claims.userId,
       membershipId: claims.membershipId,
       role: claims.role,
-      surface: claims.surface,
       exp: nowSeconds + WEBAPP_TICKET_TTL_SECONDS,
     };
     const encodedPayload = base64Url(encoder.encode(JSON.stringify(payload)));
@@ -119,7 +109,6 @@ export class WorkspaceWebAppAuth {
   public async verify(
     credential: string,
     workspaceId: string,
-    surface: WebAppSurface,
     nowSeconds = Math.floor(Date.now() / 1_000),
   ): Promise<VerifiedWebAppCredential | null> {
     const workspaceToken = await this.tokenFor(workspaceId);
@@ -143,7 +132,6 @@ export class WorkspaceWebAppAuth {
           userId: "legacy-owner",
           membershipId: "legacy-owner",
           role: "owner",
-          surface,
           exp: Number.MAX_SAFE_INTEGER,
         },
       };
@@ -170,7 +158,6 @@ export class WorkspaceWebAppAuth {
       claims === null
       || claims.exp <= nowSeconds
       || claims.workspaceId !== workspaceId
-      || claims.surface !== surface
     ) return null;
     return { kind: "ticket", claims };
   }

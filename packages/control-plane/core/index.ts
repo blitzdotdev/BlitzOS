@@ -29,7 +29,7 @@ export {
   WorkspaceWebAppAuth,
   workspaceWebAppAuthFromEnv,
 } from "./webapp-tickets.js";
-export type { WebAppRole, WebAppSurface, WebAppTicketClaims } from "./webapp-tickets.js";
+export type { WebAppTicketClaims } from "./webapp-tickets.js";
 export type { VmProviderListResult } from "./providers/registry.js";
 export {
   addMicrovmHostRoutes,

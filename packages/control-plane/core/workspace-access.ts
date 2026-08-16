@@ -6,7 +6,7 @@ import { cookieValue, SESSION_COOKIE } from "./principals.js";
 import { hashSecret, matchesStoredHash } from "./crypto.js";
 import type { CoreContext, CoreRuntime } from "./runtime.js";
 import { workspaceById, type WorkspaceRow } from "./workspace-records.js";
-import type { WebAppRole } from "./webapp-tickets.js";
+import type { WorkspaceRole } from "./wire.js";
 
 export interface WorkspaceAccessRow {
   id: string;
@@ -30,7 +30,7 @@ export function canControlWorkspace(
 export function workspaceRole(
   principal: Principal,
   workspace: WorkspaceAccessRow & { grant_role?: "editor" | "viewer" | null },
-): WebAppRole | null {
+): WorkspaceRole | null {
   if (principal.orgId === null || workspace.org_id !== principal.orgId) return null;
   if (workspace.owner_membership_id === principal.membershipId) return "owner";
   if (principal.role === "admin") return "admin";
@@ -41,7 +41,7 @@ export interface WebAppWorkspaceAccess {
   workspace: WorkspaceRow;
   userId: string;
   membershipId: string;
-  role: WebAppRole;
+  role: WorkspaceRole;
 }
 
 export async function requireWorkspaceControl<T extends WorkspaceAccessRow>(

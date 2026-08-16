@@ -23,6 +23,8 @@ export type Phase = (typeof PHASES)[number];
 export const RETRY_ACTIONS = ["poll", "destroy", "create"] as const;
 export type RetryAction = (typeof RETRY_ACTIONS)[number] | null;
 
+export type WorkspaceRole = "owner" | "admin" | "editor" | "viewer";
+
 export const PHASE_TRANSITIONS = {
   creating: ["ready", "error"],
   ready: ["destroying"],
@@ -74,7 +76,7 @@ export interface WorkspaceView {
   } | null;
   volumeId: string | null;
   error: string | null;
-  role: "owner" | "admin" | "editor" | "viewer" | null;
+  role: WorkspaceRole | null;
   owner: {
     name: string;
     avatarUrl: string | null;

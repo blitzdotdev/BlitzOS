@@ -171,7 +171,6 @@ describe("identity phase 2", () => {
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       providers.webAppCredentials.at(-1) ?? "",
       workspace.id,
-      "files",
     )).resolves.toMatchObject({
       kind: "ticket",
       claims: {
