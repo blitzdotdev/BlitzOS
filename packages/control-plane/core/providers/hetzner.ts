@@ -234,11 +234,15 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     );
   }
 
-  private async list(path: string, field: string): Promise<Record<string, unknown>[]> {
+  private async list(
+    path: string,
+    field: string,
+    perPage = 50,
+  ): Promise<Record<string, unknown>[]> {
     const result: Record<string, unknown>[] = [];
     let page = 1;
     while (true) {
-      const value = await this.request(`${path}?per_page=50&page=${page}`);
+      const value = await this.request(`${path}?per_page=${perPage}&page=${page}`);
       result.push(...records(value, field));
       const nextPage =
         isRecord(value) &&
@@ -253,7 +257,10 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   }
 
   async listMachineTypes(): Promise<ProviderMachineType[]> {
-    const types = await this.list("/server_types", "server_types");
+    // Server-type entries carry per-location price tables, so a 50-item page
+    // can exceed the bounded JSON fetch cap; smaller pages keep each response
+    // under it.
+    const types = await this.list("/server_types", "server_types", 10);
     for (const type of types) {
       const id = type.id;
       const name = type.name;
