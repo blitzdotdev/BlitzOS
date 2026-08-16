@@ -19,6 +19,10 @@ const SHUTDOWN_TIMEOUT_MS = 45_000;
 // are lowercase ASCII letters followed by decimal digits, with no dash.
 const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
 const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
+// Curated catalog for now: two mid-size x86 types in the US-west location.
+// This constrains what the create page offers; existing workspaces on other
+// types keep working because ownership stays shape-based.
+const MACHINE_TYPE_ALLOWLIST = new Set(["cpx21@hil", "cpx31@hil"]);
 
 export interface HetznerProviderOptions {
   now?: () => number;
@@ -289,7 +293,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
           location: locationName,
         } satisfies ProviderMachineType;
       });
-    });
+    }).filter((machineType) => MACHINE_TYPE_ALLOWLIST.has(machineType.id));
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {

@@ -297,39 +297,39 @@ describe("control plane security and lifecycle", () => {
     expect(providers.createCalls).toBe(0);
   });
 
-  it("filters deprecated Hetzner machine types and locations from the API response", async () => {
+  it("filters deprecated and non-allowlisted Hetzner machine types from the API response", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({
         server_types: [
           {
-            name: "cx22",
-            cores: 2,
-            memory: 4,
-            disk: 40,
+            name: "cpx31",
+            cores: 4,
+            memory: 8,
+            disk: 160,
             architecture: "x86",
             deprecation: {
               announced: "2025-10-16T06:00:00Z",
               unavailable_after: "2025-12-31T23:59:59Z",
             },
-            locations: [{ name: "fsn1", available: true, deprecation: null }],
+            locations: [{ name: "hil", available: true, deprecation: null }],
           },
           {
-            name: "cpx22",
-            cores: 2,
+            name: "cpx21",
+            cores: 3,
             memory: 4,
             disk: 80,
             architecture: "x86",
             deprecation: null,
             locations: [
               {
-                name: "fsn1",
+                name: "hil",
                 available: true,
                 deprecation: {
                   announced: "2026-01-01T00:00:00Z",
                   unavailable_after: "2026-06-01T00:00:00Z",
                 },
               },
-              { name: "nbg1", available: true, deprecation: null },
+              { name: "ash", available: true, deprecation: null },
             ],
           },
           {
@@ -353,9 +353,12 @@ describe("control plane security and lifecycle", () => {
       headers: { Cookie: cookie },
     });
 
+    // cpx31@hil is allowlisted but type-deprecated; cpx21@hil is allowlisted
+    // but location-deprecated; cpx21@ash and cx23@fsn1 are healthy but not
+    // allowlisted.
     expect(response.status).toBe(200);
     const body = await response.json<ListMachineTypesResponse>();
-    expect(body.machineTypes.map(({ id }) => id)).toEqual(["cpx22@nbg1", "cx23@fsn1"]);
+    expect(body.machineTypes.map(({ id }) => id)).toEqual([]);
     const listHeaders = fetchMock.mock.calls[0]?.[1]?.headers ?? {};
     expect(Object.keys(listHeaders)).toEqual(["Authorization"]);
     expect("Content-Type" in listHeaders).toBe(false);
@@ -412,14 +415,14 @@ describe("control plane security and lifecycle", () => {
           },
           {
             id: 106,
-            name: "cpx22",
-            cores: 2,
+            name: "cpx21",
+            cores: 3,
             memory: 4,
             disk: 80,
             architecture: "x86",
             deprecation: null,
             locations: [
-              { id: 2, name: "nbg1", available: true, deprecation: null },
+              { id: 2, name: "hil", available: true, deprecation: null },
             ],
           },
         ],
@@ -429,7 +432,7 @@ describe("control plane security and lifecycle", () => {
     const provider = new HetznerProvider("test-token");
 
     expect((await provider.listMachineTypes()).map(({ id }) => id)).toEqual([
-      "cpx22@nbg1",
+      "cpx21@hil",
     ]);
   });
 
