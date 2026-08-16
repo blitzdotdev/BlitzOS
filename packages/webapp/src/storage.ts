@@ -64,7 +64,7 @@ export type WorkspaceFiles = {
   segment: WorkspaceDrawerSegment;
 };
 
-export type WorkspaceDrawerSegment = 'files' | 'leases' | 'requests' | 'events';
+export type WorkspaceDrawerSegment = 'files' | 'credentials' | 'events';
 
 export type GlobalWebAppStateV1 = {
   version: 1;
@@ -279,10 +279,11 @@ function parseDrawer(value: OptionalJsonValue): WorkspaceFiles | null {
   ) return null;
   const expanded = object.expanded.filter(isSafeRelativePath);
   if (expanded.length !== object.expanded.length) return null;
-  const segment = object.segment === 'leases' || object.segment === 'requests' || object.segment === 'events'
-    ? object.segment
-    : object.segment === 'files'
-      ? 'files'
+  // Pre-merge docs stored 'leases'/'requests'; both land on the combined tab.
+  const segment = object.segment === 'leases' || object.segment === 'requests' || object.segment === 'credentials'
+    ? 'credentials'
+    : object.segment === 'files' || object.segment === 'events'
+      ? object.segment
       : null;
   return segment === null
     ? null

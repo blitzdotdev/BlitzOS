@@ -127,12 +127,12 @@ describe('v2 credential surfaces', () => {
     }
 
     let view = await render(<Harness />);
-    const requestsTab = [...view.container.querySelectorAll('[role="tab"]')]
-      .find((tab) => tab.textContent?.includes('Requests'))!;
-    await act(async () => click(requestsTab));
-    expect(requestsTab.getAttribute('aria-selected')).toBe('true');
+    const credentialsTab = [...view.container.querySelectorAll('[role="tab"]')]
+      .find((tab) => tab.textContent?.includes('Credentials'))!;
+    await act(async () => click(credentialsTab));
+    expect(credentialsTab.getAttribute('aria-selected')).toBe('true');
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toContain('Requests');
+      .toContain('Credentials');
     await view.unmount();
   });
 
@@ -193,7 +193,7 @@ describe('v2 credential surfaces', () => {
           mobile={false}
           open
           width={264}
-          segment="requests"
+          segment="credentials"
           pendingRequests={requests}
           canManageCredentials
           files={<div>File tree</div>}
