@@ -69,6 +69,25 @@ describe("UI protocol and persistence object contracts", () => {
     );
   });
 
+  it("accepts wide drawer widths to the server cap and rejects beyond it", () => {
+    const doc = (width: number) => JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs: { version: 1, tabs: [{ id: 1, type: "terminal" }], activeId: 1, nextId: 2 },
+        drawer: { version: 1, open: true, width, expanded: [], segment: "files" },
+      },
+      updatedAt: 1,
+    });
+    // The rail-vanish regression: a stored fractional width above the old
+    // 480 ceiling must decode, not throw the whole bootstrap away.
+    expect(decodeWorkspaceWebAppStateResponse(doc(724.07421875)).doc?.drawer.width)
+      .toBe(724.07421875);
+    expect(decodeWorkspaceWebAppStateResponse(doc(2000)).doc?.drawer.width).toBe(2000);
+    expect(() => decodeWorkspaceWebAppStateResponse(doc(2001))).toThrow();
+    expect(() => decodeWorkspaceWebAppStateResponse(doc(199))).toThrow();
+  });
+
   it("restores port and URL preview tabs and rejects malformed URL variants", () => {
     const decodeTabs = (tabs: object[]) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
       doc: {
