@@ -843,30 +843,11 @@
   background: var(--wash);
 }
 
-.workspace-status {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  font: 600 11px/1 var(--font-ui);
+.workspace-sect small {
+  margin-left: 6px;
+  color: var(--faint);
+  font-weight: 400;
 }
-
-.workspace-status--ok { color: color-mix(in oklab, var(--ansi-green) 55%, var(--ink)); }
-
-.workspace-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: color-mix(in oklab, var(--ink) 24%, var(--paper));
-}
-
-.workspace-dot--ok {
-  background: var(--ansi-green);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ansi-green) 20%, transparent);
-}
-
-.workspace-row-chevron { flex: none; color: var(--faint); }
 
 /* The integrations column scrolls as one page of slabs. */
 .workspace-integrations {
@@ -1139,44 +1120,137 @@
   padding-bottom: 12px;
 }
 
-.workspace-preview-row {
-  display: flex;
-  width: 100%;
-  align-items: center;
+/* Each running app is a card whose thumbnail is the live page itself —
+ * a scaled, non-interactive frame through the preview proxy. */
+.workspace-preview-cards {
+  display: grid;
   gap: 10px;
-  padding: 12px 14px;
+  margin: 0 14px;
+}
+
+.workspace-preview-card {
+  overflow: hidden;
   border: 0;
-  color: var(--muted);
-  background: transparent;
-  font: 11.5px/1.3 var(--font-ui);
+  padding: 0;
+  border-radius: var(--r-card);
+  color: var(--ink);
+  background: var(--wash);
+  font: 12.5px/1.4 var(--font-ui);
   text-align: left;
   cursor: pointer;
 }
 
-.workspace-preview-row + .workspace-preview-row {
-  border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
-}
-
-.workspace-preview-row:hover,
-.workspace-preview-row:focus-visible {
+.workspace-preview-card:hover,
+.workspace-preview-card:focus-visible {
   background: var(--wash-deep);
   outline: 0;
 }
 
-.workspace-preview-port {
-  min-width: 46px;
-  color: var(--ink);
-  font-size: 13px;
+.workspace-preview-shot {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9.4;
+  overflow: hidden;
+  background: var(--wash-deep);
+  border-bottom: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.workspace-preview-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200%;
+  height: 200%;
+  border: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.5);
+  transform-origin: top left;
+  transition: opacity 160ms ease;
+}
+
+.workspace-preview-thumb--ready {
+  opacity: 1;
+}
+
+.workspace-preview-shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in oklab, var(--ink) 5%, transparent) 50%,
+    transparent 70%
+  );
+  animation: workspace-preview-sweep 1.4s infinite;
+}
+
+.workspace-preview-thumb--ready ~ .workspace-preview-shimmer,
+.workspace-preview-thumb--ready ~ .workspace-preview-wait {
+  display: none;
+}
+
+@keyframes workspace-preview-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-preview-shimmer { animation: none; }
+}
+
+.workspace-preview-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.workspace-preview-caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.workspace-preview-caption b {
+  overflow: hidden;
+  flex: none;
+  max-width: 45%;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-preview-meta {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
-.workspace-preview-process {
-  overflow: hidden;
-  min-width: 0;
-  flex: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.workspace-preview-open-tab {
+  display: grid;
+  width: 28px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  margin-left: auto;
+  border-radius: var(--r-item);
+  color: var(--muted);
+}
+
+.workspace-preview-card:hover .workspace-preview-open-tab,
+.workspace-preview-open-tab:focus-visible {
+  color: var(--ink);
+  background: var(--hover);
+  outline: 0;
 }
 
 /* Opened state: quiet toolbar, soft address field, the live page below. */

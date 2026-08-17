@@ -421,11 +421,10 @@ export function WorkspaceDrawer({
                   <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.2-3.2" /><path d="M13 2.6v2.6h-2.6" /></svg>
                 </button>
                 <span className="workspace-preview-addr">
-                  <span className="workspace-dot workspace-dot--ok" aria-hidden="true" />
                   <span className="workspace-preview-addr-text">
-                    <b>:{openedPort}</b>
+                    {livePorts.find((entry) => entry.port === openedPort)?.process ?? 'stopped'}
                     {' · '}
-                    {livePorts.find((entry) => entry.port === openedPort)?.process ?? 'gone'}
+                    <b>:{openedPort}</b>
                   </span>
                 </span>
                 <button
@@ -452,33 +451,70 @@ export function WorkspaceDrawer({
             </div>
           )}
           {openedPort === null && (
-            <section className="workspace-drawer-panel workspace-previews" aria-label="Live preview ports">
-              <h3 className="workspace-sect">Live ports</h3>
+            <section className="workspace-drawer-panel workspace-previews" aria-label="Running app previews">
+              <h3 className="workspace-sect">
+                Running apps
+                {livePorts.length > 0 && <small>{livePorts.length}</small>}
+              </h3>
               {livePorts.length === 0
                 ? (
                   <p className="workspace-drawer-state">
-                    No live ports yet — start a dev server in the terminal and it
-                    shows up here.
+                    Nothing running yet — start a dev server in the terminal and
+                    its live preview shows up here.
                   </p>
                 )
                 : (
-                  <div className="workspace-slab">
+                  <div className="workspace-preview-cards">
                     {livePorts.map((entry) => (
                       <button
-                        className="workspace-preview-row"
+                        className="workspace-preview-card"
                         type="button"
                         key={entry.port}
+                        aria-label={`Open preview of ${entry.process}`}
                         onClick={() => setOpenedPort(entry.port)}
                       >
-                        <span className="workspace-preview-port">:{entry.port}</span>
-                        <span className="workspace-preview-process">
-                          {entry.process} · {portAge(entry.firstSeenAt)}
+                        <span className="workspace-preview-shot" aria-hidden="true">
+                          {previewReady && filesBase !== null && (
+                            <iframe
+                              className="workspace-preview-thumb"
+                              src={previewUrl(filesBase, entry.port)}
+                              title={`Preview of ${entry.process}`}
+                              tabIndex={-1}
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
+                              onLoad={(event) => {
+                                event.currentTarget.classList.add('workspace-preview-thumb--ready');
+                              }}
+                            />
+                          )}
+                          <span className="workspace-preview-shimmer" />
+                          <span className="workspace-preview-wait">Starting preview…</span>
                         </span>
-                        <span className="workspace-status workspace-status--ok">
-                          <span className="workspace-dot workspace-dot--ok" aria-hidden="true" />
-                          Live
+                        <span className="workspace-preview-caption">
+                          <b>{entry.process}</b>
+                          <span className="workspace-preview-meta">
+                            started {portAge(entry.firstSeenAt)} ago · :{entry.port}
+                          </span>
+                          <span
+                            className="workspace-preview-open-tab"
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`Open ${entry.process} as a workspace tab`}
+                            title="Open as a workspace tab"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onOpenPreview(entry.port);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key !== 'Enter' && event.key !== ' ') return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onOpenPreview(entry.port);
+                            }}
+                          >
+                            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
+                          </span>
                         </span>
-                        <svg className="workspace-row-chevron" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4.3 2.5 3.5 3.5-3.5 3.5" /></svg>
                       </button>
                     ))}
                   </div>
