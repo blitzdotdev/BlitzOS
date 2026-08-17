@@ -1,4 +1,5 @@
-import { CheckGlyph, CloseGlyph, DownloadGlyph, FileGlyph, KebabGlyph, LinkGlyph } from './DriveIcons';
+import { CheckGlyph, CloseGlyph, DownloadGlyph, KebabGlyph, LinkGlyph } from './DriveIcons';
+import { DocDuoIcon } from '../files-icons';
 import { DriveAvatar } from './DriveAvatar';
 import { formatBytes, formatWhen, type DriveFileEntry } from './drive-model';
 
@@ -172,7 +173,7 @@ export function DriveUploaderCard({
         ><CloseGlyph /></button>
       </header>
       <div className="drive-uploader-item">
-        <FileGlyph />
+        <DocDuoIcon name={upload.name} />
         <span className="drive-uploader-copy">
           <strong>{upload.name}</strong>
           {upload.done
@@ -278,12 +279,13 @@ export function DriveFileRow({
       onContextMenu={onContextMenu}
     >
       <button className="drive-row-open" type="button" aria-label={entry.name} onClick={onToggleSelect} />
-      <span className="drive-row-name"><FileGlyph /><span>{entry.name}</span></span>
+      <span className="drive-row-name"><DocDuoIcon name={entry.name} /><span>{entry.name}</span></span>
       <span className="drive-owner-cell">
         <DriveAvatar name={ownerName} avatarUrl={ownerAvatarUrl} me={mine} />
         <span>{mine ? 'me' : ownerName}</span>
       </span>
-      <span className="drive-row-trail">{formatWhen(entry.mtime)} · {entry.editedBy} · {formatBytes(entry.size)}</span>
+      <span className="drive-row-trail">{formatWhen(entry.mtime)} · {entry.editedBy}</span>
+      <span className="drive-row-size">{formatBytes(entry.size)}</span>
       <span className="drive-row-actions">
         <button type="button" title="Download" aria-label={`Download ${entry.name}`} onClick={onDownload}>
           <DownloadGlyph />

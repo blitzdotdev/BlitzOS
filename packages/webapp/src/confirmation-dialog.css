@@ -13,7 +13,7 @@
   border: 1px solid var(--rule);
   color: var(--ink);
   background: color-mix(in oklab, var(--ink) 2%, var(--paper));
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
 }
 
 .webapp-confirmation-header {
@@ -59,7 +59,7 @@
   min-height: 30px;
   padding: 0 11px;
   background: transparent;
-  font: 10.5px/1 var(--font-mono);
+  font: 10.5px/1 var(--font-ui);
   text-transform: lowercase;
 }
 

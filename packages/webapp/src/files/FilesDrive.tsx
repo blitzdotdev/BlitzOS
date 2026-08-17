@@ -8,14 +8,13 @@ import { AttachFolderDialog } from './AttachFolderDialog';
 import { DriveAvatar } from './DriveAvatar';
 import {
   DownloadGlyph,
-  FileGlyph,
-  FolderGlyph,
   KebabGlyph,
   LinkGlyph,
   PencilGlyph,
   ShareGlyph,
   TrashGlyph,
 } from './DriveIcons';
+import { FolderDuoIcon } from '../files-icons';
 import {
   canManageFolder,
   canWriteFolder,
@@ -393,7 +392,7 @@ export function FilesDrive({
         aria-label={`Open ${target.name}`}
         onClick={() => openFolder(target)}
       />
-      <FolderGlyph />
+      <FolderDuoIcon className="drive-folder-icon" />
       <span className="drive-tile-name">
         <span>{target.name}</span>
         {target.attachedWorkspaceIds.length > 0 && (
@@ -515,7 +514,7 @@ export function FilesDrive({
                       aria-label={`Open ${dir.name}`}
                       onClick={() => openPath(folder.id, [...path, dir.name])}
                     />
-                    <FolderGlyph />
+                    <FolderDuoIcon className="drive-folder-icon" />
                     <span className="drive-tile-name"><span>{dir.name}</span></span>
                     <span className="drive-tile-trail">
                       <span className="drive-row-trail">{dir.fileCount} {dir.fileCount === 1 ? 'file' : 'files'}</span>
@@ -528,7 +527,7 @@ export function FilesDrive({
 
           <section className="drive-section">
             {entries !== null && entries.dirs.length > 0 && <h2 className="drive-section-title">Files</h2>}
-            <div className="drive-list-head"><span>Name</span><span>Owner</span><span>Last modified</span><span /></div>
+            <div className="drive-list-head"><span>Name</span><span>Owner</span><span>Last modified</span><span>Size</span><span /></div>
             {entries === null || entries.files.length === 0 ? (
               <div className="drive-empty">{trimmedQuery !== '' ? 'No files match' : 'No files here yet'}</div>
             ) : entries.files.map((entry) => (

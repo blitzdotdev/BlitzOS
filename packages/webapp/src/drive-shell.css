@@ -107,7 +107,7 @@
   align-items: center;
   padding: 6px 12px;
   color: var(--faint);
-  font: 650 10px/1 var(--font-mono);
+  font: 650 10px/1 var(--font-ui);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }

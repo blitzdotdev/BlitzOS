@@ -13,6 +13,7 @@ import { caughtErrorMessage } from './error-message';
 import { previewUrl, type LivePort } from './preview';
 import type { WorkspaceDrawerSegment } from './storage';
 import { asJsonObject, isString } from './type-guards';
+import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
 export const CREDENTIAL_POLL_INTERVAL_MS = 5_000;
 
@@ -325,11 +326,21 @@ export function WorkspaceDrawer({
     onWidthChange(Math.max(200, Math.min(480, origin.width + origin.x - event.clientX)));
   };
 
-  const tabs: Array<{ id: WorkspaceDrawerSegment; label: string }> = [
-    { id: 'files', label: 'Files' },
-    { id: 'previews', label: 'Previews' },
+  const tabs: Array<{ id: WorkspaceDrawerSegment; label: string; icon: ReactNode }> = [
+    { id: 'files', label: 'Files', icon: <FolderIcon className="webapp-tab-icon" /> },
+    {
+      id: 'previews',
+      label: 'Previews',
+      icon: <span className="webapp-tab-icon mi-preview" aria-hidden="true" />,
+    },
   ];
-  if (canManageCredentials) tabs.push({ id: 'integrations', label: 'Integrations' });
+  if (canManageCredentials) {
+    tabs.push({
+      id: 'integrations',
+      label: 'Integrations',
+      icon: <GenericProviderIcon className="webapp-tab-icon" />,
+    });
+  }
   const effectiveSegment = !canManageCredentials && segment === 'integrations' ? 'files' : segment;
 
   return (
@@ -360,23 +371,32 @@ export function WorkspaceDrawer({
         />
       )}
       <header className="workspace-drawer-segments" role="tablist" aria-label="Workspace drawer sections">
-        {tabs.map((tab) => (
-          <button
-            className={effectiveSegment === tab.id ? 'workspace-drawer-segment workspace-drawer-segment--active' : 'workspace-drawer-segment'}
-            type="button"
-            role="tab"
-            aria-selected={effectiveSegment === tab.id}
-            key={tab.id}
-            onClick={() => onSegmentChange(tab.id)}
-          >
-            {tab.label}
-            {tab.id === 'integrations' && pendingRequests.length > 0 && (
-              <span className="workspace-pending-badge" aria-label={`${pendingRequests.length} pending`}>
-                {pendingRequests.length}
-              </span>
-            )}
-          </button>
-        ))}
+        {tabs.map((tab) => {
+          const active = effectiveSegment === tab.id;
+          return (
+            <div
+              className={`webapp-tab-cell${active ? ' webapp-tab-cell--active' : ''}`}
+              key={tab.id}
+            >
+              <button
+                className="webapp-tab-select"
+                type="button"
+                role="tab"
+                aria-selected={active}
+                title={tab.label}
+                onClick={() => onSegmentChange(tab.id)}
+              >
+                {tab.icon}
+                <span className="webapp-tab-label">{tab.label}</span>
+                {tab.id === 'integrations' && pendingRequests.length > 0 && (
+                  <span className="workspace-pending-badge" aria-label={`${pendingRequests.length} pending`}>
+                    {pendingRequests.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })}
       </header>
       <div className="workspace-drawer-body">
         <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>

@@ -79,7 +79,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 14px;
-  font: 12.5px/1.7 var(--font-mono) !important;
+  font: 12.5px/1.7 var(--font-ui) !important;
 }
 
 .webapp-tab-label {
@@ -233,7 +233,7 @@
 .webapp-agent-menu__process {
   margin-left: auto;
   color: var(--faint);
-  font: 10px/1 var(--font-mono);
+  font: 10px/1 var(--font-ui);
   white-space: nowrap;
 }
 
@@ -276,7 +276,7 @@
   border: 1px solid var(--rule);
   border-radius: 5px;
   background: var(--paper);
-  font: 12px/1.3 var(--font-mono);
+  font: 12px/1.3 var(--font-ui);
 }
 
 .webapp-session-menu {
@@ -439,7 +439,7 @@
   border: 1px solid var(--rule);
   color: var(--muted);
   background: transparent;
-  font: 12px/1.6 var(--font-mono);
+  font: 12px/1.6 var(--font-ui);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -476,7 +476,7 @@
   justify-items: center;
   padding: 24px 24px 12vh;
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   text-align: center;
 }
 
@@ -596,7 +596,7 @@
   flex: none;
   padding: 0;
   color: var(--faint);
-  font: 12.5px/1.7 var(--font-mono);
+  font: 12.5px/1.7 var(--font-ui);
 }
 
 .webapp-workspace-view--pane-strips .dv-tab:hover {
@@ -668,7 +668,7 @@
   border: 1px solid var(--accent);
   color: var(--accent);
   background: var(--paper);
-  font: 650 10px/1 var(--font-mono);
+  font: 650 10px/1 var(--font-ui);
   letter-spacing: .14em;
   text-transform: uppercase;
   pointer-events: none;
@@ -732,7 +732,7 @@
   border: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
-  font: 10px/1 var(--font-mono);
+  font: 10px/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -748,7 +748,7 @@
   place-items: center;
   color: var(--faint);
   background: var(--paper);
-  font: 12px/1.5 var(--font-mono);
+  font: 12px/1.5 var(--font-ui);
 }
 
 .terminal-surface {
@@ -849,7 +849,7 @@
   border: 0;
   color: var(--muted);
   background: var(--paper);
-  font: 10px/1 var(--font-mono);
+  font: 10px/1 var(--font-ui);
 }
 
 .terminal-selection-chip button + button {
@@ -907,7 +907,7 @@
 .session-ended__eyebrow {
   margin: 0 0 7px;
   color: var(--faint);
-  font: 10px/1.5 var(--font-mono);
+  font: 10px/1.5 var(--font-ui);
   letter-spacing: .14em;
   text-transform: uppercase;
 }
@@ -974,7 +974,7 @@
   min-width: 0;
   margin-left: auto;
   overflow: hidden;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1015,7 +1015,7 @@
   padding: 2px 7px;
   border: 1px solid var(--rule);
   color: var(--faint);
-  font: 10.5px/1.5 var(--font-mono);
+  font: 10.5px/1.5 var(--font-ui);
   white-space: nowrap;
 }
 
@@ -1035,7 +1035,7 @@
   border: 0;
   background: transparent;
   color: var(--faint);
-  font: 11px/1 var(--font-mono);
+  font: 11px/1 var(--font-ui);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -1282,7 +1282,7 @@
     min-width: auto;
     margin-left: 0;
     padding: 0 8px;
-    font: 9px/1 var(--font-mono);
+    font: 9px/1 var(--font-ui);
     white-space: nowrap;
   }
 
@@ -1378,7 +1378,7 @@
 
 .terminal-prompt-modal__title {
   margin: 0;
-  font: 600 12px/1.2 var(--font-mono);
+  font: 600 12px/1.2 var(--font-ui);
   color: var(--ink);
 }
 
@@ -1388,7 +1388,7 @@
   background: transparent;
   color: var(--ink);
   /* ≥16px: anything smaller makes iOS auto-zoom the page on focus. */
-  font: 16px/1.2 var(--font-mono);
+  font: 16px/1.2 var(--font-ui);
 }
 
 .terminal-prompt-modal__actions {
@@ -1403,7 +1403,7 @@
   border: 1px solid var(--rule);
   background: transparent;
   color: var(--ink);
-  font: 12px/1 var(--font-mono);
+  font: 12px/1 var(--font-ui);
 }
 
 .terminal-prompt-modal__actions button:disabled {
@@ -1432,7 +1432,7 @@
   border: 1px solid var(--rule);
   color: var(--muted);
   background: transparent;
-  font: 10.5px/1.4 var(--font-mono);
+  font: 10.5px/1.4 var(--font-ui);
   overflow-wrap: anywhere;
   text-align: left;
   white-space: normal;
@@ -1627,7 +1627,7 @@
     min-width: auto;
     margin-left: 0;
     padding: 0 8px;
-    font: 9px/1 var(--font-mono);
+    font: 9px/1 var(--font-ui);
     white-space: nowrap;
   }
 

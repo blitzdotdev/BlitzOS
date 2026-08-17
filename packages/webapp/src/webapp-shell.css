@@ -95,7 +95,7 @@
   border-right: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   user-select: none;
 }
 
@@ -241,7 +241,7 @@
   padding: 14px 9px;
   color: var(--faint);
   font-size: 12.5px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
 }
 
 .webapp-workspace {
@@ -317,7 +317,7 @@
 
 .webapp-workspace-disclosure span {
   display: block;
-  font: 13px/1 var(--font-mono);
+  font: 13px/1 var(--font-ui);
   transform: rotate(0);
   transition: transform 100ms ease, color 100ms ease;
 }
@@ -444,7 +444,7 @@
   min-height: 20px;
   padding: 0 4px 0 34px;
   color: var(--faint);
-  font: 9.5px/1.5 var(--font-mono);
+  font: 9.5px/1.5 var(--font-ui);
 }
 
 .webapp-workspace--collapsed .webapp-workspace-meta {
@@ -548,7 +548,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--accent);
-  font: 9px/1.4 var(--font-mono);
+  font: 9px/1.4 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -578,7 +578,7 @@
   padding: 3px 7px;
   border-radius: 7px;
   color: var(--faint) !important;
-  font: 12.5px/1.7 var(--font-mono) !important;
+  font: 12.5px/1.7 var(--font-ui) !important;
   text-align: left;
 }
 
@@ -678,7 +678,7 @@
   padding: 10px 8px;
   border-top: 1px solid var(--rule);
   color: var(--muted);
-  font: 10.5px/1.45 var(--font-mono);
+  font: 10.5px/1.45 var(--font-ui);
   text-decoration: none;
 }
 
@@ -770,7 +770,7 @@
   align-items: center;
   gap: 7px;
   color: var(--faint);
-  font: 10px/1 var(--font-mono);
+  font: 10px/1 var(--font-ui);
 }
 
 .webapp-dev-controls select {
@@ -795,7 +795,7 @@
   flex: 1;
   place-items: center;
   color: var(--faint);
-  font: 10px/1 var(--font-mono);
+  font: 10px/1 var(--font-ui);
 }
 
 /* The production chat panel must receive the same full workspace bounds it
@@ -816,7 +816,7 @@
   padding: 18px;
   color: var(--muted);
   background: var(--terminal-background);
-  font: 13px/1.55 var(--font-mono);
+  font: 13px/1.55 var(--font-ui);
 }
 
 .webapp-dev-terminal-caret {
