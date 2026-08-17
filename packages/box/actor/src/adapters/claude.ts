@@ -41,6 +41,14 @@ export function claudePermissionMode(value: string): NonNullable<Options["permis
   return PERMISSION_MODES.has(value) ? (value as NonNullable<Options["permissionMode"]>) : "default";
 }
 
+const EFFORT_LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+/** "default" (or anything unknown) leaves the SDK's own effort choice alone. */
+export function claudeEffort(value: string): Options["effort"] | undefined {
+  // SAFETY: The set above holds exactly the EffortLevel literals the SDK accepts.
+  return EFFORT_LEVELS.has(value) ? (value as NonNullable<Options["effort"]>) : undefined;
+}
+
 export interface ClaudeStreamChunk {
   messageId: string;
   text?: string;
@@ -104,6 +112,8 @@ export class ClaudeAdapter implements AgentAdapter {
       permissionMode: claudePermissionMode(input.config.permission),
     };
     if (input.config.model !== "default") options.model = input.config.model;
+    const effort = claudeEffort(input.config.effort);
+    if (effort !== undefined) options.effort = effort;
     Object.assign(options, claudeOptionalOptions(input));
     let resumeId = input.resumeId ?? undefined;
     let stopReason: TurnOutput["stopReason"] = "refusal";

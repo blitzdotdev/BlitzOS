@@ -30,7 +30,6 @@ interface PermissionAnsweredNotification {
   actor?: ChatActor;
 }
 
-const SHOW_THINKING_KEY = "blitz-chat-show-thinking";
 const APPROVAL_PREVIEW_CHARS = 600;
 
 type SelectConfig = {
@@ -83,9 +82,6 @@ export function ChatPanel({
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
   const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
-  const [showThinking, setShowThinking] = useState(
-    () => localStorage.getItem(SHOW_THINKING_KEY) === "true",
-  );
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const onSessionIdRef = useRef(onSessionId);
@@ -347,7 +343,7 @@ export function ChatPanel({
                 key={`turn:${entry.turn.id}`}
                 turn={entry.turn}
                 toolResults={derived.toolResults}
-                showThinking={showThinking}
+                showThinking
                 onOpenPreview={onOpenPreview}
                 workingDirectory={workingDirectory}
               />
@@ -356,7 +352,7 @@ export function ChatPanel({
                 key={`loose:${entry.item.id}`}
                 item={entry.item}
                 toolResults={derived.toolResults}
-                showThinking={showThinking}
+                showThinking
                 onOpenPreview={onOpenPreview}
                 workingDirectory={workingDirectory}
               />
@@ -472,18 +468,6 @@ export function ChatPanel({
                   />
                 </span>
               ))}
-              <label className="chat-thinking-toggle">
-                <input
-                  type="checkbox"
-                  aria-label="Show thinking"
-                  checked={showThinking}
-                  onChange={(event) => {
-                    setShowThinking(event.target.checked);
-                    localStorage.setItem(SHOW_THINKING_KEY, String(event.target.checked));
-                  }}
-                />
-                <span>thinking</span>
-              </label>
               {runningModel && <span className="chat-active-model">running {runningModel}</span>}
             </div>
           </div>
