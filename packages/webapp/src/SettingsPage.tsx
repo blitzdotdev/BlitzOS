@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
+import { appliedTheme, chooseTheme, type ThemeChoice } from './theme';
 import type { SettingsSection } from './sessions-page-state';
 import { IntegrationsPanel } from './settings/IntegrationsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
@@ -77,7 +78,38 @@ function ProfilePanel({
         <div><dt>Workspace scope</dt><dd>{viewer.org.name || viewer.org.slug}</dd></div>
         <div><dt>Role</dt><dd>{viewer.membership.role}</dd></div>
       </dl>
+      <AppearanceControl />
     </section>
+  );
+}
+
+/* Device-local preference (theme.ts): applies immediately, never synced. */
+function AppearanceControl() {
+  const [theme, setTheme] = useState<ThemeChoice>(() => appliedTheme());
+  const choices: Array<{ id: ThemeChoice; label: string }> = [
+    { id: 'system', label: 'System' },
+    { id: 'light', label: 'Light' },
+    { id: 'dark', label: 'Dark' },
+  ];
+  return (
+    <div className="settings-appearance">
+      <span className="settings-appearance-label">Appearance</span>
+      <div className="settings-appearance-options" role="radiogroup" aria-label="Theme">
+        {choices.map((choice) => (
+          <button
+            className={choice.id === theme
+              ? 'settings-appearance-option settings-appearance-option--active'
+              : 'settings-appearance-option'}
+            type="button"
+            role="radio"
+            aria-checked={choice.id === theme}
+            key={choice.id}
+            onClick={() => setTheme(chooseTheme(choice.id))}
+          >{choice.label}</button>
+        ))}
+      </div>
+      <span className="settings-appearance-note">Applies to this device only.</span>
+    </div>
   );
 }
 

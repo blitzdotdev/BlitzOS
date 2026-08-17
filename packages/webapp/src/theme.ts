@@ -23,6 +23,17 @@ export function initTheme(): void {
   }
 }
 
+export function chooseTheme(choice: ThemeChoice): ThemeChoice {
+  apply(choice);
+  try {
+    if (choice === 'system') window.localStorage.removeItem(THEME_KEY);
+    else window.localStorage.setItem(THEME_KEY, choice);
+  } catch {
+    // Sandboxed storage: the choice still applies for this page.
+  }
+  return choice;
+}
+
 /** The mockup's cycle: system → dark → light → system. */
 export function cycleTheme(): ThemeChoice {
   const current = appliedTheme();

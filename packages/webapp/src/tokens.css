@@ -59,6 +59,25 @@
     --paper: #f7f7f4;
     --ink: #1c1f26;
     --accent: #4c62aa;
+    --terminal-selection: color-mix(in oklab, var(--accent) 22%, transparent);
+    /* Light ANSI ramp: same muted hues, darkened for paper backgrounds.
+     * bright-white is the emphasis color, so it goes darkest. */
+    --ansi-black: #d9dbde;
+    --ansi-red: #a34e56;
+    --ansi-green: #5f7d46;
+    --ansi-yellow: #8a6d28;
+    --ansi-blue: #4c62aa;
+    --ansi-magenta: #7d548f;
+    --ansi-cyan: #397a83;
+    --ansi-white: #6f747f;
+    --ansi-bright-black: #9aa0a8;
+    --ansi-bright-red: #b4636b;
+    --ansi-bright-green: #6f8f55;
+    --ansi-bright-yellow: #9c7f37;
+    --ansi-bright-blue: #5f77bd;
+    --ansi-bright-magenta: #8f66a2;
+    --ansi-bright-cyan: #4b8b95;
+    --ansi-bright-white: #1c1f26;
     --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
     --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
     --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
@@ -73,6 +92,25 @@
   --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
   --selected: color-mix(in oklab, var(--accent) 20%, var(--paper));
   --lift: 0 10px 30px color-mix(in oklab, #000 34%, transparent);
+  --terminal-selection: color-mix(in oklab, var(--accent) 25%, transparent);
+  /* Forced dark on a light system: restore the dark ANSI ramp the
+   * light media block replaced. */
+  --ansi-black: #292c33;
+  --ansi-red: #c47f86;
+  --ansi-green: #8fa879;
+  --ansi-yellow: #b7a06b;
+  --ansi-blue: #7e95d7;
+  --ansi-magenta: #a88abb;
+  --ansi-cyan: #78a7ad;
+  --ansi-white: #c4c8d0;
+  --ansi-bright-black: #6f747f;
+  --ansi-bright-red: #d59299;
+  --ansi-bright-green: #a3ba8d;
+  --ansi-bright-yellow: #c9b37c;
+  --ansi-bright-blue: #9aace3;
+  --ansi-bright-magenta: #bc9bca;
+  --ansi-bright-cyan: #8ebbc0;
+  --ansi-bright-white: #e7e9ee;
   color-scheme: dark;
 }
 
@@ -80,6 +118,25 @@
   --paper: #f7f7f4;
   --ink: #1c1f26;
   --accent: #4c62aa;
+  --terminal-selection: color-mix(in oklab, var(--accent) 22%, transparent);
+  /* Light ANSI ramp: same muted hues, darkened for paper backgrounds.
+   * bright-white is the emphasis color, so it goes darkest. */
+  --ansi-black: #d9dbde;
+  --ansi-red: #a34e56;
+  --ansi-green: #5f7d46;
+  --ansi-yellow: #8a6d28;
+  --ansi-blue: #4c62aa;
+  --ansi-magenta: #7d548f;
+  --ansi-cyan: #397a83;
+  --ansi-white: #6f747f;
+  --ansi-bright-black: #9aa0a8;
+  --ansi-bright-red: #b4636b;
+  --ansi-bright-green: #6f8f55;
+  --ansi-bright-yellow: #9c7f37;
+  --ansi-bright-blue: #5f77bd;
+  --ansi-bright-magenta: #8f66a2;
+  --ansi-bright-cyan: #4b8b95;
+  --ansi-bright-white: #1c1f26;
   --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
   --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
   --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
