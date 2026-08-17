@@ -1,0 +1,118 @@
+.webapp-select {
+  position: relative;
+  min-width: 0;
+}
+
+.webapp-select-trigger {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 27px;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 3px 7px;
+  text-align: left;
+}
+
+.webapp-select-trigger:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.webapp-select-prefix {
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.webapp-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-select-chevron {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.webapp-select-menu {
+  position: absolute;
+  z-index: 40;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid color-mix(in oklab, var(--ink) 20%, var(--paper));
+  background: color-mix(in oklab, var(--ink) 4%, var(--paper));
+  color: var(--ink);
+}
+
+.webapp-select-group {
+  padding: 8px 10px 5px;
+  border-top: 1px solid var(--rule);
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.webapp-select-group:first-child {
+  border-top: 0;
+}
+
+.webapp-select-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.webapp-select-option:hover,
+.webapp-select-option:focus-visible,
+.webapp-select-option[aria-selected='true'] {
+  background: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  color: var(--ink);
+}
+
+.webapp-select-option-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.webapp-select-option-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.webapp-select-option-copy small {
+  color: var(--faint);
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.webapp-select-check {
+  margin-left: auto;
+  color: var(--accent);
+}

@@ -6,11 +6,16 @@ import type {
   SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isString } from "../type-guards.js";
-import { ChatTranscript } from "./ChatTranscript.js";
+import { ArrowIcon, WorkspaceIcon } from "../WebAppIcons.js";
+import { WebAppSelectMenu } from "../WebAppSelectMenu.js";
+import { ChatItemView, ChatTurnView, WorkingIndicator } from "./chat-turn-views.js";
+import { textFromContent } from "./chat-render.js";
+import { deriveChatTranscript } from "./chat-turns.js";
+import { deriveChatItems } from "./chat-items.js";
 import { chatReducer, initialChatState } from "./reducer.js";
-import type { ChatActor } from "./reducer.js";
+import type { ChatActor, ChatPermission } from "./reducer.js";
 
 interface RawSessionNotification {
   sessionId: string;
@@ -26,6 +31,7 @@ interface PermissionAnsweredNotification {
 }
 
 const SHOW_THINKING_KEY = "blitz-chat-show-thinking";
+const APPROVAL_PREVIEW_CHARS = 600;
 
 type SelectConfig = {
   id: string;
@@ -47,6 +53,15 @@ function selectConfigs(options: SessionConfigOption[]): SelectConfig[] {
 
 type PermissionResolver = (response: RequestPermissionResponse) => void;
 
+function approvalPayload<Value>(input: Value): string {
+  if (input === undefined) return "";
+  try {
+    return JSON.stringify(input, null, 2) ?? "";
+  } catch {
+    return String(input);
+  }
+}
+
 export function ChatPanel({
   url,
   workspaceId,
@@ -64,8 +79,10 @@ export function ChatPanel({
 }): React.JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState("Connecting…");
-  const [composer, setComposer] = useState("");
+  const [draft, setDraft] = useState("");
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
+  const [approvalExpanded, setApprovalExpanded] = useState(false);
+  const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const [showThinking, setShowThinking] = useState(
     () => localStorage.getItem(SHOW_THINKING_KEY) === "true",
   );
@@ -76,10 +93,12 @@ export function ChatPanel({
   const turnRef = useRef(0);
   const permissionResolvers = useRef(new Map<string, Set<PermissionResolver>>());
   const permissionAnswers = useRef(new Map<string, RequestPermissionResponse>());
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   onSessionIdRef.current = onSessionId;
 
   useEffect(() => {
     runningRef.current = state.running;
+    if (state.running) setTurnStartedAt(Date.now());
   }, [state.running]);
 
   const requestPermission = useCallback((request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
@@ -224,14 +243,14 @@ export function ChatPanel({
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
-  const [showJump, setShowJump] = useState(false);
+  const [pinned, setPinned] = useState(true);
 
   const updatePinned = (): void => {
     const element = scrollRef.current;
     if (!element) return;
-    const pinned = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-    pinnedRef.current = pinned;
-    setShowJump(!pinned);
+    const next = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+    pinnedRef.current = next;
+    setPinned(next);
   };
 
   useEffect(() => {
@@ -243,18 +262,19 @@ export function ChatPanel({
     const element = scrollRef.current;
     if (element) element.scrollTop = element.scrollHeight;
     pinnedRef.current = true;
-    setShowJump(false);
+    setPinned(true);
   };
 
   const send = async (): Promise<void> => {
-    const text = composer.trim();
+    const text = draft.trim();
     const context = connectionRef.current;
     const sessionId = sessionIdRef.current;
     if (text.length === 0 || context === null || sessionId === null || runningRef.current) return;
     const turnId = `turn-${++turnRef.current}`;
     runningRef.current = true;
+    setTurnStartedAt(Date.now());
     dispatch({ type: "turn-started", turnId });
-    setComposer("");
+    setDraft("");
     try {
       const result = await context.request(acp.methods.agent.session.prompt, {
         sessionId,
@@ -285,122 +305,191 @@ export function ChatPanel({
     setConfigOptions(answer.configOptions ?? []);
   };
 
-  const connected = status === "Connected";
+  const connected = status.startsWith("Connected");
+  const connectionTone = connected
+    ? "connected"
+    : status === "Disconnected" ? "disconnected" : "connecting";
   const selects = selectConfigs(configOptions);
   const model = selects.find((option) => option.id === "model");
   const runningModel = state.running && model !== undefined && model.currentValue !== "default"
     ? model.choices.find((choice) => choice.value === model.currentValue)?.name
     : undefined;
+  const derived = useMemo(() => deriveChatItems(state), [state]);
+  const transcript = useMemo(
+    () => deriveChatTranscript(derived.items, derived.toolResults),
+    [derived],
+  );
+  const approval: ChatPermission | null = readOnly ? null : derived.activePermission;
+  const approvalText = approval === null
+    ? ""
+    : approvalPayload(approval.rawInput ?? textFromContent(approval.rawInput));
+  const approvalTruncated = approvalText.length > APPROVAL_PREVIEW_CHARS;
+  const workingDirectory = "/workspace";
+
   return (
-    <section className="panel chat-panel">
+    <div className="chat-panel">
       <div className="chat-body">
         <div className="chat-scroll" ref={scrollRef} aria-live="polite" onScroll={updatePinned}>
-          {state.rows.length === 0 && !state.running && (
-            <div className="chat-empty">
-              {connected
-                ? "Ask the agent anything — it runs on your workspace VM."
-                : status}
-            </div>
-          )}
-          <ChatTranscript
-            state={state}
-            showThinking={showThinking}
-            onPermission={answerPermission}
-            onOpenPreview={onOpenPreview}
-          />
-          {state.running && (
-            <div className="chat-working" role="status">
-              <span className="webapp-inline-spinner" aria-hidden="true" />
-              <span>Working…</span>
-            </div>
-          )}
-          {!state.running && state.stopReasons.length > 0 && (
-            <div className="chat-result-meta">{state.stopReasons.at(-1)?.stopReason}</div>
-          )}
-        </div>
-        {showJump && (
-          <button type="button" className="chat-jump" onClick={jumpToLatest}>
-            Jump to latest
-          </button>
-        )}
-      </div>
-      {readOnly ? (
-        <div className="chat-composer chat-composer--readonly" role="status">
-          Replay only · viewers can follow this session but cannot prompt, cancel, or answer permissions.
-        </div>
-      ) : <form
-        className="chat-composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send();
-        }}
-      >
-        <div className="chat-composer-controls">
-          {selects.map((option) => (
-            <label
-              className={`chat-composer-control${option.id === "model" ? " chat-composer-control--model" : ""}`}
-              key={option.id}
-            >
-              <span>{option.name}</span>
-              <select
-                className={option.id === "model" ? "chat-model-select" : undefined}
-                aria-label={option.name}
-                value={option.currentValue}
-                disabled={!connected}
-                onChange={(event) => void chooseConfig(option.id, event.currentTarget.value)}
-              >
-                {option.choices.map((choice) => (
-                  <option key={choice.value} value={choice.value}>{choice.name}</option>
-                ))}
-              </select>
-            </label>
-          ))}
-          <label className="chat-thinking-toggle">
-            <input
-              type="checkbox"
-              aria-label="Show thinking"
-              checked={showThinking}
-              onChange={(event) => {
-                setShowThinking(event.target.checked);
-                localStorage.setItem(SHOW_THINKING_KEY, String(event.target.checked));
-              }}
-            />
-            <span>Show thinking</span>
-          </label>
-          {runningModel && <span className="chat-active-model">Running: {runningModel}</span>}
-        </div>
-        <div className="chat-input-row">
-          <textarea
-            aria-label="Message"
-            rows={1}
-            value={composer}
-            disabled={!connected}
-            placeholder={connected ? "Message the agent…" : status}
-            onChange={(event) => setComposer(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape" && state.running) {
-                event.preventDefault();
-                cancel();
-              } else if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <div className="chat-input-actions">
-            {state.running ? (
-              <button type="button" className="chat-stop" onClick={cancel}>
-                <span className="chat-key">Esc</span> Stop
-              </button>
-            ) : (
-              <button type="submit" disabled={!connected || composer.trim().length === 0}>
-                Send
-              </button>
+          <div className="chat-transcript">
+            {derived.items.length === 0 && !state.running && (
+              <div className="chat-empty">
+                <WorkspaceIcon />
+                <strong>Chat</strong>
+                <p>
+                  {connected
+                    ? "Start a conversation with the agent on this workspace."
+                    : status}
+                </p>
+              </div>
             )}
+            {transcript.map((entry) => entry.kind === "turn" ? (
+              <ChatTurnView
+                key={`turn:${entry.turn.id}`}
+                turn={entry.turn}
+                toolResults={derived.toolResults}
+                showThinking={showThinking}
+                onOpenPreview={onOpenPreview}
+                workingDirectory={workingDirectory}
+              />
+            ) : (
+              <ChatItemView
+                key={`loose:${entry.item.id}`}
+                item={entry.item}
+                toolResults={derived.toolResults}
+                showThinking={showThinking}
+                onOpenPreview={onOpenPreview}
+                workingDirectory={workingDirectory}
+              />
+            ))}
+            {state.running && <WorkingIndicator startedAt={turnStartedAt} />}
           </div>
         </div>
-      </form>}
-    </section>
+        <button
+          type="button"
+          className={`chat-jump${pinned ? "" : " is-visible"}`}
+          aria-label="Jump to latest"
+          aria-hidden={pinned}
+          disabled={pinned}
+          tabIndex={pinned ? -1 : 0}
+          onClick={jumpToLatest}
+        ><ArrowIcon direction="down" /></button>
+      </div>
+
+      <div className="chat-dock">
+        {approval !== null && (
+          <div className="chat-approval" role="alertdialog" aria-label="Tool approval">
+            <div className="chat-approval-title">Allow {approval.title}?</div>
+            {approvalText !== "" && (
+              <pre className={`chat-approval-input${approvalExpanded ? " chat-approval-input--full" : ""}`}>
+                {approvalTruncated && !approvalExpanded
+                  ? `${approvalText.slice(0, APPROVAL_PREVIEW_CHARS)}…`
+                  : approvalText}
+              </pre>
+            )}
+            {approvalTruncated && (
+              <button
+                type="button"
+                className="chat-approval-expand"
+                onClick={() => setApprovalExpanded((current) => !current)}
+              >
+                {approvalExpanded ? "Show less" : "Show full payload"}
+              </button>
+            )}
+            <div className="chat-approval-actions">
+              {approval.options.map((option) => (
+                <button
+                  type="button"
+                  key={option.optionId}
+                  className={option.kind.startsWith("reject") ? "chat-approval-deny" : undefined}
+                  onClick={() => answerPermission(approval.toolCallId, option.optionId)}
+                >
+                  {option.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {readOnly ? (
+          <div className="chat-composer chat-composer--readonly" role="status">
+            Replay only · viewers can follow this session but cannot prompt, cancel, or answer permissions.
+          </div>
+        ) : (
+          <div className="chat-composer">
+            <div className="chat-composer-context">
+              <span className={`chat-link-state chat-link-state--${connectionTone}`} aria-hidden="true" />
+              <strong>{status}</strong>
+              <span>·</span>
+              <span>{workingDirectory}</span>
+            </div>
+            <div className="chat-input-row">
+              <span className="chat-input-prompt" aria-hidden="true">❯</span>
+              <textarea
+                ref={textareaRef}
+                aria-label="Message"
+                rows={1}
+                value={draft}
+                disabled={!connected}
+                placeholder={connected ? "message the agent…" : "Connecting…"}
+                onChange={(event) => setDraft(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && state.running) {
+                    event.preventDefault();
+                    cancel();
+                  } else if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void send();
+                  }
+                }}
+              />
+              <div className="chat-input-actions">
+                {state.running ? (
+                  <button type="button" className="chat-stop" onClick={cancel}>
+                    <span className="chat-key">Esc</span> Stop
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="chat-send"
+                    aria-label="Send message"
+                    onClick={() => { void send(); }}
+                    disabled={!connected || draft.trim().length === 0}
+                  ><ArrowIcon direction="up" /></button>
+                )}
+              </div>
+            </div>
+            <div className="chat-composer-controls">
+              {selects.map((option, index) => (
+                <span key={option.id} style={{ display: "contents" }}>
+                  {index > 0 && <span aria-hidden="true">·</span>}
+                  <WebAppSelectMenu
+                    className={`chat-composer-control${option.id === "model" ? " chat-composer-control--model" : ""}`}
+                    ariaLabel={option.name}
+                    value={option.currentValue}
+                    options={option.choices.map((choice) => ({ value: choice.value, label: choice.name }))}
+                    onChange={(value) => { void chooseConfig(option.id, value); }}
+                    disabled={!connected}
+                  />
+                </span>
+              ))}
+              <label className="chat-thinking-toggle">
+                <input
+                  type="checkbox"
+                  aria-label="Show thinking"
+                  checked={showThinking}
+                  onChange={(event) => {
+                    setShowThinking(event.target.checked);
+                    localStorage.setItem(SHOW_THINKING_KEY, String(event.target.checked));
+                  }}
+                />
+                <span>thinking</span>
+              </label>
+              {runningModel && <span className="chat-active-model">running {runningModel}</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
