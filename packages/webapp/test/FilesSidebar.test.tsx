@@ -35,9 +35,13 @@ function sidebar(
       refreshVersion={0}
       visible={visible}
       width={280}
+      sharedFolders={[]}
+      canShare
       onClose={() => undefined}
       onExpandedChange={() => undefined}
       onOpenFile={() => undefined}
+      onOpenDriveFolder={() => undefined}
+      onShareToDrive={() => undefined}
       onUnauthorized={onUnauthorized}
       onWidthChange={() => undefined}
     />
@@ -179,6 +183,87 @@ describe("FilesSidebar root listing retries", () => {
 
     expect(onUnauthorized).not.toHaveBeenCalled();
     expect(getDirectoryContents).toHaveBeenCalledTimes(1);
+
+    await view.unmount();
+  });
+
+  it("offers Drive actions in the row context menu", async () => {
+    const listings = new Map<string, unknown[]>([
+      ["/", [
+        { basename: "shared", filename: "/shared", type: "directory" },
+        { basename: "src", filename: "/src", type: "directory" },
+      ]],
+      ["shared", [
+        { basename: "obsidian-vault", filename: "/shared/obsidian-vault", type: "directory" },
+      ]],
+    ]);
+    const getDirectoryContents = vi.fn((path: string) => Promise.resolve(listings.get(path) ?? []));
+    const client = webDavClient(getDirectoryContents as ReturnType<typeof vi.fn>);
+    const onOpenDriveFolder = vi.fn();
+    const onShareToDrive = vi.fn();
+    const view = await render(
+      <FilesSidebar
+        client={client}
+        expanded={[]}
+        getClient={() => client}
+        mobile={false}
+        open
+        ready
+        refreshVersion={0}
+        visible
+        width={340}
+        sharedFolders={[{
+          id: "folder-1",
+          name: "obsidian-vault",
+          role: "editor",
+          guestPath: "shared/obsidian-vault",
+          attachedAt: 0,
+        }]}
+        canShare
+        onClose={() => undefined}
+        onExpandedChange={() => undefined}
+        onOpenFile={() => undefined}
+        onOpenDriveFolder={onOpenDriveFolder}
+        onShareToDrive={onShareToDrive}
+        onUnauthorized={() => undefined}
+        onWidthChange={() => undefined}
+      />,
+    );
+    await flushPromises();
+
+    const rowFor = (name: string) => [...view.container.querySelectorAll(".files-tree-row")]
+      .find((row) => row.textContent?.includes(name));
+    const menuItems = () => [...document.body.querySelectorAll('[role="menuitem"]')]
+      .map((item) => item.textContent ?? "");
+
+    await act(async () => {
+      rowFor("src")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+    expect(menuItems().some((item) => item.includes("Share to Drive"))).toBe(true);
+    expect(menuItems().some((item) => item.includes("Open in Drive"))).toBe(false);
+    await act(async () => {
+      [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find((item) => item.textContent?.includes("Share to Drive"))?.click();
+    });
+    expect(onShareToDrive).toHaveBeenCalledWith("src");
+
+    const sharedChevron = rowFor("shared")
+      ?.querySelector<HTMLButtonElement>('[aria-label="Expand shared"]');
+    await act(async () => {
+      sharedChevron?.click();
+      await Promise.resolve();
+    });
+    await flushPromises();
+    await act(async () => {
+      rowFor("obsidian-vault")?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+    expect(menuItems().some((item) => item.includes("Open in Drive"))).toBe(true);
+    expect(menuItems().some((item) => item.includes("Share to Drive"))).toBe(false);
+    await act(async () => {
+      [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find((item) => item.textContent?.includes("Open in Drive"))?.click();
+    });
+    expect(onOpenDriveFolder).toHaveBeenCalledWith("folder-1");
 
     await view.unmount();
   });

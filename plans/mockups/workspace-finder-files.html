@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Workspace files — Finder-style mock</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1c1f26;
+    --sidebar: rgba(255, 255, 255, 0.045);
+    --rule: rgba(255, 255, 255, 0.09);
+    --ink: #e6e8ee;
+    --muted: #9aa1ad;
+    --faint: #6b7280;
+    --select: #2458c7;
+    --select-soft: rgba(87, 129, 216, 0.28);
+    --folder-a: #4da3f5;
+    --folder-b: #2f7fe0;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    display: grid;
+    min-height: 100vh;
+    margin: 0;
+    place-items: center;
+    background: #0d0f13;
+    color: var(--ink);
+    font-size: 13px;
+  }
+  .stage { display: grid; gap: 14px; justify-items: center; padding: 30px 12px; }
+  .stage h1 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); }
+  .stage p { max-width: 640px; margin: 0; color: var(--faint); font-size: 12px; text-align: center; line-height: 1.6; }
+
+  /* ============ the right drawer, for context ============ */
+  .drawer {
+    display: flex;
+    width: 560px;
+    height: 640px;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--bg);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  }
+  .segments {
+    display: grid;
+    height: 34px;
+    flex: none;
+    grid-template-columns: repeat(3, 1fr);
+    border-bottom: 1px solid var(--rule);
+    font: 700 9px/34px ui-monospace, SFMono-Regular, monospace;
+    letter-spacing: 0.09em;
+    text-align: center;
+    color: var(--faint);
+  }
+  .segments b { position: relative; color: var(--ink); font-weight: 700; }
+  .segments b::after {
+    position: absolute; right: 14px; bottom: -1px; left: 14px; height: 1px;
+    background: #7e95d7; content: '';
+  }
+
+  /* ============ finder chrome ============ */
+  .finder { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+  .toolbar {
+    display: flex;
+    height: 40px;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+  }
+  .nav { display: flex; gap: 2px; }
+  .nav button {
+    display: grid; width: 26px; height: 24px; place-items: center;
+    border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .nav button:first-child { color: var(--ink); }
+  .nav button:hover { background: rgba(255,255,255,0.07); }
+  .crumb-title { font-weight: 600; font-size: 13px; }
+  .toolbar .spacer { flex: 1; }
+  .search {
+    display: flex; align-items: center; gap: 6px;
+    height: 24px; padding: 0 8px;
+    border-radius: 7px; background: rgba(255,255,255,0.07);
+    color: var(--faint); font-size: 12px;
+  }
+
+  .body { display: flex; min-height: 0; flex: 1; }
+
+  /* ============ sidebar ============ */
+  .sidebar {
+    width: 136px;
+    flex: none;
+    padding: 10px 8px;
+    border-right: 1px solid var(--rule);
+    background: var(--sidebar);
+  }
+  .sidebar h3 {
+    margin: 4px 6px 4px;
+    color: var(--faint);
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+  .pin {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 12.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pin svg { width: 15px; height: 15px; flex: none; }
+  .pin:hover { background: rgba(255,255,255,0.06); }
+  .pin.active { background: var(--select-soft); }
+  .pin .badge {
+    margin-left: auto;
+    color: var(--faint);
+    font-size: 10.5px;
+  }
+
+  /* ============ list view ============ */
+  .list { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+  .cols, .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px 58px 64px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 12px 0 10px;
+  }
+  .cols {
+    height: 26px;
+    flex: none;
+    border-bottom: 1px solid var(--rule);
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .cols span + span, .row .meta { text-align: left; }
+  .rows { flex: 1; overflow-y: auto; padding: 3px 0; }
+  .row {
+    height: 26px;
+    color: var(--ink);
+    font-size: 12.5px;
+    cursor: default;
+    user-select: none;
+  }
+  .rows .row:nth-child(even) { background: rgba(255,255,255,0.025); }
+  .row:hover { background: rgba(255,255,255,0.05); }
+  .row.selected, .rows .row.selected:nth-child(even) {
+    background: var(--select);
+    color: #fff;
+  }
+  .row.selected .meta { color: rgba(255,255,255,0.75); }
+  .name { display: flex; min-width: 0; align-items: center; gap: 6px; }
+  .name .indent { flex: none; }
+  .name .chev {
+    width: 12px; height: 12px; flex: none;
+    color: var(--faint);
+    transition: transform 80ms ease;
+  }
+  .name .chev.open { transform: rotate(90deg); }
+  .name .chev.hidden { visibility: hidden; }
+  .name .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .name svg.icon { width: 16px; height: 16px; flex: none; }
+  .meta { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+
+  .pathbar {
+    display: flex;
+    height: 24px;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    padding: 0 12px;
+    border-top: 1px solid var(--rule);
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .pathbar svg { width: 12px; height: 12px; }
+
+  /* file badge icons */
+  .doc { position: relative; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <h1>Workspace FILES tab — macOS Finder layout (mock)</h1>
+
+  <div class="drawer">
+    <div class="segments"><b>FILES</b><span>PREVIEWS</span><span>INTEGRATIONS</span></div>
+    <div class="finder">
+      <div class="toolbar">
+        <div class="nav">
+          <button aria-label="Back"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 3 5 8l5 5"/></svg></button>
+          <button aria-label="Forward"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 3 5 5-5 5"/></svg></button>
+        </div>
+        <span class="crumb-title">workspace</span>
+        <div class="spacer"></div>
+        <div class="search">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.4"/><path d="m10.4 10.4 3 3"/></svg>
+          Search
+        </div>
+      </div>
+
+      <div class="body">
+        <aside class="sidebar">
+          <h3>Favorites</h3>
+          <button class="pin active">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#8fb7f2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7c0-1 .8-1.8 1.8-1.8h4l1.7 1.9h8.7c1 0 1.8.8 1.8 1.8v8.3c0 1-.8 1.8-1.8 1.8H4.8c-1 0-1.8-.8-1.8-1.8Z"/></svg>
+            <span>workspace</span>
+          </button>
+          <button class="pin">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#8fb7f2" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12.2V8.9c0-1-.8-1.8-1.8-1.8h-8.7L8.8 5.2h-4C3.8 5.2 3 6 3 7v10.2c0 1 .8 1.8 1.8 1.8h7.4"/>
+              <circle cx="17.5" cy="16.6" r="4.1"/>
+              <circle cx="17.5" cy="15.5" r="1.3"/>
+              <path d="M15.3 19.5c.3-1.2 1.2-1.9 2.2-1.9s1.9.7 2.2 1.9"/>
+            </svg>
+            <span>shared</span>
+            <span class="badge">2</span>
+          </button>
+        </aside>
+
+        <div class="list">
+          <div class="cols"><span>Name</span><span>Date Modified</span><span>Size</span><span>Kind</span></div>
+          <div class="rows">
+
+            <!-- shared/ expanded -->
+            <div class="row">
+              <span class="name">
+                <svg class="chev open" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+                <svg class="icon" viewBox="0 0 24 24"><defs><linearGradient id="f1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5db1ff"/><stop offset="1" stop-color="#2f7fe0"/></linearGradient></defs><path fill="url(#f1)" d="M3 6.6c0-.9.7-1.6 1.6-1.6h4.1l1.8 1.8h9c.9 0 1.5.7 1.5 1.6v9c0 .9-.6 1.6-1.5 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z"/><path fill="#79c0ff" opacity=".6" d="M3 8.2h18v1.1H3z"/></svg>
+                <span class="label">shared</span>
+              </span>
+              <span class="meta">Today, 9:11 PM</span><span class="meta">--</span><span class="meta">Folder</span>
+            </div>
+
+            <div class="row">
+              <span class="name">
+                <span class="indent" style="width:16px"></span>
+                <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+                <svg class="icon" viewBox="0 0 24 24"><path fill="url(#f1)" d="M3 6.6c0-.9.7-1.6 1.6-1.6h4.1l1.8 1.8h9c.9 0 1.5.7 1.5 1.6v9c0 .9-.6 1.6-1.5 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z"/></svg>
+                <span class="label">obsidian-vault</span>
+              </span>
+              <span class="meta">Today, 9:11 PM</span><span class="meta">--</span><span class="meta">Folder</span>
+            </div>
+
+            <!-- can-u-make... expanded -->
+            <div class="row">
+              <span class="name">
+                <span class="indent" style="width:16px"></span>
+                <svg class="chev open" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+                <svg class="icon" viewBox="0 0 24 24"><path fill="url(#f1)" d="M3 6.6c0-.9.7-1.6 1.6-1.6h4.1l1.8 1.8h9c.9 0 1.5.7 1.5 1.6v9c0 .9-.6 1.6-1.5 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z"/></svg>
+                <span class="label">can-u-make-a-simple-personal-2</span>
+              </span>
+              <span class="meta">Today, 9:10 PM</span><span class="meta">--</span><span class="meta">Folder</span>
+            </div>
+
+            <div class="row selected">
+              <span class="name">
+                <span class="indent" style="width:32px"></span>
+                <svg class="chev hidden" viewBox="0 0 12 12"></svg>
+                <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="2.6" width="16" height="18.8" rx="2.4" fill="#f5f6f8"/><path d="M8 7.4h8M8 10.6h8M8 13.8h5" stroke="#e8833a" stroke-width="1.5" stroke-linecap="round"/><rect x="6.2" y="16.6" width="11.6" height="3.4" rx="1" fill="#e8833a"/><text x="12" y="19.3" font-size="2.7" font-weight="700" fill="#fff" text-anchor="middle" font-family="system-ui">HTML</text></svg>
+                <span class="label">index.html</span>
+              </span>
+              <span class="meta">Today, 9:10 PM</span><span class="meta">5 KB</span><span class="meta">HTML text</span>
+            </div>
+
+            <div class="row">
+              <span class="name">
+                <span class="indent" style="width:32px"></span>
+                <svg class="chev hidden" viewBox="0 0 12 12"></svg>
+                <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="2.6" width="16" height="18.8" rx="2.4" fill="#f5f6f8"/><path d="M8 7.4h8M8 10.6h8M8 13.8h5" stroke="#3f8ef7" stroke-width="1.5" stroke-linecap="round"/><rect x="6.2" y="16.6" width="11.6" height="3.4" rx="1" fill="#3f8ef7"/><text x="12" y="19.3" font-size="2.7" font-weight="700" fill="#fff" text-anchor="middle" font-family="system-ui">CSS</text></svg>
+                <span class="label">styles.css</span>
+              </span>
+              <span class="meta">Today, 9:10 PM</span><span class="meta">5 KB</span><span class="meta">CSS</span>
+            </div>
+
+            <div class="row">
+              <span class="name">
+                <span class="indent" style="width:32px"></span>
+                <svg class="chev hidden" viewBox="0 0 12 12"></svg>
+                <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="2.6" width="16" height="18.8" rx="2.4" fill="#f5f6f8"/><path d="M8 7.4h8M8 10.6h8M8 13.8h5" stroke="#e7c944" stroke-width="1.5" stroke-linecap="round"/><rect x="6.2" y="16.6" width="11.6" height="3.4" rx="1" fill="#e7c944"/><text x="12" y="19.3" font-size="3.2" font-weight="700" fill="#1c1f26" text-anchor="middle" font-family="system-ui">JS</text></svg>
+                <span class="label">script.js</span>
+              </span>
+              <span class="meta">Today, 9:10 PM</span><span class="meta">108 bytes</span><span class="meta">JavaScript</span>
+            </div>
+
+            <div class="row">
+              <span class="name">
+                <span class="indent" style="width:32px"></span>
+                <svg class="chev hidden" viewBox="0 0 12 12"></svg>
+                <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="2.6" width="16" height="18.8" rx="2.4" fill="#f5f6f8"/><path d="M7.4 14.6V9.2l2.2 2.6 2.2-2.6v5.4M16.9 9.2v5.4m0 0-1.8-2m1.8 2 1.8-2" stroke="#4d5566" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="label">README.md</span>
+              </span>
+              <span class="meta">Today, 9:10 PM</span><span class="meta">447 bytes</span><span class="meta">Markdown</span>
+            </div>
+
+            <!-- workspace root content -->
+            <div class="row">
+              <span class="name">
+                <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+                <svg class="icon" viewBox="0 0 24 24"><path fill="url(#f1)" d="M3 6.6c0-.9.7-1.6 1.6-1.6h4.1l1.8 1.8h9c.9 0 1.5.7 1.5 1.6v9c0 .9-.6 1.6-1.5 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z"/></svg>
+                <span class="label">src</span>
+              </span>
+              <span class="meta">Today, 8:54 PM</span><span class="meta">--</span><span class="meta">Folder</span>
+            </div>
+
+            <div class="row">
+              <span class="name">
+                <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+                <svg class="icon" viewBox="0 0 24 24"><path fill="url(#f1)" d="M3 6.6c0-.9.7-1.6 1.6-1.6h4.1l1.8 1.8h9c.9 0 1.5.7 1.5 1.6v9c0 .9-.6 1.6-1.5 1.6H4.6c-.9 0-1.6-.7-1.6-1.6z"/></svg>
+                <span class="label">node_modules</span>
+              </span>
+              <span class="meta">Today, 8:54 PM</span><span class="meta">--</span><span class="meta">Folder</span>
+            </div>
+
+            <div class="row">
+              <span class="name">
+                <svg class="chev hidden" viewBox="0 0 12 12"></svg>
+                <svg class="icon" viewBox="0 0 24 24"><rect x="4" y="2.6" width="16" height="18.8" rx="2.4" fill="#f5f6f8"/><path d="M9.3 8.2c-1.2 0-1.7.6-1.7 1.5 0 1.5 1.6 1.3 1.6 2.5 0 .7-.4 1.1-1 1.1M14.7 8.2c1.2 0 1.7.6 1.7 1.5 0 1.5-1.6 1.3-1.6 2.5 0 .7.4 1.1 1 1.1" stroke="#4d5566" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+                <span class="label">package.json</span>
+              </span>
+              <span class="meta">Today, 8:54 PM</span><span class="meta">1 KB</span><span class="meta">JSON</span>
+            </div>
+
+          </div>
+          <div class="pathbar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#8fb7f2" stroke-width="2"><path d="m12 2.75 8 4.5v9.5l-8 4.5-8-4.5v-9.5Z"/></svg>
+            workspace
+            <span>›</span> shared
+            <span>›</span> can-u-make-a-simple-personal-2
+            <span>›</span> <b style="color:var(--ink)">index.html</b>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    One Finder-style view replaces the current tree + the separate “Drive folders” section.
+    Sidebar pins jump to /workspace and /workspace/shared (shared shows its badge with the
+    attached-folder count; Drive-folder actions like “open in Drive” move to right-click).
+    Columns collapse right-to-left when the drawer is narrow — Name and Size always stay.
+    Selection, double-click to open in the editor, and the existing context menu all carry over.
+  </p>
+</div>
+</body>
+</html>

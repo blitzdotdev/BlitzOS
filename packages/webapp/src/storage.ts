@@ -138,7 +138,8 @@ export function defaultWorkspaceFiles(): WorkspaceFiles {
   return {
     version: 1,
     open: true,
-    width: 264,
+    // Wide enough for the Finder view's Name + Modified + Size columns.
+    width: 340,
     expanded: [],
     segment: 'files',
   };

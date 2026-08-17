@@ -70,8 +70,9 @@ describe('workspace DAV listings through the proxy', () => {
 
     const shared = await client.getDirectoryContents('shared') as FileStat[];
     expect(shared.map(({ basename }) => basename).sort()).toEqual(['readme.md', 'test']);
+    // Finder-style listing interleaves files and directories by name.
     expect(listedNodes('shared', shared).map(({ path }) => path))
-      .toEqual(['shared/test', 'shared/readme.md']);
+      .toEqual(['shared/readme.md', 'shared/test']);
 
     const empty = await client.getDirectoryContents('shared/test') as FileStat[];
     expect(empty).toEqual([]);

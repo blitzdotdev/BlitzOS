@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Drawer tabs — variation: Instrument</title>
+<style>
+  /* Tokens copied from packages/webapp/src/tokens.css. Everything else is a mix of them. */
+  :root {
+    --paper: #16181d;
+    --ink: #dfe2e8;
+    --accent: #7e95d7;
+    --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
+    --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+    --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+    --rule-faint: color-mix(in oklab, var(--ink) 7%, var(--paper));
+    --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
+    --sunken: color-mix(in oklab, var(--ink) 5%, var(--paper));
+    --tint: color-mix(in oklab, var(--ink) 3%, var(--paper));
+    --warm: #b7a06b;   /* --ansi-yellow */
+    --ok: #8fa879;     /* --ansi-green  */
+    --bad: #c47f86;    /* --ansi-red    */
+    --sel: color-mix(in oklab, var(--accent) 12%, var(--paper));
+    --folder-fill: color-mix(in oklab, var(--accent) 13%, transparent);
+    --stage: color-mix(in oklab, #000 26%, var(--paper));
+    --lift-soft: 0 12px 32px color-mix(in oklab, #000 28%, transparent);
+    --ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    /* Instrument radius scale: 6px frames, 5px controls and rows. */
+    --r-frame: 6px;
+    --r-ctl: 5px;
+    color-scheme: dark;
+  }
+  :root[data-theme='light'] {
+    --paper: #f7f7f4;
+    --ink: #1c1f26;
+    --accent: #4c62aa;
+    --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
+    --sel: color-mix(in oklab, var(--accent) 11%, var(--paper));
+    --folder-fill: color-mix(in oklab, var(--accent) 12%, transparent);
+    --stage: color-mix(in oklab, var(--ink) 7%, var(--paper));
+    --lift-soft: 0 12px 32px color-mix(in oklab, #000 13%, transparent);
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 30px 16px 60px;
+    background: var(--stage);
+    color: var(--ink);
+    font: 12px/1.45 var(--ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font-family: var(--ui); }
+
+  .theme-toggle {
+    position: fixed;
+    top: 10px;
+    right: 12px;
+    z-index: 5;
+    height: 26px;
+    padding: 0 11px;
+    border: 1px solid var(--rule);
+    border-radius: var(--r-frame);
+    background: var(--paper);
+    color: var(--muted);
+    font: 600 11px var(--ui);
+    cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--faint); color: var(--ink); }
+
+  .stage { display: flex; flex-wrap: wrap; gap: 24px; justify-content: center; }
+  .col { display: grid; gap: 12px; justify-items: center; align-content: start; }
+  .col h1 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .note { max-width: 380px; margin: 0; color: var(--faint); font-size: 11px; line-height: 1.65; text-align: center; }
+
+  .drawer {
+    display: flex;
+    width: 430px;
+    height: 620px;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--rule);
+    border-radius: var(--r-frame);
+    background: var(--paper);
+    box-shadow: var(--lift-soft);
+  }
+
+  /* Engraved micro-labels: one voice for every small caption. */
+  .lbl {
+    margin: 0;
+    color: var(--faint);
+    font: 600 9.5px var(--ui);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Tab strip: text + 2px accent underline, no pill chrome ---- */
+  .tabs {
+    display: flex;
+    height: 34px;
+    flex: none;
+    align-items: stretch;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .tab {
+    position: relative;
+    display: grid;
+    place-items: center;
+    padding: 0 10px;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: 500 11.5px var(--ui);
+    cursor: pointer;
+  }
+  .tab::before {
+    content: '';
+    position: absolute;
+    inset: 5px 2px;
+    border-radius: var(--r-ctl);
+    background: transparent;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab:hover::before { background: var(--hover); }
+  .tab span { position: relative; }
+  .tab.active { color: var(--ink); font-weight: 600; }
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+  }
+
+  /* ---- Shared atoms ---- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 7px;
+    border-radius: var(--r-ctl);
+    background: color-mix(in oklab, var(--ink) 5%, transparent);
+    color: var(--muted);
+    font: 500 10px/1.4 var(--ui);
+    white-space: nowrap;
+  }
+  .chip .d { width: 5px; height: 5px; flex: none; border-radius: 50%; }
+  .chip.live {
+    background: color-mix(in oklab, var(--ok) 10%, transparent);
+    color: color-mix(in oklab, var(--ok) 62%, var(--ink));
+    font-weight: 600;
+  }
+  .chip.live .d { background: var(--ok); }
+  .chip.off .d { background: var(--faint); }
+
+  .dot { width: 7px; height: 7px; flex: none; border-radius: 50%; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ok) 15%, transparent); }
+  .dot.off { background: transparent; border: 1.5px solid var(--faint); }
+
+  .btn {
+    height: 24px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: var(--r-ctl);
+    background: color-mix(in oklab, var(--ink) 5%, transparent);
+    color: var(--muted);
+    font: 600 11px var(--ui);
+    cursor: pointer;
+  }
+  .btn:hover { background: color-mix(in oklab, var(--ink) 9%, transparent); color: var(--ink); }
+  .btn.danger:hover {
+    background: color-mix(in oklab, var(--bad) 10%, transparent);
+    color: color-mix(in oklab, var(--bad) 72%, var(--ink));
+  }
+  .btn.primary {
+    border: 1px solid color-mix(in oklab, var(--accent) 36%, transparent);
+    background: color-mix(in oklab, var(--accent) 15%, transparent);
+    color: color-mix(in oklab, var(--accent) 74%, var(--ink));
+  }
+  .btn.primary:hover {
+    background: color-mix(in oklab, var(--accent) 23%, transparent);
+    color: color-mix(in oklab, var(--accent) 60%, var(--ink));
+  }
+
+  .iconbtn {
+    display: grid;
+    width: 26px;
+    height: 24px;
+    place-items: center;
+    border: 0;
+    border-radius: var(--r-ctl);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .iconbtn:hover { background: var(--hover); color: var(--ink); }
+  .iconbtn.off { color: var(--faint); cursor: default; }
+  .iconbtn.off:hover { background: transparent; color: var(--faint); }
+
+  /* ================= FILES ================= */
+  .ftool {
+    display: flex;
+    height: 38px;
+    flex: none;
+    align-items: center;
+    gap: 3px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ftool .title { margin-left: 5px; font-weight: 600; font-size: 12.5px; }
+  .ftool .sp { flex: 1; }
+  .fsearch {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 128px;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: var(--r-ctl);
+    background: var(--sunken);
+    color: var(--faint);
+    font-size: 11px;
+    cursor: text;
+  }
+  .fsearch:hover { background: var(--hover); color: var(--muted); }
+
+  .fbody { display: flex; min-height: 0; flex: 1; }
+  .fside {
+    width: 112px;
+    flex: none;
+    padding: 10px 6px;
+    border-right: 1px solid var(--rule);
+    background: var(--tint);
+  }
+  .fside .lbl { display: block; margin: 0 0 5px; padding: 0 8px; }
+  .pin {
+    position: relative;
+    display: flex;
+    width: 100%;
+    height: 27px;
+    align-items: center;
+    gap: 7px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--r-ctl);
+    background: transparent;
+    color: var(--muted);
+    font: 12px var(--ui);
+    text-align: left;
+    cursor: pointer;
+  }
+  .pin svg { width: 16px; height: 16px; flex: none; }
+  .pin:hover { background: var(--hover); color: var(--ink); }
+  .pin.active { background: var(--sel); color: var(--ink); font-weight: 500; }
+  .pin.active:hover { background: color-mix(in oklab, var(--accent) 15%, var(--paper)); }
+  .pin.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 7px;
+    bottom: 7px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+  }
+  .pin .n {
+    margin-left: auto;
+    color: var(--faint);
+    font-size: 10.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .flist { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+  .fcols, .frow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 66px 34px 34px;
+    gap: 5px;
+    align-items: center;
+  }
+  .fcols {
+    height: 25px;
+    flex: none;
+    padding: 0 16px 0 14px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .fcols span { color: var(--faint); font: 600 9.5px var(--ui); letter-spacing: .05em; text-transform: uppercase; }
+  .frows { flex: 1; overflow-y: auto; scrollbar-width: thin; padding: 3px 6px; }
+  .frow {
+    position: relative;
+    height: 26px;
+    padding: 0 10px 0 8px;
+    border-radius: var(--r-ctl);
+    font-size: 12px;
+    cursor: default;
+  }
+  .frow:hover { background: var(--hover); }
+  .frow.sel { background: var(--sel); }
+  .frow.sel:hover { background: color-mix(in oklab, var(--accent) 15%, var(--paper)); }
+  .frow.sel::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 6px;
+    bottom: 6px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+  }
+  .fname { display: flex; min-width: 0; align-items: center; gap: 5px; }
+  .fname .ind { flex: none; }
+  .chev { width: 10px; height: 10px; flex: none; color: var(--faint); }
+  .chev.open { transform: rotate(90deg); }
+  .chev.none { visibility: hidden; }
+  .ficon { width: 16px; height: 16px; flex: none; color: var(--muted); }
+  .flabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fmeta {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 10.5px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .fmeta.dim { color: var(--faint); }
+  .num, .fcols .num { text-align: right; }
+  .fpath {
+    display: flex;
+    height: 26px;
+    flex: none;
+    align-items: center;
+    gap: 5px;
+    padding: 0 12px;
+    border-top: 1px solid var(--rule);
+    color: var(--faint);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+  .fpath b { overflow: hidden; color: var(--ink); font-weight: 500; text-overflow: ellipsis; }
+  .fpath i { flex: none; font-style: normal; color: var(--faint); }
+
+  /* ================= PREVIEWS ================= */
+  .scroll { min-height: 0; flex: 1; overflow-y: auto; scrollbar-width: thin; padding-bottom: 10px; }
+  .sect { margin: 13px 14px 5px; }
+  .plist { display: block; }
+  .prow {
+    display: flex;
+    height: 34px;
+    align-items: center;
+    gap: 9px;
+    padding: 0 12px 0 14px;
+    cursor: pointer;
+  }
+  .prow + .prow { border-top: 1px solid var(--rule-faint); }
+  .prow:hover { background: var(--hover); }
+  .prow .port { min-width: 42px; font-weight: 600; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .prow .proc {
+    overflow: hidden;
+    min-width: 0;
+    flex: 1;
+    color: var(--muted);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .prow .chev { color: var(--faint); }
+  .prow.dead { cursor: default; }
+  .prow.dead .port, .prow.dead .proc { color: var(--faint); }
+
+  .bbar {
+    display: flex;
+    height: 38px;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .baddr {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 7px;
+    height: 24px;
+    margin: 0 2px;
+    padding: 0 9px;
+    border-radius: var(--r-ctl);
+    background: var(--sunken);
+    color: var(--muted);
+    font-size: 11px;
+    cursor: text;
+  }
+  .baddr:hover { background: var(--hover); }
+  .baddr b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .baddr .crop { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewport { position: relative; flex: 1; background: #fff; }
+  .fakeapp { position: absolute; inset: 0; display: grid; grid-template-rows: 46px 1fr; color: #1b1e24; font-family: var(--ui); }
+  .fakeapp header { display: flex; align-items: center; gap: 9px; padding: 0 16px; border-bottom: 1px solid #e8e8ee; font-weight: 700; font-size: 13px; }
+  .fakeapp header i { width: 18px; height: 18px; border-radius: 5px; background: #4c62aa; }
+  .fakeapp main { display: grid; gap: 9px; align-content: start; padding: 16px; }
+  .sk { height: 11px; border-radius: 5px; background: #eceef4; }
+  .sk.w60 { width: 60%; } .sk.w80 { width: 80%; } .sk.w40 { width: 40%; }
+  .fake-card { height: 74px; border: 1px solid #e8e8ee; border-radius: 6px; background: #fafbfe; }
+
+  /* ================= INTEGRATIONS ================= */
+  /* The one lifted surface: the request that needs a decision. */
+  .pending {
+    position: relative;
+    margin: 0 6px;
+    border: 1px solid color-mix(in oklab, var(--warm) 20%, var(--rule));
+    border-radius: var(--r-frame);
+    background: color-mix(in oklab, var(--warm) 7%, var(--paper));
+  }
+  .pending::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 9px;
+    bottom: 9px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--warm);
+  }
+  .req-head {
+    padding: 9px 5px 0 7px;
+    color: color-mix(in oklab, var(--warm) 68%, var(--ink));
+    font: 600 10.5px var(--ui);
+  }
+  .pending .irow { padding: 8px 5px 10px 7px; }
+
+  .irow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px 9px 14px;
+  }
+  .ilist .irow + .irow { border-top: 1px solid var(--rule-faint); }
+  .tile {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    place-items: center;
+    border-radius: var(--r-ctl);
+    background: var(--sunken);
+    color: color-mix(in oklab, var(--ink) 86%, var(--paper));
+  }
+  .pending .tile { background: color-mix(in oklab, var(--ink) 6%, transparent); }
+  .tile svg { width: 15px; height: 15px; }
+  .icopy { display: grid; min-width: 0; flex: 1; gap: 3px; }
+  .icopy b { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+  .icopy .sub { color: var(--faint); font-size: 10.5px; }
+  .chips { display: flex; gap: 4px; }
+  .scope {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1.5px 6px;
+    border-radius: var(--r-ctl);
+    background: color-mix(in oklab, var(--ink) 6%, transparent);
+    color: var(--muted);
+    font: 500 10px/1.4 var(--ui);
+    white-space: nowrap;
+  }
+  .scope::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: .7; }
+  .cd { color: color-mix(in oklab, var(--warm) 74%, var(--ink)); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; flex: none; gap: 6px; }
+
+  .alog { padding: 1px 0; }
+  .alog .l { display: flex; gap: 9px; padding: 5.5px 14px; color: var(--muted); font-size: 11px; }
+  .alog time { flex: none; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .alog b { color: var(--ink); font-weight: 600; }
+  .flink { display: inline-block; margin: 12px 14px 4px; color: var(--accent); font-size: 11px; text-decoration: none; }
+  .flink:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" id="themeToggle">Light</button>
+
+<!-- Icon symbols: 1.5px optical strokes, monochrome; color only carries state. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-folder" viewBox="0 0 16 16">
+      <path d="M2.1 11.65V5.05c0-.86.7-1.55 1.55-1.55h2.5c.41 0 .81.16 1.1.45l.85.85h4.35c.86 0 1.55.7 1.55 1.55v5.3c0 .86-.7 1.55-1.55 1.55H3.65c-.86 0-1.55-.7-1.55-1.55Z"
+        fill="var(--folder-fill)" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-folder-open" viewBox="0 0 16 16">
+      <path d="M2.1 10.9V5.05c0-.86.7-1.55 1.55-1.55h2.5c.41 0 .81.16 1.1.45l.85.85h4.05c.86 0 1.55.7 1.55 1.55v.55"
+        fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M4.62 8.35h8.55c.72 0 1.24.69 1.04 1.38l-.83 2.9c-.19.66-.8 1.12-1.49 1.12H3.34c-.72 0-1.24-.69-1.04-1.38l.83-2.9c.19-.66.8-1.12 1.49-1.12Z"
+        fill="var(--folder-fill)" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-folder-shared" viewBox="0 0 16 16">
+      <path d="M2.1 11.65V5.05c0-.86.7-1.55 1.55-1.55h2.5c.41 0 .81.16 1.1.45l.85.85h4.35c.86 0 1.55.7 1.55 1.55v5.3c0 .86-.7 1.55-1.55 1.55H3.65c-.86 0-1.55-.7-1.55-1.55Z"
+        fill="var(--folder-fill)" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <circle cx="8" cy="7.9" r="1.3" fill="none" stroke="currentColor" stroke-width="1.25"/>
+      <path d="M5.95 11.35c.3-1.3 1.15-1.95 2.05-1.95s1.75.65 2.05 1.95"
+        fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-doc" viewBox="0 0 16 16">
+      <path d="M8.55 1.9H5.35c-.8 0-1.45.65-1.45 1.45v9.3c0 .8.65 1.45 1.45 1.45h5.3c.8 0 1.45-.65 1.45-1.45V5.45Z"
+        fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+      <path d="M8.55 2.3v2.1c0 .66.54 1.2 1.2 1.2h2.1"
+        fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-chev" viewBox="0 0 12 12">
+      <path d="m4.4 2.6 3.4 3.4-3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-back" viewBox="0 0 16 16">
+      <path d="M10.2 3.2 5.4 8l4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-fwd" viewBox="0 0 16 16">
+      <path d="M5.8 3.2 10.6 8l-4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 16 16">
+      <circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="m10.3 10.3 3.2 3.2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="i-reload" viewBox="0 0 16 16">
+      <path d="M13 8a5 5 0 1 1-1.2-3.2" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round"/>
+      <path d="M13 2.6v2.6h-2.6" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-ext" viewBox="0 0 16 16">
+      <path d="M6.4 3.6H3.9c-.72 0-1.3.58-1.3 1.3v7.2c0 .72.58 1.3 1.3 1.3h7.2c.72 0 1.3-.58 1.3-1.3V9.6" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M9.7 2.7h3.6v3.6M13.1 2.9 7.7 8.3" fill="none" stroke="currentColor" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="i-github" viewBox="0 0 24 24">
+      <path fill="currentColor" d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5A3.9 3.9 0 0 1 6.6 8.7a3.6 3.6 0 0 1 .1-2.7s.8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.8c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/>
+    </symbol>
+    <symbol id="i-slack" viewBox="0 0 24 24">
+      <path fill="#E01E5A" d="M5.04 15.16a2.52 2.52 0 1 1-2.52-2.52h2.52zM6.31 15.16a2.52 2.52 0 0 1 5.04 0v6.32a2.52 2.52 0 0 1-5.04 0z"/>
+      <path fill="#36C5F0" d="M8.83 5.04a2.52 2.52 0 1 1 2.52-2.52v2.52zM8.83 6.31a2.52 2.52 0 0 1 0 5.04H2.52a2.52 2.52 0 0 1 0-5.04z"/>
+      <path fill="#2EB67D" d="M18.96 8.83a2.52 2.52 0 1 1 2.52 2.52h-2.52zM17.69 8.83a2.52 2.52 0 0 1-5.04 0V2.52a2.52 2.52 0 0 1 5.04 0z"/>
+      <path fill="#ECB22E" d="M15.16 18.96a2.52 2.52 0 1 1-2.52 2.52v-2.52zM15.16 17.69a2.52 2.52 0 0 1 0-5.04h6.32a2.52 2.52 0 0 1 0 5.04z"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="stage">
+
+  <!-- ================= FILES ================= -->
+  <div class="col">
+    <h1>Files — instrument list</h1>
+    <div class="drawer">
+      <div class="tabs">
+        <button class="tab active"><span>Files</span></button>
+        <button class="tab"><span>Previews</span></button>
+        <button class="tab"><span>Integrations</span></button>
+      </div>
+      <div class="ftool">
+        <button class="iconbtn" aria-label="Back"><svg width="14" height="14"><use href="#i-back"/></svg></button>
+        <button class="iconbtn off" aria-label="Forward"><svg width="14" height="14"><use href="#i-fwd"/></svg></button>
+        <span class="title">workspace</span>
+        <span class="sp"></span>
+        <span class="fsearch">
+          <svg width="12" height="12"><use href="#i-search"/></svg>
+          Search
+        </span>
+      </div>
+      <div class="fbody">
+        <aside class="fside">
+          <span class="lbl">Favorites</span>
+          <button class="pin active">
+            <svg aria-hidden="true"><use href="#i-folder"/></svg>
+            workspace
+          </button>
+          <button class="pin">
+            <svg aria-hidden="true"><use href="#i-folder-shared"/></svg>
+            shared
+            <span class="n">2</span>
+          </button>
+        </aside>
+        <div class="flist">
+          <div class="fcols"><span>Name</span><span>Modified</span><span class="num">Size</span><span>Kind</span></div>
+          <div class="frows">
+            <div class="frow">
+              <span class="fname">
+                <svg class="chev open"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-folder-open"/></svg>
+                <span class="flabel">shared</span>
+              </span>
+              <span class="fmeta">Today 21:11</span><span class="fmeta dim num">--</span><span class="fmeta">Folder</span>
+            </div>
+            <div class="frow">
+              <span class="fname"><span class="ind" style="width:14px"></span>
+                <svg class="chev"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-folder"/></svg>
+                <span class="flabel">obsidian-vault</span>
+              </span>
+              <span class="fmeta">Today 21:11</span><span class="fmeta dim num">--</span><span class="fmeta">Folder</span>
+            </div>
+            <div class="frow">
+              <span class="fname"><span class="ind" style="width:14px"></span>
+                <svg class="chev open"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-folder-open"/></svg>
+                <span class="flabel">can-u-make-a-simple-personal-2</span>
+              </span>
+              <span class="fmeta">Today 21:10</span><span class="fmeta dim num">--</span><span class="fmeta">Folder</span>
+            </div>
+            <div class="frow sel">
+              <span class="fname"><span class="ind" style="width:28px"></span>
+                <svg class="chev none"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-doc"/></svg>
+                <span class="flabel">index.html</span>
+              </span>
+              <span class="fmeta">Today 21:10</span><span class="fmeta num">5 KB</span><span class="fmeta">HTML</span>
+            </div>
+            <div class="frow">
+              <span class="fname"><span class="ind" style="width:28px"></span>
+                <svg class="chev none"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-doc"/></svg>
+                <span class="flabel">styles.css</span>
+              </span>
+              <span class="fmeta">Today 21:10</span><span class="fmeta num">5 KB</span><span class="fmeta">CSS</span>
+            </div>
+            <div class="frow">
+              <span class="fname"><span class="ind" style="width:28px"></span>
+                <svg class="chev none"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-doc"/></svg>
+                <span class="flabel">script.js</span>
+              </span>
+              <span class="fmeta">Today 21:10</span><span class="fmeta num">108 B</span><span class="fmeta">JS</span>
+            </div>
+            <div class="frow">
+              <span class="fname">
+                <svg class="chev"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-folder"/></svg>
+                <span class="flabel">src</span>
+              </span>
+              <span class="fmeta">Today 20:54</span><span class="fmeta dim num">--</span><span class="fmeta">Folder</span>
+            </div>
+            <div class="frow">
+              <span class="fname">
+                <svg class="chev none"><use href="#i-chev"/></svg>
+                <svg class="ficon"><use href="#i-doc"/></svg>
+                <span class="flabel">package.json</span>
+              </span>
+              <span class="fmeta">Today 20:54</span><span class="fmeta num">1 KB</span><span class="fmeta">JSON</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="fpath">shared <i>›</i> can-u-make-a-simple-personal-2 <i>›</i> <b>index.html</b></div>
+    </div>
+    <p class="note">Instrument: hierarchy comes from type weight and faint tints, not chrome.
+    The accent never fills a surface — it marks state: a 2px bar on the active pin and the
+    selected row, a 2px underline on the live tab. Icons are 1.5px monochrome strokes;
+    folders carry a dim accent wash.</p>
+  </div>
+
+  <!-- ================= PREVIEWS ================= -->
+  <div class="col">
+    <h1>Previews — list &amp; opened</h1>
+    <div class="drawer" style="height:296px">
+      <div class="tabs">
+        <button class="tab"><span>Files</span></button>
+        <button class="tab active"><span>Previews</span></button>
+        <button class="tab"><span>Integrations</span></button>
+      </div>
+      <div class="scroll">
+        <div class="sect"><span class="lbl">Live ports</span></div>
+        <div class="plist">
+          <div class="prow">
+            <span class="dot ok"></span>
+            <span class="port">:5173</span>
+            <span class="proc">vite · node · 4m</span>
+            <span class="chip live"><span class="d"></span>Live</span>
+            <svg class="chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="prow">
+            <span class="dot ok"></span>
+            <span class="port">:8000</span>
+            <span class="proc">uvicorn · python · 22m</span>
+            <span class="chip live"><span class="d"></span>Live</span>
+            <svg class="chev"><use href="#i-chev"/></svg>
+          </div>
+          <div class="prow dead">
+            <span class="dot off"></span>
+            <span class="port">:3000</span>
+            <span class="proc">next dev · exited 11m ago</span>
+            <span class="chip off"><span class="d"></span>Stopped</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="drawer" style="height:296px">
+      <div class="tabs">
+        <button class="tab"><span>Files</span></button>
+        <button class="tab active"><span>Previews</span></button>
+        <button class="tab"><span>Integrations</span></button>
+      </div>
+      <div class="bbar">
+        <button class="iconbtn" aria-label="Back to ports"><svg width="14" height="14"><use href="#i-back"/></svg></button>
+        <button class="iconbtn" aria-label="Reload"><svg width="13" height="13"><use href="#i-reload"/></svg></button>
+        <span class="baddr">
+          <span class="dot ok" style="width:6px;height:6px;box-shadow:none"></span>
+          <span class="crop"><b>:5173</b> · vite</span>
+        </span>
+        <button class="iconbtn" aria-label="Open in new tab"><svg width="13" height="13"><use href="#i-ext"/></svg></button>
+      </div>
+      <div class="viewport">
+        <div class="fakeapp">
+          <header><i></i>my-app</header>
+          <main>
+            <div class="sk w40"></div>
+            <div class="sk w80"></div>
+            <div class="fake-card"></div>
+            <div class="sk w60"></div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <p class="note">Ports are a flat list under an engraved label — no card chrome, hairlines
+    only between rows. Color is reserved for state: ANSI-green dots for live, a hollow ring
+    for stopped. Chips are a tiny dot plus text on a near-invisible tint. Open state is the
+    same quiet toolbar with a sunken address strip.</p>
+  </div>
+
+  <!-- ================= INTEGRATIONS ================= -->
+  <div class="col">
+    <h1>Integrations</h1>
+    <div class="drawer">
+      <div class="tabs">
+        <button class="tab"><span>Files</span></button>
+        <button class="tab"><span>Previews</span></button>
+        <button class="tab active"><span>Integrations</span></button>
+      </div>
+      <div class="scroll">
+
+        <div class="sect"><span class="lbl">Pending request</span></div>
+        <div class="pending">
+          <div class="req-head">Claude asked for access · 2m ago</div>
+          <div class="irow">
+            <span class="tile"><svg><use href="#i-github"/></svg></span>
+            <span class="icopy">
+              <b>GitHub</b>
+              <span class="chips"><span class="scope">repo:read</span><span class="scope">repo:write</span></span>
+            </span>
+            <span class="actions">
+              <button class="btn danger">Deny</button>
+              <button class="btn primary">Approve</button>
+            </span>
+          </div>
+        </div>
+
+        <div class="sect"><span class="lbl">Active leases</span></div>
+        <div class="ilist">
+          <div class="irow">
+            <span class="tile"><svg><use href="#i-github"/></svg></span>
+            <span class="icopy">
+              <b>GitHub <span class="scope">repo:read</span></b>
+              <span class="sub">injected · <span class="cd">47m left</span></span>
+            </span>
+            <button class="btn danger">Revoke</button>
+          </div>
+        </div>
+
+        <div class="sect"><span class="lbl">Available in this workspace</span></div>
+        <div class="ilist">
+          <div class="irow">
+            <span class="tile"><svg><use href="#i-github"/></svg></span>
+            <span class="icopy"><b>GitHub</b><span class="sub">App install · org-wide</span></span>
+            <span class="chip live"><span class="d"></span>Configured</span>
+          </div>
+          <div class="irow">
+            <span class="tile"><svg><use href="#i-slack"/></svg></span>
+            <span class="icopy"><b>Slack</b><span class="sub">Not configured</span></span>
+            <button class="btn">Set up</button>
+          </div>
+        </div>
+
+        <div class="sect"><span class="lbl">Recent activity</span></div>
+        <div class="alog">
+          <div class="l"><time>21:04</time><span><b>You</b> approved GitHub · repo:read for Claude</span></div>
+          <div class="l"><time>20:32</time><span>Lease GitHub · repo:read expired</span></div>
+          <div class="l"><time>19:58</time><span><b>You</b> revoked GitHub · repo:write</span></div>
+        </div>
+
+        <a class="flink" href="#">Manage org integrations in Settings →</a>
+      </div>
+    </div>
+    <p class="note">The only lifted surface is the one asking for a decision: the pending
+    request sits on a faint warm tint with a 2px warm bar. Everything else is full-bleed rows
+    under engraved labels — quiet tinted buttons, one faint-accent primary, a warm countdown,
+    and destructive intent that only appears on hover.</p>
+  </div>
+
+</div>
+
+<script>
+  const toggle = document.getElementById('themeToggle');
+  toggle.addEventListener('click', () => {
+    const root = document.documentElement;
+    const next = root.dataset.theme === 'light' ? 'dark' : 'light';
+    root.dataset.theme = next;
+    toggle.textContent = next === 'light' ? 'Dark' : 'Light';
+  });
+</script>
+</body>
+</html>
