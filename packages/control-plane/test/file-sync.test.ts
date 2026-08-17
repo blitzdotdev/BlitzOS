@@ -4,6 +4,8 @@ import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
 import {
   parseDavListing,
   runFileSyncSweep,
+  runWorkspaceFileSync,
+  scheduledSyncsSettled,
 } from "../core/files/sync.js";
 import {
   appRequest,
@@ -11,6 +13,7 @@ import {
   createWorkspace,
   FakeProviders,
   operatorSession,
+  phoneHomeUrl,
   resetDatabase,
   testRuntime,
 } from "./helpers.js";
@@ -118,6 +121,9 @@ async function attachedFolder(providers: WebDavProviders): Promise<{
     body: JSON.stringify({ folderId }),
   });
   expect(attached.status).toBe(201);
+  // The attach fires a background convergence pass; settle it so tests own
+  // the sync sequencing from here.
+  await scheduledSyncsSettled();
   return { app, cookie, folderId, workspaceId: workspace.id };
 }
 
@@ -226,5 +232,86 @@ describe("control-plane folder sync", () => {
     expect(await runFileSyncSweep(testRuntime(providers))).toMatchObject({ files: 0 });
     expect(await env.BOX_IMAGES.head(`org/personal/${folderId}/local.txt`)).toBeNull();
     expect(providers.transfers).toEqual([]);
+  });
+
+  it("materializes attached folders as soon as the workspace phones home ready", async () => {
+    const providers = new WebDavProviders();
+    const app = appWithProviders(providers, providers);
+    const cookie = await operatorSession(app);
+    const folderResponse = await appRequest(app, "/folders", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Notes" }),
+    });
+    const folderId = (await folderResponse.json<{ folder: { id: string } }>()).folder.id;
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/note.txt`, "remote", {
+      customMetadata: { mtime: "1000", "edited-by": "Operator" },
+    });
+    const workspace = await createWorkspace(app, cookie);
+    // Attaching to a still-creating workspace is inert until it is ready.
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    })).status).toBe(201);
+    expect(providers.files.size).toBe(0);
+
+    await env.DB.prepare(
+      "UPDATE workspaces SET ssh_host = '198.51.100.7', ssh_port = 22, ssh_user = 'blitz' WHERE id = ?1",
+    ).bind(workspace.id).run();
+    const ready = await appRequest(app, new URL(phoneHomeUrl(providers, workspace.id)).pathname, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+    });
+    expect(ready.status).toBe(200);
+    await scheduledSyncsSettled();
+    expect(providers.files.get("note.txt")?.body).toBe("remote");
+  });
+
+  it("materializes a folder onto an already-ready workspace right when it is attached", async () => {
+    const providers = new WebDavProviders();
+    const app = appWithProviders(providers, providers);
+    const cookie = await operatorSession(app);
+    const folderResponse = await appRequest(app, "/folders", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Notes" }),
+    });
+    const folderId = (await folderResponse.json<{ folder: { id: string } }>()).folder.id;
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/note.txt`, "remote", {
+      customMetadata: { mtime: "1000", "edited-by": "Operator" },
+    });
+    const workspace = await createWorkspace(app, cookie);
+    await env.DB.prepare(
+      "UPDATE workspaces SET phase = 'ready' WHERE id = ?1",
+    ).bind(workspace.id).run();
+    expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    })).status).toBe(201);
+    await scheduledSyncsSettled();
+    expect(providers.files.get("note.txt")?.body).toBe("remote");
+  });
+
+  it("scopes runWorkspaceFileSync to a single workspace's attachments", async () => {
+    const providers = new WebDavProviders();
+    const { app, cookie, folderId, workspaceId } = await attachedFolder(providers);
+    const second = await createWorkspace(app, cookie);
+    await env.DB.prepare(
+      "UPDATE workspaces SET phase = 'ready' WHERE id = ?1",
+    ).bind(second.id).run();
+    expect((await appRequest(app, `/workspaces/${second.id}/folders`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ folderId }),
+    })).status).toBe(201);
+    await scheduledSyncsSettled();
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/note.txt`, "remote", {
+      customMetadata: { mtime: "1000", "edited-by": "Operator" },
+    });
+    expect(await runWorkspaceFileSync(testRuntime(providers), workspaceId))
+      .toMatchObject({ attachments: 1 });
   });
 });
