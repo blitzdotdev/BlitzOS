@@ -104,6 +104,21 @@ describe("workspace templates", () => {
     const workspace = (await fromTemplate.json<{ workspace: WorkspaceView }>()).workspace;
     expect(workspace.machineTypeId).toBe("small");
     expect(workspace.orgShareRole).toBe("editor");
+    expect(workspace.name).toBe("web analysis");
+    const sibling = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    await expect(sibling.json()).resolves.toMatchObject({
+      workspace: { name: "web analysis-2" },
+    });
+    const named = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id, name: "my own name" }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    await expect(named.json()).resolves.toMatchObject({
+      workspace: { name: "my own name" },
+    });
     const attached = await env.DB.prepare(
       `SELECT folder_id, attached_by_membership_id FROM folder_attachments
        WHERE workspace_id = ?1 ORDER BY folder_id`,

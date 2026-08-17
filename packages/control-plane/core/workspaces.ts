@@ -20,7 +20,11 @@ import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-rec
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
-import { attachTemplateFolders, workspaceTemplateForCreate } from "./workspace-templates.js";
+import {
+  attachTemplateFolders,
+  templateWorkspaceName,
+  workspaceTemplateForCreate,
+} from "./workspace-templates.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -363,7 +367,9 @@ export function addWorkspaceRoutes(
           RETURNING id`,
       v: [
         id,
-        input.name ?? randomWorkspaceName(),
+        input.name ?? (template === null
+          ? randomWorkspaceName()
+          : await templateWorkspaceName(runtime.db, principal.orgId, template.name)),
         principal.id,
         principal.orgId,
         principal.membershipId,

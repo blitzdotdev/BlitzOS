@@ -160,7 +160,7 @@ export function CreateWorkspaceDialog({
                 <p>
                   {machineTypeLabel(selectedTemplate.machineTypeId)}
                   {' · shared with everyone at '}{orgName}
-                  {' · a random name is picked for you'}
+                  {' · the workspace is named after the template'}
                 </p>
               </div>
               {selectedTemplate.folders.length > 0 && (
