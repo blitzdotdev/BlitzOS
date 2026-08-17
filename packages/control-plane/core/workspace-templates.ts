@@ -89,6 +89,29 @@ async function templateFolderRows(
   });
 }
 
+/** Workspaces created from a template are named after it; live name twins in
+ * the org get a numbered suffix so the rail stays tellable-apart. Purely a
+ * display convention — names are not unique, and a racing create may repeat
+ * a suffix. */
+export async function templateWorkspaceName(
+  db: Db,
+  orgId: string,
+  templateName: string,
+): Promise<string> {
+  const base = templateName.slice(0, 59).trim();
+  const candidates = [base, ...Array.from({ length: 8 }, (_, i) => `${base}-${String(i + 2)}`)];
+  const taken = new Set(
+    (await rows<{ name: string }>(db, {
+      q: `SELECT name FROM workspaces
+          WHERE org_id = ?1 AND phase != 'destroyed'
+            AND name IN (${candidates.map((_, i) => `?${String(i + 2)}`).join(",")})`,
+      v: [orgId, ...candidates],
+    })).map(({ name }) => name),
+  );
+  return candidates.find((candidate) => !taken.has(candidate))
+    ?? `${base}-${crypto.randomUUID().slice(0, 4)}`;
+}
+
 /** Attaches the template's folders the creating member can actually access;
  * the sync tick re-checks access on every pass, so an attachment never
  * outlives a revocation. */
