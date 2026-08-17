@@ -108,7 +108,7 @@ export function FinderPins({
         onClick={() => onSelect('')}
       >
         <FolderDuoIcon className="fnd-pin-icon" />
-        workspace
+        <span className="fnd-pin-label">workspace</span>
       </button>
       <button
         className={`fnd-pin${root === 'shared' ? ' fnd-pin--active' : ''}`}
@@ -117,7 +117,7 @@ export function FinderPins({
         onClick={() => onSelect('shared')}
       >
         <SharedFolderDuoIcon className="fnd-pin-icon" />
-        shared
+        <span className="fnd-pin-label">shared</span>
         {sharedCount > 0 && <span className="fnd-count">{sharedCount}</span>}
       </button>
     </aside>

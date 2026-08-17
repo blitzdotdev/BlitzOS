@@ -683,20 +683,22 @@
   border-left: 0;
 }
 
-.workspace-drawer .files-sidebar-resizer { display: none; }
+/* Only the drawer's own left-edge handle resizes; the nested sidebar's
+ * handle (hidden below) would double up. */
+.workspace-drawer .files-sidebar .files-sidebar-resizer { display: none; }
 
 
-/* Editorial paper (plans/mockups/workspace-tabs-editorial.html): the drawer
- * is one warm sheet; sections are soft washes, controls are pills, status is
- * a dot plus a word. Derivation palette is scoped here. */
+/* Editorial paper (plans/mockups/workspace-tabs-editorial.html) on the app's
+ * neutral palette: sections are soft ink washes, controls are pills, status
+ * is a dot plus a word. Warmth is reserved for pending-request urgency. */
 .workspace-drawer {
-  --sheet: color-mix(in oklab, var(--status-warm-yellow) 4%, var(--paper));
+  --sheet: var(--paper);
   --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
-  --wash: color-mix(in oklab, var(--status-warm-yellow) 6%, color-mix(in oklab, var(--ink) 4%, var(--paper)));
-  --wash-deep: color-mix(in oklab, var(--status-warm-yellow) 6%, color-mix(in oklab, var(--ink) 8%, var(--paper)));
-  --field: color-mix(in oklab, var(--ink) 5%, var(--sheet));
-  --quiet: color-mix(in oklab, var(--ink) 8%, var(--sheet));
-  --quiet-hover: color-mix(in oklab, var(--ink) 12%, var(--sheet));
+  --wash: color-mix(in oklab, var(--ink) 5%, var(--paper));
+  --wash-deep: color-mix(in oklab, var(--ink) 9%, var(--paper));
+  --field: color-mix(in oklab, var(--ink) 5%, var(--paper));
+  --quiet: color-mix(in oklab, var(--ink) 8%, var(--paper));
+  --quiet-hover: color-mix(in oklab, var(--ink) 12%, var(--paper));
   --rule-soft: color-mix(in oklab, var(--ink) 9%, var(--paper));
   position: relative;
   z-index: 5;
@@ -708,7 +710,7 @@
   flex-direction: column;
   border-left: 1px solid var(--rule);
   color: var(--ink);
-  background: var(--sheet);
+  background: var(--paper);
 }
 
 .workspace-drawer-segments {
@@ -1327,7 +1329,9 @@
 
 .fnd-side {
   display: flex;
-  width: 104px;
+  overflow: hidden;
+  width: 124px;
+  min-width: 0;
   flex: none;
   flex-direction: column;
   padding: 10px 6px;
@@ -1344,7 +1348,9 @@
 
 .fnd-pin {
   display: flex;
+  overflow: hidden;
   width: 100%;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   padding: 6px 7px;
@@ -1355,6 +1361,14 @@
   font: 12px/1.3 var(--font-ui);
   text-align: left;
   cursor: pointer;
+}
+
+.fnd-pin-label {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fnd-pin:hover,
@@ -1378,6 +1392,7 @@
 }
 
 .fnd-count {
+  flex: none;
   margin-left: auto;
   padding: 1px 6px;
   border-radius: var(--r-pill);
