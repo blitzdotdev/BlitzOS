@@ -410,4 +410,34 @@ describe("control-plane folder sync", () => {
     expect(reports.join(" ")).toContain("folder_sync_file_failed");
     expect(reports.join(" ")).toContain("a-poison.txt");
   });
+
+  it("buffers tunnel-compressed guest responses whose declared length lies", async () => {
+    const providers = new WebDavProviders();
+    const { folderId } = await attachedFolder(providers);
+    providers.files.set("index.html", { body: "<html>" + "x".repeat(120) + "</html>", mtime: 5_000 });
+    // The tunnel gzips text: the runtime decompresses the body but keeps the
+    // compressed content-length, so the fake declares a short length plus the
+    // encoding header.
+    providers.listedSizes.set("index.html", 40);
+    const healthy = providers.proxyWebApp.bind(providers);
+    providers.proxyWebApp = async (...args: Parameters<WebDavProviders["proxyWebApp"]>) => {
+      const response = await healthy(...args);
+      if (args[3].method === "GET" && response?.status === 200) {
+        const bytes = await response.arrayBuffer();
+        return new Response(bytes, {
+          headers: {
+            "Content-Type": "text/html",
+            "Content-Encoding": "gzip",
+            "Content-Length": "40",
+          },
+        });
+      }
+      return response;
+    };
+
+    expect(await runFileSyncSweep(testRuntime(providers))).toMatchObject({ attachments: 1 });
+    const stored = await env.BOX_IMAGES.get(`org/personal/${folderId}/index.html`);
+    expect(stored).not.toBeNull();
+    expect(await stored?.text()).toContain("</html>");
+  });
 });
