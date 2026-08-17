@@ -25,7 +25,7 @@ import {
   templateWorkspaceName,
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
-import { runWorkspaceFileSync, scheduleSync } from "./files/sync.js";
+import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -742,8 +742,9 @@ export function addWorkspaceRoutes(
       throw new HttpError(409, "phone_home capability already used");
     }
     // The guest just came up: materialize its attached Drive folders now
-    // instead of waiting for the next scheduled sweep.
-    scheduleSync(runtime, (syncRuntime) => runWorkspaceFileSync(syncRuntime, id));
+    // instead of waiting for the next scheduled sweep, retrying briefly while
+    // the tunnel finishes connecting.
+    scheduleSync(runtime, (syncRuntime) => runReadyWorkspaceFileSync(syncRuntime, id));
     const webAppToken = runtime.providers.webAppAuth === undefined
       ? undefined
       : await runtime.providers.webAppAuth.tokenFor(id);

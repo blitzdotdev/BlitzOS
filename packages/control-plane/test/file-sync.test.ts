@@ -4,6 +4,7 @@ import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
 import {
   parseDavListing,
   runFileSyncSweep,
+  runReadyWorkspaceFileSync,
   runWorkspaceFileSync,
   scheduledSyncsSettled,
 } from "../core/files/sync.js";
@@ -338,5 +339,30 @@ describe("control-plane folder sync", () => {
       "/workspace/shared/",
       "/workspace/shared/Shared/",
     ]);
+  });
+
+  it("retries the ready-time pass while the tunnel is still connecting", async () => {
+    const providers = new WebDavProviders();
+    const { folderId, workspaceId } = await attachedFolder(providers);
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/note.txt`, "remote", {
+      customMetadata: { mtime: "1000", "edited-by": "Operator" },
+    });
+    let failuresLeft = 2;
+    const healthy = providers.proxyWebApp.bind(providers);
+    providers.proxyWebApp = async (...args: Parameters<WebDavProviders["proxyWebApp"]>) => {
+      if (failuresLeft > 0) {
+        failuresLeft -= 1;
+        throw new Error("tunnel is not connected yet");
+      }
+      return healthy(...args);
+    };
+    const result = await runReadyWorkspaceFileSync(
+      testRuntime(providers),
+      workspaceId,
+      [1, 1],
+    );
+    expect(failuresLeft).toBe(0);
+    expect(result.attachments).toBe(1);
+    expect(providers.files.get("note.txt")?.body).toBe("remote");
   });
 });
