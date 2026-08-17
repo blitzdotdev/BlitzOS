@@ -100,7 +100,7 @@ export class ClaudeAdapter implements AgentAdapter {
       canUseTool,
       cwd: input.cwd,
       includePartialMessages: true,
-      pathToClaudeCodeExecutable: "/usr/local/bin/claude",
+      pathToClaudeCodeExecutable: "/opt/blitz/npm/bin/claude",
       permissionMode: claudePermissionMode(input.config.permission),
     };
     if (input.config.model !== "default") options.model = input.config.model;
