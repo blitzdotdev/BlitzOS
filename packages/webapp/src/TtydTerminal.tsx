@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type ITheme } from '@xterm/xterm';
 import { WebAppLoadingPane } from './LoadingSkeleton';
 import { hasTerminalChoiceMenu } from './terminal-choices';
 import { isTouchInputDevice } from './terminal-touch';
@@ -12,6 +12,35 @@ import type { TerminalAgent } from './protocol';
 const encoder = new TextEncoder();
 
 export const TERMINAL_BACKGROUND_PROPERTY = '--terminal-background';
+
+/** The full xterm palette derives from the app tokens, so the terminal
+ * follows theme switches instead of keeping the dark ramp on paper. */
+function terminalThemeFromStyles(styles: CSSStyleDeclaration): ITheme {
+  const token = (name: string) => styles.getPropertyValue(name).trim();
+  return {
+    background: token(TERMINAL_BACKGROUND_PROPERTY),
+    foreground: token('--ink'),
+    cursor: token('--ink'),
+    cursorAccent: token('--paper'),
+    selectionBackground: token('--terminal-selection'),
+    black: token('--ansi-black'),
+    red: token('--ansi-red'),
+    green: token('--ansi-green'),
+    yellow: token('--ansi-yellow'),
+    blue: token('--ansi-blue'),
+    magenta: token('--ansi-magenta'),
+    cyan: token('--ansi-cyan'),
+    white: token('--ansi-white'),
+    brightBlack: token('--ansi-bright-black'),
+    brightRed: token('--ansi-bright-red'),
+    brightGreen: token('--ansi-bright-green'),
+    brightYellow: token('--ansi-bright-yellow'),
+    brightBlue: token('--ansi-bright-blue'),
+    brightMagenta: token('--ansi-bright-magenta'),
+    brightCyan: token('--ansi-bright-cyan'),
+    brightWhite: token('--ansi-bright-white'),
+  };
+}
 
 // Statusline paste-code and Enter actions submit input through this event.
 export const TERMINAL_SUBMIT_EVENT = 'blitz:terminal-submit';
@@ -214,12 +243,22 @@ export function TtydTerminal({
       // selection everywhere else, but macOS only gets an escape hatch when
       // Option-drag is explicitly allowed to force selection.
       macOptionClickForcesSelection: true,
-      theme: {
-        background: styles.getPropertyValue(TERMINAL_BACKGROUND_PROPERTY).trim(),
-        cursor: styles.getPropertyValue('--ink').trim(),
-        selectionBackground: styles.getPropertyValue('--terminal-selection').trim(),
-      },
+      theme: terminalThemeFromStyles(styles),
     });
+
+    // Theme switches (settings toggle or the system scheme) restyle the
+    // terminal live.
+    const applyTheme = () => {
+      terminal.options.theme = terminalThemeFromStyles(getComputedStyle(host));
+    };
+    const themeObserver = new MutationObserver(applyTheme);
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+    // jsdom has no matchMedia; live scheme tracking is browser-only.
+    const schemeQuery = window.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
+    schemeQuery?.addEventListener('change', applyTheme);
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
@@ -352,6 +391,8 @@ export function TtydTerminal({
       stopped = true;
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+      themeObserver.disconnect();
+      schemeQuery?.removeEventListener('change', applyTheme);
       observer.disconnect();
       input.dispose();
       socket?.close();
