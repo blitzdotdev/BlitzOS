@@ -1343,3 +1343,145 @@
   color: var(--faint);
   font-size: 11px;
 }
+
+/* ================= blitz additions: members + invites ============ */
+
+.settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: var(--r-control);
+  background: var(--sunken);
+}
+
+.settings-field {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 220px;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.settings-field--compact {
+  flex: 0 1 140px;
+}
+
+.settings-field input,
+.settings-field select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12.5px/1 var(--font-ui);
+  outline: 0;
+}
+
+.settings-field input:focus,
+.settings-field select:focus {
+  border-color: var(--accent);
+}
+
+.settings-form .webapp-action {
+  height: 32px;
+}
+
+.settings-onetime {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in oklab, var(--accent) 40%, var(--rule));
+  border-radius: var(--r-control);
+  background: color-mix(in oklab, var(--accent) 8%, var(--paper));
+  font-size: 12px;
+}
+
+.settings-onetime-row {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-onetime-row input {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12px/1 var(--font-ui);
+}
+
+.settings-people {
+  display: grid;
+  margin-top: 18px;
+}
+
+.settings-person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 4px;
+}
+
+.settings-person + .settings-person {
+  border-top: 1px solid var(--rule);
+}
+
+.settings-person--disabled .settings-person-copy {
+  opacity: 0.55;
+}
+
+.settings-person-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.settings-person-copy strong {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-person-copy span {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-person-role {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-person-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-person-actions select {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12px/1 var(--font-ui);
+}

@@ -161,6 +161,14 @@ export function addInviteRoutes(
     const code = context.req.param("code");
     if (!/^[A-Za-z0-9_-]{43}$/u.test(code)) throw new HttpError(404, "invite not found");
     const runtime = runtimeFactory(context);
+    // A browser following the invite link gets the app shell; the invite
+    // page then re-fetches this route for the JSON view.
+    if (
+      runtime.assets !== undefined
+      && (context.req.header("accept") ?? "").includes("text/html")
+    ) {
+      return runtime.assets.fetch(context.req.raw);
+    }
     const now = Date.now();
     await expireInvites(runtime.db, now);
     const invite = await inviteByHash(runtime.db, await inviteCodeHash(code));

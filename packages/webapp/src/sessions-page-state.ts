@@ -7,7 +7,8 @@ export type AppRoute =
   | { workspaceId: null; page: 'drive'; scope: DriveScope }
   | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
   | { workspaceId: null; page: 'template-new' }
-  | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
+  | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection }
+  | { workspaceId: null; page: 'invite'; inviteCode: string };
 
 const HOME: AppRoute = { workspaceId: null, page: 'drive', scope: 'mine' };
 
@@ -26,6 +27,11 @@ export function parseAppRoute(pathname: string): AppRoute {
   }
   if (/^\/templates\/new\/?$/u.test(pathname)) {
     return { workspaceId: null, page: 'template-new' };
+  }
+  const invite = pathname.match(/^\/invite\/([A-Za-z0-9_-]{43})\/?$/u);
+  if (invite) {
+    // SAFETY: The regular expression admits only the 43-character invite code alphabet.
+    return { workspaceId: null, page: 'invite', inviteCode: invite[1] as string };
   }
   const folder = pathname.match(/^\/folder\/([^/]+)((?:\/[^/]+)*)\/?$/u);
   if (folder) {

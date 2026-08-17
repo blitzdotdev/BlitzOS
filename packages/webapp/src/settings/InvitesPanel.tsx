@@ -21,7 +21,7 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Invites">
       <header className="settings-panel-header"><div><p>Organization</p><h1>Invite links</h1><span>Links expire after {INVITE_TTL_DAYS} days.</span></div></header>
-      <form className="settings-credential-form" onSubmit={(event) => {
+      <form className="settings-form" onSubmit={(event) => {
         event.preventDefault();
         const input = { email: email.trim() || undefined, role };
         void client.createInvite(input).then((created) => {
@@ -30,14 +30,40 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
           return load();
         }).catch((caught: Error) => setError(caught.message));
       }}>
-        <label>Email (optional)<input type="email" value={email} onChange={(event) => setEmail(event.currentTarget.value)} /></label>
-        <label>Role<select value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select></label>
-        <button className="webapp-action" type="submit">Create invite</button>
+        <label className="settings-field">
+          <span>Email (optional)</span>
+          <input type="email" placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
+        </label>
+        <label className="settings-field settings-field--compact">
+          <span>Role</span>
+          <select value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
+        </label>
+        <button className="webapp-action webapp-action--primary" type="submit">Create invite</button>
       </form>
-      {oneTimeLink && <div className="webapp-form-message"><strong>Copy this link now—it is shown once.</strong><input readOnly value={oneTimeLink} aria-label="Invite link" /><button type="button" onClick={() => void navigator.clipboard.writeText(oneTimeLink)}>Copy</button></div>}
+      {oneTimeLink && (
+        <div className="settings-onetime" role="status">
+          <strong>Copy this link now — it is shown once.</strong>
+          <div className="settings-onetime-row">
+            <input readOnly value={oneTimeLink} aria-label="Invite link" onFocus={(event) => event.currentTarget.select()} />
+            <button className="webapp-action" type="button" onClick={() => void navigator.clipboard.writeText(oneTimeLink)}>Copy</button>
+          </div>
+        </div>
+      )}
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
-      <div className="settings-definition-list">
-        {invites.map((invite) => <div key={invite.id}><dt>{invite.email ?? 'Anyone with the link'}</dt><dd>{invite.role} · {invite.state}{invite.state === 'ready' && <button type="button" onClick={() => void client.revokeInvite(invite.id).then(load).catch((caught: Error) => setError(caught.message))}>Revoke</button>}</dd></div>)}
+      <div className="settings-people">
+        {invites.map((invite) => (
+          <div className="settings-person" key={invite.id}>
+            <span className="settings-person-copy">
+              <strong>{invite.email ?? 'Anyone with the link'}</strong>
+              <span>{invite.role} · {invite.state}</span>
+            </span>
+            {invite.state === 'ready' && (
+              <span className="settings-person-actions">
+                <button className="webapp-action" type="button" onClick={() => void client.revokeInvite(invite.id).then(load).catch((caught: Error) => setError(caught.message))}>Revoke</button>
+              </span>
+            )}
+          </div>
+        ))}
       </div>
     </section>
   );
