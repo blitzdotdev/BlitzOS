@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Previews — live thumbnails (no ports up front)</title>
+<style>
+  /* Tokens from packages/webapp/src/tokens.css. */
+  :root {
+    --paper: #16181d;
+    --ink: #dfe2e8;
+    --accent: #7e95d7;
+    --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
+    --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+    --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+    --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
+    --sunken: color-mix(in oklab, var(--ink) 5%, var(--paper));
+    --wash: color-mix(in oklab, var(--ink) 5%, var(--paper));
+    --wash-deep: color-mix(in oklab, var(--ink) 9%, var(--paper));
+    --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
+    --r-card: 12px;
+    --r-control: 10px;
+    --r-pill: 999px;
+    --stage: color-mix(in oklab, #000 26%, var(--paper));
+    --lift: 0 10px 30px color-mix(in oklab, #000 34%, transparent);
+    --ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  :root[data-theme='light'] {
+    --paper: #f7f7f4;
+    --ink: #1c1f26;
+    --accent: #4c62aa;
+    --stage: color-mix(in oklab, var(--ink) 7%, var(--paper));
+    --lift: 0 10px 30px color-mix(in oklab, #000 14%, transparent);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 30px 16px 60px;
+    background: var(--stage);
+    color: var(--ink);
+    font: 12.5px/1.45 var(--ui);
+    -webkit-font-smoothing: antialiased;
+  }
+  .theme-toggle {
+    position: fixed; top: 10px; right: 12px; z-index: 5;
+    height: 26px; padding: 0 12px;
+    border: 1px solid var(--rule); border-radius: var(--r-pill);
+    background: var(--paper); color: var(--muted);
+    font: 600 11px var(--ui); cursor: pointer;
+  }
+  .stage { display: flex; flex-wrap: wrap; gap: 26px; justify-content: center; }
+  .col { display: grid; gap: 12px; justify-items: center; align-content: start; }
+  .col h1 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .note { max-width: 380px; margin: 0; color: var(--faint); font-size: 11px; line-height: 1.65; text-align: center; }
+
+  .drawer {
+    display: flex; width: 380px; height: 620px; flex-direction: column;
+    overflow: hidden; border: 1px solid var(--rule); border-radius: var(--r-card);
+    background: var(--paper); box-shadow: var(--lift);
+  }
+  .tabs { display: flex; min-height: 37px; align-items: stretch; border-bottom: 1px solid var(--rule); font-size: 12.5px; }
+  .tabs > span {
+    display: flex; align-items: center; gap: 8px; padding: 0 10px;
+    border-right: 1px solid var(--rule); color: var(--faint);
+  }
+  .tabs > span.on { color: var(--ink); font-weight: 650; }
+  .scroll { min-height: 0; flex: 1; overflow-y: auto; padding-bottom: 14px; }
+  .sect { margin: 16px 16px 8px; color: var(--soft-ink); font: 600 12px/1.3 var(--ui); }
+  .sect small { margin-left: 6px; color: var(--faint); font-weight: 400; }
+
+  /* ---- Preview cards: the app itself is the row ---- */
+  .cards { display: grid; gap: 10px; margin: 0 14px; }
+  .card {
+    overflow: hidden;
+    border: 0;
+    border-radius: var(--r-card);
+    background: var(--wash);
+    text-align: left;
+    padding: 0;
+    cursor: pointer;
+  }
+  .card:hover { background: var(--wash-deep); }
+  .shot {
+    position: relative;
+    aspect-ratio: 16 / 9.4;
+    overflow: hidden;
+    background: #fff;
+    border-bottom: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
+  }
+  /* In the real build this is the app's own page in a scaled, inert iframe —
+     a live thumbnail, not a screenshot. */
+  .shot .app { position: absolute; top: 0; left: 0; width: 200%; height: 200%; transform: scale(.5); transform-origin: top left; }
+  .caption {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+  }
+  .caption b { color: var(--ink); font-size: 12.5px; font-weight: 600; }
+  .caption .meta { overflow: hidden; min-width: 0; color: var(--faint); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .caption .open {
+    margin-left: auto; flex: none;
+    display: grid; place-items: center; width: 28px; height: 26px;
+    border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .card:hover .open { color: var(--ink); background: var(--hover); }
+
+  /* capturing / just-started state */
+  .shot--loading { display: grid; place-items: center; background: var(--wash-deep); border-bottom: 1px solid color-mix(in oklab, var(--ink) 6%, transparent); }
+  .shot--loading span { color: var(--faint); font-size: 11px; }
+  .shimmer {
+    position: absolute; inset: 0;
+    background: linear-gradient(100deg, transparent 30%, color-mix(in oklab, var(--ink) 5%, transparent) 50%, transparent 70%);
+    animation: sweep 1.4s infinite;
+  }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+
+  /* ---- fake apps standing in for live frames ---- */
+  .app { font-family: var(--ui); color: #1b1e24; background: #fff; }
+  .vite header { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 22px; border-bottom: 1px solid #e8e8ee; font-weight: 700; font-size: 16px; }
+  .vite header i { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, #646cff, #bd34fe); }
+  .vite header nav { margin-left: auto; display: flex; gap: 18px; color: #667; font-size: 13px; font-weight: 500; }
+  .vite main { padding: 26px 22px; display: grid; gap: 14px; }
+  .vite h2 { margin: 0; font-size: 24px; }
+  .vite p { margin: 0; color: #667; font-size: 14px; width: 70%; }
+  .vite .cta { width: 132px; height: 38px; border-radius: 9px; background: #646cff; }
+  .vite .cards3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 8px; }
+  .vite .c { height: 84px; border: 1px solid #e8e8ee; border-radius: 10px; background: #fafbfe; }
+
+  .board { background: #f6f7f9; }
+  .board header { display: flex; align-items: center; height: 52px; padding: 0 20px; background: #1d2430; color: #fff; font-weight: 600; font-size: 15px; gap: 10px;}
+  .board header i { width: 18px; height: 18px; border-radius: 4px; background: #3fb68b; }
+  .board main { padding: 18px 20px; display: grid; gap: 12px; }
+  .board .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .board .kpi { background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; padding: 12px 14px; }
+  .board .kpi b { font-size: 20px; display:block; }
+  .board .kpi span { color: #778; font-size: 12px; }
+  .board table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e4e7ec; border-radius: 10px; overflow: hidden; font-size: 13px; }
+  .board th, .board td { padding: 9px 12px; text-align: left; border-bottom: 1px solid #eef0f3; }
+  .board th { color: #778; font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+<button class="theme-toggle" onclick="const r=document.documentElement;r.dataset.theme=r.dataset.theme==='light'?'dark':'light';this.textContent=r.dataset.theme==='light'?'Dark':'Light'">Light</button>
+<div class="stage">
+
+  <div class="col">
+    <h1>Previews — you see the app, not a number</h1>
+    <div class="drawer">
+      <div class="tabs"><span>Files</span><span class="on">Previews</span><span>Integrations</span></div>
+      <div class="scroll">
+        <div class="sect">Running apps <small>3</small></div>
+        <div class="cards">
+
+          <button class="card">
+            <div class="shot">
+              <div class="app vite">
+                <header><i></i>my-app<nav><span>Docs</span><span>About</span><span>Login</span></nav></header>
+                <main>
+                  <h2>Ship your next idea faster</h2>
+                  <p>A starter that gets out of the way. Edit src/App.tsx and save to reload.</p>
+                  <div class="cta"></div>
+                  <div class="cards3"><div class="c"></div><div class="c"></div><div class="c"></div></div>
+                </main>
+              </div>
+            </div>
+            <div class="caption">
+              <b>my-app</b>
+              <span class="meta">vite · started 4m ago · :5173</span>
+              <span class="open" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5"/><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4"/></svg>
+              </span>
+            </div>
+          </button>
+
+          <button class="card">
+            <div class="shot">
+              <div class="app board">
+                <header><i></i>Decision Board</header>
+                <main>
+                  <div class="kpis">
+                    <div class="kpi"><b>9/9</b><span>accepted</span></div>
+                    <div class="kpi"><b>11</b><span>ledger events</span></div>
+                    <div class="kpi"><b>2</b><span>pending</span></div>
+                  </div>
+                  <table>
+                    <tr><th>Sheet</th><th>Owner</th><th>Status</th></tr>
+                    <tr><td>Harbor Mills</td><td>MJ</td><td>Accepted</td></tr>
+                    <tr><td>Cornerstone</td><td>MJ</td><td>Review</td></tr>
+                  </table>
+                </main>
+              </div>
+            </div>
+            <div class="caption">
+              <b>Decision Board</b>
+              <span class="meta">python · started 12m ago · :8080</span>
+              <span class="open" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5"/><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4"/></svg>
+              </span>
+            </div>
+          </button>
+
+          <button class="card">
+            <div class="shot shot--loading">
+              <div class="shimmer"></div>
+              <span>Starting preview…</span>
+            </div>
+            <div class="caption">
+              <b>next dev</b>
+              <span class="meta">node · started just now · :3000</span>
+            </div>
+          </button>
+
+        </div>
+      </div>
+    </div>
+    <p class="note">Each running app is a card: a <strong>live mini view of the page itself</strong>
+    on top (a scaled, non-interactive frame that stays current — no stale screenshots), a name,
+    and how long it has run. The port appears only as small trailing
+    metadata. Click anywhere on the card to open the full preview.</p>
+  </div>
+
+</div>
+</body>
+</html>
