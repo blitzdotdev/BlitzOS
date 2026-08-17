@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CodexIcon, FileIcon, ShellIcon } from './WebAppIcons';
+import { CodexIcon, FileIcon, GenericProviderIcon, ShellIcon } from './WebAppIcons';
 import { FileTypeIcon } from './FileTypeIcon';
 import type { LivePort } from './preview';
 import type { TerminalAgent } from './protocol';
@@ -65,7 +65,7 @@ export function SessionTypeIcon({
   if (type === 'opencode') return <span className={`${className} mi-opencode`} aria-hidden="true" />;
   if (type === 'pi') return <span className={`${className} mi-pi`} aria-hidden="true" />;
   if (type === 'kimi') return <span className={`${className} mi-kimi`} aria-hidden="true" />;
-  if (type === 'prime') return <span className={`${className} mi-prime`} aria-hidden="true" />;
+  if (type === 'prime') return <GenericProviderIcon className={className} />;
   if (type === 'terminal') return <ShellIcon className={className} />;
   if (type === 'preview') return <span className={`${className} mi-preview`} aria-hidden="true" />;
   if (type === 'file') {
@@ -73,7 +73,8 @@ export function SessionTypeIcon({
       ? <FileTypeIcon className={className} filePath={filePath} />
       : <FileIcon className={className} />;
   }
-  return <CodexIcon className={className} />;
+  if (type === 'codex') return <CodexIcon className={className} />;
+  return <GenericProviderIcon className={className} />;
 }
 
 export function WebAppHeader({
