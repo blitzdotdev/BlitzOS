@@ -41,7 +41,6 @@ export function ChatItemView({
   if (item.kind === "user") {
     return (
       <div className="chat-msg chat-msg--user">
-        <span className="chat-user-prompt" aria-hidden="true">❯</span>
         <p>{item.text}</p>
       </div>
     );
@@ -119,9 +118,11 @@ export function TurnWork({
 
   if (workItems.length === 0 && activities.length === 0) {
     return (
-      <div className={`chat-turn-work chat-turn-work--static chat-turn-work--${turn.status}`}>
-        <span className="chat-turn-work-rule" aria-hidden="true" />
-        <span className="chat-turn-work-label">{stateLabel}</span>
+      <div
+        className={`chat-turn-work chat-turn-work--static chat-turn-work--${turn.status}`}
+        role="status"
+        aria-label={stateLabel}
+      >
         <span className="chat-turn-work-rule" aria-hidden="true" />
       </div>
     );
@@ -131,9 +132,7 @@ export function TurnWork({
       className={`chat-turn-work chat-turn-work--${turn.status}`}
       open={turn.status !== "complete"}
     >
-      <summary>
-        <span className="chat-turn-work-rule" aria-hidden="true" />
-        <span className="chat-turn-work-label">{stateLabel}</span>
+      <summary aria-label={stateLabel}>
         <span className="chat-turn-work-rule" aria-hidden="true" />
       </summary>
       {contents}
