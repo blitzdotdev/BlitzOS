@@ -84,7 +84,7 @@ describe("server-side webApp state", () => {
     expect(invalid.status).toBe(400);
   });
 
-  it("normalizes legacy drawer segments to the merged credentials tab", async () => {
+  it("normalizes legacy drawer segments to the merged integrations tab", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
@@ -99,13 +99,13 @@ describe("server-side webApp state", () => {
     });
     expect(put.status).toBe(200);
     await expect(put.json()).resolves.toMatchObject({
-      doc: { drawer: { segment: "credentials" } },
+      doc: { drawer: { segment: "integrations" } },
     });
     const got = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
       headers: { Cookie: cookie },
     });
     await expect(got.json()).resolves.toMatchObject({
-      doc: { drawer: { segment: "credentials" } },
+      doc: { drawer: { segment: "integrations" } },
     });
   });
 

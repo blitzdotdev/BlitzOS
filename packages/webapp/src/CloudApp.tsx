@@ -1713,6 +1713,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               : current);
           }}
           onResolveRequest={resolveWorkspaceRequest}
+          livePorts={orderedLivePorts}
+          onOpenPreview={(port) => { openPreviewPort(port); }}
           files={(
             <>
             <FilesSidebar

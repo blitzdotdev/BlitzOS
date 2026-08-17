@@ -177,19 +177,18 @@ export function DriveRail({
           </div>
         </div>
 
-        {driveScope === 'shared'
-          ? <div className="drive-rail-new-placeholder" aria-hidden="true" />
-          : (
-            <button
-              className="drive-rail-new"
-              type="button"
-              aria-haspopup="menu"
-              aria-expanded={newOpen}
-              onClick={() => setNewOpen((open) => !open)}
-            >
-              <PlusGlyph />New
-            </button>
-          )}
+        <div className="drive-rail-section">
+          Drive
+          <button
+            className="webapp-workspace-add"
+            type="button"
+            title="New in Drive"
+            aria-label="New in Drive"
+            aria-haspopup="menu"
+            aria-expanded={newOpen}
+            onClick={() => setNewOpen((open) => !open)}
+          ><PlusGlyph /></button>
+        </div>
         <nav className="drive-rail-nav" aria-label="Locations">
           <button
             className={`drive-rail-row${driveScope === 'mine' ? ' drive-rail-row--active' : ''}`}
@@ -407,7 +406,7 @@ export function DriveRail({
             style={{ position: 'fixed', inset: 0, zIndex: 190, border: 0, background: 'transparent', cursor: 'default' }}
             onClick={() => setNewOpen(false)}
           />
-          <div className="drive-menu" role="menu" style={{ left: 16, top: 122, zIndex: 410 }}>
+          <div className="drive-menu" role="menu" style={{ left: 16, top: 88, zIndex: 410 }}>
             <button
               className="drive-menu-item"
               type="button"

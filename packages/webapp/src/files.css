@@ -673,6 +673,19 @@
 
 /* ================= blitz additions: identity + drive surfaces ============ */
 
+/* Inside the workspace drawer the sidebar is a nested pane, not the cockpit
+ * grid column — undo the header-overlap pull and let the drawer size it. */
+.workspace-drawer .files-sidebar {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin-top: 0;
+  border-left: 0;
+}
+
+.workspace-drawer .files-sidebar-resizer { display: none; }
+
+
 .workspace-drawer {
   position: relative;
   z-index: 5;
@@ -1026,4 +1039,47 @@
   .webapp-statusline__files {
     position: relative;
   }
+}
+
+.workspace-previews {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workspace-preview-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  background: var(--paper);
+  font: 11.5px/1 var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-preview-row:hover,
+.workspace-preview-row:focus-visible {
+  border-color: var(--muted);
+  color: var(--ink);
+  outline: 0;
+}
+
+.workspace-preview-row .mi-preview {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.workspace-preview-port { font-weight: 700; color: var(--ink); }
+
+.workspace-preview-process {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

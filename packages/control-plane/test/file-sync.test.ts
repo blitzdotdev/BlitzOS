@@ -24,10 +24,14 @@ interface GuestFile {
   mtime: number;
 }
 
-function davResponse(path: string, files: Map<string, GuestFile>): string {
+function davResponse(
+  path: string,
+  files: Map<string, GuestFile>,
+  listedSizes?: Map<string, number>,
+): string {
   const entries = [...files].map(([key, file]) => `
 <D:response><D:href>${path}${key.split("/").map(encodeURIComponent).join("/")}</D:href>
-<D:propstat><D:prop><D:getcontentlength>${new TextEncoder().encode(file.body).byteLength}</D:getcontentlength>
+<D:propstat><D:prop><D:getcontentlength>${listedSizes?.get(key) ?? new TextEncoder().encode(file.body).byteLength}</D:getcontentlength>
 <D:getlastmodified>${new Date(file.mtime).toUTCString()}</D:getlastmodified>
 <D:resourcetype></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`).join("");
   return `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">
@@ -35,7 +39,11 @@ function davResponse(path: string, files: Map<string, GuestFile>): string {
 </D:multistatus>`;
 }
 
-function davTreeResponse(path: string, files: Map<string, GuestFile>): string {
+function davTreeResponse(
+  path: string,
+  files: Map<string, GuestFile>,
+  listedSizes?: Map<string, number>,
+): string {
   const match = /^\/workspace\/shared\/[^/]+\/(.*)$/u.exec(path);
   const encodedDirectory = match?.[1]?.replace(/\/$/u, "") ?? "";
   const directory = encodedDirectory === ""
@@ -53,7 +61,7 @@ function davTreeResponse(path: string, files: Map<string, GuestFile>): string {
   const directoryEntries = [...directories].map((name) => `
 <D:response><D:href>${path}${encodeURIComponent(name)}/</D:href>
 <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop></D:propstat></D:response>`).join("");
-  return davResponse(path, directFiles).replace("\n</D:multistatus>", `${directoryEntries}\n</D:multistatus>`);
+  return davResponse(path, directFiles, listedSizes).replace("\n</D:multistatus>", `${directoryEntries}\n</D:multistatus>`);
 }
 
 class WebDavProviders extends FakeProviders {
@@ -62,6 +70,7 @@ class WebDavProviders extends FakeProviders {
   // A fresh guest has only /workspace; dufs-compliant MKCOL rejects missing
   // intermediates, so the fake enforces the same 409 to pin the chain logic.
   readonly collections = new Set<string>(["/workspace/"]);
+  readonly listedSizes = new Map<string, number>();
   putMtime = 2_000;
 
   override async createVm(input: CreateVmInput) {
@@ -78,7 +87,7 @@ class WebDavProviders extends FakeProviders {
       if (this.files.size === 0 && !this.collections.has(path)) {
         return new Response("not found", { status: 404 });
       }
-      return new Response(davTreeResponse(path, this.files), {
+      return new Response(davTreeResponse(path, this.files, this.listedSizes), {
         status: 207,
         headers: { "Content-Type": "application/xml" },
       });
@@ -379,5 +388,26 @@ describe("control-plane folder sync", () => {
     expect(providers.files.get("good.txt")?.body).toBe("remote");
     expect(providers.files.has("poison.bin")).toBe(false);
     expect(reports).toContain("folder_sync_invalid_metadata");
+  });
+
+  it("isolates a file whose real bytes exceed its listed size instead of starving the pass", async () => {
+    const providers = new WebDavProviders();
+    const { folderId } = await attachedFolder(providers);
+    // A live file grew after PROPFIND: listed 3 bytes, actually far larger.
+    providers.files.set("a-poison.txt", { body: "x".repeat(64), mtime: 5_000 });
+    providers.listedSizes.set("a-poison.txt", 3);
+    providers.files.set("zzz-after.txt", { body: "fine", mtime: 5_000 });
+    const reports: string[] = [];
+    const runtime = {
+      ...testRuntime(providers),
+      reportError: (event: string, error: Error) => reports.push(`${event}:${error.message}`),
+    };
+
+    expect(await runFileSyncSweep(runtime)).toMatchObject({ attachments: 1 });
+    // The healthy file still made it up to R2 despite the earlier failure.
+    expect(await env.BOX_IMAGES.head(`org/personal/${folderId}/zzz-after.txt`)).not.toBeNull();
+    expect(await env.BOX_IMAGES.head(`org/personal/${folderId}/a-poison.txt`)).toBeNull();
+    expect(reports.join(" ")).toContain("folder_sync_file_failed");
+    expect(reports.join(" ")).toContain("a-poison.txt");
   });
 });

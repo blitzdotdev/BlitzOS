@@ -52,35 +52,10 @@
 
 
 
-.drive-rail-new {
-  display: flex;
-  height: 42px;
-  flex: none;
-  align-items: center;
-  gap: 10px;
-  margin: 2px 0 12px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: var(--r-pill);
-  color: var(--paper);
-  background: var(--ink);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 120ms ease;
-}
 
-.drive-rail-new:hover { opacity: 0.86; }
-.drive-rail-new svg { width: 16px; height: 16px; }
 
 /* Shared with me has no New button; the placeholder holds its space so the
    nav rows do not jump when you switch between the two locations. */
-.drive-rail-new-placeholder {
-  height: 42px;
-  flex: none;
-  margin: 2px 0 12px;
-}
 
 .drive-rail-nav {
   display: grid;

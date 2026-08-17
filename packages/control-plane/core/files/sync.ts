@@ -403,11 +403,16 @@ async function copyUp(
     throw new Error(`WebDAV GET failed with status ${response.status}`);
   }
   // Tunneled responses can arrive chunked with no content-length, and R2 put
-  // requires a known length — the DAV-listed size pins the stream. A file
-  // that changed size mid-flight errors the pass and retries next tick.
+  // requires a known length. The GET's own content-length beats the DAV
+  // listing, which goes stale the moment a live file grows; a mismatch still
+  // errors this one file and the next tick retries with fresh listings.
+  const declared = response.headers.get("content-length");
+  const pinnedSize = declared !== null && /^\d+$/u.test(declared)
+    ? Number(declared)
+    : guest.size;
   await runtime.fileObjects.put(
     objectKey,
-    response.body.pipeThrough(new FixedLengthStream(guest.size)),
+    response.body.pipeThrough(new FixedLengthStream(pinnedSize)),
     {
       httpMetadata: response.headers,
       customMetadata: {
@@ -447,42 +452,65 @@ async function syncAttachment(
     listGuest(runtime, attachment),
   ]);
   let uploaded = false;
+  let failedFiles = 0;
+  let firstFileError = "";
+  // One failing transfer must not starve every file sorted after it — the
+  // pass continues and the next tick retries the failures with fresh
+  // listings.
+  const transfer = async (key: string, run: () => Promise<void>) => {
+    try {
+      await run();
+      return true;
+    } catch (caught) {
+      failedFiles += 1;
+      if (firstFileError === "") {
+        firstFileError = `${key}: ${caught instanceof Error ? caught.message : String(caught)}`;
+      }
+      return false;
+    }
+  };
   const keys = new Set([...remoteFiles.keys(), ...guestFiles.keys()]);
   for (const key of [...keys].sort()) {
     const remote = remoteFiles.get(key);
     const guest = guestFiles.get(key);
     if (remote === undefined && guest !== undefined) {
       if (!canUpload(folder.role) || !reserve(budget, guest.size)) continue;
-      await copyUp(
+      if (await transfer(key, () => copyUp(
         runtime,
         attachment,
         root,
         guest,
         `${folderObjectPrefix(folder.org_id, folder.id)}${guest.key}`,
-      );
-      uploaded = true;
+      ))) uploaded = true;
       continue;
     }
     if (remote !== undefined && guest === undefined) {
       if (!reserve(budget, remote.size)) continue;
-      await copyDown(runtime, attachment, root, remote);
+      await transfer(key, () => copyDown(runtime, attachment, root, remote));
       continue;
     }
     if (remote === undefined || guest === undefined) continue;
     if (remote.size === guest.size && remote.mtime === guest.mtime) continue;
     if (remote.mtime >= guest.mtime) {
       if (!reserve(budget, remote.size)) continue;
-      await copyDown(runtime, attachment, root, remote);
+      await transfer(key, () => copyDown(runtime, attachment, root, remote));
     } else if (canUpload(folder.role) && reserve(budget, guest.size)) {
-      await copyUp(
+      if (await transfer(key, () => copyUp(
         runtime,
         attachment,
         root,
         guest,
         `${folderObjectPrefix(folder.org_id, folder.id)}${guest.key}`,
-      );
-      uploaded = true;
+      ))) uploaded = true;
     }
+  }
+  if (failedFiles > 0) {
+    runtime.reportError(
+      "folder_sync_file_failed",
+      new Error(
+        `${String(failedFiles)} files failed for ${attachment.workspace_id}/${attachment.folder_id} — first: ${firstFileError}`,
+      ),
+    );
   }
   if (uploaded) {
     await rows(runtime.db, {
@@ -548,8 +576,11 @@ async function runAttachments(
     try {
       if (await syncAttachment(runtime, attachment, budget)) synced += 1;
     } catch (caught) {
-      const error = caught instanceof Error ? caught : new Error("folder sync failed");
-      runtime.reportError("folder_sync_failed", error);
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      runtime.reportError(
+        "folder_sync_failed",
+        new Error(`${attachment.workspace_id}/${attachment.folder_id}: ${detail}`),
+      );
     }
   }
   return { attachments: synced, files: budget.files, bytes: budget.bytes };

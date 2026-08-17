@@ -271,7 +271,6 @@ export function WebAppHeader({
                 })}
               >
                 <span aria-hidden="true">+</span>
-                {!mobile && <span>New session</span>}
               </button>
               <div className="webapp-agent-menu" role="menu" hidden={!menuOpen}>
                 {SPAWN_SESSION_TYPES.map((agent) => (

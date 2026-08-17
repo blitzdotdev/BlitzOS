@@ -122,6 +122,8 @@ describe('v2 credential surfaces', () => {
           width={264}
           segment={segment}
           pendingRequests={[]}
+          livePorts={[]}
+          onOpenPreview={() => undefined}
           canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
@@ -133,11 +135,11 @@ describe('v2 credential surfaces', () => {
 
     let view = await render(<Harness />);
     const credentialsTab = [...view.container.querySelectorAll('[role="tab"]')]
-      .find((tab) => tab.textContent?.includes('Credentials'))!;
+      .find((tab) => tab.textContent?.includes('Integrations'))!;
     await act(async () => click(credentialsTab));
     expect(credentialsTab.getAttribute('aria-selected')).toBe('true');
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toContain('Credentials');
+      .toContain('Integrations');
     await view.unmount();
   });
 
@@ -198,8 +200,10 @@ describe('v2 credential surfaces', () => {
           mobile={false}
           open
           width={264}
-          segment="credentials"
+          segment="integrations"
           pendingRequests={requests}
+          livePorts={[]}
+          onOpenPreview={() => undefined}
           canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
