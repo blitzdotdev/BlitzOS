@@ -1166,6 +1166,106 @@ func TestWebSocketControlPlaneOriginAppearsAfterGatewayStart(t *testing.T) {
 	}
 }
 
+func TestServePreviewsFixtures(t *testing.T) {
+	fixturesDirectory := filepath.Join("..", "..", "schema", "fixtures", "previews")
+	entries, err := os.ReadDir(fixturesDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		fixtureCount++
+		t.Run(entry.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(fixturesDirectory, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fixture struct {
+				Input struct {
+					Previews json.RawMessage `json:"previews"`
+				} `json:"input"`
+				Expected json.RawMessage `json:"expected"`
+			}
+			if err := json.Unmarshal(data, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(t.TempDir(), "previews.json")
+			if err := os.WriteFile(statePath, fixture.Input.Previews, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			handler := &gateway{previewsPath: statePath}
+			request := httptest.NewRequest(http.MethodGet, "http://box/previews", nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusOK, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type = %q", got)
+			}
+			if got := response.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+			var gotValue interface{}
+			var expectedValue interface{}
+			if err := json.Unmarshal(response.Body.Bytes(), &gotValue); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(fixture.Expected, &expectedValue); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotValue, expectedValue) {
+				t.Fatalf("response = %s, want %s", response.Body.String(), fixture.Expected)
+			}
+		})
+	}
+	if fixtureCount != 4 {
+		t.Fatalf("preview fixture count = %d, want 4", fixtureCount)
+	}
+}
+
+func TestServePreviewsEmptyAbsentAndMethod(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "previews.json")
+	handler := &gateway{previewsPath: statePath}
+	request := func(method string) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(method, "http://box/previews", nil))
+		return response
+	}
+
+	for _, test := range []struct {
+		name  string
+		write bool
+	}{
+		{name: "absent"},
+		{name: "empty", write: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.write {
+				if err := os.WriteFile(statePath, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response := request(http.MethodGet)
+			if response.Code != http.StatusOK || response.Body.String() != "{\"previews\":[]}\n" {
+				t.Fatalf("status = %d; body = %q", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	response := request(http.MethodPost)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+	if got := response.Header().Get("Allow"); got != "GET, OPTIONS" {
+		t.Fatalf("Allow = %q", got)
+	}
+}
+
 func TestDiscoverPorts(t *testing.T) {
 	procRoot := t.TempDir()
 	mustWrite(t, filepath.Join(procRoot, "net", "tcp"), strings.Join([]string{
@@ -1173,6 +1273,7 @@ func TestDiscoverPorts(t *testing.T) {
 		"   0: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 111 1 0000000000000000 100 0 0 10 0",
 		"   1: 0100007F:1D15 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 222 1 0000000000000000 100 0 0 10 0",
 		"   2: 0100007F:0FA0 00000000:0000 01 00000000:00000000 00:00000000 00000000  1000        0 333 1 0000000000000000 100 0 0 10 0",
+		"   3: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 555 1 0000000000000000 100 0 0 10 0",
 	}, "\n"))
 	mustWrite(t, filepath.Join(procRoot, "net", "tcp6"), strings.Join([]string{
 		"  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
@@ -1192,10 +1293,22 @@ func TestDiscoverPorts(t *testing.T) {
 	if err := os.Symlink("socket:[444]", filepath.Join(procRoot, "42", "fd", "4")); err != nil {
 		t.Fatal(err)
 	}
+	mustWrite(t, filepath.Join(procRoot, "43", "comm"), "cloudflared\n")
+	if err := os.MkdirAll(filepath.Join(procRoot, "43", "fd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("socket:[555]", filepath.Join(procRoot, "43", "fd", "5")); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := discoverPorts(procRoot, map[int]struct{}{7445: {}})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, port := range got {
+		if port.Port == 8080 {
+			t.Fatalf("discoverPorts() included cloudflared port: %#v", got)
+		}
 	}
 	want := []portInfo{{Port: 3000, Process: "node"}, {Port: 5227, Process: "python3"}}
 	if !reflect.DeepEqual(got, want) {

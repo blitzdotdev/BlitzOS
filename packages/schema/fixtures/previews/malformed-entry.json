@@ -1,0 +1,47 @@
+{
+  "input": {
+    "previews": [
+      {
+        "url": "https://valid.blitz.dev",
+        "title": "Valid",
+        "source": "agent",
+        "createdAt": 1786900003000
+      },
+      {
+        "url": "",
+        "title": "Empty URL",
+        "source": "agent",
+        "createdAt": 1786900003001
+      },
+      {
+        "url": 42,
+        "title": "Wrong URL type",
+        "source": "agent",
+        "createdAt": 1786900003002
+      },
+      {
+        "url": "https://bad-title.blitz.dev",
+        "title": 42,
+        "source": "agent",
+        "createdAt": 1786900003003
+      },
+      {
+        "url": "https://bad-date.blitz.dev",
+        "title": "Wrong date type",
+        "source": "agent",
+        "createdAt": "yesterday"
+      },
+      null
+    ]
+  },
+  "expected": {
+    "previews": [
+      {
+        "url": "https://valid.blitz.dev",
+        "title": "Valid",
+        "source": "agent",
+        "createdAt": 1786900003000
+      }
+    ]
+  }
+}

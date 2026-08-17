@@ -727,12 +727,15 @@
   position: absolute;
   right: 12px;
   bottom: 12px;
+  display: flex;
+  align-items: center;
   min-height: 30px;
   padding: 0 9px;
   border: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
   font: 10px/1 var(--font-ui);
+  text-decoration: none;
   cursor: pointer;
 }
 
@@ -749,6 +752,34 @@
   color: var(--faint);
   background: var(--paper);
   font: 12px/1.5 var(--font-ui);
+}
+
+.preview-panel--external {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.preview-panel__external-card {
+  display: flex;
+  width: min(480px, 100%);
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12px/1.5 var(--font-ui);
+}
+
+.preview-panel__external-card span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.preview-panel__external-card a {
+  align-self: flex-start;
+  color: var(--ink);
 }
 
 .terminal-surface {

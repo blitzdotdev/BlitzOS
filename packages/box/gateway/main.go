@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -38,6 +39,7 @@ const (
 	webAppTokenPath        = "/var/lib/blitz/webapp-token"
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
 	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
+	previewsPath           = "/var/lib/blitz/previews.json"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
@@ -56,6 +58,13 @@ type portInfo struct {
 	Process string `json:"process"`
 }
 
+type previewLink struct {
+	Url       string `json:"url"`
+	Title     string `json:"title"`
+	Source    string `json:"source"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
 type gateway struct {
 	dufs                   *httputil.ReverseProxy
 	terminal               *url.URL
@@ -64,6 +73,7 @@ type gateway struct {
 	webAppTokenPath        string
 	workspaceIDPath        string
 	tunnelTokenPath        string
+	previewsPath           string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
@@ -136,6 +146,7 @@ func main() {
 		webAppTokenPath:        webAppTokenPath,
 		workspaceIDPath:        workspaceIDPath,
 		tunnelTokenPath:        tunnelTokenPath,
+		previewsPath:           previewsPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -192,6 +203,11 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	if request.URL.Path == "/ports" {
 		removeWebAppTokenHeader(request.Header)
 		g.servePorts(response, request)
+		return
+	}
+	if request.URL.Path == "/previews" {
+		removeWebAppTokenHeader(request.Header)
+		g.servePreviews(response, request)
 		return
 	}
 	if request.URL.Path == "/terminal/ws" {
@@ -329,6 +345,63 @@ func (g *gateway) servePorts(response http.ResponseWriter, request *http.Request
 		Ports []portInfo `json:"ports"`
 	}{Ports: ports}); err != nil {
 		log.Printf("port response failed: %v", err)
+	}
+}
+
+func parsePreviewLinks(data []byte) []previewLink {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return []previewLink{}
+	}
+	previews := make([]previewLink, 0, len(entries))
+	for _, data := range entries {
+		var fields struct {
+			Url       *string `json:"url"`
+			Title     *string `json:"title"`
+			Source    *string `json:"source"`
+			CreatedAt *int64  `json:"createdAt"`
+		}
+		if err := json.Unmarshal(data, &fields); err != nil ||
+			fields.Url == nil || strings.TrimSpace(*fields.Url) == "" ||
+			fields.Title == nil || fields.Source == nil || fields.CreatedAt == nil ||
+			*fields.CreatedAt < -9007199254740991 || *fields.CreatedAt > 9007199254740991 {
+			continue
+		}
+		previews = append(previews, previewLink{
+			Url:       *fields.Url,
+			Title:     *fields.Title,
+			Source:    *fields.Source,
+			CreatedAt: *fields.CreatedAt,
+		})
+	}
+	return previews
+}
+
+func (g *gateway) servePreviews(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	previews := []previewLink{}
+	data, err := os.ReadFile(g.previewsPath)
+	if err == nil && len(bytes.TrimSpace(data)) > 0 {
+		previews = parsePreviewLinks(data)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("preview state read failed: %v", err)
+	}
+
+	response.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(response).Encode(struct {
+		Previews []previewLink `json:"previews"`
+	}{Previews: previews}); err != nil {
+		log.Printf("preview response failed: %v", err)
 	}
 }
 
@@ -685,6 +758,9 @@ func discoverPorts(procRoot string, excluded map[int]struct{}) ([]portInfo, erro
 			if process := inodeProcesses[inode]; process != "" {
 				processes[process] = struct{}{}
 			}
+		}
+		if _, ok := processes["cloudflared"]; ok {
+			continue
 		}
 		process := "unknown"
 		if len(processes) > 0 {

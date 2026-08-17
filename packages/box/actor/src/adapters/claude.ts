@@ -5,6 +5,7 @@ import {
   type PermissionResult,
   type SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { PREVIEW_GUIDANCE } from "../preview-guidance.js";
 import { hasObjectType, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
@@ -110,6 +111,7 @@ export class ClaudeAdapter implements AgentAdapter {
       includePartialMessages: true,
       pathToClaudeCodeExecutable: "/opt/blitz/npm/bin/claude",
       permissionMode: claudePermissionMode(input.config.permission),
+      systemPrompt: { type: "preset", preset: "claude_code", append: PREVIEW_GUIDANCE },
     };
     if (input.config.model !== "default") options.model = input.config.model;
     const effort = claudeEffort(input.config.effort);

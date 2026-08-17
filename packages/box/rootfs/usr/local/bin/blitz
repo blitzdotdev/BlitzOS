@@ -1,0 +1,107 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  echo 'usage: blitz preview <add <url> [--title <name>]|list|rm <url>>' >&2
+  exit 2
+}
+
+[ "${1:-}" = preview ] || usage
+shift
+action=${1:-}
+[ -n "$action" ] || usage
+shift
+
+exec node - /var/lib/blitz/previews.json "$action" "$@" <<'NODE'
+const fs = require('node:fs');
+
+const [statePath, action, ...args] = process.argv.slice(2);
+
+function fail(message, status = 1) {
+  console.error(`blitz preview: ${message}`);
+  process.exit(status);
+}
+
+function entry(value) {
+  return value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && typeof value.url === 'string'
+    && value.url.length > 0
+    && typeof value.title === 'string'
+    && typeof value.source === 'string'
+    && Number.isSafeInteger(value.createdAt);
+}
+
+function readEntries() {
+  let source;
+  try {
+    source = fs.readFileSync(statePath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+  if (source.trim() === '') return [];
+  const value = JSON.parse(source);
+  if (!Array.isArray(value)) fail('state file is not a JSON array');
+  return value.filter(entry);
+}
+
+function writeEntries(entries) {
+  const temporaryPath = `${statePath}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(entries)}\n`, { flag: 'wx', mode: 0o600 });
+    fs.chmodSync(temporaryPath, 0o600);
+    fs.renameSync(temporaryPath, statePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch {}
+    throw error;
+  }
+}
+
+try {
+  if (action === 'add') {
+    if (args.length !== 1 && !(args.length === 3 && args[1] === '--title')) {
+      fail('expected add <url> [--title <name>]', 2);
+    }
+    const url = args[0];
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      fail('URL must be a well-formed http(s) URL');
+    }
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.host === '') {
+      fail('URL must be a well-formed http(s) URL');
+    }
+    const title = args.length === 3 ? args[2] : parsed.host;
+    const entries = readEntries().filter((item) => item.url !== url);
+    entries.push({ url, title, source: 'agent', createdAt: Date.now() });
+    writeEntries(entries);
+    process.exit(0);
+  }
+  if (action === 'list') {
+    if (args.length !== 0) fail('list takes no arguments', 2);
+    for (const item of readEntries()) console.log(`${item.title} — ${item.url}`);
+    process.exit(0);
+  }
+  if (action === 'rm') {
+    if (args.length !== 1) fail('expected rm <url>', 2);
+    let exists = true;
+    try {
+      fs.accessSync(statePath);
+    } catch (error) {
+      if (error.code === 'ENOENT') exists = false;
+      else throw error;
+    }
+    if (!exists) process.exit(0);
+    writeEntries(readEntries().filter((item) => item.url !== args[0]));
+    process.exit(0);
+  }
+  fail(`unsupported command: ${action}`, 2);
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
+NODE

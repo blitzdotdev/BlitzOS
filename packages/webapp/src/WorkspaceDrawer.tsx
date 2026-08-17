@@ -10,7 +10,12 @@ import {
 import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
-import { previewUrl, type LivePort } from './preview';
+import {
+  previewLinkLabel,
+  previewUrl,
+  type LivePort,
+  type PreviewLink,
+} from './preview';
 import type { WorkspaceDrawerSegment } from './storage';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
@@ -284,9 +289,11 @@ export function WorkspaceDrawer({
   onResolveRequest,
   canManageCredentials,
   livePorts,
+  previewLinks,
   filesBase,
   previewReady,
   onOpenPreview,
+  onOpenPreviewLink,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
@@ -305,9 +312,11 @@ export function WorkspaceDrawer({
   ) => Promise<void>;
   canManageCredentials: boolean;
   livePorts: LivePort[];
+  previewLinks: PreviewLink[];
   filesBase: string | null;
   previewReady: boolean;
   onOpenPreview: (port: number) => void;
+  onOpenPreviewLink: (url: string, title: string) => void;
 }) {
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
   const [openedPort, setOpenedPort] = useState<number | null>(null);
@@ -451,12 +460,14 @@ export function WorkspaceDrawer({
             </div>
           )}
           {openedPort === null && (
-            <section className="workspace-drawer-panel workspace-previews" aria-label="Running app previews">
+            <section className="workspace-drawer-panel workspace-previews" aria-label="Preview sources">
               <h3 className="workspace-sect">
-                Running apps
-                {livePorts.length > 0 && <small>{livePorts.length}</small>}
+                Previews
+                {(livePorts.length > 0 || previewLinks.length > 0) && (
+                  <small>{livePorts.length + previewLinks.length}</small>
+                )}
               </h3>
-              {livePorts.length === 0
+              {livePorts.length === 0 && previewLinks.length === 0
                 ? (
                   <p className="workspace-drawer-state">
                     Nothing running yet — start a dev server in the terminal and
@@ -513,6 +524,26 @@ export function WorkspaceDrawer({
                             }}
                           >
                             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                    {previewLinks.map((entry) => (
+                      <button
+                        className="workspace-preview-card"
+                        type="button"
+                        key={entry.url}
+                        aria-label={`Open preview link ${previewLinkLabel(entry.url, entry.title)}`}
+                        onClick={() => onOpenPreviewLink(entry.url, entry.title)}
+                      >
+                        <span className="workspace-preview-shot" aria-hidden="true">
+                          <span className="workspace-preview-wait">Public link ↗</span>
+                        </span>
+                        <span className="workspace-preview-caption">
+                          <b>{previewLinkLabel(entry.url, entry.title)}</b>
+                          <span className="workspace-preview-meta">{entry.url}</span>
+                          <span className="workspace-preview-open-tab" aria-hidden="true">
+                            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
                           </span>
                         </span>
                       </button>

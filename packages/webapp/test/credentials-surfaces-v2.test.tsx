@@ -123,9 +123,11 @@ describe('v2 credential surfaces', () => {
           segment={segment}
           pendingRequests={[]}
           livePorts={[]}
+          previewLinks={[]}
           filesBase={null}
           previewReady={false}
           onOpenPreview={() => undefined}
+          onOpenPreviewLink={() => undefined}
           canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
@@ -205,9 +207,11 @@ describe('v2 credential surfaces', () => {
           segment="integrations"
           pendingRequests={requests}
           livePorts={[]}
+          previewLinks={[]}
           filesBase={null}
           previewReady={false}
           onOpenPreview={() => undefined}
+          onOpenPreviewLink={() => undefined}
           canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}

@@ -47,6 +47,11 @@ export type WorkspaceTab = {
   id: number;
   type: 'preview';
   port: number;
+} | {
+  id: number;
+  type: 'preview';
+  url: string;
+  title: string;
 };
 
 export type WorkspaceTabs = {
@@ -211,8 +216,16 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
       : null;
   }
   if (object.type === 'preview') {
-    return isNumber(object.port) && isPreviewPort(object.port)
-      ? { id, type: 'preview', port: object.port }
+    if (isNumber(object.port) && isPreviewPort(object.port)) {
+      return object.url === undefined && object.title === undefined
+        ? { id, type: 'preview', port: object.port }
+        : null;
+    }
+    return object.port === undefined
+      && isString(object.url)
+      && object.url.trim() !== ''
+      && isString(object.title)
+      ? { id, type: 'preview', url: object.url, title: object.title }
       : null;
   }
   if (object.type === 'chat') {

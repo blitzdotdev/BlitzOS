@@ -1,0 +1,24 @@
+{
+  "input": {
+    "requestId": "future-field",
+    "previews": [
+      {
+        "url": "https://extra.blitz.dev/path",
+        "title": "Extra fields",
+        "source": "agent",
+        "createdAt": 1786900002000,
+        "description": "ignored"
+      }
+    ]
+  },
+  "expected": {
+    "previews": [
+      {
+        "url": "https://extra.blitz.dev/path",
+        "title": "Extra fields",
+        "source": "agent",
+        "createdAt": 1786900002000
+      }
+    ]
+  }
+}

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { PREVIEW_GUIDANCE } from "../preview-guidance.js";
 import { hasObjectType, isNumber, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
@@ -11,6 +12,7 @@ export type ThreadRequestParams = {
   cwd?: string;
   approvalPolicy?: "on-request" | "never";
   sandbox?: "workspace-write";
+  developerInstructions?: string;
 };
 
 export function codexThreadRequestParams(
@@ -21,6 +23,7 @@ export function codexThreadRequestParams(
   params.cwd = input.cwd;
   params.approvalPolicy = input.config.permission === "never" ? "never" : "on-request";
   params.sandbox = "workspace-write";
+  params.developerInstructions = PREVIEW_GUIDANCE;
   return params;
 }
 

@@ -17,6 +17,23 @@ describe("agent config selectors", () => {
     expect(codex.map(({ id }) => id)).toEqual(["model", "effort", "permission"]);
     expect(claude.map(({ category }) => category)).toEqual(["model", "thought_level", "mode"]);
     expect(codex[1]?.category).toBe("thought_level");
+    expect(defaultAgentConfig("claude")).toEqual({
+      model: "default",
+      effort: "default",
+      permission: "bypassPermissions",
+    });
+    expect(defaultAgentConfig("codex")).toEqual({
+      model: "default",
+      effort: "medium",
+      permission: "never",
+    });
+    expect(claude.at(-1)?.type === "select" && claude.at(-1)?.currentValue)
+      .toBe("bypassPermissions");
+    expect(codex.at(-1)?.type === "select" && codex.at(-1)?.currentValue).toBe("never");
+    expect(claude.at(-1)?.type === "select" && claude.at(-1)?.options
+      .some(({ value }) => value === "bypassPermissions")).toBe(true);
+    expect(codex.at(-1)?.type === "select" && codex.at(-1)?.options
+      .some(({ value }) => value === "never")).toBe(true);
   });
 
   it("maps claude effort choices to SDK levels and leaves default alone", () => {

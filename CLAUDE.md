@@ -55,6 +55,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | ACP | box actor ↔ ui chat reducer | `fixtures/acp/` | existing suites both sides |
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/providers/microvm-hosts.js` imported by both |
 | dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
+| public preview links | box CLI state ↔ Go gateway ↔ browser | `fixtures/previews/` | `gateway/main_test.go`, `webapp/test/preview-v2.test.ts` |
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/providers/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 

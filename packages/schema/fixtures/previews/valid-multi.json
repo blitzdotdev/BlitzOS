@@ -1,0 +1,34 @@
+{
+  "input": {
+    "previews": [
+      {
+        "url": "https://demo.blitz.dev",
+        "title": "Demo",
+        "source": "agent",
+        "createdAt": 1786900000000
+      },
+      {
+        "url": "https://status.example.com/app",
+        "title": "Status",
+        "source": "agent",
+        "createdAt": 1786900001000
+      }
+    ]
+  },
+  "expected": {
+    "previews": [
+      {
+        "url": "https://demo.blitz.dev",
+        "title": "Demo",
+        "source": "agent",
+        "createdAt": 1786900000000
+      },
+      {
+        "url": "https://status.example.com/app",
+        "title": "Status",
+        "source": "agent",
+        "createdAt": 1786900001000
+      }
+    ]
+  }
+}

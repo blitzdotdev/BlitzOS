@@ -1,7 +1,22 @@
 import type { WorkspaceTabs } from './storage';
-import { hasObjectType, isDefined, isNumber, isString } from './type-guards';
+import {
+  asJsonObject,
+  hasObjectType,
+  isDefined,
+  isNumber,
+  isString,
+  type JsonValue,
+} from './type-guards';
 
 export const PORTS_POLL_INTERVAL_MS = 5_000;
+export const EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] = ['blitz.dev'];
+
+export type PreviewLink = {
+  url: string;
+  title: string;
+  source: string;
+  createdAt: number;
+};
 
 export type LivePort = {
   port: number;
@@ -12,6 +27,7 @@ export type LivePort = {
 export type PortsState = {
   workspaceId: string;
   ports: LivePort[];
+  previews: PreviewLink[];
   newPorts: LivePort[];
   removedPorts: LivePort[];
   revision: number;
@@ -23,12 +39,14 @@ export type PortsAction =
       type: 'received';
       workspaceId: string;
       ports: Array<{ port: number; process: string }>;
+      previews: PreviewLink[];
       now: number;
     };
 
 export const initialPortsState: PortsState = {
   workspaceId: '',
   ports: [],
+  previews: [],
   newPorts: [],
   removedPorts: [],
   revision: 0,
@@ -55,11 +73,38 @@ function parsedPorts(value: unknown): Array<{ port: number; process: string }> {
       !isNumber(entry.port)
       || !isPreviewPort(entry.port)
       || !isString(entry.process)
+      || entry.process === 'cloudflared'
       || seen.has(entry.port)
     ) return [];
     seen.add(entry.port);
     return [{ port: entry.port, process: entry.process }];
   }).sort((left, right) => left.port - right.port);
+}
+
+export function parsedPreviews(value: JsonValue): PreviewLink[] {
+  const object = asJsonObject(value);
+  if (object === null || !Array.isArray(object.previews)) return [];
+  const seen = new Set<string>();
+  return object.previews.flatMap((value): PreviewLink[] => {
+    const entry = asJsonObject(value);
+    if (
+      entry === null
+      || !isString(entry.url)
+      || entry.url.trim() === ''
+      || !isString(entry.title)
+      || !isString(entry.source)
+      || !isNumber(entry.createdAt)
+      || !Number.isSafeInteger(entry.createdAt)
+      || seen.has(entry.url)
+    ) return [];
+    seen.add(entry.url);
+    return [{
+      url: entry.url,
+      title: entry.title,
+      source: entry.source,
+      createdAt: entry.createdAt,
+    }];
+  });
 }
 
 function httpUrl(value: string): URL {
@@ -84,6 +129,14 @@ export function portsEndpointUrl(filesBase: string): string {
   return target.toString();
 }
 
+export function previewsEndpointUrl(filesBase: string): string {
+  const target = httpUrl(filesBase);
+  target.pathname = `${gatewayPath(target)}previews`;
+  target.search = '';
+  target.hash = '';
+  return target.toString();
+}
+
 export async function fetchWorkspacePorts(
   filesBase: string,
   fetcher: typeof fetch = fetch,
@@ -102,12 +155,52 @@ export async function fetchWorkspacePorts(
   }
 }
 
+export async function fetchWorkspacePreviews(
+  filesBase: string,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<PreviewLink[]> {
+  try {
+    const response = await fetcher(previewsEndpointUrl(filesBase), {
+      credentials: 'include',
+      signal,
+    });
+    if (!response.ok) return [];
+    // SAFETY: Response.json parses JSON text, whose values are representable by JsonValue.
+    const value = await response.json() as JsonValue;
+    return parsedPreviews(value);
+  } catch {
+    return [];
+  }
+}
+
+export function isEmbeddablePreviewUrl(url: string): boolean {
+  try {
+    const target = new URL(url);
+    return target.protocol === 'https:' && EMBEDDABLE_PREVIEW_HOST_SUFFIXES.some(
+      (suffix) => target.hostname === suffix || target.hostname.endsWith(`.${suffix}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function previewLinkLabel(url: string, title: string): string {
+  if (title.trim() !== '') return title;
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
 export function portsReducer(state: PortsState, action: PortsAction): PortsState {
   if (action.type === 'reset') {
     if (state.workspaceId === action.workspaceId && state.ports.length === 0) return state;
     return {
       workspaceId: action.workspaceId,
       ports: [],
+      previews: [],
       newPorts: [],
       removedPorts: [],
       revision: state.revision + 1,
@@ -129,10 +222,19 @@ export function portsReducer(state: PortsState, action: PortsAction): PortsState
       && current.process === entry.process
       && current.firstSeenAt === entry.firstSeenAt;
   });
-  if (unchanged) return state;
+  const previewsUnchanged = action.previews.length === state.previews.length
+    && action.previews.every((entry, index) => {
+      const current = state.previews[index];
+      return current?.url === entry.url
+        && current.title === entry.title
+        && current.source === entry.source
+        && current.createdAt === entry.createdAt;
+    });
+  if (unchanged && previewsUnchanged) return state;
   return {
     ...state,
     ports,
+    previews: action.previews,
     newPorts: ports.filter(({ port }) => !previous.has(port)),
     removedPorts: state.ports.filter(
       ({ port }) => !ports.some((entry) => entry.port === port),
@@ -145,6 +247,10 @@ export function newestPorts(ports: LivePort[]): LivePort[] {
   return [...ports].sort((left, right) => (
     right.firstSeenAt - left.firstSeenAt || right.port - left.port
   ));
+}
+
+export function newestPreviewLinks(previews: PreviewLink[]): PreviewLink[] {
+  return [...previews].sort((left, right) => right.createdAt - left.createdAt);
 }
 
 export function newestUndismissedPort(
@@ -185,7 +291,9 @@ export function previewPortFromLocalUrl(href: string): number | null {
 }
 
 export function openPreviewTab(tabs: WorkspaceTabs, port: number): WorkspaceTabs {
-  const existing = tabs.tabs.find((tab) => tab.type === 'preview' && tab.port === port);
+  const existing = tabs.tabs.find(
+    (tab) => tab.type === 'preview' && 'port' in tab && tab.port === port,
+  );
   if (existing) {
     return tabs.activeId === existing.id ? tabs : { ...tabs, activeId: existing.id };
   }

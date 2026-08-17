@@ -232,6 +232,21 @@ grep -q '"port":31234,"process":"node"' <<<"$ports_json" \
 if grep -Eq '"port":(22|7443|7444|7445|17445),' <<<"$ports_json"; then
   fail "/ports exposed a box service port: $ports_json"
 fi
+docker exec --user blitz "$container" blitz preview add 'https://demo.blitz.dev/app' --title 'Public demo'
+preview_links_json=$(docker run --rm --network "container:$container" "$curl_image" \
+  -fsS http://127.0.0.1:7445/previews)
+grep -Eq '"url":"https://demo\.blitz\.dev/app","title":"Public demo","source":"agent","createdAt":[0-9]+' <<<"$preview_links_json" \
+  || fail "/previews omitted the registered link: $preview_links_json"
+[ "$(docker exec --user blitz "$container" blitz preview list)" = 'Public demo — https://demo.blitz.dev/app' ] \
+  || fail "blitz preview list did not print the registered link"
+[ "$(docker exec "$container" stat -c '%U:%G %a' /var/lib/blitz/previews.json)" = 'blitz:blitz 600' ] \
+  || fail "previews state file has the wrong owner or mode"
+if docker exec --user blitz "$container" blitz preview add 'javascript:alert(1)' >/dev/null 2>&1; then
+  fail "blitz preview add accepted a non-http(s) URL"
+fi
+docker exec --user blitz "$container" blitz preview rm 'https://demo.blitz.dev/app'
+[ "$(docker run --rm --network "container:$container" "$curl_image" -fsS http://127.0.0.1:7445/previews)" = '{"previews":[]}' ] \
+  || fail "blitz preview rm did not remove the registered link"
 preview_http=$(docker run --rm --network "container:$container" "$curl_image" \
   -fsS 'http://127.0.0.1:7445/preview/31234/deep/path?probe=1')
 [ "$preview_http" = 'preview-http:GET:/deep/path?probe=1' ] \
@@ -253,6 +268,7 @@ const result = await new Promise((resolve, reject) => {
 if (result !== "preview-ws:/socket?probe=1:hello") throw new Error(`bad preview WebSocket response: ${result}`);
 NODE
 echo "PASS ports discovery ($ports_json)"
+echo "PASS public preview CLI + gateway ($preview_links_json)"
 echo "PASS preview HTTP + WebSocket proxy ($preview_http)"
 
 docker exec --user blitz "$container" sh -c \
