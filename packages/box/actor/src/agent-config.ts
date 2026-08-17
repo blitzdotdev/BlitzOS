@@ -38,15 +38,22 @@ const CATALOGS = {
       { value: "claude-sonnet-5", name: "Sonnet 5" },
       { value: "claude-haiku-4-5-20251001", name: "Haiku 4.5" },
     ],
-    // Claude Code carries no reasoning-effort switch; the selector stays hidden.
-    efforts: [],
+    // The agent SDK's adaptive-thinking effort scale.
+    efforts: [
+      { value: "default", name: "default" },
+      { value: "low", name: "low" },
+      { value: "medium", name: "medium" },
+      { value: "high", name: "high" },
+      { value: "xhigh", name: "xhigh" },
+      { value: "max", name: "max" },
+    ],
     permissions: [
       { value: "default", name: "ask" },
       { value: "acceptEdits", name: "accept edits" },
       { value: "bypassPermissions", name: "bypass" },
       { value: "plan", name: "plan" },
     ],
-    defaults: { model: "default", effort: "", permission: "default" },
+    defaults: { model: "default", effort: "default", permission: "default" },
   },
   codex: {
     models: [

@@ -5,18 +5,29 @@ import {
   applyAgentConfig,
   defaultAgentConfig,
 } from "../src/agent-config.js";
-import { claudeStreamChunk } from "../src/adapters/claude.js";
+import { claudeEffort, claudeStreamChunk } from "../src/adapters/claude.js";
 import { codexConfigArguments, codexThreadRequestParams } from "../src/adapters/codex.js";
 
 describe("agent config selectors", () => {
-  it("offers model and permission selectors for claude and adds effort for codex", () => {
+  it("offers model, effort, and permission selectors for both providers", () => {
     const claude = agentConfigOptions("claude", defaultAgentConfig("claude"));
     const codex = agentConfigOptions("codex", defaultAgentConfig("codex"));
 
-    expect(claude.map(({ id }) => id)).toEqual(["model", "permission"]);
+    expect(claude.map(({ id }) => id)).toEqual(["model", "effort", "permission"]);
     expect(codex.map(({ id }) => id)).toEqual(["model", "effort", "permission"]);
-    expect(claude.map(({ category }) => category)).toEqual(["model", "mode"]);
+    expect(claude.map(({ category }) => category)).toEqual(["model", "thought_level", "mode"]);
     expect(codex[1]?.category).toBe("thought_level");
+  });
+
+  it("maps claude effort choices to SDK levels and leaves default alone", () => {
+    expect(claudeEffort("default")).toBeUndefined();
+    expect(claudeEffort("")).toBeUndefined();
+    expect(claudeEffort("ludicrous")).toBeUndefined();
+    expect(claudeEffort("low")).toBe("low");
+    expect(claudeEffort("xhigh")).toBe("xhigh");
+    expect(claudeEffort("max")).toBe("max");
+    const chosen = applyAgentConfig("claude", defaultAgentConfig("claude"), "effort", "high");
+    expect(chosen.effort).toBe("high");
   });
 
   it("keeps only known values and reflects the change in the option list", () => {
