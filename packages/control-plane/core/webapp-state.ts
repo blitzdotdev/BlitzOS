@@ -13,7 +13,7 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 
 type WebAppAgent = "claude" | "codex";
 type OptionalJsonValue = JsonValue | undefined;
-type WebAppDrawerSegment = "files" | "credentials" | "events";
+type WebAppDrawerSegment = "files" | "previews" | "integrations";
 type WebAppTabType =
   | "claude"
   | "codex"
@@ -180,12 +180,15 @@ function parseDrawer(value: OptionalJsonValue): WebAppDrawerV1 {
     throw new HttpError(400, "drawer.width must be between 200 and 480");
   }
   const expanded = stringList(value.expanded, "drawer.expanded", 1_000);
-  // Legacy docs stored the pre-merge segments; they normalize to the
-  // combined credentials tab instead of invalidating the whole doc.
-  const segment = value.segment === "leases" || value.segment === "requests"
-    ? "credentials"
+  // Legacy docs stored earlier segment names; they normalize to the combined
+  // integrations tab instead of invalidating the whole doc.
+  const segment = value.segment === "leases"
+      || value.segment === "requests"
+      || value.segment === "credentials"
+      || value.segment === "events"
+    ? "integrations"
     : value.segment;
-  if (segment !== "files" && segment !== "credentials" && segment !== "events") {
+  if (segment !== "files" && segment !== "previews" && segment !== "integrations") {
     throw new HttpError(400, "drawer.segment is invalid");
   }
   return {

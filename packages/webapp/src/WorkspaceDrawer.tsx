@@ -10,6 +10,7 @@ import {
 import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
+import type { LivePort } from './preview';
 import type { WorkspaceDrawerSegment } from './storage';
 import { asJsonObject, isString } from './type-guards';
 
@@ -274,6 +275,8 @@ export function WorkspaceDrawer({
   onSegmentChange,
   onResolveRequest,
   canManageCredentials,
+  livePorts,
+  onOpenPreview,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
@@ -291,6 +294,8 @@ export function WorkspaceDrawer({
     action: 'approve' | 'deny',
   ) => Promise<void>;
   canManageCredentials: boolean;
+  livePorts: LivePort[];
+  onOpenPreview: (port: number) => void;
 }) {
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -304,12 +309,12 @@ export function WorkspaceDrawer({
     onWidthChange(Math.max(200, Math.min(480, origin.width + origin.x - event.clientX)));
   };
 
-  const tabs: Array<{ id: WorkspaceDrawerSegment; label: string }> = [{ id: 'files', label: 'Files' }];
-  if (canManageCredentials) tabs.push(
-    { id: 'credentials', label: 'Credentials' },
-    { id: 'events', label: 'Events' },
-  );
-  const effectiveSegment = canManageCredentials ? segment : 'files';
+  const tabs: Array<{ id: WorkspaceDrawerSegment; label: string }> = [
+    { id: 'files', label: 'Files' },
+    { id: 'previews', label: 'Previews' },
+  ];
+  if (canManageCredentials) tabs.push({ id: 'integrations', label: 'Integrations' });
+  const effectiveSegment = !canManageCredentials && segment === 'integrations' ? 'files' : segment;
 
   return (
     <aside
@@ -349,7 +354,7 @@ export function WorkspaceDrawer({
             onClick={() => onSegmentChange(tab.id)}
           >
             {tab.label}
-            {tab.id === 'credentials' && pendingRequests.length > 0 && (
+            {tab.id === 'integrations' && pendingRequests.length > 0 && (
               <span className="workspace-pending-badge" aria-label={`${pendingRequests.length} pending`}>
                 {pendingRequests.length}
               </span>
@@ -359,7 +364,30 @@ export function WorkspaceDrawer({
       </header>
       <div className="workspace-drawer-body">
         <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>
-        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'credentials'}>
+        <div role="tabpanel" hidden={effectiveSegment !== 'previews'}>
+          <section className="workspace-drawer-panel workspace-previews" aria-label="Live preview ports">
+            {livePorts.length === 0
+              ? (
+                <p className="workspace-drawer-state">
+                  No live ports yet — start a dev server in the terminal and it
+                  shows up here.
+                </p>
+              )
+              : livePorts.map((entry) => (
+                <button
+                  className="workspace-preview-row"
+                  type="button"
+                  key={entry.port}
+                  onClick={() => onOpenPreview(entry.port)}
+                >
+                  <span className="mi-preview" aria-hidden="true" />
+                  <span className="workspace-preview-port">:{entry.port}</span>
+                  <span className="workspace-preview-process">{entry.process}</span>
+                </button>
+              ))}
+          </section>
+        </div>
+        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'integrations'}>
           <WorkspaceRequestsPanel
             requests={pendingRequests}
             loadError={pendingRequestsError}
@@ -368,14 +396,12 @@ export function WorkspaceDrawer({
           <WorkspaceLeasesPanel
             client={client}
             workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'credentials'}
+            visible={open && effectiveSegment === 'integrations'}
           />
-        </div>}
-        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'events'}>
           <WorkspaceEventsPanel
             client={client}
             workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'events'}
+            visible={open && effectiveSegment === 'integrations'}
           />
         </div>}
       </div>
