@@ -134,24 +134,25 @@
   overflow-wrap: anywhere;
 }
 
+/* User prompts are right-aligned bubbles. */
 .chat-msg--user {
-  display: grid;
+  display: flex;
   width: 100%;
-  grid-template-columns: 12px minmax(0, 1fr);
-  gap: 7px;
+  justify-content: flex-end;
   color: var(--ink);
   font-size: 13px;
-  font-weight: 600;
   white-space: normal;
 }
 
 .chat-msg--user p {
+  overflow-wrap: anywhere;
+  max-width: 78%;
   margin: 0;
+  padding: 8px 14px;
+  border-radius: 16px;
+  border-bottom-right-radius: 5px;
+  background: color-mix(in oklab, var(--accent) 16%, var(--paper));
   white-space: pre-wrap;
-}
-
-.chat-user-prompt {
-  color: var(--accent);
 }
 
 .chat-turn {
@@ -172,16 +173,17 @@
   margin: 25px 0 22px;
 }
 
+/* The work section divides with a plain rule; the disclosure caret is the
+ * only marker. Status shows through the caret color. */
 .chat-turn-work > summary,
 .chat-turn-work--static {
   display: grid;
-  grid-template-columns: minmax(24px, 1fr) auto minmax(24px, 1fr);
+  grid-template-columns: auto minmax(24px, 1fr);
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   color: var(--faint);
   font-size: 10.5px;
   list-style: none;
-  text-align: center;
   user-select: none;
 }
 
@@ -193,25 +195,24 @@
   display: none;
 }
 
-.chat-turn-work-label::before {
-  content: '› ';
-  color: var(--rule);
+.chat-turn-work > summary::before {
+  content: '›';
+  color: var(--faint);
 }
 
-.chat-turn-work[open] .chat-turn-work-label::before {
-  content: '⌄ ';
+.chat-turn-work[open] > summary::before {
+  content: '⌄';
 }
 
-.chat-turn-work--static .chat-turn-work-label::before {
-  content: '';
+.chat-turn-work--static {
+  display: block;
 }
 
-.chat-turn-work--failed .chat-turn-work-label,
-.chat-turn-work--failed .chat-turn-work-label::before {
+.chat-turn-work--failed > summary::before {
   color: var(--ansi-red);
 }
 
-.chat-turn-work--working .chat-turn-work-label::before {
+.chat-turn-work--working > summary::before {
   color: var(--accent);
 }
 
