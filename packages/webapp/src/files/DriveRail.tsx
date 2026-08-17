@@ -6,7 +6,6 @@ import { SessionTypeIcon, type WebAppTabModel } from '../WebAppHeader';
 import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
 import { ShareGlyph } from './DriveIcons';
 import {
-  CloseGlyph,
   DriveGlyph,
   FolderPlusGlyph,
   PlusGlyph,
@@ -66,7 +65,6 @@ export function DriveRail({
   onUploadFile,
   onSwitchOrg,
   onOpenSettings,
-  onSignOut,
   onOpenWorkspaceDetails,
   onDeleteWorkspace,
   drawerOpen,
@@ -89,7 +87,6 @@ export function DriveRail({
   onUploadFile: () => void;
   onSwitchOrg: (orgId: string) => void;
   onOpenSettings: () => void;
-  onSignOut: () => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   drawerOpen: boolean;
@@ -97,7 +94,6 @@ export function DriveRail({
 }) {
   const [newOpen, setNewOpen] = useState(false);
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
   const orgSelector = useRef<HTMLDivElement>(null);
   const orgLabel = org?.name || org?.slug || 'Organization';
@@ -378,11 +374,9 @@ export function DriveRail({
         <button
           className="webapp-user"
           type="button"
-          title="Account"
-          aria-haspopup="menu"
-          aria-expanded={accountOpen}
-          aria-label={`Open account menu for ${userLabel}`}
-          onClick={() => setAccountOpen((open) => !open)}
+          title="Settings"
+          aria-label={`Open settings for ${userLabel}`}
+          onClick={onOpenSettings}
         >
           {identity?.avatarUrl
             ? <img className="webapp-avatar" src={identity.avatarUrl} alt="" referrerPolicy="no-referrer" />
@@ -425,39 +419,6 @@ export function DriveRail({
               onClick={() => { setNewOpen(false); onUploadFile(); }}
             >
               <UploadGlyph /><span>Upload file</span>
-            </button>
-          </div>
-        </>
-      )}
-      {accountOpen && (
-        <>
-          <button
-            type="button"
-            aria-label="Close menu"
-            style={{ position: 'fixed', inset: 0, zIndex: 190, border: 0, background: 'transparent', cursor: 'default' }}
-            onClick={() => setAccountOpen(false)}
-          />
-          <div
-            className="drive-menu"
-            role="menu"
-            style={{ left: 16, bottom: 64, zIndex: 410 }}
-          >
-            <button
-              className="drive-menu-item"
-              type="button"
-              role="menuitem"
-              onClick={() => { setAccountOpen(false); onOpenSettings(); }}
-            >
-              <DriveGlyph /><span>Settings</span>
-            </button>
-            <div className="drive-menu-divider" />
-            <button
-              className="drive-menu-item"
-              type="button"
-              role="menuitem"
-              onClick={() => { setAccountOpen(false); onSignOut(); }}
-            >
-              <CloseGlyph /><span>Sign out</span>
             </button>
           </div>
         </>

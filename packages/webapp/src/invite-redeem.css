@@ -1,0 +1,89 @@
+.invite-redeem {
+  display: grid;
+  min-height: 100%;
+  padding: 32px;
+  place-items: center;
+  color: var(--ink);
+  background: var(--paper);
+  font: 13.5px/1.6 var(--font-ui);
+}
+
+.invite-redeem__panel {
+  width: min(480px, 100%);
+  padding: 30px 32px 32px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.invite-redeem__label {
+  margin: 0 0 12px !important;
+  color: var(--faint) !important;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.invite-redeem__panel h1 {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  line-height: 1.25;
+}
+
+.invite-redeem__panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.invite-redeem__panel form {
+  margin-top: 24px;
+}
+
+.invite-redeem__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--ink);
+  color: var(--paper);
+  background: var(--ink);
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.invite-redeem__action:hover,
+.invite-redeem__action:focus-visible {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.invite-redeem__panel small {
+  display: block;
+  margin-top: 12px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+@media (max-width: 560px) {
+  .invite-redeem {
+    min-height: 100dvh;
+    padding: 0;
+    place-items: stretch;
+  }
+
+  .invite-redeem__panel {
+    width: 100%;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 24px 22px;
+    border: 0;
+  }
+}

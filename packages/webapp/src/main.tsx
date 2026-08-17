@@ -16,6 +16,7 @@ import './confirmation-dialog.css';
 import './loading-skeleton.css';
 import './create-workspace-dialog.css';
 import './settings.css';
+import './invite-redeem.css';
 import { StandaloneWebApp } from './StandaloneWebApp';
 import { initTheme } from './theme';
 
