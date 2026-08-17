@@ -396,8 +396,8 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(createClientSpy).toHaveBeenCalledWith(
-      "https://cp.example.test/workspaces/workspace-running/webapp/7445/workspace/",
-      { withCredentials: true },
+      'https://cp.example.test/workspaces/workspace-running/webapp/7445/workspace/',
+      { withCredentials: true, remoteBasePath: '/workspace' },
     );
     await view.unmount();
   });

@@ -87,7 +87,7 @@ import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
-import type { EndpointResolver } from './resolver';
+import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
 import {
   rememberWorkspaceEndpoints,
@@ -448,14 +448,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   const filesClient = useMemo<WebDAVClient | null>(() => {
     if (!activeFilesBase) return null;
-    return createClient(activeFilesBase, { withCredentials: true });
+    return createClient(activeFilesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
   }, [activeFilesBase]);
   const getFilesClient = useCallback((): WebDAVClient | null => {
     const workspaceId = activeWorkspaceIdRef.current;
     const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
     const filesBase = workspaceEndpoints.current.get(workspaceId)?.filesBase;
     if (workspace?.lifecycleStatus !== 'running' || !filesBase) return null;
-    return createClient(filesBase, { withCredentials: true });
+    return createClient(filesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
   }, []);
   const [dropActive, setDropActive] = useState(false);
   const [dropBusy, setDropBusy] = useState(false);
