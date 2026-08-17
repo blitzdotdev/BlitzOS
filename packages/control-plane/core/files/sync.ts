@@ -114,6 +114,33 @@ async function guestRequest(
   );
 }
 
+async function boundedBytes(
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  if (response.body === null) return new Uint8Array(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    size += result.value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new Error(`file exceeds the ${String(maxBytes)}-byte buffered-transfer cap`);
+    }
+    chunks.push(result.value);
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
 async function boundedText(response: Response): Promise<string> {
   const declared = response.headers.get("content-length");
   if (
@@ -402,10 +429,26 @@ async function copyUp(
   if (!response.ok || response.body === null) {
     throw new Error(`WebDAV GET failed with status ${response.status}`);
   }
-  // Tunneled responses can arrive chunked with no content-length, and R2 put
-  // requires a known length. The GET's own content-length beats the DAV
-  // listing, which goes stale the moment a live file grows; a mismatch still
-  // errors this one file and the next tick retries with fresh listings.
+  // R2 put needs a known length. When the tunnel compressed the response,
+  // the runtime hands us the decompressed body but keeps the compressed
+  // content-length, so no declared size can be trusted — buffer those,
+  // bounded by the chunk cap. Identity responses pin to the GET's own
+  // content-length, falling back to the DAV listing.
+  const metadata = new Headers(response.headers);
+  metadata.delete("content-encoding");
+  metadata.delete("content-length");
+  const customMetadata = {
+    [MTIME_METADATA]: String(guest.mtime),
+    [EDITED_BY_METADATA]: attachment.owner_name,
+  };
+  if (response.headers.get("content-encoding") !== null) {
+    await runtime.fileObjects.put(
+      objectKey,
+      await boundedBytes(response, FILE_SYNC_MAX_BYTES_PER_TICK),
+      { httpMetadata: metadata, customMetadata },
+    );
+    return;
+  }
   const declared = response.headers.get("content-length");
   const pinnedSize = declared !== null && /^\d+$/u.test(declared)
     ? Number(declared)
@@ -413,13 +456,7 @@ async function copyUp(
   await runtime.fileObjects.put(
     objectKey,
     response.body.pipeThrough(new FixedLengthStream(pinnedSize)),
-    {
-      httpMetadata: response.headers,
-      customMetadata: {
-        [MTIME_METADATA]: String(guest.mtime),
-        [EDITED_BY_METADATA]: attachment.owner_name,
-      },
-    },
+    { httpMetadata: metadata, customMetadata },
   );
 }
 
