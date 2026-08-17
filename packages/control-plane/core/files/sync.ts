@@ -551,6 +551,29 @@ export async function runWorkspaceFileSync(
   return runAttachments(runtime, await attachmentRows(runtime, { workspaceId }));
 }
 
+/** Materializes a just-booted workspace's attachments. The guest phones home
+ * while its tunnel may still be connecting, so a failed first pass retries
+ * briefly before the five-minute sweep takes over as the backstop. */
+export async function runReadyWorkspaceFileSync(
+  runtime: CoreRuntime,
+  workspaceId: string,
+  retryDelaysMs: readonly number[] = [8_000, 15_000],
+): Promise<FileSyncResult> {
+  let result = await runWorkspaceFileSync(runtime, workspaceId);
+  if (result.attachments > 0) return result;
+  const pending = await rows<{ workspace_id: string }>(runtime.db, {
+    q: "SELECT workspace_id FROM folder_attachments WHERE workspace_id = ?1 LIMIT 1",
+    v: [workspaceId],
+  });
+  if (pending.length === 0) return result;
+  for (const delayMs of retryDelaysMs) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    result = await runWorkspaceFileSync(runtime, workspaceId);
+    if (result.attachments > 0) return result;
+  }
+  return result;
+}
+
 /** Fire-and-forget convergence pass for a request that changed what should
  * be on a guest (attach, upload, workspace becoming ready). The scheduled
  * sweep remains the backstop when this best-effort pass loses to a tunnel
