@@ -24,8 +24,6 @@ import { DriveHome } from './files/DriveHome';
 import { CreateTemplateScreen } from './files/CreateTemplateScreen';
 import { DriveRail } from './files/DriveRail';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
-import { DriveAvatar } from './files/DriveAvatar';
-import { KebabGlyph, ShareGlyph, TrashGlyph } from './files/DriveIcons';
 import type { DriveCommand } from './files/FilesDrive';
 import {
   CreateWorkspaceDialog,
@@ -219,7 +217,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
   const [driveCommand, setDriveCommand] = useState<DriveCommand | null>(null);
   const [driveUploadTarget, setDriveUploadTarget] = useState<string | null>(null);
-  const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -1311,74 +1308,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       })()}
 
       <div className="drive-ws-frame">
-          {activeWorkspace && (
-            <div className="drive-ws-head">
-              <button
-                className="drive-icon-button drive-topbar-menu"
-                type="button"
-                aria-label="Open navigation"
-                onClick={() => setDrawerOpen(true)}
-              >
-                <span className="mi-menu" aria-hidden="true" />
-              </button>
-              <h1>{activeWorkspace.title}</h1>
-              <span
-                className={`drive-ws-dot${activeWorkspace.lifecycleStatus === 'running' ? ' drive-ws-dot--online' : ''}`}
-              />
-              <span className="drive-ws-meta">
-                {activeWorkspace.lifecycleStatus}
-                {activeWorkspace.machineType ? ` · ${machineTypeLabel(activeWorkspace.machineType)}` : ''}
-              </span>
-              {activeWorkspace.accessRole !== 'owner' && activeWorkspace.owner && (
-                <span className="drive-ws-owner">
-                  <DriveAvatar name={activeWorkspace.owner.name} avatarUrl={activeWorkspace.owner.avatarUrl} />
-                  shared by {activeWorkspace.owner.name}
-                </span>
-              )}
-              {(activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin') && (
-                <button
-                  className="drive-icon-button"
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={wsMenuOpen}
-                  aria-label={`Actions for ${activeWorkspace.title}`}
-                  style={activeWorkspace.accessRole === 'owner' && !activeWorkspace.owner ? { marginLeft: 'auto' } : undefined}
-                  onClick={() => setWsMenuOpen((open) => !open)}
-                >
-                  <KebabGlyph />
-                </button>
-              )}
-              {wsMenuOpen && activeWorkspace && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Close menu"
-                    style={{ position: 'fixed', inset: 0, zIndex: 190, border: 0, background: 'transparent', cursor: 'default' }}
-                    onClick={() => setWsMenuOpen(false)}
-                  />
-                  <div className="drive-menu" role="menu" style={{ right: 24, top: 52 }}>
-                    <button
-                      className="drive-menu-item"
-                      type="button"
-                      role="menuitem"
-                      onClick={() => { setWsMenuOpen(false); setShareWorkspaceId(activeWorkspace.id); }}
-                    >
-                      <ShareGlyph /><span>Share workspace</span>
-                    </button>
-                    <div className="drive-menu-divider" />
-                    <button
-                      className="drive-menu-item drive-menu-item--danger"
-                      type="button"
-                      role="menuitem"
-                      onClick={() => { setWsMenuOpen(false); requestDeleteWorkspace(activeWorkspace.id); }}
-                    >
-                      <TrashGlyph /><span>Delete workspace</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
           <WebAppHeader
             tabs={ttydTabs}
             activeSessionId={ttydActiveId ?? ''}

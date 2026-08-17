@@ -8,7 +8,6 @@
 .mi-paste,
 .mi-pi,
 .mi-preview,
-.mi-prime,
 .mi-reconnect,
 .mi-terminal,
 .mi-trash,
@@ -29,28 +28,23 @@
 }
 
 .mi-claude {
-  -webkit-mask-image: url('./assets/icons/claude-mask.png');
-  mask-image: url('./assets/icons/claude-mask.png');
+  -webkit-mask-image: url('./assets/icons/claudecode-color.svg');
+  mask-image: url('./assets/icons/claudecode-color.svg');
 }
 
 .mi-opencode {
-  -webkit-mask-image: url('./assets/icons/opencode-mask.svg');
-  mask-image: url('./assets/icons/opencode-mask.svg');
+  -webkit-mask-image: url('./assets/icons/opencode-logo-dark.svg');
+  mask-image: url('./assets/icons/opencode-logo-dark.svg');
 }
 
 .mi-pi {
-  -webkit-mask-image: url('./assets/icons/pi-mask.svg');
-  mask-image: url('./assets/icons/pi-mask.svg');
+  -webkit-mask-image: url('./assets/icons/pi-coding-agent.svg');
+  mask-image: url('./assets/icons/pi-coding-agent.svg');
 }
 
 .mi-kimi {
-  -webkit-mask-image: url('./assets/icons/kimi-mask.svg');
-  mask-image: url('./assets/icons/kimi-mask.svg');
-}
-
-.mi-prime {
-  -webkit-mask-image: url('./assets/icons/prime-mask.svg');
-  mask-image: url('./assets/icons/prime-mask.svg');
+  -webkit-mask-image: url('./assets/icons/kimi.svg');
+  mask-image: url('./assets/icons/kimi.svg');
 }
 
 .mi-enter {

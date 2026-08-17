@@ -10,3 +10,4 @@ coverage/
 packages/box/test/.smoke-tmp/
 packages/control-plane/.managed-dist/
 scratchpad/
+*.tsbuildinfo
