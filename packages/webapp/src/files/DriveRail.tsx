@@ -3,7 +3,8 @@ import type { IdentityRecord, OrgRecord } from '../protocol';
 import type { DriveScope } from '../sessions-page-state';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { SessionTypeIcon, type WebAppTabModel } from '../WebAppHeader';
-import { MoreIcon, NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
+import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
+import { ShareGlyph } from './DriveIcons';
 import {
   CloseGlyph,
   DriveGlyph,
@@ -279,6 +280,15 @@ export function DriveRail({
                       {workspaceRow}
                     </div>
                   )}
+                  {workspace.canControl && (
+                    <button
+                      className="webapp-workspace-details-button"
+                      type="button"
+                      aria-label={`Share ${workspace.title}`}
+                      title={`Share ${workspace.title}`}
+                      onClick={() => onOpenWorkspaceDetails(workspace.id)}
+                    ><ShareGlyph /></button>
+                  )}
                   {canDiscloseSessions && (
                     <button
                       className="webapp-workspace-disclosure"
@@ -307,15 +317,6 @@ export function DriveRail({
                       {!workspace.canControl && <OwnerTag workspace={workspace} />}
                     </span>
                   </div>
-                  {workspace.canControl && !sessionsCollapsed && (
-                    <button
-                      className="webapp-workspace-details-button"
-                      type="button"
-                      aria-label={`View details for ${workspace.title}`}
-                      title={`View details for ${workspace.title}`}
-                      onClick={() => onOpenWorkspaceDetails(workspace.id)}
-                    ><MoreIcon /></button>
-                  )}
                   {workspace.canControl && (
                     <button
                       className="webapp-workspace-delete"
