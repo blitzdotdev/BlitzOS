@@ -139,6 +139,12 @@ export function defaultWorkspaceTabs(): WorkspaceTabs {
   };
 }
 
+/** The drawer opens up to 65% of the viewport beyond the 264px rail, and
+ * never less than the old 480px ceiling. */
+export function maxDrawerWidth(viewportWidth: number): number {
+  return Math.max(480, Math.round((viewportWidth - 264) * 0.65));
+}
+
 export function defaultWorkspaceFiles(): WorkspaceFiles {
   return {
     version: 1,
