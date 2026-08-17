@@ -29,32 +29,33 @@
 
 .drive-rail-brand {
   display: flex;
-  height: 64px;
+  height: 52px;
   flex: none;
   align-items: center;
-  gap: 10px;
-  padding: 0 8px;
+  gap: 9px;
+  margin: 0 0 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-mono);
 }
 
 .drive-rail-mark {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 18px;
+  height: 18px;
   flex: none;
   place-items: center;
-  border-radius: 9px;
-  color: var(--paper);
-  background: var(--accent);
+  color: var(--accent);
 }
 
-.drive-rail-mark svg { width: 15px; height: 15px; }
+.drive-rail-mark svg { width: 16px; height: 16px; }
 
 .drive-rail-brand strong {
   min-width: 0;
   overflow: hidden;
-  font-size: 15px;
-  font-weight: 620;
-  letter-spacing: -0.01em;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -147,11 +148,10 @@
 .drive-rail-section {
   display: flex;
   align-items: center;
-  padding: 4px 12px 6px;
+  padding: 6px 12px;
   color: var(--faint);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
+  font: 650 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -161,37 +161,56 @@
   height: 22px;
   margin-left: auto;
   place-items: center;
-  border: 0;
-  border-radius: 50%;
+  border: 1px solid transparent;
   color: var(--muted);
   background: transparent;
   cursor: pointer;
 }
 
-.drive-rail-section button:hover { color: var(--ink); background: var(--hover); }
+.drive-rail-section button:hover,
+.drive-rail-section button:focus-visible {
+  border-color: var(--rule);
+  color: var(--ink);
+  outline: 0;
+}
 .drive-rail-section button svg { width: 13px; height: 13px; }
 
 .drive-rail-ws {
   display: grid;
   width: 100%;
   min-width: 0;
-  height: 34px;
-  grid-template-columns: 17px minmax(0, 1fr) auto;
+  height: 32px;
+  grid-template-columns: 15px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   padding: 0 12px;
   border: 0;
-  border-radius: var(--r-control);
   color: var(--muted);
   background: transparent;
-  font: inherit;
-  font-size: 13px;
+  font: 11.5px/1 var(--font-mono);
   text-align: left;
   cursor: pointer;
 }
 
-.drive-rail-ws:hover { color: var(--ink); background: var(--hover); }
-.drive-rail-ws svg { width: 17px; height: 17px; color: var(--faint); }
+.drive-rail-ws:hover,
+.drive-rail-ws:focus-visible {
+  color: var(--ink);
+  background: color-mix(in oklab, var(--ink) 5%, transparent);
+  outline: 0;
+}
+
+.drive-rail-ws.drive-rail-row--active {
+  color: var(--ink);
+  background: color-mix(in oklab, var(--ink) 9%, transparent);
+}
+
+.drive-rail-ws svg { width: 15px; height: 15px; color: var(--faint); }
+
+.drive-rail-ws .webapp-workspace-status-badge {
+  font: 650 8.5px/1.4 var(--font-mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
 
 .drive-rail-ws span {
   min-width: 0;
@@ -200,35 +219,31 @@
   white-space: nowrap;
 }
 
-.drive-ws-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--faint);
-}
-
-.drive-ws-dot--online { background: var(--accent); }
-
 .drive-rail-account {
   position: relative;
   display: grid;
   width: 100%;
   min-width: 0;
   flex: none;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   margin-top: 8px;
-  padding: 8px 10px;
+  padding: 13px 10px;
   border: 0;
-  border-radius: var(--r-control);
+  border-top: 1px solid var(--rule);
   background: transparent;
-  font: inherit;
+  font-family: var(--font-mono);
   text-align: left;
   cursor: pointer;
 }
 
-.drive-rail-account:hover { background: var(--hover); }
+.drive-rail-account:hover,
+.drive-rail-account:focus-visible {
+  background: color-mix(in oklab, var(--ink) 5%, var(--paper));
+  outline: 0;
+}
+
 .drive-rail-account-copy { display: grid; min-width: 0; }
 
 .drive-rail-account-copy strong,
@@ -239,8 +254,8 @@
   white-space: nowrap;
 }
 
-.drive-rail-account-copy strong { color: var(--ink); font-size: 13px; font-weight: 600; }
-.drive-rail-account-copy span { color: var(--faint); font-size: 11.5px; }
+.drive-rail-account-copy strong { color: var(--ink); font-size: 11.5px; font-weight: 650; }
+.drive-rail-account-copy span { color: var(--faint); font-size: 10px; }
 
 /* ----------------------------------------------------------------- topbar */
 .drive-topbar {

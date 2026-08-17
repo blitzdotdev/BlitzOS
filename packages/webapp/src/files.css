@@ -33,17 +33,19 @@
 
 .files-sidebar {
   position: relative;
-  z-index: 5;
+  z-index: 11;
   display: flex;
   width: var(--files-sidebar-width);
   min-width: var(--files-sidebar-width);
+  height: calc(100% + var(--headerH));
   min-height: 0;
+  margin-top: calc(-1 * var(--headerH));
   flex: none;
   flex-direction: column;
   border-left: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
-  font: 13px/1.4 var(--font-ui);
+  font: 12.5px/1.4 var(--font-mono);
 }
 
 .files-sidebar-resizer {
@@ -68,13 +70,13 @@
 
 .files-sidebar-header {
   display: flex;
-  height: 36px;
-  min-height: 36px;
+  height: 40px;
+  min-height: 40px;
   align-items: center;
-  padding-left: 12px;
+  padding-left: 11px;
   border-bottom: 1px solid var(--rule);
   color: var(--faint);
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: .14em;
 }
 
@@ -84,20 +86,26 @@
 
 .files-sidebar-header button {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border: 0;
+  border-radius: 6px;
   color: var(--faint);
   background: transparent;
-  font: 15px/1 var(--font-ui);
   cursor: pointer;
   place-items: center;
+}
+
+.files-sidebar-header button svg {
+  width: 18px;
+  height: 18px;
 }
 
 .files-sidebar-header button:hover:not(:disabled),
 .files-sidebar-header button:focus-visible:not(:disabled) {
   color: var(--ink);
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
 .files-sidebar-header button:disabled {
@@ -109,7 +117,7 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  font: 13px/22px var(--font-ui);
+  font: 13px/28px var(--font-mono);
 }
 
 .files-tree > div[role='tree'] {
@@ -123,7 +131,7 @@
   display: flex;
   width: 100%;
   height: 100%;
-  min-width: max-content;
+  min-width: 0;
   align-items: center;
   color: var(--muted);
   cursor: default;
@@ -137,7 +145,9 @@
 
 .files-tree-row--selected {
   color: var(--ink);
-  background: var(--terminal-selection);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in oklab, var(--accent) 7%, var(--paper));
 }
 
 .files-tree-row--dotfile:not(.files-tree-row--selected) {
@@ -164,9 +174,9 @@
 }
 
 .files-tree-icon {
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
+  width: 13px;
+  height: 13px;
+  min-width: 13px;
   margin-right: 5px;
   color: var(--faint);
 }
@@ -180,8 +190,34 @@
 }
 
 .files-tree-name {
-  padding-right: 12px;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding-right: 8px;
+  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.files-tree-git-status {
+  width: 18px;
+  flex: none;
+  margin-left: auto;
+  padding-right: 6px;
+  color: var(--faint);
+  font-size: 10px;
+  text-align: right;
+}
+
+.files-tree-git-status--m {
+  color: var(--status-warm-yellow);
+}
+
+.files-tree-git-status--a {
+  color: var(--ansi-green);
+}
+
+.files-tree-git-status--d {
+  color: var(--ansi-red);
 }
 
 .files-tree-indent-guides {
@@ -229,7 +265,7 @@
   height: 22px;
   padding: 2px 12px;
   color: var(--faint);
-  font: 13px/18px var(--font-ui);
+  font: 12px/18px var(--font-mono);
 }
 
 .files-sidebar-loading {
@@ -240,7 +276,7 @@
   display: block;
   padding: 4px 12px 7px;
   color: var(--faint);
-  font: 10.5px/1.4 var(--font-ui);
+  font: 10.5px/1.4 var(--font-mono);
 }
 
 .files-tree .webapp-loading-rows {
@@ -252,9 +288,11 @@
   z-index: 40;
   width: 200px;
   border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
   color: var(--muted);
   background: var(--paper);
-  font: 12.5px/1.4 var(--font-ui);
+  font: 12px/1.4 var(--font-mono);
 }
 
 .files-context-menu > button {
@@ -301,6 +339,7 @@
   height: 30px;
   padding: 0 7px;
   border: 1px solid var(--rule);
+  border-radius: 6px;
   outline: 0;
   color: var(--ink);
   background: var(--paper);
@@ -328,9 +367,10 @@
   min-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--rule);
+  border-radius: 6px;
   color: var(--muted);
   background: transparent;
-  font: 11px/1 var(--font-ui);
+  font: 11px/1 var(--font-mono);
   cursor: pointer;
 }
 
@@ -526,6 +566,112 @@
 .webapp-statusline__files:focus-visible {
   color: var(--accent);
 }
+
+@keyframes files-saved-fade {
+  70% { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (max-width: 899px) {
+  .files-sidebar {
+    position: fixed;
+    z-index: 50;
+    top: var(--mobile-viewport-top, 0);
+    right: 0;
+    bottom: auto;
+    width: min(84vw, 320px);
+    min-width: min(84vw, 320px);
+    height: var(--mobile-viewport-height, 100dvh);
+    margin-top: 0;
+    transform: translateX(101%);
+    transition: transform 100ms ease-out;
+    border-left: 1px solid var(--rule);
+  }
+
+  .files-sidebar--open {
+    transform: translateX(0);
+  }
+
+  .files-sidebar-header {
+    height: var(--headerH);
+    min-height: var(--headerH);
+    padding-left: 16px;
+  }
+
+  .files-sidebar-header button {
+    width: var(--touchTarget);
+    height: var(--touchTarget);
+  }
+
+  .files-tree-root-state {
+    height: var(--touchTarget);
+    padding: 13px 14px;
+  }
+
+  .files-drawer-scrim {
+    position: fixed;
+    z-index: 40;
+    top: var(--mobile-viewport-top, 0);
+    right: 0;
+    bottom: auto;
+    left: 0;
+    width: 100%;
+    height: var(--mobile-viewport-height, 100dvh);
+    padding: 0;
+    border: 0;
+    background: color-mix(in oklab, var(--paper) 72%, transparent);
+  }
+
+  .files-drawer-scrim--open {
+    display: block;
+  }
+
+  .file-editor-meta {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .file-editor-banner {
+    max-width: 58%;
+    overflow: hidden;
+  }
+
+  .file-editor-path {
+    min-width: 28px;
+  }
+
+  .file-editor-code .cm-scroller {
+    font-size: 13px;
+  }
+
+  .webapp-statusline__files {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    align-self: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--faint);
+    color: var(--ink);
+    background: color-mix(in oklab, var(--ink) 6%, var(--paper));
+  }
+
+  .webapp-statusline__files span {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .files-sidebar,
+  .files-tree-chevron > .codicon,
+  .file-editor-saved {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* ================= blitz additions: identity + drive surfaces ============ */
 
 .workspace-drawer {
   position: relative;
@@ -747,11 +893,6 @@
   color: var(--accent);
 }
 
-@keyframes files-saved-fade {
-  70% { opacity: 1; }
-  to { opacity: 0; }
-}
-
 @media (max-width: 899px) {
   .workspace-drawer {
     position: fixed;
@@ -884,14 +1025,5 @@
 
   .webapp-statusline__files {
     position: relative;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .files-sidebar,
-  .files-tree-chevron > .codicon,
-  .file-editor-saved {
-    transition: none;
-    animation: none;
   }
 }

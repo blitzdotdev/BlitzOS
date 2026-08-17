@@ -431,7 +431,7 @@ export function CreateTemplateScreen({
                     : `${attached.length} ${attached.length === 1 ? 'folder' : 'folders'} attached`}
                 </span>
                 <button
-                  className={`drive-button${targetAttached ? '' : ' drive-button--primary'}`}
+                  className={`webapp-action${targetAttached ? '' : ' webapp-action--primary'}`}
                   type="button"
                   disabled={target === null}
                   onClick={toggleAttach}

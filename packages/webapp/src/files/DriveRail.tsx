@@ -53,6 +53,11 @@ export function DriveRail({
   const [newOpen, setNewOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const label = identity?.name || identity?.email || 'BlitzOS';
+  const stateLabel = (workspace: CloudWorkspaceModel): string => {
+    if (workspace.lifecycleStatus === 'running') return 'online';
+    if (workspace.lifecycleStatus === 'error') return 'failed';
+    return workspace.lifecycleStatus;
+  };
 
   return (
     <>
@@ -117,7 +122,6 @@ export function DriveRail({
           </div>
           {workspaces.map((workspace) => {
             const active = workspace.id === activeWorkspaceId;
-            const online = workspace.lifecycleStatus === 'running';
             return (
               <button
                 className={`drive-rail-ws${active ? ' drive-rail-row--active' : ''}`}
@@ -132,9 +136,8 @@ export function DriveRail({
                 {workspace.accessRole === 'owner' || !workspace.owner
                   ? (
                     <span
-                      className={`drive-ws-dot${online ? ' drive-ws-dot--online' : ''}`}
-                      title={workspace.lifecycleStatus}
-                    />
+                      className={`webapp-workspace-status-badge webapp-workspace-status-badge--${stateLabel(workspace)}`}
+                    >{stateLabel(workspace)}</span>
                   )
                   : (
                     <DriveAvatar

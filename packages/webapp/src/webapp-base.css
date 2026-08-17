@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   color: var(--ink);
   background: var(--terminal-background);
   font-family: var(--font-ui);
@@ -8,6 +9,29 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: var(--faint) var(--paper);
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--paper);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--paper);
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--faint);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 
 html,
@@ -104,32 +128,51 @@ a {
   height: 100%;
   align-content: center;
   justify-items: center;
-  padding: 24px;
+  padding: 24px 24px 12vh;
   color: var(--faint);
+  font-family: var(--font-mono);
   text-align: center;
 }
 
 .webapp-empty > svg {
-  width: 30px;
-  height: 30px;
-  margin-bottom: 14px;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 112px;
   fill: none;
-  stroke: var(--accent);
+  stroke: color-mix(in oklab, var(--ink) 20%, var(--paper));
   stroke-width: 1;
 }
 
 .webapp-empty h1 {
-  margin: 0 0 6px;
+  margin: 0 0 78px;
   color: var(--ink);
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .webapp-empty p {
-  max-width: 480px;
-  margin: 0 0 16px;
+  max-width: 380px;
+  margin: 0 0 82px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.webapp-empty__action {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
   color: var(--muted);
-  font-size: 12px;
+  background: transparent;
+  font: 11px/1 var(--font-mono);
+  cursor: pointer;
+}
+
+.webapp-empty__action:hover,
+.webapp-empty__action:focus-visible {
+  border-color: color-mix(in oklab, var(--ink) 24%, var(--paper));
+  color: var(--ink);
+  outline: none;
 }
 
 .webapp-notice,
@@ -157,6 +200,17 @@ a {
   bottom: auto;
 }
 
+.webapp-workspace-view > .webapp-notice--error {
+  position: absolute;
+  z-index: 80;
+  inset: 0 0 auto;
+  max-width: none;
+  padding: 9px 12px;
+  border-color: color-mix(in srgb, var(--ansi-red) 55%, var(--rule));
+  color: var(--ansi-red);
+  background: color-mix(in srgb, var(--ansi-red) 9%, var(--paper));
+}
+
 .webapp-notice button {
   border: 0;
   color: var(--faint);
@@ -178,6 +232,36 @@ a {
 @keyframes webapp-spin {
   to { transform: rotate(360deg); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .webapp-inline-spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 899px) {
+  .webapp-action,
+  .webapp-notice button {
+    min-height: 44px;
+  }
+
+  .webapp-notice {
+    right: 10px;
+    bottom: 54px;
+    max-width: calc(100vw - 20px);
+  }
+
+  .webapp-notice--update {
+    top: 10px;
+    bottom: auto;
+  }
+  .webapp-workspace-view > .webapp-notice--error {
+    inset: 0 0 auto;
+    max-width: none;
+  }
+}
+
+/* ================= blitz additions: identity + drive surfaces ============ */
 
 /* blitz-core operator-key entry uses the webapp primitives. */
 .login-screen {
@@ -226,28 +310,4 @@ a {
 
 .login-card input:focus {
   border-color: var(--accent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .webapp-inline-spinner {
-    animation: none;
-  }
-}
-
-@media (max-width: 899px) {
-  .webapp-action,
-  .webapp-notice button {
-    min-height: 44px;
-  }
-
-  .webapp-notice {
-    right: 10px;
-    bottom: 54px;
-    max-width: calc(100vw - 20px);
-  }
-
-  .webapp-notice--update {
-    top: 10px;
-    bottom: auto;
-  }
 }
