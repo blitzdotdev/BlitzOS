@@ -15,6 +15,8 @@ ARG TARGETARCH
 WORKDIR /src/packages/box/gateway
 COPY packages/box/gateway/go.mod ./
 COPY packages/box/gateway/*.go ./
+# The previews conformance test reads the shared cross-runtime fixtures.
+COPY packages/schema/fixtures/previews /src/packages/schema/fixtures/previews
 RUN go test ./... \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
 
