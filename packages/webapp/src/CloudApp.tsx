@@ -1286,7 +1286,20 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {railFor(null, activeWorkspaceId)}
       {shareWorkspaceId && (() => {
         const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
-        return workspace ? <ShareWorkspaceDialog client={client} workspaceId={workspace.id} workspaceName={workspace.title} orgName={store.viewer?.org.name ?? 'your org'} orgShareRole={workspace.orgShareRole} onClose={() => setShareWorkspaceId(null)} /> : null;
+        return workspace ? (
+          <ShareWorkspaceDialog
+            client={client}
+            workspaceId={workspace.id}
+            workspaceName={workspace.title}
+            orgName={store.viewer?.org.name ?? 'your org'}
+            orgShareRole={workspace.orgShareRole}
+            owner={workspace.owner ?? (workspace.accessRole === 'owner' && store.viewer
+              ? { name: store.viewer.identity.name || store.viewer.identity.email, avatarUrl: store.viewer.identity.avatarUrl ?? null }
+              : null)}
+            viewerIsOwner={workspace.accessRole === 'owner'}
+            onClose={() => setShareWorkspaceId(null)}
+          />
+        ) : null;
       })()}
 
       <div className="drive-ws-frame">

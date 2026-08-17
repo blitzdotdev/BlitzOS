@@ -131,9 +131,10 @@ export function storedWorkspacePreference(
 }
 
 export function defaultWorkspaceTabs(): WorkspaceTabs {
+  // A fresh workspace opens straight into Claude; terminals spawn on demand.
   return {
     version: 1,
-    tabs: [{ id: 1, type: 'terminal' }],
+    tabs: [{ id: 1, type: 'claude' }],
     activeId: 1,
     nextId: 2,
   };
