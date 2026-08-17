@@ -70,11 +70,14 @@ export function useWorkspaceBootstrap({
         ]);
         const workspaceStates = new Map<string, WorkspaceWebAppStateV1>();
         await Promise.all(records.map(async ({ id }) => {
+          // A preferences doc is never worth failing the boot over: missing,
+          // stale, or malformed state falls back to defaults for that
+          // workspace while the rest of the app loads normally.
           try {
             const state = await api.getWorkspaceWebAppState(id);
             if (state.doc !== null) workspaceStates.set(id, state.doc);
-          } catch (cause) {
-            if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
+          } catch {
+            // Defaults apply.
           }
         }));
         const preferences = reconcileUiPreferences(

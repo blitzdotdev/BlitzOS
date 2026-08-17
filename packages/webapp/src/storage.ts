@@ -294,7 +294,7 @@ function parseDrawer(value: OptionalJsonValue): WorkspaceFiles | null {
     || !isBoolean(object.open)
     || !isNumber(object.width)
     || object.width < 200
-    || object.width > 480
+    || object.width > 2000
     || !Array.isArray(object.expanded)
   ) return null;
   const expanded = object.expanded.filter(isSafeRelativePath);
