@@ -81,7 +81,6 @@ import {
 } from './preview';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
-import { InviteRedeemPage } from './InviteRedeemPage';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
@@ -1112,12 +1111,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
-
-  // The invite landing must render for signed-out visitors; Google sign-in
-  // carries the code and the auth callback redeems it.
-  if (route.page === 'invite') {
-    return <InviteRedeemPage inviteCode={route.inviteCode} />;
-  }
 
   if (signedOut) {
     return <LoginForm loginUrl={api.googleLoginUrl()} />;
