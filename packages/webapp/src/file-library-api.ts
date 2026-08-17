@@ -283,8 +283,13 @@ export function createFileLibraryClient(
         throw new Error('multipart create returned an invalid upload ID');
       }
       const uploadId = created.uploadId;
+      const abortUpload = () => rawRequest(
+        `${path}/multipart/${encodeURIComponent(uploadId)}`,
+        { method: 'DELETE' },
+      ).then(() => undefined, () => undefined);
       const partCount = Math.ceil(file.size / FILES_MULTIPART_CHUNK_BYTES);
       const uploaded: Array<{ partNumber: number; etag: string }> = [];
+      try {
       for (let start = 0; start < partCount; start += 3) {
         const batch = Array.from(
           { length: Math.min(3, partCount - start) },
@@ -322,6 +327,11 @@ export function createFileLibraryClient(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parts: uploaded }),
       });
+      } catch (caught) {
+        // Abandoned uploads store billable parts server-side until aborted.
+        await abortUpload();
+        throw caught;
+      }
       onProgress?.(file.size, file.size);
     },
     async listWorkspaceFolders(workspaceId) {

@@ -509,8 +509,19 @@ export function addWorkspaceRoutes(
   });
 
   router.get("/workspaces/:id", async (context) => {
+    // The SPA's workspace page shares this path. A browser refresh navigates
+    // here with an HTML accept; serve the app shell and keep JSON for fetch
+    // callers. Deeper /workspaces/:id/* paths (the webApp proxy) never take
+    // this branch.
+    const runtime = runtimeFactory(context);
+    if (
+      runtime.assets !== undefined
+      && (context.req.header("accept") ?? "").includes("text/html")
+    ) {
+      return runtime.assets.fetch(context.req.raw);
+    }
     const principal = await requirePrincipal(context);
-    const row = await workspaceById(runtimeFactory(context).db, context.req.param("id"));
+    const row = await workspaceById(runtime.db, context.req.param("id"));
     if (row === null || row.org_id !== principal.orgId || row.phase === "destroyed") {
       throw new HttpError(404, "workspace not found");
     }

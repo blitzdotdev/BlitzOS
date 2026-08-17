@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectDropped, type DropItemSource } from '../src/files/drop-upload.js';
+import { collectDropped, DropLimitError, MAX_DROP_FILES, type DropItemSource } from '../src/files/drop-upload.js';
 
 interface FakeEntry {
   isFile: boolean;
@@ -89,5 +89,11 @@ describe('drop payload traversal', () => {
       [new File(['x'], 'real.txt')],
     );
     expect(payload.files).toHaveLength(1);
+  });
+
+  it('refuses a drop past the file cap before uploading anything', async () => {
+    const children = Array.from({ length: MAX_DROP_FILES + 1 }, (_, i) => fileEntry(`f${i}.txt`));
+    await expect(collectDropped([item(dirEntry('huge', children, 100))], []))
+      .rejects.toBeInstanceOf(DropLimitError);
   });
 });

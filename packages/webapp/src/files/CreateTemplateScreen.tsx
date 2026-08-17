@@ -13,7 +13,7 @@ import {
   formatWhen,
   normalizeFolderName,
 } from './drive-model';
-import { collectDropped } from './drop-upload';
+import { collectDropped, DropLimitError } from './drop-upload';
 
 function BackGlyph() {
   return (
@@ -366,7 +366,10 @@ export function CreateTemplateScreen({
                     Array.from(event.dataTransfer.files),
                   )
                     .then((payload) => uploadDroppedFolders(payload.folders, payload.files.length))
-                    .catch((caught: Error) => setError(caught.message));
+                    .catch((caught: Error) => {
+                      if (caught instanceof DropLimitError) setDropHint(caught.message);
+                      else setError(caught.message);
+                    });
                 }}
               >
                 <div className="tplf-head">
@@ -458,7 +461,7 @@ export function CreateTemplateScreen({
           <button
             className="create-workspace-primary"
             type="submit"
-            disabled={busy || loading || name.trim() === '' || machineTypeId === ''}
+            disabled={busy || loading || uploading !== null || name.trim() === '' || machineTypeId === ''}
           >
             {busy ? 'Creating…' : 'Create template'}
           </button>

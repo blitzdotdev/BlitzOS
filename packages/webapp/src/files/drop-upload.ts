@@ -17,6 +17,32 @@ export interface DroppedPayload {
   folders: DroppedFolder[];
 }
 
+export const MAX_DROP_FILES = 500;
+export const MAX_DROP_BYTES = 1024 * 1024 * 1024;
+
+/** A drop past the caps is refused whole rather than partially uploaded. */
+export class DropLimitError extends Error {
+  public constructor(public readonly fileCount: number, public readonly totalBytes: number) {
+    super(fileCount > MAX_DROP_FILES
+      ? `That drop has over ${String(MAX_DROP_FILES)} files — zip it or sync it through a workspace instead`
+      : 'That drop is over 1 GB — zip it or sync it through a workspace instead');
+    this.name = 'DropLimitError';
+  }
+}
+
+interface DropBudget {
+  files: number;
+  bytes: number;
+}
+
+function reserveDropBudget(budget: DropBudget, file: File): void {
+  budget.files += 1;
+  budget.bytes += file.size;
+  if (budget.files > MAX_DROP_FILES || budget.bytes > MAX_DROP_BYTES) {
+    throw new DropLimitError(budget.files, budget.bytes);
+  }
+}
+
 interface EntryFileSource {
   isFile: boolean;
   isDirectory: boolean;
@@ -59,10 +85,13 @@ async function collectInto(
   entry: EntryFileSource,
   prefix: string,
   sink: DroppedFile[],
+  budget: DropBudget,
 ): Promise<void> {
   if (entry.isFile) {
+    const file = await entryFile(entry);
+    reserveDropBudget(budget, file);
     sink.push({
-      file: await entryFile(entry),
+      file,
       relativePath: prefix === '' ? entry.name : `${prefix}/${entry.name}`,
     });
     return;
@@ -71,7 +100,7 @@ async function collectInto(
   const children = await readAllEntries(entry);
   const next = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
   for (const child of children) {
-    await collectInto(child, next, sink);
+    await collectInto(child, next, sink, budget);
   }
 }
 
@@ -92,22 +121,26 @@ export async function collectDropped(
     .map((item) => item.webkitGetAsEntry?.() ?? null)
     .filter((entry): entry is EntryFileSource => entry !== null);
   const payload: DroppedPayload = { files: [], folders: [] };
+  const budget: DropBudget = { files: 0, bytes: 0 };
   for (const entry of entries) {
     if (entry.isDirectory) {
       const folder: DroppedFolder = { name: entry.name, files: [] };
       const children = await readAllEntries(entry);
       for (const child of children) {
-        await collectInto(child, '', folder.files);
+        await collectInto(child, '', folder.files, budget);
       }
       payload.folders.push(folder);
       continue;
     }
     if (entry.isFile) {
-      payload.files.push({ file: await entryFile(entry), relativePath: entry.name });
+      const file = await entryFile(entry);
+      reserveDropBudget(budget, file);
+      payload.files.push({ file, relativePath: entry.name });
     }
   }
   if (entries.length === 0) {
     for (const file of fallbackFiles) {
+      reserveDropBudget(budget, file);
       payload.files.push({ file, relativePath: file.name });
     }
   }

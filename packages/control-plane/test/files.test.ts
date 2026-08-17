@@ -435,4 +435,50 @@ describe("organization file library", () => {
     })).status).toBe(404);
     expect((await appRequest(app, path, { headers: { Cookie: owner } })).status).toBe(404);
   });
+
+  it("stores empty files and skips objects with unusable metadata instead of failing the listing", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const folderId = await createFolder(app, owner);
+    expect((await appRequest(app, objectPath(folderId, ".gitkeep"), {
+      method: "PUT",
+      headers: { Cookie: owner, "x-blitz-mtime": "5", "content-length": "0" },
+    })).status).toBe(204);
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/foreign.bin`, "no metadata here");
+
+    const listing = await appRequest(app, `/folders/${folderId}/objects`, {
+      headers: { Cookie: owner },
+    });
+    expect(listing.status).toBe(200);
+    const body = await listing.json<{ objects: { key: string; size: number }[] }>();
+    expect(body.objects).toEqual([{
+      key: ".gitkeep",
+      size: 0,
+      mtime: 5,
+      editedBy: expect.any(String),
+    }]);
+    const fetched = await appRequest(app, objectPath(folderId, ".gitkeep"), {
+      headers: { Cookie: owner },
+    });
+    expect(fetched.status).toBe(200);
+    expect(await fetched.text()).toBe("");
+  });
+
+  it("aborts an in-flight multipart upload on request", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const folderId = await createFolder(app, owner);
+    const created = await appRequest(app, `${objectPath(folderId, "big.bin")}/multipart`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ mtime: 7 }),
+    });
+    expect(created.status).toBe(201);
+    const { uploadId } = await created.json<{ uploadId: string }>();
+    expect((await appRequest(
+      app,
+      `${objectPath(folderId, "big.bin")}/multipart/${encodeURIComponent(uploadId)}`,
+      { method: "DELETE", headers: { Cookie: owner } },
+    )).status).toBe(204);
+  });
 });

@@ -91,6 +91,10 @@ export interface CoreRuntime {
     webAppAuth?: WorkspaceWebAppAuth;
   };
   principalSource: PrincipalSource;
+  /** Serves the webApp shell for browser navigations that land on API paths
+   * shared with SPA pages (a refresh on /workspaces/:id). Absent where the
+   * deployment has no programmatic asset access. */
+  assets?: { fetch(request: Request): Promise<Response> };
   waitUntil(promise: Promise<unknown>): void;
   reportError(event: string, error: Error): void;
 }

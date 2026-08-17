@@ -566,6 +566,8 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
+    // SAFETY: Both routed context variants satisfy the webApp blob response contract used for the SPA shell.
+    assets: { fetch: async () => webAppResponse(context as WebAppContext, "/index.html") },
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
     reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
   };

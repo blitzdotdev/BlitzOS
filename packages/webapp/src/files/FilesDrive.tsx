@@ -7,8 +7,6 @@ import { drivePath, folderPagePath, type DriveScope } from '../sessions-page-sta
 import { AttachFolderDialog } from './AttachFolderDialog';
 import { DriveAvatar } from './DriveAvatar';
 import {
-  CloseGlyph,
-  CheckGlyph,
   DownloadGlyph,
   FileGlyph,
   FolderGlyph,
@@ -27,7 +25,18 @@ import {
   normalizeFolderName,
   splitFolders,
 } from './drive-model';
-import { collectDropped, type DroppedPayload } from './drop-upload';
+import { collectDropped, DropLimitError, type DroppedPayload } from './drop-upload';
+import {
+  DriveCrumbs,
+  DriveDeleteDialog,
+  DriveFileRow,
+  DriveMenu,
+  DriveSnackbar,
+  DriveUploaderCard,
+  FolderNameDialog,
+  type MenuItem,
+  type UploadState,
+} from './drive-chrome';
 import { ShareFolderDialog } from './ShareFolderDialog';
 
 export type DrivePageRoute =
@@ -36,15 +45,6 @@ export type DrivePageRoute =
 
 export type DriveCommand = { kind: 'new-folder' | 'upload'; nonce: number };
 
-interface MenuItem {
-  label: string;
-  icon?: React.ReactNode;
-  danger?: boolean;
-  disabled?: boolean;
-  title?: string;
-  run: () => void;
-}
-
 type DriveDialog =
   | { kind: 'share'; folderId: string }
   | { kind: 'attach'; folderId: string }
@@ -52,16 +52,6 @@ type DriveDialog =
   | { kind: 'rename'; folderId: string }
   | { kind: 'delete-folder'; folderId: string }
   | { kind: 'delete-object'; key: string; name: string };
-
-interface UploadState {
-  name: string;
-  sent: number;
-  total: number;
-  done: boolean;
-  folderName: string;
-  index: number;
-  count: number;
-}
 
 interface UploadEntry {
   file: File;
@@ -101,6 +91,7 @@ export function FilesDrive({
   const fileInput = useRef<HTMLInputElement>(null);
   const snackTimer = useRef<number | null>(null);
   const dragDepth = useRef(0);
+  const uploadRun = useRef(0);
 
   const folderId = route.page === 'folder' ? route.folderId : null;
   const path = route.page === 'folder' ? route.folderPath : [];
@@ -216,7 +207,15 @@ export function FilesDrive({
 
   const uploadEntries = async (target: FolderView, entries: UploadEntry[]): Promise<boolean> => {
     const count = entries.length;
+    const run = uploadRun.current + 1;
+    uploadRun.current = run;
     for (const [position, { file, key }] of entries.entries()) {
+      if (uploadRun.current !== run) {
+        showSnack(<span>Upload canceled — {position} of {count} finished</span>);
+        if (target.id === folderId) await loadObjects(target.id);
+        await loadFolders();
+        return false;
+      }
       const progress = (sent: number, total: number) => {
         setUpload({
           name: file.name,
@@ -464,7 +463,10 @@ export function FilesDrive({
         // go inert once the drop event yields to the event loop.
         void collectDropped(Array.from(event.dataTransfer.items), Array.from(event.dataTransfer.files))
           .then(handleDropPayload)
-          .catch((caught: Error) => setError(caught.message));
+          .catch((caught: Error) => {
+            if (caught instanceof DropLimitError) showSnack(caught.message);
+            else setError(caught.message);
+          });
       }}
     >
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
@@ -489,33 +491,17 @@ export function FilesDrive({
         </div>
       ) : (
         <div>
-          <nav className="drive-crumbs" aria-label="Breadcrumb">
-            <button type="button" onClick={() => goDrive(scope)}>{scopeTitle}</button>
-            <i>›</i>
-            {path.length === 0
-              ? <b>{folder.name}</b>
-              : <button type="button" onClick={() => openPath(folder.id, [])}>{folder.name}</button>}
-            {path.map((segment, index) => (
-              <span key={`${segment}-${String(index)}`} style={{ display: 'contents' }}>
-                <i>›</i>
-                {index === path.length - 1
-                  ? <b>{segment}</b>
-                  : (
-                    <button type="button" onClick={() => openPath(folder.id, path.slice(0, index + 1))}>
-                      {segment}
-                    </button>
-                  )}
-              </span>
-            ))}
-            {folder.attachedWorkspaceIds.length > 0 && (
-              <span
-                className="drive-crumb-attached"
-                title={`Attached to ${folder.attachedWorkspaceIds.map(workspaceName).join(', ')} at /workspace/shared/${folder.name}`}
-              >
-                <LinkGlyph />
-              </span>
-            )}
-          </nav>
+          <DriveCrumbs
+            rootLabel={scopeTitle}
+            folderName={folder.name}
+            path={path}
+            attachedNote={folder.attachedWorkspaceIds.length > 0
+              ? `Attached to ${folder.attachedWorkspaceIds.map(workspaceName).join(', ')} at /workspace/shared/${folder.name}`
+              : null}
+            onRoot={() => goDrive(scope)}
+            onFolderRoot={() => openPath(folder.id, [])}
+            onPath={(next) => openPath(folder.id, next)}
+          />
 
           {entries !== null && entries.dirs.length > 0 && (
             <section className="drive-section">
@@ -546,42 +532,18 @@ export function FilesDrive({
             {entries === null || entries.files.length === 0 ? (
               <div className="drive-empty">{trimmedQuery !== '' ? 'No files match' : 'No files here yet'}</div>
             ) : entries.files.map((entry) => (
-              <div
-                className={`drive-file-row${selectedKey === entry.key ? ' drive-file-row--selected' : ''}`}
+              <DriveFileRow
                 key={entry.key}
+                entry={entry}
+                ownerName={folder.owner.name}
+                ownerAvatarUrl={folder.owner.avatarUrl}
+                mine={folder.role === 'owner'}
+                selected={selectedKey === entry.key}
+                onToggleSelect={() => setSelectedKey(selectedKey === entry.key ? null : entry.key)}
+                onDownload={() => download(entry.name, entry.key)}
+                onMenu={(event) => openMenuFrom(event, fileMenuItems(entry.name, entry.key))}
                 onContextMenu={(event) => openMenuAtPointer(event, fileMenuItems(entry.name, entry.key))}
-              >
-                <button
-                  className="drive-row-open"
-                  type="button"
-                  aria-label={entry.name}
-                  onClick={() => setSelectedKey(selectedKey === entry.key ? null : entry.key)}
-                />
-                <span className="drive-row-name"><FileGlyph /><span>{entry.name}</span></span>
-                <span className="drive-owner-cell">
-                  <DriveAvatar name={folder.owner.name} avatarUrl={folder.owner.avatarUrl} me={folder.role === 'owner'} />
-                  <span>{folder.role === 'owner' ? 'me' : folder.owner.name}</span>
-                </span>
-                <span className="drive-row-trail">{formatWhen(entry.mtime)} · {entry.editedBy} · {formatBytes(entry.size)}</span>
-                <span className="drive-row-actions">
-                  <button
-                    type="button"
-                    title="Download"
-                    aria-label={`Download ${entry.name}`}
-                    onClick={() => download(entry.name, entry.key)}
-                  >
-                    <DownloadGlyph />
-                  </button>
-                  <button
-                    type="button"
-                    title="More actions"
-                    aria-label={`More actions for ${entry.name}`}
-                    onClick={(event) => openMenuFrom(event, fileMenuItems(entry.name, entry.key))}
-                  >
-                    <KebabGlyph />
-                  </button>
-                </span>
-              </div>
+              />
             ))}
           </section>
         </div>
@@ -604,41 +566,7 @@ export function FilesDrive({
         }}
       />
 
-      {menu !== null && (
-        <>
-          <button
-            type="button"
-            aria-label="Close menu"
-            style={{ position: 'fixed', inset: 0, zIndex: 190, border: 0, background: 'transparent', cursor: 'default' }}
-            onClick={() => setMenu(null)}
-          />
-          <div
-            className="drive-menu"
-            role="menu"
-            style={{
-              left: Math.max(8, Math.min(menu.x, window.innerWidth - 224)),
-              top: Math.min(menu.y, window.innerHeight - 8 - menu.items.length * 40),
-            }}
-          >
-            {menu.items.map((item) => (
-              <button
-                className={`drive-menu-item${item.danger ? ' drive-menu-item--danger' : ''}`}
-                type="button"
-                role="menuitem"
-                key={item.label}
-                disabled={item.disabled}
-                title={item.title}
-                onClick={() => {
-                  setMenu(null);
-                  item.run();
-                }}
-              >
-                {item.icon}<span>{item.label}</span>
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      {menu !== null && <DriveMenu menu={menu} onClose={() => setMenu(null)} />}
 
       {dialog?.kind === 'share' && (() => {
         const target = folders.find(({ id }) => id === dialog.folderId);
@@ -670,49 +598,31 @@ export function FilesDrive({
       })()}
 
       {(dialog?.kind === 'new-folder' || dialog?.kind === 'rename') && (
-        <div className="drive-scrim" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDialog(null); }}>
-          <section className="drive-dialog" role="dialog" aria-modal="true">
-            <h2>{dialog.kind === 'new-folder' ? 'New folder' : 'Rename'}</h2>
-            <form onSubmit={(event) => {
-              event.preventDefault();
-              const name = normalizeFolderName(nameField);
-              if (name === '') return;
-              const action = dialog.kind === 'new-folder'
-                ? client.createFolder(name).then(({ folder: created }) => {
-                  showSnack(<span><b>{created.name}</b> created</span>);
-                })
-                : client.renameFolder(dialog.folderId, name).then(() => {
-                  showSnack(<span>Renamed to <b>{name}</b></span>);
-                });
-              void action.then(() => loadFolders())
-                .then(() => setDialog(null))
-                .catch((caught: Error) => setError(caught.message));
-            }}>
-              <div className="drive-dialog-body">
-                <input
-                  className="drive-field"
-                  type="text"
-                  aria-label="Folder name"
-                  placeholder="Folder name"
-                  value={nameField}
-                  maxLength={128}
-                  onChange={(event) => setNameField(event.currentTarget.value)}
-                />
-                <p className="drive-dialog-note">
-                  {dialog.kind === 'new-folder'
-                    ? 'You own it. Share it to add editors and viewers.'
-                    : 'Attached workspaces sync under the new name from the next tick; the old directory stays in the guest until removed there.'}
-                </p>
-              </div>
-              <div className="drive-dialog-foot">
-                <button className="drive-button" type="button" onClick={() => setDialog(null)}>Cancel</button>
-                <button className="drive-button drive-button--primary" type="submit" disabled={normalizeFolderName(nameField) === ''}>
-                  {dialog.kind === 'new-folder' ? 'Create' : 'Rename'}
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
+        <FolderNameDialog
+          title={dialog.kind === 'new-folder' ? 'New folder' : 'Rename'}
+          submitLabel={dialog.kind === 'new-folder' ? 'Create' : 'Rename'}
+          note={dialog.kind === 'new-folder'
+            ? 'You own it. Share it to add editors and viewers.'
+            : 'Attached workspaces sync under the new name from the next tick; the old directory stays in the guest until removed there.'}
+          value={nameField}
+          submitDisabled={normalizeFolderName(nameField) === ''}
+          onChange={setNameField}
+          onCancel={() => setDialog(null)}
+          onSubmit={() => {
+            const name = normalizeFolderName(nameField);
+            if (name === '') return;
+            const action = dialog.kind === 'new-folder'
+              ? client.createFolder(name).then(({ folder: created }) => {
+                showSnack(<span><b>{created.name}</b> created</span>);
+              })
+              : client.renameFolder(dialog.folderId, name).then(() => {
+                showSnack(<span>Renamed to <b>{name}</b></span>);
+              });
+            void action.then(() => loadFolders())
+              .then(() => setDialog(null))
+              .catch((caught: Error) => setError(caught.message));
+          }}
+        />
       )}
 
       {(dialog?.kind === 'delete-folder' || dialog?.kind === 'delete-object') && (() => {
@@ -722,78 +632,38 @@ export function FilesDrive({
         if (target === undefined || target === null) return null;
         const objectDelete = dialog.kind === 'delete-object';
         return (
-          <div className="drive-scrim" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDialog(null); }}>
-            <section className="drive-dialog" role="dialog" aria-modal="true">
-              <h2>Delete <em>“{objectDelete ? dialog.name : target.name}”</em></h2>
-              <div className="drive-dialog-body">
-                <p className="drive-dialog-note">
-                  {objectDelete
-                    ? target.attachedWorkspaceIds.length > 0
-                      ? 'Deletes from the library now. Copies in attached workspaces return it on the next sync unless deleted there too.'
-                      : 'Deletes the file from the library. There is no undo.'
-                    : 'Deletes the folder, its grants, and every file in it. There is no undo.'}
-                </p>
-              </div>
-              <div className="drive-dialog-foot">
-                <button className="drive-button" type="button" onClick={() => setDialog(null)}>Cancel</button>
-                <button
-                  className="drive-button drive-button--primary"
-                  type="button"
-                  onClick={() => {
-                    const action = objectDelete
-                      ? client.deleteFolderObject(target.id, dialog.key).then(() => loadObjects(target.id))
-                      : client.deleteFolder(target.id).then(() => goDrive(scope));
-                    void action
-                      .then(() => loadFolders())
-                      .then(() => {
-                        setDialog(null);
-                        showSnack(<span><b>{objectDelete ? dialog.name : target.name}</b> deleted</span>);
-                      })
-                      .catch((caught: Error) => setError(caught.message));
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            </section>
-          </div>
+          <DriveDeleteDialog
+            name={objectDelete ? dialog.name : target.name}
+            note={objectDelete
+              ? target.attachedWorkspaceIds.length > 0
+                ? 'Deletes from the library now. Copies in attached workspaces return it on the next sync unless deleted there too.'
+                : 'Deletes the file from the library. There is no undo.'
+              : 'Deletes the folder, its grants, and every file in it. There is no undo.'}
+            onCancel={() => setDialog(null)}
+            onConfirm={() => {
+              const action = objectDelete
+                ? client.deleteFolderObject(target.id, dialog.key).then(() => loadObjects(target.id))
+                : client.deleteFolder(target.id).then(() => goDrive(scope));
+              void action
+                .then(() => loadFolders())
+                .then(() => {
+                  setDialog(null);
+                  showSnack(<span><b>{objectDelete ? dialog.name : target.name}</b> deleted</span>);
+                })
+                .catch((caught: Error) => setError(caught.message));
+            }}
+          />
         );
       })()}
 
       {upload !== null && (
-        <section className="drive-uploader" aria-label="Upload status">
-          <header className="drive-uploader-head">
-            <span>
-              {upload.done
-                ? upload.count === 1 ? 'Upload complete' : `Uploaded ${upload.count} items`
-                : upload.count === 1 ? 'Uploading 1 item' : `Uploading ${upload.index} of ${upload.count}`}
-            </span>
-            <button type="button" aria-label="Close upload status" onClick={() => setUpload(null)}><CloseGlyph /></button>
-          </header>
-          <div className="drive-uploader-item">
-            <FileGlyph />
-            <span className="drive-uploader-copy">
-              <strong>{upload.name}</strong>
-              {upload.done
-                ? <span className="drive-uploader-state">{formatBytes(upload.total)} · in {upload.folderName}</span>
-                : (
-                  <span className="drive-progress">
-                    <span
-                      className="drive-progress-fill"
-                      style={{ width: `${upload.total === 0 ? 100 : Math.round((upload.sent / upload.total) * 100)}%` }}
-                    />
-                  </span>
-                )}
-            </span>
-            {upload.done
-              ? <span className="drive-uploader-check"><CheckGlyph /></span>
-              : (
-                <span className="drive-uploader-state">
-                  {upload.total === 0 ? 100 : Math.round((upload.sent / upload.total) * 100)}%
-                </span>
-              )}
-          </div>
-        </section>
+        <DriveUploaderCard
+          upload={upload}
+          onClose={() => {
+            uploadRun.current += 1;
+            setUpload(null);
+          }}
+        />
       )}
 
       {dropActive && (
@@ -810,12 +680,7 @@ export function FilesDrive({
         </div>
       )}
 
-      {snack !== null && (
-        <div className="drive-snackbar" role="status">
-          <span>{snack}</span>
-          <button type="button" onClick={() => setSnack(null)}>Dismiss</button>
-        </div>
-      )}
+      {snack !== null && <DriveSnackbar message={snack} onDismiss={() => setSnack(null)} />}
     </div>
   );
 }

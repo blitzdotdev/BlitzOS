@@ -1374,6 +1374,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           />
 
           <section className="webapp-workspace-view">
+            {activeWorkspace?.accessRole === 'viewer' && (
+              <div className="ws-viewer-hold" role="status">
+                <strong>View access is almost here.</strong>
+                <span>
+                  Read-only terminals arrive with the next platform update. Until
+                  then, ask {activeWorkspace.owner?.name ?? 'the owner'} for
+                  editor access to use this workspace.
+                </span>
+              </div>
+            )}
             <div className="webapp-workspace-main">
               {ttydSessions.map((session) => session.type === 'preview' && (
                 <div

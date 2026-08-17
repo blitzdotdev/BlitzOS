@@ -69,6 +69,12 @@ export function WorkspaceSharedFolders({
           setBusy(false);
           load();
           onOpenFolder(folder.id);
+        })
+        // The folder only exists to carry this attachment; a failed attach
+        // must not leave an empty orphan in Drive.
+        .catch(async (caught: Error) => {
+          await client.deleteFolder(folder.id).catch(() => undefined);
+          throw caught;
         }))
       .catch((caught: Error) => {
         setBusy(false);

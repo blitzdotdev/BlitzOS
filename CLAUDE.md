@@ -54,6 +54,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | phone-home v1 | bash in `core/bootstrap.ts` + `microvm-host/guest/blitz-microvm-enroll.js` ↔ `core/workspaces.ts` | `fixtures/phone-home/` | `test/phone-home-conformance.test.ts`, `guest/blitz-microvm-enroll.test.js` |
 | ACP | box actor ↔ ui chat reducer | `fixtures/acp/` | existing suites both sides |
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/providers/microvm-hosts.js` imported by both |
+| dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/providers/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 
