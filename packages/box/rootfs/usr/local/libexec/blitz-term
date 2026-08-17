@@ -31,7 +31,7 @@ mode=${3:-rw}
 # Tabs are workspace-scoped: agents always run with permission prompts off.
 case "$session_type" in
   terminal) session_prefix=term; session_cmd=() ;;
-  claude) session_prefix=claude; session_cmd=(claude --dangerously-skip-permissions) ;;
+  claude) session_prefix=claude; session_cmd=(claude --dangerously-skip-permissions --permission-mode bypassPermissions) ;;
   codex) session_prefix=codex; session_cmd=(codex --dangerously-bypass-approvals-and-sandbox) ;;
   *) echo "terminal: unsupported session type: $session_type" >&2; exit 2 ;;
 esac
