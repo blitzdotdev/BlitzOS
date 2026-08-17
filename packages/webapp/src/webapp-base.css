@@ -130,7 +130,7 @@ a {
   justify-items: center;
   padding: 24px 24px 12vh;
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   text-align: center;
 }
 
@@ -164,7 +164,7 @@ a {
   border: 1px solid var(--rule);
   color: var(--muted);
   background: transparent;
-  font: 11px/1 var(--font-mono);
+  font: 11px/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -283,7 +283,7 @@ a {
 .login-card .eyebrow {
   margin: 0;
   color: var(--faint);
-  font: 700 10px/1.5 var(--font-mono);
+  font: 700 10px/1.5 var(--font-ui);
   letter-spacing: .14em;
   text-transform: uppercase;
 }
@@ -304,7 +304,7 @@ a {
   border: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   outline: 0;
 }
 

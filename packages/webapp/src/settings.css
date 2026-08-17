@@ -47,7 +47,7 @@
 .settings-header button span {
   max-width: 220px;
   overflow: hidden;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -112,7 +112,7 @@
   background: transparent;
   text-align: left;
   cursor: pointer;
-  font: 12.5px/1.5 var(--font-mono);
+  font: 12.5px/1.5 var(--font-ui);
 }
 
 .settings-nav-button:hover,
@@ -231,7 +231,7 @@
 
 .settings-identity span {
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11.5px;
 }
 
@@ -265,7 +265,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--ink);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -339,7 +339,7 @@
   place-items: center;
   border: 1px solid var(--rule);
   border-radius: 5px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11px;
 }
 
@@ -394,7 +394,7 @@
 
 .settings-tree-disclosure {
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 10px;
 }
 
@@ -411,7 +411,7 @@
   border: 1px solid var(--rule);
   color: var(--muted);
   background: var(--rule);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 8px;
   font-weight: 650;
 }
@@ -439,7 +439,7 @@
 
 .settings-owner-copy > span {
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 10.5px;
 }
 
@@ -448,7 +448,7 @@
   border: 1px solid var(--rule);
   border-radius: 4px;
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 8px;
   font-weight: 500;
   letter-spacing: .04em;
@@ -486,7 +486,7 @@
   padding: 6px 10px 6px 39px;
   border-top: 1px solid var(--rule);
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11.5px;
   text-decoration: none;
 }
@@ -610,7 +610,7 @@
 
 .settings-machine-copy > span {
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 10.5px;
 }
 
@@ -726,7 +726,7 @@
     border: 1px solid var(--rule);
     color: var(--ink);
     background: color-mix(in oklab, var(--ink) 4%, var(--paper));
-    font: 12.5px/1.5 var(--font-mono);
+    font: 12.5px/1.5 var(--font-ui);
   }
 
   .settings-section-select .webapp-select-menu {
@@ -826,7 +826,7 @@
   padding: 4px 7px;
   border: 1px solid var(--accent);
   color: var(--accent);
-  font: 700 9px/1.2 var(--font-mono);
+  font: 700 9px/1.2 var(--font-ui);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -851,7 +851,7 @@
 
 .settings-section-heading p {
   color: var(--faint);
-  font: 700 9.5px/1.5 var(--font-mono);
+  font: 700 9.5px/1.5 var(--font-ui);
   letter-spacing: .14em;
   text-transform: uppercase;
 }
@@ -864,7 +864,7 @@
 
 .settings-section-heading > span {
   color: var(--faint);
-  font: 10px/1.5 var(--font-mono);
+  font: 10px/1.5 var(--font-ui);
 }
 
 .settings-credential-state {
@@ -872,7 +872,7 @@
   padding: 15px 14px;
   border: 1px solid var(--rule);
   color: var(--faint);
-  font: 11px/1.5 var(--font-mono);
+  font: 11px/1.5 var(--font-ui);
 }
 
 .settings-credential-list {
@@ -923,7 +923,7 @@
 .settings-credential-row time {
   margin-top: 2px;
   color: var(--faint);
-  font: 10.5px/1.45 var(--font-mono);
+  font: 10.5px/1.45 var(--font-ui);
   overflow-wrap: anywhere;
 }
 
@@ -941,7 +941,7 @@
 .settings-row-actions .webapp-action {
   min-height: 30px;
   padding: 0 9px;
-  font: 10.5px/1 var(--font-mono);
+  font: 10.5px/1 var(--font-ui);
 }
 
 .webapp-action--danger {
@@ -999,7 +999,7 @@
 
 .settings-template-card small {
   color: var(--faint);
-  font: 9.5px/1.35 var(--font-mono);
+  font: 9.5px/1.35 var(--font-ui);
 }
 
 .settings-integration-form {
@@ -1015,7 +1015,7 @@
   min-width: 0;
   gap: 5px;
   color: var(--faint);
-  font: 700 9.5px/1.4 var(--font-mono);
+  font: 700 9.5px/1.4 var(--font-ui);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -1030,7 +1030,7 @@
   border-radius: 0;
   color: var(--ink);
   background: var(--paper);
-  font: 12px/1.45 var(--font-mono);
+  font: 12px/1.45 var(--font-ui);
   letter-spacing: 0;
   text-transform: none;
 }
@@ -1065,7 +1065,7 @@
 .settings-secret-paste p {
   margin: 0;
   color: var(--faint);
-  font: 10.5px/1.5 var(--font-mono);
+  font: 10.5px/1.5 var(--font-ui);
 }
 
 .settings-request-row time {
@@ -1085,7 +1085,7 @@
   display: grid;
   gap: 5px;
   color: var(--faint);
-  font: 700 9.5px/1.4 var(--font-mono);
+  font: 700 9.5px/1.4 var(--font-ui);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -1094,7 +1094,7 @@
   display: grid;
   gap: 5px;
   color: var(--faint);
-  font: 700 9.5px/1.4 var(--font-mono);
+  font: 700 9.5px/1.4 var(--font-ui);
   letter-spacing: .08em;
   text-transform: uppercase;
 }
@@ -1126,7 +1126,7 @@
 
 .files-library-share p {
   color: var(--faint);
-  font: 10.5px/1.5 var(--font-mono);
+  font: 10.5px/1.5 var(--font-ui);
 }
 
 .files-library-share ul {

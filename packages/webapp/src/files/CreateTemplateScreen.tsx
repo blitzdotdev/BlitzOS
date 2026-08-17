@@ -5,7 +5,8 @@ import type { FolderObjectView, FolderView } from '../file-library-api';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
 import { MachineCatalogGrid } from '../MachineCatalogGrid';
 import { DriveAvatar } from './DriveAvatar';
-import { CloseGlyph, FileGlyph, FolderGlyph } from './DriveIcons';
+import { CloseGlyph } from './DriveIcons';
+import { DocDuoIcon, FolderDuoIcon } from '../files-icons';
 import {
   canManageFolder,
   entriesAt,
@@ -216,7 +217,7 @@ export function CreateTemplateScreen({
           onClick={() => setSelectedId(folder.id)}
           onDoubleClick={() => enterFolder(folder.id)}
         >
-          <FolderGlyph />
+          <FolderDuoIcon className="drive-folder-icon" />
           <span className="tplf-row-name">{folder.name}</span>
           <span className="tplf-row-owner">
             <DriveAvatar name={folder.owner.name} avatarUrl={folder.owner.avatarUrl} me={folder.role === 'owner'} />
@@ -252,7 +253,7 @@ export function CreateTemplateScreen({
                 : { folderId: current.folderId, path: [...current.path, dir.name] });
             }}
           >
-            <FolderGlyph />
+            <FolderDuoIcon className="drive-folder-icon" />
             <span className="tplf-row-name">{dir.name}</span>
             <span className="tplf-row-owner" />
             <span className="tplf-row-state">{dir.fileCount} {dir.fileCount === 1 ? 'file' : 'files'}</span>
@@ -260,7 +261,7 @@ export function CreateTemplateScreen({
         ))}
         {entries.files.map((file) => (
           <div className="tplf-row tplf-row--file" key={file.key}>
-            <FileGlyph />
+            <DocDuoIcon name={file.name} className="drive-folder-icon" />
             <span className="tplf-row-name">{file.name}</span>
             <span className="tplf-row-owner" />
             <span className="tplf-row-state">{formatWhen(file.mtime)} · {formatBytes(file.size)}</span>
@@ -411,7 +412,7 @@ export function CreateTemplateScreen({
                     ? <p className="tplf-side-empty">Nothing attached yet. Select a folder and press Attach.</p>
                     : attached.map((folder) => (
                       <div className="tplf-side-item" key={folder.id}>
-                        <FolderGlyph />
+                        <FolderDuoIcon className="drive-folder-icon" />
                         <span>{folder.name}</span>
                         <button
                           type="button"

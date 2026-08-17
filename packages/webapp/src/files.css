@@ -45,7 +45,7 @@
   border-left: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
-  font: 12.5px/1.4 var(--font-mono);
+  font: 12.5px/1.4 var(--font-ui);
 }
 
 .files-sidebar-resizer {
@@ -117,7 +117,7 @@
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  font: 13px/28px var(--font-mono);
+  font: 13px/28px var(--font-ui);
 }
 
 .files-tree > div[role='tree'] {
@@ -265,7 +265,7 @@
   height: 22px;
   padding: 2px 12px;
   color: var(--faint);
-  font: 12px/18px var(--font-mono);
+  font: 12px/18px var(--font-ui);
 }
 
 .files-sidebar-loading {
@@ -276,7 +276,7 @@
   display: block;
   padding: 4px 12px 7px;
   color: var(--faint);
-  font: 10.5px/1.4 var(--font-mono);
+  font: 10.5px/1.4 var(--font-ui);
 }
 
 .files-tree .webapp-loading-rows {
@@ -292,7 +292,7 @@
   overflow: hidden;
   color: var(--muted);
   background: var(--paper);
-  font: 12px/1.4 var(--font-mono);
+  font: 12px/1.4 var(--font-ui);
 }
 
 .files-context-menu > button {
@@ -343,7 +343,7 @@
   outline: 0;
   color: var(--ink);
   background: var(--paper);
-  font: 12px/1 var(--font-mono);
+  font: 12px/1 var(--font-ui);
 }
 
 .files-context-menu input:focus {
@@ -370,7 +370,7 @@
   border-radius: 6px;
   color: var(--muted);
   background: transparent;
-  font: 11px/1 var(--font-mono);
+  font: 11px/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -409,7 +409,7 @@
   padding: 0 8px 0 12px;
   border-bottom: 1px solid var(--rule);
   color: var(--faint);
-  font: 10.5px/1 var(--font-mono);
+  font: 10.5px/1 var(--font-ui);
 }
 
 .file-editor-path {
@@ -499,7 +499,7 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--rule);
   color: var(--ansi-red);
-  font: 10.5px/1.4 var(--font-mono);
+  font: 10.5px/1.4 var(--font-ui);
 }
 
 .file-editor--placeholder {
@@ -508,7 +508,7 @@
   justify-items: center;
   gap: 10px;
   color: var(--faint);
-  font: 12px/1.5 var(--font-mono);
+  font: 12px/1.5 var(--font-ui);
   text-align: center;
 }
 
@@ -528,7 +528,7 @@
   border: 1px solid var(--rule);
   color: var(--muted);
   background: transparent;
-  font: 11px/1 var(--font-mono);
+  font: 11px/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -552,7 +552,7 @@
   border: 0;
   color: var(--faint);
   background: transparent;
-  font: 11px/1 var(--font-mono);
+  font: 11px/1 var(--font-ui);
   cursor: pointer;
 }
 

@@ -81,7 +81,7 @@
   align-self: center;
   margin-left: auto;
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 10px;
   white-space: nowrap;
 }
@@ -198,7 +198,7 @@
   padding: 10px;
   overflow-x: auto;
   color: var(--ink);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12.5px;
 }
 
@@ -291,7 +291,7 @@
   background: color-mix(in srgb, var(--ansi-green) 8%, var(--paper));
   border: 1px solid var(--rule);
   color: var(--ansi-green);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   padding: 2px 5px;
 }
 
@@ -408,7 +408,7 @@
 .chat-tool-hint {
   overflow: hidden;
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -416,7 +416,7 @@
 
 .chat-tool-full {
   color: var(--ansi-green);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   margin-bottom: 6px;
 }
 
@@ -436,7 +436,7 @@
   margin: 6px 0 0;
   overflow: auto;
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11.5px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -486,7 +486,7 @@
   border: 1px solid var(--ansi-red);
   background: color-mix(in srgb, var(--ansi-red) 10%, var(--paper));
   color: var(--ansi-bright-red);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12px;
   padding: 8px 10px;
   white-space: pre-wrap;
@@ -524,7 +524,7 @@
 .chat-diff-path {
   flex: 1;
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -544,7 +544,7 @@
   display: grid;
   grid-template-columns: 25px minmax(0, 1fr);
   min-width: max-content;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11.5px;
 }
 
@@ -578,7 +578,7 @@
 }
 
 .chat-file-list {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11.5px;
   white-space: pre-wrap;
 }
@@ -645,7 +645,7 @@
   align-self: flex-start;
   gap: 8px;
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11.5px;
 }
 
@@ -658,14 +658,14 @@
 .chat-result-meta {
   align-self: flex-start;
   color: var(--faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 10.5px;
 }
 
 .chat-system-row {
   align-self: flex-start;
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11px;
 }
 
@@ -700,7 +700,7 @@
   border: 1px solid var(--faint);
   color: var(--ink);
   background: color-mix(in oklab, var(--ink) 6%, var(--paper));
-  font: 9px/1 var(--font-mono);
+  font: 9px/1 var(--font-ui);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -740,7 +740,7 @@
   margin: 0 0 8px;
   overflow: auto;
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -918,7 +918,7 @@
 
 .chat-command-name {
   color: var(--ink);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -991,7 +991,7 @@
 .chat-key {
   border: 1px solid var(--faint);
   color: var(--muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 10px;
   padding: 1px 3px;
 }

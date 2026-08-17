@@ -74,7 +74,7 @@
   flex: none;
   overflow: hidden;
   color: var(--faint);
-  font: 12.5px/1.7 var(--font-mono);
+  font: 12.5px/1.7 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -138,14 +138,14 @@
 .webapp-loading-box__copy span {
   overflow: hidden;
   color: var(--faint);
-  font: 10.5px/1.5 var(--font-mono);
+  font: 10.5px/1.5 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .webapp-loading-box__elapsed {
   color: var(--accent);
-  font: 12px var(--font-mono);
+  font: 12px var(--font-ui);
 }
 
 .webapp-loading-status {
