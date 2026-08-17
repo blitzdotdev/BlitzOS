@@ -355,7 +355,7 @@ async function copyDown(
     new Request("https://control-plane.invalid", {
       method: "PUT",
       headers,
-      body: object.body,
+      body: object.body.pipeThrough(new FixedLengthStream(object.size)),
     }),
   );
   if (response.status !== 200 && response.status !== 201 && response.status !== 204) {
@@ -380,13 +380,20 @@ async function copyUp(
   if (!response.ok || response.body === null) {
     throw new Error(`WebDAV GET failed with status ${response.status}`);
   }
-  await runtime.fileObjects.put(objectKey, response.body, {
-    httpMetadata: response.headers,
-    customMetadata: {
-      [MTIME_METADATA]: String(guest.mtime),
-      [EDITED_BY_METADATA]: attachment.owner_name,
+  // Tunneled responses can arrive chunked with no content-length, and R2 put
+  // requires a known length — the DAV-listed size pins the stream. A file
+  // that changed size mid-flight errors the pass and retries next tick.
+  await runtime.fileObjects.put(
+    objectKey,
+    response.body.pipeThrough(new FixedLengthStream(guest.size)),
+    {
+      httpMetadata: response.headers,
+      customMetadata: {
+        [MTIME_METADATA]: String(guest.mtime),
+        [EDITED_BY_METADATA]: attachment.owner_name,
+      },
     },
-  });
+  );
 }
 
 function canUpload(role: FolderRole): boolean {
