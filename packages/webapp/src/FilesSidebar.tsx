@@ -27,6 +27,7 @@ import {
 import { FilesContextMenu, type FilesContextMenuState } from './FilesContextMenu';
 import { FilesTreeRow } from './FilesTreeRow';
 import { FinderPins, FinderToolbar, type FinderRoot } from './FinderChrome';
+import { maxDrawerWidth } from './storage';
 
 type FilesSidebarProps = {
   client: WebDAVClient | null;
@@ -472,7 +473,7 @@ export function FilesSidebar({
   const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
     const origin = resizeOrigin.current;
     if (!origin) return;
-    onWidthChange(Math.max(200, Math.min(480, origin.width + origin.x - event.clientX)));
+    onWidthChange(Math.max(200, Math.min(maxDrawerWidth(window.innerWidth), origin.width + origin.x - event.clientX)));
   };
 
   return (

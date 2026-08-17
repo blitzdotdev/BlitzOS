@@ -176,8 +176,8 @@ function parseDrawer(value: OptionalJsonValue): WebAppDrawerV1 {
   if (!isRecord(value) || value.version !== 1 || (value.open !== true && value.open !== false)) {
     throw new HttpError(400, "drawer must be a version 1 drawer document");
   }
-  if (!isNumber(value.width) || !Number.isFinite(value.width) || value.width < 200 || value.width > 480) {
-    throw new HttpError(400, "drawer.width must be between 200 and 480");
+  if (!isNumber(value.width) || !Number.isFinite(value.width) || value.width < 200 || value.width > 2000) {
+    throw new HttpError(400, "drawer.width must be between 200 and 2000");
   }
   const expanded = stringList(value.expanded, "drawer.expanded", 1_000);
   // Legacy docs stored earlier segment names; they normalize to the combined

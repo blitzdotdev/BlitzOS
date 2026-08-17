@@ -701,11 +701,14 @@
   --quiet: color-mix(in oklab, var(--ink) 8%, var(--paper));
   --quiet-hover: color-mix(in oklab, var(--ink) 12%, var(--paper));
   --rule-soft: color-mix(in oklab, var(--ink) 9%, var(--paper));
+  /* A stored width survives window shrinks: the drawer never exceeds 65% of
+   * the viewport beyond the 264px rail. */
+  --drawer-width: min(var(--files-sidebar-width), calc((100vw - 264px) * 0.65));
   position: relative;
   z-index: 5;
   display: flex;
-  width: var(--files-sidebar-width);
-  min-width: var(--files-sidebar-width);
+  width: var(--drawer-width);
+  min-width: var(--drawer-width);
   min-height: 0;
   flex: none;
   flex-direction: column;

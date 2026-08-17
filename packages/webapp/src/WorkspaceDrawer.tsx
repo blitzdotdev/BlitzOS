@@ -16,7 +16,7 @@ import {
   type LivePort,
   type PreviewLink,
 } from './preview';
-import type { WorkspaceDrawerSegment } from './storage';
+import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
@@ -332,7 +332,7 @@ export function WorkspaceDrawer({
   const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
     const origin = resizeOrigin.current;
     if (!origin) return;
-    onWidthChange(Math.max(200, Math.min(480, origin.width + origin.x - event.clientX)));
+    onWidthChange(Math.max(200, Math.min(maxDrawerWidth(window.innerWidth), origin.width + origin.x - event.clientX)));
   };
 
   const tabs: Array<{ id: WorkspaceDrawerSegment; label: string; icon: ReactNode }> = [
