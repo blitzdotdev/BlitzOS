@@ -58,6 +58,9 @@ function davTreeResponse(path: string, files: Map<string, GuestFile>): string {
 class WebDavProviders extends FakeProviders {
   readonly files = new Map<string, GuestFile>();
   readonly transfers: string[] = [];
+  // A fresh guest has only /workspace; dufs-compliant MKCOL rejects missing
+  // intermediates, so the fake enforces the same 409 to pin the chain logic.
+  readonly collections = new Set<string>(["/workspace/"]);
   putMtime = 2_000;
 
   override async createVm(input: CreateVmInput) {
@@ -71,10 +74,22 @@ class WebDavProviders extends FakeProviders {
     request: Request,
   ): Promise<Response | null> {
     if (request.method === "PROPFIND") {
+      if (this.files.size === 0 && !this.collections.has(path)) {
+        return new Response("not found", { status: 404 });
+      }
       return new Response(davTreeResponse(path, this.files), {
         status: 207,
         headers: { "Content-Type": "application/xml" },
       });
+    }
+    if (request.method === "MKCOL") {
+      if (this.collections.has(path)) return new Response(null, { status: 405 });
+      const parent = `${path.replace(/\/$/u, "").split("/").slice(0, -1).join("/")}/`;
+      if (parent !== "/workspace/" && !this.collections.has(parent) && this.files.size === 0) {
+        return new Response("missing intermediate collection", { status: 409 });
+      }
+      this.collections.add(path);
+      return new Response(null, { status: 201 });
     }
     const match = /^\/workspace\/shared\/[^/]+\/(.+)$/u.exec(path);
     const encodedKey = match?.[1];
@@ -92,7 +107,6 @@ class WebDavProviders extends FakeProviders {
         ? new Response("not found", { status: 404 })
         : new Response(file.body, { headers: { "Content-Type": "text/plain" } });
     }
-    if (request.method === "MKCOL") return new Response(null, { status: 201 });
     return new Response("unsupported", { status: 405 });
   }
 }
@@ -313,5 +327,16 @@ describe("control-plane folder sync", () => {
     });
     expect(await runWorkspaceFileSync(testRuntime(providers), workspaceId))
       .toMatchObject({ attachments: 1 });
+  });
+
+  it("creates the guest mount chain for an attached folder with no files yet", async () => {
+    const providers = new WebDavProviders();
+    const { folderId } = await attachedFolder(providers);
+    void folderId;
+    expect([...providers.collections].sort()).toEqual([
+      "/workspace/",
+      "/workspace/shared/",
+      "/workspace/shared/Shared/",
+    ]);
   });
 });
