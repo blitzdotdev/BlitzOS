@@ -1090,6 +1090,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       org={store.viewer?.org ?? null}
       organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
       uploadTargetName={driveUploadTarget}
+      sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId ? ttydTabs : []}
+      activeSessionId={ttydActiveId ?? ''}
+      onSelectSession={selectTtydSession}
       onOpenDrive={(nextScope) => navigateTo(drivePath(nextScope))}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
@@ -1103,6 +1106,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onOpenSettings={() => navigateToSettings('profile')}
       onSignOut={() => { void signOut(); }}
+      onOpenWorkspaceDetails={(workspaceId) => setShareWorkspaceId(workspaceId)}
+      onDeleteWorkspace={requestDeleteWorkspace}
       drawerOpen={drawerOpen}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
@@ -1530,75 +1535,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   </div>
                 ))}
             </div>
-            {activeWorkspace && (mobileWebApp || activeFiles.open) && (
-              <WorkspaceDrawer
-                client={client}
-                workspaceId={activeWorkspace.id}
-                mobile={mobileWebApp}
-                open={filesOpen}
-                width={activeFiles.width}
-                segment={activeFiles.segment}
-                pendingRequests={activePendingRequests}
-                pendingRequestsError={pendingRequestsError}
-                canManageCredentials={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
-                onWidthChange={(width) => {
-                  setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                    ? { ...current, value: { ...current.value, width } }
-                    : current);
-                }}
-                onSegmentChange={(segment: WorkspaceDrawerSegment) => {
-                  setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                    ? { ...current, value: { ...current.value, segment } }
-                    : current);
-                }}
-                onResolveRequest={resolveWorkspaceRequest}
-                files={(
-                  <>
-                  <FilesSidebar
-                    key={activeWorkspace.id}
-                    client={filesClient}
-                    expanded={activeFiles.expanded}
-                    getClient={getFilesClient}
-                    mobile={mobileWebApp}
-                    open={filesOpen}
-                    ready={activeWorkspaceRunning}
-                    refreshVersion={filesRefreshVersion}
-                    visible={filesOpen && activeFiles.segment === 'files'}
-                    wakingStage={workspaceWakingStage}
-                    width={activeFiles.width}
-                    onClose={() => {
-                      if (mobileWebApp) setFilesDrawerOpen(false);
-                      else {
-                        setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                          ? { ...current, value: { ...current.value, open: false } }
-                          : current);
-                      }
-                    }}
-                    onExpandedChange={(expanded) => {
-                      setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                        ? { ...current, value: { ...current.value, expanded } }
-                        : current);
-                    }}
-                    onOpenFile={openFile}
-                    onUnauthorized={handleUnauthorized}
-                    onWidthChange={(width) => {
-                      setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                        ? { ...current, value: { ...current.value, width } }
-                        : current);
-                    }}
-                  />
-                    <WorkspaceSharedFolders
-                      client={client}
-                      workspaceId={activeWorkspace.id}
-                      filesClient={filesClient}
-                      canControl={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
-                      visible={filesOpen && activeFiles.segment === 'files'}
-                      onOpenFolder={(folderId) => navigateTo(folderPagePath(folderId))}
-                    />
-                  </>
-                )}
-              />
-            )}
             {mobileWebApp && activeWorkspace && (
               <button
                 className={`files-drawer-scrim${filesDrawerOpen ? ' files-drawer-scrim--open' : ''}`}
@@ -1754,6 +1690,76 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             />
           )}
       </div>
+
+      {activeWorkspace && (mobileWebApp || activeFiles.open) && (
+        <WorkspaceDrawer
+          client={client}
+          workspaceId={activeWorkspace.id}
+          mobile={mobileWebApp}
+          open={filesOpen}
+          width={activeFiles.width}
+          segment={activeFiles.segment}
+          pendingRequests={activePendingRequests}
+          pendingRequestsError={pendingRequestsError}
+          canManageCredentials={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
+          onWidthChange={(width) => {
+            setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+              ? { ...current, value: { ...current.value, width } }
+              : current);
+          }}
+          onSegmentChange={(segment: WorkspaceDrawerSegment) => {
+            setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+              ? { ...current, value: { ...current.value, segment } }
+              : current);
+          }}
+          onResolveRequest={resolveWorkspaceRequest}
+          files={(
+            <>
+            <FilesSidebar
+              key={activeWorkspace.id}
+              client={filesClient}
+              expanded={activeFiles.expanded}
+              getClient={getFilesClient}
+              mobile={mobileWebApp}
+              open={filesOpen}
+              ready={activeWorkspaceRunning}
+              refreshVersion={filesRefreshVersion}
+              visible={filesOpen && activeFiles.segment === 'files'}
+              wakingStage={workspaceWakingStage}
+              width={activeFiles.width}
+              onClose={() => {
+                if (mobileWebApp) setFilesDrawerOpen(false);
+                else {
+                  setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+                    ? { ...current, value: { ...current.value, open: false } }
+                    : current);
+                }
+              }}
+              onExpandedChange={(expanded) => {
+                setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+                  ? { ...current, value: { ...current.value, expanded } }
+                  : current);
+              }}
+              onOpenFile={openFile}
+              onUnauthorized={handleUnauthorized}
+              onWidthChange={(width) => {
+                setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+                  ? { ...current, value: { ...current.value, width } }
+                  : current);
+              }}
+            />
+              <WorkspaceSharedFolders
+                client={client}
+                workspaceId={activeWorkspace.id}
+                filesClient={filesClient}
+                canControl={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
+                visible={filesOpen && activeFiles.segment === 'files'}
+                onOpenFolder={(folderId) => navigateTo(folderPagePath(folderId))}
+              />
+            </>
+          )}
+        />
+      )}
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}

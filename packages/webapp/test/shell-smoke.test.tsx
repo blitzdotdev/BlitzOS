@@ -535,7 +535,7 @@ describe("webapp shell smoke", () => {
     const first = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
     const firstMountId = first.dataset.mountId;
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.drive-rail-ws[data-workspace-id="workspace-two"]',
+      '.webapp-workspace[data-workspace-id="workspace-two"] .webapp-workspace-button',
     )?.click());
     await settle();
 
