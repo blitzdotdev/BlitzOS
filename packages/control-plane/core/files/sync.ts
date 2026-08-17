@@ -460,10 +460,21 @@ async function syncAttachment(
   return true;
 }
 
+interface AttachmentFilter {
+  folderId?: string;
+  workspaceId?: string;
+}
+
 async function attachmentRows(
   runtime: CoreRuntime,
-  folderId?: string,
+  filter: AttachmentFilter = {},
 ): Promise<SyncAttachmentRow[]> {
+  const scope = filter.folderId !== undefined
+    ? "WHERE attachment.folder_id = ?1"
+    : filter.workspaceId !== undefined
+      ? "WHERE attachment.workspace_id = ?1"
+      : "";
+  const value = filter.folderId ?? filter.workspaceId;
   return rows<SyncAttachmentRow>(runtime.db, {
     q: `SELECT attachment.workspace_id, workspace.vm_id,
                workspace.tunnel_hostname, attachment.folder_id,
@@ -484,9 +495,9 @@ async function attachmentRows(
          AND attacher.status = 'active'
         JOIN memberships owner ON owner.id = workspace.owner_membership_id
         JOIN users owner_user ON owner_user.id = owner.user_id
-        ${folderId === undefined ? "" : "WHERE attachment.folder_id = ?1"}
+        ${scope}
         ORDER BY attachment.created_at, attachment.workspace_id, attachment.folder_id`,
-    v: folderId === undefined ? [] : [folderId],
+    v: value === undefined ? [] : [value],
   });
 }
 
@@ -516,14 +527,40 @@ export async function runFolderSync(
   runtime: CoreRuntime,
   folderId: string,
 ): Promise<FileSyncResult> {
-  return runAttachments(runtime, await attachmentRows(runtime, folderId));
+  return runAttachments(runtime, await attachmentRows(runtime, { folderId }));
 }
 
-export function scheduleFolderSync(runtime: CoreRuntime, folderId: string): void {
-  const sync = runFolderSync(runtime, folderId).catch((caught) => {
+export async function runWorkspaceFileSync(
+  runtime: CoreRuntime,
+  workspaceId: string,
+): Promise<FileSyncResult> {
+  return runAttachments(runtime, await attachmentRows(runtime, { workspaceId }));
+}
+
+/** Fire-and-forget convergence pass for a request that changed what should
+ * be on a guest (attach, upload, workspace becoming ready). The scheduled
+ * sweep remains the backstop when this best-effort pass loses to a tunnel
+ * still connecting. */
+const pendingScheduledSyncs = new Set<Promise<void>>();
+
+/** Settles when every schedule-triggered pass started so far has finished.
+ * Tests use this to sequence around the fire-and-forget triggers. */
+export async function scheduledSyncsSettled(): Promise<void> {
+  while (pendingScheduledSyncs.size > 0) {
+    await Promise.all([...pendingScheduledSyncs]);
+  }
+}
+
+export function scheduleSync(
+  runtime: CoreRuntime,
+  run: (runtime: CoreRuntime) => Promise<FileSyncResult>,
+): void {
+  const sync = run(runtime).then(() => undefined).catch((caught) => {
     const error = caught instanceof Error ? caught : new Error("folder sync failed");
     runtime.reportError("folder_sync_failed", error);
   });
+  pendingScheduledSyncs.add(sync);
+  void sync.finally(() => pendingScheduledSyncs.delete(sync));
   try {
     runtime.waitUntil(sync);
   } catch (caught) {
@@ -533,4 +570,8 @@ export function scheduleFolderSync(runtime: CoreRuntime, folderId: string): void
     const error = caught instanceof Error ? caught : new Error("folder sync scheduling failed");
     runtime.reportError("folder_sync_schedule_failed", error);
   }
+}
+
+export function scheduleFolderSync(runtime: CoreRuntime, folderId: string): void {
+  scheduleSync(runtime, (syncRuntime) => runFolderSync(syncRuntime, folderId));
 }

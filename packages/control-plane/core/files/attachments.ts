@@ -19,6 +19,7 @@ import {
   requireFolderAccess,
   type FilesActor,
 } from "./access.js";
+import { runWorkspaceFileSync, scheduleSync } from "./sync.js";
 
 interface AttachmentWorkspaceRow {
   id: string;
@@ -129,6 +130,7 @@ export function addFolderAttachmentRoutes(
             guest_path = excluded.guest_path`,
       v: [workspace.id, folder.id, principal.membershipId, now, guestPath],
     });
+    scheduleSync(runtime, (syncRuntime) => runWorkspaceFileSync(syncRuntime, workspace.id));
     return context.json({
       folder: {
         id: folder.id,

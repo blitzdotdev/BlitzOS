@@ -57,4 +57,4 @@ run_worker_first = [
 ]
 
 [triggers]
-crons = ["0 * * * *", "0 3 * * *"]
+crons = ["*/5 * * * *", "0 * * * *", "0 3 * * *"]

@@ -180,7 +180,7 @@ export default {
     return Promise.resolve(app.fetch(request, env, executionContext));
   },
   async scheduled(
-    _event: ScheduledController,
+    event: ScheduledController,
     env: WorkerBindings,
     executionContext: ExecutionContext,
   ): Promise<void> {
@@ -193,6 +193,13 @@ export default {
           executionContext,
           await credentialMasterKeyFor(env.CRED_MASTER_KEY),
         );
+        // The five-minute tick converges folder sync only — the backstop for
+        // request-triggered passes that lost to a tunnel still connecting.
+        // Everything else stays on the hourly and daily schedules.
+        if (event.cron === "*/5 * * * *") {
+          await runFileSyncSweep(runtime);
+          return;
+        }
         await runtime.providers.microvm?.syncStaticHosts();
         await runSessionSweep(runtime);
         await runLeaseSweep(runtime);
