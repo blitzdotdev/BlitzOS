@@ -52,3 +52,36 @@ export function ChevronIcon(props: WebAppIconProps) {
     </svg>
   );
 }
+
+export function MoreIcon(props: WebAppIconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" {...props}>
+      <circle cx="4" cy="10" r="1.5" />
+      <circle cx="10" cy="10" r="1.5" />
+      <circle cx="16" cy="10" r="1.5" />
+    </svg>
+  );
+}
+
+export function OrganizationIcon(props: WebAppIconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="2.5" />
+      <circle cx="9.4" cy="9.4" r="1.7" />
+      <circle cx="14.6" cy="9.4" r="1.7" />
+      <circle cx="9.4" cy="14.6" r="1.7" />
+      <circle cx="14.6" cy="14.6" r="1.7" />
+    </svg>
+  );
+}
+
+export function NewWorkspaceIcon(props: WebAppIconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="m10.5 5.25 6 3.35v6.8l-6 3.35-6-3.35V8.6Z" />
+      <path d="m4.75 8.75 5.75 3.2 5.75-3.2M10.5 11.95v6.55" />
+      <path d="M18.75 3.5v4M16.75 5.5h4" />
+    </svg>
+  );
+}
+
