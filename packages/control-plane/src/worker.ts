@@ -197,7 +197,8 @@ export default {
         // request-triggered passes that lost to a tunnel still connecting.
         // Everything else stays on the hourly and daily schedules.
         if (event.cron === "*/5 * * * *") {
-          await runFileSyncSweep(runtime);
+          const swept = await runFileSyncSweep(runtime);
+          console.error(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
           return;
         }
         await runtime.providers.microvm?.syncStaticHosts();
@@ -206,7 +207,8 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
-        await runFileSyncSweep(runtime);
+        const swept = await runFileSyncSweep(runtime);
+        console.error(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),
     );
   },

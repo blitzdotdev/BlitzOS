@@ -238,16 +238,23 @@ async function listGuest(
   });
   let response = await guestRequest(runtime, attachment, root, rootRequest);
   if (response.status === 404) {
-    response = await guestRequest(
-      runtime,
-      attachment,
-      root,
-      new Request("https://control-plane.invalid", { method: "MKCOL" }),
-    );
-    if (response.status !== 201 && response.status !== 405) {
-      throw new Error(`WebDAV MKCOL failed with status ${response.status}`);
+    // MKCOL rejects missing intermediates (RFC 4918: 409), and a fresh guest
+    // has no /workspace/shared yet — build the chain segment by segment.
+    const segments = root.replace(/^\/workspace\//u, "").split("/").filter(Boolean);
+    let prefix = "/workspace/";
+    for (const segment of segments) {
+      prefix = `${prefix}${segment}/`;
+      const mkcol = await guestRequest(
+        runtime,
+        attachment,
+        prefix,
+        new Request("https://control-plane.invalid", { method: "MKCOL" }),
+      );
+      if (mkcol.status !== 201 && mkcol.status !== 405) {
+        throw new Error(`WebDAV MKCOL failed with status ${mkcol.status}`);
+      }
+      await mkcol.body?.cancel();
     }
-    await response.body?.cancel();
     return new Map();
   }
   if (response.status !== 207) {
