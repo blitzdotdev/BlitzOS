@@ -692,6 +692,7 @@
  * neutral palette: sections are soft ink washes, controls are pills, status
  * is a dot plus a word. Warmth is reserved for pending-request urgency. */
 .workspace-drawer {
+  container: drawer / inline-size;
   --sheet: var(--paper);
   --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
   --wash: color-mix(in oklab, var(--ink) 5%, var(--paper));
@@ -713,46 +714,44 @@
   background: var(--paper);
 }
 
+/* The section selector is a permanent session-tab strip: the same
+ * .webapp-tab-cell/.webapp-tab-select chrome as the workspace tabs, minus
+ * close buttons — three tabs you cycle through. */
 .workspace-drawer-segments {
   display: flex;
-  min-height: 0;
+  min-height: 37px;
   flex: none;
-  gap: 2px;
-  margin: 10px 12px 6px;
-  padding: 3px;
-  border-radius: var(--r-control);
-  background: var(--wash);
+  align-items: stretch;
+  border-bottom: 1px solid var(--rule);
 }
 
-.workspace-drawer-segment {
-  position: relative;
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 4px;
+/* Three permanent tabs never shrink-ellipsize; below the cutoff the
+ * inactive ones drop to icons instead. */
+.workspace-drawer-segments .webapp-tab-cell {
+  min-width: max-content;
+  max-width: none;
+  flex: none;
+}
+
+.workspace-drawer-segments .webapp-tab-select {
   border: 0;
-  border-radius: 7px;
-  color: var(--muted);
+  padding: 0 10px;
   background: transparent;
-  font: 600 11.5px/1.2 var(--font-ui);
+  color: inherit;
   cursor: pointer;
 }
 
-.workspace-drawer-segment:hover,
-.workspace-drawer-segment:focus-visible {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 4%, transparent);
+.workspace-drawer-segments .webapp-tab-select:focus-visible {
   outline: 0;
+  color: var(--ink);
 }
 
-.workspace-drawer-segment--active,
-.workspace-drawer-segment--active:hover,
-.workspace-drawer-segment--active:focus-visible {
-  color: var(--ink);
-  background: var(--sheet);
+/* Narrow drawers keep the active label readable: inactive tabs fall back to
+ * their icons, like an overfull browser tab strip. */
+@container drawer (max-width: 335px) {
+  .workspace-drawer-segments .webapp-tab-cell:not(.webapp-tab-cell--active) .webapp-tab-label {
+    display: none;
+  }
 }
 
 .workspace-pending-badge {
@@ -1021,8 +1020,8 @@
     transform: translateX(0);
   }
 
-  .workspace-drawer-segment {
-    min-height: 40px;
+  .workspace-drawer-segments {
+    min-height: 44px;
   }
 
   .workspace-drawer .files-sidebar {
