@@ -17,6 +17,12 @@ export interface StandalonePorts {
 }
 
 export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
+
+/** The guest's dufs serves the workspace tree under this path and emits DAV
+ * hrefs rooted at it — without the control-plane proxy prefix. WebDAV clients
+ * must parse responses against this base, not the full proxied URL, or every
+ * listing keeps its own collection as a phantom child. */
+export const FILES_DAV_ROOT = "/workspace";
 export function standaloneResolver(
   _ports: StandalonePorts,
   controlPlaneOrigin = globalThis.location?.origin ?? "",
@@ -30,7 +36,7 @@ export function standaloneResolver(
     return {
       terminalUrl: `${prefix}/7445/terminal/`,
       acpUrl: acp.toString(),
-      filesBase: `${prefix}/7445/workspace/`,
+      filesBase: `${prefix}/7445${FILES_DAV_ROOT}/`,
     };
   };
   return {
