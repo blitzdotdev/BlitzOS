@@ -40,6 +40,7 @@ export interface ChatPermission {
   answeredOptionId: string | null;
   cancelled: boolean;
   answeredBy?: ChatActor;
+  rawInput?: unknown;
 }
 
 export type ChatRow =
@@ -323,6 +324,7 @@ function addPermission(state: ChatState, request: RequestPermissionRequest): Cha
     answeredOptionId: existing?.answeredOptionId ?? null,
     cancelled: existing?.cancelled ?? false,
   };
+  if (request.toolCall.rawInput !== undefined) permission.rawInput = request.toolCall.rawInput;
   return {
     ...state,
     permissions: { ...state.permissions, [id]: permission },
