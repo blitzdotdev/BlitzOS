@@ -1,0 +1,5 @@
+{
+  "root": "/workspace/shared/vault/",
+  "files": [{ "key": "note.md", "size": 7, "mtime": 5000 }],
+  "directories": ["raw"]
+}

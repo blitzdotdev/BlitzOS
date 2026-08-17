@@ -72,22 +72,29 @@ function requestBody(request: Request): ReadableStream<Uint8Array> {
   if (declared !== null) {
     const bytes = Number(declared);
     if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > FILES_MULTIPART_CHUNK_BYTES) {
-      throw new HttpError(413, `file chunk exceeds ${FILES_MULTIPART_CHUNK_BYTES} bytes`);
+      throw new HttpError(413, `file chunk must be 1 through ${FILES_MULTIPART_CHUNK_BYTES} bytes`);
     }
   }
   return request.body;
 }
 
-function objectView(object: R2Object, prefix: string): FolderObjectView {
+/** Single-object PUT bodies, unlike multipart parts, may be empty — dropped
+ * folders regularly contain zero-byte markers like .gitkeep. */
+function singlePutBody(request: Request): ReadableStream<Uint8Array> | "" {
+  if (request.headers.get("content-length") === "0" || request.body === null) return "";
+  return requestBody(request);
+}
+
+/** Returns null for objects whose metadata is unusable so one foreign or
+ * corrupt object can never poison the whole folder listing. */
+function objectView(object: R2Object, prefix: string): FolderObjectView | null {
   const mtimeValue = object.customMetadata?.[MTIME_METADATA];
   const editedBy = object.customMetadata?.[EDITED_BY_METADATA];
   if (mtimeValue === undefined || !/^\d+$/u.test(mtimeValue) || editedBy === undefined) {
-    throw new Error(`folder object ${object.key} has invalid metadata`);
+    return null;
   }
   const mtime = Number(mtimeValue);
-  if (!Number.isSafeInteger(mtime)) {
-    throw new Error(`folder object ${object.key} has invalid mtime metadata`);
-  }
+  if (!Number.isSafeInteger(mtime)) return null;
   return { key: object.key.slice(prefix.length), size: object.size, mtime, editedBy };
 }
 
@@ -113,15 +120,28 @@ export function addFolderObjectRoutes(
     const folder = await requireFolderAccess(runtime.db, context.req.param("id"), actor, "read");
     const requestUrl = new URL(context.req.url);
     const cursor = requestUrl.searchParams.get("cursor") ?? undefined;
+    const prefix = folderObjectPrefix(folder.org_id, folder.id);
     const page = await runtime.fileObjects.list({
-      prefix: folderObjectPrefix(folder.org_id, folder.id),
+      prefix,
       cursor,
       limit: 1_000,
       include: ["customMetadata"],
     });
-    const prefix = folderObjectPrefix(folder.org_id, folder.id);
+    const objects: FolderObjectView[] = [];
+    let skipped = 0;
+    for (const object of page.objects) {
+      const view = objectView(object, prefix);
+      if (view === null) skipped += 1;
+      else objects.push(view);
+    }
+    if (skipped > 0) {
+      runtime.reportError(
+        "folder_object_invalid_metadata",
+        new Error(`skipped ${String(skipped)} objects under ${prefix}`),
+      );
+    }
     const response: ListFolderObjectsResponse = {
-      objects: page.objects.map((object) => objectView(object, prefix)),
+      objects,
       cursor: page.truncated ? page.cursor : null,
       truncated: page.truncated,
     };
@@ -205,7 +225,7 @@ export function addFolderObjectRoutes(
     const actor = await filesActorForRequest(runtime, context, requirePrincipal);
     const folder = await requireFolderAccess(runtime.db, context.req.param("id"), actor, "write");
     const key = folderObjectKey(folder.org_id, folder.id, routeKey(context));
-    await runtime.fileObjects.put(key, requestBody(context.req.raw), {
+    await runtime.fileObjects.put(key, singlePutBody(context.req.raw), {
       httpMetadata: context.req.raw.headers,
       customMetadata: {
         [MTIME_METADATA]: String(mtimeHeader(context.req.raw)),
@@ -216,6 +236,24 @@ export function addFolderObjectRoutes(
     scheduleFolderSync(runtime, folder.id);
     return context.body(null, 204);
   });
+
+  router.delete(
+    "/folders/:id/objects/:key/multipart/:uploadId",
+    async (context) => {
+      const runtime = runtimeFactory(context);
+      const actor = await filesActorForRequest(runtime, context, requirePrincipal);
+      const folder = await requireFolderAccess(runtime.db, context.req.param("id"), actor, "write");
+      const key = folderObjectKey(folder.org_id, folder.id, routeKey(context));
+      const upload = runtime.fileObjects.resumeMultipartUpload(
+        key,
+        context.req.param("uploadId"),
+      );
+      // Abort is best-effort cleanup: an unknown or already-settled upload is
+      // the same end state the caller wants.
+      await upload.abort().catch(() => undefined);
+      return context.body(null, 204);
+    },
+  );
 
   router.delete("/folders/:id/objects/:key", async (context) => {
     const runtime = runtimeFactory(context);

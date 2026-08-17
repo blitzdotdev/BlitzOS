@@ -365,4 +365,19 @@ describe("control-plane folder sync", () => {
     expect(result.attachments).toBe(1);
     expect(providers.files.get("note.txt")?.body).toBe("remote");
   });
+
+  it("skips remote objects with unusable metadata instead of wedging the folder", async () => {
+    const providers = new WebDavProviders();
+    const { folderId } = await attachedFolder(providers);
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/poison.bin`, "no metadata");
+    await env.BOX_IMAGES.put(`org/personal/${folderId}/good.txt`, "remote", {
+      customMetadata: { mtime: "1000", "edited-by": "Operator" },
+    });
+    const reports: string[] = [];
+    const runtime = { ...testRuntime(providers), reportError: (event: string) => reports.push(event) };
+    expect(await runFileSyncSweep(runtime)).toMatchObject({ files: 1 });
+    expect(providers.files.get("good.txt")?.body).toBe("remote");
+    expect(providers.files.has("poison.bin")).toBe(false);
+    expect(reports).toContain("folder_sync_invalid_metadata");
+  });
 });

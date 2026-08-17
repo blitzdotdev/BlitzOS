@@ -28,6 +28,7 @@ import {
 import config from "../teenybase.js";
 
 type WorkerBindings = Env & {
+  ASSETS: { fetch(request: Request): Promise<Response> };
   HETZNER_API_TOKEN: string;
   JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
@@ -105,6 +106,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
+    assets: { fetch: (request) => env.ASSETS.fetch(request) },
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
     reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
   };
@@ -193,12 +195,12 @@ export default {
           executionContext,
           await credentialMasterKeyFor(env.CRED_MASTER_KEY),
         );
-        // The five-minute tick converges folder sync only — the backstop for
-        // request-triggered passes that lost to a tunnel still connecting.
-        // Everything else stays on the hourly and daily schedules.
-        if (event.cron === "*/5 * * * *") {
+        // Only the hourly and daily schedules run the full janitor set. Any
+        // other tick (the */5 backstop today) converges folder sync alone, so
+        // renaming that cron can never silently multiply the heavy sweeps.
+        if (event.cron !== "0 * * * *" && event.cron !== "0 3 * * *") {
           const swept = await runFileSyncSweep(runtime);
-          console.error(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
+          console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
           return;
         }
         await runtime.providers.microvm?.syncStaticHosts();
@@ -208,7 +210,7 @@ export default {
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
         const swept = await runFileSyncSweep(runtime);
-        console.error(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
+        console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),
     );
   },

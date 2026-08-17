@@ -203,6 +203,11 @@ export function appWithVmProviders(
       webAppAuth,
     },
     principalSource: createSessionPrincipalSource(),
+    assets: {
+      fetch: async () => new Response("<!doctype html><title>webapp shell</title>", {
+        headers: { "Content-Type": "text/html" },
+      }),
+    },
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
     reportError: () => undefined,
   });

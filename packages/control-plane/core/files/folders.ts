@@ -1,5 +1,5 @@
 import type { FolderGrantView, FolderView } from "../wire.js";
-import { first, rows, transaction } from "../db.js";
+import { first, rows } from "../db.js";
 import {
   HttpError,
   isRecord,
@@ -337,12 +337,12 @@ export function addFolderRoutes(
       actor,
       "control",
     );
-    const deleted = await transaction(runtime.db, [{
+    const deleted = await rows<{ id: string }>(runtime.db, {
       q: `DELETE FROM folder_grants
           WHERE id = ?1 AND folder_id = ?2 RETURNING id`,
       v: [context.req.param("grantId"), folder.id],
-    }]);
-    if (deleted[0]?.length !== 1) throw new HttpError(404, "folder grant not found");
+    });
+    if (deleted.length !== 1) throw new HttpError(404, "folder grant not found");
     return context.body(null, 204);
   });
 }

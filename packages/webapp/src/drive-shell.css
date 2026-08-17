@@ -387,3 +387,21 @@
 .drive-ws-frame > .webapp-header { flex: none; }
 .drive-ws-frame > .webapp-workspace-view { flex: 1 1 0; min-height: 0; }
 .drive-ws-frame > .webapp-statusline { flex: none; }
+
+/* Until the box-image re-pin, viewers get an explanation instead of a
+ * proxy-refused terminal. */
+.ws-viewer-hold {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 14px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  background: var(--sunken);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ws-viewer-hold strong { color: var(--ink); }

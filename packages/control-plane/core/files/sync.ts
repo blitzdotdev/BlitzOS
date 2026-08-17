@@ -17,6 +17,9 @@ export const FILE_SYNC_MAX_FILES_PER_TICK = 128;
 export const FILE_SYNC_MAX_BYTES_PER_TICK = 256 * 1024 * 1024;
 
 const DAV_RESPONSE_MAX_BYTES = 2 * 1024 * 1024;
+/** One PROPFIND per directory: past this many the tick reports the truncation
+ * and syncs what it listed rather than blowing the subrequest allowance. */
+const FILE_SYNC_MAX_GUEST_DIRECTORIES = 512;
 const MTIME_METADATA = "mtime";
 const EDITED_BY_METADATA = "edited-by";
 
@@ -262,6 +265,7 @@ async function listGuest(
   }
   const files = new Map<string, DavEntry>();
   const queue: string[] = [];
+  let truncated = false;
   const firstPage = parseDavListing(await boundedText(response), root);
   for (const file of firstPage.files) files.set(file.key, file);
   const seenDirectories = new Set(firstPage.directories);
@@ -286,22 +290,32 @@ async function listGuest(
     for (const file of listing.files) files.set(file.key, file);
     for (const child of listing.directories) {
       if (seenDirectories.has(child)) continue;
+      if (seenDirectories.size >= FILE_SYNC_MAX_GUEST_DIRECTORIES) {
+        truncated = true;
+        continue;
+      }
       seenDirectories.add(child);
       queue.push(child);
     }
   }
+  if (truncated) {
+    runtime.reportError(
+      "folder_sync_listing_truncated",
+      new Error(`guest listing capped at ${String(FILE_SYNC_MAX_GUEST_DIRECTORIES)} directories under ${root}`),
+    );
+  }
   return files;
 }
 
-function remoteEntry(object: R2Object, prefix: string): RemoteEntry {
+/** Returns null for objects whose metadata is unusable so one foreign or
+ * corrupt object can never wedge the folder's sync forever. */
+function remoteEntry(object: R2Object, prefix: string): RemoteEntry | null {
   const value = object.customMetadata?.[MTIME_METADATA];
   if (value === undefined || !/^\d+$/u.test(value)) {
-    throw new Error(`folder object ${object.key} has invalid mtime metadata`);
+    return null;
   }
   const mtime = Number(value);
-  if (!Number.isSafeInteger(mtime)) {
-    throw new Error(`folder object ${object.key} has invalid mtime metadata`);
-  }
+  if (!Number.isSafeInteger(mtime)) return null;
   return { object, key: object.key.slice(prefix.length), size: object.size, mtime };
 }
 
@@ -312,6 +326,7 @@ async function listRemote(
 ): Promise<Map<string, RemoteEntry>> {
   const prefix = folderObjectPrefix(orgId, folderId);
   const objects = new Map<string, RemoteEntry>();
+  let skipped = 0;
   let cursor: string | undefined;
   do {
     const page = await runtime.fileObjects.list({
@@ -322,10 +337,17 @@ async function listRemote(
     });
     for (const object of page.objects) {
       const entry = remoteEntry(object, prefix);
-      objects.set(entry.key, entry);
+      if (entry === null) skipped += 1;
+      else objects.set(entry.key, entry);
     }
     cursor = page.truncated ? page.cursor : undefined;
   } while (cursor !== undefined);
+  if (skipped > 0) {
+    runtime.reportError(
+      "folder_sync_invalid_metadata",
+      new Error(`skipped ${String(skipped)} objects under ${prefix}`),
+    );
+  }
   return objects;
 }
 

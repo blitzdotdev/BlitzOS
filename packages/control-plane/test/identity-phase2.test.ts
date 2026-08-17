@@ -146,6 +146,11 @@ describe("identity phase 2", () => {
     ]);
     expect((await appRequest(app, `/workspaces/${workspace.id}`, { headers: { Cookie: member.cookie } })).status).toBe(403);
     expect((await appRequest(app, `/workspaces/${workspace.id}`, { headers: { Cookie: outsiderCookie } })).status).toBe(404);
+    const refresh = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: member.cookie, Accept: "text/html,application/xhtml+xml" },
+    });
+    expect(refresh.headers.get("content-type")).toContain("text/html");
+    expect(await refresh.text()).toContain("webapp shell");
     await appRequest(app, `/workspaces/${workspace.id}/grants`, {
       ...json({ membershipId: member.membershipId, role: "editor" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
