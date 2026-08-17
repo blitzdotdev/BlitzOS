@@ -45,6 +45,9 @@ RUN npm run build \
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
 
+# Agents install into a prefix the runtime user owns, so `claude` can
+# auto-update and users can `npm install -g` without root.
+ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
 RUN npm install --global --omit=dev \
       @anthropic-ai/claude-code@2.1.228 \
       @openai/codex@0.147.0 \
@@ -112,7 +115,7 @@ RUN set -eux; \
 FROM runtime-base
 
 COPY --from=artifacts /out/root/ /
-COPY --from=vendors /usr/local/ /usr/local/
+COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
 COPY --from=gateway-build /out/blitz-box-gateway /usr/local/bin/blitz-box-gateway
 COPY --from=actor-build /src/packages/box/actor/package.json /opt/blitz/actor/package.json
@@ -125,10 +128,13 @@ RUN set -eux; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
-    ln -s /var/lib/blitz/home /srv/blitz-files/home
+    ln -s /var/lib/blitz/home /srv/blitz-files/home; \
+    chown -R blitz:blitz /opt/blitz/npm
 
 ENV HOME=/var/lib/blitz/home \
-    USER=blitz
+    USER=blitz \
+    NPM_CONFIG_PREFIX=/opt/blitz/npm \
+    PATH=/opt/blitz/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 VOLUME ["/var/lib/blitz"]
 EXPOSE 22 7443 7444 7445
