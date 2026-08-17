@@ -92,51 +92,29 @@ export function TurnWork({
     if (item.kind !== "assistant" || item.id !== turn.finalAssistantId) return true;
     return item.blocks.some((block) => block.type !== "text");
   });
-  const stateLabel = turn.status === "failed"
-    ? "failed"
-    : turn.status === "working" ? "working" : "worked";
-  const contents = (
-    <div className="chat-turn-work-body">
-      {activities.length > 0 && (
-        <div className="chat-turn-activity-summary">
-          {activities.map((activity) => <div key={activity}>› {activity}</div>)}
-        </div>
-      )}
-      {workItems.map((item) => (
-        <ChatItemView
-          key={item.id}
-          item={item}
-          toolResults={toolResults}
-          showThinking={showThinking}
-          onOpenPreview={onOpenPreview}
-          workingDirectory={workingDirectory}
-          finalAssistantId={turn.finalAssistantId}
-        />
-      ))}
-    </div>
-  );
 
-  if (workItems.length === 0 && activities.length === 0) {
-    return (
-      <div
-        className={`chat-turn-work chat-turn-work--static chat-turn-work--${turn.status}`}
-        role="status"
-        aria-label={stateLabel}
-      >
-        <span className="chat-turn-work-rule" aria-hidden="true" />
-      </div>
-    );
-  }
+  if (workItems.length === 0 && activities.length === 0) return null;
   return (
-    <details
-      className={`chat-turn-work chat-turn-work--${turn.status}`}
-      open={turn.status !== "complete"}
-    >
-      <summary aria-label={stateLabel}>
-        <span className="chat-turn-work-rule" aria-hidden="true" />
-      </summary>
-      {contents}
-    </details>
+    <div className={`chat-turn-work chat-turn-work--${turn.status}`}>
+      <div className="chat-turn-work-body">
+        {activities.length > 0 && (
+          <div className="chat-turn-activity-summary">
+            {activities.map((activity) => <div key={activity}>› {activity}</div>)}
+          </div>
+        )}
+        {workItems.map((item) => (
+          <ChatItemView
+            key={item.id}
+            item={item}
+            toolResults={toolResults}
+            showThinking={showThinking}
+            onOpenPreview={onOpenPreview}
+            workingDirectory={workingDirectory}
+            finalAssistantId={turn.finalAssistantId}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -170,57 +170,10 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  margin: 25px 0 22px;
+  margin: 18px 0 14px;
 }
 
-/* The work section divides with a plain rule; the disclosure caret is the
- * only marker. Status shows through the caret color. */
-.chat-turn-work > summary,
-.chat-turn-work--static {
-  display: grid;
-  grid-template-columns: auto minmax(24px, 1fr);
-  align-items: center;
-  gap: 10px;
-  color: var(--faint);
-  font-size: 10.5px;
-  list-style: none;
-  user-select: none;
-}
-
-.chat-turn-work > summary {
-  cursor: pointer;
-}
-
-.chat-turn-work > summary::-webkit-details-marker {
-  display: none;
-}
-
-.chat-turn-work > summary::before {
-  content: '›';
-  color: var(--faint);
-}
-
-.chat-turn-work[open] > summary::before {
-  content: '⌄';
-}
-
-.chat-turn-work--static {
-  display: block;
-}
-
-.chat-turn-work--failed > summary::before {
-  color: var(--ansi-red);
-}
-
-.chat-turn-work--working > summary::before {
-  color: var(--accent);
-}
-
-.chat-turn-work-rule {
-  height: 1px;
-  background: var(--rule);
-}
-
+/* Agent work shows inline — no separator, no disclosure. */
 .chat-turn-work-body {
   display: grid;
   width: 100%;
@@ -228,7 +181,6 @@
   max-width: 100%;
   overflow: hidden;
   gap: 7px;
-  margin: 20px 0 5px;
 }
 
 .chat-turn-activity-summary {
