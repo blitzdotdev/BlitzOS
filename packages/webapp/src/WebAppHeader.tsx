@@ -6,6 +6,7 @@ import type { TerminalAgent } from './protocol';
 
 export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview';
 export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
+export const SESSION_TITLE_MAX_LENGTH = 64;
 
 export const SPAWN_SESSION_LABELS = {
   chat: 'Chat',
@@ -190,7 +191,8 @@ export function WebAppHeader({
           ><span aria-hidden="true">☰</span></button>
         )}
         {!paneStrips && (
-          <div className="webapp-tabstrip" ref={tabstrip} role="tablist" aria-label="Workspace sessions">
+          <>
+            <div className="webapp-tabstrip" ref={tabstrip} role="tablist" aria-label="Workspace sessions">
             {tabs.map((tab) => {
               const active = tab.id === activeSessionId;
               return (
@@ -210,8 +212,12 @@ export function WebAppHeader({
                         ref={renameInput}
                         className="webapp-tab-rename"
                         aria-label={`Rename ${tab.label}`}
+                        maxLength={SESSION_TITLE_MAX_LENGTH}
                         value={renaming.value}
-                        onChange={(event) => setRenaming({ id: tab.id, value: event.target.value })}
+                        onChange={(event) => setRenaming({
+                          id: tab.id,
+                          value: event.target.value.slice(0, SESSION_TITLE_MAX_LENGTH),
+                        })}
                         onBlur={() => finishRename(tab)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
@@ -230,7 +236,7 @@ export function WebAppHeader({
                       type="button"
                       role="tab"
                       aria-selected={active}
-                      title={tab.title ?? (tab.renameable ? 'Double-click the label to rename' : undefined)}
+                      title={tab.title ?? tab.label}
                       onClick={() => onSelect(tab.id)}
                     >
                       <SessionTypeIcon
@@ -261,6 +267,7 @@ export function WebAppHeader({
               );
             })}
 
+            </div>
             <div
               className="webapp-new-tab-control"
               ref={newTabControl}
@@ -321,7 +328,7 @@ export function WebAppHeader({
                 )}
               </div>
             </div>
-          </div>
+          </>
         )}
 
       </div>
