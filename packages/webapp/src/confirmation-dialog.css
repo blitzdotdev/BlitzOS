@@ -5,52 +5,75 @@
   inset: 0;
   padding: 16px;
   place-items: center;
-  background: color-mix(in oklab, var(--paper) 82%, transparent);
+  background: color-mix(in oklab, var(--paper) 88%, transparent);
 }
 
 .webapp-confirmation-dialog {
-  width: min(440px, 100%);
+  width: min(410px, 100%);
   border: 1px solid var(--rule);
   color: var(--ink);
-  background: var(--paper);
+  background: color-mix(in oklab, var(--ink) 2%, var(--paper));
+  font-family: var(--font-mono);
 }
 
 .webapp-confirmation-header {
-  min-height: 52px;
+  min-height: 46px;
   display: flex;
   align-items: center;
-  padding: 0 18px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--rule);
 }
 
 .webapp-confirmation-header h1 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: lowercase;
 }
 
 .webapp-confirmation-body {
-  padding: 22px 18px 24px;
+  padding: 20px 16px 24px;
 }
 
 .webapp-confirmation-body p {
   margin: 0;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.65;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.7;
 }
 
 .webapp-confirmation-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 18px;
+  padding: 10px 16px;
   border-top: 1px solid var(--rule);
 }
 
 .webapp-confirmation-confirm {
-  border-color: var(--accent);
+  border-color: var(--ansi-red);
+  color: var(--ansi-red);
+}
+
+.webapp-confirmation-actions .webapp-action {
+  min-height: 30px;
+  padding: 0 11px;
+  background: transparent;
+  font: 10.5px/1 var(--font-mono);
+  text-transform: lowercase;
+}
+
+.webapp-confirmation-actions .webapp-action:hover,
+.webapp-confirmation-actions .webapp-action:focus-visible {
+  border-color: color-mix(in oklab, var(--ink) 24%, var(--paper));
   color: var(--ink);
+}
+
+.webapp-confirmation-actions .webapp-confirmation-confirm:hover,
+.webapp-confirmation-actions .webapp-confirmation-confirm:focus-visible {
+  border-color: var(--ansi-red);
+  color: var(--paper);
+  background: var(--ansi-red);
 }
 
 @media (max-width: 520px) {

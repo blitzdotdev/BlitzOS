@@ -95,6 +95,7 @@
   border-right: 1px solid var(--rule);
   color: var(--ink);
   background: var(--paper);
+  font-family: var(--font-mono);
   user-select: none;
 }
 
@@ -119,14 +120,28 @@
   min-width: 0;
   flex: 1;
   align-items: center;
-  gap: 10px;
-  padding: 0 0 0 22px;
+  gap: 9px;
+  margin: 7px 0 7px 8px;
+  padding: 0 8px;
+  border-radius: 8px;
   text-align: left;
+}
+
+.webapp-org-button:hover,
+.webapp-org-button:focus-visible {
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.webapp-org-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--accent);
 }
 
 .webapp-org-button strong {
   overflow: hidden;
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 650;
   letter-spacing: -.02em;
   text-overflow: ellipsis;
@@ -145,15 +160,26 @@
 }
 
 .webapp-workspace-add {
-  width: 48px;
+  display: grid;
+  width: 36px;
+  height: 34px;
   flex: none;
+  place-items: center;
+  align-self: center;
+  margin-right: 8px;
+  border-radius: 8px;
   color: var(--faint) !important;
-  font-size: 17px;
+}
+
+.webapp-workspace-add svg {
+  width: 19px;
+  height: 19px;
 }
 
 .webapp-workspace-add:hover,
 .webapp-workspace-add:focus-visible {
   color: var(--ink) !important;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
 .webapp-org-menu {
@@ -163,7 +189,9 @@
   right: 16px;
   left: 16px;
   border: 1px solid var(--rule);
+  border-radius: 8px;
   background: var(--paper);
+  overflow: hidden;
 }
 
 .webapp-org-menu-label {
@@ -192,22 +220,37 @@
   flex: 1;
   overflow-x: hidden;
   overflow-y: auto;
+  padding: 10px 8px 4px;
+  scrollbar-color: var(--rule) transparent;
+  scrollbar-width: thin;
+}
+
+.webapp-tree::-webkit-scrollbar {
+  width: 6px;
+}
+
+.webapp-tree::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.webapp-tree::-webkit-scrollbar-thumb {
+  background: var(--rule);
 }
 
 .webapp-tree-empty {
-  padding: 18px 22px;
+  padding: 14px 9px;
   color: var(--faint);
   font-size: 12.5px;
   font-family: var(--font-mono);
 }
 
 .webapp-workspace {
-  padding: 6px 0 7px;
-  border-bottom: 1px solid var(--rule);
+  padding: 2px 0 7px;
 }
 
 .webapp-workspace--active {
-  background: color-mix(in oklab, var(--ink) 5%, var(--paper));
+  border-left: 1px solid var(--accent);
+  background: color-mix(in oklab, var(--ink) 6%, var(--paper));
 }
 
 .webapp-workspace:first-child {
@@ -221,10 +264,16 @@
   min-width: 0;
   width: 100%;
   align-items: flex-start;
-  gap: 10px;
-  padding: 2px 22px 0;
+  gap: 9px;
+  padding: 5px 8px 1px;
+  border-radius: 7px;
   color: var(--ink) !important;
   text-align: left;
+}
+
+.webapp-workspace-button:hover,
+.webapp-workspace-button:focus-visible {
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
 .webapp-workspace-button--disclosable {
@@ -235,7 +284,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   grid-template-rows: auto auto;
-  min-height: var(--touchTarget);
+  min-height: 42px;
   align-items: center;
 }
 
@@ -248,13 +297,22 @@
   display: grid;
   grid-column: 4;
   grid-row: 1;
-  width: 36px;
-  min-width: 36px;
+  width: 24px;
+  min-width: 24px;
   min-height: 24px;
   place-items: center;
   align-self: stretch;
-  padding: 0 16px 0 0;
+  margin-right: 3px;
+  padding: 0;
+  border-radius: 6px;
+  opacity: 0;
   color: var(--faint) !important;
+}
+
+.webapp-workspace:hover .webapp-workspace-disclosure,
+.webapp-workspace:focus-within .webapp-workspace-disclosure,
+.webapp-workspace--collapsed .webapp-workspace-disclosure {
+  opacity: 1;
 }
 
 .webapp-workspace-disclosure span {
@@ -277,11 +335,13 @@
   display: grid;
   grid-column: 4;
   grid-row: 2;
-  min-width: 32px;
+  min-width: 24px;
   min-height: 20px;
   place-items: center;
   align-self: stretch;
-  padding: 0 16px 0 6px;
+  margin-right: 3px;
+  padding: 0;
+  border-radius: 6px;
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -289,12 +349,43 @@
   font: 11px/1 var(--font-ui) !important;
 }
 
+.webapp-workspace-details-button {
+  display: grid;
+  grid-column: 3;
+  grid-row: 2;
+  width: 24px;
+  min-width: 24px;
+  min-height: 20px;
+  place-items: center;
+  align-self: stretch;
+  padding: 0;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--faint) !important;
+}
+
+.webapp-workspace-details-button svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.webapp-workspace-details-button:hover,
+.webapp-workspace-details-button:focus-visible {
+  color: var(--accent) !important;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
 .webapp-workspace-delete .mi-trash {
   width: 14px;
   height: 14px;
 }
 
-.webapp-workspace--expanded .webapp-workspace-delete {
+.webapp-workspace:hover .webapp-workspace-delete,
+.webapp-workspace:focus-within .webapp-workspace-delete,
+.webapp-workspace:hover .webapp-workspace-details-button,
+.webapp-workspace:focus-within .webapp-workspace-details-button {
   visibility: visible;
   opacity: 1;
   pointer-events: auto;
@@ -319,7 +410,7 @@
 }
 
 .webapp-workspace-button--readonly:hover {
-  background: none;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
 .webapp-workspace-button--shared {
@@ -330,7 +421,7 @@
   display: block;
   min-width: 0;
   overflow: hidden;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -351,7 +442,7 @@
   align-items: center;
   gap: 6px;
   min-height: 20px;
-  padding: 0 4px 0 41px;
+  padding: 0 4px 0 34px;
   color: var(--faint);
   font: 9.5px/1.5 var(--font-mono);
 }
@@ -422,6 +513,7 @@
   flex: none;
   padding: 0 4px;
   border: 1px solid var(--rule);
+  border-radius: 4px;
 }
 
 .webapp-workspace-status-badge--online {
@@ -434,6 +526,8 @@
 .webapp-workspace-status-badge--parking,
 .webapp-workspace-status-badge--waking {
   animation: webapp-loading-step 800ms steps(2, end) infinite;
+  border-color: var(--status-warm-yellow);
+  color: var(--status-warm-yellow);
 }
 
 .webapp-workspace--parked .webapp-workspace-name,
@@ -472,18 +566,25 @@
 }
 
 .webapp-tree-icon--online {
-  color: var(--accent);
+  color: var(--ink);
 }
 
 .webapp-session {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 9px;
-  padding: 2px 22px 2px 41px;
+  gap: 8px;
+  margin: 1px 0;
+  padding: 3px 7px;
+  border-radius: 7px;
   color: var(--faint) !important;
   font: 12.5px/1.7 var(--font-mono) !important;
   text-align: left;
+}
+
+.webapp-workspace-sessions {
+  margin-left: 17px;
+  padding-left: 9px;
 }
 
 .webapp-session .webapp-tree-icon {
@@ -497,19 +598,87 @@
 .webapp-session:focus-visible,
 .webapp-session--active {
   color: var(--ink) !important;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
+.webapp-session:hover .webapp-tree-icon,
+.webapp-session:focus-visible .webapp-tree-icon,
 .webapp-session--active .webapp-tree-icon {
   color: var(--accent);
 }
 
+.webapp-session--active,
+.webapp-session--unread {
+  font-weight: 650 !important;
+}
+
+.webapp-session .webapp-tree-icon--prime {
+  width: 14px;
+  height: 14px;
+  margin-inline: -1px;
+}
+
+.webapp-session-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-session-state {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--ansi-magenta);
+  border-radius: 4px;
+  color: var(--ansi-magenta);
+  font-size: 9.5px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.webapp-session-state--attention {
+  border-color: var(--ansi-yellow);
+  color: var(--ansi-yellow);
+}
+
+.webapp-session-state--done {
+  border-color: var(--ansi-green);
+  color: var(--ansi-green);
+}
+
+.webapp-session-state--error {
+  border-color: var(--ansi-red);
+  color: var(--ansi-red);
+}
+
+.webapp-session-age {
+  flex: none;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.webapp-session-spinner {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border: 1px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: webapp-session-spin 900ms linear infinite;
+}
+
+@keyframes webapp-session-spin {
+  to { transform: rotate(360deg); }
+}
+
 .webapp-support {
   flex: none;
-  padding: 12px 22px;
+  padding: 10px 8px;
   border-top: 1px solid var(--rule);
   color: var(--muted);
-  font-size: 11.5px;
-  line-height: 1.4;
+  font: 10.5px/1.45 var(--font-mono);
   text-decoration: none;
 }
 
@@ -524,8 +693,8 @@
   width: 100%;
   flex: none;
   align-items: center;
-  gap: 12px;
-  padding: 18px 22px;
+  gap: 9px;
+  padding: 13px 8px;
   border-top: 1px solid var(--rule) !important;
   text-align: left;
 }
@@ -540,8 +709,8 @@
 }
 
 .webapp-avatar {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   flex: none;
 }
 
@@ -551,7 +720,7 @@
 
 .webapp-avatar text {
   fill: var(--paper);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -559,6 +728,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
+  font-size: 12.5px;
 }
 
 .webapp-user-copy > span {
@@ -567,14 +737,95 @@
   white-space: nowrap;
 }
 
-.webapp-user-org {
-  color: var(--faint);
-  font-size: 11.5px;
-}
-
 .webapp-drawer-close,
 .webapp-drawer-scrim {
   display: none;
+}
+
+.webapp-dev-stage {
+  position: relative;
+  display: flex;
+  grid-column: 2;
+  grid-row: 2 / 4;
+  min-width: 0;
+  min-height: 0;
+  background: var(--terminal-background);
+}
+
+.webapp-dev-controls {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 7px;
+  border: 1px solid var(--rule);
+  background: color-mix(in oklab, var(--paper) 92%, transparent);
+}
+
+.webapp-dev-controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--faint);
+  font: 10px/1 var(--font-mono);
+}
+
+.webapp-dev-controls select {
+  padding: 4px 6px;
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  background: var(--paper);
+  font: inherit;
+}
+
+.webapp-dev-workspace-body {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.webapp-dev-canvas {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  color: var(--faint);
+  font: 10px/1 var(--font-mono);
+}
+
+/* The production chat panel must receive the same full workspace bounds it
+   gets in CloudApp. Centering is only for the terminal/empty fixture states. */
+.webapp-dev-canvas--chat {
+  place-items: stretch;
+}
+
+.webapp-dev-canvas--chat > .chat-panel {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.webapp-dev-terminal {
+  align-self: stretch;
+  width: 100%;
+  padding: 18px;
+  color: var(--muted);
+  background: var(--terminal-background);
+  font: 13px/1.55 var(--font-mono);
+}
+
+.webapp-dev-terminal-caret {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 5px;
+  vertical-align: -2px;
+  background: var(--accent);
 }
 
 @media (max-width: 899px) {
@@ -598,6 +849,20 @@
 
   .webapp-shell--box-offline .webapp-statusline {
     grid-column: 1;
+  }
+
+  .webapp-dev-stage {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .webapp-dev-controls {
+    top: 6px;
+    right: 6px;
+    left: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
   }
 
   .webapp-rail,
@@ -689,8 +954,12 @@
     padding-left: 38px;
   }
 
-  .webapp-workspace--expanded .webapp-workspace-delete {
+  .webapp-workspace--expanded .webapp-workspace-delete,
+  .webapp-workspace--expanded .webapp-workspace-details-button {
     min-height: var(--touchTarget);
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .webapp-session {
@@ -724,9 +993,13 @@
   .webapp-workspace-disclosure span {
     transition: none;
   }
+
+  .webapp-session-spinner {
+    animation: none;
+  }
 }
 
-/* Drag a screenshot anywhere over the webapp: the overlay is the only signal
+/* Drag a screenshot anywhere over the cockpit: the overlay is the only signal
    that the drop will be accepted, so it must sit above the terminal, which
    xterm.js paints into its own canvas layer. */
 .webapp-shell--drop-active {
@@ -748,4 +1021,11 @@
   color: var(--ink);
   font-size: 0.95rem;
   letter-spacing: 0.01em;
+}
+
+/* ================= blitz additions: identity + drive surfaces ============ */
+
+.webapp-user-org {
+  color: var(--faint);
+  font-size: 11.5px;
 }
