@@ -14,9 +14,9 @@ import {
   type TreeApi,
 } from 'react-arborist';
 import type { FileStat, WebDAVClient } from 'webdav';
-import { FileTypeIcon } from './FileTypeIcon';
+import type { FolderAttachmentView } from '@blitzos/schema';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
-import { davErrorStatus, fullDavPath } from './files';
+import { davErrorStatus } from './files';
 import {
   listedNodes,
   mergedTree,
@@ -24,6 +24,9 @@ import {
   statusNode,
   type FileNode,
 } from './files-tree';
+import { FilesContextMenu, type FilesContextMenuState } from './FilesContextMenu';
+import { FilesTreeRow } from './FilesTreeRow';
+import { FinderPins, FinderToolbar, type FinderRoot } from './FinderChrome';
 
 type FilesSidebarProps = {
   client: WebDAVClient | null;
@@ -36,9 +39,13 @@ type FilesSidebarProps = {
   visible: boolean;
   wakingStage?: string;
   width: number;
+  sharedFolders: FolderAttachmentView[];
+  canShare: boolean;
   onClose: () => void;
   onExpandedChange: (expanded: string[]) => void;
   onOpenFile: (filePath: string) => void;
+  onOpenDriveFolder: (folderId: string) => void;
+  onShareToDrive: (path: string) => void;
   onUnauthorized: () => void;
   onWidthChange: (width: number) => void;
 };
@@ -57,111 +64,6 @@ function transientDavStatus(status: number | undefined): boolean {
     || status >= 500;
 }
 
-type FilesContextMenu = {
-  x: number;
-  y: number;
-  directory: string;
-  createKind?: 'file' | 'folder';
-};
-
-function IndentGuides({ depth }: { depth: number }) {
-  if (depth === 0) return null;
-  return (
-    <span className="files-tree-indent-guides" aria-hidden="true">
-      {Array.from({ length: depth }, (_, level) => (
-        <span key={level} style={{ left: `${level * 8 + 7}px` }} />
-      ))}
-    </span>
-  );
-}
-
-function FileTreeNode({
-  node,
-  style,
-  loading,
-  onContextMenu,
-  onOpenFile,
-  onRetry,
-}: NodeRendererProps<FileNode> & {
-  loading: boolean;
-  onContextMenu: (event: ReactMouseEvent, directory: string) => void;
-  onOpenFile: (path: string) => void;
-  onRetry: (path: string) => void;
-}) {
-  const data = node.data;
-  if (data.kind === 'status') {
-    return (
-      <div
-        className="files-tree-status"
-        style={style}
-        onContextMenu={(event) => onContextMenu(event, data.path)}
-      >
-        <IndentGuides depth={node.level} />
-        {data.status === 'empty' && <span>(empty)</span>}
-        {data.status === 'error' && (
-          <>
-            <span>couldn&apos;t list · </span>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onRetry(data.path);
-              }}
-            >
-              retry
-            </button>
-          </>
-        )}
-      </div>
-    );
-  }
-
-  const directory = data.kind === 'directory';
-  return (
-    <div
-      className={[
-        'files-tree-row',
-        node.isSelected ? 'files-tree-row--selected' : '',
-        data.name.startsWith('.') ? 'files-tree-row--dotfile' : '',
-      ].filter(Boolean).join(' ')}
-      style={style}
-      title={fullDavPath(data.path)}
-      onContextMenu={(event) => onContextMenu(
-        event,
-        directory ? data.path : data.path.split('/').slice(0, -1).join('/'),
-      )}
-      onClick={(event) => {
-        event.stopPropagation();
-        node.select();
-        node.focus();
-        if (directory && event.detail === 1) node.toggle();
-      }}
-      onDoubleClick={(event) => {
-        event.stopPropagation();
-        if (!directory) onOpenFile(data.path);
-      }}
-    >
-      <IndentGuides depth={node.level} />
-      <span className="files-tree-chevron">
-        {directory && (loading
-          ? <span className="webapp-inline-spinner files-tree-spinner" aria-label="Loading folder" />
-          : (
-            <span
-              className={[
-                'codicon',
-                'codicon-chevron-right',
-                node.isOpen ? 'files-tree-chevron--open' : '',
-              ].filter(Boolean).join(' ')}
-              aria-hidden="true"
-            />
-          ))}
-      </span>
-      {!directory && <FileTypeIcon className="files-tree-icon" filePath={data.path} />}
-      <span className="files-tree-name">{data.name}</span>
-    </div>
-  );
-}
-
 export function FilesSidebar({
   client,
   expanded,
@@ -173,17 +75,26 @@ export function FilesSidebar({
   visible,
   wakingStage,
   width,
+  sharedFolders,
+  canShare,
   onClose,
   onExpandedChange,
   onOpenFile,
+  onOpenDriveFolder,
+  onShareToDrive,
   onUnauthorized,
   onWidthChange,
 }: FilesSidebarProps) {
   const [data, setData] = useState<FileNode[]>([]);
+  const [root, setRoot] = useState<FinderRoot>('');
+  const [rootBack, setRootBack] = useState<FinderRoot[]>([]);
+  const [rootForward, setRootForward] = useState<FinderRoot[]>([]);
+  const [query, setQuery] = useState('');
+  const [selectedPath, setSelectedPath] = useState('');
   const [rootState, setRootState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [treeHeight, setTreeHeight] = useState(1);
-  const [contextMenu, setContextMenu] = useState<FilesContextMenu | null>(null);
+  const [contextMenu, setContextMenu] = useState<FilesContextMenuState | null>(null);
   const [createName, setCreateName] = useState('');
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -476,7 +387,7 @@ export function FilesSidebar({
   }, [ready, silentRefresh, visible]);
 
   const renderNode = useCallback((props: NodeRendererProps<FileNode>) => (
-    <FileTreeNode
+    <FilesTreeRow
       {...props}
       loading={props.node.data.kind === 'directory' && loadingPaths.has(props.node.data.path)}
       onContextMenu={openContextMenu}
@@ -484,6 +395,73 @@ export function FilesSidebar({
       onRetry={(path) => { void loadDirectory(path); }}
     />
   ), [loadDirectory, loadingPaths, onOpenFile, openContextMenu]);
+
+  const goToRoot = (next: FinderRoot) => {
+    if (next === root) return;
+    setRootBack((stack) => [...stack, root]);
+    setRootForward([]);
+    setRoot(next);
+    setSelectedPath('');
+    if (next === 'shared') void loadDirectory('shared');
+  };
+
+  const goBack = () => {
+    setRootBack((stack) => {
+      const previous = stack.at(-1);
+      if (previous === undefined) return stack;
+      setRootForward((forward) => [...forward, root]);
+      setRoot(previous);
+      return stack.slice(0, -1);
+    });
+  };
+
+  const goForward = () => {
+    setRootForward((stack) => {
+      const next = stack.at(-1);
+      if (next === undefined) return stack;
+      setRootBack((back) => [...back, root]);
+      setRoot(next);
+      return stack.slice(0, -1);
+    });
+  };
+
+  const sharedNode = data.find(
+    (node) => node.kind === 'directory' && node.path === 'shared',
+  );
+  const rootedData = root === ''
+    ? data
+    : sharedNode?.kind === 'directory' ? sharedNode.children ?? [] : [];
+  const driveFolderFor = (directory: string): FolderAttachmentView | undefined => sharedFolders.find((folder) => {
+    const guestPath = folder.guestPath ?? `shared/${folder.name}`;
+    return directory === guestPath || directory.startsWith(`${guestPath}/`);
+  });
+  const crumbParts = selectedPath === '' ? [] : selectedPath.split('/');
+  const contextDriveFolder = contextMenu === null || contextMenu.createKind !== undefined
+    ? undefined
+    : driveFolderFor(contextMenu.directory);
+  // Publishing is offered on exact top-level workspace directories that are
+  // not already synced attachments.
+  const contextShareable = canShare
+    && contextMenu !== null
+    && contextMenu.createKind === undefined
+    && contextMenu.directory !== ''
+    && contextMenu.directory !== 'shared'
+    && !contextMenu.directory.includes('/')
+    && contextDriveFolder === undefined
+    ? contextMenu.directory
+    : '';
+
+  // Path-bar crumbs jump within the tree: expand ancestors, then select.
+  const jumpToPath = (path: string) => {
+    const ancestors = path.split('/').slice(0, -1)
+      .map((_, index, parts) => parts.slice(0, index + 1).join('/'));
+    const missing = ancestors.filter((ancestor) => !expandedRef.current.includes(ancestor));
+    if (missing.length > 0) onExpandedChange([...expandedRef.current, ...missing]);
+    for (const ancestor of ancestors) tree.current?.open(ancestor);
+    tree.current?.select(path);
+    tree.current?.scrollTo(path);
+    setSelectedPath(path);
+  };
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mobile || event.button !== 0) return;
@@ -526,151 +504,152 @@ export function FilesSidebar({
           }}
         />
       )}
-      <header className="files-sidebar-header">
-        <span>FILES</span>
-        <button
-          type="button"
-          aria-label="Refresh files"
-          title="Refresh files"
-          disabled={!ready}
-          onClick={startRootRetry}
-        >
-          {loadingPaths.has('')
-            ? <span className="webapp-inline-spinner files-tree-spinner" />
-            : <span aria-hidden="true">⟳</span>}
-        </button>
-        <button
-          type="button"
-          aria-label="Close files"
-          title="Close files"
-          onClick={onClose}
-        >⨯</button>
-      </header>
-      <div
-        className="files-tree"
-        ref={treeBody}
-        onContextMenu={(event) => openContextMenu(event, '')}
-        onKeyDown={(event) => {
-          if (event.key !== 'Enter' || event.defaultPrevented) return;
-          // SAFETY: React keyboard events in this element originate from DOM Element targets.
-          if ((event.target as Element).closest('button')) return;
-          const selected = tree.current?.selectedNodes[0] ?? tree.current?.focusedNode;
-          if (!selected || selected.data.kind === 'status') return;
-          event.preventDefault();
-          if (selected.data.kind === 'directory') selected.toggle();
-          else onOpenFile(selected.data.path);
-        }}
-      >
-        {!ready ? (
-          <div className="files-sidebar-loading">
-            {wakingStage && <span className="files-sidebar-stage">{wakingStage}</span>}
-            <OutlinedLoadingRows ariaLabel="Loading workspace files" count={3} />
+      <FinderToolbar
+        root={root}
+        canBack={rootBack.length > 0}
+        canForward={rootForward.length > 0}
+        query={query}
+        ready={ready}
+        refreshing={loadingPaths.has('')}
+        mobile={mobile}
+        onBack={goBack}
+        onForward={goForward}
+        onQueryChange={setQuery}
+        onRefresh={startRootRetry}
+        onClose={onClose}
+      />
+      <div className="fnd-body">
+        <FinderPins root={root} sharedCount={sharedFolders.length} onSelect={goToRoot} />
+        <div className="fnd-list">
+          <div className="fnd-cols" aria-hidden="true">
+            <span>Name</span>
+            <span>Modified</span>
+            <span className="fnd-num">Size</span>
+            <span>Kind</span>
           </div>
-        ) : rootState === 'loading' ? (
-          <OutlinedLoadingRows ariaLabel="Loading workspace files" count={3} />
-        ) : rootState === 'error' ? (
-          <div className="files-tree-root-state">
-            <span>couldn&apos;t list · </span>
-            <button type="button" onClick={startRootRetry}>retry</button>
-          </div>
-        ) : data.length === 0 ? (
-          <div className="files-tree-root-state">(empty)</div>
-        ) : (
-          <Tree<FileNode>
-            ref={tree}
-            data={data}
-            width="100%"
-            height={treeHeight}
-            rowHeight={22}
-            indent={8}
-            idAccessor="id"
-            childrenAccessor={(node) => node.kind === 'directory' ? node.children ?? [] : null}
-            initialOpenState={initialOpenState.current}
-            openByDefault={false}
-            selectionFollowsFocus
-            disableMultiSelection
-            disableDrag
-            disableDrop
-            disableEdit
-            disableSelect={(node) => node.kind === 'status'}
-            onActivate={(node) => {
-              if (node.data.kind === 'file') onOpenFile(node.data.path);
+          <div
+            className="files-tree"
+            ref={treeBody}
+            onContextMenu={(event) => openContextMenu(event, root === '' ? '' : 'shared')}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.defaultPrevented) return;
+              // SAFETY: React keyboard events in this element originate from DOM Element targets.
+              if ((event.target as Element).closest('button, input')) return;
+              const selected = tree.current?.selectedNodes[0] ?? tree.current?.focusedNode;
+              if (!selected || selected.data.kind === 'status') return;
+              event.preventDefault();
+              if (selected.data.kind === 'directory') selected.toggle();
+              else onOpenFile(selected.data.path);
             }}
-            onToggle={(path) => {
-              const paths = new Set(expandedRef.current);
-              if (tree.current?.isOpen(path)) {
-                paths.add(path);
-                void (async () => {
-                  if (await loadDirectory(path) !== 'loaded') return;
-                  const descendants = [...paths]
-                    .filter((candidate) => candidate.startsWith(`${path}/`))
-                    .sort((left, right) => left.split('/').length - right.split('/').length);
-                  for (const descendant of descendants) await loadDirectory(descendant);
-                })();
-              } else {
-                paths.delete(path);
-              }
-              onExpandedChange([...paths]);
-            }}
-            aria-label="Workspace file tree"
           >
-            {renderNode}
-          </Tree>
-        )}
+            {!ready ? (
+              <div className="files-sidebar-loading">
+                {wakingStage && <span className="files-sidebar-stage">{wakingStage}</span>}
+                <OutlinedLoadingRows ariaLabel="Loading workspace files" count={3} />
+              </div>
+            ) : rootState === 'loading' ? (
+              <OutlinedLoadingRows ariaLabel="Loading workspace files" count={3} />
+            ) : rootState === 'error' ? (
+              <div className="files-tree-root-state">
+                <span>couldn&apos;t list · </span>
+                <button type="button" onClick={startRootRetry}>retry</button>
+              </div>
+            ) : rootedData.length === 0 ? (
+              <div className="files-tree-root-state">(empty)</div>
+            ) : (
+              <Tree<FileNode>
+                ref={tree}
+                data={rootedData}
+                width="100%"
+                height={treeHeight}
+                rowHeight={30}
+                indent={12}
+                idAccessor="id"
+                childrenAccessor={(node) => node.kind === 'directory' ? node.children ?? [] : null}
+                initialOpenState={initialOpenState.current}
+                openByDefault={false}
+                selectionFollowsFocus
+                disableMultiSelection
+                disableDrag
+                disableDrop
+                disableEdit
+                disableSelect={(node) => node.kind === 'status'}
+                searchTerm={query}
+                searchMatch={(node, term) => node.data.kind !== 'status'
+                  && node.data.name.toLowerCase().includes(term.toLowerCase())}
+                onSelect={(nodes) => {
+                  const selected = nodes[0]?.data;
+                  setSelectedPath(selected !== undefined && selected.kind !== 'status' ? selected.path : '');
+                }}
+                onActivate={(node) => {
+                  if (node.data.kind === 'file') onOpenFile(node.data.path);
+                }}
+                onToggle={(path) => {
+                  const paths = new Set(expandedRef.current);
+                  if (tree.current?.isOpen(path)) {
+                    paths.add(path);
+                    void (async () => {
+                      if (await loadDirectory(path) !== 'loaded') return;
+                      const descendants = [...paths]
+                        .filter((candidate) => candidate.startsWith(`${path}/`))
+                        .sort((left, right) => left.split('/').length - right.split('/').length);
+                      for (const descendant of descendants) await loadDirectory(descendant);
+                    })();
+                  } else {
+                    paths.delete(path);
+                  }
+                  onExpandedChange([...paths]);
+                }}
+                aria-label="Workspace file tree"
+              >
+                {renderNode}
+              </Tree>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="fnd-path" aria-label="Selected path">
+        <button className="fnd-crumb" type="button" onClick={() => { goToRoot(''); setSelectedPath(''); }}>
+          workspace
+        </button>
+        {crumbParts.map((part, index) => {
+          const path = crumbParts.slice(0, index + 1).join('/');
+          const last = index === crumbParts.length - 1;
+          return (
+            <span className="fnd-crumb-pair" key={path}>
+              <i aria-hidden="true">›</i>
+              {last
+                ? <b>{part}</b>
+                : (
+                  <button className="fnd-crumb" type="button" onClick={() => jumpToPath(path)}>
+                    {part}
+                  </button>
+                )}
+            </span>
+          );
+        })}
       </div>
       {contextMenu && (
-        <div
-          className="files-context-menu"
-          ref={contextPopup}
-          role={contextMenu.createKind ? 'dialog' : 'menu'}
-          aria-label={contextMenu.createKind
-            ? `Create ${contextMenu.createKind}`
-            : `Create in ${fullDavPath(contextMenu.directory)}`}
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-        >
-          {contextMenu.createKind ? (
-            <form onSubmit={(event) => { void createEntry(event); }}>
-              <div className="files-context-menu-label">
-                New {contextMenu.createKind} in {fullDavPath(contextMenu.directory)}
-              </div>
-              <input
-                ref={createInput}
-                aria-label={`${contextMenu.createKind === 'file' ? 'File' : 'Folder'} name`}
-                value={createName}
-                disabled={creating}
-                onChange={(event) => {
-                  setCreateName(event.target.value);
-                  setCreateError(null);
-                }}
-              />
-              {createError && <div className="files-context-menu-error" role="alert">{createError}</div>}
-              <div className="files-context-menu-actions">
-                <button type="button" disabled={creating} onClick={() => setContextMenu(null)}>
-                  Cancel
-                </button>
-                <button type="submit" disabled={creating || createName.trim().length === 0}>
-                  {creating ? 'Creating…' : 'Create'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <button
-                ref={contextFirstAction}
-                type="button"
-                role="menuitem"
-                onClick={() => chooseCreateKind('file')}
-              >
-                <span className="codicon codicon-new-file" aria-hidden="true" />
-                New file…
-              </button>
-              <button type="button" role="menuitem" onClick={() => chooseCreateKind('folder')}>
-                <span className="codicon codicon-new-folder" aria-hidden="true" />
-                New folder…
-              </button>
-            </>
-          )}
-        </div>
+        <FilesContextMenu
+          menu={contextMenu}
+          popupRef={contextPopup}
+          firstActionRef={contextFirstAction}
+          inputRef={createInput}
+          createName={createName}
+          createError={createError}
+          creating={creating}
+          driveFolder={contextDriveFolder}
+          shareablePath={contextShareable}
+          onNameChange={(name) => {
+            setCreateName(name);
+            setCreateError(null);
+          }}
+          onPickCreateKind={chooseCreateKind}
+          onSubmit={(event) => { void createEntry(event); }}
+          onClose={() => setContextMenu(null)}
+          onOpenDriveFolder={onOpenDriveFolder}
+          onShareToDrive={onShareToDrive}
+        />
       )}
     </aside>
   );

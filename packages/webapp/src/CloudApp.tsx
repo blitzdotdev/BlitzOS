@@ -12,7 +12,7 @@ import {
   ApiError,
 } from './api-adapter';
 import type { ControlPlaneClient } from './api';
-import type { CredentialRequestView } from '@blitzos/schema';
+import type { CredentialRequestView, FolderAttachmentView } from '@blitzos/schema';
 import {
   WebAppHeader,
   SPAWN_SESSION_LABELS,
@@ -23,7 +23,7 @@ import { FileIcon } from './WebAppIcons';
 import { DriveHome } from './files/DriveHome';
 import { CreateTemplateScreen } from './files/CreateTemplateScreen';
 import { DriveRail } from './files/DriveRail';
-import { WorkspaceSharedFolders } from './files/WorkspaceSharedFolders';
+import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import { DriveAvatar } from './files/DriveAvatar';
 import { KebabGlyph, ShareGlyph, TrashGlyph } from './files/DriveIcons';
 import type { DriveCommand } from './files/FilesDrive';
@@ -230,6 +230,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
   const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
+  const [workspaceAttachments, setWorkspaceAttachments] = useState<{
+    workspaceId: string;
+    folders: FolderAttachmentView[];
+  }>({ workspaceId: '', folders: [] });
+  const [attachmentsVersion, setAttachmentsVersion] = useState(0);
+  const [shareToDrivePath, setShareToDrivePath] = useState<string | null>(null);
   const [portsState, dispatchPorts] = useReducer(portsReducer, initialPortsState);
   const [portsMenuOpen, setPortsMenuOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
@@ -371,11 +377,26 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ? workspaceFiles.value
     : defaultWorkspaceFiles();
   const filesOpen = mobileWebApp ? filesDrawerOpen : activeFiles.open;
+  const filesSegmentVisible = filesOpen && activeFiles.segment === 'files';
 
   useEffect(() => {
     dispatchPorts({ type: 'reset', workspaceId: activeWorkspaceId });
     setPortsMenuOpen(false);
   }, [activeWorkspaceId]);
+
+  // Drive attachments feed the files view (shared pin count, context-menu
+  // "Open in Drive"); refetched on workspace switch and after a share.
+  useEffect(() => {
+    if (activeWorkspaceId === '' || !filesSegmentVisible) return;
+    let active = true;
+    void client.listWorkspaceFolders(activeWorkspaceId).then(
+      ({ folders }) => {
+        if (active) setWorkspaceAttachments({ workspaceId: activeWorkspaceId, folders });
+      },
+      () => undefined,
+    );
+    return () => { active = false; };
+  }, [activeWorkspaceId, client, filesSegmentVisible, attachmentsVersion]);
 
   useEffect(() => {
     if (
@@ -1714,9 +1735,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           }}
           onResolveRequest={resolveWorkspaceRequest}
           livePorts={orderedLivePorts}
+          filesBase={activeFilesBase}
+          previewReady={activeWorkspaceRunning}
           onOpenPreview={(port) => { openPreviewPort(port); }}
           files={(
-            <>
             <FilesSidebar
               key={activeWorkspace.id}
               client={filesClient}
@@ -1726,9 +1748,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               open={filesOpen}
               ready={activeWorkspaceRunning}
               refreshVersion={filesRefreshVersion}
-              visible={filesOpen && activeFiles.segment === 'files'}
+              visible={filesSegmentVisible}
               wakingStage={workspaceWakingStage}
               width={activeFiles.width}
+              sharedFolders={workspaceAttachments.workspaceId === activeWorkspace.id
+                ? workspaceAttachments.folders
+                : []}
+              canShare={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
               onClose={() => {
                 if (mobileWebApp) setFilesDrawerOpen(false);
                 else {
@@ -1743,6 +1769,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   : current);
               }}
               onOpenFile={openFile}
+              onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
+              onShareToDrive={setShareToDrivePath}
               onUnauthorized={handleUnauthorized}
               onWidthChange={(width) => {
                 setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
@@ -1750,16 +1778,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   : current);
               }}
             />
-              <WorkspaceSharedFolders
-                client={client}
-                workspaceId={activeWorkspace.id}
-                filesClient={filesClient}
-                canControl={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
-                visible={filesOpen && activeFiles.segment === 'files'}
-                onOpenFolder={(folderId) => navigateTo(folderPagePath(folderId))}
-              />
-            </>
           )}
+        />
+      )}
+
+      {shareToDrivePath !== null && activeWorkspace && (
+        <ShareToDriveDialog
+          client={client}
+          workspaceId={activeWorkspace.id}
+          path={shareToDrivePath}
+          onCancel={() => setShareToDrivePath(null)}
+          onShared={(folderId) => {
+            setShareToDrivePath(null);
+            setAttachmentsVersion((version) => version + 1);
+            navigateTo(folderPagePath(folderId));
+          }}
         />
       )}
 

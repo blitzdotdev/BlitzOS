@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Previews + Integrations — macOS-style mocks</title>
+<style>
+  :root {
+    --bg: #16181d;
+    --panel: #1c1f26;
+    --card: #22252d;
+    --rule: rgba(255, 255, 255, 0.09);
+    --ink: #e6e8ee;
+    --muted: #9aa1ad;
+    --faint: #6b7280;
+    --select: #2458c7;
+    --blue: #3f8ef7;
+    --green: #34c759;
+    --amber: #e7c944;
+    --red: #ff5f57;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 30px 16px 60px;
+    background: #0d0f13;
+    color: var(--ink);
+    font-size: 13px;
+  }
+  .stage { display: flex; flex-wrap: wrap; gap: 22px; justify-content: center; }
+  .col { display: grid; gap: 10px; justify-items: center; align-content: start; }
+  .col h1 { margin: 0; color: var(--muted); font-size: 13px; font-weight: 600; }
+  .note { max-width: 380px; margin: 0; color: var(--faint); font-size: 11.5px; line-height: 1.6; text-align: center; }
+
+  .drawer {
+    display: flex;
+    width: 420px;
+    height: 620px;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--bg);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  }
+  .segments {
+    display: grid;
+    height: 34px;
+    flex: none;
+    grid-template-columns: repeat(3, 1fr);
+    border-bottom: 1px solid var(--rule);
+    font: 700 9px/34px ui-monospace, SFMono-Regular, monospace;
+    letter-spacing: 0.09em;
+    text-align: center;
+    color: var(--faint);
+  }
+  .segments b { position: relative; color: var(--ink); font-weight: 700; }
+  .segments b::after {
+    position: absolute; right: 14px; bottom: -1px; left: 14px; height: 1px;
+    background: #7e95d7; content: '';
+  }
+
+  /* ---------- shared macOS bits ---------- */
+  .group-label {
+    margin: 14px 14px 6px;
+    color: var(--faint);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .inset {
+    margin: 0 12px;
+    overflow: hidden;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    background: var(--card);
+  }
+  .inset .sep { height: 1px; margin-left: 42px; background: var(--rule); }
+  .pill {
+    height: 24px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.1);
+    color: var(--ink);
+    font: 600 12px/24px inherit;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .pill.primary { background: var(--select); color: #fff; }
+  .pill.subtle { background: transparent; color: var(--blue); }
+  .appicon {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    flex: none;
+    place-items: center;
+    border-radius: 6.5px;
+    color: #fff;
+  }
+  .appicon svg { width: 15px; height: 15px; }
+
+  /* =================== PREVIEWS — list state =================== */
+  .plist-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    cursor: pointer;
+  }
+  .plist-row:hover { background: rgba(255,255,255,0.045); }
+  .plist-copy { display: grid; min-width: 0; flex: 1; }
+  .plist-copy b { font-size: 13px; font-weight: 600; }
+  .plist-copy span { overflow: hidden; color: var(--faint); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .live-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px rgba(52,199,89,.7); }
+  .chev { color: var(--faint); flex: none; }
+  .previews-empty {
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    margin: 26px 12px 0;
+    padding: 26px 16px;
+    border: 1px dashed var(--rule);
+    border-radius: 10px;
+    color: var(--faint);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  /* =================== PREVIEWS — open state =================== */
+  .browser {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+  .browser-bar {
+    display: flex;
+    height: 38px;
+    flex: none;
+    align-items: center;
+    gap: 7px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--panel);
+  }
+  .browser-bar button {
+    display: grid; width: 26px; height: 24px; place-items: center;
+    border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .browser-bar button:hover { background: rgba(255,255,255,0.07); }
+  .addr {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 7px;
+    background: rgba(255,255,255,0.07);
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .addr .lock { color: var(--green); }
+  .viewport {
+    position: relative;
+    flex: 1;
+    background: #fff;
+  }
+  /* fake app inside the preview */
+  .fakeapp { position: absolute; inset: 0; display: grid; grid-template-rows: 54px 1fr; color: #1b1e24; font-family: inherit; }
+  .fakeapp header { display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid #e8e8ee; font-weight: 700; }
+  .fakeapp header i { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg,#7e95d7,#4759a8); }
+  .fakeapp main { padding: 18px; display: grid; gap: 10px; align-content: start; }
+  .sk { height: 12px; border-radius: 6px; background: #eceef4; }
+  .sk.w60 { width: 60%; } .sk.w80 { width: 80%; } .sk.w40 { width: 40%; }
+  .fake-card { height: 84px; border-radius: 10px; border: 1px solid #e8e8ee; background: #fafbfe; }
+
+  /* =================== INTEGRATIONS =================== */
+  .req {
+    margin: 12px;
+    overflow: hidden;
+    border: 1px solid rgba(231, 201, 68, 0.45);
+    border-radius: 10px;
+    background: rgba(231, 201, 68, 0.07);
+  }
+  .req-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px 0;
+    color: var(--amber);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  .req-body { display: flex; align-items: center; gap: 10px; padding: 8px 12px 11px; }
+  .req-copy { display: grid; min-width: 0; flex: 1; }
+  .req-copy b { font-size: 13px; }
+  .req-copy span { color: var(--muted); font-size: 11.5px; }
+  .scopes { display: inline-flex; gap: 4px; margin-top: 3px; }
+  .scope {
+    padding: 1px 7px;
+    border: 1px solid var(--rule);
+    border-radius: 9px;
+    color: var(--muted);
+    font: 500 10.5px/1.5 ui-monospace, monospace;
+  }
+  .lease-meta { display: flex; gap: 8px; align-items: center; color: var(--faint); font-size: 11px; }
+  .countdown { color: var(--amber); font-variant-numeric: tabular-nums; }
+  .row3 { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+  .row3 .copy { display: grid; min-width: 0; flex: 1; }
+  .row3 .copy b { font-size: 13px; font-weight: 600; }
+  .row3 .copy span { color: var(--faint); font-size: 11.5px; }
+  .status-ok { color: var(--green); font-size: 11.5px; }
+  .status-off { color: var(--faint); font-size: 11.5px; }
+  .activity { padding: 2px 0; }
+  .act {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 12px;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .act time { flex: none; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .act b { color: var(--ink); font-weight: 600; }
+  .footlink {
+    display: block;
+    margin: 10px 14px 16px;
+    color: var(--blue);
+    font-size: 11.5px;
+    text-decoration: none;
+  }
+  .scroll { min-height: 0; flex: 1; overflow-y: auto; }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ============ PREVIEWS: list ============ -->
+  <div class="col">
+    <h1>PREVIEWS — port list</h1>
+    <div class="drawer">
+      <div class="segments"><span>FILES</span><b>PREVIEWS</b><span>INTEGRATIONS</span></div>
+      <div class="scroll">
+        <div class="group-label">Live ports</div>
+        <div class="inset">
+          <div class="plist-row">
+            <span class="live-dot"></span>
+            <span class="appicon" style="background:#3f8ef7"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><circle cx="12" cy="12" r="8.4"/><path d="M3.6 12h16.8M12 3.6c2.5 2.4 3.6 5.2 3.6 8.4s-1.1 6-3.6 8.4c-2.5-2.4-3.6-5.2-3.6-8.4s1.1-6 3.6-8.4Z"/></svg></span>
+            <span class="plist-copy">
+              <b>:5173</b>
+              <span>vite · node — started 4 min ago</span>
+            </span>
+            <svg class="chev" viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+          </div>
+          <div class="sep"></div>
+          <div class="plist-row">
+            <span class="live-dot"></span>
+            <span class="appicon" style="background:#34775a"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"><path d="M5 7.5 10 12l-5 4.5"/><path d="M12.5 16.5H19"/></svg></span>
+            <span class="plist-copy">
+              <b>:8000</b>
+              <span>uvicorn · python — started 22 min ago</span>
+            </span>
+            <svg class="chev" viewBox="0 0 12 12" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4.2 2.4 3.6 3.6-3.6 3.6"/></svg>
+          </div>
+        </div>
+        <div class="group-label">Recently closed</div>
+        <div class="inset">
+          <div class="plist-row" style="opacity:.55">
+            <span class="live-dot" style="background:var(--faint);box-shadow:none"></span>
+            <span class="appicon" style="background:#555c68"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"><circle cx="12" cy="12" r="8.4"/></svg></span>
+            <span class="plist-copy">
+              <b>:3000</b>
+              <span>next dev — exited 11 min ago</span>
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note">Each live port is a row: green pulse, port number, the process behind it, age.
+    Click → the in-drawer preview (next mock). Row context menu: open in new tab, copy URL.</p>
+  </div>
+
+  <!-- ============ PREVIEWS: open ============ -->
+  <div class="col">
+    <h1>PREVIEWS — port opened</h1>
+    <div class="drawer">
+      <div class="segments"><span>FILES</span><b>PREVIEWS</b><span>INTEGRATIONS</span></div>
+      <div class="browser">
+        <div class="browser-bar">
+          <button aria-label="Back to ports"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 3 5 8l5 5"/></svg></button>
+          <button aria-label="Reload"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M13 8a5 5 0 1 1-1.2-3.2"/><path d="M13 2.6v2.6h-2.6"/></svg></button>
+          <span class="addr">
+            <svg class="lock" viewBox="0 0 12 12" width="10" height="10" fill="currentColor"><path d="M3.6 5V3.9a2.4 2.4 0 1 1 4.8 0V5h.5a1 1 0 0 1 1 1v3.9a1 1 0 0 1-1 1H3.1a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm1.2 0h2.4V3.9a1.2 1.2 0 1 0-2.4 0Z"/></svg>
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">test.blitz.dev <b style="color:var(--ink)">:5173</b></span>
+          </span>
+          <button aria-label="Open in new tab"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5"/><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4"/></svg></button>
+        </div>
+        <div class="viewport">
+          <div class="fakeapp">
+            <header><i></i>my-app <span style="color:#9aa1ad;font-weight:500;font-size:12px">running on :5173</span></header>
+            <main>
+              <div class="sk w40"></div>
+              <div class="sk w80"></div>
+              <div class="sk w60"></div>
+              <div class="fake-card"></div>
+              <div class="sk w80"></div>
+              <div class="sk w40"></div>
+            </main>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note">Mini-browser chrome: back (to the port list), reload, address pill showing the
+    proxied preview URL, open-in-new-tab. The app renders live in the pane — same proxy the
+    header's preview tabs use today.</p>
+  </div>
+
+  <!-- ============ INTEGRATIONS ============ -->
+  <div class="col">
+    <h1>INTEGRATIONS</h1>
+    <div class="drawer">
+      <div class="segments"><span>FILES</span><span>PREVIEWS</span><b>INTEGRATIONS</b></div>
+      <div class="scroll">
+
+        <div class="req">
+          <div class="req-head">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M8 1.6 15 14H1L8 1.6Zm-.9 4.6.2 4h1.4l.2-4H7.1Zm.9 6.9a.95.95 0 1 0 0-1.9.95.95 0 0 0 0 1.9Z"/></svg>
+            1 PENDING REQUEST
+          </div>
+          <div class="req-body">
+            <span class="appicon" style="background:#1b1f24"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5A3.9 3.9 0 0 1 6.6 8.7a3.6 3.6 0 0 1 .1-2.7s.8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.8c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg></span>
+            <span class="req-copy">
+              <b>GitHub access</b>
+              <span>claude asked 2 min ago</span>
+              <span class="scopes"><span class="scope">repo:read</span><span class="scope">repo:write</span></span>
+            </span>
+            <button class="pill">Deny</button>
+            <button class="pill primary">Approve</button>
+          </div>
+        </div>
+
+        <div class="group-label">Active leases</div>
+        <div class="inset">
+          <div class="row3">
+            <span class="appicon" style="background:#1b1f24"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5A3.9 3.9 0 0 1 6.6 8.7a3.6 3.6 0 0 1 .1-2.7s.8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.8c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg></span>
+            <span class="copy">
+              <b>GitHub</b>
+              <span class="lease-meta"><span class="scope">repo:read</span> · injected · <span class="countdown">47m left</span></span>
+            </span>
+            <button class="pill">Revoke</button>
+          </div>
+        </div>
+
+        <div class="group-label">Available to this workspace</div>
+        <div class="inset">
+          <div class="row3">
+            <span class="appicon" style="background:#1b1f24"><svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2a10 10 0 0 0-3.2 19.5c.5.1.7-.2.7-.5v-1.7c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 .1 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.3-1.1.6-1.3-2.2-.3-4.6-1.1-4.6-5A3.9 3.9 0 0 1 6.6 8.7a3.6 3.6 0 0 1 .1-2.7s.8-.3 2.7 1a9.4 9.4 0 0 1 5 0c1.9-1.3 2.7-1 2.7-1a3.6 3.6 0 0 1 .1 2.7 3.9 3.9 0 0 1 1 2.8c0 3.9-2.4 4.7-4.6 5 .4.3.7.9.7 1.9v2.8c0 .3.2.6.7.5A10 10 0 0 0 12 2Z"/></svg></span>
+            <span class="copy"><b>GitHub</b><span>App install · org-wide</span></span>
+            <span class="status-ok">● Configured</span>
+          </div>
+          <div class="sep"></div>
+          <div class="row3">
+            <span class="appicon" style="background:#611f69"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round"><path d="M9 4v7M15 20v-7M4 15h7M20 9h-7"/></svg></span>
+            <span class="copy"><b>Slack</b><span>Not configured</span></span>
+            <span class="status-off">Set up →</span>
+          </div>
+        </div>
+
+        <div class="group-label">Recent activity</div>
+        <div class="inset activity">
+          <div class="act"><time>21:04</time><span><b>you</b> approved <b>github</b> · repo:read for claude</span></div>
+          <div class="act"><time>20:32</time><span>lease <b>github</b> expired</span></div>
+          <div class="act"><time>19:58</time><span><b>you</b> revoked <b>github</b> · repo:write</span></div>
+        </div>
+
+        <a class="footlink" href="#">Manage org integrations in Settings →</a>
+      </div>
+    </div>
+    <p class="note">Order = urgency: pending requests (amber card, Approve/Deny pills) → active
+    leases (countdown, one-tap Revoke) → what's available to inject (configured vs not, with a
+    Settings hand-off) → attributed activity log. All data exists today: requests, leases,
+    integrations registry, credential events.</p>
+  </div>
+
+</div>
+</body>
+</html>

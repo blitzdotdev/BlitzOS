@@ -10,11 +10,18 @@ import {
 import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
-import type { LivePort } from './preview';
+import { previewUrl, type LivePort } from './preview';
 import type { WorkspaceDrawerSegment } from './storage';
 import { asJsonObject, isString } from './type-guards';
 
 export const CREDENTIAL_POLL_INTERVAL_MS = 5_000;
+
+export function portAge(firstSeenAt: number, now = Date.now()): string {
+  const minutes = Math.floor((now - firstSeenAt) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.floor(minutes / 60)}h`;
+}
 
 export function expiryCountdown(expiresAt: number, now = Date.now()): string {
   const seconds = Math.ceil((expiresAt - now) / 1_000);
@@ -276,6 +283,8 @@ export function WorkspaceDrawer({
   onResolveRequest,
   canManageCredentials,
   livePorts,
+  filesBase,
+  previewReady,
   onOpenPreview,
 }: {
   client: ControlPlaneClient;
@@ -295,9 +304,16 @@ export function WorkspaceDrawer({
   ) => Promise<void>;
   canManageCredentials: boolean;
   livePorts: LivePort[];
+  filesBase: string | null;
+  previewReady: boolean;
   onOpenPreview: (port: number) => void;
 }) {
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
+  const [openedPort, setOpenedPort] = useState<number | null>(null);
+  const [previewNonce, setPreviewNonce] = useState(0);
+  useEffect(() => {
+    setOpenedPort(null);
+  }, [workspaceId]);
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mobile || event.button !== 0) return;
     resizeOrigin.current = { x: event.clientX, width };
@@ -365,39 +381,105 @@ export function WorkspaceDrawer({
       <div className="workspace-drawer-body">
         <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>
         <div role="tabpanel" hidden={effectiveSegment !== 'previews'}>
-          <section className="workspace-drawer-panel workspace-previews" aria-label="Live preview ports">
-            {livePorts.length === 0
-              ? (
-                <p className="workspace-drawer-state">
-                  No live ports yet — start a dev server in the terminal and it
-                  shows up here.
-                </p>
-              )
-              : livePorts.map((entry) => (
+          {openedPort !== null && (
+            <div className="workspace-preview-open">
+              <div className="workspace-preview-bar">
                 <button
-                  className="workspace-preview-row"
+                  className="fnd-tbtn"
                   type="button"
-                  key={entry.port}
-                  onClick={() => onOpenPreview(entry.port)}
+                  aria-label="Back to ports"
+                  onClick={() => setOpenedPort(null)}
                 >
-                  <span className="mi-preview" aria-hidden="true" />
-                  <span className="workspace-preview-port">:{entry.port}</span>
-                  <span className="workspace-preview-process">{entry.process}</span>
+                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
                 </button>
-              ))}
-          </section>
+                <button
+                  className="fnd-tbtn"
+                  type="button"
+                  aria-label="Reload preview"
+                  onClick={() => setPreviewNonce((nonce) => nonce + 1)}
+                >
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.2-3.2" /><path d="M13 2.6v2.6h-2.6" /></svg>
+                </button>
+                <span className="workspace-preview-addr">
+                  <span className="workspace-dot workspace-dot--ok" aria-hidden="true" />
+                  <span className="workspace-preview-addr-text">
+                    <b>:{openedPort}</b>
+                    {' · '}
+                    {livePorts.find((entry) => entry.port === openedPort)?.process ?? 'gone'}
+                  </span>
+                </span>
+                <button
+                  className="fnd-tbtn"
+                  type="button"
+                  aria-label="Open as a workspace tab"
+                  title="Open as a workspace tab"
+                  onClick={() => onOpenPreview(openedPort)}
+                >
+                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
+                </button>
+              </div>
+              {previewReady && filesBase !== null
+                ? (
+                  <iframe
+                    key={previewNonce}
+                    className="workspace-preview-frame"
+                    src={previewUrl(filesBase, openedPort)}
+                    title={`Preview :${openedPort}`}
+                    referrerPolicy="no-referrer"
+                  />
+                )
+                : <p className="workspace-drawer-state">Box is asleep.</p>}
+            </div>
+          )}
+          {openedPort === null && (
+            <section className="workspace-drawer-panel workspace-previews" aria-label="Live preview ports">
+              <h3 className="workspace-sect">Live ports</h3>
+              {livePorts.length === 0
+                ? (
+                  <p className="workspace-drawer-state">
+                    No live ports yet — start a dev server in the terminal and it
+                    shows up here.
+                  </p>
+                )
+                : (
+                  <div className="workspace-slab">
+                    {livePorts.map((entry) => (
+                      <button
+                        className="workspace-preview-row"
+                        type="button"
+                        key={entry.port}
+                        onClick={() => setOpenedPort(entry.port)}
+                      >
+                        <span className="workspace-preview-port">:{entry.port}</span>
+                        <span className="workspace-preview-process">
+                          {entry.process} · {portAge(entry.firstSeenAt)}
+                        </span>
+                        <span className="workspace-status workspace-status--ok">
+                          <span className="workspace-dot workspace-dot--ok" aria-hidden="true" />
+                          Live
+                        </span>
+                        <svg className="workspace-row-chevron" viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4.3 2.5 3.5 3.5-3.5 3.5" /></svg>
+                      </button>
+                    ))}
+                  </div>
+                )}
+            </section>
+          )}
         </div>
-        {canManageCredentials && <div role="tabpanel" hidden={effectiveSegment !== 'integrations'}>
+        {canManageCredentials && <div className="workspace-integrations" role="tabpanel" hidden={effectiveSegment !== 'integrations'}>
+          <h3 className="workspace-sect workspace-sect--pending">Pending requests</h3>
           <WorkspaceRequestsPanel
             requests={pendingRequests}
             loadError={pendingRequestsError}
             onResolve={onResolveRequest}
           />
+          <h3 className="workspace-sect">Active leases</h3>
           <WorkspaceLeasesPanel
             client={client}
             workspaceId={workspaceId}
             visible={open && effectiveSegment === 'integrations'}
           />
+          <h3 className="workspace-sect">Recent activity</h3>
           <WorkspaceEventsPanel
             client={client}
             workspaceId={workspaceId}
