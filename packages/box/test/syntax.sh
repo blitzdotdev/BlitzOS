@@ -4,6 +4,8 @@ set -euo pipefail
 script_dir=$(realpath "$(dirname "$0")")
 box_dir=$(realpath "$script_dir/..")
 
+sh -n "$box_dir/rootfs/usr/local/bin/blitz"
+
 while IFS= read -r script; do
   bash -n "$script"
 done < <(

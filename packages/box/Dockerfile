@@ -125,6 +125,7 @@ COPY --from=actor-build /src/packages/box/actor/node_modules /opt/blitz/actor/no
 COPY env.defaults /etc/blitz/env.defaults
 COPY packages/box/rootfs/ /
 RUN set -eux; \
+    chmod 0755 /usr/local/bin/blitz; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \

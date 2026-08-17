@@ -74,12 +74,10 @@ import {
 } from './workspace-store';
 import { PreviewPanel } from './PreviewPanel';
 import {
-  fetchWorkspacePorts,
-  initialPortsState,
   isPreviewPort,
   newestPorts,
-  PORTS_POLL_INTERVAL_MS,
-  portsReducer,
+  newestPreviewLinks,
+  previewLinkLabel,
 } from './preview';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
@@ -96,6 +94,7 @@ import {
   useWorkspaceBootstrap,
   useWorkspacePolling,
 } from './use-workspace-lifecycle';
+import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
@@ -233,8 +232,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }>({ workspaceId: '', folders: [] });
   const [attachmentsVersion, setAttachmentsVersion] = useState(0);
   const [shareToDrivePath, setShareToDrivePath] = useState<string | null>(null);
-  const [portsState, dispatchPorts] = useReducer(portsReducer, initialPortsState);
-  const [portsMenuOpen, setPortsMenuOpen] = useState(false);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
   const shellRef = useRef<HTMLElement>(null);
@@ -375,11 +372,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     : defaultWorkspaceFiles();
   const filesOpen = mobileWebApp ? filesDrawerOpen : activeFiles.open;
   const filesSegmentVisible = filesOpen && activeFiles.segment === 'files';
-
-  useEffect(() => {
-    dispatchPorts({ type: 'reset', workspaceId: activeWorkspaceId });
-    setPortsMenuOpen(false);
-  }, [activeWorkspaceId]);
+  const { livePorts, previewLinks } = useWorkspacePreviewSources(
+    route.page === 'webApp' && activeWorkspaceRunning,
+    activeWorkspaceId,
+    activeFilesBase,
+  );
 
   // Drive attachments feed the files view (shared pin count, context-menu
   // "Open in Drive"); refetched on workspace switch and after a share.
@@ -394,40 +391,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     );
     return () => { active = false; };
   }, [activeWorkspaceId, client, filesSegmentVisible, attachmentsVersion]);
-
-  useEffect(() => {
-    if (
-      route.page !== 'webApp'
-      || !portsMenuOpen
-      || !activeWorkspaceRunning
-      || !activeFilesBase
-      || !activeWorkspaceId
-    ) return;
-    let disposed = false;
-    let request: AbortController | null = null;
-    const poll = async () => {
-      if (request || document.visibilityState !== 'visible') return;
-      request = new AbortController();
-      const current = request;
-      const ports = await fetchWorkspacePorts(activeFilesBase, fetch, current.signal);
-      if (!disposed && request === current && !current.signal.aborted) {
-        dispatchPorts({
-          type: 'received',
-          workspaceId: activeWorkspaceId,
-          ports,
-          now: Date.now(),
-        });
-      }
-      if (request === current) request = null;
-    };
-    void poll();
-    const timer = window.setInterval(() => { void poll(); }, PORTS_POLL_INTERVAL_MS);
-    return () => {
-      disposed = true;
-      request?.abort();
-      window.clearInterval(timer);
-    };
-  }, [activeFilesBase, activeWorkspaceId, activeWorkspaceRunning, portsMenuOpen, route.page]);
 
   useEffect(() => {
     if (route.page !== 'webApp' || !activeWorkspaceId || signedOut) {
@@ -864,7 +827,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
     : session.type === 'preview'
-      ? `:${session.port}`
+      ? 'port' in session
+        ? `:${session.port}`
+        : previewLinkLabel(session.url, session.title)
       : (
         session.type === 'chat'
         || session.type === 'claude'
@@ -968,15 +933,32 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   };
-  const livePorts = portsState.workspaceId === activeWorkspaceId ? portsState.ports : [];
   const orderedLivePorts = useMemo(() => newestPorts(livePorts), [livePorts]);
+  const orderedPreviewLinks = useMemo(
+    () => newestPreviewLinks(previewLinks),
+    [previewLinks],
+  );
   const openPreviewPort = (port: number) => {
     if (!isPreviewPort(port)) return false;
-    const existing = ttydSessions.find((tab) => tab.type === 'preview' && tab.port === port);
+    const existing = ttydSessions.find(
+      (tab) => tab.type === 'preview' && 'port' in tab && tab.port === port,
+    );
     if (existing) {
       selectTtydSession(String(existing.id));
     } else {
       addWorkspaceTab((id) => ({ id, type: 'preview', port }));
+    }
+    return true;
+  };
+  const openPreviewLink = (url: string, title: string) => {
+    if (url.trim() === '') return false;
+    const existing = ttydSessions.find(
+      (tab) => tab.type === 'preview' && 'url' in tab && tab.url === url,
+    );
+    if (existing) {
+      selectTtydSession(String(existing.id));
+    } else {
+      addWorkspaceTab((id) => ({ id, type: 'preview', url, title }));
     }
     return true;
   };
@@ -1324,8 +1306,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             onClose={closeTtydSession}
             onSpawn={spawnTtydSession}
             livePorts={orderedLivePorts}
+            previewLinks={orderedPreviewLinks}
             onOpenPreview={openPreviewPort}
-            onMenuOpenChange={setPortsMenuOpen}
+            onOpenPreviewLink={openPreviewLink}
           />
 
           <section className="webapp-workspace-view">
@@ -1347,7 +1330,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   style={ttydActiveId === String(session.id) ? { display: 'contents' } : undefined}
                 >
                   <PreviewPanel
-                    port={session.port}
+                    target={'port' in session
+                      ? session.port
+                      : { url: session.url, title: session.title }}
                     filesBase={activeFilesBase}
                     running={activeWorkspaceRunning}
                   />
@@ -1664,9 +1649,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           }}
           onResolveRequest={resolveWorkspaceRequest}
           livePorts={orderedLivePorts}
+          previewLinks={orderedPreviewLinks}
           filesBase={activeFilesBase}
           previewReady={activeWorkspaceRunning}
           onOpenPreview={(port) => { openPreviewPort(port); }}
+          onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
           files={(
             <FilesSidebar
               key={activeWorkspace.id}

@@ -53,7 +53,7 @@ const CATALOGS = {
       { value: "bypassPermissions", name: "bypass" },
       { value: "plan", name: "plan" },
     ],
-    defaults: { model: "default", effort: "default", permission: "default" },
+    defaults: { model: "default", effort: "default", permission: "bypassPermissions" },
   },
   codex: {
     models: [
@@ -66,7 +66,7 @@ const CATALOGS = {
       { value: "on-request", name: "ask" },
       { value: "never", name: "bypass" },
     ],
-    defaults: { model: "default", effort: "medium", permission: "on-request" },
+    defaults: { model: "default", effort: "medium", permission: "never" },
   },
 } satisfies Record<Provider, ProviderCatalog>;
 

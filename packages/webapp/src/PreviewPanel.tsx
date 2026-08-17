@@ -1,32 +1,49 @@
-import { previewUrl } from './preview';
+import { isEmbeddablePreviewUrl, previewLinkLabel, previewUrl } from './preview';
+import { isNumber } from './type-guards';
 
 export function PreviewPanel({
-  port,
+  target,
   filesBase,
   running,
 }: {
-  port: number;
+  target: number | { url: string; title: string };
   filesBase: string | null;
   running: boolean;
 }) {
-  if (!running || !filesBase) {
+  const local = isNumber(target);
+  if (local && (!running || !filesBase)) {
     return <div className="preview-panel__asleep">Box is asleep</div>;
   }
-  const url = previewUrl(filesBase, port);
+  const url = local ? previewUrl(filesBase ?? '', target) : target.url;
+  const title = local
+    ? `Preview :${target}`
+    : previewLinkLabel(target.url, target.title);
+  if (!local && !isEmbeddablePreviewUrl(url)) {
+    return (
+      <div className="preview-panel preview-panel--external">
+        <div className="preview-panel__external-card">
+          <strong>{title}</strong>
+          <span>{url}</span>
+          <a href={url} target="_blank" rel="noopener">Open in new tab ↗</a>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="preview-panel">
       <iframe
         src={url}
-        title={`Preview :${port}`}
+        title={title}
         referrerPolicy="no-referrer"
       />
-      <button
+      <a
         className="preview-panel__open"
-        type="button"
-        onClick={() => window.open(url, '_blank', 'noopener')}
+        href={url}
+        target="_blank"
+        rel="noopener"
       >
         open ↗
-      </button>
+      </a>
     </div>
   );
 }

@@ -68,4 +68,30 @@ describe("UI protocol and persistence object contracts", () => {
       '{"id":1,"type":"chat","chatSessionId":"session-1","chatProvider":"codex"}',
     );
   });
+
+  it("restores port and URL preview tabs and rejects malformed URL variants", () => {
+    const decodeTabs = (tabs: object[]) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs: { version: 1, tabs, activeId: 1, nextId: tabs.length + 1 },
+        drawer: { version: 1, open: true, width: 264, expanded: [], segment: "previews" },
+      },
+      updatedAt: 1,
+    })).doc?.tabs.tabs;
+
+    expect(decodeTabs([
+      { id: 1, type: "preview", port: 3000 },
+      { id: 2, type: "preview", url: "https://demo.blitz.dev", title: "Demo" },
+    ])).toEqual([
+      { id: 1, type: "preview", port: 3000 },
+      { id: 2, type: "preview", url: "https://demo.blitz.dev", title: "Demo" },
+    ]);
+    expect(() => decodeTabs([
+      { id: 1, type: "preview", url: "", title: "Empty" },
+    ])).toThrow("webApp state response has invalid doc");
+    expect(() => decodeTabs([
+      { id: 1, type: "preview", url: "https://demo.blitz.dev", title: 42 },
+    ])).toThrow("webApp state response has invalid doc");
+  });
 });

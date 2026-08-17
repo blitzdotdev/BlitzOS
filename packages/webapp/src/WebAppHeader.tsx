@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CodexIcon, FileIcon, GenericProviderIcon, ShellIcon } from './WebAppIcons';
 import { FileTypeIcon } from './FileTypeIcon';
-import type { LivePort } from './preview';
+import { previewLinkLabel, type LivePort, type PreviewLink } from './preview';
 import type { TerminalAgent } from './protocol';
 
 export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview';
@@ -47,7 +47,9 @@ type WebAppHeaderProps = {
   onRename?: (sessionId: string, title: string | undefined) => void;
   onSpawn: (type: SpawnSessionType) => void;
   livePorts?: LivePort[];
+  previewLinks?: PreviewLink[];
   onOpenPreview?: (port: number) => boolean;
+  onOpenPreviewLink?: (url: string, title: string) => boolean;
   onMenuOpenChange?: (open: boolean) => void;
 };
 
@@ -91,7 +93,9 @@ export function WebAppHeader({
   onRename,
   onSpawn,
   livePorts = [],
+  previewLinks = [],
   onOpenPreview = () => false,
+  onOpenPreviewLink = () => false,
   onMenuOpenChange = () => undefined,
 }: WebAppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -163,6 +167,12 @@ export function WebAppHeader({
     setMenuOpen(false);
     onMenuOpenChange(false);
     onOpenPreview(port);
+    newSessionButton.current?.focus();
+  };
+  const openPreviewLink = (url: string, title: string) => {
+    setMenuOpen(false);
+    onMenuOpenChange(false);
+    onOpenPreviewLink(url, title);
     newSessionButton.current?.focus();
   };
 
@@ -280,7 +290,7 @@ export function WebAppHeader({
                     {SPAWN_SESSION_LABELS[agent]}
                   </button>
                 ))}
-                {livePorts.length > 0 && (
+                {(livePorts.length > 0 || previewLinks.length > 0) && (
                   <>
                     <div className="webapp-agent-menu__separator" role="separator" />
                     {livePorts.map((entry) => (
@@ -293,6 +303,18 @@ export function WebAppHeader({
                         <SessionTypeIcon type="preview" className="webapp-new-menu-icon" />
                         <span>:{entry.port}</span>
                         <span className="webapp-agent-menu__process">{entry.process}</span>
+                      </button>
+                    ))}
+                    {previewLinks.map((entry) => (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        key={entry.url}
+                        onClick={() => openPreviewLink(entry.url, entry.title)}
+                      >
+                        <SessionTypeIcon type="preview" className="webapp-new-menu-icon" />
+                        <span>{previewLinkLabel(entry.url, entry.title)}</span>
+                        <span className="webapp-agent-menu__process">link</span>
                       </button>
                     ))}
                   </>
