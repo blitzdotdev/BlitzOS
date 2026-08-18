@@ -18,9 +18,7 @@ export function DriveHome({
   onOpenRail: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const location = route.page === 'drive' && route.scope === 'shared'
-    ? 'Shared with me'
-    : route.page === 'drive' ? 'Drive' : 'folder';
+  const location = route.page === 'drive' ? 'Drive' : 'folder';
 
   return (
     <>

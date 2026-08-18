@@ -37,8 +37,8 @@ const grantedFolder = {
   updatedAt: 1,
 };
 
-function drive(scope: 'mine' | 'shared') {
-  return { page: 'drive' as const, scope };
+function drive() {
+  return { page: 'drive' as const };
 }
 
 function folderRoute(folderId: string, folderPath: string[] = []) {
@@ -86,20 +86,14 @@ function props(route: Parameters<typeof FilesDrive>[0]['route']) {
 describe('files drive surface', () => {
   it('lists owned folders with shared ones in their own section below', async () => {
     stubFolders();
-    const mine = await render(<FilesDrive {...props(drive('mine'))} />);
+    const mine = await render(<FilesDrive {...props(drive())} />);
     await settle();
     expect(mine.container.textContent).toContain('Drive');
     expect(mine.container.textContent).toContain('shared-notes');
     expect(mine.container.textContent).toContain('Shared with me');
     expect(mine.container.textContent).toContain('ada-datasets');
+    expect(mine.container.querySelector('[title="Ada Park"]')).not.toBeNull();
     await mine.unmount();
-
-    const shared = await render(<FilesDrive {...props(drive('shared'))} />);
-    await settle();
-    expect(shared.container.textContent).toContain('Shared with me');
-    expect(shared.container.textContent).toContain('ada-datasets');
-    expect(shared.container.querySelector('[title="Ada Park"]')).not.toBeNull();
-    expect(shared.container.textContent).not.toContain('shared-notes');
   });
 
   it('attaches a folder to a workspace through the dialog', async () => {
@@ -115,7 +109,7 @@ describe('files drive surface', () => {
       }
       return null;
     });
-    const view = await render(<FilesDrive {...props(drive('mine'))} />);
+    const view = await render(<FilesDrive {...props(drive())} />);
     await settle();
 
     clickButton(view, 'More actions for shared-notes');
@@ -153,15 +147,11 @@ describe('files drive surface', () => {
       if (url.pathname === '/workspaces') return Response.json({ workspaces: [] });
       return new Response('not found', { status: 404 });
     }));
-    const mine = await render(<FilesDrive {...props(drive('mine'))} />);
+    const mine = await render(<FilesDrive {...props(drive())} />);
     await settle();
     expect(mine.container.textContent).not.toContain('private-notes');
     expect(mine.container.textContent).toContain('Nothing here yet');
     await mine.unmount();
-
-    const shared = await render(<FilesDrive {...props(drive('shared'))} />);
-    await settle();
-    expect(shared.container.textContent).toContain('Nothing is shared with you yet');
   });
 
   it('browses a shared folder read-only for viewers', async () => {
@@ -252,7 +242,7 @@ describe('drive sharing', () => {
       }
       return null;
     });
-    const view = await render(<FilesDrive {...props(drive('mine'))} />);
+    const view = await render(<FilesDrive {...props(drive())} />);
     await settle();
     clickButton(view, 'Share shared-notes');
     await settle();
@@ -324,7 +314,7 @@ describe('drive drag-and-drop', () => {
       }
       return null;
     });
-    const view = await render(<FilesDrive {...props(drive('mine'))} />);
+    const view = await render(<FilesDrive {...props(drive())} />);
     await settle();
 
     dropEntries(view, [fakeDirEntry('Field Photos', [
@@ -347,14 +337,7 @@ describe('drive drag-and-drop', () => {
 
   it('refuses drops where nothing can be created or written', async () => {
     const fetcher = stubFolders();
-    const shared = await render(<FilesDrive {...props(drive('shared'))} />);
-    await settle();
-    dropEntries(shared, [fakeDirEntry('anything', [fakeFileEntry('a.txt')])]);
-    await settle();
-    expect(shared.container.textContent).toContain('Shared with me is read-only');
-    await shared.unmount();
-
-    const mine = await render(<FilesDrive {...props(drive('mine'))} />);
+    const mine = await render(<FilesDrive {...props(drive())} />);
     await settle();
     dropEntries(mine, [fakeFileEntry('loose.txt')]);
     await settle();

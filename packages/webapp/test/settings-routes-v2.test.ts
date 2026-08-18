@@ -21,16 +21,16 @@ describe('settings routes', () => {
     expect(parseAppRoute('/settings/files')).toEqual({
       workspaceId: null,
       page: 'drive',
-      scope: 'mine',
     });
     expect(settingsPath('profile')).toBe('/settings');
     expect(settingsPath('integrations')).toBe('/settings/integrations');
     expect(settingsPath('requests')).toBe('/settings/requests');
   });
 
-  it('routes the drive home, shared location, and folder pages', () => {
-    expect(parseAppRoute('/')).toEqual({ workspaceId: null, page: 'drive', scope: 'mine' });
-    expect(parseAppRoute('/shared')).toEqual({ workspaceId: null, page: 'drive', scope: 'shared' });
+  it('routes the drive home and folder pages, retiring the old shared address', () => {
+    expect(parseAppRoute('/')).toEqual({ workspaceId: null, page: 'drive' });
+    // Drive is one destination now; an old /shared bookmark lands on it.
+    expect(parseAppRoute('/shared')).toEqual({ workspaceId: null, page: 'drive' });
     expect(parseAppRoute('/folder/f-1')).toEqual({
       workspaceId: null,
       page: 'folder',
@@ -43,9 +43,8 @@ describe('settings routes', () => {
       folderId: 'f-1',
       folderPath: ['raw', 'deep'],
     });
-    expect(drivePath('mine')).toBe('/');
-    expect(drivePath('shared')).toBe('/shared');
+    expect(drivePath()).toBe('/');
     expect(folderPagePath('f-1', ['a b', 'c'])).toBe('/folder/f-1/a%20b/c');
-    expect(parseAppRoute('/nonsense')).toEqual({ workspaceId: null, page: 'drive', scope: 'mine' });
+    expect(parseAppRoute('/nonsense')).toEqual({ workspaceId: null, page: 'drive' });
   });
 });

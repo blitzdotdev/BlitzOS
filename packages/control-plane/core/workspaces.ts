@@ -19,6 +19,7 @@ import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from ".
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./providers/types.js";
+import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import {
   attachTemplateFolders,
@@ -41,36 +42,6 @@ export type { WorkspaceRow } from "./workspace-records.js";
 
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
 
-/** Only the paths the browser app actually uses may reach a box.
- *
- * The guest exposes far more than the app needs: dufs serves
- * /srv/blitz-files, which symlinks the agent's HOME (holding its OAuth
- * credentials) next to /workspace, and both the gateway and the actor answer
- * /admin/drain — a disconnect-everyone switch — for any valid ticket, with no
- * role check. Those guards live in the guest image, which never upgrades in
- * place, so this allowlist is the only lever that protects boxes already
- * running. Keep it in sync with `standaloneResolver` in the webApp. */
-function webAppPathAllowed(port: WebAppPort, path: string): boolean {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(path);
-  } catch {
-    return false;
-  }
-  // Rejects both raw and percent-encoded traversal out of an allowed prefix.
-  if (decoded.split("/").includes("..")) return false;
-  if (port === 7444) {
-    // The actor's only browser surface is the ACP websocket at the root; its
-    // /admin/drain is reached server-side by the revocation drain, never here.
-    return decoded === "/";
-  }
-  if (decoded === "/ports" || decoded === "/previews" || decoded === "/terminal/ws") {
-    return true;
-  }
-  return decoded === "/workspace"
-    || decoded.startsWith("/workspace/")
-    || decoded.startsWith("/preview/");
-}
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
 const PHONE_HOME_REQUEST_FIELDS = Object.freeze([
   "pub_key_ecdsa",
@@ -590,7 +561,7 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const path = suffix === "" ? "/" : suffix;
-    if (!webAppPathAllowed(port, path)) {
+    if (!isWebAppSurfacePath(port, path)) {
       throw new HttpError(403, "path is not a workspace webApp surface");
     }
     const pathAndQuery = `${path}${requestURL.search}`;

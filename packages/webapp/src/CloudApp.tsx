@@ -641,7 +641,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return;
     }
     window.history.pushState({}, '', '/');
-    setRoute({ workspaceId: null, page: 'drive', scope: 'mine' });
+    setRoute({ workspaceId: null, page: 'drive' });
   }, [navigateToWorkspacePage]);
 
   const deleteWorkspace = useCallback((workspaceId: string) => {
@@ -662,7 +662,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (nextId) navigateToWorkspacePage(nextId);
       else {
         window.history.pushState({}, '', '/');
-        setRoute({ workspaceId: null, page: 'drive', scope: 'mine' });
+        setRoute({ workspaceId: null, page: 'drive' });
       }
     }
     void api.deleteWorkspace(workspaceId)
@@ -1093,7 +1093,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId ? ttydTabs : []}
       activeSessionId={ttydActiveId ?? ''}
       onSelectSession={selectTtydSession}
-      onOpenDrive={() => navigateTo(drivePath('mine'))}
+      onOpenDrive={() => navigateTo(drivePath())}
       onOpenTemplates={() => navigateTo(templatesPath())}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}

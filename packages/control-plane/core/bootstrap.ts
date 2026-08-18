@@ -10,7 +10,12 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-// TODO: wtf is this? why is this script inline.
+/** Emits the first-boot script a VM runs: bash, with Python inline for the
+ * box-image manifest. It is a template literal rather than a file because a
+ * Worker has no filesystem to read at runtime, so the script has to be part
+ * of the bundle. The emitted bytes are a contract pinned by
+ * `test/bootstrap-python.test.mjs` and the phone-home fixtures — edit them
+ * the way you would edit a wire format, not a script. */
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");

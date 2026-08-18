@@ -4,14 +4,14 @@ export type DriveScope = 'mine' | 'shared';
 
 export type AppRoute =
   | { workspaceId: string; page: 'webApp' }
-  | { workspaceId: null; page: 'drive'; scope: DriveScope }
+  | { workspaceId: null; page: 'drive' }
   | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
   | { workspaceId: null; page: 'templates' }
   | { workspaceId: null; page: 'template-new' }
   | { workspaceId: null; page: 'template-edit'; templateId: string }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
-const HOME: AppRoute = { workspaceId: null, page: 'drive', scope: 'mine' };
+const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
   const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests))?\/?$/u);
@@ -22,9 +22,6 @@ export function parseAppRoute(pathname: string): AppRoute {
       // SAFETY: The regular expression captures only the SettingsSection literals in group 1.
       settingsSection: (settings[1] as SettingsSection | undefined) ?? 'profile',
     };
-  }
-  if (/^\/shared\/?$/u.test(pathname)) {
-    return { workspaceId: null, page: 'drive', scope: 'shared' };
   }
   if (/^\/templates\/new\/?$/u.test(pathname)) {
     return { workspaceId: null, page: 'template-new' };
@@ -80,8 +77,10 @@ export function settingsPath(section: SettingsSection): string {
   return section === 'profile' ? '/settings' : `/settings/${section}`;
 }
 
-export function drivePath(scope: DriveScope): string {
-  return scope === 'shared' ? '/shared' : '/';
+/** Drive is one destination: the root lists owned folders and the folders
+ * shared with the viewer. The old /shared address resolves here. */
+export function drivePath(): string {
+  return '/';
 }
 
 export function templateNewPath(): string {

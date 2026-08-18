@@ -5,4 +5,5 @@ export * from "./files.js";
 export * from "./json.js";
 export * from "./machine.js";
 export * from "./volume.js";
+export * from "./webapp-surface.js";
 export * from "./workspace.js";

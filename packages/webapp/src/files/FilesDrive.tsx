@@ -46,7 +46,7 @@ import {
 import { ShareFolderDialog } from './ShareFolderDialog';
 
 export type DrivePageRoute =
-  | { page: 'drive'; scope: DriveScope }
+  | { page: 'drive' }
   | { page: 'folder'; folderId: string; folderPath: string[] };
 
 type DriveDialog =
@@ -90,9 +90,11 @@ export function FilesDrive({
   const folderId = route.page === 'folder' ? route.folderId : null;
   const path = route.page === 'folder' ? route.folderPath : [];
   const folder = folders.find(({ id }) => id === folderId) ?? null;
-  const scope: DriveScope = route.page === 'drive'
-    ? route.scope
-    : folder === null || folder.role === 'owner' ? 'mine' : 'shared';
+  // The root is always the viewer's Drive; only an open folder they do not
+  // own puts the page in the shared scope.
+  const scope: DriveScope = route.page === 'drive' || folder === null || folder.role === 'owner'
+    ? 'mine'
+    : 'shared';
 
   const showSnack = useCallback((message: React.ReactNode) => {
     setSnack(message);
@@ -142,25 +144,21 @@ export function FilesDrive({
     void loadObjects(folderId);
   }, [folderId, loadObjects]);
 
+  // The Drive root is the single destination: owned folders first, then the
+  // ones shared with the viewer.
   const { mine, shared } = useMemo(() => splitFolders(folders), [folders]);
-  const scoped = scope === 'mine' ? mine : shared;
   const trimmedQuery = query.trim().toLowerCase();
-  const visible = scoped.filter((candidate) =>
-    trimmedQuery === '' || candidate.name.toLowerCase().includes(trimmedQuery));
-  // The Drive root is the single destination: shared folders list below the
-  // owned ones instead of behind a separate rail row.
-  const sharedVisible = shared.filter((candidate) =>
-    trimmedQuery === '' || candidate.name.toLowerCase().includes(trimmedQuery));
+  const matching = (candidate: FolderView) =>
+    trimmedQuery === '' || candidate.name.toLowerCase().includes(trimmedQuery);
+  const visible = mine.filter(matching);
+  const sharedVisible = shared.filter(matching);
   const controllable = workspaces.filter(({ role }) => role === 'owner' || role === 'admin');
   const workspaceName = useCallback(
     (id: string) => workspaces.find((workspace) => workspace.id === id)?.name ?? id,
     [workspaces],
   );
 
-  const goDrive = useCallback(
-    (nextScope: DriveScope) => onNavigate(drivePath(nextScope)),
-    [onNavigate],
-  );
+  const goDrive = useCallback(() => onNavigate(drivePath()), [onNavigate]);
   const openFolder = (target: FolderView) => onNavigate(folderPagePath(target.id));
   const openPath = (target: string, nextPath: string[]) => {
     setSelectedKey(null);
@@ -177,11 +175,11 @@ export function FilesDrive({
         onNavigate(folderPagePath(route.folderId, route.folderPath.slice(0, -1)));
         return;
       }
-      if (route.page === 'folder') goDrive(scope);
+      if (route.page === 'folder') goDrive();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [dialog, goDrive, menu, onNavigate, route, scope, selectedKey]);
+  }, [dialog, goDrive, menu, onNavigate, route, selectedKey]);
 
   const openMenuFrom = (event: React.MouseEvent<HTMLElement>, items: MenuItem[]) => {
     event.preventDefault();
@@ -215,10 +213,6 @@ export function FilesDrive({
         return;
       }
       await uploadEntries(folder, entries);
-      return;
-    }
-    if (scope === 'shared') {
-      showSnack('Shared with me is read-only — drop into Drive, or open a folder you can edit');
       return;
     }
     if (payload.folders.length === 0) {
@@ -410,7 +404,6 @@ export function FilesDrive({
 
       {folder === null ? (
         <DriveRootView
-          scope={scope}
           scopeTitle={scopeTitle}
           query={query}
           visible={visible}
@@ -432,7 +425,7 @@ export function FilesDrive({
               attachedNote={folder.attachedWorkspaceIds.length > 0
                 ? `Attached to ${folder.attachedWorkspaceIds.map(workspaceName).join(', ')} at /workspace/shared/${folder.name}`
                 : null}
-              onRoot={() => goDrive(scope)}
+              onRoot={() => goDrive()}
               onFolderRoot={() => openPath(folder.id, [])}
               onPath={(next) => openPath(folder.id, next)}
             />
@@ -609,7 +602,7 @@ export function FilesDrive({
             onConfirm={() => {
               const action = objectDelete
                 ? client.deleteFolderObject(target.id, dialog.key).then(() => loadObjects(target.id))
-                : client.deleteFolder(target.id).then(() => goDrive(scope));
+                : client.deleteFolder(target.id).then(() => goDrive());
               void action
                 .then(() => loadFolders())
                 .then(() => {
