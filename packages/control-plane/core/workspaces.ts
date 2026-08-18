@@ -40,6 +40,37 @@ import type {
 export type { WorkspaceRow } from "./workspace-records.js";
 
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
+
+/** Only the paths the browser app actually uses may reach a box.
+ *
+ * The guest exposes far more than the app needs: dufs serves
+ * /srv/blitz-files, which symlinks the agent's HOME (holding its OAuth
+ * credentials) next to /workspace, and both the gateway and the actor answer
+ * /admin/drain — a disconnect-everyone switch — for any valid ticket, with no
+ * role check. Those guards live in the guest image, which never upgrades in
+ * place, so this allowlist is the only lever that protects boxes already
+ * running. Keep it in sync with `standaloneResolver` in the webApp. */
+function webAppPathAllowed(port: WebAppPort, path: string): boolean {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    return false;
+  }
+  // Rejects both raw and percent-encoded traversal out of an allowed prefix.
+  if (decoded.split("/").includes("..")) return false;
+  if (port === 7444) {
+    // The actor's only browser surface is the ACP websocket at the root; its
+    // /admin/drain is reached server-side by the revocation drain, never here.
+    return decoded === "/";
+  }
+  if (decoded === "/ports" || decoded === "/previews" || decoded === "/terminal/ws") {
+    return true;
+  }
+  return decoded === "/workspace"
+    || decoded.startsWith("/workspace/")
+    || decoded.startsWith("/preview/");
+}
 /** 2026-08-17 19:10 UTC: first moment new VMs booted the ticket-verifying
  * gateway (box image 20260817a). Older VMs byte-compare the static token. */
 const TICKET_GATEWAYS_SINCE_MS = 1_786_993_800_000;
@@ -561,19 +592,24 @@ export function addWorkspaceRoutes(
       throw new HttpError(400, "invalid workspace webApp path");
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
-    const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
+    const path = suffix === "" ? "/" : suffix;
+    if (!webAppPathAllowed(port, path)) {
+      throw new HttpError(403, "path is not a workspace webApp surface");
+    }
+    const pathAndQuery = `${path}${requestURL.search}`;
     // Boxes boot the image pinned at their creation and never upgrade in
     // place. VMs from before the 20260817a pin run gateways that only
-    // byte-compare the static token, so they keep receiving it and viewers
-    // stay refused there. Ticket-capable gateways force read-only terminals
-    // and file methods for viewer tickets; the agent port stays refused for
-    // viewers everywhere until the actor grows its own guard.
+    // byte-compare the static token, so they keep receiving it.
     // TODO(identity-phase-4): drop the gate once every pre-ticket VM is gone.
     const ticketCapable = row.created_at >= TICKET_GATEWAYS_SINCE_MS;
-    if (access.role === "viewer" && (port === 7444 || !ticketCapable)) {
-      throw new HttpError(403, ticketCapable
-        ? "viewers cannot drive the workspace agent"
-        : "read-only access arrives when this workspace VM is recycled");
+    // Viewers stay refused on every deployed image. The gateway's read-only
+    // force appends "ro" as a THIRD argument, so a request carrying a single
+    // arg lands "ro" in blitz-term's session-key slot and the mode defaults
+    // back to rw — a writable shell. Its read-only path also creates a
+    // missing session, so an observer can spawn agents. Restore viewer
+    // access only alongside a box image that fixes both.
+    if (access.role === "viewer") {
+      throw new HttpError(403, "read-only access arrives when this workspace VM is recycled");
     }
     const webAppAuth = requireWorkspaceWebAppAuth(runtime.providers.webAppAuth);
     const credential = ticketCapable

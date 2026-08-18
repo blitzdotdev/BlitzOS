@@ -382,6 +382,40 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("does not re-send the shared doc when the workspace poll re-renders it", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1, false);
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    const afterLoad = vi.mocked(wire.putWorkspaceWebAppState).mock.calls.length;
+
+    // Every poll rebuilds the workspace records, which re-runs the save
+    // effect. An idle tab must stay silent: the doc is shared, and re-sending
+    // a held snapshot would outrank another account's newer save.
+    for (let tick = 0; tick < 3; tick += 1) {
+      await act(async () => {
+        window.dispatchEvent(new Event("focus"));
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      });
+    }
+
+    expect(vi.mocked(wire.putWorkspaceWebAppState).mock.calls.length).toBe(afterLoad);
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
+      .toEqual([{ id: 1, type: "terminal" }]);
+
+    await view.unmount();
+  });
+
   it("renders default tabs but never persists them when the state read fails", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     const wire = runningClient();

@@ -172,17 +172,11 @@ describe("identity phase 2", () => {
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
     expect(viewer.status).toBe(201);
-    // Viewers reach the gateway with a role-carrying ticket: it forces
-    // read-only terminals and file methods. The agent port stays refused.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
-    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
-      providers.webAppCredentials.at(-1) ?? "",
-      workspace.id,
-    )).resolves.toMatchObject({
-      kind: "ticket",
-      claims: { role: "viewer", userId: "collaborator", membershipId: editor.membershipId },
-    });
-    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7444/sessions`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
+    // Viewers stay refused on every port: the deployed gateway's read-only
+    // force is bypassable (a single arg lands "ro" in the session-key slot),
+    // so a viewer ticket would buy a writable shell.
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
     const created = await appRequest(app, `/workspaces/${workspace.id}/grants`, {
       ...json({ membershipId: editor.membershipId, role: "editor" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
@@ -238,6 +232,42 @@ describe("identity phase 2", () => {
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: member.cookie } })).status).toBe(403);
+  });
+
+  it("proxies only browser surfaces, refusing the agent HOME and the drain switch", async () => {
+    const providers = new ProxyProviders();
+    const app = appWithProviders(providers, providers);
+    const ownerCookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, ownerCookie);
+    const proxy = (path: string, method = "GET") => appRequest(
+      app,
+      `/workspaces/${workspace.id}/webapp/${path}`,
+      { method, headers: { Cookie: ownerCookie } },
+    );
+
+    // dufs serves /srv/blitz-files, where the agent's HOME sits beside
+    // /workspace: reaching it would hand over the agent's OAuth credentials.
+    expect((await proxy("7445/home/.claude/.credentials.json")).status).toBe(403);
+    expect((await proxy("7445/home/")).status).toBe(403);
+    // Traversal, raw and percent-encoded, must not climb out of /workspace.
+    expect((await proxy("7445/workspace/%2e%2e/home/.claude.json")).status).toBe(403);
+    // Both the gateway and the actor answer /admin/drain for any ticket.
+    expect((await proxy("7445/admin/drain", "POST")).status).toBe(403);
+    expect((await proxy("7444/admin/drain", "POST")).status).toBe(403);
+    // The gateway's /acp is a second door to the agent on the files port.
+    expect((await proxy("7445/acp")).status).toBe(403);
+
+    for (const allowed of [
+      "7445/workspace/",
+      "7445/workspace/notes.md",
+      "7445/ports",
+      "7445/previews",
+      "7445/preview/3000/",
+      "7445/terminal/ws",
+      "7444",
+    ]) {
+      expect((await proxy(allowed)).status, allowed).toBe(200);
+    }
   });
 
   it("lists real memberships only and keeps last-active-admin protection", async () => {

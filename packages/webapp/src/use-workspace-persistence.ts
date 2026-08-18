@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ApiAdapter } from './api-adapter.js';
 import {
   defaultWorkspaceFiles,
@@ -39,9 +39,16 @@ export function useWorkspacePersistence(
     value: WorkspaceFiles;
   }>(() => ({ workspaceId: '', value: defaultWorkspaceFiles() }));
   const [serverSeededId, setServerSeededId] = useState('');
+  // The doc last agreed with the server, as sent-on-the-wire JSON. The
+  // workspace poll rebuilds workspace objects every 15s, which re-runs the
+  // save effect; without this an idle tab would re-PUT its held snapshot on
+  // every tick and — because the doc is shared and read newest-first — undo
+  // whatever another account did in the meantime.
+  const syncedDoc = useRef<{ workspaceId: string; json: string }>({ workspaceId: '', json: '' });
 
   useEffect(() => {
     setServerSeededId('');
+    syncedDoc.current = { workspaceId: '', json: '' };
     if (!enabled || !activeWorkspaceId) {
       setWorkspaceTabs({
         workspaceId: activeWorkspaceId,
@@ -63,6 +70,9 @@ export function useWorkspacePersistence(
         const state = response.doc ?? defaultWorkspaceWebAppState();
         setWorkspaceTabs({ workspaceId: activeWorkspaceId, value: state.tabs, loaded: true });
         setWorkspaceFiles({ workspaceId: activeWorkspaceId, value: state.drawer });
+        // Adopting the server's doc is not an edit, so it must not echo back
+        // as a write that outranks another account's newer save.
+        syncedDoc.current = { workspaceId: activeWorkspaceId, json: JSON.stringify(state) };
         setServerSeededId(activeWorkspaceId);
       })
       .catch((cause: Error) => {
@@ -93,17 +103,25 @@ export function useWorkspacePersistence(
       || !workspaceTabs.loaded
       || serverSeededId !== activeWorkspaceId
     ) return;
+    const doc = workspaceWebAppState(
+      metadata.title,
+      metadata.serverName,
+      metadata.agentDefault,
+      workspaceTabs.value,
+      workspaceFiles.value,
+    );
+    const json = JSON.stringify(doc);
+    if (syncedDoc.current.workspaceId === activeWorkspaceId && syncedDoc.current.json === json) {
+      return;
+    }
     const timer = window.setTimeout(() => {
-      void api.putWorkspaceWebAppState(
-        activeWorkspaceId,
-        workspaceWebAppState(
-          metadata.title,
-          metadata.serverName,
-          metadata.agentDefault,
-          workspaceTabs.value,
-          workspaceFiles.value,
-        ),
-      ).catch(onError);
+      syncedDoc.current = { workspaceId: activeWorkspaceId, json };
+      void api.putWorkspaceWebAppState(activeWorkspaceId, doc).catch((cause: Error) => {
+        // Let the next change retry rather than pinning a doc the server
+        // never accepted.
+        syncedDoc.current = { workspaceId: '', json: '' };
+        onError(cause);
+      });
     }, 150);
     return () => window.clearTimeout(timer);
   }, [
