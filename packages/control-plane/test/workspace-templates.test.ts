@@ -63,6 +63,68 @@ async function createFolder(
 describe("workspace templates", () => {
   beforeEach(resetDatabase);
 
+  it("updates a template, preserving folders the editor can no longer read", async () => {
+    const { app } = harness();
+    await operatorSession(app);
+    const member = await sameOrgSession("author");
+    const bystander = await sameOrgSession("bystander");
+
+    const lent = await appRequest(app, "/folders", {
+      ...json({ name: "lent-notes" }),
+      headers: { Cookie: bystander.cookie, "Content-Type": "application/json" },
+    });
+    const folderId = (await lent.json<{ folder: { id: string } }>()).folder.id;
+    const granted = await appRequest(app, `/folders/${folderId}/grants`, {
+      ...json({ membershipId: member.membershipId, role: "editor" }),
+      headers: { Cookie: bystander.cookie, "Content-Type": "application/json" },
+    });
+    const grantId = (await granted.json<{ grant: { id: string } }>()).grant.id;
+
+    const created = await appRequest(app, "/workspace-templates", {
+      ...json({ name: "draft", machineTypeId: "small", folderIds: [folderId] }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const template = (await created.json<{ template: WorkspaceTemplateView }>()).template;
+
+    // The lender revokes access; the creator keeps editing rights on the
+    // template itself but can no longer read the attached folder.
+    expect((await appRequest(app, `/folders/${folderId}/grants/${grantId}`, {
+      method: "DELETE",
+      headers: { Cookie: bystander.cookie },
+    })).status).toBe(204);
+
+    // A same-org member who is neither creator nor admin cannot edit.
+    expect((await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({ name: "hijack", machineTypeId: "small", folderIds: [] }),
+      method: "PUT",
+      headers: { Cookie: bystander.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+
+    // The creator renames while keeping the now-unreadable folder attached.
+    const renamed = await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({ name: "field study", machineTypeId: "small", folderIds: [folderId] }),
+      method: "PUT",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(renamed.status).toBe(200);
+    const view = (await renamed.json<{ template: WorkspaceTemplateView }>()).template;
+    expect(view.name).toBe("field study");
+    expect(view.folders.map(({ id, role }) => [id, role])).toEqual([[folderId, null]]);
+
+    // Adding a folder the editor cannot read still fails.
+    const secret = await appRequest(app, "/folders", {
+      ...json({ name: "other-notes" }),
+      headers: { Cookie: bystander.cookie, "Content-Type": "application/json" },
+    });
+    const secretId = (await secret.json<{ folder: { id: string } }>()).folder.id;
+    expect((await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({ name: "field study 3", machineTypeId: "small", folderIds: [folderId, secretId] }),
+      method: "PUT",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+  });
+
   it("creates, lists, applies, and deletes a template with per-viewer folder access", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);

@@ -172,6 +172,76 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  it('prefills edit mode from the template and saves through PUT', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [{
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          folders: [
+            { id: 'folder-mine', name: 'datasets', role: 'owner' },
+            { id: 'folder-gone', name: 'lost-notes', role: null },
+          ],
+        }] });
+      }
+      if (url.pathname === '/workspace-templates/template-1' && init?.method === 'PUT') {
+        return Response.json({ template: {
+          id: 'template-1',
+          name: 'starter v2',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
+        } });
+      }
+      return null;
+    });
+    const onCreated = vi.fn();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        editTemplateId="template-1"
+        onCreated={onCreated}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain('Edit workspace template');
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    expect(name.value).toBe('starter');
+    expect(row(view, 'datasets').textContent).toContain('In template');
+
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(name, 'starter v2');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    const put = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates/template-1' && init?.method === 'PUT'
+    ));
+    // The unreadable folder id survives the round trip untouched.
+    expect(JSON.parse(String(put?.[1]?.body ?? '{}'))).toEqual({
+      name: 'starter v2',
+      machineTypeId: 'cx23@fsn1',
+      folderIds: ['folder-mine', 'folder-gone'],
+    });
+    expect(onCreated).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
   it('enters a folder on double click, walks back up, and keeps the attach target', async () => {
     const { view } = await screenWith();
     const back = view.container.querySelector<HTMLButtonElement>('.tplf-back')!;

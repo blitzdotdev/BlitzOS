@@ -75,3 +75,13 @@ export function DocDuoIcon({ name, className }: { name: string; className?: stri
     </svg>
   );
 }
+
+/** Duotone template glyph: same accent-wash treatment as the folder icons. */
+export function TemplateDuoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="7.6" y="3.6" width="12.8" height="12.8" rx="2" fill="var(--accent)" opacity=".3" />
+      <rect x="3.6" y="7.6" width="12.8" height="12.8" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  );
+}

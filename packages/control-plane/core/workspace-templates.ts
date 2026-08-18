@@ -240,6 +240,75 @@ export function addWorkspaceTemplateRoutes(
     return context.json({ template }, 201);
   });
 
+  router.put("/workspace-templates/:id", async (context) => {
+    const runtime = runtimeFactory(context);
+    const actor = await filesActorForRequest(runtime, context, requirePrincipal);
+    const principal = actor.principal;
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    const template = await workspaceTemplateForCreate(
+      runtime.db,
+      context.req.param("id"),
+      principal.orgId,
+    );
+    if (
+      principal.role !== "admin"
+      && template.created_by_membership_id !== principal.membershipId
+    ) {
+      throw new HttpError(403, "forbidden");
+    }
+    // Full replacement with the create shape: the edit form always submits
+    // name, machine, and the complete folder set. Only newly added folders
+    // need read access — an admin may edit a template whose existing folders
+    // were never shared with them, and keeping those must not fail or drop.
+    const input = parseCreateTemplate(await readJson(context.req.raw));
+    runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
+    const existingFolderIds = new Set(
+      (await templateFolderRows(runtime.db, [template.id], principal.membershipId))
+        .map(({ folder_id }) => folder_id),
+    );
+    for (const folderId of input.folderIds) {
+      if (existingFolderIds.has(folderId)) continue;
+      await requireFolderAccess(runtime.db, folderId, actor, "read");
+    }
+    const now = Date.now();
+    await rows(runtime.db, {
+      q: `UPDATE workspace_templates
+          SET name = ?2, machine_type_id = ?3, updated_at = ?4
+          WHERE id = ?1`,
+      v: [template.id, input.name, input.machineTypeId, now],
+    });
+    await rows(runtime.db, {
+      q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",
+      v: [template.id],
+    });
+    for (const folderId of input.folderIds) {
+      await rows(runtime.db, {
+        q: `INSERT INTO workspace_template_folders (template_id, folder_id, created_at)
+            VALUES (?1, ?2, ?3)`,
+        v: [template.id, folderId, now],
+      });
+    }
+    const updated = await first<TemplateListRow>(runtime.db, {
+      q: `SELECT t.*, creator_user.name AS creator_name,
+                 creator_user.avatar_url AS creator_avatar_url
+          FROM workspace_templates t
+          JOIN memberships creator ON creator.id = t.created_by_membership_id
+          JOIN users creator_user ON creator_user.id = creator.user_id
+          WHERE t.id = ?1 LIMIT 1`,
+      v: [template.id],
+    });
+    if (updated === null) throw new HttpError(404, "workspace template not found");
+    return context.json({
+      template: templateView(
+        updated,
+        principal,
+        await templateFolderRows(runtime.db, [template.id], principal.membershipId),
+      ),
+    });
+  });
+
   router.delete("/workspace-templates/:id", async (context) => {
     const runtime = runtimeFactory(context);
     const principal = await requirePrincipal(context);

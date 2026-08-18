@@ -49,6 +49,7 @@ import {
   settingsPath,
   workspacePath,
   type SettingsSection,
+  templateEditPath,
   templateNewPath,
   templatesPath,
 } from './sessions-page-state';
@@ -1180,6 +1181,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             client={client}
             creating={createWorkspaceBusy}
             onNewTemplate={() => navigateTo(templateNewPath())}
+            onEditTemplate={(template) => navigateTo(templateEditPath(template.id))}
             onUseTemplate={(template) => {
               void createWorkspace({ templateId: template.id, orgShareRole: 'editor' });
             }}
@@ -1197,7 +1199,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     );
   }
 
-  if (route.page === 'template-new') {
+  if (route.page === 'template-new' || route.page === 'template-edit') {
     const leaveToTemplates = () => navigateTo(templatesPath());
     return (
       <main className="drive-shell" aria-busy={!loaded}>
@@ -1206,6 +1208,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           <CreateTemplateScreen
             client={client}
             orgName={store.viewer.org.name}
+            editTemplateId={route.page === 'template-edit' ? route.templateId : undefined}
             onCreated={leaveToTemplates}
             onCancel={leaveToTemplates}
           />

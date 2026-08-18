@@ -39,6 +39,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     setFolderOrgRole: vi.fn(async () => undefined),
     listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
     createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
+    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
     deleteWorkspaceTemplate: vi.fn(async () => undefined),
     setWorkspaceOrgRole: vi.fn(async () => undefined),
     deleteFolderObject: vi.fn(async () => undefined),

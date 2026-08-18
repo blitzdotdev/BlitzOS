@@ -907,7 +907,8 @@
 .tpl-card:focus-within .tpl-kebab { opacity: 1; }
 
 .tpl-card-head { display: flex; align-items: center; gap: 10px; }
-.tpl-card-head > svg { width: 19px; height: 19px; flex: none; color: var(--muted); }
+/* Matches .drive-folder-icon so templates read like Drive folders. */
+.tpl-card-head > svg { width: 20px; height: 20px; flex: none; color: var(--soft-ink, var(--ink)); }
 
 .tpl-card-name {
   flex: 1;

@@ -148,6 +148,10 @@ export interface ControlPlaneClient extends FileLibraryClient {
   createWorkspaceTemplate(
     input: CreateWorkspaceTemplateRequest,
   ): Promise<CreateWorkspaceTemplateResponse>;
+  updateWorkspaceTemplate(
+    id: string,
+    input: CreateWorkspaceTemplateRequest,
+  ): Promise<CreateWorkspaceTemplateResponse>;
   deleteWorkspaceTemplate(id: string): Promise<void>;
   setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
@@ -571,6 +575,12 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     createWorkspaceTemplate: (input) =>
       request<CreateWorkspaceTemplateResponse>("/workspace-templates", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    updateWorkspaceTemplate: (id, input) =>
+      request<CreateWorkspaceTemplateResponse>(`/workspace-templates/${encodeURIComponent(id)}`, {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),

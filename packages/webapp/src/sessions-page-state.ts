@@ -8,6 +8,7 @@ export type AppRoute =
   | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
   | { workspaceId: null; page: 'templates' }
   | { workspaceId: null; page: 'template-new' }
+  | { workspaceId: null; page: 'template-edit'; templateId: string }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
 const HOME: AppRoute = { workspaceId: null, page: 'drive', scope: 'mine' };
@@ -30,6 +31,18 @@ export function parseAppRoute(pathname: string): AppRoute {
   }
   if (/^\/templates\/?$/u.test(pathname)) {
     return { workspaceId: null, page: 'templates' };
+  }
+  const templateEdit = pathname.match(/^\/templates\/([^/]+)\/edit\/?$/u);
+  if (templateEdit) {
+    try {
+      return {
+        workspaceId: null,
+        page: 'template-edit',
+        templateId: decodeURIComponent(templateEdit[1]!),
+      };
+    } catch {
+      return HOME;
+    }
   }
   const folder = pathname.match(/^\/folder\/([^/]+)((?:\/[^/]+)*)\/?$/u);
   if (folder) {
@@ -77,6 +90,10 @@ export function templateNewPath(): string {
 
 export function templatesPath(): string {
   return '/templates';
+}
+
+export function templateEditPath(templateId: string): string {
+  return `/templates/${encodeURIComponent(templateId)}/edit`;
 }
 
 export function folderPagePath(folderId: string, folderPath: string[] = []): string {

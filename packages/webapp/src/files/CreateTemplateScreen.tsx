@@ -37,11 +37,14 @@ interface BrowseState {
 export function CreateTemplateScreen({
   client,
   orgName,
+  editTemplateId,
   onCreated,
   onCancel,
 }: {
   client: ControlPlaneClient;
   orgName: string;
+  /** When set, the screen edits this template instead of creating one. */
+  editTemplateId?: string;
   onCreated: (template: WorkspaceTemplateView) => void;
   onCancel: () => void;
 }) {
@@ -170,6 +173,25 @@ export function CreateTemplateScreen({
       .catch((caught: Error) => setError(caught.message));
   };
 
+  useEffect(() => {
+    if (editTemplateId === undefined) return;
+    let mounted = true;
+    void client.listWorkspaceTemplates().then(({ templates }) => {
+      if (!mounted) return;
+      const existing = templates.find(({ id }) => id === editTemplateId);
+      if (existing === undefined) {
+        setError('That template no longer exists.');
+        return;
+      }
+      setName(existing.name);
+      setMachineTypeId(existing.machineTypeId);
+      // Keep every attached folder id, including ones this editor cannot
+      // read — the server preserves them and only checks new additions.
+      setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
+    }).catch((caught: Error) => setError(caught.message));
+    return () => { mounted = false; };
+  }, [client, editTemplateId]);
+
   const create = async () => {
     const trimmed = name.trim();
     if (trimmed === '' || machineTypeId === '' || busy) return;
@@ -186,14 +208,17 @@ export function CreateTemplateScreen({
           await client.setFolderOrgRole(folder.id, 'viewer');
         }
       }
-      const { template } = await client.createWorkspaceTemplate({
+      const request = {
         name: trimmed,
         machineTypeId,
         folderIds: [...attachedIds],
-      });
+      };
+      const { template } = editTemplateId === undefined
+        ? await client.createWorkspaceTemplate(request)
+        : await client.updateWorkspaceTemplate(editTemplateId, request);
       onCreated(template);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Template creation failed.');
+      setError(caught instanceof Error ? caught.message : 'The template could not be saved.');
       setBusy(false);
     }
   };
@@ -282,7 +307,7 @@ export function CreateTemplateScreen({
         }}
       >
         <header className="create-workspace-header">
-          <div className="create-workspace-header__title"><h1>New workspace template</h1></div>
+          <div className="create-workspace-header__title"><h1>{editTemplateId === undefined ? 'New workspace template' : 'Edit workspace template'}</h1></div>
           <button type="button" aria-label="Close" disabled={busy} onClick={onCancel}>×</button>
         </header>
 
@@ -464,7 +489,9 @@ export function CreateTemplateScreen({
             type="submit"
             disabled={busy || loading || uploading !== null || name.trim() === '' || machineTypeId === ''}
           >
-            {busy ? 'Creating…' : 'Create template'}
+            {editTemplateId === undefined
+              ? busy ? 'Creating…' : 'Create template'
+              : busy ? 'Saving…' : 'Save template'}
           </button>
         </footer>
       </form>

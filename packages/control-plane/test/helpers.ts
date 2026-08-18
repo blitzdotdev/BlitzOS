@@ -411,6 +411,8 @@ export async function enrollBox(
 export async function resetDatabase(): Promise<void> {
   const tables = [
     "microvm_hosts",
+    "workspace_template_folders",
+    "workspace_templates",
     "folder_grants",
     "folder_attachments",
     "folders",

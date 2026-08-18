@@ -7,10 +7,11 @@ import { DriveAvatar } from './DriveAvatar';
 import {
   FolderGlyph,
   KebabGlyph,
+  PencilGlyph,
   PlusGlyph,
-  TemplateGlyph,
   TrashGlyph,
 } from './DriveIcons';
+import { TemplateDuoIcon } from '../files-icons';
 
 /** The Templates surface: saved workspace setups as cards. Deliberately no
  * search topbar — the page spans both drive-shell rows. */
@@ -18,12 +19,14 @@ export function TemplatesHome({
   client,
   creating,
   onNewTemplate,
+  onEditTemplate,
   onUseTemplate,
   onOpenRail,
 }: {
   client: ControlPlaneClient;
   creating: boolean;
   onNewTemplate: () => void;
+  onEditTemplate: (template: WorkspaceTemplateView) => void;
   onUseTemplate: (template: WorkspaceTemplateView) => void;
   onOpenRail: () => void;
 }) {
@@ -74,7 +77,7 @@ export function TemplatesHome({
             {templates.map((template) => (
               <article className="tpl-card" key={template.id}>
                 <div className="tpl-card-head">
-                  <TemplateGlyph />
+                  <TemplateDuoIcon />
                   <span className="tpl-card-name">{template.name}</span>
                   <span className="drive-new-wrap">
                     <button
@@ -94,6 +97,17 @@ export function TemplatesHome({
                           onClick={() => setMenuFor(null)}
                         />
                         <div className="drive-menu drive-new-menu" role="menu">
+                          <button
+                            className="drive-menu-item"
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setMenuFor(null);
+                              onEditTemplate(template);
+                            }}
+                          >
+                            <PencilGlyph /><span>Edit template</span>
+                          </button>
                           <button
                             className="drive-menu-item drive-menu-item--danger"
                             type="button"
