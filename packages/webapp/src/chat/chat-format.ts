@@ -89,14 +89,6 @@ export function formatUsageLimitText(value: string): string {
     + ` - ${date.getDate()} ${month} ${date.getFullYear()}`;
 }
 
-export function formatTokenCount(count: number): string {
-  if (count >= 10_000_000) return `${(count / 1_000_000).toFixed(0)}M`;
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 10_000) return `${(count / 1_000).toFixed(0)}K`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`;
-  return count.toLocaleString();
-}
-
 export function basename(path: string): string {
   const parts = path.replaceAll('\\', '/').split('/').filter(Boolean);
   return parts.at(-1) ?? '';

@@ -409,46 +409,6 @@ export function decodeWorkspaceWebAppStateResponse(
   return decodeStateResponse(json, parseWorkspaceDoc);
 }
 
-export function loadDismissedChatAuthProviders(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  storage: StorageBackend = localStorage,
-): Agent[] {
-  try {
-    const value = JSON.parse(
-      storage.getItem(chatAuthDismissalsStorageKey(namespace, workspaceId)) ?? 'null',
-    );
-    const object = asJsonObject(value);
-    if (object === null || object.version !== 1 || !Array.isArray(object.providers)) {
-      return [];
-    }
-    return [...new Set(object.providers.filter(
-      (provider): provider is Agent => provider === 'claude' || provider === 'codex',
-    ))];
-  } catch {
-    return [];
-  }
-}
-
-export function saveDismissedChatAuthProviders(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  providers: Agent[],
-  storage: StorageBackend = localStorage,
-): void {
-  const valid = [...new Set(providers.filter(
-    (provider): provider is Agent => provider === 'claude' || provider === 'codex',
-  ))];
-  if (valid.length === 0) {
-    storage.removeItem(chatAuthDismissalsStorageKey(namespace, workspaceId));
-    return;
-  }
-  storage.setItem(
-    chatAuthDismissalsStorageKey(namespace, workspaceId),
-    JSON.stringify({ version: 1, providers: valid }),
-  );
-}
-
 export function removeDismissedChatAuthProviders(
   namespace: StorageNamespace,
   workspaceId: string,

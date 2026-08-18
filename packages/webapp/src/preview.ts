@@ -253,13 +253,6 @@ export function newestPreviewLinks(previews: PreviewLink[]): PreviewLink[] {
   return [...previews].sort((left, right) => right.createdAt - left.createdAt);
 }
 
-export function newestUndismissedPort(
-  ports: LivePort[],
-  dismissed: ReadonlySet<number>,
-): LivePort | null {
-  return newestPorts(ports).find(({ port }) => !dismissed.has(port)) ?? null;
-}
-
 export function previewUrl(
   filesBase: string,
   port: number,
@@ -290,18 +283,3 @@ export function previewPortFromLocalUrl(href: string): number | null {
   }
 }
 
-export function openPreviewTab(tabs: WorkspaceTabs, port: number): WorkspaceTabs {
-  const existing = tabs.tabs.find(
-    (tab) => tab.type === 'preview' && 'port' in tab && tab.port === port,
-  );
-  if (existing) {
-    return tabs.activeId === existing.id ? tabs : { ...tabs, activeId: existing.id };
-  }
-  const id = tabs.nextId;
-  return {
-    ...tabs,
-    tabs: [...tabs.tabs, { id, type: 'preview', port }],
-    activeId: id,
-    nextId: id + 1,
-  };
-}

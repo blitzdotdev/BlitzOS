@@ -158,23 +158,6 @@ a {
   line-height: 1.7;
 }
 
-.webapp-empty__action {
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--rule);
-  color: var(--muted);
-  background: transparent;
-  font: 11px/1 var(--font-ui);
-  cursor: pointer;
-}
-
-.webapp-empty__action:hover,
-.webapp-empty__action:focus-visible {
-  border-color: color-mix(in oklab, var(--ink) 24%, var(--paper));
-  color: var(--ink);
-  outline: none;
-}
-
 .webapp-notice,
 .webapp-auth-return {
   position: fixed;
@@ -221,12 +204,6 @@ a {
 .webapp-notice button:hover,
 .webapp-notice button:focus-visible {
   color: var(--ink);
-}
-
-.webapp-auth-return {
-  inset: 50% auto auto 50%;
-  padding: 13px 16px;
-  transform: translate(-50%, -50%);
 }
 
 @keyframes webapp-spin {

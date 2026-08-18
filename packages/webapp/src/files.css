@@ -68,50 +68,6 @@
   content: '';
 }
 
-.files-sidebar-header {
-  display: flex;
-  height: 40px;
-  min-height: 40px;
-  align-items: center;
-  padding-left: 11px;
-  border-bottom: 1px solid var(--rule);
-  color: var(--faint);
-  font-size: 10px;
-  letter-spacing: .14em;
-}
-
-.files-sidebar-header > span:first-child {
-  margin-right: auto;
-}
-
-.files-sidebar-header button {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  color: var(--faint);
-  background: transparent;
-  cursor: pointer;
-  place-items: center;
-}
-
-.files-sidebar-header button svg {
-  width: 18px;
-  height: 18px;
-}
-
-.files-sidebar-header button:hover:not(:disabled),
-.files-sidebar-header button:focus-visible:not(:disabled) {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 6%, transparent);
-}
-
-.files-sidebar-header button:disabled {
-  cursor: default;
-}
-
 .files-tree {
   min-width: 0;
   min-height: 0;
@@ -154,31 +110,10 @@
   color: var(--faint);
 }
 
-.files-tree-chevron {
-  display: grid;
-  width: 16px;
-  min-width: 16px;
-  height: 100%;
-  color: var(--faint);
-  place-items: center;
-}
-
 .files-tree-chevron > .codicon {
   width: 16px;
   height: 16px;
   transition: transform 80ms ease-out;
-}
-
-.files-tree-chevron--open {
-  transform: rotate(90deg);
-}
-
-.files-tree-icon {
-  width: 13px;
-  height: 13px;
-  min-width: 13px;
-  margin-right: 5px;
-  color: var(--faint);
 }
 
 .files-tree-row--selected .files-tree-icon.codicon {
@@ -187,50 +122,6 @@
 
 .files-tree-row--dotfile:not(.files-tree-row--selected) .files-tree-icon {
   opacity: .55;
-}
-
-.files-tree-name {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  padding-right: 8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.files-tree-git-status {
-  width: 18px;
-  flex: none;
-  margin-left: auto;
-  padding-right: 6px;
-  color: var(--faint);
-  font-size: 10px;
-  text-align: right;
-}
-
-.files-tree-git-status--m {
-  color: var(--status-warm-yellow);
-}
-
-.files-tree-git-status--a {
-  color: var(--ansi-green);
-}
-
-.files-tree-git-status--d {
-  color: var(--ansi-red);
-}
-
-.files-tree-indent-guides {
-  position: absolute;
-  inset: 0 auto 0 0;
-  pointer-events: none;
-}
-
-.files-tree-indent-guides > span {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-left: 1px solid var(--rule);
 }
 
 .files-tree-spinner {
@@ -592,17 +483,6 @@
     transform: translateX(0);
   }
 
-  .files-sidebar-header {
-    height: var(--headerH);
-    min-height: var(--headerH);
-    padding-left: 16px;
-  }
-
-  .files-sidebar-header button {
-    width: var(--touchTarget);
-    height: var(--touchTarget);
-  }
-
   .files-tree-root-state {
     height: var(--touchTarget);
     padding: 13px 14px;
@@ -659,8 +539,7 @@
 
   .webapp-statusline__files span {
     display: none;
-  }
-}
+  }}
 
 @media (prefers-reduced-motion: reduce) {
   .files-sidebar,
@@ -686,7 +565,6 @@
 /* Only the drawer's own left-edge handle resizes; the nested sidebar's
  * handle (hidden below) would double up. */
 .workspace-drawer .files-sidebar .files-sidebar-resizer { display: none; }
-
 
 /* Editorial paper (plans/mockups/workspace-tabs-editorial.html) on the app's
  * neutral palette: sections are soft ink washes, controls are pills, status
@@ -837,13 +715,6 @@
   margin: 16px 16px 8px;
   color: var(--soft-ink);
   font: 600 12px/1.3 var(--font-ui);
-}
-
-.workspace-slab {
-  overflow: hidden;
-  margin: 0 14px;
-  border-radius: var(--r-card);
-  background: var(--wash);
 }
 
 .workspace-sect small {
@@ -1035,17 +906,6 @@
     transform: translateX(0);
   }
 
-  .files-sidebar-header {
-    height: var(--headerH);
-    min-height: var(--headerH);
-    padding-left: 16px;
-  }
-
-  .files-sidebar-header button {
-    width: var(--touchTarget);
-    height: var(--touchTarget);
-  }
-
   .files-tree-root-state {
     height: var(--touchTarget);
     padding: 13px 14px;
@@ -1114,8 +974,7 @@
 
   .webapp-statusline__files {
     position: relative;
-  }
-}
+  }}
 
 .workspace-previews {
   display: flex;

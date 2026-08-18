@@ -31,24 +31,9 @@ export const TemplateGlyph = glyph(
   </>,
 );
 
-export const SharedGlyph = glyph(
-  <>
-    <circle cx="9" cy="8.4" r="3.1" />
-    <path d="M3.4 19.2c.5-3 2.8-4.8 5.6-4.8s5.1 1.8 5.6 4.8" />
-    <path d="M16.2 5.8a3 3 0 0 1 0 5.6M17.6 14.8c2.1.5 3.4 2.1 3.8 4.4" />
-  </>,
-);
-
 export const FolderGlyph = glyph(
   <path d="M3.4 7.4a2 2 0 0 1 2-2h3.3a2 2 0 0 1 1.5.7l1.2 1.4h7.2a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2z" />,
   true,
-);
-
-export const FileGlyph = glyph(
-  <>
-    <path d="M6.4 3.6h7L18 8.2v12.2H6.4z" />
-    <path d="M13.2 3.6v4.7H18" />
-  </>,
 );
 
 export const BoxGlyph = glyph(

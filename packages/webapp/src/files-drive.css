@@ -27,30 +27,6 @@
   gap: 8px;
 }
 
-.drive-nav {
-  display: flex;
-  gap: 2px;
-}
-
-.drive-nav-row {
-  display: flex;
-  height: 36px;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: var(--r-control);
-  color: var(--muted);
-  background: transparent;
-  font-size: 13.5px;
-  cursor: pointer;
-}
-
-.drive-nav-row svg { width: 17px; height: 17px; color: var(--faint); }
-.drive-nav-row:hover { color: var(--ink); background: var(--hover); }
-.drive-nav-row--active { color: var(--ink); background: var(--hover); font-weight: 600; }
-.drive-nav-row--active svg { color: var(--accent); }
-
 .drive-new {
   display: flex;
   height: 36px;
@@ -422,12 +398,6 @@
 .drive-menu-item--danger svg { color: var(--accent); }
 .drive-menu-item:disabled { color: var(--faint); cursor: default; }
 .drive-menu-item:disabled:hover { background: transparent; }
-
-.drive-menu-divider {
-  height: 1px;
-  margin: 5px 8px;
-  background: var(--rule);
-}
 
 /* ----------------------------------------------------------------- dialogs */
 .drive-scrim {

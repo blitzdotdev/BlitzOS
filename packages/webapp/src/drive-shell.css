@@ -48,15 +48,6 @@
   user-select: none;
 }
 
-
-
-
-
-
-
-/* Shared with me has no New button; the placeholder holds its space so the
-   nav rows do not jump when you switch between the two locations. */
-
 .drive-rail-nav {
   display: grid;
   flex: none;
@@ -101,7 +92,6 @@
   white-space: nowrap;
 }
 
-
 .drive-rail-nav--top { margin-top: 6px; }
 
 .drive-rail-divider {
@@ -140,17 +130,6 @@
   outline: 0;
 }
 .drive-rail-section button svg { width: 13px; height: 13px; }
-
-
-
-
-
-
-
-
-
-
-
 
 /* ----------------------------------------------------------------- topbar */
 .drive-topbar {
@@ -212,14 +191,6 @@
   grid-row: 1 / 3;
 }
 
-.drive-ws-body {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-}
-
 /* ------------------------------------------------------------- responsive */
 .drive-rail-close,
 .drive-rail-scrim,
@@ -241,7 +212,6 @@
   }
 
   .drive-rail--open { transform: translateX(0); }
-  .drive-rail-close { display: grid; margin-left: auto; }
 
   .drive-rail-scrim {
     position: fixed;
@@ -305,4 +275,3 @@
   .drive-shell--workspace { grid-template-columns: minmax(0, 1fr); }
   .drive-shell--workspace > .drive-ws-frame { grid-column: 1; }
 }
-

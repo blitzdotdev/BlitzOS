@@ -34,15 +34,3 @@ export function chooseTheme(choice: ThemeChoice): ThemeChoice {
   return choice;
 }
 
-/** The mockup's cycle: system → dark → light → system. */
-export function cycleTheme(): ThemeChoice {
-  const current = appliedTheme();
-  const next: ThemeChoice = current === 'system' ? 'dark' : current === 'dark' ? 'light' : 'system';
-  apply(next);
-  try {
-    window.localStorage.setItem(THEME_KEY, next);
-  } catch {
-    // Sandboxed storage: the choice still applies for this page.
-  }
-  return next;
-}

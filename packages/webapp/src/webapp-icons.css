@@ -67,19 +67,9 @@
   mask-image: url('./assets/icons/browser-window-mask.svg');
 }
 
-.mi-reconnect {
-  -webkit-mask-image: url('./assets/icons/reconnect-mask.svg');
-  mask-image: url('./assets/icons/reconnect-mask.svg');
-}
-
 .mi-chat {
   -webkit-mask-image: url('./assets/icons/message-bubble-mask.svg');
   mask-image: url('./assets/icons/message-bubble-mask.svg');
-}
-
-.mi-terminal {
-  -webkit-mask-image: url('./assets/icons/terminal-mask.svg');
-  mask-image: url('./assets/icons/terminal-mask.svg');
 }
 
 .mi-trash {

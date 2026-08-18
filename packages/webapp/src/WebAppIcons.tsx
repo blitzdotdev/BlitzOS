@@ -23,33 +23,6 @@ export function ArrowIcon({
   );
 }
 
-export function RefreshIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M19 8a8 8 0 1 0 1 7" />
-      <path d="M19 3v5h-5" />
-    </svg>
-  );
-}
-
-export function CloseIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true" {...props}>
-      <path d="m6 6 12 12M18 6 6 18" />
-    </svg>
-  );
-}
-
-export function MoreIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" {...props}>
-      <circle cx="4" cy="10" r="1.5" />
-      <circle cx="10" cy="10" r="1.5" />
-      <circle cx="16" cy="10" r="1.5" />
-    </svg>
-  );
-}
-
 export function OrganizationIcon(props: WebAppIconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
@@ -117,45 +90,3 @@ export function FolderIcon(props: WebAppIconProps) {
   );
 }
 
-export function FolderOpenIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" aria-hidden="true" {...props}>
-      <path d="M1.25 3h3.5l1-1.25h5v2.1" />
-      <path d="M1.25 4.1h10l-1.4 6.15H2.4Z" />
-    </svg>
-  );
-}
-
-export function ArchiveIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M1.5 3.25h9v7h-9Z" />
-      <path d="M1 1.25h10v2H1ZM4.4 5.4h3.2" />
-    </svg>
-  );
-}
-
-export function RestoreIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M2.1 4.1A4.25 4.25 0 1 1 1.8 7" />
-      <path d="M2 1.5v2.8h2.8" />
-    </svg>
-  );
-}
-
-export function TrashIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M2.5 3.25h7l-.45 7h-6.1ZM1.75 3.25h8.5M4.25 3.25v-1.5h3.5v1.5M4.7 5.2v3.2M7.3 5.2v3.2" />
-    </svg>
-  );
-}
-
-export function ChevronIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.35" aria-hidden="true" {...props}>
-      <path d="m4.25 2.5 3.5 3.5-3.5 3.5" />
-    </svg>
-  );
-}
