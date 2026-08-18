@@ -66,14 +66,13 @@ describe("workspace tunnels", () => {
     expect(ports.status).toBe(200);
     expect(proxied.request?.url).toBe(`https://ws-${workspace.id}.webapp.test/acp/session?x=1`);
     const credential = proxied.request?.headers.get("X-Blitz-WebApp-Token") ?? "";
-    // TODO(identity-phase-4): assert a v1 ticket once the box-image re-pin lets
-    // the proxy stop sending the static token deployed gateways require.
-    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").tokenFor(workspace.id))
-      .resolves.toBe(credential);
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       credential,
       workspace.id,
-    )).resolves.toMatchObject({ kind: "static" });
+    )).resolves.toMatchObject({
+      kind: "ticket",
+      claims: { role: "owner", userId: "operator", membershipId: "personal" },
+    });
     expect(proxied.request?.headers.get("Cookie")).toBeNull();
 
     const destroyed = await appRequest(app, `/workspaces/${workspace.id}`, {

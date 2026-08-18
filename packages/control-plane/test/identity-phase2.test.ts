@@ -172,10 +172,17 @@ describe("identity phase 2", () => {
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
     expect(viewer.status).toBe(201);
-    // TODO(identity-phase-4): viewers get 200 with a role-carrying ticket once
-    // the box-image re-pin lands; deployed gateways only accept the static
-    // token, which cannot express read-only, so the proxy refuses viewers.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
+    // Viewers reach the gateway with a role-carrying ticket: it forces
+    // read-only terminals and file methods. The agent port stays refused.
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
+    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
+      providers.webAppCredentials.at(-1) ?? "",
+      workspace.id,
+    )).resolves.toMatchObject({
+      kind: "ticket",
+      claims: { role: "viewer", userId: "collaborator", membershipId: editor.membershipId },
+    });
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7444/sessions`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
     const created = await appRequest(app, `/workspaces/${workspace.id}/grants`, {
       ...json({ membershipId: editor.membershipId, role: "editor" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
@@ -185,7 +192,10 @@ describe("identity phase 2", () => {
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       providers.webAppCredentials.at(-1) ?? "",
       workspace.id,
-    )).resolves.toMatchObject({ kind: "static" });
+    )).resolves.toMatchObject({
+      kind: "ticket",
+      claims: { role: "editor", userId: "collaborator", membershipId: editor.membershipId },
+    });
     expect((await appRequest(app, `/workspaces/${workspace.id}`, { method: "DELETE", headers: { Cookie: editor.cookie } })).status).toBe(403);
 
     providers.drainStatus = 503;
