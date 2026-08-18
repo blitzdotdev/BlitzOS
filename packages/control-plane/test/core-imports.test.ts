@@ -43,6 +43,9 @@ const expected = [
   "janitors.ts",
   "oauth.ts",
   "principals.ts",
+  "providers/aws.ts",
+  "providers/aws-sigv4.ts",
+  "providers/aws-xml.ts",
   "providers/cloudflare-tunnels.ts",
   "providers/hetzner.ts",
   "providers/json-fetch.ts",
@@ -86,6 +89,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(61);
+    expect(expected).toHaveLength(64);
   });
 });

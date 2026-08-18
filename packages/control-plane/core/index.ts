@@ -26,6 +26,16 @@ export { createSessionPrincipalSource } from "./principals.js";
 export type { Principal, PrincipalSource } from "./principals.js";
 export { HetznerProvider } from "./providers/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./providers/hetzner.js";
+export {
+  AWS_USER_DATA_MAX_BYTES,
+  AwsProvider,
+  awsProviderFromEnv,
+} from "./providers/aws.js";
+export type {
+  AwsProviderConfig,
+  AwsProviderEnv,
+  AwsProviderOptions,
+} from "./providers/aws.js";
 export { VmProviderRegistry } from "./providers/registry.js";
 export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
 export {

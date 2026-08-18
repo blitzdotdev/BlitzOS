@@ -416,6 +416,7 @@ export default config;
 export const WORKER_SOURCE = normalizeSource(`import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase";
 import config from "virtual:teenybase";
 import {
+  awsProviderFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
   HetznerProvider,
@@ -455,6 +456,8 @@ type ManagedBindings = {
   MAX_CONCURRENT_WORKSPACES: string;
   MICROVM_HOSTS: string;
   CRED_MASTER_KEY: string;
+  AWS_ACCESS_KEY_ID?: string; AWS_SECRET_ACCESS_KEY?: string; AWS_SESSION_TOKEN?: string;
+  AWS_REGION?: string; AWS_IMAGE_ID?: string; AWS_SUBNET_ID?: string; AWS_SECURITY_GROUP_IDS?: string;
 };
 
 type ManagedEnv = {
@@ -495,8 +498,9 @@ function providersFor(env: ManagedBindings, db: Db): CoreRuntime["providers"] {
     (tokenVar) => dynamicBinding(env, tokenVar),
     { db },
   );
+  const aws = awsProviderFromEnv(env);
   return {
-    vmRegistry: new VmProviderRegistry([hetzner, microvm]),
+    vmRegistry: new VmProviderRegistry(aws === undefined ? [hetzner, microvm] : [hetzner, microvm, aws]),
     volume: hetzner,
     microvm,
   };

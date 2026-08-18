@@ -2,6 +2,7 @@ import type { DatabaseSettings } from "teenybase";
 import type { $Env } from "teenybase/worker";
 import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
 import {
+  awsProviderFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
   HetznerProvider,
@@ -40,6 +41,13 @@ type WorkerBindings = Env & {
   CRED_MASTER_KEY: string;
   CLOUDFLARE_API_TOKEN?: string;
   WEBAPP_TOKEN_SECRET?: string;
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
+  AWS_SESSION_TOKEN?: string;
+  AWS_REGION?: string;
+  AWS_IMAGE_ID?: string;
+  AWS_SUBNET_ID?: string;
+  AWS_SECURITY_GROUP_IDS?: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
 };
@@ -69,8 +77,15 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
     (tokenVar) => dynamicBinding(env, tokenVar),
     { db },
   );
+  // AWS joins the registry only when its variables are configured, so
+  // deployments without AWS keep exactly the providers they had. Volumes still
+  // route to Hetzner: `providers.volume` is single-valued.
+  const aws = awsProviderFromEnv(env);
+  const vmProviders = aws === undefined
+    ? [hetzner, microvm]
+    : [hetzner, microvm, aws];
   return {
-    vmRegistry: new VmProviderRegistry([hetzner, microvm]),
+    vmRegistry: new VmProviderRegistry(vmProviders),
     volume: hetzner,
     microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),

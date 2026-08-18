@@ -9,8 +9,9 @@ Self-hosters set `APP_URL` to their Worker origin.
   (idempotent, tombstone). The workspace view carries the public SSH endpoint
   and pinned host key.
 - The server owns the workspace view. Clients render it. Monotonic revision.
-- Two provider seams: `VmProvider` and `VolumeProvider`. Hetzner and microVM
-  pool adapters are included. Your cloud = one adapter file, not a fork.
+- Two provider seams: `VmProvider` and `VolumeProvider`. Hetzner, AWS
+  (EC2/EBS), and microVM pool adapters are included. Your cloud = one adapter
+  file, not a fork.
 - Volumes are raw cloud primitives, passed through — no shadow tables. A
   volume survives workspace destroy.
 - Readiness = the VM bootstrap posts box host keys to a single-use capability
@@ -85,8 +86,52 @@ npx wrangler secret put MICROVM_LAB_TOKEN --config packages/control-plane/wrangl
 
 Machine IDs are `mv-<cpu>c<memGb>g@<hostName>`. The included pool sizes are
 `2c2g` and `2c4g`; they appear only while the selected host's live
-`/v1/capacity` response has enough CPU, memory, and a VM slot. Non-`mv-`
-creates and all volume operations continue to use Hetzner.
+`/v1/capacity` response has enough CPU, memory, and a VM slot.
+
+## AWS provider (EC2 and EBS)
+
+The AWS adapter is optional and joins the VM registry only when its variables
+are set; a deployment that sets none of them keeps exactly the providers it had.
+Setting some but not all of `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
+`AWS_REGION` throws at startup rather than silently dropping the provider.
+
+```sh
+npx wrangler secret put AWS_ACCESS_KEY_ID --config packages/control-plane/wrangler.toml
+npx wrangler secret put AWS_SECRET_ACCESS_KEY --config packages/control-plane/wrangler.toml
+```
+
+Set `AWS_REGION` in `wrangler.toml` `[vars]`, plus the optional
+`AWS_IMAGE_ID`, `AWS_SUBNET_ID`, and `AWS_SECURITY_GROUP_IDS`.
+
+Machine IDs are `aws-<ec2InstanceType>@<region>`, for example
+`aws-t3.medium@us-east-1`; the curated catalog is `t3.medium`, `t3.large`,
+`m6i.large`, and `m6i.xlarge`, x86_64 only because the published box image is an
+amd64 tag. VM IDs are the raw EC2 instance ID (`i-` plus 8 or 17 hex digits),
+which cannot collide with Hetzner's numeric IDs or microVM's `microvm:` IDs.
+Requests are signed with a hand-rolled SigV4 on Web Crypto — the control-plane
+core may not import npm packages — and EC2's XML replies are read by a small
+targeted scanner, both under `core/providers/`.
+
+EC2 accepts at most 16 KiB (16,384 bytes) of user data in raw form, before
+base64 encoding: half of Hetzner's budget, of which the generated bootstrap
+already spends roughly 12-13 KiB. Sizing the caller payload accordingly matters
+more here than on Hetzner.
+
+Reachability is the operator's job. `AWS_SECURITY_GROUP_IDS` must name a group
+that admits inbound TCP 22 (the box container binds host port 22; the host's own
+sshd moves to 2222) and allows outbound HTTPS for phone-home, the box image
+download, and the workspace tunnel. Leaving it empty falls back to the VPC
+default group, which refuses inbound SSH, so the workspace will bootstrap and
+then be unreachable. With `AWS_SUBNET_ID` set the launch explicitly requests a
+public IPv4; without it the instance inherits the default subnet's auto-assign
+setting. Two AWS behaviours differ from Hetzner and are not papered over: EC2
+releases the auto-assigned public IPv4 when an instance stops, so a stopped
+workspace's stored SSH host goes stale, and an EBS volume can only attach inside
+its own availability zone, which is why `AWS_SUBNET_ID` also pins the zone.
+
+All volume operations still route to Hetzner: `CoreRuntime.providers.volume`
+holds a single adapter, so `AwsProvider`'s EBS implementation is available and
+tested but not yet reachable from the `/volumes` routes.
 
 Session cookies expire after 30 days by default. Set `SESSION_TTL_DAYS` to an
 integer from 1 through 3650 to override that lifetime. Expired sessions return
