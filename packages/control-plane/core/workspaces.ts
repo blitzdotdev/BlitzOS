@@ -40,6 +40,9 @@ import type {
 export type { WorkspaceRow } from "./workspace-records.js";
 
 const WORKSPACE_ERROR_MAX_LENGTH = 1_024;
+/** 2026-08-17 19:10 UTC: first moment new VMs booted the ticket-verifying
+ * gateway (box image 20260817a). Older VMs byte-compare the static token. */
+const TICKET_GATEWAYS_SINCE_MS = 1_786_993_800_000;
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
 const PHONE_HOME_REQUEST_FIELDS = Object.freeze([
   "pub_key_ecdsa",
@@ -559,21 +562,28 @@ export function addWorkspaceRoutes(
     }
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const pathAndQuery = `${suffix === "" ? "/" : suffix}${requestURL.search}`;
-    // Every reachable box verifies v1 tickets: org-scoped workspaces all
-    // postdate the 20260816b image pin, and org-less relics 404 above. The
-    // gateway forces read-only terminals and file methods for viewer tickets;
-    // the actor has no such guard yet, so viewers stay refused on the agent
-    // port until it grows one.
-    if (access.role === "viewer" && port === 7444) {
-      throw new HttpError(403, "viewers cannot drive the workspace agent");
+    // Boxes boot the image pinned at their creation and never upgrade in
+    // place. VMs from before the 20260817a pin run gateways that only
+    // byte-compare the static token, so they keep receiving it and viewers
+    // stay refused there. Ticket-capable gateways force read-only terminals
+    // and file methods for viewer tickets; the agent port stays refused for
+    // viewers everywhere until the actor grows its own guard.
+    // TODO(identity-phase-4): drop the gate once every pre-ticket VM is gone.
+    const ticketCapable = row.created_at >= TICKET_GATEWAYS_SINCE_MS;
+    if (access.role === "viewer" && (port === 7444 || !ticketCapable)) {
+      throw new HttpError(403, ticketCapable
+        ? "viewers cannot drive the workspace agent"
+        : "read-only access arrives when this workspace VM is recycled");
     }
-    const credential = await requireWorkspaceWebAppAuth(runtime.providers.webAppAuth)
-      .mint({
-        workspaceId: row.id,
-        userId: access.userId,
-        membershipId: access.membershipId,
-        role: access.role,
-      });
+    const webAppAuth = requireWorkspaceWebAppAuth(runtime.providers.webAppAuth);
+    const credential = ticketCapable
+      ? await webAppAuth.mint({
+          workspaceId: row.id,
+          userId: access.userId,
+          membershipId: access.membershipId,
+          role: access.role,
+        })
+      : await webAppAuth.tokenFor(row.id);
     const authenticatedRequest = requestWithWebAppCredential(context.req.raw, credential);
     const workspaceTunnels = runtime.providers.workspaceTunnels;
     let upstream: Response | null;

@@ -216,6 +216,30 @@ describe("identity phase 2", () => {
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
   });
 
+  it("keeps the static token and viewer refusal for pre-ticket VMs", async () => {
+    const providers = new ProxyProviders();
+    const app = appWithProviders(providers, providers);
+    const ownerCookie = await operatorSession(app);
+    const member = await sameOrgSession("colleague");
+    const workspace = await createWorkspace(app, ownerCookie);
+    // Age the workspace to before the 20260817a pin: its VM never upgrades,
+    // so its gateway only byte-compares the static token.
+    await env.DB.prepare("UPDATE workspaces SET created_at = 1786900000000 WHERE id = ?1")
+      .bind(workspace.id).run();
+
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: ownerCookie } })).status).toBe(200);
+    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
+      providers.webAppCredentials.at(-1) ?? "",
+      workspace.id,
+    )).resolves.toMatchObject({ kind: "static" });
+
+    await appRequest(app, `/workspaces/${workspace.id}/grants`, {
+      ...json({ membershipId: member.membershipId, role: "viewer" }),
+      headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
+    });
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: member.cookie } })).status).toBe(403);
+  });
+
   it("lists real memberships only and keeps last-active-admin protection", async () => {
     const { app } = harness();
     const adminCookie = await operatorSession(app);
