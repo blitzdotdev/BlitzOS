@@ -1,9 +1,9 @@
 <h1 align="center">BlitzOS</h1>
 
-<p align="center"><strong>Collaborative platform for running agents.</strong></p>
+<p align="center"><strong>Open platform for running agents.</strong></p>
 
 <p align="center">
-  One place for teams to run agents. Agents run in linux workspaces with scoped credentials, tools, and data. Create and share agent workspaces with teammates. 
+  One place for teams to run agents. Give everyone a cloud agent with scoped credentials, tools, and data. 
 </p>
 
 <p align="center">
@@ -14,14 +14,14 @@
 
 ## Capabilities
 
-- **Run persistent agent workspaces.** Launch a complete Linux environment on your cloud
+- **Cloud agent workspaces.** Give agents a complete Linux work environment, deployed on your cloud 
 - **Scoped agent workspaces.** Scope the workspace to hold only the credentials and data the work requires.
+- **Multiplayer** Setup agent workspaces with custom credentials, harness, data and share with teammates
+- **BYO agent.** Run Claude Code, Codex, or any other harness
+- **Start from Slack** Launch agent runs in Slack and continue from browser webUI 
 - **Browser webUI** Create, watch, and steer agents in workspaces via chat/terminal. View files and live port previews
-- **BYO agent.** Run Claude Code, Codex, or any other harness  
-- **Multiplayer** Invite teammates to view, edit, or resume agent sessions in a workspace, like Google Docs. 
-- **Agent session persistence.** Sessions are stored with the workspace, so agents keep working through disconnects and you can resume later from any device.
 - **Programmable agent workspaces** Agents can provision agent workspaces for their subagents via API. 
-- **Build and automate.** Use agents for quick tasks or build internal dashboards, pipelines, CRMs, and tools
+- **Build internal tools.** Agents can build internal dashboards, pipelines, CRMs, and tools via API, hosted on Cloudflare
 
 ## Architecture
 
