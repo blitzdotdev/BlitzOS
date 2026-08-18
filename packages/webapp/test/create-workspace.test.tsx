@@ -29,6 +29,7 @@ describe("create workspace dialog", () => {
     expect(view.container.textContent).toContain("Hetzner · fsn1");
     expect(view.container.textContent).toContain("Local lab");
     expect(view.container.textContent).toContain("SSH public key (optional)");
+    expect(view.container.querySelector<HTMLDetailsElement>('.blueprint-advanced')?.open).toBe(false);
     expect(view.container.textContent).toContain(
       "Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.",
     );
@@ -101,6 +102,58 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
+  it("submits a populated advanced environment", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => machines}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    const key = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable key 1"]',
+    )!;
+    const value = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable value 1"]',
+    )!;
+    const script = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Startup script"]',
+    )!;
+    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (inputSetter === undefined || textareaSetter === undefined) throw new Error('input setter unavailable');
+    await act(async () => {
+      inputSetter.call(key, 'API_ORIGIN');
+      key.dispatchEvent(new Event('input', { bubbles: true }));
+      inputSetter.call(value, 'https://api.example');
+      value.dispatchEvent(new Event('input', { bubbles: true }));
+      textareaSetter.call(script, 'npm install\n');
+      script.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith({
+      machineTypeId: 'cx23@fsn1',
+      orgShareRole: 'editor',
+      environment: {
+        env: { API_ORIGIN: 'https://api.example' },
+        startupScript: 'npm install\n',
+      },
+    });
+    await view.unmount();
+  });
+
   it("disables volume selection for a provider without volume support", async () => {
     const submit = vi.fn();
     const view = await render(
@@ -150,6 +203,10 @@ describe("create workspace dialog", () => {
       machineTypeId: "cx23@fsn1",
       createdAt: 1,
       createdBy: { name: "Ada Park", avatarUrl: null },
+      environment: {
+        env: { FROM_TEMPLATE: "yes" },
+        startupScript: "./setup.sh\n",
+      },
       folders: [
         { id: "folder-a", name: "datasets", role: "viewer" as const },
         { id: "folder-b", name: "private", role: null },
@@ -189,7 +246,11 @@ describe("create workspace dialog", () => {
         new Event("submit", { bubbles: true, cancelable: true }),
       );
     });
-    expect(submit).toHaveBeenCalledWith({ templateId: "template-1", orgShareRole: "editor" });
+    expect(submit).toHaveBeenCalledWith({
+      templateId: "template-1",
+      orgShareRole: "editor",
+      environment: template.environment,
+    });
 
     const newTile = [...view.container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("New template"))!;

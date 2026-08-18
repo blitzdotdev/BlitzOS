@@ -1,0 +1,5 @@
+{
+  "env": {},
+  "startupScript": ["echo", "nope"],
+  "filesReady": true
+}

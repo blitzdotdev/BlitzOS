@@ -33,6 +33,19 @@ const volume: SharedShape<wire.Volume, schema.Volume> = {
   attachedTo: "workspace",
 };
 
+const environment: SharedShape<
+  wire.WorkspaceEnvironment,
+  schema.WorkspaceEnvironment
+> = {
+  env: { API_ORIGIN: "https://api.example" },
+  startupScript: "npm install\n",
+};
+
+const environmentResponse: SharedShape<
+  wire.WorkspaceEnvironmentResponse,
+  schema.WorkspaceEnvironmentResponse
+> = { ...environment, filesReady: true };
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -53,6 +66,7 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   role: "owner",
   orgShareRole: "editor",
   owner: { name: "Owner", avatarUrl: null },
+  environment,
 };
 
 const workspaceTemplate: SharedShape<
@@ -64,6 +78,7 @@ const workspaceTemplate: SharedShape<
   machineTypeId: "mv-2c2g@lab",
   createdAt: 1,
   createdBy: { name: "Owner", avatarUrl: null },
+  environment,
   folders: [{ id: "folder", name: "Shared", role: "editor" }],
 };
 
@@ -79,6 +94,7 @@ const createWorkspaceTemplate: SharedShape<
   name: "web analysis",
   machineTypeId: "mv-2c2g@lab",
   folderIds: ["folder"],
+  environment,
 };
 
 const createdWorkspaceTemplate: SharedShape<
@@ -107,6 +123,7 @@ const createWorkspaceRequest: SharedShape<
       github: { scopes: ["contents:read"] },
     },
   },
+  environment,
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -227,6 +244,8 @@ const fullFieldValues = [
   machineType,
   machineTypeFailure,
   volume,
+  environment,
+  environmentResponse,
   workspace,
   workspaceTemplate,
   workspaceTemplates,
@@ -261,6 +280,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
+    expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
+    expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.WorkspaceTemplateView>().toEqualTypeOf<schema.WorkspaceTemplateView>();
     expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();

@@ -22,7 +22,8 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     error: phase === "error" ? "provider failed" : null,
     role: "owner",
     orgShareRole: null,
-    owner: { name: "Owner", avatarUrl: null },
+  owner: { name: "Owner", avatarUrl: null },
+  environment: null,
   };
 }
 

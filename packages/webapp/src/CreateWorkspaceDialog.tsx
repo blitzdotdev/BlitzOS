@@ -2,6 +2,11 @@ import type { CreateWorkspaceRequest, MachineType, Volume, WorkspaceTemplateView
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
+import {
+  EMPTY_WORKSPACE_ENVIRONMENT,
+  EnvironmentEditor,
+  populatedEnvironment,
+} from './EnvironmentEditor';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
@@ -35,6 +40,7 @@ export function CreateWorkspaceDialog({
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
   const submitted = useRef(false);
   const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
   const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
@@ -76,7 +82,14 @@ export function CreateWorkspaceDialog({
     if (busy || submitted.current) return;
     if (selectedTemplate !== null) {
       submitted.current = true;
-      onSubmit({ templateId: selectedTemplate.id, orgShareRole: 'editor' });
+      const input: CreateWorkspaceDialogInput = {
+        templateId: selectedTemplate.id,
+        orgShareRole: 'editor',
+      };
+      const configured = populatedEnvironment(environment);
+      if (configured !== undefined) input.environment = configured;
+      else if (selectedTemplate.environment !== null) input.environment = environment;
+      onSubmit(input);
       return;
     }
     if (selectedMachineType === '') return;
@@ -93,6 +106,8 @@ export function CreateWorkspaceDialog({
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
     if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
+    const configured = populatedEnvironment(environment);
+    if (configured !== undefined) input.environment = configured;
     onSubmit(input);
   };
 
@@ -130,7 +145,12 @@ export function CreateWorkspaceDialog({
                     type="button"
                     key={template.id}
                     aria-pressed={active}
-                    onClick={() => setSelectedTemplateId(active ? null : template.id)}
+                    onClick={() => {
+                      setSelectedTemplateId(active ? null : template.id);
+                      setEnvironment(active
+                        ? EMPTY_WORKSPACE_ENVIRONMENT
+                        : template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+                    }}
                   >
                     <strong>{template.name}</strong>
                     <span>{machineTypeLabel(template.machineTypeId)}</span>
@@ -262,6 +282,12 @@ export function CreateWorkspaceDialog({
               spellCheck={false}
             />
           </section>}
+
+          <EnvironmentEditor
+            key={selectedTemplateId ?? 'workspace'}
+            initial={selectedTemplate?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT}
+            onChange={setEnvironment}
+          />
         </div>
 
         <footer className="create-workspace-actions">

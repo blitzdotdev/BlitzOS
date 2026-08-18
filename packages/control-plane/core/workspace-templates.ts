@@ -1,10 +1,15 @@
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
+import {
+  parseWorkspaceEnvironment,
+  workspaceEnvironmentFromJson,
+  workspaceEnvironmentJson,
+} from "./environment.js";
 import { filesActorForRequest, folderRole, requireFolderAccess } from "./files/access.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
-import type { WorkspaceTemplateView } from "./wire.js";
+import type { WorkspaceEnvironment, WorkspaceTemplateView } from "./wire.js";
 
 export interface WorkspaceTemplateRow {
   id: string;
@@ -14,6 +19,7 @@ export interface WorkspaceTemplateRow {
   created_by_membership_id: string;
   created_at: number;
   updated_at: number;
+  environment: string | null;
 }
 
 interface TemplateListRow extends WorkspaceTemplateRow {
@@ -35,6 +41,7 @@ interface CreateTemplateInput {
   name: string;
   machineTypeId: string;
   folderIds: string[];
+  environment?: WorkspaceEnvironment;
 }
 
 const MAX_TEMPLATE_FOLDERS = 16;
@@ -52,7 +59,11 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
   if (folderIds.length > MAX_TEMPLATE_FOLDERS) {
     throw new HttpError(400, `folderIds must have at most ${String(MAX_TEMPLATE_FOLDERS)} entries`);
   }
-  return { name, machineTypeId, folderIds };
+  const result: CreateTemplateInput = { name, machineTypeId, folderIds };
+  if (value.environment !== undefined) {
+    result.environment = parseWorkspaceEnvironment(value.environment);
+  }
+  return result;
 }
 
 export async function workspaceTemplateForCreate(
@@ -146,6 +157,7 @@ function templateView(
     machineTypeId: row.machine_type_id,
     createdAt: row.created_at,
     createdBy: { name: row.creator_name, avatarUrl: row.creator_avatar_url },
+    environment: workspaceEnvironmentFromJson(row.environment),
     folders: folders.map((folder) => ({
       id: folder.folder_id,
       name: folder.name,
@@ -197,7 +209,7 @@ export function addWorkspaceTemplateRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
-    const input = parseCreateTemplate(await readJson(context.req.raw));
+    const input = parseCreateTemplate(await readJson(context.req.raw, 512 * 1024));
     // Fails loudly on machine types no provider claims, same as create.
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     for (const folderId of input.folderIds) {
@@ -207,9 +219,18 @@ export function addWorkspaceTemplateRoutes(
     const now = Date.now();
     await rows(runtime.db, {
       q: `INSERT INTO workspace_templates
-          (id, org_id, name, machine_type_id, created_by_membership_id, created_at, updated_at)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)`,
-      v: [id, principal.orgId, input.name, input.machineTypeId, principal.membershipId, now],
+          (id, org_id, name, machine_type_id, created_by_membership_id,
+           created_at, updated_at, environment)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)`,
+      v: [
+        id,
+        principal.orgId,
+        input.name,
+        input.machineTypeId,
+        principal.membershipId,
+        now,
+        input.environment === undefined ? null : workspaceEnvironmentJson(input.environment),
+      ],
     });
     for (const folderId of input.folderIds) {
       await rows(runtime.db, {
@@ -231,6 +252,9 @@ export function addWorkspaceTemplateRoutes(
         created_by_membership_id: principal.membershipId,
         created_at: now,
         updated_at: now,
+        environment: input.environment === undefined
+          ? null
+          : workspaceEnvironmentJson(input.environment),
         creator_name: creator?.name ?? principal.id,
         creator_avatar_url: creator?.avatar_url ?? null,
       },

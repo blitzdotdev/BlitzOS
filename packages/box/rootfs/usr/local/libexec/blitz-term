@@ -2,6 +2,16 @@
 set -euo pipefail
 
 workspace=/workspace
+environment_file=$BLITZ_STATE_DIR/env/user-env.sh
+environment_attempt=0
+while [ ! -r "$environment_file" ] && [ -r "$BLITZ_STATE_DIR/origin" ] && [ "$environment_attempt" -lt 50 ]; do
+  environment_attempt=$((environment_attempt + 1))
+  sleep 0.1
+done
+if [ -r "$environment_file" ]; then
+  . "$environment_file" || :
+fi
+unset environment_file environment_attempt
 
 plain_shell() {
   local shell=${SHELL:-}

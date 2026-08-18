@@ -1,9 +1,18 @@
-import type { MachineType, WorkspaceTemplateView } from '@blitzos/schema';
+import type {
+  CreateWorkspaceTemplateRequest,
+  MachineType,
+  WorkspaceTemplateView,
+} from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { FolderObjectView, FolderView } from '../file-library-api';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
 import { MachineCatalogGrid } from '../MachineCatalogGrid';
+import {
+  EMPTY_WORKSPACE_ENVIRONMENT,
+  EnvironmentEditor,
+  populatedEnvironment,
+} from '../EnvironmentEditor';
 import { DriveAvatar } from './DriveAvatar';
 import { CloseGlyph } from './DriveIcons';
 import { DocDuoIcon, FolderDuoIcon } from '../files-icons';
@@ -63,6 +72,7 @@ export function CreateTemplateScreen({
   const [dropHint, setDropHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -208,11 +218,15 @@ export function CreateTemplateScreen({
           await client.setFolderOrgRole(folder.id, 'viewer');
         }
       }
-      const request = {
+      const request: CreateWorkspaceTemplateRequest = {
         name: trimmed,
         machineTypeId,
         folderIds: [...attachedIds],
       };
+      // Environment rides only on create: the PUT handler replaces name,
+      // machine, and folders, and leaves the stored environment untouched.
+      const configured = populatedEnvironment(environment);
+      if (editTemplateId === undefined && configured !== undefined) request.environment = configured;
       const { template } = editTemplateId === undefined
         ? await client.createWorkspaceTemplate(request)
         : await client.updateWorkspaceTemplate(editTemplateId, request);
@@ -480,6 +494,13 @@ export function CreateTemplateScreen({
               </span>
             </label>
           </section>
+
+          {editTemplateId === undefined && (
+            <EnvironmentEditor
+              initial={EMPTY_WORKSPACE_ENVIRONMENT}
+              onChange={setEnvironment}
+            />
+          )}
         </div>
 
         <footer className="create-workspace-actions">

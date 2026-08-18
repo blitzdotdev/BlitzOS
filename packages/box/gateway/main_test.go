@@ -298,6 +298,38 @@ func TestGatewayLegacyRoutesWhenBothTokensAbsent(t *testing.T) {
 	}
 }
 
+func TestStartupLogIsReadOnly(t *testing.T) {
+	directory := t.TempDir()
+	logPath := filepath.Join(directory, "startup.log")
+	if err := os.WriteFile(logPath, []byte("startup output\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{
+		startupLogPath:  logPath,
+		webAppTokenPath: filepath.Join(directory, "webapp-token"),
+		tunnelTokenPath: filepath.Join(directory, "tunnel-token"),
+	}
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(method, "http://box/startup.log", nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", method, response.Code)
+		}
+		if method == http.MethodGet && response.Body.String() != "startup output\n" {
+			t.Fatalf("startup log body = %q", response.Body.String())
+		}
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPut, "http://box/startup.log", strings.NewReader("replace")))
+	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("write response = %d Allow=%q", response.Code, response.Header().Get("Allow"))
+	}
+	stored, err := os.ReadFile(logPath)
+	if err != nil || string(stored) != "startup output\n" {
+		t.Fatalf("startup log changed: %q %v", stored, err)
+	}
+}
+
 func TestGatewayWebAppTokenAuthentication(t *testing.T) {
 	upstreamRequests := 0
 	dufs := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

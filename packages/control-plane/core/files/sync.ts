@@ -4,6 +4,9 @@ import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
 import { folderObjectPrefix } from "./keys.js";
 import { requireFolderAccess, type FilesActor, type FolderRole } from "./access.js";
+import { scheduleSync } from "./schedule.js";
+
+export { scheduleSync, scheduledSyncsSettled } from "./schedule.js";
 
 /**
  * Paid Workers allow 10,000 subrequests per invocation. A transfer consumes at
@@ -650,53 +653,24 @@ export async function runReadyWorkspaceFileSync(
   retryDelaysMs: readonly number[] = [8_000, 15_000],
 ): Promise<FileSyncResult> {
   let result = await runWorkspaceFileSync(runtime, workspaceId);
-  if (result.attachments > 0) return result;
-  const pending = await rows<{ workspace_id: string }>(runtime.db, {
-    q: "SELECT workspace_id FROM folder_attachments WHERE workspace_id = ?1 LIMIT 1",
+  if (result.attachments === 0) {
+    const pending = await rows<{ workspace_id: string }>(runtime.db, {
+      q: "SELECT workspace_id FROM folder_attachments WHERE workspace_id = ?1 LIMIT 1",
+      v: [workspaceId],
+    });
+    if (pending.length > 0) {
+      for (const delayMs of retryDelaysMs) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        result = await runWorkspaceFileSync(runtime, workspaceId);
+        if (result.attachments > 0) break;
+      }
+    }
+  }
+  await rows(runtime.db, {
+    q: "UPDATE workspaces SET files_ready = 1 WHERE id = ?1 AND phase = 'ready'",
     v: [workspaceId],
   });
-  if (pending.length === 0) return result;
-  for (const delayMs of retryDelaysMs) {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    result = await runWorkspaceFileSync(runtime, workspaceId);
-    if (result.attachments > 0) return result;
-  }
   return result;
-}
-
-/** Fire-and-forget convergence pass for a request that changed what should
- * be on a guest (attach, upload, workspace becoming ready). The scheduled
- * sweep remains the backstop when this best-effort pass loses to a tunnel
- * still connecting. */
-const pendingScheduledSyncs = new Set<Promise<void>>();
-
-/** Settles when every schedule-triggered pass started so far has finished.
- * Tests use this to sequence around the fire-and-forget triggers. */
-export async function scheduledSyncsSettled(): Promise<void> {
-  while (pendingScheduledSyncs.size > 0) {
-    await Promise.all([...pendingScheduledSyncs]);
-  }
-}
-
-export function scheduleSync(
-  runtime: CoreRuntime,
-  run: (runtime: CoreRuntime) => Promise<FileSyncResult>,
-): void {
-  const sync = run(runtime).then(() => undefined).catch((caught) => {
-    const error = caught instanceof Error ? caught : new Error("folder sync failed");
-    runtime.reportError("folder_sync_failed", error);
-  });
-  pendingScheduledSyncs.add(sync);
-  void sync.finally(() => pendingScheduledSyncs.delete(sync));
-  try {
-    runtime.waitUntil(sync);
-  } catch (caught) {
-    // Some local/managed adapters do not expose waitUntil after the response
-    // lifecycle closes. The promise was already started, so the write remains
-    // successful and the scheduled sweep is still the durability backstop.
-    const error = caught instanceof Error ? caught : new Error("folder sync scheduling failed");
-    runtime.reportError("folder_sync_schedule_failed", error);
-  }
 }
 
 export function scheduleFolderSync(runtime: CoreRuntime, folderId: string): void {

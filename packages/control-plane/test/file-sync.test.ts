@@ -289,8 +289,14 @@ describe("control-plane folder sync", () => {
       body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
     });
     expect(ready.status).toBe(200);
+    expect(await env.DB.prepare(
+      "SELECT files_ready FROM workspaces WHERE id = ?1",
+    ).bind(workspace.id).first<number>("files_ready")).toBe(0);
     await scheduledSyncsSettled();
     expect(providers.files.get("note.txt")?.body).toBe("remote");
+    expect(await env.DB.prepare(
+      "SELECT files_ready FROM workspaces WHERE id = ?1",
+    ).bind(workspace.id).first<number>("files_ready")).toBe(1);
   });
 
   it("materializes a folder onto an already-ready workspace right when it is attached", async () => {

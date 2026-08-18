@@ -166,6 +166,17 @@ class SessionActor {
         stopReason = "cancelled";
         return { stopReason };
       }
+      let environment: NodeJS.ProcessEnv;
+      try {
+        environment = await this.credentials.environment();
+      } catch {
+        await this.visibleError("Workspace environment could not be loaded; the prompt was not sent.", identity);
+        return { stopReason };
+      }
+      if (abort.signal.aborted) {
+        stopReason = "cancelled";
+        return { stopReason };
+      }
       try {
         const output = await this.adapter.runTurn({
           sessionId: this.id,
@@ -175,6 +186,7 @@ class SessionActor {
           resumeId: this.resumeId,
           signal: abort.signal,
           token,
+          environment,
           config: this.config,
           emit: (update) => this.emit(update, identity),
           requestPermission: (request) => this.requestPermission(request, identity),

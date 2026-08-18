@@ -1,5 +1,6 @@
 import type { Db } from "./db.js";
 import { first } from "./db.js";
+import { workspaceEnvironmentFromJson } from "./environment.js";
 import { isMicrovmProviderId } from "./providers/microvm.js";
 import type { Phase, RetryAction, WorkspaceView } from "./wire.js";
 
@@ -22,6 +23,8 @@ export interface WorkspaceRow {
   created_at: number;
   updated_at: number;
   manifest: string | null;
+  environment: string | null;
+  files_ready: number;
   tunnel_id: string | null;
   tunnel_hostname: string | null;
   dns_record_id: string | null;
@@ -80,6 +83,7 @@ export function workspaceView(
       name: row.owner_name ?? row.owner_id,
       avatarUrl: row.owner_avatar_url ?? null,
     },
+    environment: workspaceEnvironmentFromJson(row.environment),
   };
 }
 
