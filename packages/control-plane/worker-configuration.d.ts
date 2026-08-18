@@ -5,8 +5,8 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	APP_URL: "https://blitz-control-plane.blitzapp.workers.dev";
 	BOX_IMAGE_REF: "https://blitz-control-plane.blitzapp.workers.dev/box-image/manifest.json";
-	BOX_IMAGE_TAG: "blitz-box:20260817c-amd64";
-	BOX_IMAGE_SHA256: "c75c3ed525b7a2b4602ed31318de891244f82d56a2b61d5ef99c05fa43324b30";
+	BOX_IMAGE_TAG: "blitz-box:20260818a-amd64";
+	BOX_IMAGE_SHA256: "df64957ae502a6b903ac73808e9d0c2cdf4c7a5c67265c62daf95e1b7c1af3bd";
 	SESSION_TTL_DAYS: "30";
 	MAX_CONCURRENT_WORKSPACES: "10";
 	MICROVM_HOSTS: "[{\"name\":\"lab\",\"tokenVar\":\"MICROVM_LAB_TOKEN\",\"dynamic\":true}]";

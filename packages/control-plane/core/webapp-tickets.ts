@@ -11,6 +11,13 @@ export const WEBAPP_TICKET_TTL_SECONDS = 60;
  * verification declares none and always receives the static token. */
 export const BOX_IMAGE_TICKETS_SINCE_MS = 1_786_993_800_000;
 
+/** Set when image 20260818a became the pin. Its gateway refuses a terminal
+ * request that is not shaped to carry the read-only flag — earlier images
+ * appended it as a third argument, which slid it into the session-key slot
+ * and quietly restored write access — and its blitz-term will not create a
+ * session for an observer. Viewers may only reach VMs booted from it. */
+export const BOX_IMAGE_VIEWER_GUARDS_SINCE_MS = 1_787_043_600_000;
+
 export interface WebAppTicketClaims {
   workspaceId: string;
   userId: string;

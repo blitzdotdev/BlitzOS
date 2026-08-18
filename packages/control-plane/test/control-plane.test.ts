@@ -21,7 +21,10 @@ import {
 } from "../core/index.js";
 import { buildUserData } from "../core/cloud-init.js";
 import { hashSecret } from "../core/crypto.js";
-import { BOX_IMAGE_TICKETS_SINCE_MS } from "../core/webapp-tickets.js";
+import {
+  BOX_IMAGE_TICKETS_SINCE_MS,
+  BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
+} from "../core/webapp-tickets.js";
 import { HetznerProvider } from "../core/providers/hetzner.js";
 import worker from "../src/worker.js";
 import {
@@ -707,6 +710,7 @@ describe("control plane security and lifecycle", () => {
       volumes: true,
       maxUserDataBytes: 32 * 1024,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
+      webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
     });
   });
 

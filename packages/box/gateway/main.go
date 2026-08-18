@@ -177,6 +177,14 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		}
 	}
 	if request.URL.Path == "/admin/drain" {
+		// Drain closes every matching connection and an empty target matches
+		// all of them, so it is an administrative switch, not a user surface.
+		// The control plane calls it with the workspace token, which presents
+		// as the owner.
+		if identity.Role != "owner" && identity.Role != "admin" {
+			http.Error(response, "forbidden", http.StatusForbidden)
+			return
+		}
 		removeWebAppTokenHeader(request.Header)
 		g.serveDrain(response, request)
 		return
@@ -216,11 +224,24 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
+		// The actor has no role guard of its own, so an observer reaching it
+		// here would drive the agent.
+		if identity.Role == "viewer" {
+			http.Error(response, "viewers cannot drive the workspace agent", http.StatusForbidden)
+			return
+		}
 		g.serveACP(response, request)
 		return
 	}
 	removeWebAppTokenHeader(request.Header)
 	if strings.HasPrefix(request.URL.Path, "/preview/") {
+		// A preview proxies straight into whatever the workspace is running,
+		// so an observer gets to look but not to send.
+		if identity.Role == "viewer" && !filesReadMethod(request.Method) {
+			response.Header().Set("Allow", "GET, HEAD, OPTIONS")
+			http.Error(response, "viewer preview access is read-only", http.StatusForbidden)
+			return
+		}
 		g.servePreview(response, request)
 		return
 	}
@@ -283,7 +304,10 @@ func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request
 
 func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request) {
 	if identity, ok := request.Context().Value(webAppIdentityContextKey{}).(webAppIdentity); ok && identity.Role == "viewer" {
-		forceReadOnlyTerminalArgs(request.URL)
+		if !forceReadOnlyTerminalArgs(request.URL) {
+			http.Error(response, "terminal requires a session type and key", http.StatusBadRequest)
+			return
+		}
 	}
 	target := g.terminal
 	if target == nil {
@@ -664,18 +688,29 @@ func filesReadMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions || method == "PROPFIND"
 }
 
-func forceReadOnlyTerminalArgs(target *url.URL) {
+// forceReadOnlyTerminalArgs appends the read-only flag to a terminal request,
+// reporting whether the request was shaped to take it.
+//
+// The contract is `<type> <key> [ro]`, positional. Anything other than the two
+// positional arguments is refused rather than repaired: with one argument the
+// appended "ro" would land in the session-key slot and blitz-term would
+// default the mode back to read-write, handing an observer a writable shell.
+func forceReadOnlyTerminalArgs(target *url.URL) bool {
 	query := target.Query()
-	args := append([]string(nil), query["arg"]...)
-	if len(args) > 2 {
-		args = args[:2]
+	args := query["arg"]
+	// The client already asks for read-only; nothing to add.
+	if len(args) == 3 && args[2] == "ro" {
+		return true
+	}
+	if len(args) != 2 {
+		return false
 	}
 	query.Del("arg")
-	for _, value := range args {
-		query.Add("arg", value)
-	}
+	query.Add("arg", args[0])
+	query.Add("arg", args[1])
 	query.Add("arg", "ro")
 	target.RawQuery = query.Encode()
+	return true
 }
 
 func removeWebAppTokenHeader(header http.Header) {

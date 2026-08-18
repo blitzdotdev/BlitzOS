@@ -57,8 +57,12 @@ new_session() {
 }
 
 if [ "$mode" = ro ]; then
+  # An observer attaches to what is already running and never starts
+  # anything: creating on demand here would let a read-only visitor spawn
+  # agent processes at will, one per session key they invent.
   if ! tmux has-session -t "=$session" 2>/dev/null; then
-    new_session || tmux has-session -t "=$session"
+    echo "terminal: no session to observe yet" >&2
+    exit 3
   fi
   exec tmux -u attach-session -r -t "=$session"
 fi

@@ -4,7 +4,11 @@ import type { WorkspaceView } from "@blitzos/schema";
 import { hashSecret, randomToken } from "../core/crypto.js";
 import { INVITE_TTL_MS, inviteCodeHash } from "../core/identity/invites.js";
 import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
-import { BOX_IMAGE_TICKETS_SINCE_MS, WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
+import {
+  BOX_IMAGE_TICKETS_SINCE_MS,
+  BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
+  WorkspaceWebAppAuth,
+} from "../core/webapp-tickets.js";
 import {
   FakeProviders,
   appRequest,
@@ -97,6 +101,7 @@ class ProxyProviders extends FakeProviders {
       ...super.capabilities(),
       webAppActorBypassesGateway: true,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
+      webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
     };
   }
 
@@ -178,11 +183,26 @@ describe("identity phase 2", () => {
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
     expect(viewer.status).toBe(201);
-    // Viewers stay refused on every port: the deployed gateway's read-only
-    // force is bypassable (a single arg lands "ro" in the session-key slot),
-    // so a viewer ticket would buy a writable shell.
-    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
+    // A viewer reaches the files port with a role-carrying ticket once the VM
+    // boots a guest that enforces read-only; the agent port stays closed.
+    await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")
+      .bind(BOX_IMAGE_VIEWER_GUARDS_SINCE_MS, workspace.id).run();
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
+    await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
+      providers.webAppCredentials.at(-1) ?? "",
+      workspace.id,
+    )).resolves.toMatchObject({
+      kind: "ticket",
+      claims: { role: "viewer", userId: "collaborator", membershipId: editor.membershipId },
+    });
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
+
+    // A VM from before the guarded image refuses viewers outright.
+    await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")
+      .bind(BOX_IMAGE_VIEWER_GUARDS_SINCE_MS - 1, workspace.id).run();
+    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
+    await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")
+      .bind(Date.now(), workspace.id).run();
     const created = await appRequest(app, `/workspaces/${workspace.id}/grants`, {
       ...json({ membershipId: editor.membershipId, role: "editor" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },

@@ -194,6 +194,16 @@ describe("ACP actor", () => {
       new Promise<void>((resolve) => first.socket.once("close", () => resolve())),
       new Promise<void>((resolve) => second.socket.once("close", () => resolve())),
     ]);
+    // Drain with no target closes every connection, so a valid ticket is not
+    // enough to call it — only the control plane's workspace token.
+    for (const role of ["viewer", "editor"] as const) {
+      const refused = await fetch(item.url.replace("ws://", "http://") + "/admin/drain", {
+        method: "POST",
+        headers: { "X-Blitz-WebApp-Token": actorTicket(role) },
+      });
+      expect(refused.status).toBe(403);
+    }
+
     const response = await fetch(item.url.replace("ws://", "http://") + "/admin/drain", {
       method: "POST",
       headers: { "X-Blitz-WebApp-Token": ACTOR_TEST_SECRET },

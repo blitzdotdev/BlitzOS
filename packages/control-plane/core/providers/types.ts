@@ -14,6 +14,9 @@ export interface ProviderCapabilities {
    * created_at only means something against its own provider's cutoff.
    * Undefined is "never": those VMs keep receiving the static token. */
   webAppTicketsSinceMs?: number;
+  /** Epoch ms from which this provider's guests enforce viewer read-only
+   * correctly. Undefined is "never": viewers are refused. */
+  webAppViewerGuardsSinceMs?: number;
 }
 
 export interface CreateVmInput {

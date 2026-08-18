@@ -599,16 +599,19 @@ export function addWorkspaceRoutes(
     // so the cutoff comes from the provider that owns this VM, never from a
     // single global date.
     // TODO(identity-phase-4): drop the gate once every pre-ticket VM is gone.
-    const ticketsSince = provider.capabilities().webAppTicketsSinceMs;
+    const capabilities = provider.capabilities();
+    const ticketsSince = capabilities.webAppTicketsSinceMs;
     const ticketCapable = ticketsSince !== undefined && row.created_at >= ticketsSince;
-    // Viewers stay refused on every deployed image. The gateway's read-only
-    // force appends "ro" as a THIRD argument, so a request carrying a single
-    // arg lands "ro" in blitz-term's session-key slot and the mode defaults
-    // back to rw — a writable shell. Its read-only path also creates a
-    // missing session, so an observer can spawn agents. Restore viewer
-    // access only alongside a box image that fixes both.
-    if (access.role === "viewer") {
-      throw new HttpError(403, "read-only access arrives when this workspace VM is recycled");
+    // A viewer needs a guest that actually holds the line: earlier images
+    // could be talked into a writable shell, and their observer path spawned
+    // sessions on demand. The agent port stays closed to viewers on every
+    // image — the actor still accepts any valid ticket once connected.
+    const viewerGuardsSince = capabilities.webAppViewerGuardsSinceMs;
+    const viewerSafe = viewerGuardsSince !== undefined && row.created_at >= viewerGuardsSince;
+    if (access.role === "viewer" && (port === 7444 || !viewerSafe)) {
+      throw new HttpError(403, viewerSafe
+        ? "viewers cannot drive the workspace agent"
+        : "read-only access arrives when this workspace VM is recycled");
     }
     const webAppAuth = requireWorkspaceWebAppAuth(runtime.providers.webAppAuth);
     const credential = ticketCapable

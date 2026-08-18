@@ -72,7 +72,7 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 		WorkspaceID: workspaceID, UserID: "viewer-user", MembershipID: "viewer-member",
 		Role: "viewer", Exp: time.Now().Unix() + 60,
 	}
-	request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws?arg=terminal&arg=tab&arg=client-value", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws?arg=terminal&arg=tab", nil)
 	request.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
 	request.Header.Set("Origin", "http://localhost:3000")
 	response := httptest.NewRecorder()
@@ -82,6 +82,61 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 	}
 	if got := <-observed; got != "/ws?arg=terminal&arg=tab&arg=ro" {
 		t.Fatalf("viewer terminal URI = %q", got)
+	}
+
+	// The read-only flag is positional. A request that is not shaped to
+	// carry it is refused: appending "ro" to a single argument would put it
+	// in the session-key slot, where blitz-term defaults the mode back to
+	// read-write and hands the observer a writable shell.
+	for _, query := range []string{"arg=terminal", "arg=terminal&arg=tab&arg=client-value", ""} {
+		malformed := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws?"+query, nil)
+		malformed.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+		malformed.Header.Set("Origin", "http://localhost:3000")
+		malformedResponse := httptest.NewRecorder()
+		handler.ServeHTTP(malformedResponse, malformed)
+		if malformedResponse.Code != http.StatusBadRequest {
+			t.Fatalf("viewer terminal %q status = %d, want %d", query, malformedResponse.Code, http.StatusBadRequest)
+		}
+	}
+
+	// A client that already asked for read-only passes through unchanged.
+	alreadyReadOnly := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws?arg=terminal&arg=tab&arg=ro", nil)
+	alreadyReadOnly.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+	alreadyReadOnly.Header.Set("Origin", "http://localhost:3000")
+	alreadyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(alreadyResponse, alreadyReadOnly)
+	if alreadyResponse.Code != http.StatusNoContent {
+		t.Fatalf("viewer read-only terminal status = %d", alreadyResponse.Code)
+	}
+	if got := <-observed; got != "/ws?arg=terminal&arg=tab&arg=ro" {
+		t.Fatalf("viewer read-only terminal URI = %q", got)
+	}
+
+	// Viewers may look at a preview but not send to it, and the agent port
+	// is closed to them entirely.
+	previewWrite := httptest.NewRequest(http.MethodPost, "http://box/preview/3000/api", strings.NewReader("x"))
+	previewWrite.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+	previewResponse := httptest.NewRecorder()
+	handler.ServeHTTP(previewResponse, previewWrite)
+	if previewResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer preview write status = %d, want %d", previewResponse.Code, http.StatusForbidden)
+	}
+
+	acpRequest := httptest.NewRequest(http.MethodGet, "http://box/acp", nil)
+	acpRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+	acpResponse := httptest.NewRecorder()
+	handler.ServeHTTP(acpResponse, acpRequest)
+	if acpResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer acp status = %d, want %d", acpResponse.Code, http.StatusForbidden)
+	}
+
+	// Drain is the control plane's switch, not a user surface.
+	drainRequest := httptest.NewRequest(http.MethodPost, "http://box/admin/drain", strings.NewReader("{}"))
+	drainRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
+	drainResponse := httptest.NewRecorder()
+	handler.ServeHTTP(drainResponse, drainRequest)
+	if drainResponse.Code != http.StatusForbidden {
+		t.Fatalf("viewer drain status = %d, want %d", drainResponse.Code, http.StatusForbidden)
 	}
 
 	writeRequest := httptest.NewRequest(http.MethodPut, "http://box/workspace/file.txt", strings.NewReader("write"))

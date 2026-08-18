@@ -30,7 +30,10 @@ export class ActorServer {
       if (request.method === "POST" && request.url === "/admin/drain") {
         const identity = this.authenticator.verify(request.headers["x-blitz-webapp-token"]);
         delete request.headers["x-blitz-webapp-token"];
-        if (identity === null) {
+        // Drain disconnects everyone when the target is empty, so a valid
+        // ticket is not enough — it is the control plane's switch. The
+        // workspace token presents as the owner.
+        if (identity === null || (identity.role !== "owner" && identity.role !== "admin")) {
           response.writeHead(403).end();
           return;
         }
