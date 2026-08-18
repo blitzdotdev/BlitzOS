@@ -20,6 +20,9 @@ interface WorkspacePersistenceMetadata {
   title: string;
   serverName: string;
   agentDefault: Agent;
+  /** Viewers read the shared doc but may not write it; saving anyway would
+   * 403 on a loop for the whole session. */
+  canWrite: boolean;
 }
 
 export function useWorkspacePersistence(
@@ -102,6 +105,7 @@ export function useWorkspacePersistence(
       || workspaceFiles.workspaceId !== activeWorkspaceId
       || !workspaceTabs.loaded
       || serverSeededId !== activeWorkspaceId
+      || !metadata.canWrite
     ) return;
     const doc = workspaceWebAppState(
       metadata.title,
@@ -117,9 +121,8 @@ export function useWorkspacePersistence(
     const timer = window.setTimeout(() => {
       syncedDoc.current = { workspaceId: activeWorkspaceId, json };
       void api.putWorkspaceWebAppState(activeWorkspaceId, doc).catch((cause: Error) => {
-        // Let the next change retry rather than pinning a doc the server
-        // never accepted.
-        syncedDoc.current = { workspaceId: '', json: '' };
+        // The attempt stays recorded so a rejected doc is not re-sent on every
+        // poll tick; the next real edit produces different JSON and retries.
         onError(cause);
       });
     }, 150);

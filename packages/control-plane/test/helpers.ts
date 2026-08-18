@@ -69,7 +69,8 @@ export class FakeProviders implements VmProvider, VolumeProvider {
   onDestroy?: (workspaceId: string) => Promise<void>;
 
   capabilities() {
-    return { volumes: true, maxUserDataBytes: 32 * 1024 };
+    // Ticket-capable from epoch: workspaces created in tests are new.
+    return { volumes: true, maxUserDataBytes: 32 * 1024, webAppTicketsSinceMs: 0 };
   }
 
   ownsMachineType(machineTypeId: string): boolean {

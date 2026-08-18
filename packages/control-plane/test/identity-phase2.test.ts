@@ -4,7 +4,7 @@ import type { WorkspaceView } from "@blitzos/schema";
 import { hashSecret, randomToken } from "../core/crypto.js";
 import { INVITE_TTL_MS, inviteCodeHash } from "../core/identity/invites.js";
 import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
-import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
+import { BOX_IMAGE_TICKETS_SINCE_MS, WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 import {
   FakeProviders,
   appRequest,
@@ -91,7 +91,13 @@ class ProxyProviders extends FakeProviders {
   drainStatus = 204;
 
   override capabilities() {
-    return { ...super.capabilities(), webAppActorBypassesGateway: true };
+    // The real box-image cutoff, so an aged workspace exercises the
+    // static-token path while fresh ones get tickets.
+    return {
+      ...super.capabilities(),
+      webAppActorBypassesGateway: true,
+      webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
+    };
   }
 
   override async createVm(input: CreateVmInput) {

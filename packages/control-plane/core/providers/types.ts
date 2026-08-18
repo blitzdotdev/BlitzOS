@@ -9,6 +9,11 @@ export interface ProviderCapabilities {
   volumes: boolean;
   maxUserDataBytes?: number | null;
   webAppActorBypassesGateway?: boolean;
+  /** Epoch ms from which VMs this provider creates boot a guest that verifies
+   * v1 webApp tickets. Guest channels version independently, so a workspace's
+   * created_at only means something against its own provider's cutoff.
+   * Undefined is "never": those VMs keep receiving the static token. */
+  webAppTicketsSinceMs?: number;
 }
 
 export interface CreateVmInput {

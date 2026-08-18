@@ -4,6 +4,13 @@ import type { WorkspaceRole } from "./wire.js";
 export const WEBAPP_TOKEN_HEADER = "X-Blitz-WebApp-Token";
 export const WEBAPP_TICKET_TTL_SECONDS = 60;
 
+/** 2026-08-17 19:10 UTC: the first moment a new Hetzner box booted the
+ * ticket-verifying gateway (image 20260817a). A VM keeps the image it booted
+ * for life, so anything older only understands the static token. Providers
+ * declare their own cutoff — a guest channel that has never shipped ticket
+ * verification declares none and always receives the static token. */
+export const BOX_IMAGE_TICKETS_SINCE_MS = 1_786_993_800_000;
+
 export interface WebAppTicketClaims {
   workspaceId: string;
   userId: string;

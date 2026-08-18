@@ -345,6 +345,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         title: activeWorkspace.title,
         serverName: activeWorkspace.serverName,
         agentDefault: activeWorkspace.agentDefault,
+        canWrite: activeWorkspace.accessRole !== 'viewer',
       }, [activeWorkspace]);
   const {
     workspaceTabs,

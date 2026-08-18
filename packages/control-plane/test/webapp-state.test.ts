@@ -183,6 +183,74 @@ describe("server-side webApp state", () => {
     })).status).toBe(403);
   });
 
+  it("never lets the tab counter rewind, whichever account writes", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const member = await sameOrgSession("counter");
+    const workspace = await createWorkspace(app, owner);
+    await setOrgShareRole(workspace.id, "editor");
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    const withTabs = (ids: number[], nextId: number) => ({
+      ...workspaceDoc,
+      tabs: {
+        version: 1,
+        tabs: ids.map((id) => ({ id, type: "claude" })),
+        activeId: ids.at(-1) ?? null,
+        nextId,
+      },
+    });
+
+    // The owner opens tabs up to id 6.
+    expect((await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify(withTabs([1, 2, 3, 4, 5], 6)),
+    })).status).toBe(200);
+
+    // A client holding an older view closes back down to one tab. Its ids may
+    // shrink, but the counter must not: tab ids name live tmux sessions, and
+    // reissuing 2 would attach a new tab to a session still running.
+    const rewound = await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: member, "Content-Type": "application/json" },
+      body: JSON.stringify(withTabs([1], 2)),
+    });
+    expect(rewound.status).toBe(200);
+    await expect(rewound.json()).resolves.toMatchObject({ doc: { tabs: { nextId: 6 } } });
+    await expect(appRequest(app, path, { headers: { Cookie: owner } })
+      .then((response) => response.json()))
+      .resolves.toMatchObject({ doc: { tabs: { nextId: 6 } } });
+  });
+
+  it("refuses to resurrect state for a destroyed workspace", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    expect((await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(workspaceDoc),
+    })).status).toBe(200);
+    expect((await appRequest(app, `/workspaces/${workspace.id}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+
+    // An open tab that saves after the destroy must not recreate the row the
+    // teardown just deleted.
+    expect((await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(workspaceDoc),
+    })).status).toBe(404);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM webapp_state WHERE workspace_id = ?1",
+      ).bind(workspace.id).first<number>("count"),
+    ).toBe(0);
+  });
+
   it("normalizes legacy drawer segments to the merged integrations tab", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);

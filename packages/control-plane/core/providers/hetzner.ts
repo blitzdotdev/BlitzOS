@@ -10,6 +10,7 @@ import type {
   VmProvider,
   VolumeProvider,
 } from "./types.js";
+import { BOX_IMAGE_TICKETS_SINCE_MS } from "../webapp-tickets.js";
 
 const API = "https://api.hetzner.cloud/v1";
 export const HETZNER_USER_DATA_MAX_BYTES = 32 * 1024;
@@ -164,7 +165,11 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   }
 
   capabilities(): ProviderCapabilities {
-    return { volumes: true, maxUserDataBytes: HETZNER_USER_DATA_MAX_BYTES };
+    return {
+      volumes: true,
+      maxUserDataBytes: HETZNER_USER_DATA_MAX_BYTES,
+      webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
+    };
   }
 
   ownsMachineType(machineTypeId: string): boolean {

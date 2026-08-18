@@ -61,6 +61,8 @@ function approvalPayload<Value>(input: Value): string {
   }
 }
 
+const MAX_RECONNECT_ATTEMPTS = 8;
+
 export function ChatPanel({
   url,
   workspaceId,
@@ -210,6 +212,14 @@ export function ChatPanel({
         }
         if (!active) break;
         attempts += 1;
+        // A refused handshake — no access to this workspace, or a box that is
+        // gone — never resolves by retrying, and the capped backoff would
+        // knock every ten seconds for as long as the tab stays open. Give up
+        // and let the reader retry deliberately.
+        if (attempts >= MAX_RECONNECT_ATTEMPTS) {
+          setStatus("Disconnected · reload to reconnect");
+          break;
+        }
         setStatus("Disconnected");
         await wait(Math.min(500 * 2 ** (attempts - 1), 10_000));
         wake = null;

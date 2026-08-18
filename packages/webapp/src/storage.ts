@@ -170,6 +170,31 @@ export function defaultWorkspaceWebAppState(): WorkspaceWebAppStateV1 {
   };
 }
 
+/** The server rejects an out-of-range document whole, and a rejected write
+ * takes the entire shared doc — tabs included — down with it. Local state can
+ * drift out of range from a resize or a stale device, so clamp to the wire
+ * limits here rather than letting one field end persistence. Mirror
+ * `parseWorkspaceDoc` in the control plane. */
+function clampedDoc(doc: WorkspaceWebAppStateV1): WorkspaceWebAppStateV1 {
+  const tabs = doc.tabs.tabs.slice(0, 100);
+  const highestId = tabs.reduce((highest, tab) => Math.max(highest, tab.id), 0);
+  const activeId = tabs.some(({ id }) => id === doc.tabs.activeId) ? doc.tabs.activeId : null;
+  return {
+    ...doc,
+    tabs: {
+      version: 1,
+      tabs,
+      activeId,
+      nextId: Math.max(doc.tabs.nextId, highestId + 1),
+    },
+    drawer: {
+      ...doc.drawer,
+      width: Math.min(2000, Math.max(200, Math.round(doc.drawer.width))),
+      expanded: doc.drawer.expanded.filter((path) => path.length <= 1024).slice(0, 1000),
+    },
+  };
+}
+
 export function workspaceWebAppState(
   title: string,
   serverName: string,
@@ -183,8 +208,8 @@ export function workspaceWebAppState(
     tabs,
     drawer,
   };
-  if (title !== serverName) doc.title = title;
-  return doc;
+  if (title !== serverName) doc.title = title.slice(0, 256);
+  return clampedDoc(doc);
 }
 
 export function reconcileUiPreferences(

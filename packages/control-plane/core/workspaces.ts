@@ -71,9 +71,6 @@ function webAppPathAllowed(port: WebAppPort, path: string): boolean {
     || decoded.startsWith("/workspace/")
     || decoded.startsWith("/preview/");
 }
-/** 2026-08-17 19:10 UTC: first moment new VMs booted the ticket-verifying
- * gateway (box image 20260817a). Older VMs byte-compare the static token. */
-const TICKET_GATEWAYS_SINCE_MS = 1_786_993_800_000;
 const BOOTSTRAP_ERROR_PREFIX = "bootstrap failed: ";
 const PHONE_HOME_REQUEST_FIELDS = Object.freeze([
   "pub_key_ecdsa",
@@ -598,10 +595,12 @@ export function addWorkspaceRoutes(
     }
     const pathAndQuery = `${path}${requestURL.search}`;
     // Boxes boot the image pinned at their creation and never upgrade in
-    // place. VMs from before the 20260817a pin run gateways that only
-    // byte-compare the static token, so they keep receiving it.
+    // place, and each provider ships its guest on its own release channel —
+    // so the cutoff comes from the provider that owns this VM, never from a
+    // single global date.
     // TODO(identity-phase-4): drop the gate once every pre-ticket VM is gone.
-    const ticketCapable = row.created_at >= TICKET_GATEWAYS_SINCE_MS;
+    const ticketsSince = provider.capabilities().webAppTicketsSinceMs;
+    const ticketCapable = ticketsSince !== undefined && row.created_at >= ticketsSince;
     // Viewers stay refused on every deployed image. The gateway's read-only
     // force appends "ro" as a THIRD argument, so a request carrying a single
     // arg lands "ro" in blitz-term's session-key slot and the mode defaults

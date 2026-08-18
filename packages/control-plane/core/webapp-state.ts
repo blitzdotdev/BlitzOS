@@ -275,6 +275,30 @@ async function workspaceState(
   });
 }
 
+/** The highest tab counter any principal has stored for this workspace.
+ * Unreadable rows are skipped rather than failing the write: the floor is a
+ * safety rail, and a doc nobody can parse cannot be naming live sessions. */
+async function storedNextId(db: Db, workspaceId: string): Promise<number> {
+  const stored = await rows<{ doc: string }>(db, {
+    q: "SELECT doc FROM webapp_state WHERE workspace_id = ?1",
+    v: [workspaceId],
+  });
+  let floor = 0;
+  for (const row of stored) {
+    let value: JsonValue;
+    try {
+      value = JSON.parse(row.doc);
+    } catch {
+      continue;
+    }
+    if (!isRecord(value)) continue;
+    const tabs = value.tabs;
+    if (!isRecord(tabs) || !isNumber(tabs.nextId) || !Number.isSafeInteger(tabs.nextId)) continue;
+    floor = Math.max(floor, tabs.nextId);
+  }
+  return floor;
+}
+
 async function throwWorkspaceAccessError(
   db: Db,
   workspaceId: string,
@@ -338,15 +362,22 @@ export function addWebAppStateRoutes(
     const principal = await requirePrincipal(context);
     const doc = parseWorkspaceDoc(await readJson(context.req.raw));
     const now = Date.now();
+    const db = runtimeFactory(context).db;
+    // A tab id names a tmux session on the shared guest, so an id must never
+    // be handed out twice: a doc that rewinds nextId would give a new tab an
+    // id whose session is still running, silently attaching it to someone
+    // else's agent. The counter is therefore workspace-wide and only rises,
+    // whichever client writes.
+    doc.tabs.nextId = Math.max(doc.tabs.nextId, await storedNextId(db, context.req.param("id")));
     // Writes keep one row per (principal, workspace); readers take the newest
     // row, so the doc behaves as shared last-write-wins state with no schema
     // change. Editors via a personal grant or org-wide sharing may write.
-    const updated = await rows(runtimeFactory(context).db, {
+    const updated = await rows(db, {
       q: `INSERT INTO webapp_state (principal_id, workspace_id, doc, updated_at)
           SELECT ?1, w.id, ?3, ?4 FROM workspaces w
           LEFT JOIN workspace_grants grant
             ON grant.workspace_id = w.id AND grant.membership_id = ?5
-          WHERE w.id = ?2 AND w.org_id = ?6
+          WHERE w.id = ?2 AND w.org_id = ?6 AND w.phase != 'destroyed'
             AND (w.owner_membership_id = ?5 OR ?7 = 'admin'
               OR grant.role = 'editor' OR w.org_share_role = 'editor')
           ON CONFLICT(principal_id, workspace_id) DO UPDATE
