@@ -38,8 +38,10 @@ export function useWorkspacePersistence(
     workspaceId: string;
     value: WorkspaceFiles;
   }>(() => ({ workspaceId: '', value: defaultWorkspaceFiles() }));
+  const [serverSeededId, setServerSeededId] = useState('');
 
   useEffect(() => {
+    setServerSeededId('');
     if (!enabled || !activeWorkspaceId) {
       setWorkspaceTabs({
         workspaceId: activeWorkspaceId,
@@ -61,9 +63,13 @@ export function useWorkspacePersistence(
         const state = response.doc ?? defaultWorkspaceWebAppState();
         setWorkspaceTabs({ workspaceId: activeWorkspaceId, value: state.tabs, loaded: true });
         setWorkspaceFiles({ workspaceId: activeWorkspaceId, value: state.drawer });
+        setServerSeededId(activeWorkspaceId);
       })
       .catch((cause: Error) => {
         if (!active) return;
+        // A failed read still renders local defaults, but serverSeededId stays
+        // clear: the doc is shared across the whole workspace, and persisting
+        // defaults here would clobber every other account's tabs.
         setWorkspaceTabs({
           workspaceId: activeWorkspaceId,
           value: defaultWorkspaceTabs(),
@@ -85,6 +91,7 @@ export function useWorkspacePersistence(
       || workspaceTabs.workspaceId !== activeWorkspaceId
       || workspaceFiles.workspaceId !== activeWorkspaceId
       || !workspaceTabs.loaded
+      || serverSeededId !== activeWorkspaceId
     ) return;
     const timer = window.setTimeout(() => {
       void api.putWorkspaceWebAppState(
@@ -105,6 +112,7 @@ export function useWorkspacePersistence(
     enabled,
     metadata,
     onError,
+    serverSeededId,
     workspaceFiles,
     workspaceTabs,
   ]);

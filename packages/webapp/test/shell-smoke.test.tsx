@@ -381,6 +381,37 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("renders default tabs but never persists them when the state read fails", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const wire = runningClient();
+    wire.getWorkspaceWebAppState = vi.fn(async () => {
+      throw new ApiRequestError("state unavailable", 500, null);
+    });
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+    // Wait out the 150ms save debounce before asserting nothing was written:
+    // the workspace doc is shared, so a failed read must not push defaults.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+
+    const sessionTabs = [...view.container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"]',
+    )];
+    expect(sessionTabs).toHaveLength(1);
+    expect(sessionTabs[0]?.textContent ?? "").toMatch(/claude/i);
+    expect(vi.mocked(wire.putWorkspaceWebAppState)).not.toHaveBeenCalled();
+    expect(serverWorkspaceStates.size).toBe(0);
+
+    await view.unmount();
+  });
+
   it("routes non-microVM workspace files through the control plane", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     const view = await render(
