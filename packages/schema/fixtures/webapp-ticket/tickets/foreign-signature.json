@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItb3duZXIiLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLW93bmVyIiwicm9sZSI6Im93bmVyIiwiZXhwIjoxODAwMDAwMDYwfQ.d_a6MsujAsxwfCfA1c7bEj5V6qFXRA1GZbfJDfXiLeE",
+  "expect": {
+    "valid": false
+  },
+  "note": "Well-formed claims signed with the wrong key."
+}

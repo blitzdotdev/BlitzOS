@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItb3duZXIiLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLW93bmVyIiwicm9sZSI6Im93bmVyIiwiZXhwIjoxODAwMDAwMDYwLCJzY29wZSI6ImV2ZXJ5dGhpbmcifQ.FRFcTXh6UpXSTRAnJFHXOiY3i-6xrB-k4D8r7V02yLU",
+  "expect": {
+    "valid": false
+  },
+  "note": "An unrecognized claim is refused rather than ignored: a verifier that skips a field it does not know cannot enforce it."
+}

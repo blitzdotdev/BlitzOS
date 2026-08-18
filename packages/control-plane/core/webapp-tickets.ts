@@ -125,6 +125,10 @@ export class WorkspaceWebAppAuth {
     workspaceId: string,
     nowSeconds = Math.floor(Date.now() / 1_000),
   ): Promise<VerifiedWebAppCredential | null> {
+    // An empty credential is simply absent, not a candidate to compare: Web
+    // Crypto refuses a zero-length HMAC key and would throw where every other
+    // rejection returns null.
+    if (credential === "") return null;
     const workspaceToken = await this.tokenFor(workspaceId);
     if (!credential.startsWith("v1.")) {
       // TODO(identity-phase-4): Remove static-token acceptance after every box image is re-pinned with ticket verification.

@@ -7,38 +7,10 @@ import {
   createWorkspace,
   harness,
   operatorSession,
+  sameOrgSession,
   resetDatabase,
   userSession,
 } from "./helpers.js";
-
-async function sameOrgSession(
-  id: string,
-  role: "admin" | "member" = "member",
-): Promise<{ cookie: string; membershipId: string }> {
-  const token = randomToken();
-  const membershipId = `${id}-membership`;
-  const now = Date.now();
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, 'blitz', '[\"codex\"]')",
-    ).bind(id),
-    env.DB.prepare(
-      `INSERT INTO users
-       (id, google_user_id, email, name, avatar_url, platform_operator, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5, ?5)`,
-    ).bind(id, `google-${id}`, `${id}@example.com`, id, now),
-    env.DB.prepare(
-      `INSERT INTO memberships (id, user_id, org_id, role, status)
-       VALUES (?1, ?2, 'personal', ?3, 'active')`,
-    ).bind(membershipId, id, role),
-    env.DB.prepare(
-      `INSERT INTO sessions
-       (token_hash, principal_id, created_at, expires_at, membership_id)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
-    ).bind(await hashSecret(token), id, now, now + 60_000, membershipId),
-  ]);
-  return { cookie: `blitz_session=${token}`, membershipId };
-}
 
 async function createFolder(
   app: ReturnType<typeof harness>["app"],

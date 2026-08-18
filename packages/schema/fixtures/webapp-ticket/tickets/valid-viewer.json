@@ -1,0 +1,11 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItdmlld2VyIiwibWVtYmVyc2hpcElkIjoibWVtYmVyc2hpcC12aWV3ZXIiLCJyb2xlIjoidmlld2VyIiwiZXhwIjoxODAwMDAwMDYwfQ.MAsGIUYDwA-x5FTLUnEJICTCKtCg6VGJ0g6_tqXEc08",
+  "expect": {
+    "valid": true,
+    "kind": "ticket",
+    "role": "viewer",
+    "userId": "user-viewer",
+    "membershipId": "membership-viewer"
+  },
+  "note": "A live viewer ticket: signature, workspace, and expiry all check out."
+}

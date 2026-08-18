@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZWRpdG9yIiwibWVtYmVyc2hpcElkIjoibWVtYmVyc2hpcC1lZGl0b3IiLCJyb2xlIjoiZWRpdG9yIiwiZXhwIjoxODAwMDAwMDAwfQ.QtXyriZdTA4IEbl7B2LOKuYXHKqoTchnKkeo4gQ1bGE",
+  "expect": {
+    "valid": false
+  },
+  "note": "exp is not in the future. Expiry is exclusive: exp == now is already expired."
+}

@@ -1,0 +1,7 @@
+{
+  "credential": "v1.only-two-parts",
+  "expect": {
+    "valid": false
+  },
+  "note": "Not three dot-separated parts."
+}

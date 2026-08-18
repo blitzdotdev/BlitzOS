@@ -309,6 +309,44 @@ export async function operatorSession(app?: TestApp): Promise<string> {
   return `blitz_session=${token}`;
 }
 
+export interface OrgMemberSession {
+  cookie: string;
+  membershipId: string;
+}
+
+/** A second identity inside the operator's org. Four suites had grown their
+ * own copy of this with three different return shapes, which is how a caller
+ * ends up reading `.cookie` off a plain string and debugging a 401. */
+export async function sameOrgSession(
+  id: string,
+  role: "admin" | "member" = "member",
+  status: "active" | "disabled" = "active",
+): Promise<OrgMemberSession> {
+  const token = randomToken();
+  const membershipId = `${id}-membership`;
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, 'blitz', '[\"codex\"]')",
+    ).bind(id),
+    env.DB.prepare(
+      `INSERT INTO users
+       (id, google_user_id, email, name, avatar_url, platform_operator, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5, ?5)`,
+    ).bind(id, `google-${id}`, `${id}@example.com`, id, now),
+    env.DB.prepare(
+      `INSERT INTO memberships (id, user_id, org_id, role, status)
+       VALUES (?1, ?2, 'personal', ?3, ?4)`,
+    ).bind(membershipId, id, role, status),
+    env.DB.prepare(
+      `INSERT INTO sessions
+       (token_hash, principal_id, created_at, expires_at, membership_id)
+       VALUES (?1, ?2, ?3, ?4, ?5)`,
+    ).bind(await hashSecret(token), id, now, now + 60_000, membershipId),
+  ]);
+  return { cookie: `blitz_session=${token}`, membershipId };
+}
+
 export async function userSession(id: string): Promise<string> {
   const token = randomToken();
   const now = Date.now();

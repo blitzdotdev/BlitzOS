@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItb3duZXIiLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLW93bmVyIiwicm9sZSI6Im93bmVyIiwiZXhwIjoxODAwMDAwMDYwfQ.MAsGIUYDwA-x5FTLUnEJICTCKtCg6VGJ0g6_tqXEc08",
+  "expect": {
+    "valid": false
+  },
+  "note": "A viewer's signature carried over an owner payload \u2014 the promotion attempt the signature exists to stop."
+}

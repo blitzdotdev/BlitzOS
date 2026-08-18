@@ -1,0 +1,11 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZWRpdG9yIiwibWVtYmVyc2hpcElkIjoibWVtYmVyc2hpcC1lZGl0b3IiLCJyb2xlIjoiZWRpdG9yIiwiZXhwIjoxODAwMDAwMDYwfQ.z_oX7VabNo6QEq41UDRqv09Vpa4QwBuJ6LjibvjtLQc",
+  "expect": {
+    "valid": true,
+    "kind": "ticket",
+    "role": "editor",
+    "userId": "user-editor",
+    "membershipId": "membership-editor"
+  },
+  "note": "A live editor ticket: signature, workspace, and expiry all check out."
+}

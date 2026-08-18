@@ -7,33 +7,10 @@ import {
   createWorkspace,
   harness,
   operatorSession,
+  sameOrgSession,
   resetDatabase,
   testRuntime,
 } from "./helpers.js";
-
-async function sameOrgSession(id: string): Promise<string> {
-  const token = randomToken();
-  const now = Date.now();
-  await env.DB.batch([
-    env.DB.prepare(
-      "INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, 'blitz', '[\"codex\"]')",
-    ).bind(id),
-    env.DB.prepare(
-      `INSERT INTO users
-       (id, google_user_id, email, name, avatar_url, platform_operator, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, NULL, 0, ?5, ?5)`,
-    ).bind(id, `google-${id}`, `${id}@example.com`, id, now),
-    env.DB.prepare(
-      `INSERT INTO memberships (id, user_id, org_id, role, status)
-       VALUES (?1, ?2, 'personal', 'member', 'active')`,
-    ).bind(`${id}-membership`, id),
-    env.DB.prepare(
-      `INSERT INTO sessions (token_hash, principal_id, created_at, expires_at, membership_id)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
-    ).bind(await hashSecret(token), id, now, now + 60_000, `${id}-membership`),
-  ]);
-  return `blitz_session=${token}`;
-}
 
 async function setOrgShareRole(workspaceId: string, role: "editor" | "viewer"): Promise<void> {
   await env.DB.prepare("UPDATE workspaces SET org_share_role = ?1 WHERE id = ?2")
@@ -128,14 +105,14 @@ describe("server-side webApp state", () => {
       body: JSON.stringify(workspaceDoc),
     })).status).toBe(200);
     await expect(appRequest(app, path, {
-      headers: { Cookie: member },
+      headers: { Cookie: member.cookie },
     }).then((response) => response.json())).resolves.toMatchObject({ doc: workspaceDoc });
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     const replacement = { ...workspaceDoc, title: "Member view" };
     expect((await appRequest(app, path, {
       method: "PUT",
-      headers: { Cookie: member, "Content-Type": "application/json" },
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
       body: JSON.stringify(replacement),
     })).status).toBe(200);
     await expect(appRequest(app, path, {
@@ -157,11 +134,11 @@ describe("server-side webApp state", () => {
       body: JSON.stringify(workspaceDoc),
     });
     await expect(appRequest(app, path, {
-      headers: { Cookie: viewer },
+      headers: { Cookie: viewer.cookie },
     }).then((response) => response.json())).resolves.toMatchObject({ doc: workspaceDoc });
     expect((await appRequest(app, path, {
       method: "PUT",
-      headers: { Cookie: viewer, "Content-Type": "application/json" },
+      headers: { Cookie: viewer.cookie, "Content-Type": "application/json" },
       body: JSON.stringify(workspaceDoc),
     })).status).toBe(403);
   });
@@ -174,11 +151,11 @@ describe("server-side webApp state", () => {
     const path = `/workspaces/${workspace.id}/webapp-state`;
 
     expect((await appRequest(app, path, {
-      headers: { Cookie: outsider },
+      headers: { Cookie: outsider.cookie },
     })).status).toBe(403);
     expect((await appRequest(app, path, {
       method: "PUT",
-      headers: { Cookie: outsider, "Content-Type": "application/json" },
+      headers: { Cookie: outsider.cookie, "Content-Type": "application/json" },
       body: JSON.stringify(workspaceDoc),
     })).status).toBe(403);
   });
@@ -212,7 +189,7 @@ describe("server-side webApp state", () => {
     // reissuing 2 would attach a new tab to a session still running.
     const rewound = await appRequest(app, path, {
       method: "PUT",
-      headers: { Cookie: member, "Content-Type": "application/json" },
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
       body: JSON.stringify(withTabs([1], 2)),
     });
     expect(rewound.status).toBe(200);

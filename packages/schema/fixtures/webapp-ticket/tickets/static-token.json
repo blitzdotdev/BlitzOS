@@ -1,0 +1,11 @@
+{
+  "credential": "9xrOnl5UWxmNRKJqzfVS9biKpzZvIKd_D_EroCodflw",
+  "expect": {
+    "valid": true,
+    "kind": "static",
+    "role": "owner",
+    "userId": "legacy-owner",
+    "membershipId": "legacy-owner"
+  },
+  "note": "The per-workspace token, which predates tickets. Accepted as the owner while VMs from before the ticket images are still running; remove with TODO(identity-phase-4)."
+}

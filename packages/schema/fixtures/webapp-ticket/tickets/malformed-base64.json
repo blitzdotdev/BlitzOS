@@ -1,0 +1,7 @@
+{
+  "credential": "v1.@@@not-base64@@@.@@@",
+  "expect": {
+    "valid": false
+  },
+  "note": "Payload and signature are not base64url."
+}

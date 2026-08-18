@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6Ijk5OTk5OTk5LTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItb3duZXIiLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLW93bmVyIiwicm9sZSI6Im93bmVyIiwiZXhwIjoxODAwMDAwMDYwfQ.0RoE_hfB3obJ1mGuMjhVa5yiz9wJVedpOpmE3q2T-3M",
+  "expect": {
+    "valid": false
+  },
+  "note": "Signed correctly but for another workspace, so this box must refuse it."
+}

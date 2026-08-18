@@ -1,0 +1,11 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItYWRtaW4iLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLWFkbWluIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxODAwMDAwMDYwfQ.yiGzp3D4pyVshxxWf7ASoXBnp-FvwQtaXyE_HH_yHl4",
+  "expect": {
+    "valid": true,
+    "kind": "ticket",
+    "role": "admin",
+    "userId": "user-admin",
+    "membershipId": "membership-admin"
+  },
+  "note": "A live admin ticket: signature, workspace, and expiry all check out."
+}

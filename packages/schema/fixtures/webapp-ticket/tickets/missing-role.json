@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItb3duZXIiLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLW93bmVyIiwiZXhwIjoxODAwMDAwMDYwfQ.avxvAh9RMDACtqhHaELIS7gU4PQTtDhBC1JjB4JnU54",
+  "expect": {
+    "valid": false
+  },
+  "note": "Every claim is required; a ticket with no role has no authority."
+}

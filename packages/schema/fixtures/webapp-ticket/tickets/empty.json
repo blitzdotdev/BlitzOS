@@ -1,0 +1,7 @@
+{
+  "credential": "",
+  "expect": {
+    "valid": false
+  },
+  "note": "No credential at all."
+}

@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItc3VwZXJ1c2VyIiwibWVtYmVyc2hpcElkIjoibWVtYmVyc2hpcC1zdXBlcnVzZXIiLCJyb2xlIjoic3VwZXJ1c2VyIiwiZXhwIjoxODAwMDAwMDYwfQ.Ya-owQKRNewck60B1LEuwoBjehDgCDKECGkVEvBIZ-o",
+  "expect": {
+    "valid": false
+  },
+  "note": "Roles are a closed set: owner, admin, editor, viewer."
+}

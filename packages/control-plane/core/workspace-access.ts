@@ -51,26 +51,6 @@ export interface WebAppWorkspaceAccess {
   role: WorkspaceRole;
 }
 
-export async function requireWorkspaceControl<T extends WorkspaceAccessRow>(
-  db: Db,
-  id: string,
-  principal: Principal,
-  select: string,
-  label = "workspace",
-): Promise<T> {
-  const workspace = await first<T>(db, {
-    q: `${select} WHERE w.id = ?1 LIMIT 1`,
-    v: [id],
-  });
-  if (workspace === null || workspace.org_id !== principal.orgId) {
-    throw new HttpError(404, `${label} not found`);
-  }
-  if (!canControlWorkspace(principal, workspace)) {
-    throw new HttpError(403, `forbidden`);
-  }
-  return workspace;
-}
-
 /** Resolves session, membership, workspace, and editor grant in one D1 read on
  * every authenticated webApp request. The ordinary principal lookup is only a
  * miss-path fallback needed to preserve the 401 response contract. */

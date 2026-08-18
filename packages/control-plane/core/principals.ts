@@ -103,23 +103,6 @@ export async function mintSession(
   return token;
 }
 
-export async function mintUserSession(
-  db: Db,
-  userId: string,
-  membershipId: string | null,
-  ttlMs: number,
-  now = Date.now(),
-): Promise<string> {
-  const token = randomToken();
-  await rows(db, {
-    q: `INSERT INTO sessions
-        (token_hash, principal_id, created_at, expires_at, membership_id)
-        VALUES (?1, ?2, ?3, ?4, ?5)`,
-    v: [await hashSecret(token), userId, now, now + ttlMs, membershipId],
-  });
-  return token;
-}
-
 export function sessionCookie(token: string, ttlMs: number): string {
   return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(ttlMs / 1000)}`;
 }
