@@ -1,30 +1,26 @@
 import { useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
-import { FilesDrive, type DriveCommand, type DrivePageRoute } from './FilesDrive';
+import { FilesDrive, type DrivePageRoute } from './FilesDrive';
 import { SearchGlyph } from './DriveIcons';
 
 export function DriveHome({
   client,
   viewer,
   route,
-  command,
   onNavigate,
-  onUploadTarget,
   onOpenRail,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
   route: DrivePageRoute;
-  command: DriveCommand | null;
   onNavigate: (path: string) => void;
-  onUploadTarget: (folderName: string | null) => void;
   onOpenRail: () => void;
 }) {
   const [query, setQuery] = useState('');
   const location = route.page === 'drive' && route.scope === 'shared'
     ? 'Shared with me'
-    : route.page === 'drive' ? 'My Drive' : 'folder';
+    : route.page === 'drive' ? 'Drive' : 'folder';
 
   return (
     <>
@@ -56,12 +52,10 @@ export function DriveHome({
           viewer={viewer}
           route={route}
           query={query}
-          command={command}
           onNavigate={(path) => {
             setQuery('');
             onNavigate(path);
           }}
-          onUploadTarget={onUploadTarget}
         />
       </div>
     </>

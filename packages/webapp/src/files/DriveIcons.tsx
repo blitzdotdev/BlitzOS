@@ -24,6 +24,13 @@ export const DriveGlyph = glyph(
   <path d="M3 7.6a2 2 0 0 1 2-2h3.7a2 2 0 0 1 1.5.7l1.1 1.3H19a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
 );
 
+export const TemplateGlyph = glyph(
+  <>
+    <rect x="7.6" y="3.6" width="12.8" height="12.8" rx="2" />
+    <path d="M16.4 16.4v2a2 2 0 0 1-2 2H5.6a2 2 0 0 1-2-2V7.6a2 2 0 0 1 2-2h2" />
+  </>,
+);
+
 export const SharedGlyph = glyph(
   <>
     <circle cx="9" cy="8.4" r="3.1" />

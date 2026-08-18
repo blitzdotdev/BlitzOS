@@ -822,3 +822,198 @@
   color: var(--ink);
   font-weight: 600;
 }
+
+/* ------------------------------------------------------------- page heads */
+.drive-head-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.drive-head-row .drive-title,
+.drive-head-row .drive-crumbs { flex: 1; min-width: 0; }
+
+.drive-new-wrap { position: relative; }
+
+.drive-new-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--paper);
+  font: 600 13px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.drive-new-button:hover { filter: brightness(1.06); }
+.drive-new-button svg { width: 14px; height: 14px; }
+
+.drive-new-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 190;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.drive-new-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  z-index: 410;
+}
+
+/* -------------------------------------------------------------- templates */
+.tpl-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 2px 0 4px;
+}
+
+.tpl-head .drive-title { flex: 1; }
+
+.tpl-sub {
+  margin: 0 0 18px;
+  color: var(--faint);
+  font-size: 13px;
+}
+
+.tpl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.tpl-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in oklab, var(--ink) 11%, transparent);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.tpl-card:hover { border-color: color-mix(in oklab, var(--ink) 22%, transparent); }
+.tpl-card:hover .tpl-kebab,
+.tpl-card:focus-within .tpl-kebab { opacity: 1; }
+
+.tpl-card-head { display: flex; align-items: center; gap: 10px; }
+.tpl-card-head > svg { width: 19px; height: 19px; flex: none; color: var(--muted); }
+
+.tpl-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpl-kebab {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.tpl-kebab:hover { background: var(--hover); color: var(--ink); }
+.tpl-kebab svg { width: 15px; height: 15px; }
+
+.tpl-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.tpl-machine {
+  flex: none;
+  padding: 2.5px 8px;
+  border: 1px solid color-mix(in oklab, var(--ink) 14%, transparent);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+.tpl-by { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.tpl-by img, .tpl-by .drive-avatar { width: 16px; height: 16px; flex: none; border-radius: 50%; }
+
+.tpl-folders { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.tpl-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tpl-folder svg { width: 13px; height: 13px; flex: none; }
+
+.tpl-folder--locked {
+  border: 1px dashed color-mix(in oklab, var(--ink) 16%, transparent);
+  background: transparent;
+  color: var(--faint);
+}
+
+.tpl-folders-empty { color: var(--faint); font-size: 12px; font-style: italic; }
+
+.tpl-foot { display: flex; justify-content: flex-end; align-items: center; margin-top: auto; }
+
+.tpl-use {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6.5px 13px;
+  border: 1px solid color-mix(in oklab, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 10%, var(--paper));
+  color: var(--accent);
+  font: 600 12.5px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.tpl-use:hover:not(:disabled) { background: color-mix(in oklab, var(--accent) 18%, var(--paper)); }
+.tpl-use:disabled { opacity: 0.55; cursor: default; }
+.tpl-use svg { width: 15px; height: 15px; }
+
+.tpl-ghost {
+  display: grid;
+  min-height: 132px;
+  place-items: center;
+  border: 1.5px dashed color-mix(in oklab, var(--ink) 16%, transparent);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--faint);
+  font: 550 13px/1.5 var(--font-ui);
+  cursor: pointer;
+}
+
+.tpl-ghost:hover { color: var(--muted); border-color: color-mix(in oklab, var(--ink) 28%, transparent); }
+.tpl-ghost span { display: grid; justify-items: center; gap: 6px; }
+.tpl-ghost svg { width: 18px; height: 18px; }

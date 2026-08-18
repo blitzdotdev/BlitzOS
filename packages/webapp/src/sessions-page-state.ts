@@ -6,6 +6,7 @@ export type AppRoute =
   | { workspaceId: string; page: 'webApp' }
   | { workspaceId: null; page: 'drive'; scope: DriveScope }
   | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
+  | { workspaceId: null; page: 'templates' }
   | { workspaceId: null; page: 'template-new' }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
@@ -26,6 +27,9 @@ export function parseAppRoute(pathname: string): AppRoute {
   }
   if (/^\/templates\/new\/?$/u.test(pathname)) {
     return { workspaceId: null, page: 'template-new' };
+  }
+  if (/^\/templates\/?$/u.test(pathname)) {
+    return { workspaceId: null, page: 'templates' };
   }
   const folder = pathname.match(/^\/folder\/([^/]+)((?:\/[^/]+)*)\/?$/u);
   if (folder) {
@@ -69,6 +73,10 @@ export function drivePath(scope: DriveScope): string {
 
 export function templateNewPath(): string {
   return '/templates/new';
+}
+
+export function templatesPath(): string {
+  return '/templates';
 }
 
 export function folderPagePath(folderId: string, folderPath: string[] = []): string {

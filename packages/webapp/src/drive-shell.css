@@ -102,6 +102,15 @@
 }
 
 
+.drive-rail-nav--top { margin-top: 6px; }
+
+.drive-rail-divider {
+  height: 1px;
+  margin: 8px 12px 6px;
+  flex: none;
+  background: color-mix(in oklab, var(--ink) 12%, transparent);
+}
+
 .drive-rail-section {
   display: flex;
   align-items: center;
@@ -188,6 +197,9 @@
 }
 
 .drive-page { padding: 4px 24px 48px; }
+
+/* Pages without the search topbar (Templates) span both grid rows. */
+.drive-content--full { grid-row: 1 / 3; padding-top: 16px; }
 
 /* -------------------------------------------------------------- workspace */
 .drive-ws-frame {

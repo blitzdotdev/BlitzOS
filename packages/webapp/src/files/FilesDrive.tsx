@@ -13,7 +13,10 @@ import {
   PencilGlyph,
   ShareGlyph,
   TrashGlyph,
+  UploadGlyph,
 } from './DriveIcons';
+import { DriveRootView } from './DriveRootView';
+import { useDriveUploads, type UploadEntry } from './use-drive-uploads';
 import { FolderDuoIcon } from '../files-icons';
 import {
   canManageFolder,
@@ -24,7 +27,12 @@ import {
   normalizeFolderName,
   splitFolders,
 } from './drive-model';
-import { collectDropped, DropLimitError, type DroppedPayload } from './drop-upload';
+import {
+  collectDropped,
+  DropLimitError,
+  payloadFromPickedFiles,
+  type DroppedPayload,
+} from './drop-upload';
 import {
   DriveCrumbs,
   DriveDeleteDialog,
@@ -34,15 +42,12 @@ import {
   DriveUploaderCard,
   FolderNameDialog,
   type MenuItem,
-  type UploadState,
 } from './drive-chrome';
 import { ShareFolderDialog } from './ShareFolderDialog';
 
 export type DrivePageRoute =
   | { page: 'drive'; scope: DriveScope }
   | { page: 'folder'; folderId: string; folderPath: string[] };
-
-export type DriveCommand = { kind: 'new-folder' | 'upload'; nonce: number };
 
 type DriveDialog =
   | { kind: 'share'; folderId: string }
@@ -52,11 +57,6 @@ type DriveDialog =
   | { kind: 'delete-folder'; folderId: string }
   | { kind: 'delete-object'; key: string; name: string };
 
-interface UploadEntry {
-  file: File;
-  key: string;
-}
-
 const SNACK_MS = 7_000;
 
 export function FilesDrive({
@@ -64,17 +64,13 @@ export function FilesDrive({
   viewer,
   route,
   query,
-  command,
   onNavigate,
-  onUploadTarget,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
   route: DrivePageRoute;
   query: string;
-  command: DriveCommand | null;
   onNavigate: (path: string) => void;
-  onUploadTarget: (folderName: string | null) => void;
 }) {
   const [folders, setFolders] = useState<FolderView[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
@@ -83,14 +79,13 @@ export function FilesDrive({
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [dialog, setDialog] = useState<DriveDialog | null>(null);
   const [nameField, setNameField] = useState('');
-  const [upload, setUpload] = useState<UploadState | null>(null);
   const [snack, setSnack] = useState<React.ReactNode | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const dirInput = useRef<HTMLInputElement>(null);
   const snackTimer = useRef<number | null>(null);
   const dragDepth = useRef(0);
-  const uploadRun = useRef(0);
 
   const folderId = route.page === 'folder' ? route.folderId : null;
   const path = route.page === 'folder' ? route.folderPath : [];
@@ -124,6 +119,15 @@ export function FilesDrive({
     }
   }, [client]);
 
+  const { upload, uploadEntries, cancelUpload } = useDriveUploads({
+    client,
+    currentFolderId: folderId,
+    loadObjects,
+    loadFolders,
+    showSnack,
+    onError: setError,
+  });
+
   useEffect(() => { void loadFolders(); }, [loadFolders]);
   useEffect(() => {
     void client.poll()
@@ -138,26 +142,14 @@ export function FilesDrive({
     void loadObjects(folderId);
   }, [folderId, loadObjects]);
 
-  const uploadTargetName = folder !== null && canWriteFolder(folder.role) ? folder.name : null;
-  useEffect(() => {
-    onUploadTarget(uploadTargetName);
-    return () => onUploadTarget(null);
-  }, [onUploadTarget, uploadTargetName]);
-
-  useEffect(() => {
-    if (command === null) return;
-    if (command.kind === 'new-folder') {
-      setNameField('');
-      setDialog({ kind: 'new-folder' });
-      return;
-    }
-    fileInput.current?.click();
-  }, [command]);
-
   const { mine, shared } = useMemo(() => splitFolders(folders), [folders]);
   const scoped = scope === 'mine' ? mine : shared;
   const trimmedQuery = query.trim().toLowerCase();
   const visible = scoped.filter((candidate) =>
+    trimmedQuery === '' || candidate.name.toLowerCase().includes(trimmedQuery));
+  // The Drive root is the single destination: shared folders list below the
+  // owned ones instead of behind a separate rail row.
+  const sharedVisible = shared.filter((candidate) =>
     trimmedQuery === '' || candidate.name.toLowerCase().includes(trimmedQuery));
   const controllable = workspaces.filter(({ role }) => role === 'owner' || role === 'admin');
   const workspaceName = useCallback(
@@ -204,60 +196,6 @@ export function FilesDrive({
     setMenu({ x: event.clientX, y: event.clientY + 4, items });
   };
 
-  const uploadEntries = async (target: FolderView, entries: UploadEntry[]): Promise<boolean> => {
-    const count = entries.length;
-    const run = uploadRun.current + 1;
-    uploadRun.current = run;
-    for (const [position, { file, key }] of entries.entries()) {
-      if (uploadRun.current !== run) {
-        showSnack(<span>Upload canceled — {position} of {count} finished</span>);
-        if (target.id === folderId) await loadObjects(target.id);
-        await loadFolders();
-        return false;
-      }
-      const progress = (sent: number, total: number) => {
-        setUpload({
-          name: file.name,
-          sent,
-          total,
-          done: false,
-          folderName: target.name,
-          index: position + 1,
-          count,
-        });
-      };
-      progress(0, file.size);
-      try {
-        await client.uploadFolderObject(target.id, key, file, progress);
-      } catch (caught) {
-        setUpload(null);
-        setError(caught instanceof Error ? caught.message : 'Upload failed.');
-        return false;
-      }
-    }
-    const last = entries[count - 1];
-    if (last !== undefined) {
-      setUpload({
-        name: last.file.name,
-        sent: last.file.size,
-        total: last.file.size,
-        done: true,
-        folderName: target.name,
-        index: count,
-        count,
-      });
-    }
-    showSnack(count === 1
-      ? <span><b>{last?.file.name}</b> uploaded to {target.name}</span>
-      : <span><b>{count} files</b> uploaded to {target.name}</span>);
-    window.setTimeout(() => {
-      setUpload((current) => (current?.done ? null : current));
-    }, 3_200);
-    if (target.id === folderId) await loadObjects(target.id);
-    await loadFolders();
-    return true;
-  };
-
   const keyedAtPath = (name: string) =>
     path.length === 0 ? name : `${path.join('/')}/${name}`;
 
@@ -280,11 +218,11 @@ export function FilesDrive({
       return;
     }
     if (scope === 'shared') {
-      showSnack('Shared with me is read-only — drop into My Drive, or open a folder you can edit');
+      showSnack('Shared with me is read-only — drop into Drive, or open a folder you can edit');
       return;
     }
     if (payload.folders.length === 0) {
-      showSnack('Drop a folder to add it to My Drive — open a folder to drop single files');
+      showSnack('Drop a folder to add it to Drive — open a folder to drop single files');
       return;
     }
     for (const dropped of payload.folders) {
@@ -372,7 +310,7 @@ export function FilesDrive({
     }] : []),
   ];
 
-  const scopeTitle = scope === 'mine' ? 'My Drive' : 'Shared with me';
+  const scopeTitle = scope === 'mine' ? 'Drive' : 'Shared with me';
   const entries = folder === null ? null : entriesAt(
     trimmedQuery === ''
       ? objects
@@ -471,36 +409,43 @@ export function FilesDrive({
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       {folder === null ? (
-        <div>
-          <h1 className="drive-title">{scopeTitle}</h1>
-          {visible.length === 0 ? (
-            <div className="drive-empty">
-              {trimmedQuery !== ''
-                ? `No folders in ${scopeTitle} match “${query.trim()}”`
-                : scope === 'shared'
-                  ? 'Nothing is shared with you yet'
-                  : 'Nothing here yet — make a folder with New'}
-            </div>
-          ) : (
-            <section className="drive-section">
-              <h2 className="drive-section-title">Folders</h2>
-              <div className="drive-tiles">{visible.map(renderTile)}</div>
-            </section>
-          )}
-        </div>
+        <DriveRootView
+          scope={scope}
+          scopeTitle={scopeTitle}
+          query={query}
+          visible={visible}
+          sharedVisible={sharedVisible}
+          renderTile={renderTile}
+          onNewFolder={() => {
+            setNameField('');
+            setDialog({ kind: 'new-folder' });
+          }}
+          onUploadFolder={() => dirInput.current?.click()}
+        />
       ) : (
         <div>
-          <DriveCrumbs
-            rootLabel={scopeTitle}
-            folderName={folder.name}
-            path={path}
-            attachedNote={folder.attachedWorkspaceIds.length > 0
-              ? `Attached to ${folder.attachedWorkspaceIds.map(workspaceName).join(', ')} at /workspace/shared/${folder.name}`
-              : null}
-            onRoot={() => goDrive(scope)}
-            onFolderRoot={() => openPath(folder.id, [])}
-            onPath={(next) => openPath(folder.id, next)}
-          />
+          <div className="drive-head-row">
+            <DriveCrumbs
+              rootLabel={scopeTitle}
+              folderName={folder.name}
+              path={path}
+              attachedNote={folder.attachedWorkspaceIds.length > 0
+                ? `Attached to ${folder.attachedWorkspaceIds.map(workspaceName).join(', ')} at /workspace/shared/${folder.name}`
+                : null}
+              onRoot={() => goDrive(scope)}
+              onFolderRoot={() => openPath(folder.id, [])}
+              onPath={(next) => openPath(folder.id, next)}
+            />
+            {canWriteFolder(folder.role) && (
+              <button
+                className="drive-new-button"
+                type="button"
+                onClick={() => fileInput.current?.click()}
+              >
+                <UploadGlyph /><span>Upload</span>
+              </button>
+            )}
+          </div>
 
           {entries !== null && entries.dirs.length > 0 && (
             <section className="drive-section">
@@ -560,6 +505,28 @@ export function FilesDrive({
               folder,
               Array.from(files).map((file) => ({ file, key: keyedAtPath(file.name) })),
             );
+          }
+          event.currentTarget.value = '';
+        }}
+      />
+      <input
+        // The directory-picker flag is not in React's typed DOM props, so the
+        // ref callback stamps the attribute; webkitdirectory works cross-browser.
+        ref={(node) => {
+          dirInput.current = node;
+          node?.setAttribute('webkitdirectory', '');
+        }}
+        type="file"
+        hidden
+        onChange={(event) => {
+          const files = event.currentTarget.files;
+          if (files && files.length > 0) {
+            try {
+              void handleDropPayload(payloadFromPickedFiles(Array.from(files)));
+            } catch (caught) {
+              if (caught instanceof DropLimitError) showSnack(caught.message);
+              else setError(caught instanceof Error ? caught.message : 'Folder upload failed.');
+            }
           }
           event.currentTarget.value = '';
         }}
@@ -658,10 +625,7 @@ export function FilesDrive({
       {upload !== null && (
         <DriveUploaderCard
           upload={upload}
-          onClose={() => {
-            uploadRun.current += 1;
-            setUpload(null);
-          }}
+          onClose={cancelUpload}
         />
       )}
 
@@ -673,7 +637,7 @@ export function FilesDrive({
                 ? <>Drop to upload to <b>{[folder.name, ...path].join('/')}</b></>
                 : 'View-only — you need editor access to upload here'
               : scope === 'mine'
-                ? 'Drop folders to add them to My Drive'
+                ? 'Drop folders to add them to Drive'
                 : 'Shared with me is read-only'}
           </span>
         </div>

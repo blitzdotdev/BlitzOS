@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectDropped, DropLimitError, MAX_DROP_FILES, type DropItemSource } from '../src/files/drop-upload.js';
+import { collectDropped, DropLimitError, MAX_DROP_BYTES, MAX_DROP_FILES, payloadFromPickedFiles, type DropItemSource } from '../src/files/drop-upload.js';
 
 interface FakeEntry {
   isFile: boolean;
@@ -95,5 +95,34 @@ describe('drop payload traversal', () => {
     const children = Array.from({ length: MAX_DROP_FILES + 1 }, (_, i) => fileEntry(`f${i}.txt`));
     await expect(collectDropped([item(dirEntry('huge', children, 100))], []))
       .rejects.toBeInstanceOf(DropLimitError);
+  });
+});
+
+describe('payloadFromPickedFiles', () => {
+  const picked = (path: string, bytes = 3): File => {
+    const file = new File([new Uint8Array(bytes)], path.split('/').at(-1) ?? path);
+    Object.defineProperty(file, 'webkitRelativePath', { value: path });
+    return file;
+  };
+
+  it('groups picker files by their top-level directory', () => {
+    const payload = payloadFromPickedFiles([
+      picked('datasets/a.txt'),
+      picked('datasets/sub/b.txt'),
+      picked('notes/c.md'),
+    ]);
+    expect(payload.files).toEqual([]);
+    expect(payload.folders.map(({ name }) => name)).toEqual(['datasets', 'notes']);
+    expect(payload.folders[0]?.files.map(({ relativePath }) => relativePath))
+      .toEqual(['a.txt', 'sub/b.txt']);
+  });
+
+  it('treats pathless files as loose and enforces the drop caps', () => {
+    const loose = new File([new Uint8Array(2)], 'plain.txt');
+    Object.defineProperty(loose, 'webkitRelativePath', { value: '' });
+    expect(payloadFromPickedFiles([loose]).files.map(({ relativePath }) => relativePath))
+      .toEqual(['plain.txt']);
+    expect(() => payloadFromPickedFiles([picked('big/huge.bin', MAX_DROP_BYTES + 1)]))
+      .toThrow(DropLimitError);
   });
 });

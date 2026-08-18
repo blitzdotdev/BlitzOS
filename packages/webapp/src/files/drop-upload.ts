@@ -146,3 +146,29 @@ export async function collectDropped(
   }
   return payload;
 }
+
+/** Files chosen through a webkitdirectory picker carry their location in
+ * webkitRelativePath ("dir/sub/name"); the payload groups them by the picked
+ * top-level directory under the same caps the drop path enforces. */
+export function payloadFromPickedFiles(files: readonly File[]): DroppedPayload {
+  const payload: DroppedPayload = { files: [], folders: [] };
+  const budget: DropBudget = { files: 0, bytes: 0 };
+  const byFolder = new Map<string, DroppedFolder>();
+  for (const file of files) {
+    reserveDropBudget(budget, file);
+    const segments = file.webkitRelativePath.split('/').filter((part) => part !== '');
+    if (segments.length < 2) {
+      payload.files.push({ file, relativePath: file.name });
+      continue;
+    }
+    const name = segments[0] ?? '';
+    let folder = byFolder.get(name);
+    if (folder === undefined) {
+      folder = { name, files: [] };
+      byFolder.set(name, folder);
+      payload.folders.push(folder);
+    }
+    folder.files.push({ file, relativePath: segments.slice(1).join('/') });
+  }
+  return payload;
+}

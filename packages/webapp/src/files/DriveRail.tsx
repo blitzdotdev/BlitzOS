@@ -1,21 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IdentityRecord, OrgRecord } from '../protocol';
-import type { DriveScope } from '../sessions-page-state';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { SessionTypeIcon, type WebAppTabModel } from '../WebAppHeader';
 import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
-import { ShareGlyph } from './DriveIcons';
-import {
-  DriveGlyph,
-  FolderPlusGlyph,
-  PlusGlyph,
-  SharedGlyph,
-  UploadGlyph,
-} from './DriveIcons';
+import { DriveGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
 
-/** Brandon's cockpit rail (monorepov2 PR #252) with one insertion: the Drive
- * block — the New pill plus My Drive / Shared with me — keeps its own look
- * between the organization header and the workspace tree. */
+/** Brandon's cockpit rail (monorepov2 PR #252) with one insertion: the flat
+ * Templates and Drive locations sit between the organization header and a
+ * divider, and the workspace tree keeps the section header below it. */
+
+export type DriveRailNav = 'templates' | 'drive';
 
 function workspaceStateLabel(workspace: CloudWorkspaceModel): string {
   if (workspace.lifecycleStatus === 'creating') return 'creating';
@@ -50,19 +44,17 @@ function OwnerTag({ workspace }: { workspace: CloudWorkspaceModel }) {
 export function DriveRail({
   workspaces,
   activeWorkspaceId,
-  driveScope,
+  nav,
   identity,
   org,
   organizations,
-  uploadTargetName,
   sessions,
   activeSessionId,
   onSelectSession,
   onOpenDrive,
+  onOpenTemplates,
   onSelectWorkspace,
   onCreateWorkspace,
-  onNewFolder,
-  onUploadFile,
   onSwitchOrg,
   onOpenSettings,
   onOpenWorkspaceDetails,
@@ -72,19 +64,17 @@ export function DriveRail({
 }: {
   workspaces: CloudWorkspaceModel[];
   activeWorkspaceId: string | null;
-  driveScope: DriveScope | null;
+  nav: DriveRailNav | null;
   identity: IdentityRecord | null;
   org: OrgRecord | null;
   organizations: OrgRecord[];
-  uploadTargetName: string | null;
   sessions: WebAppTabModel[];
   activeSessionId: string;
   onSelectSession: (sessionId: string) => void;
-  onOpenDrive: (scope: DriveScope) => void;
+  onOpenDrive: () => void;
+  onOpenTemplates: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onNewFolder: () => void;
-  onUploadFile: () => void;
   onSwitchOrg: (orgId: string) => void;
   onOpenSettings: () => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
@@ -92,7 +82,6 @@ export function DriveRail({
   drawerOpen: boolean;
   onCloseDrawer: () => void;
 }) {
-  const [newOpen, setNewOpen] = useState(false);
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
   const orgSelector = useRef<HTMLDivElement>(null);
@@ -174,36 +163,26 @@ export function DriveRail({
           </div>
         </div>
 
-        <div className="drive-rail-section">
-          Drive
+        <nav className="drive-rail-nav drive-rail-nav--top" aria-label="Locations">
           <button
-            className="webapp-workspace-add"
+            className={`drive-rail-row${nav === 'templates' ? ' drive-rail-row--active' : ''}`}
             type="button"
-            title="New in Drive"
-            aria-label="New in Drive"
-            aria-haspopup="menu"
-            aria-expanded={newOpen}
-            onClick={() => setNewOpen((open) => !open)}
-          ><PlusGlyph /></button>
-        </div>
-        <nav className="drive-rail-nav" aria-label="Locations">
-          <button
-            className={`drive-rail-row${driveScope === 'mine' ? ' drive-rail-row--active' : ''}`}
-            type="button"
-            aria-current={driveScope === 'mine' ? 'page' : undefined}
-            onClick={() => onOpenDrive('mine')}
+            aria-current={nav === 'templates' ? 'page' : undefined}
+            onClick={onOpenTemplates}
           >
-            <DriveGlyph /><span>My Drive</span>
+            <TemplateGlyph /><span>Templates</span>
           </button>
           <button
-            className={`drive-rail-row${driveScope === 'shared' ? ' drive-rail-row--active' : ''}`}
+            className={`drive-rail-row${nav === 'drive' ? ' drive-rail-row--active' : ''}`}
             type="button"
-            aria-current={driveScope === 'shared' ? 'page' : undefined}
-            onClick={() => onOpenDrive('shared')}
+            aria-current={nav === 'drive' ? 'page' : undefined}
+            onClick={onOpenDrive}
           >
-            <SharedGlyph /><span>Shared with me</span>
+            <DriveGlyph /><span>Drive</span>
           </button>
         </nav>
+
+        <div className="drive-rail-divider" role="presentation" />
 
         <div className="drive-rail-section">
           Workspaces
@@ -393,36 +372,6 @@ export function DriveRail({
         tabIndex={-1}
         onClick={onCloseDrawer}
       />
-      {newOpen && (
-        <>
-          <button
-            type="button"
-            aria-label="Close menu"
-            style={{ position: 'fixed', inset: 0, zIndex: 190, border: 0, background: 'transparent', cursor: 'default' }}
-            onClick={() => setNewOpen(false)}
-          />
-          <div className="drive-menu" role="menu" style={{ left: 16, top: 88, zIndex: 410 }}>
-            <button
-              className="drive-menu-item"
-              type="button"
-              role="menuitem"
-              onClick={() => { setNewOpen(false); onNewFolder(); }}
-            >
-              <FolderPlusGlyph /><span>New folder</span>
-            </button>
-            <button
-              className="drive-menu-item"
-              type="button"
-              role="menuitem"
-              disabled={uploadTargetName === null}
-              title={uploadTargetName === null ? 'Open a folder you can edit first' : `Upload into ${uploadTargetName}`}
-              onClick={() => { setNewOpen(false); onUploadFile(); }}
-            >
-              <UploadGlyph /><span>Upload file</span>
-            </button>
-          </div>
-        </>
-      )}
     </>
   );
 }

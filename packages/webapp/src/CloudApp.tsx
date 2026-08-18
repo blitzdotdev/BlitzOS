@@ -22,9 +22,9 @@ import {
 import { FileIcon } from './WebAppIcons';
 import { DriveHome } from './files/DriveHome';
 import { CreateTemplateScreen } from './files/CreateTemplateScreen';
-import { DriveRail } from './files/DriveRail';
+import { DriveRail, type DriveRailNav } from './files/DriveRail';
+import { TemplatesHome } from './files/TemplatesHome';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
-import type { DriveCommand } from './files/FilesDrive';
 import {
   CreateWorkspaceDialog,
   type CreateWorkspaceDialogInput,
@@ -50,6 +50,7 @@ import {
   workspacePath,
   type SettingsSection,
   templateNewPath,
+  templatesPath,
 } from './sessions-page-state';
 import {
   defaultWorkspaceFiles,
@@ -214,8 +215,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
-  const [driveCommand, setDriveCommand] = useState<DriveCommand | null>(null);
-  const [driveUploadTarget, setDriveUploadTarget] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -1081,26 +1080,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     </div>
   );
 
-  const railFor = (scope: 'mine' | 'shared' | null, railActiveWorkspaceId: string | null) => (
+  const railFor = (nav: DriveRailNav | null, railActiveWorkspaceId: string | null) => (
     <DriveRail
       workspaces={store.workspaces}
       activeWorkspaceId={railActiveWorkspaceId}
-      driveScope={scope}
+      nav={nav}
       identity={store.viewer?.identity ?? null}
       org={store.viewer?.org ?? null}
       organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
-      uploadTargetName={driveUploadTarget}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId ? ttydTabs : []}
       activeSessionId={ttydActiveId ?? ''}
       onSelectSession={selectTtydSession}
-      onOpenDrive={(nextScope) => navigateTo(drivePath(nextScope))}
+      onOpenDrive={() => navigateTo(drivePath('mine'))}
+      onOpenTemplates={() => navigateTo(templatesPath())}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onNewFolder={() => {
-        if (isDriveRoute) setDriveCommand({ kind: 'new-folder', nonce: Date.now() });
-        else navigateTo(drivePath('mine'));
-      }}
-      onUploadFile={() => setDriveCommand({ kind: 'upload', nonce: Date.now() })}
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());
       }}
@@ -1132,15 +1126,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   if (isDriveRoute && (route.page === 'drive' || route.page === 'folder')) {
     return (
       <main className="drive-shell" aria-busy={!loaded}>
-        {railFor(route.page === 'drive' ? route.scope : null, null)}
+        {railFor('drive', null)}
         {loaded && store.viewer ? (
           <DriveHome
             client={client}
             viewer={store.viewer}
             route={route}
-            command={driveCommand}
             onNavigate={navigateTo}
-            onUploadTarget={setDriveUploadTarget}
             onOpenRail={() => setDrawerOpen(true)}
           />
         ) : (
@@ -1179,20 +1171,43 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     );
   }
 
-  if (route.page === 'template-new') {
-    const leaveToCreate = () => {
-      navigateTo(drivePath('mine'));
-      setShowCreateWorkspace(true);
-    };
+  if (route.page === 'templates') {
     return (
       <main className="drive-shell" aria-busy={!loaded}>
-        {railFor(null, null)}
+        {railFor('templates', null)}
+        {loaded && store.viewer ? (
+          <TemplatesHome
+            client={client}
+            creating={createWorkspaceBusy}
+            onNewTemplate={() => navigateTo(templateNewPath())}
+            onUseTemplate={(template) => {
+              void createWorkspace({ templateId: template.id, orgShareRole: 'editor' });
+            }}
+            onOpenRail={() => setDrawerOpen(true)}
+          />
+        ) : (
+          <div className="drive-content">
+            <div className="drive-empty" role="status">Loading…</div>
+          </div>
+        )}
+        {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
+        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {updateNotice}
+      </main>
+    );
+  }
+
+  if (route.page === 'template-new') {
+    const leaveToTemplates = () => navigateTo(templatesPath());
+    return (
+      <main className="drive-shell" aria-busy={!loaded}>
+        {railFor('templates', null)}
         {loaded && store.viewer ? (
           <CreateTemplateScreen
             client={client}
             orgName={store.viewer.org.name}
-            onCreated={leaveToCreate}
-            onCancel={leaveToCreate}
+            onCreated={leaveToTemplates}
+            onCancel={leaveToTemplates}
           />
         ) : (
           <div className="drive-content">

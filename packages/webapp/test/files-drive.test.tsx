@@ -79,20 +79,19 @@ function props(route: Parameters<typeof FilesDrive>[0]['route']) {
     viewer,
     route,
     query: '',
-    command: null,
     onNavigate: vi.fn(),
-    onUploadTarget: vi.fn(),
   };
 }
 
 describe('files drive surface', () => {
-  it('splits My Drive from Shared with me by ownership', async () => {
+  it('lists owned folders with shared ones in their own section below', async () => {
     stubFolders();
     const mine = await render(<FilesDrive {...props(drive('mine'))} />);
     await settle();
-    expect(mine.container.textContent).toContain('My Drive');
+    expect(mine.container.textContent).toContain('Drive');
     expect(mine.container.textContent).toContain('shared-notes');
-    expect(mine.container.textContent).not.toContain('ada-datasets');
+    expect(mine.container.textContent).toContain('Shared with me');
+    expect(mine.container.textContent).toContain('ada-datasets');
     await mine.unmount();
 
     const shared = await render(<FilesDrive {...props(drive('shared'))} />);
@@ -359,7 +358,7 @@ describe('drive drag-and-drop', () => {
     await settle();
     dropEntries(mine, [fakeFileEntry('loose.txt')]);
     await settle();
-    expect(mine.container.textContent).toContain('Drop a folder to add it to My Drive');
+    expect(mine.container.textContent).toContain('Drop a folder to add it to Drive');
     expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST' || init?.method === 'PUT'))
       .toBe(false);
     await mine.unmount();
