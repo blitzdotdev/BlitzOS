@@ -88,9 +88,12 @@ export function useWorkspaceTabDrag({
       event.clientX,
       Number(tabDrag.sessionId),
     );
-    // A column already on screen is measured; one the split has yet to create
-    // claims its own half of the container instead.
-    const settled = target.kind === 'split' && !visibleRegions.includes(target.region)
+    // A split is measured from the column it lands in only while both columns
+    // are on screen. With a single pane, either edge creates the second column
+    // — the same-region edge by displacing the neighbours — so the hint claims
+    // its own half of the container instead of the whole pane.
+    const settled = target.kind === 'split'
+      && (visibleRegions.length === 1 || !visibleRegions.includes(target.region))
       ? null
       : stripElement(target.kind === 'split' ? target.region : region)
         ?.getBoundingClientRect() ?? null;
@@ -140,7 +143,7 @@ export function useWorkspaceTabDrag({
     dropTargetLabel: (target) => {
       const column = target.region === 'main' ? 'left pane' : 'right pane';
       if (target.kind === 'split') {
-        return visibleRegions.includes(target.region)
+        return visibleRegions.length > 1 && visibleRegions.includes(target.region)
           ? `Move to ${column}`
           : `Split ${target.region === 'main' ? 'left' : 'right'}`;
       }
