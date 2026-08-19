@@ -1,6 +1,6 @@
 # Production plan (simple version)
 
-Full test evidence: `e2e/GAPS.md`.
+Full test evidence: `tools/e2e/GAPS.md`.
 
 ## Where we are
 
@@ -32,7 +32,7 @@ Keep surfaces (terminal / chat / files) tunnel-only for v1. Hosted ingress stays
 ## The work, in order
 
 **1. Bootstrap** (the fix above). Blocks everything else.
-Done when `e2e/selfhost.mjs` passes all steps, including box surfaces + credentials + volume survival.
+Done when `tools/e2e/selfhost.mjs` passes all steps, including box surfaces + credentials + volume survival.
 
 **2. Publish images.**
 CI builds amd64 + arm64, pushes public ghcr, writes digests into release notes. (Today: private, and we streamed 640 MB over ssh for 4 minutes.)

@@ -23,7 +23,7 @@ const SUITE_ENVIRONMENT_VARIABLE = "COVERAGE_SUITE";
 
 function usage() {
   return [
-    "Usage: node e2e/coverage.mjs [--suite <name>]",
+    "Usage: node tools/e2e/coverage.mjs [--suite <name>]",
     "",
     `Environment: ${SUITE_ENVIRONMENT_VARIABLE}=<name>`,
     `Suites: ${SELECTABLE_SUITE_NAMES.join(", ")}`,
@@ -92,7 +92,7 @@ const DEFAULT_WORK_ROOT =
 const HETZNER_API = "https://api.hetzner.cloud/v1";
 const MAX_WORKSPACE_CREATES = 4;
 const ACTIVE_PHASES = new Set(["creating", "ready", "destroying", "error"]);
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const envPath = join(repoRoot, ".env");
 const runToken = randomBytes(6).toString("hex");
 const runLabel = `blitz-coverage-${runToken}`;

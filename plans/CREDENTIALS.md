@@ -73,7 +73,7 @@ Why mint-in-CP is the foundation and not a proxy, gateway, or external service: 
 | `packages/schema/src/credential.ts` | wire types shared by CP, box, ui (export from `src/index.ts:1-5`) |
 | `packages/broker/internal/workspace/cp.go` | box-side CP mint call + placement apply (env / file / unset-env) |
 | `packages/webapp/src/settings/IntegrationsPanel.tsx` + leases view | webApp config + audit surfaces; built-in provider templates + the access-request inbox (phase 4) |
-| `e2e/credentials.mjs` (or `coverage.mjs --suite credentials`) | the gates in §4 |
+| `tools/e2e/credentials.mjs` (or `coverage.mjs --suite credentials`) | the gates in §4 |
 
 ### Modified files
 

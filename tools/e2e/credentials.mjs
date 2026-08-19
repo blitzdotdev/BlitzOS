@@ -12,7 +12,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORK_DIR = join(repoRoot, "scratchpad", "credentials");
 const DEFAULT_LEDGER = join(DEFAULT_WORK_DIR, "workspace-ids");
 const PROTECTED_WORKSPACE_ID = "f8434c15-991a-486d-bd37-6df51c0f0647";

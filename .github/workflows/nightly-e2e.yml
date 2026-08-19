@@ -29,4 +29,4 @@ jobs:
             echo "::notice::Skipping self-hosted E2E because CP_URL or OPERATOR_API_KEY is unavailable."
             exit 0
           fi
-          node e2e/selfhost.mjs
+          node tools/e2e/selfhost.mjs

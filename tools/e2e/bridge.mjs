@@ -14,7 +14,7 @@ import { createServer, connect, isIP } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const envPath = join(repoRoot, ".env");
 const defaultScratch = join(repoRoot, ".bridge-e2e");
 const scratchDir = resolve(process.env.BRIDGE_SCRATCH_DIR ?? defaultScratch);

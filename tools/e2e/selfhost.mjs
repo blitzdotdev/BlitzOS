@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_WORK_DIR =
   "/private/tmp/claude-501/-Users-minjunes-blitz-core/04b1d3bc-f75f-42dd-8392-58b453d06f5a/scratchpad/e2e";
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const envPath = join(repoRoot, ".env");
 
 function readEnvValue(name) {
