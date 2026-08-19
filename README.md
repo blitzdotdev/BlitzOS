@@ -1,9 +1,9 @@
 <h1 align="center">BlitzOS</h1>
 
-<p align="center"><strong>Open platform for running agents.</strong></p>
+<p align="center"><strong>Multiplayer AI platform</strong></p>
 
 <p align="center">
-  One place for teams to run agents. Give everyone a cloud agent with scoped credentials, tools, and data. 
+  Share agent workspaces with credentials, tools, and data loaded in, ready for your teammate's agent to start working. 
 </p>
 
 <p align="center">
@@ -14,42 +14,45 @@
 
 ## Capabilities
 
-- **Cloud agent workspaces.** Give agents a complete Linux work environment, deployed on your cloud 
-- **Scoped agent workspaces.** Scope the workspace to hold only the credentials and data the work requires.
-- **Multiplayer** Setup agent workspaces with custom credentials, harness, data and share with teammates
+- **Agent workspaces.** Scoped workspaces holding only the credentials and data the agent needs. 
+- **Multiplayer** Share agent workspaces with teammates to share work context
+- **Set it up once, hand it over.** Build a custom workspace template for a role, then share it with the team.
 - **BYO agent.** Run Claude Code, Codex, or any other harness
-- **Start from Slack** Launch agent runs in Slack and continue from browser webUI 
-- **Browser webUI** Create, watch, and steer agents in workspaces via chat/terminal. View files and live port previews
-- **Programmable agent workspaces** Agents can provision agent workspaces for their subagents via API. 
-- **Build internal tools.** Agents can build internal dashboards, pipelines, CRMs, and tools via API, hosted on Cloudflare
+- **Start in Slack, finish in the browser.** Launch agents from chat and pick it up in the webApp 
+- **webApp** Create, watch, and steer agents in workspaces via chat/terminal. View files and live port previews
+- **Programmable.** Agents provision workspaces for their own subagents through the API.
+- **Build internal tools.** Agents ship dashboards, pipelines, and internal apps straight to Cloudflare.
 
 ## Architecture
 
 ```text
-                      you · your team · apps
-                               |
-                      browser · terminal · API
-                               |
-                 +-------------+-------------+
-                 |     BlitzOS control plane |
-                 | workspaces · sessions · access |
-                 +--------+------------+-----+
-                          |            |
-                     VmProvider   credential plane
-                   +------+-----+ mint · proxy · broker
-                   |            |       |
-              cloud VM   Firecracker    integrations
-                   |        host         |
-                   +------+--+-----------+
-                          |
-                 +--------+---------+
-                 |  agent workspace |
-                 |  Linux · Docker   |
-                 |  tools · data     |
-                 |  scoped credentials|
-                 |  Claude · Codex   |
-                 +------------------+
+             you  ·  your teammates  ·  your agents
+                                │
+                  browser  ·  terminal  ·  API
+                                │
+        ┌───────────────────────┴───────────────────────┐
+        │             BlitzOS control plane             │
+        │     workspaces · sessions · access · org      │
+        └───────────┬───────────────────────┬───────────┘
+                    │                       │
+               VmProvider           credential plane
+                    │                       │
+         cloud VM · Firecracker   mint · proxy · broker
+                    │                       │
+                    │                 integrations
+                    │                       │
+        ┌───────────┴───────────────────────┴───────────┐
+        │                agent workspace                │
+        │            Linux · Docker · tools             │
+        │        your data · scoped credentials         │
+        │              Claude · Codex · …               │
+        └───────────────────────────────────────────────┘
 ```
+
+The control plane owns workspace lifecycle, sessions, and org access. It resolves
+compute through a `VmProvider` — a cloud VM or a Firecracker host you run yourself —
+and injects short-lived credentials through the credential plane. The agent never
+holds a long-lived secret.
 
 ## Packages
 
