@@ -79,6 +79,7 @@ export const googleWorkspaceManifest = {
       { name: "prompt", value: "consent" },
       { name: "include_granted_scopes", value: "true" },
     ],
+    scopeDelimiter: " ",
     accessTtlMs: HOUR_MS,
     redirectPath: "/connect/google-workspace/callback",
   },

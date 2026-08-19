@@ -44,6 +44,7 @@ run_worker_first = [
   "/workspace-templates*",
   "/folders*",
   "/connections*",
+  "/connect/*",
   "/integrations*",
   "/leases*",
   "/requests*",

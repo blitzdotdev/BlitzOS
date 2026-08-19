@@ -79,6 +79,7 @@ export const linearManifest = {
     // actor=user keeps attribution on the human. actor=app is the agent-identity
     // path, parked with installation tokens.
     authorizeParams: [{ name: "actor", value: "user" }],
+    scopeDelimiter: ",",
     accessTtlMs: 24 * HOUR_MS,
     redirectPath: "/connect/linear/callback",
   },

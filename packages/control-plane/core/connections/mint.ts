@@ -4,7 +4,9 @@ import { first, rows } from "../db.js";
 import { HttpError, isRecord, isString, readJson, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
 import { providerManifest } from "./catalog/index.js";
+import type { ProviderManifest } from "./catalog/types.js";
 import { tombstoneSurfaces } from "./catalog/surfaces.js";
+import { addConnectRoutes } from "./connect.js";
 import {
   createLease,
   listCredentialEvents,
@@ -18,6 +20,7 @@ import {
   usableByAllows,
 } from "./manifest.js";
 import { mintFromGrant } from "./minters/grant.js";
+import { refreshedAccessToken } from "./minters/oauth.js";
 import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
@@ -144,7 +147,7 @@ async function ownerGrantMint(
     throw new HttpError(409, `connection grant names an unknown provider ${grant.manifest_id}`);
   }
   const config = grantConfig(grant);
-  const secret = await grantSecretForMint(runtime, grant);
+  const secret = await grantSecretForMint(runtime, manifest, grant, request.origin);
   return mintFromGrant({
     manifest,
     grant,
@@ -158,14 +161,33 @@ async function ownerGrantMint(
 
 async function grantSecretForMint(
   runtime: ReturnType<RuntimeFactory>,
+  manifest: ProviderManifest,
   grant: GrantRow,
+  origin: string,
 ): Promise<string> {
   if (grant.kind === "pat") {
     const secret = await openGrantSecret(runtime.credentialMasterKey, grant, "refresh");
     if (secret === null) throw new HttpError(409, "connection grant has no stored key");
     return secret;
   }
-  const access = await accessTokenForGrant(runtime, grant);
+  const auth = manifest.auth;
+  if (auth === null) throw new HttpError(409, "connection grant needs re-authorization");
+  const clientId = runtime.vars.connectSecret(auth.clientIdVar);
+  const clientSecret = runtime.vars.connectSecret(auth.clientSecretVar);
+  if (clientId === undefined || clientSecret === undefined) {
+    throw new HttpError(409, `${manifest.title} is not configured on this instance`);
+  }
+  const access = await refreshedAccessToken(
+    {
+      db: runtime.db,
+      key: runtime.credentialMasterKey,
+      clientId,
+      clientSecret,
+      redirectUri: `${origin}${auth.redirectPath}`,
+    },
+    { ...manifest, auth },
+    grant,
+  );
   if (access === null) throw new HttpError(409, "connection grant needs re-authorization");
   return access;
 }
@@ -259,18 +281,6 @@ async function mintOne(
     principal,
   });
   return result;
-}
-
-/** Phase 1 mints oauth grants from the access token the connect callback
- * stored. Refresh-on-demand arrives with the generic oauth minter. */
-async function accessTokenForGrant(
-  runtime: ReturnType<RuntimeFactory>,
-  grant: GrantRow,
-): Promise<string | null> {
-  if (grant.access_expires_at === null || grant.access_expires_at <= Date.now()) {
-    return null;
-  }
-  return openGrantSecret(runtime.credentialMasterKey, grant, "access");
 }
 
 /** Static org-root minting predates per-user grants. It stays for rows that
@@ -417,6 +427,7 @@ export function addCredentialRoutes(
 ): void {
   addConnectionRoutes(router, runtimeFactory, requirePrincipal);
   addUserGrantRoutes(router, runtimeFactory, requirePrincipal);
+  addConnectRoutes(router, runtimeFactory, requirePrincipal);
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 

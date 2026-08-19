@@ -40,6 +40,9 @@ export interface ProviderAuth {
   authorizeParams: readonly ProviderParam[];
   /** Documented access-token lifetime, used when an exchange omits expires_in. */
   accessTtlMs: number;
+  /** How the provider joins requested scopes. Linear wants commas, the rest
+   * want spaces, and getting it wrong reads as "invalid scope". */
+  scopeDelimiter: " " | ",";
   /** Redirect URI path registered with the provider, for the ops runbook. */
   redirectPath: string;
 }

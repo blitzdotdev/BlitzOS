@@ -10,7 +10,7 @@ const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
   "/sessions", "/workspaces", "/workspace-templates", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
-  "/hosts/", "/oauth/", "/boxes/", "/connections", "/integrations", "/leases/", "/requests",
+  "/hosts/", "/oauth/", "/boxes/", "/connections", "/connect/", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
 ]);
 export const CORE_MANIFEST = Object.freeze([

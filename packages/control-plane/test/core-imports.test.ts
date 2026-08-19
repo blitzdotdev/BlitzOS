@@ -19,11 +19,13 @@ const expected = [
   "connections/catalog/linear.ts",
   "connections/catalog/surfaces.ts",
   "connections/catalog/types.ts",
+  "connections/connect.ts",
   "connections/leases.ts",
   "connections/manifest.ts",
   "connections/mint.ts",
   "connections/minters/app-jwt/github-app.ts",
   "connections/minters/grant.ts",
+  "connections/minters/oauth.ts",
   "connections/minters/static.ts",
   "connections/proxy.ts",
   "connections/registry.ts",
@@ -98,6 +100,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(73);
+    expect(expected).toHaveLength(75);
   });
 });

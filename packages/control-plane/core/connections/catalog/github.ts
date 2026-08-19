@@ -70,6 +70,7 @@ export const githubManifest = {
     clientSecretVar: "GITHUB_APP_CLIENT_SECRET",
     pkce: true,
     authorizeParams: [],
+    scopeDelimiter: " ",
     accessTtlMs: 8 * HOUR_MS,
     redirectPath: "/connect/github/callback",
   },
