@@ -356,6 +356,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     () => client.listWorkspaceTemplates().then(({ templates }) => templates),
     [client],
   );
+  const listGrants = useCallback(
+    () => client.listConnectionGrants().then(({ grants }) => grants),
+    [client],
+  );
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
       const records = await api.listWorkspaces();
@@ -1380,6 +1384,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
             listTemplates={listTemplates}
+            listGrants={listGrants}
+            connectClient={client}
             onNewTemplate={() => navigateTo(templateNewPath())}
             onCancel={() => {
               if (!createWorkspaceBusy) setShowCreateWorkspace(false);
@@ -2016,6 +2022,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
           listTemplates={listTemplates}
+          listGrants={listGrants}
+          connectClient={client}
           onNewTemplate={() => navigateTo(templateNewPath())}
           onCancel={() => {
             if (!createWorkspaceBusy) {

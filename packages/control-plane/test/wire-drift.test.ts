@@ -55,6 +55,11 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   owner: { name: "Owner", avatarUrl: null },
 };
 
+const templateConnection: SharedShape<
+  wire.TemplateConnectionView,
+  schema.TemplateConnectionView
+> = { provider: "linear", required: true };
+
 const workspaceTemplate: SharedShape<
   wire.WorkspaceTemplateView,
   schema.WorkspaceTemplateView
@@ -65,6 +70,7 @@ const workspaceTemplate: SharedShape<
   createdAt: 1,
   createdBy: { name: "Owner", avatarUrl: null },
   folders: [{ id: "folder", name: "Shared", role: "editor" }],
+  connections: [templateConnection],
 };
 
 const workspaceTemplates: SharedShape<
@@ -79,6 +85,7 @@ const createWorkspaceTemplate: SharedShape<
   name: "web analysis",
   machineTypeId: "mv-2c2g@lab",
   folderIds: ["folder"],
+  connections: [templateConnection],
 };
 
 const createdWorkspaceTemplate: SharedShape<
@@ -107,6 +114,7 @@ const createWorkspaceRequest: SharedShape<
       github: { scopes: ["contents:read"] },
     },
   },
+  connections: ["github"],
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -228,6 +236,7 @@ const fullFieldValues = [
   machineTypeFailure,
   volume,
   workspace,
+  templateConnection,
   workspaceTemplate,
   workspaceTemplates,
   createWorkspaceTemplate,
@@ -262,6 +271,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
+    expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
     expectTypeOf<wire.WorkspaceTemplateView>().toEqualTypeOf<schema.WorkspaceTemplateView>();
     expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();
     expectTypeOf<wire.CreateWorkspaceTemplateRequest>().toEqualTypeOf<schema.CreateWorkspaceTemplateRequest>();

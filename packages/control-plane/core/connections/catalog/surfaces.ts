@@ -97,11 +97,11 @@ export function compileSurfaces(
 export function tombstoneSurfaces(
   manifest: ProviderManifest,
   connection: string,
-  overrides: SurfaceOverrides | null,
+  environmentNames: readonly string[],
 ): Placement[] {
   const placements: Placement[] = [];
-  for (const surface of envSurfaces(manifest, overrides)) {
-    placements.push({ kind: "unset-env", name: surface.name });
+  for (const name of environmentNames) {
+    placements.push({ kind: "unset-env", name });
   }
   placements.push({
     kind: "file",

@@ -27,6 +27,9 @@ export interface CreateWorkspaceRequest {
   /** User-data is readable inside the VM; never put secrets here. */
   userData?: string;
   manifest?: CredentialManifest;
+  /** Providers to enable in the new workspace. The manifest stays the ceiling;
+   * this is the provision list, and the ceiling wins on conflict. */
+  connections?: string[];
 }
 
 export interface CreateWorkspaceResponse {

@@ -132,6 +132,11 @@ export interface WorkspaceView {
   };
 }
 
+export interface TemplateConnectionView {
+  provider: string;
+  required: boolean;
+}
+
 export interface WorkspaceTemplateView {
   id: string;
   name: string;
@@ -140,6 +145,8 @@ export interface WorkspaceTemplateView {
   createdBy: { name: string; avatarUrl: string | null };
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: FolderRole | null }[];
+  /** Provider names only. `required` blocks create until the creator connects. */
+  connections: TemplateConnectionView[];
 }
 
 export interface ListWorkspaceTemplatesResponse {
@@ -150,6 +157,7 @@ export interface CreateWorkspaceTemplateRequest {
   name: string;
   machineTypeId: string;
   folderIds: string[];
+  connections?: TemplateConnectionView[];
 }
 
 export interface CreateWorkspaceTemplateResponse {
@@ -173,6 +181,9 @@ export interface CreateWorkspaceRequest {
   volumeId?: string;
   userData?: string;
   manifest?: CredentialManifest;
+  /** Providers to enable in the new workspace. The manifest stays the ceiling;
+   * this is the provision list, and the ceiling wins on conflict. */
+  connections?: string[];
 }
 
 export interface CreateWorkspaceResponse {

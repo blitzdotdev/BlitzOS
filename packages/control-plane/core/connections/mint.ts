@@ -4,11 +4,13 @@ import { first, rows } from "../db.js";
 import { HttpError, isRecord, isString, readJson, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
 import { providerManifest } from "./catalog/index.js";
+import { tombstoneSurfaces } from "./catalog/surfaces.js";
 import {
   createLease,
   listCredentialEvents,
   listLeases,
   revokeLease,
+  staleSurfaceConnections,
 } from "./leases.js";
 import {
   connectionDefaultScopes,
@@ -31,9 +33,14 @@ import {
   addUserGrantRoutes,
   grantConfig,
   grantFor,
+  grantsForUser,
   openGrantSecret,
 } from "./user-grants.js";
 import { canControlWorkspace } from "../workspace-access.js";
+
+/** A tombstone carries no credential, so its horizon only has to outlast the
+ * sync that applied it without shortening the box's freshness window. */
+const TOMBSTONE_TTL_MS = 60 * 60 * 1_000;
 
 interface WorkspaceCredentialRow {
   id: string;
@@ -288,6 +295,121 @@ async function legacyRootMint(
   return minter.mint(root, connection, request);
 }
 
+/** Tombstone results ride the same wire a live mint does: `inject` mode with
+ * `unset-env` names and an empty-valued file. They create no lease, because
+ * they carry no credential. */
+async function surfaceTombstones(
+  runtime: ReturnType<RuntimeFactory>,
+  workspaceId: string,
+  mintedConnectionIds: readonly string[],
+  now = Date.now(),
+): Promise<MintResult[]> {
+  const results: MintResult[] = [];
+  for (const stale of await staleSurfaceConnections(
+    runtime.db,
+    workspaceId,
+    mintedConnectionIds,
+    now,
+  )) {
+    const declared = parseConnectionSurfaceConfig(stale.config);
+    if (declared === null) continue;
+    const manifest = providerManifest(declared.manifestId);
+    if (manifest === null) continue;
+    results.push({
+      // FROZEN box wire key: the shipped broker requires "integration".
+      integration: stale.connection_name,
+      mode: "inject",
+      placements: tombstoneSurfaces(
+        manifest,
+        stale.connection_name,
+        declared.environmentNames,
+      ),
+      expiresAt: now + TOMBSTONE_TTL_MS,
+    });
+  }
+  return results;
+}
+
+interface ConnectionSurfaceConfig {
+  manifestId: string;
+  environmentNames: string[];
+}
+
+/** Catalog connections record which manifest wrote their surfaces and under
+ * which names. A legacy static row has neither and needs no tombstone: its
+ * environment file is replaced wholesale by the sync, and it wrote no skill. */
+function parseConnectionSurfaceConfig(value: string): ConnectionSurfaceConfig | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isString(parsed.manifest_id)) return null;
+  const placements = Array.isArray(parsed.placements) ? parsed.placements : [];
+  const environmentNames: string[] = [];
+  for (const placement of placements) {
+    if (isRecord(placement) && placement.kind === "env" && isString(placement.name)) {
+      environmentNames.push(placement.name);
+    }
+  }
+  return { manifestId: parsed.manifest_id, environmentNames };
+}
+
+/** Pre-mints the workspace's enabled connections at the phone-home ready
+ * transition, so the first shell opens with environment and skills already on
+ * disk instead of waiting for a human to run a login. */
+export async function preMintReadyConnections(
+  runtime: ReturnType<RuntimeFactory>,
+  workspaceId: string,
+  boxId: string,
+  origin: string,
+): Promise<number> {
+  const workspace = await first<WorkspaceCredentialRow>(runtime.db, {
+    q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
+        FROM workspaces WHERE id = ?1 LIMIT 1`,
+    v: [workspaceId],
+  });
+  if (workspace === null || workspace.org_id === null || workspace.phase !== "ready") return 0;
+  const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
+    q: `SELECT id, role FROM memberships
+        WHERE user_id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
+    v: [workspace.owner_id, workspace.org_id],
+  });
+  const owner: Principal = {
+    id: workspace.owner_id,
+    unixName: "blitz",
+    harnesses: [],
+    membershipId: membership?.id ?? workspace.owner_membership_id,
+    orgId: workspace.org_id,
+    role: membership?.role ?? null,
+    platformOperator: false,
+  };
+  // Grant-backed connections only. A legacy org-root connection keeps its
+  // first-shell mint: pre-minting one would hand every new box a credential
+  // nobody asked this workspace to hold.
+  const granted = new Set(
+    (await grantsForUser(runtime.db, workspace.owner_id)).map(({ provider }) => provider),
+  );
+  if (granted.size === 0) return 0;
+  let preminted = 0;
+  for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
+    if (!granted.has(connection.name)) continue;
+    const result = await mintOne(
+      runtime,
+      workspace,
+      boxId,
+      owner,
+      origin,
+      connection,
+      connectionDefaultScopes(connection),
+      "skip",
+    );
+    if (result !== null) preminted += 1;
+  }
+  return preminted;
+}
+
 export function addCredentialRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -365,6 +487,7 @@ export function addCredentialRoutes(
     }
 
     const results: MintResult[] = [];
+    const minted: string[] = [];
     for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
       const result = await mintOne(
         runtime,
@@ -376,8 +499,11 @@ export function addCredentialRoutes(
         connectionDefaultScopes(connection),
         "skip",
       );
-      if (result !== null) results.push(result);
+      if (result === null) continue;
+      results.push(result);
+      minted.push(connection.id);
     }
+    results.push(...(await surfaceTombstones(runtime, workspace.id, minted)));
     return context.json(results);
   });
 

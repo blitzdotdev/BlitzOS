@@ -442,11 +442,47 @@
 
 .template-tile--new:hover strong { color: var(--ink); }
 
-.template-folder-list {
+.template-folder-list,
+.template-connection-list {
   margin: 0;
   padding-left: 16px;
   color: var(--muted);
   font: 11px/1.7 var(--font-ui);
+}
+
+.template-connection-list {
+  list-style: none;
+  padding-left: 0;
+}
+
+.template-connection-list li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.tplf-connections {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+}
+
+.tplf-connections h2 {
+  margin: 0;
+  font: 600 12px/1.4 var(--font-ui);
+}
+
+.tplf-connections p {
+  margin: 0;
+  color: var(--muted);
+  font: 11px/1.6 var(--font-ui);
+}
+
+.tplf-connection {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font: 12px/1.5 var(--font-ui);
 }
 
 /* --------------------------------------------- template folder browser */

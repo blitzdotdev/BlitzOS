@@ -1,9 +1,17 @@
 import type { CatalogEntryView, PutUserGrantRequest } from '@blitzos/schema';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { ControlPlaneClient } from '../api';
+
 import { caughtErrorMessage } from '../error-message';
 
 const GENERIC_ID = 'generic';
+
+/** Exactly what connecting needs. Narrow so the create-workspace dialog can
+ * host the same component without taking the whole client surface. */
+export type ConnectClient = Pick<
+  ControlPlaneClient,
+  'listConnectionCatalog' | 'putConnectionGrant' | 'connectStartUrl'
+>;
 
 function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim();
@@ -38,7 +46,7 @@ export function ConnectPicker({
   requestedProvider,
   onConnected,
 }: {
-  client: ControlPlaneClient;
+  client: ConnectClient;
   requestedProvider?: string | null;
   onConnected?: () => void;
 }) {

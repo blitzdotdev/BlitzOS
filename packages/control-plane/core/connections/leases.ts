@@ -309,26 +309,41 @@ export function revokeGrantLeasesQuery(grantId: string): Query {
   };
 }
 
-/** Connections whose surfaces this workspace still carries on disk but which
- * no longer mint. Phase A has no `remove-file` placement, so the next sync
- * overwrites their files empty instead of deleting them. */
+export interface StaleSurfaceRow {
+  connection_id: string;
+  connection_name: string;
+  config: string;
+}
+
+/** How long a dead connection keeps being overwritten. Past this the file has
+ * been empty for weeks on every box that ever synced. */
+const SURFACE_TOMBSTONE_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+
+/** Connections whose surface files this workspace still carries on disk but
+ * which no longer mint. The running box image has no `remove-file` placement,
+ * so the next sync overwrites them empty — a stale skill for a dead
+ * connection would gaslight the agent into retrying a credential that is gone. */
 export async function staleSurfaceConnections(
   db: Db,
   workspaceId: string,
   liveConnectionIds: readonly string[],
-): Promise<Array<{ connection_id: string; connection_name: string; grant_id: string | null }>> {
+  now = Date.now(),
+): Promise<StaleSurfaceRow[]> {
   const excluded = liveConnectionIds
-    .map((_id, index) => `?${String(index + 2)}`)
+    .map((_id, index) => `?${String(index + 3)}`)
     .join(", ");
-  return rows<{ connection_id: string; connection_name: string; grant_id: string | null }>(db, {
-    q: `SELECT DISTINCT lease.connection_id, connection.scoped_name AS connection_name,
-               lease.grant_id
+  return rows<StaleSurfaceRow>(db, {
+    q: `SELECT lease.connection_id, connection.scoped_name AS connection_name,
+               connection.config
         FROM credential_leases lease
         JOIN connections connection ON connection.id = lease.connection_id
         WHERE lease.workspace_id = ?1
+          AND lease.issued_at >= ?2
           ${excluded === "" ? "" : `AND lease.connection_id NOT IN (${excluded})`}
+        GROUP BY lease.connection_id
+        HAVING SUM(CASE WHEN lease.state = 'active' THEN 1 ELSE 0 END) = 0
         ORDER BY connection.scoped_name`,
-    v: [workspaceId, ...liveConnectionIds],
+    v: [workspaceId, now - SURFACE_TOMBSTONE_WINDOW_MS, ...liveConnectionIds],
   });
 }
 

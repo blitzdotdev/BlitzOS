@@ -37,6 +37,32 @@ export function manifestJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Per-workspace enablement (§1 rule 3) maps onto the ceiling primitive that
+ * already exists: a grant must not flow into every workspace its owner has
+ * just because they hold it. An explicit ceiling wins on conflict — the
+ * provision list can only enable what the ceiling already allows. */
+export function enablementManifestJson(
+  ceiling: unknown,
+  connections: readonly string[],
+): string | null {
+  if (ceiling !== undefined) return manifestJson(ceiling);
+  if (connections.length === 0) return null;
+  const integrations: Record<string, Record<string, unknown>> = {};
+  for (const name of connections) integrations[name] = {};
+  return JSON.stringify({ integrations });
+}
+
+/** Names the ceiling allows, filtered to the requested provision list. */
+export function enabledConnections(
+  storedManifest: string | null,
+  connections: readonly string[],
+): string[] {
+  if (storedManifest === null) return [...connections];
+  const manifest = parsedStoredManifest(storedManifest);
+  if (manifest === null) return [];
+  return connections.filter((name) => manifest.integrations[name] !== undefined);
+}
+
 function parsedStoredManifest(value: string): CredentialManifest | null {
   try {
     return parseManifest(JSON.parse(value));
