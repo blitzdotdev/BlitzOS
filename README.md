@@ -3,13 +3,17 @@
 <p align="center"><strong>Multiplayer AI platform</strong></p>
 
 <p align="center">
-  Share agent workspaces with credentials, tools, and data loaded in, ready for your teammate's agent to start working. 
+  Create agent workspaces with custom credentials, tools, and data and share with your teammate. 
 </p>
 
 <p align="center">
   <a href="#capabilities">Capabilities</a> •
   <a href="#architecture">Architecture</a> •
   <a href="#packages">Packages</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/workspace.png" alt="A BlitzOS workspace: agent terminal, chat, files, and connections in the browser" width="100%">
 </p>
 
 ## Capabilities
@@ -21,7 +25,8 @@
 - **Start in Slack, finish in the browser.** Launch agents from chat and pick it up in the webApp 
 - **webApp** Create, watch, and steer agents in workspaces via chat/terminal. View files and live port previews
 - **Programmable.** Agents provision workspaces for their own subagents through the API.
-- **Build internal tools.** Agents ship dashboards, pipelines, and internal apps straight to Cloudflare.
+- **Shared Drive.** Upload files/folders and share it with teammates and attach folders to the agent workspace
+- **Shared Apps.** Agents ship dashboards, pipelines, and other internal tools as real full-stack apps on Cloudflare.
 
 ## Architecture
 
