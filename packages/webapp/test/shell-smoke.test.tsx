@@ -584,6 +584,51 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("keeps the panels an off-canvas sheet and one tab strip on mobile", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    saveTabs(
+      "workspace-running",
+      [
+        { id: 1, type: "terminal" },
+        { id: 2, type: "panel", panel: "previews", region: "side" },
+      ],
+      1,
+      2,
+    );
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    // No rail, no split: one strip holding only the session tabs, with the
+    // panel living in the drawer the mobile layout already had.
+    expect(view.container.querySelector(".webapp-rail-strip")).toBeNull();
+    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect([...view.container.querySelectorAll(
+      '[aria-label="Workspace sessions"] .webapp-tab-cell',
+    )]).toHaveLength(1);
+    const drawer = view.container.querySelector("#webapp-workspace-drawer")!;
+    const segments = [...drawer.querySelectorAll('[role="tab"]')]
+      .map((tab) => tab.textContent);
+    expect(segments).toEqual(["Files", "teenyapps", "Integrations"]);
+    expect(drawer.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
+      .toBe("teenyapps");
+
+    await view.unmount();
+  });
+
   it("splits the tab area from the right icon strip and collapses it again", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
