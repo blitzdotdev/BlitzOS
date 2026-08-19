@@ -48,7 +48,7 @@ What this deletes from the design space: grant precedence, org-secret rotation p
 
 Named costs, accepted:
 - **Service continuity ties to people.** Long-running automation uses the owner's token; offboarding or ownership transfer means the new owner re-connects. Escape hatch with zero product surface: a bot user with its own grants can own a workspace.
-- **The GitHub App minter is org-shaped** (App ID + private key is inherently a shared secret). GitHub becomes user OAuth / user PAT like everything else; `app-jwt` is parked — code kept, catalog entry dropped.
+- **Installation-token minting is org-shaped and parked** (App JWT → installation tokens attribute to the app, not a person). The GitHub App itself stays — as the vehicle for per-user **user access tokens** (§9). `app-jwt` keeps its code, loses its catalog entry.
 
 ## 2. Reachable: the add flow moves into the workspace panel
 
@@ -83,7 +83,7 @@ Revocation symmetry matters: when a lease is revoked (including on unshare), the
 
 1. `GET /connect/:provider/start` → 302 to the provider authorize URL, `state` via the generalized CSRF helper (`core/identity/oauth-state.ts` is Google-login-bound today).
 2. `GET /connect/:provider/callback` → code exchange → encrypt tokens into `user_oauth_grants` for the signed-in user.
-3. **New oauth minter**: at mint, exchange refresh → access for the *owner's* grant; lease TTL from `expires_in`; rotate stored refresh when the provider rotates (Figma does).
+3. **New oauth minter**: at mint, exchange refresh → access for the *owner's* grant; lease TTL from `expires_in`; persist rotated refresh tokens. Rotation is now the norm, not the exception — GitHub rotates single-use, Linear rotates with a 30-minute replay grace, Google does not rotate (§9). Single-use rotation means refreshes must serialize per grant (CAS on the grant row).
 4. Provider registry entries carry client ids; client secrets are worker secrets; redirect URIs are per-deployment ops work — documented per provider in the manifest.
 5. Blunt sequencing: **personal PATs deliver most agent value this week** (Linear API keys, Figma PATs) through the same grant table with no OAuth code. Ship PAT-grants first, OAuth after surfaces.
 
@@ -105,3 +105,52 @@ Revocation symmetry matters: when a lease is revoked (including on unshare), the
 4. **Owner offboarding**: leases die with the owner's grants; ownership transfer re-prompts SSO. Surface this in the transfer flow, not in a support ticket.
 5. **Scope consent**: the per-provider scope catalog is what makes "Connect figma" honest about what the agent will hold. Ship it with Phase 1, hand-written is fine.
 6. **Naming collision**: "connection" also means sockets in box/gateway/chat code. The rename constrained itself to the credential product noun; `user_connections` → `user_oauth_grants` cleared the clash.
+
+---
+
+## 9. Provider dossiers (researched against official docs, 2026-08-19)
+
+The 2025–26 industry shift validates the lease design: GitHub user tokens expire by default, and Linear force-migrated every OAuth app to expiring tokens on 2026-04-01. All three providers now converge on the exact shape we built: long-lived refresh material held server-side, short-lived tokens issued on demand.
+
+### GitHub — vehicle: GitHub App **user access tokens**
+
+- **Connect**: web flow (PKCE) against our GitHub App → store `ghu_` access (8 h, fixed) + `ghr_` refresh (6 months, single-use rotating; every rotation re-issues both). Device flow available for headless connect.
+- **One-time ops per org**: the org installs the App once, choosing repos + permissions. Installation and user authorization are separate acts; a member's token reaches the **intersection** of (app installation repos/perms) × (that member's own perms). Attribution: the human, with an app badge — exactly the per-user model.
+- **Custody: `cp`, not proxy.** `git` talks to github.com directly, so the box needs the real token — but it is only ever the 8 h `ghu_`. Lease TTL = token expiry, the same shape the existing `github-app.ts` minter already implements. `GH_TOKEN` env drives `gh` CLI natively; the box's git credential helper already exists.
+- **Minter care**: refresh tokens are strictly single-use → serialize refresh per grant (CAS). A grant unused ~6 months dies; reconnect prompt.
+- **PAT path (day one)**: fine-grained PATs — GA, per-resource-owner, per-repo, per-permission, 1–366 days or non-expiring. Caveat: org policy can require owner approval per PAT and can block them.
+- **MCP**: official. Local stdio server takes `GITHUB_PERSONAL_ACCESS_TOKEN` env (our leased token slots in; verify it accepts `ghu_`); remote `api.githubcopilot.com/mcp/` takes an Authorization header.
+- Rate limit: 5,000 req/h per user token.
+
+### Google Workspace — vehicle: standard OAuth, and the constraint is **verification, not protocol**
+
+- **Connect**: web flow with `access_type=offline&prompt=consent` → store the refresh token. No rotation; one refresh token mints unlimited 1 h access tokens in parallel. Simplest minter of the three.
+- **Custody: `proxy` is ideal.** Access tokens live 1 h but box creds refresh only on shell login — a stable lease token with server-side swap makes staleness impossible. All Workspace REST APIs take `Authorization: Bearer`.
+- **The real ladder** (this decides scope choices, not code):
+  - *Restricted* scopes (most Gmail read, full `drive`) ⇒ annual **CASA security assessment** for any app touching them from a third-party server (us). Assessor cost is negotiated; Google charges nothing.
+  - *Sensitive* scopes (all Calendar, `gmail.send`) ⇒ app review, ~10 business days.
+  - *Non-sensitive*: `drive.file` (per-file access the user picks) needs neither.
+  - **Escape hatch: Internal apps.** A client owned inside the customer's own Google Cloud org, used by same-domain accounts, skips verification AND CASA entirely. For dogfood and BYO-client customers this is the path.
+- **Recommended scope posture**: start `drive.file` + Calendar + `gmail.send` — full agent utility for scheduling/sending/file-handoff, zero CASA. Add restricted Gmail read only when a verified SaaS client is worth the assessment.
+- **Publishing status trap**: a client in "Testing" expires every consent after 7 days (100 test users max) — fine for a week of dogfood, then move to Production.
+- **Admin reality**: Workspace admins can allowlist/block by client ID; default still allows unconfigured apps for adults; an on-by-default request-access approval workflow exists since Aug 2025.
+- **MCP**: official Workspace MCP servers shipped to preview May 2026 (`gmailmcp`/`drivemcp`/`calendarmcp`.googleapis.com, OAuth with standard scopes). Official CLI announced, unshipped. Skill teaches Bearer + REST meanwhile.
+- Caps to respect: 100 live refresh tokens per client per account (we hold one per user — fine); refresh dies after 6 months unused or on Gmail-scope password change.
+
+### Linear — lightest admin friction of the three
+
+- **Connect**: OAuth `authorization_code` (+PKCE), `actor=user`. Since 2026-04-01 every app gets 24 h access tokens + rotating refresh (30-minute replay grace — forgiving concurrency). Scopes: `read`, `write`, `issues:create`, `comments:create`, `admin`, plus agent/customer/initiative scopes.
+- **No admin gate by default**: any member can authorize; approval workflow is Enterprise-plan opt-in. Public directory listing is curated (integrations@linear.app) but unlisted apps work.
+- **Custody: `proxy` (single GraphQL endpoint `api.linear.app/graphql`, Bearer) or `cp` with 24 h TTL. Header quirk: personal API keys use a raw `Authorization: <key>` header, no Bearer — the provider manifest's `tokenHeader` covers this (the proxy already supports per-connection header shapes).
+- **PAT path (day one)**: personal API keys — non-expiring, per-team and per-permission scoping. Admins can disable member key creation (admins keep theirs).
+- **Webhooks need `admin` scope** (or a workspace admin) — relevant later for change observation.
+- **MCP**: official hosted `mcp.linear.app/mcp` (Streamable HTTP), does its own OAuth **or accepts a pre-supplied Bearer token** — our leased token rides it directly. Local use via `mcp-remote` bridge.
+- **Future option, parked with installation tokens**: Linear's agents surface (`actor=app`, app users that are @-mentionable/delegable, admin-installed, `client_credentials` 30-day app tokens). Our model attributes actions to the human (`createAsUser` renders "User (via App)"); a dedicated agent identity is a later product decision, not a v1 need.
+- Rate limits: 5,000 req/h per user via OAuth; 2,500 via API key.
+
+### What this settles
+
+1. The oauth minter needs exactly three per-provider behaviors: exchange semantics (rotate-strict / rotate-graceful / no-rotate), token TTL, and header shape. Everything else is the manifest.
+2. Custody defaults per provider: GitHub `cp` (git needs the real short-lived token), Google `proxy`, Linear `proxy`.
+3. Phase B MCP passthrough gets first-party servers for all three providers — none of them require us to build or host MCP code.
+4. Google's cost is paperwork, not code: pick non-CASA scopes first, use Internal clients for dogfood, budget verification only when the SaaS client needs restricted Gmail.
