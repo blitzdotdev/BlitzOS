@@ -1,0 +1,150 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  echo 'usage: blitz-rules sync' >&2
+  exit 2
+}
+
+action=${1:-}
+[ "$action" = sync ] || usage
+shift
+[ "$#" -eq 0 ] || usage
+
+# State and HOME come from the environment, exactly as the box sets them
+# (BLITZ_STATE_DIR=/var/lib/blitz, HOME=/var/lib/blitz/home). The conformance
+# test overrides both to point at a scratch directory.
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+home=${HOME:-}
+
+exec node - "$state_dir" "$home" <<'NODE'
+'use strict';
+const fs = require('node:fs');
+const path = require('node:path');
+
+const [stateDir, home] = process.argv.slice(2);
+
+// The rule doc is small; refuse anything implausibly large so a hostile or
+// broken origin cannot exhaust memory. The baked fallback stays on refusal.
+const MAX_BYTES = 256 * 1024;
+const TIMEOUT_MS = 10_000;
+
+// Every failure mode below is expected offline behaviour: log why, then exit 0
+// so the boot oneshot never blocks and the baked fallback (installed by
+// blitz-init-state) stays in place. Only usage errors (handled in sh) are hard.
+function fallback(reason) {
+  console.error(`blitz-rules: keeping baked rules (${reason})`);
+  process.exit(0);
+}
+
+function readOrigin() {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(stateDir, 'origin'), 'utf8');
+  } catch (error) {
+    fallback(`no origin (${error && error.code ? error.code : 'unreadable'})`);
+  }
+  const origin = raw.split('\n', 1)[0].trim();
+  if (origin === '') fallback('empty origin');
+  return origin.replace(/\/+$/, '');
+}
+
+function readAccessToken() {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(stateDir, 'box-credential.json'), 'utf8');
+  } catch (error) {
+    fallback(`no credential (${error && error.code ? error.code : 'unreadable'})`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    fallback('unparseable credential');
+  }
+  const token = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed.access_token
+    : undefined;
+  if (typeof token !== 'string' || token.length === 0) fallback('credential has no access_token');
+  return token;
+}
+
+// Accept iff the body is a JSON object whose version and content are both
+// non-empty strings. An empty content is rejected on purpose: the box must
+// never overwrite the rules with nothing. This mirror of the accept rule is
+// pinned to packages/schema/fixtures/agent-rules/ by the conformance tests.
+function parseRules(text) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { version, content } = value;
+  if (typeof version !== 'string' || version.length === 0) return null;
+  if (typeof content !== 'string' || content.length === 0) return null;
+  return { version, content };
+}
+
+function atomicWrite(target, contents) {
+  const dir = path.dirname(target);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const temporary = `${target}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    fs.writeFileSync(temporary, contents, { mode: 0o644 });
+    fs.chmodSync(temporary, 0o644);
+    fs.renameSync(temporary, target);
+  } catch (error) {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {}
+    throw error;
+  }
+}
+
+async function main() {
+  if (typeof home !== 'string' || home === '') fallback('no HOME');
+  const origin = readOrigin();
+  const token = readAccessToken();
+
+  let response;
+  try {
+    response = await fetch(`${origin}/workspaces/self/agent-rules`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch (error) {
+    fallback(`fetch failed (${error && error.message ? error.message : 'network'})`);
+  }
+  if (!response.ok) fallback(`http ${response.status}`);
+
+  const declared = response.headers.get('content-length');
+  if (declared !== null && Number(declared) > MAX_BYTES) fallback('response too large');
+  const body = await response.text();
+  if (body.length > MAX_BYTES) fallback('response too large');
+
+  const rules = parseRules(body);
+  if (rules === null) fallback('response was not a valid { version, content }');
+
+  // Both canonical read paths: Claude reads ~/.claude/CLAUDE.md, Codex reads
+  // ~/.codex/AGENTS.md. Written 0644 and owned by whoever runs this (the box
+  // uid, via s6-setuidgid at boot and the actor at session start).
+  const targets = [
+    path.join(home, '.claude', 'CLAUDE.md'),
+    path.join(home, '.codex', 'AGENTS.md'),
+  ];
+  try {
+    for (const target of targets) atomicWrite(target, rules.content);
+  } catch (error) {
+    // A partial write can leave one path updated; that is still a valid rule
+    // doc (either the new or the baked one), never an empty file.
+    fallback(`write failed (${error && error.message ? error.message : 'io'})`);
+  }
+  console.error(`blitz-rules: installed rules ${rules.version}`);
+  process.exit(0);
+}
+
+void main();
+NODE

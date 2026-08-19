@@ -63,6 +63,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/providers/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
+| agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/actor/test/agent-rules-conformance.test.ts` (box) |
 
 Legacy phone-home shapes are accepted ONLY inside
 `adaptLegacyPhoneHomeRequestForInFlightImages` in `core/workspaces.ts`.

@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ActorService } from "./actor.js";
+import { AgentRulesRefresher } from "./agent-rules-refresh.js";
 import { ClaudeAdapter } from "./adapters/claude.js";
 import { CodexAdapter } from "./adapters/codex.js";
 import { CredentialSource } from "./credentials.js";
@@ -14,11 +15,13 @@ const provider = process.env.BLITZ_AGENT;
 if (provider !== "claude" && provider !== "codex") throw new Error("BLITZ_AGENT must be claude or codex");
 mkdirSync(stateDir, { recursive: true, mode: 0o700 });
 const journal = new Journal(join(stateDir, "journal.db"));
+const rulesRefresher = new AgentRulesRefresher();
 const service = new ActorService(
   journal,
   new CredentialSource(stateDir),
   (name: Provider) => (name === "claude" ? new ClaudeAdapter() : new CodexAdapter()),
   provider,
+  () => rulesRefresher.maybeRefresh(),
 );
 const server = new ActorServer(service);
 await server.start();

@@ -1,3 +1,4 @@
+import { addAgentRulesRoutes } from "./agent-rules.js";
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./credentials/mint.js";
 import { addWorkspaceEnvironmentRoutes } from "./environment.js";
@@ -21,6 +22,8 @@ export function installControlPlaneRoutes(
 ): void {
   addBoxImageRoutes(router, runtimeFactory);
   addMicrovmHostRoutes(router, runtimeFactory);
+  // Box-authenticated read of the managed agent rules; no session principal.
+  addAgentRulesRoutes(router, runtimeFactory);
 
   async function requirePrincipal(context: CoreContext): Promise<Principal> {
     const runtime = runtimeFactory(context);
