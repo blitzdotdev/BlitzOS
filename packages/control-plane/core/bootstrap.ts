@@ -201,6 +201,27 @@ fail() {
 }
 
 export DEBIAN_FRONTEND=noninteractive
+# Canonical's regional EC2 mirrors (<region>.ec2.archive.ubuntu.com) accept the TCP
+# connection and then never answer. Without a timeout apt blocks forever, retry
+# never sees a failure to act on, and the workspace sits in creating until the
+# caller gives up instead of reporting an error. These timeouts turn that hang
+# into a failure; the probe below then moves off the dead mirror.
+cat >/etc/apt/apt.conf.d/99blitz-acquire <<'APTCONF'
+Acquire::http::Timeout "15";
+Acquire::https::Timeout "15";
+Acquire::Retries "2";
+APTCONF
+# apt-get update exits 0 even when every component of a source is Ign:, so its exit
+# code cannot gate the fallback. Probe the configured mirror directly instead and
+# rewrite before the first update, or the package lists are silently incomplete and
+# the docker.io install fails later for a reason that looks unrelated.
+ec2_mirror=$(grep -rhoE 'https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com' \
+  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1)
+if [ -n "$ec2_mirror" ] && ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/dists/noble/InRelease"; then
+  echo "blitz: $ec2_mirror is unreachable; falling back to archive.ubuntu.com"
+  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+fi
 retry apt-get update
 retry apt-get install -y docker.io curl
 systemctl enable --now docker
@@ -288,6 +309,24 @@ install -d -o root -g root -m 0755 /run/sshd
 systemctl disable --now ssh.socket
 systemctl enable ssh
 systemctl restart ssh
+
+# systemctl returns as soon as it has signalled the unit, not once the old
+# listener has released the port. The box container binds host port 22, so
+# racing ahead here makes docker run die with
+# "failed to bind host port 0.0.0.0:22/tcp: address already in use" (exit 125)
+# on whichever boots fast enough to lose the race. Wait for the port to be
+# genuinely free, and say so plainly if it never is.
+port_22_free() {
+  ! ss -tln 2>/dev/null | grep -qE '(^|[^0-9.:])(0\.0\.0\.0|\[::\]|\*):22[[:space:]]'
+}
+sshd_release_deadline=$((SECONDS + 60))
+until port_22_free; do
+  if (( SECONDS >= sshd_release_deadline )); then
+    ss -tlnp 2>/dev/null | grep ':22 ' || true
+    fail "host sshd still holds port 22 after 60s; the box container cannot bind it"
+  fi
+  sleep 1
+done
 
 ${imageSetup}
 install -d -m 0755 /etc/blitz

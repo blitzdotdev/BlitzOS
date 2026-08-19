@@ -35,11 +35,15 @@ function readEnvValue(name) {
 
 const cpUrl = (process.env.CP_URL ?? "").replace(/\/+$/u, "");
 const operatorKey = process.env.OPERATOR_API_KEY ?? readEnvValue("OPERATOR_API_KEY") ?? "";
+// POST /sessions was removed by the phase-one identity work; OPERATOR_API_KEY is
+// now only the /auth/google/start bootstrap secret. Sign in through Google once,
+// then supply the resulting blitz_session value here.
+const sessionOverride = process.env.BLITZ_SESSION ?? readEnvValue("BLITZ_SESSION") ?? "";
 const machineTypeId = process.env.MACHINE_TYPE ?? "cx23@fsn1";
 const workDir = process.env.WORK_DIR ?? DEFAULT_WORK_DIR;
 const readyTimeoutMs = 900_000; // Bootstrap may need time for apt, the 640 MB image pull/load, and health checks.
 const results = [];
-const sensitiveValues = [operatorKey].filter((value) => value.length > 0);
+const sensitiveValues = [operatorKey, sessionOverride].filter((value) => value.length > 0);
 
 let cookie = null;
 let keyPath = null;
@@ -113,7 +117,9 @@ function validateConfig() {
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     return "CP_URL must use http or https";
   }
-  if (operatorKey.length === 0) return "OPERATOR_API_KEY is missing from the environment and .env";
+  if (sessionOverride.length === 0 && operatorKey.length === 0) {
+    return "supply BLITZ_SESSION (or OPERATOR_API_KEY) in the environment or .env";
+  }
   return null;
 }
 
@@ -153,6 +159,7 @@ function stopSurfaceTunnel() {
 }
 
 async function mintSession() {
+  if (sessionOverride.length > 0) return `blitz_session=${sessionOverride}`;
   const response = await fetch(
     endpoint("/sessions"),
     fetchOptions({
@@ -200,6 +207,18 @@ try {
   const login = await runStep("s1", "login", async () => {
     const configError = validateConfig();
     if (configError !== null) return fail(configError);
+    if (sessionOverride.length > 0) {
+      const supplied = `blitz_session=${sessionOverride}`;
+      const check = await fetch(
+        endpoint("/me"),
+        fetchOptions({ headers: { Cookie: supplied } }),
+      );
+      if (check.status !== 200) {
+        const body = await responseJson(check);
+        return fail(`supplied BLITZ_SESSION rejected: /me HTTP ${check.status}${apiError(body)}`);
+      }
+      return pass("supplied session accepted; /me HTTP 200", { cookie: supplied });
+    }
     const response = await fetch(
       endpoint("/sessions"),
       fetchOptions({

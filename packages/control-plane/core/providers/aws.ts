@@ -252,7 +252,13 @@ export function awsProviderFromEnv(
   const accessKeyId = env.AWS_ACCESS_KEY_ID ?? "";
   const secretAccessKey = env.AWS_SECRET_ACCESS_KEY ?? "";
   const region = env.AWS_REGION ?? "";
-  if (accessKeyId === "" && secretAccessKey === "" && region === "") return undefined;
+  // Credentials decide whether the provider exists at all. AWS_REGION and the
+  // other AWS_* knobs live in wrangler.toml, so they are committed and present
+  // in every environment once anyone configures AWS — including tests, CI, and
+  // local dev, which legitimately hold no credentials. Treating region-without-
+  // credentials as a partial configuration made the whole Worker throw at
+  // startup in exactly those environments.
+  if (accessKeyId === "" && secretAccessKey === "") return undefined;
   if (accessKeyId === "" || secretAccessKey === "" || region === "") {
     throw new Error(
       "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION must be set together",
