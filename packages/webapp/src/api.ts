@@ -4,7 +4,11 @@ import type {
   ListCredentialEventsResponse,
   CredentialEventView,
   ListCredentialRequestsResponse,
+  ListCatalogResponse,
   ListConnectionsResponse,
+  ListProviderHealthResponse,
+  ListUserGrantsResponse,
+  PutUserGrantRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   CreateWorkspaceTemplateRequest,
@@ -159,6 +163,13 @@ export interface ControlPlaneClient extends FileLibraryClient {
   listConnections(signal?: AbortSignal): Promise<ListConnectionsResponse>;
   putConnection(name: string, input: PutConnectionRequest): Promise<void>;
   deleteConnection(name: string): Promise<void>;
+  listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
+  listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
+  putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
+  deleteConnectionGrant(provider: string): Promise<void>;
+  listProviderHealth(signal?: AbortSignal): Promise<ListProviderHealthResponse>;
+  /** Full-page navigation target: the provider redirect cannot ride fetch. */
+  connectStartUrl(provider: string): string;
   listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
   listCredentialEvents(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialEventsResponse>;
   revokeLease(id: string): Promise<void>;
@@ -608,6 +619,24 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<void>(`/connections/${encodeURIComponent(name)}`, {
         method: "DELETE",
       }),
+    listConnectionCatalog: (signal) =>
+      request<ListCatalogResponse>("/connections/catalog", { signal }),
+    listConnectionGrants: (signal) =>
+      request<ListUserGrantsResponse>("/connections/grants", { signal }),
+    putConnectionGrant: (provider, input) =>
+      request<void>(`/connections/grants/${encodeURIComponent(provider)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    deleteConnectionGrant: (provider) =>
+      request<void>(`/connections/grants/${encodeURIComponent(provider)}`, {
+        method: "DELETE",
+      }),
+    listProviderHealth: (signal) =>
+      request<ListProviderHealthResponse>("/connections/health", { signal }),
+    connectStartUrl: (provider) =>
+      `${base}/connect/${encodeURIComponent(provider)}/start`,
     listLeases: (workspaceId, signal) =>
       request<ListCredentialLeasesResponse>(
         `/workspaces/${encodeURIComponent(workspaceId)}/leases`,

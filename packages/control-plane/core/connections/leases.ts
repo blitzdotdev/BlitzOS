@@ -29,6 +29,11 @@ interface CreateLeaseInput {
   boxId: string;
   connectionId: string;
   connectionName: string;
+  /** The workspace owner, always: a box is one disk and one env, so a lease
+   * resolves against the owner's identity even when an editor triggered it. */
+  userId: string;
+  /** The grant this lease was minted from; null for legacy org-root mints. */
+  grantId: string | null;
   scopes: string[];
   result: MintResult;
   tokenHash: string | null;
@@ -89,15 +94,16 @@ export async function createLease(
   await transaction(db, [
     {
       q: `INSERT INTO credential_leases
-          (id, workspace_id, box_id, connection_id, user_id, scopes, mode,
-           token_hash, issued_at, expires_at, state)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')`,
+          (id, workspace_id, box_id, connection_id, user_id, grant_id, scopes,
+           mode, token_hash, issued_at, expires_at, state)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active')`,
       v: [
         input.id,
         input.workspaceId,
         input.boxId,
         input.connectionId,
-        input.principal.id,
+        input.userId,
+        input.grantId,
         scopes,
         input.result.mode,
         input.tokenHash,
@@ -131,7 +137,7 @@ export async function createLease(
     workspaceId: input.workspaceId,
     boxId: input.boxId,
     connection: input.connectionName,
-    userId: input.principal.id,
+    userId: input.userId,
     scopes: input.scopes,
     mode: input.result.mode,
     issuedAt: input.now,
@@ -290,6 +296,40 @@ export function revokeConnectionLeasesQuery(connectionId: string): Query {
         WHERE connection_id = ?1 AND state = 'active'`,
     v: [connectionId],
   };
+}
+
+/** Revoking a grant kills every box that borrowed it, in the same transaction
+ * that clears the ciphertext. */
+export function revokeGrantLeasesQuery(grantId: string): Query {
+  return {
+    q: `UPDATE credential_leases
+        SET state = 'revoked', token_hash = NULL
+        WHERE grant_id = ?1 AND state = 'active'`,
+    v: [grantId],
+  };
+}
+
+/** Connections whose surfaces this workspace still carries on disk but which
+ * no longer mint. Phase A has no `remove-file` placement, so the next sync
+ * overwrites their files empty instead of deleting them. */
+export async function staleSurfaceConnections(
+  db: Db,
+  workspaceId: string,
+  liveConnectionIds: readonly string[],
+): Promise<Array<{ connection_id: string; connection_name: string; grant_id: string | null }>> {
+  const excluded = liveConnectionIds
+    .map((_id, index) => `?${String(index + 2)}`)
+    .join(", ");
+  return rows<{ connection_id: string; connection_name: string; grant_id: string | null }>(db, {
+    q: `SELECT DISTINCT lease.connection_id, connection.scoped_name AS connection_name,
+               lease.grant_id
+        FROM credential_leases lease
+        JOIN connections connection ON connection.id = lease.connection_id
+        WHERE lease.workspace_id = ?1
+          ${excluded === "" ? "" : `AND lease.connection_id NOT IN (${excluded})`}
+        ORDER BY connection.scoped_name`,
+    v: [workspaceId, ...liveConnectionIds],
+  });
 }
 
 export async function runLeaseSweep(

@@ -1644,8 +1644,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         files={filesSidebar}
                         pendingRequests={activePendingRequests}
                         pendingRequestsError={pendingRequestsError}
-                        canManageCredentials={activeWorkspace?.accessRole === 'owner'
-                          || activeWorkspace?.accessRole === 'admin'}
+                        readOnly={activeWorkspace?.accessRole === 'viewer'}
                         onResolveRequest={resolveWorkspaceRequest}
                         livePorts={orderedLivePorts}
                         previewLinks={orderedPreviewLinks}
@@ -1937,7 +1936,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       {activeWorkspace && !mobileWebApp && (
         <WorkspaceRailStrip
           openPanels={openPanels}
-          canManageCredentials={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
           pendingRequestCount={activePendingRequests.length}
           onTogglePanel={(panel) => {
             updateWorkspaceTabs((tabs) => togglePanelTab(tabs, panel));
@@ -1957,7 +1955,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           orgName={store.viewer?.org.name ?? 'Organization'}
           pendingRequests={activePendingRequests}
           pendingRequestsError={pendingRequestsError}
-          canManageCredentials={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
+          readOnly={activeWorkspace.accessRole === 'viewer'}
           onWidthChange={setSidePaneWidth}
           onSegmentChange={(panel: WorkspaceDrawerSegment) => {
             updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));

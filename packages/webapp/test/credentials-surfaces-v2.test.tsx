@@ -64,6 +64,12 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
+    listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
+    listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    putConnectionGrant: vi.fn(async () => undefined),
+    deleteConnectionGrant: vi.fn(async () => undefined),
+    listProviderHealth: vi.fn(async () => ({ providers: [] })),
+    connectStartUrl: (provider: string) => `/connect/${provider}/start`,
     ...overrides,
   };
 }
@@ -130,7 +136,6 @@ describe('v2 credential surfaces', () => {
           previewReady={false}
           onOpenPreview={() => undefined}
           onOpenPreviewLink={() => undefined}
-          canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
           onSegmentChange={setSegment}
@@ -187,7 +192,7 @@ describe('v2 credential surfaces', () => {
     await view.unmount();
   });
 
-  it('shows the pending badge and removes an approved workspace request', async () => {
+  it('reads a pending request as a connect prompt and dismisses it', async () => {
     const request: CredentialRequestView = {
       id: 'request-one',
       workspace_id: 'workspace-one',
@@ -196,7 +201,7 @@ describe('v2 credential surfaces', () => {
       created_at: Date.now(),
       requester: { boxId: 'box-one', userId: 'user-one' },
     };
-    const approve = vi.fn(async (_id: string) => undefined);
+    const dismiss = vi.fn(async (_id: string) => undefined);
     function Harness() {
       const [requests, setRequests] = useState([request]);
       return (
@@ -215,25 +220,30 @@ describe('v2 credential surfaces', () => {
           previewReady={false}
           onOpenPreview={() => undefined}
           onOpenPreviewLink={() => undefined}
-          canManageCredentials
           files={<div>File tree</div>}
           onWidthChange={() => undefined}
           onSegmentChange={() => undefined}
           onResolveRequest={async (entry, action) => {
-            if (action === 'approve') await approve(entry.id);
+            if (action === 'deny') await dismiss(entry.id);
             setRequests((current) => current.filter(({ id }) => id !== entry.id));
           }}
         />
       );
     }
     const view = await render(<Harness />);
-    expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('1');
-    await act(async () => click([...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Approve')!));
     await settle();
-    expect(approve).toHaveBeenCalledWith('request-one');
+    expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('1');
+    // The inbox states what an agent wanted, not a decision awaiting approval.
+    expect(view.container.textContent).toContain('@github');
+    expect(view.container.textContent).toContain('An agent asked for');
+    expect([...view.container.querySelectorAll('button')].map((button) => button.textContent))
+      .not.toContain('Approve');
+    await act(async () => click([...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Dismiss')!));
+    await settle();
+    expect(dismiss).toHaveBeenCalledWith('request-one');
     expect(view.container.querySelector('.workspace-pending-badge')).toBeNull();
-    expect(view.container.textContent).toContain('No pending requests');
+    expect(view.container.textContent).toContain('No agent has asked for a connection here.');
     await view.unmount();
   });
 });

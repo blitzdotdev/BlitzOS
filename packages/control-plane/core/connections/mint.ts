@@ -3,6 +3,7 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { first, rows } from "../db.js";
 import { HttpError, isRecord, isString, readJson, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
+import { providerManifest } from "./catalog/index.js";
 import {
   createLease,
   listCredentialEvents,
@@ -14,6 +15,7 @@ import {
   manifestAllows,
   usableByAllows,
 } from "./manifest.js";
+import { mintFromGrant } from "./minters/grant.js";
 import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
@@ -23,7 +25,14 @@ import {
   connectionByName,
   resolveMinter,
 } from "./registry.js";
-import type { Connection, MintResult } from "./types.js";
+import type { Connection, MinterResult, MintRequest, MintResult } from "./types.js";
+import type { GrantRow } from "./user-grants.js";
+import {
+  addUserGrantRoutes,
+  grantConfig,
+  grantFor,
+  openGrantSecret,
+} from "./user-grants.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
 interface WorkspaceCredentialRow {
@@ -111,6 +120,49 @@ async function recordDenied(
   });
 }
 
+/** The workspace's identity spine is its owner: one disk, one env, one value
+ * per variable. Every mint resolves against the owner's grants no matter which
+ * member's box triggered it. */
+async function ownerGrantMint(
+  runtime: ReturnType<RuntimeFactory>,
+  workspace: WorkspaceCredentialRow,
+  connection: Connection,
+  request: MintRequest,
+  scopes: string[],
+): Promise<MinterResult | null> {
+  const grant = await grantFor(runtime.db, workspace.owner_id, connection.name);
+  if (grant === null) return null;
+  const manifest = providerManifest(grant.manifest_id);
+  if (manifest === null) {
+    throw new HttpError(409, `connection grant names an unknown provider ${grant.manifest_id}`);
+  }
+  const config = grantConfig(grant);
+  const secret = await grantSecretForMint(runtime, grant);
+  return mintFromGrant({
+    manifest,
+    grant,
+    config,
+    connection,
+    request,
+    secret,
+    scopes,
+  });
+}
+
+async function grantSecretForMint(
+  runtime: ReturnType<RuntimeFactory>,
+  grant: GrantRow,
+): Promise<string> {
+  if (grant.kind === "pat") {
+    const secret = await openGrantSecret(runtime.credentialMasterKey, grant, "refresh");
+    if (secret === null) throw new HttpError(409, "connection grant has no stored key");
+    return secret;
+  }
+  const access = await accessTokenForGrant(runtime, grant);
+  if (access === null) throw new HttpError(409, "connection grant needs re-authorization");
+  return access;
+}
+
 async function mintOne(
   runtime: ReturnType<RuntimeFactory>,
   workspace: WorkspaceCredentialRow,
@@ -149,6 +201,78 @@ async function mintOne(
       requestId,
     );
   }
+  const leaseId = crypto.randomUUID();
+  const request: MintRequest = {
+    workspaceId: workspace.id,
+    boxId,
+    principalId: principal.id,
+    scopes,
+    now,
+    origin,
+    leaseId,
+  };
+  const grant = await grantFor(runtime.db, workspace.owner_id, connection.name);
+  const minter = grant === null ? resolveMinter(connection) : null;
+  if (grant === null && (minter === null || connection.root_ciphertext === null)) {
+    // The connection is declared but nobody's identity backs it. That is the
+    // connect inbox, not a failure: 404 is the status the box turns into
+    // "not configured", and it carries the request id the panel resolves.
+    if (denied === "skip") return null;
+    const requestId = await fileRequest(
+      runtime.db,
+      workspace.id,
+      connection.name,
+      scopes,
+      { boxId, userId: principal.id },
+      now,
+    );
+    throw new HttpError(
+      404,
+      `connection ${connection.name} has no grant for the workspace owner`,
+      requestId,
+    );
+  }
+  const minted = grant === null
+    ? await legacyRootMint(runtime, connection, request)
+    : await ownerGrantMint(runtime, workspace, connection, request, scopes);
+  if (minted === null) throw new Error("owner grant vanished mid-mint");
+  const { tokenHash = null, ...result } = minted;
+  await createLease(runtime.db, {
+    id: leaseId,
+    workspaceId: workspace.id,
+    boxId,
+    connectionId: connection.id,
+    connectionName: connection.name,
+    userId: workspace.owner_id,
+    grantId: grant?.id ?? null,
+    scopes: result.grantedScopes ?? scopes,
+    result,
+    tokenHash,
+    now,
+    principal,
+  });
+  return result;
+}
+
+/** Phase 1 mints oauth grants from the access token the connect callback
+ * stored. Refresh-on-demand arrives with the generic oauth minter. */
+async function accessTokenForGrant(
+  runtime: ReturnType<RuntimeFactory>,
+  grant: GrantRow,
+): Promise<string | null> {
+  if (grant.access_expires_at === null || grant.access_expires_at <= Date.now()) {
+    return null;
+  }
+  return openGrantSecret(runtime.credentialMasterKey, grant, "access");
+}
+
+/** Static org-root minting predates per-user grants. It stays for rows that
+ * already carry a root; new product surface never creates one. */
+async function legacyRootMint(
+  runtime: ReturnType<RuntimeFactory>,
+  connection: Connection,
+  request: MintRequest,
+): Promise<MinterResult> {
   const minter = resolveMinter(connection);
   if (minter === null) {
     throw new HttpError(409, "integration credential mechanism is unavailable");
@@ -161,30 +285,7 @@ async function mintOne(
           connection.name,
           connection.root_ciphertext,
         );
-  const leaseId = crypto.randomUUID();
-  const minted = await minter.mint(root, connection, {
-    workspaceId: workspace.id,
-    boxId,
-    principalId: principal.id,
-    scopes,
-    now,
-    origin,
-    leaseId,
-  });
-  const { tokenHash = null, ...result } = minted;
-  await createLease(runtime.db, {
-    id: leaseId,
-    workspaceId: workspace.id,
-    boxId,
-    connectionId: connection.id,
-    connectionName: connection.name,
-    scopes: result.grantedScopes ?? scopes,
-    result,
-    tokenHash,
-    now,
-    principal,
-  });
-  return result;
+  return minter.mint(root, connection, request);
 }
 
 export function addCredentialRoutes(
@@ -193,6 +294,7 @@ export function addCredentialRoutes(
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
   addConnectionRoutes(router, runtimeFactory, requirePrincipal);
+  addUserGrantRoutes(router, runtimeFactory, requirePrincipal);
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 

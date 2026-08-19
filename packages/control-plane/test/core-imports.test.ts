@@ -12,16 +12,25 @@ const expected = [
   "bootstrap.ts",
   "box-images.ts",
   "cloud-init.ts",
+  "connections/catalog/generic.ts",
+  "connections/catalog/github.ts",
+  "connections/catalog/google-workspace.ts",
+  "connections/catalog/index.ts",
+  "connections/catalog/linear.ts",
+  "connections/catalog/surfaces.ts",
+  "connections/catalog/types.ts",
   "connections/leases.ts",
   "connections/manifest.ts",
   "connections/mint.ts",
   "connections/minters/app-jwt/github-app.ts",
+  "connections/minters/grant.ts",
   "connections/minters/static.ts",
   "connections/proxy.ts",
   "connections/registry.ts",
   "connections/requests.ts",
   "connections/root-crypto.ts",
   "connections/types.ts",
+  "connections/user-grants.ts",
   "crypto.ts",
   "db.ts",
   "files/access.ts",
@@ -89,6 +98,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(64);
+    expect(expected).toHaveLength(73);
   });
 });

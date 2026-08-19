@@ -11,6 +11,7 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import type { ProviderManifest, SurfaceOverrides } from "./catalog/types.js";
 import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
 import {
@@ -262,6 +263,81 @@ function usableByJson(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   if (!isRecord(value)) throw new HttpError(400, "usable_by must be an object or null");
   return JSON.stringify({ owners: stringArray(value.owners, "usable_by.owners") });
+}
+
+/** The connection row is the provider *declaration*, never a secret. Stock
+ * providers land here with zero ceremony the first time a member connects, so
+ * every existing lease, audit, proxy, and ceiling join keeps working against
+ * one table. A legacy row that still holds an org root is left alone. */
+export async function ensureCatalogConnection(
+  db: Db,
+  orgId: string,
+  provider: string,
+  manifest: ProviderManifest,
+  custody: Custody,
+  overrides: SurfaceOverrides | null,
+  principal: Principal,
+  now = Date.now(),
+): Promise<Connection> {
+  const placements = (overrides === null
+    ? manifest.surfaces.env.map((surface) => ({
+        kind: "env" as const,
+        name: surface.name,
+        fill: surface.fill,
+      }))
+    : [{ kind: "env" as const, name: overrides.envName, fill: "token" as const }]);
+  const baseUrl = overrides?.baseUrl ?? manifest.baseUrl;
+  const config: ParsedStaticConfig & { manifest_id: string } = {
+    manifest_id: manifest.id,
+    placements,
+    default_scopes: [...manifest.defaultScopes],
+  };
+  if (custody === "proxy") {
+    config.proxy = {
+      base_url: baseUrl,
+      token_header: manifest.tokenHeader.name,
+      token_prefix: manifest.tokenHeader.prefix,
+    };
+  }
+  await rows(db, {
+    q: `INSERT INTO connections
+        (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
+         usable_by, created_by, created_at, revoked_at, org_id,
+         created_by_membership_id)
+        VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, ?8, NULL, ?9, ?10)
+        ON CONFLICT(org_id, scoped_name) DO UPDATE SET
+          provider = excluded.provider,
+          kind = excluded.kind,
+          custody = excluded.custody,
+          config = excluded.config,
+          revoked_at = NULL
+        WHERE connections.root_ciphertext IS NULL`,
+    v: [
+      crypto.randomUUID(),
+      provider,
+      manifest.id,
+      manifest.auth === null ? "static" : "oauth",
+      custody,
+      JSON.stringify(config),
+      principal.id,
+      now,
+      orgId,
+      principal.membershipId,
+    ],
+  });
+  const connection = await connectionByName(db, provider, orgId, false);
+  if (connection === null) throw new Error("catalog connection disappeared");
+  return connection;
+}
+
+/** Which catalog entry interprets a connection row, when one does. */
+export function connectionManifestId(connection: Connection): string | null {
+  try {
+    const value: unknown = JSON.parse(connection.config);
+    return isRecord(value) && isString(value.manifest_id) ? value.manifest_id : null;
+  } catch {
+    return null;
+  }
 }
 
 export function resolveMinter(connection: Connection): Minter | null {
