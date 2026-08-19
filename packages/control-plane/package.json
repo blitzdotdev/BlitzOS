@@ -26,6 +26,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "deploy": "node scripts/deploy.mjs",
+    "provider:check": "vitest run test/connections-catalog.test.ts -t",
     "test:shell": "sh test/shell-syntax.sh",
     "test:python": "npm run build --silent && node --test test/bootstrap-python.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.wire-drift.json",
