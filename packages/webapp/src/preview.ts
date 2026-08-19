@@ -24,6 +24,17 @@ export type LivePort = {
   firstSeenAt: number;
 };
 
+/** The marker `blitz preview open` writes and the Go gateway serves at
+ * `GET /preview-focus` as `{ focus: PreviewFocus | null }`. `requestedAt` is a
+ * millisecond epoch the webApp uses to auto-open each focus at most once. */
+export type PreviewFocus = {
+  version: 1;
+  port: number;
+  path: string;
+  title: string;
+  requestedAt: number;
+};
+
 export type PortsState = {
   workspaceId: string;
   ports: LivePort[];
@@ -107,6 +118,36 @@ export function parsedPreviews(value: JsonValue): PreviewLink[] {
   });
 }
 
+/** Parses the `GET /preview-focus` response body. Anything that is not a
+ * version-1 object with a usable, non-reserved port and a rooted path — an old
+ * box's 404 body, `{ focus: null }`, or a malformed marker — collapses to null.
+ * Mirrors the Go gateway's parsePreviewFocus so the browser never trusts a
+ * focus the reader would have rejected. */
+export function parsePreviewFocus(value: JsonValue): PreviewFocus | null {
+  const object = asJsonObject(value);
+  if (object === null) return null;
+  const focus = asJsonObject(object.focus);
+  if (
+    focus === null
+    || focus.version !== 1
+    || !isNumber(focus.port)
+    || !isPreviewPort(focus.port)
+    || !isString(focus.path)
+    || !focus.path.startsWith('/')
+    || !isString(focus.title)
+    || !isNumber(focus.requestedAt)
+    || !Number.isSafeInteger(focus.requestedAt)
+    || focus.requestedAt < 0
+  ) return null;
+  return {
+    version: 1,
+    port: focus.port,
+    path: focus.path,
+    title: focus.title,
+    requestedAt: focus.requestedAt,
+  };
+}
+
 function httpUrl(value: string): URL {
   const target = new URL(value);
   if (target.protocol === 'wss:') target.protocol = 'https:';
@@ -132,6 +173,14 @@ export function portsEndpointUrl(filesBase: string): string {
 export function previewsEndpointUrl(filesBase: string): string {
   const target = httpUrl(filesBase);
   target.pathname = `${gatewayPath(target)}previews`;
+  target.search = '';
+  target.hash = '';
+  return target.toString();
+}
+
+export function previewFocusEndpointUrl(filesBase: string): string {
+  const target = httpUrl(filesBase);
+  target.pathname = `${gatewayPath(target)}preview-focus`;
   target.search = '';
   target.hash = '';
   return target.toString();
@@ -171,6 +220,25 @@ export async function fetchWorkspacePreviews(
     return parsedPreviews(value);
   } catch {
     return [];
+  }
+}
+
+export async function fetchWorkspacePreviewFocus(
+  filesBase: string,
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<PreviewFocus | null> {
+  try {
+    const response = await fetcher(previewFocusEndpointUrl(filesBase), {
+      credentials: 'include',
+      signal,
+    });
+    if (!response.ok) return null;
+    // SAFETY: Response.json parses JSON text, whose values are representable by JsonValue.
+    const value = await response.json() as JsonValue;
+    return parsePreviewFocus(value);
+  } catch {
+    return null;
   }
 }
 

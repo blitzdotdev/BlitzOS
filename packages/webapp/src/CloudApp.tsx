@@ -97,6 +97,7 @@ import {
   useWorkspacePolling,
 } from './use-workspace-lifecycle';
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
+import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
@@ -377,6 +378,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
     activeFilesBase,
+  );
+  // The in-box agent's `blitz preview open` raises a focus marker; open it as a
+  // tab so the user never hunts for the preview. `openPreviewPort` is defined
+  // below and only referenced when a focus arrives (after render), so its
+  // temporal position is fine. Setting the drawer segment is optional polish —
+  // it never forces the drawer open if the user closed it.
+  useWorkspacePreviewFocus(
+    route.page === 'webApp' && activeWorkspaceRunning,
+    activeWorkspaceId,
+    activeFilesBase,
+    (focus) => {
+      if (!openPreviewPort(focus.port, focus.path)) return;
+      setWorkspaceFiles((current) => (
+        current.workspaceId === activeWorkspaceId && current.value.segment !== 'previews'
+          ? { ...current, value: { ...current.value, segment: 'previews' } }
+          : current
+      ));
+    },
   );
 
   // Drive attachments feed the files view (shared pin count, context-menu
@@ -939,7 +958,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     () => newestPreviewLinks(previewLinks),
     [previewLinks],
   );
-  const openPreviewPort = (port: number) => {
+  const openPreviewPort = (port: number, path?: string) => {
     if (!isPreviewPort(port)) return false;
     const existing = ttydSessions.find(
       (tab) => tab.type === 'preview' && 'port' in tab && tab.port === port,
@@ -947,7 +966,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (existing) {
       selectTtydSession(String(existing.id));
     } else {
-      addWorkspaceTab((id) => ({ id, type: 'preview', port }));
+      // Only a non-root deep-link is recorded, so plain port opens keep the
+      // bare { id, type, port } tab shape (and its persisted round-trip).
+      const deepLink = path !== undefined && path !== '/' && path.startsWith('/')
+        ? path
+        : undefined;
+      addWorkspaceTab((id) => deepLink === undefined
+        ? { id, type: 'preview', port }
+        : { id, type: 'preview', port, path: deepLink });
     }
     return true;
   };
@@ -1364,6 +1390,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                     target={'port' in session
                       ? session.port
                       : { url: session.url, title: session.title }}
+                    path={'port' in session ? session.path : undefined}
                     filesBase={activeFilesBase}
                     running={activeWorkspaceRunning}
                   />

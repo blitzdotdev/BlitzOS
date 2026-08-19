@@ -3,10 +3,12 @@ import { isNumber } from './type-guards';
 
 export function PreviewPanel({
   target,
+  path,
   filesBase,
   running,
 }: {
   target: number | { url: string; title: string };
+  path?: string;
   filesBase: string | null;
   running: boolean;
 }) {
@@ -14,7 +16,7 @@ export function PreviewPanel({
   if (local && (!running || !filesBase)) {
     return <div className="preview-panel__asleep">Box is asleep</div>;
   }
-  const url = local ? previewUrl(filesBase ?? '', target) : target.url;
+  const url = local ? previewUrl(filesBase ?? '', target, path ?? '/') : target.url;
   const title = local
     ? `Preview :${target}`
     : previewLinkLabel(target.url, target.title);
