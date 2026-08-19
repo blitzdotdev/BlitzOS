@@ -25,7 +25,9 @@ export const CORE_MANIFEST = Object.freeze([
   "core/cloud-init.ts",
   "core/crypto.ts",
   "core/connections/types.ts", "core/connections/root-crypto.ts", "core/connections/manifest.ts", "core/connections/leases.ts",
-  "core/connections/minters/static.ts", "core/connections/minters/app-jwt/github-app.ts", "core/connections/registry.ts", "core/connections/requests.ts", "core/connections/mint.ts", "core/connections/proxy.ts",
+  "core/connections/catalog/types.ts", "core/connections/catalog/surfaces.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/generic.ts", "core/connections/catalog/index.ts",
+  "core/connections/user-grants.ts", "core/connections/minters/static.ts", "core/connections/minters/app-jwt/github-app.ts", "core/connections/minters/oauth.ts", "core/connections/minters/grant.ts",
+  "core/connections/registry.ts", "core/connections/requests.ts", "core/connections/health.ts", "core/connections/canary.ts", "core/connections/connect.ts", "core/connections/mint.ts", "core/connections/proxy.ts",
   "core/http.ts",
   "core/files/access.ts", "core/files/attachments.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/routes.ts", "core/files/sync.ts",
   "core/identity/google.ts", "core/identity/grants.ts", "core/identity/invites.ts", "core/identity/members.ts", "core/identity/orgs.ts", "core/identity/routes.ts",
@@ -40,7 +42,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/webapp-state.ts",
   "core/workspace-access.ts", "core/workspace-records.ts", "core/workspace-templates.ts",
   "core/workspaces.ts",
-  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/microvm-hosts.js",
+  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
 ]);
 export const UPLOAD_MANIFEST = Object.freeze([
@@ -287,21 +289,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
       indexes: [{ name: "org_name", unique: true, fields: ["org_id", "scoped_name"] }, { name: "org", fields: ["org_id", "created_at", "scoped_name"] }],
       extensions: [DENY_ALL_RULES],
     },
-    {
-      name: "user_oauth_grants",
-      fields: [
-        { name: "user_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
-        { name: "connection_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "connections", column: "id" } },
-        { name: "refresh_ciphertext", type: "text", sqlType: "text", notNull: true },
-        { name: "scopes", type: "text", sqlType: "text", notNull: true },
-        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
-        { name: "revoked_at", type: "integer", sqlType: "integer" },
-      ],
-      indexes: [
-        { name: "identity", unique: true, fields: ["user_id", "connection_id"] },
-      ],
-      extensions: [DENY_ALL_RULES],
-    },
+    { name: "user_oauth_grants", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "user_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } }, { name: "provider", type: "text", sqlType: "text", notNull: true }, { name: "manifest_id", type: "text", sqlType: "text", notNull: true }, { name: "kind", type: "text", sqlType: "text", notNull: true, check: "kind IN ('pat','oauth')" }, { name: "label", type: "text", sqlType: "text" }, { name: "config", type: "text", sqlType: "text", notNull: true, default: { l: "{}" } }, { name: "access_ciphertext", type: "text", sqlType: "text" }, { name: "access_expires_at", type: "integer", sqlType: "integer" }, { name: "refresh_ciphertext", type: "text", sqlType: "text" }, { name: "scopes", type: "text", sqlType: "text", notNull: true }, { name: "rotation", type: "integer", sqlType: "integer", notNull: true, default: { l: 0 } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }, { name: "revoked_at", type: "integer", sqlType: "integer" }], indexes: [{ name: "live", unique: true, fields: ["user_id", "provider"], where: { q: "revoked_at IS NULL" } }, { name: "provider", fields: ["provider", "user_id"] }], extensions: [DENY_ALL_RULES] },
+    { name: "workspace_template_connections", fields: [{ name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "provider", type: "text", sqlType: "text", notNull: true }, { name: "required", type: "integer", sqlType: "integer", notNull: true, default: { l: 0 }, check: "required IN (0, 1)" }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "provider", fields: ["provider", "template_id"] }], extensions: [DENY_ALL_RULES] },
+    { name: "provider_health", fields: [{ name: "provider", type: "text", sqlType: "text", primary: true, noUpdate: true }, { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('healthy','unhealthy')" }, { name: "detail", type: "text", sqlType: "text" }, { name: "checked_at", type: "integer", sqlType: "integer", notNull: true }, { name: "latency_ms", type: "integer", sqlType: "integer" }], indexes: [], extensions: [DENY_ALL_RULES] },
     {
       name: "credential_leases",
       fields: [
@@ -310,6 +300,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "box_id", type: "text", sqlType: "text", foreignKey: { table: "boxes", column: "id", onDelete: "SET NULL" } },
         { name: "connection_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "connections", column: "id" } },
         { name: "user_id", type: "text", sqlType: "text" },
+        { name: "grant_id", type: "text", sqlType: "text", foreignKey: { table: "user_oauth_grants", column: "id" } },
         { name: "scopes", type: "text", sqlType: "text", notNull: true },
         { name: "mode", type: "text", sqlType: "text", notNull: true, check: "mode IN ('inject','proxy')" },
         { name: "token_hash", type: "text", sqlType: "text", unique: true },
@@ -321,6 +312,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "workspace", fields: ["workspace_id", "state"] },
         { name: "expiry", fields: ["state", "expires_at"] },
         { name: "token", fields: "token_hash", where: { q: "token_hash IS NOT NULL" } },
+        { name: "grant", fields: ["grant_id", "state"] },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -422,11 +414,12 @@ import {
   createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
+  isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
   runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
-  runSessionSweep, runWorkspaceTunnelSweep,
+  runProviderCanary, runSessionSweep, runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
   VmProviderRegistry,
   blobResponse,
@@ -490,6 +483,10 @@ interface ManagedFileRow {
 
 function dynamicBinding(env: ManagedBindings, name: string): unknown {
   return Reflect.get(env, name);
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return isString(value) && value.length > 0 ? value : undefined;
 }
 
 function providersFor(env: ManagedBindings, db: Db): CoreRuntime["providers"] {
@@ -568,10 +565,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
-      connectSecret: (name) => {
-        const value = dynamicBinding(env, name);
-        return typeof value === "string" && value.length > 0 ? value : undefined;
-      },
+      connectSecret: (name) => nonEmptyString(dynamicBinding(env, name)),
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
@@ -614,7 +608,8 @@ const worker = Object.assign(app, {
       await runtime.providers.microvm?.syncStaticHosts();
       await runSessionSweep(runtime); await runLeaseSweep(runtime);
       await runInvariantSweep(runtime); await runOrphanSweep(runtime);
-      await runWorkspaceTunnelSweep(runtime); await runFileSyncSweep(runtime);
+      await runWorkspaceTunnelSweep(runtime); await runProviderCanary(runtime);
+      await runFileSyncSweep(runtime);
     })());
   },
 });

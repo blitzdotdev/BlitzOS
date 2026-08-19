@@ -7,6 +7,7 @@ import {
   createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
+  isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
@@ -14,6 +15,7 @@ import {
   runFileSyncSweep,
   runLeaseSweep,
   runOrphanSweep,
+  runProviderCanary,
   runSessionSweep,
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
@@ -74,7 +76,7 @@ function dynamicBinding(env: WorkerBindings, name: string): unknown {
  * this file, so they are read by name and narrowed to a string here. */
 function connectSecretFrom(env: WorkerBindings, name: string): string | undefined {
   const value = dynamicBinding(env, name);
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  return isString(value) && value.length > 0 ? value : undefined;
 }
 
 function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
@@ -233,6 +235,8 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
+        const probed = await runProviderCanary(runtime);
+        console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
         const swept = await runFileSyncSweep(runtime);
         console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),

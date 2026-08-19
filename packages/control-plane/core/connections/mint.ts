@@ -7,6 +7,7 @@ import { providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { tombstoneSurfaces } from "./catalog/surfaces.js";
 import { addConnectRoutes } from "./connect.js";
+import { addConnectionHealthRoutes } from "./health.js";
 import {
   createLease,
   listCredentialEvents,
@@ -427,6 +428,7 @@ export function addCredentialRoutes(
 ): void {
   addConnectionRoutes(router, runtimeFactory, requirePrincipal);
   addUserGrantRoutes(router, runtimeFactory, requirePrincipal);
+  addConnectionHealthRoutes(router, runtimeFactory, requirePrincipal);
   addConnectRoutes(router, runtimeFactory, requirePrincipal);
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);

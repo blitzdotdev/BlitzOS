@@ -4,7 +4,11 @@ export type { BlobObject, BlobStore, LogicalBlobLookup } from "./blobs.js";
 export { blobResponse, NullBlobStore, streamBlob } from "./blobs.js";
 export type { Db, Query, RawRun, TransactionRun } from "./db.js";
 export { changed, first, rows, transaction } from "./db.js";
+/** Shared string guard: the Worker entry points narrow catalog-named
+ * bindings with the same predicate core parses boundaries with. */
+export { isString } from "./http.js";
 export { runLeaseSweep } from "./connections/leases.js";
+export { runProviderCanary } from "./connections/canary.js";
 export {
   FILE_SYNC_MAX_BYTES_PER_TICK,
   FILE_SYNC_MAX_FILES_PER_TICK,

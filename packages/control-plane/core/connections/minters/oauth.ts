@@ -13,7 +13,8 @@ export interface ExchangeInput {
   manifest: OAuthProviderManifest;
   clientId: string;
   clientSecret: string;
-  redirectUri: string;
+  /** Only an authorization_code exchange sends one; a refresh never does. */
+  redirectUri: string | null;
   grantType: "authorization_code" | "refresh_token";
   code: string | null;
   codeVerifier: string | null;
@@ -42,6 +43,9 @@ export function exchangeForm(input: ExchangeInput): URLSearchParams {
   form.set("client_id", input.clientId);
   form.set("client_secret", input.clientSecret);
   if (input.grantType === "authorization_code") {
+    if (input.redirectUri === null) {
+      throw new Error("authorization_code exchange needs a redirect URI");
+    }
     form.set("redirect_uri", input.redirectUri);
     if (input.manifest.auth.pkce) {
       if (input.codeVerifier === null) throw new Error("PKCE exchange needs a code verifier");
@@ -116,7 +120,7 @@ export interface RefreshContext {
   key: CryptoKey;
   clientId: string;
   clientSecret: string;
-  redirectUri: string;
+  redirectUri: string | null;
 }
 
 function fresh(grant: GrantRow, now: number): boolean {

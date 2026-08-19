@@ -19,7 +19,9 @@ const expected = [
   "connections/catalog/linear.ts",
   "connections/catalog/surfaces.ts",
   "connections/catalog/types.ts",
+  "connections/canary.ts",
   "connections/connect.ts",
+  "connections/health.ts",
   "connections/leases.ts",
   "connections/manifest.ts",
   "connections/mint.ts",
@@ -100,6 +102,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(75);
+    expect(expected).toHaveLength(77);
   });
 });

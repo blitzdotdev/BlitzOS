@@ -30,9 +30,9 @@ npm test              # control-plane, box actor, ui, guest node:test,
 
 ## Known debt (as of 2026-08-18)
 
-- 110 anti-slop findings remain, all Tier C: external-boundary code that
+- 108 anti-slop findings remain, all Tier C: external-boundary code that
   needs real parsers (52 no-unknown-parameters, 27 no-runtime-typeof in
-  plain JS, 25 no-unsafe-dictionary-type, 6 no-unknown-returns). Fixing one
+  plain JS, 23 no-unsafe-dictionary-type, 6 no-unknown-returns). Fixing one
   requires characterization tests FIRST — these fixes can change accepted
   inputs. Plan and history: GitHub issue #1.
 - 16 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
@@ -95,8 +95,8 @@ Do not add aliases anywhere else.
    and both conformance tests present and passing. A new cross-runtime
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
-7. Reference counts for comparison (2026-08-18): anti-slop 110
-   (52/27/25/6), blitz-house 0, max-lines warnings 4. These are the numbers
+7. Reference counts for comparison (2026-08-19): anti-slop 108
+   (52/27/23/6), blitz-house 0, max-lines warnings 4. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 

@@ -31,10 +31,23 @@ const expected = [
   "core/connections/root-crypto.ts",
   "core/connections/manifest.ts",
   "core/connections/leases.ts",
+  "core/connections/catalog/types.ts",
+  "core/connections/catalog/surfaces.ts",
+  "core/connections/catalog/github.ts",
+  "core/connections/catalog/google-workspace.ts",
+  "core/connections/catalog/linear.ts",
+  "core/connections/catalog/generic.ts",
+  "core/connections/catalog/index.ts",
+  "core/connections/user-grants.ts",
   "core/connections/minters/static.ts",
   "core/connections/minters/app-jwt/github-app.ts",
+  "core/connections/minters/oauth.ts",
+  "core/connections/minters/grant.ts",
   "core/connections/registry.ts",
   "core/connections/requests.ts",
+  "core/connections/health.ts",
+  "core/connections/canary.ts",
+  "core/connections/connect.ts",
   "core/connections/mint.ts",
   "core/connections/proxy.ts",
   "core/http.ts",
@@ -67,6 +80,7 @@ const expected = [
   "core/compute/registry.ts",
   "core/compute/types.ts",
   "core/compute/hetzner.ts",
+  "core/compute/json-fetch.ts",
   "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts",
   "core/compute/microvm-agent.ts",
@@ -89,7 +103,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(57);
+    expect(first.files).toHaveLength(71);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

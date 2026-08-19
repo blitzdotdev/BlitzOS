@@ -6,6 +6,7 @@ import {
   isString,
   readJson,
   requiredString,
+  type JsonValue,
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
@@ -277,7 +278,7 @@ export async function rotateGrantTokens(
   return updated.length === 1;
 }
 
-function parseScopes(value: unknown, manifest: ProviderManifest): string[] {
+function parseScopes(value: JsonValue | undefined, manifest: ProviderManifest): string[] {
   if (value === undefined) return [...manifest.defaultScopes];
   if (
     !Array.isArray(value) ||
@@ -285,17 +286,22 @@ function parseScopes(value: unknown, manifest: ProviderManifest): string[] {
   ) {
     throw new HttpError(400, "scopes must be an array of non-empty strings");
   }
+  const requested: string[] = [];
+  for (const scope of value) {
+    if (!isString(scope)) throw new HttpError(400, "scopes must be an array of non-empty strings");
+    requested.push(scope);
+  }
   const known = new Set(manifest.scopes.map((scope) => scope.id));
   if (known.size > 0) {
-    const unknownScope = value.find((scope) => !known.has(scope));
+    const unknownScope = requested.find((scope) => !known.has(scope));
     if (unknownScope !== undefined) {
       throw new HttpError(400, `scope ${unknownScope} is not in the ${manifest.id} catalog`);
     }
   }
-  return [...new Set(value)];
+  return [...new Set(requested)];
 }
 
-function grantLabel(value: unknown): string | null {
+function grantLabel(value: JsonValue | undefined): string | null {
   if (!isString(value)) return null;
   const label = value.trim().slice(0, 128);
   return label.length === 0 ? null : label;
@@ -306,7 +312,7 @@ function personalTokenHeader(manifest: ProviderManifest): TokenHeader {
 }
 
 function parseVendorConfig(
-  value: unknown,
+  value: JsonValue | undefined,
   manifest: ProviderManifest,
 ): GrantConfig {
   const header = personalTokenHeader(manifest);

@@ -47,7 +47,7 @@ interface TemplateConnectionRow {
 const MAX_TEMPLATE_FOLDERS = 16;
 const MAX_TEMPLATE_CONNECTIONS = 16;
 
-function parseTemplateConnections(value: unknown): TemplateConnectionView[] {
+function parseTemplateConnections(value: JsonValue | undefined): TemplateConnectionView[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new HttpError(400, "connections must be an array");
   const byProvider = new Map<string, TemplateConnectionView>();

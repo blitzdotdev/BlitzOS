@@ -1,12 +1,12 @@
-import { HttpError, isRecord, isString } from "../http.js";
+import { HttpError, isRecord, isString, type JsonObject } from "../http.js";
 import type { Connection } from "./types.js";
 
 /** The manifest is stored verbatim in D1 (workspaces.manifest), so its
  * `integrations` key is a persisted document format, not a renameable client
  * field; it deliberately keeps the old noun. */
-type CredentialManifest = {
-  integrations: Record<string, Record<string, unknown>>;
-};
+export interface CredentialManifest {
+  integrations: Record<string, JsonObject>;
+}
 
 function stringArray(value: unknown): value is string[] {
   return (
@@ -19,7 +19,7 @@ export function parseManifest(value: unknown): CredentialManifest {
   if (!isRecord(value) || !isRecord(value.integrations)) {
     throw new HttpError(400, "manifest.integrations must be an object");
   }
-  const integrations: Record<string, Record<string, unknown>> = {};
+  const integrations: CredentialManifest["integrations"] = {};
   for (const [name, ceiling] of Object.entries(value.integrations)) {
     if (name.length === 0 || !isRecord(ceiling)) {
       throw new HttpError(400, "each manifest integration must be an object");
@@ -42,14 +42,14 @@ export function manifestJson(value: unknown): string {
  * just because they hold it. An explicit ceiling wins on conflict — the
  * provision list can only enable what the ceiling already allows. */
 export function enablementManifestJson(
-  ceiling: unknown,
+  ceiling: CredentialManifest | undefined,
   connections: readonly string[],
 ): string | null {
   if (ceiling !== undefined) return manifestJson(ceiling);
   if (connections.length === 0) return null;
-  const integrations: Record<string, Record<string, unknown>> = {};
-  for (const name of connections) integrations[name] = {};
-  return JSON.stringify({ integrations });
+  const manifest: CredentialManifest = { integrations: {} };
+  for (const name of connections) manifest.integrations[name] = {};
+  return JSON.stringify(manifest);
 }
 
 /** Names the ceiling allows, filtered to the requested provision list. */
