@@ -568,6 +568,10 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => {
+        const value = dynamicBinding(env, name);
+        return typeof value === "string" && value.length > 0 ? value : undefined;
+      },
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),

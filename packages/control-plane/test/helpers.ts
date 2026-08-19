@@ -34,6 +34,10 @@ export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const credentialMasterKey = await credentialMasterKeyFor(CRED_MASTER_KEY);
 const webAppAuth = new WorkspaceWebAppAuth("test-webapp-root-secret");
 
+/** Stands in for the provider OAuth client bindings. Suites that exercise
+ * /connect fill it; everything else sees an unconfigured instance. */
+export const testConnectSecrets = new Map<string, string>();
+
 interface TestApp {
   request(
     input: RequestInfo | URL,
@@ -196,6 +200,7 @@ export function appWithVmProviders(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+      connectSecret: (name) => testConnectSecrets.get(name),
     },
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),
@@ -242,6 +247,7 @@ export function testRuntime(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: OPERATOR_KEY,
+      connectSecret: (name) => testConnectSecrets.get(name),
     },
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),

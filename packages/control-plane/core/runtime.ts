@@ -57,6 +57,10 @@ export interface RuntimeVariables {
   googleClientId: string;
   googleClientSecret: string;
   bootstrapSecret: string;
+  /** Reads a provider's OAuth client binding by the name its catalog manifest
+   * declares. Returning undefined is the supported answer: an instance that
+   * never registered an app simply has no Connect button for that provider. */
+  connectSecret(name: string): string | undefined;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

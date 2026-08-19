@@ -70,6 +70,13 @@ function dynamicBinding(env: WorkerBindings, name: string): unknown {
   return env[name as keyof WorkerBindings];
 }
 
+/** Connection OAuth client bindings are named by the provider catalog, not by
+ * this file, so they are read by name and narrowed to a string here. */
+function connectSecretFrom(env: WorkerBindings, name: string): string | undefined {
+  const value = dynamicBinding(env, name);
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
   const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
   const microvm = new MicrovmPoolProvider(
@@ -118,6 +125,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => connectSecretFrom(env, name),
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
@@ -151,6 +159,7 @@ function runtimeForScheduled(
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => connectSecretFrom(env, name),
     },
     providers,
     principalSource: createSessionPrincipalSource(),
