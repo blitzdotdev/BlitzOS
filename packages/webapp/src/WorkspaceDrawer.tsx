@@ -10,13 +10,9 @@ import {
 import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
-import {
-  previewLinkLabel,
-  previewUrl,
-  type LivePort,
-  type PreviewLink,
-} from './preview';
+import type { LivePort, PreviewLink } from './preview';
 import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
+import { TeenyappsPanel } from './TeenyappsPanel';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
@@ -232,7 +228,7 @@ function eventActor(event: CredentialEventView): string | null {
   return acting !== null && isString(acting.userId) ? acting.userId : null;
 }
 
-function WorkspaceEventsPanel({
+export function WorkspaceEventsPanel({
   client,
   workspaceId,
   visible,
@@ -274,56 +270,129 @@ function WorkspaceEventsPanel({
   );
 }
 
-export function WorkspaceDrawer({
+export function WorkspaceIntegrationsPanel({
   client,
   workspaceId,
-  mobile,
-  open,
-  width,
-  segment,
+  visible,
   pendingRequests,
   pendingRequestsError,
-  files,
-  onWidthChange,
-  onSegmentChange,
   onResolveRequest,
-  canManageCredentials,
-  livePorts,
-  previewLinks,
-  filesBase,
-  previewReady,
-  onOpenPreview,
-  onOpenPreviewLink,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
-  mobile: boolean;
-  open: boolean;
-  width: number;
-  segment: WorkspaceDrawerSegment;
+  visible: boolean;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
-  files: ReactNode;
-  onWidthChange: (width: number) => void;
-  onSegmentChange: (segment: WorkspaceDrawerSegment) => void;
   onResolveRequest: (
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
+}) {
+  return (
+    <div className="workspace-integrations">
+      <h3 className="workspace-sect workspace-sect--pending">Pending requests</h3>
+      <WorkspaceRequestsPanel
+        requests={pendingRequests}
+        loadError={pendingRequestsError}
+        onResolve={onResolveRequest}
+      />
+      <h3 className="workspace-sect">Active leases</h3>
+      <WorkspaceLeasesPanel client={client} workspaceId={workspaceId} visible={visible} />
+      <h3 className="workspace-sect">Recent activity</h3>
+      <WorkspaceEventsPanel client={client} workspaceId={workspaceId} visible={visible} />
+    </div>
+  );
+}
+
+export type WorkspacePanelProps = {
+  client: ControlPlaneClient;
+  workspaceId: string;
+  orgName: string;
+  visible: boolean;
+  files: ReactNode;
+  pendingRequests: CredentialRequestView[];
+  pendingRequestsError?: string | null;
   canManageCredentials: boolean;
+  onResolveRequest: (
+    request: CredentialRequestView,
+    action: 'approve' | 'deny',
+  ) => Promise<void>;
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
   filesBase: string | null;
   previewReady: boolean;
   onOpenPreview: (port: number) => void;
   onOpenPreviewLink: (url: string, title: string) => void;
+};
+
+/** One panel body, wherever it is hosted: a tab in a workspace pane on the
+ * desktop, a segment of the off-canvas sheet below the mobile breakpoint. */
+export function WorkspacePanelContent({
+  panel,
+  client,
+  workspaceId,
+  orgName,
+  visible,
+  files,
+  pendingRequests,
+  pendingRequestsError,
+  canManageCredentials,
+  onResolveRequest,
+  livePorts,
+  previewLinks,
+  filesBase,
+  previewReady,
+  onOpenPreview,
+  onOpenPreviewLink,
+}: WorkspacePanelProps & { panel: WorkspaceDrawerSegment }) {
+  if (panel === 'files') return <>{files}</>;
+  if (panel === 'previews') {
+    return (
+      <TeenyappsPanel
+        orgName={orgName}
+        workspaceId={workspaceId}
+        livePorts={livePorts}
+        previewLinks={previewLinks}
+        filesBase={filesBase}
+        previewReady={previewReady}
+        onOpenPreview={onOpenPreview}
+        onOpenPreviewLink={onOpenPreviewLink}
+      />
+    );
+  }
+  return canManageCredentials ? (
+    <WorkspaceIntegrationsPanel
+      client={client}
+      workspaceId={workspaceId}
+      visible={visible}
+      pendingRequests={pendingRequests}
+      pendingRequestsError={pendingRequestsError}
+      onResolveRequest={onResolveRequest}
+    />
+  ) : null;
+}
+
+/** Below the mobile breakpoint the panels stay an off-canvas sheet with its
+ * own segment strip — the panes never split there. */
+export function WorkspaceDrawer({
+  mobile,
+  open,
+  width,
+  segment,
+  onWidthChange,
+  onSegmentChange,
+  pendingRequests,
+  canManageCredentials,
+  ...panelProps
+}: Omit<WorkspacePanelProps, 'visible'> & {
+  mobile: boolean;
+  open: boolean;
+  width: number;
+  segment: WorkspaceDrawerSegment;
+  onWidthChange: (width: number) => void;
+  onSegmentChange: (segment: WorkspaceDrawerSegment) => void;
 }) {
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
-  const [openedPort, setOpenedPort] = useState<number | null>(null);
-  const [previewNonce, setPreviewNonce] = useState(0);
-  useEffect(() => {
-    setOpenedPort(null);
-  }, [workspaceId]);
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mobile || event.button !== 0) return;
     resizeOrigin.current = { x: event.clientX, width };
@@ -339,7 +408,7 @@ export function WorkspaceDrawer({
     { id: 'files', label: 'Files', icon: <FolderIcon className="webapp-tab-icon" /> },
     {
       id: 'previews',
-      label: 'Previews',
+      label: 'teenyapps',
       icon: <span className="webapp-tab-icon mi-preview" aria-hidden="true" />,
     },
   ];
@@ -408,171 +477,17 @@ export function WorkspaceDrawer({
         })}
       </header>
       <div className="workspace-drawer-body">
-        <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>
-        <div role="tabpanel" hidden={effectiveSegment !== 'previews'}>
-          {openedPort !== null && (
-            <div className="workspace-preview-open">
-              <div className="workspace-preview-bar">
-                <button
-                  className="fnd-tbtn"
-                  type="button"
-                  aria-label="Back to ports"
-                  onClick={() => setOpenedPort(null)}
-                >
-                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
-                </button>
-                <button
-                  className="fnd-tbtn"
-                  type="button"
-                  aria-label="Reload preview"
-                  onClick={() => setPreviewNonce((nonce) => nonce + 1)}
-                >
-                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.2-3.2" /><path d="M13 2.6v2.6h-2.6" /></svg>
-                </button>
-                <span className="workspace-preview-addr">
-                  <span className="workspace-preview-addr-text">
-                    {livePorts.find((entry) => entry.port === openedPort)?.process ?? 'stopped'}
-                    {' · '}
-                    <b>:{openedPort}</b>
-                  </span>
-                </span>
-                <button
-                  className="fnd-tbtn"
-                  type="button"
-                  aria-label="Open as a workspace tab"
-                  title="Open as a workspace tab"
-                  onClick={() => onOpenPreview(openedPort)}
-                >
-                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
-                </button>
-              </div>
-              {previewReady && filesBase !== null
-                ? (
-                  <iframe
-                    key={previewNonce}
-                    className="workspace-preview-frame"
-                    src={previewUrl(filesBase, openedPort)}
-                    title={`Preview :${openedPort}`}
-                    referrerPolicy="no-referrer"
-                  />
-                )
-                : <p className="workspace-drawer-state">Box is asleep.</p>}
-            </div>
-          )}
-          {openedPort === null && (
-            <section className="workspace-drawer-panel workspace-previews" aria-label="Preview sources">
-              <h3 className="workspace-sect">
-                Previews
-                {(livePorts.length > 0 || previewLinks.length > 0) && (
-                  <small>{livePorts.length + previewLinks.length}</small>
-                )}
-              </h3>
-              {livePorts.length === 0 && previewLinks.length === 0
-                ? (
-                  <p className="workspace-drawer-state">
-                    Nothing running yet — start a dev server in the terminal and
-                    its live preview shows up here.
-                  </p>
-                )
-                : (
-                  <div className="workspace-preview-cards">
-                    {livePorts.map((entry) => (
-                      <button
-                        className="workspace-preview-card"
-                        type="button"
-                        key={entry.port}
-                        aria-label={`Open preview of ${entry.process}`}
-                        onClick={() => setOpenedPort(entry.port)}
-                      >
-                        <span className="workspace-preview-shot" aria-hidden="true">
-                          {previewReady && filesBase !== null && (
-                            <iframe
-                              className="workspace-preview-thumb"
-                              src={previewUrl(filesBase, entry.port)}
-                              title={`Preview of ${entry.process}`}
-                              tabIndex={-1}
-                              loading="lazy"
-                              referrerPolicy="no-referrer"
-                              onLoad={(event) => {
-                                event.currentTarget.classList.add('workspace-preview-thumb--ready');
-                              }}
-                            />
-                          )}
-                          <span className="workspace-preview-shimmer" />
-                          <span className="workspace-preview-wait">Starting preview…</span>
-                        </span>
-                        <span className="workspace-preview-caption">
-                          <b>{entry.process}</b>
-                          <span className="workspace-preview-meta">
-                            started {portAge(entry.firstSeenAt)} ago · :{entry.port}
-                          </span>
-                          <span
-                            className="workspace-preview-open-tab"
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Open ${entry.process} as a workspace tab`}
-                            title="Open as a workspace tab"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onOpenPreview(entry.port);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key !== 'Enter' && event.key !== ' ') return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              onOpenPreview(entry.port);
-                            }}
-                          >
-                            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                    {previewLinks.map((entry) => (
-                      <button
-                        className="workspace-preview-card"
-                        type="button"
-                        key={entry.url}
-                        aria-label={`Open preview link ${previewLinkLabel(entry.url, entry.title)}`}
-                        onClick={() => onOpenPreviewLink(entry.url, entry.title)}
-                      >
-                        <span className="workspace-preview-shot" aria-hidden="true">
-                          <span className="workspace-preview-wait">Public link ↗</span>
-                        </span>
-                        <span className="workspace-preview-caption">
-                          <b>{previewLinkLabel(entry.url, entry.title)}</b>
-                          <span className="workspace-preview-meta">{entry.url}</span>
-                          <span className="workspace-preview-open-tab" aria-hidden="true">
-                            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-            </section>
-          )}
-        </div>
-        {canManageCredentials && <div className="workspace-integrations" role="tabpanel" hidden={effectiveSegment !== 'integrations'}>
-          <h3 className="workspace-sect workspace-sect--pending">Pending requests</h3>
-          <WorkspaceRequestsPanel
-            requests={pendingRequests}
-            loadError={pendingRequestsError}
-            onResolve={onResolveRequest}
-          />
-          <h3 className="workspace-sect">Active leases</h3>
-          <WorkspaceLeasesPanel
-            client={client}
-            workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'integrations'}
-          />
-          <h3 className="workspace-sect">Recent activity</h3>
-          <WorkspaceEventsPanel
-            client={client}
-            workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'integrations'}
-          />
-        </div>}
+        {tabs.map((tab) => (
+          <div role="tabpanel" hidden={effectiveSegment !== tab.id} key={tab.id}>
+            <WorkspacePanelContent
+              panel={tab.id}
+              pendingRequests={pendingRequests}
+              canManageCredentials={canManageCredentials}
+              {...panelProps}
+              visible={open && effectiveSegment === tab.id}
+            />
+          </div>
+        ))}
       </div>
     </aside>
   );

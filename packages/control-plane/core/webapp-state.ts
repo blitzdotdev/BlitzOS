@@ -14,6 +14,9 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 type WebAppAgent = "claude" | "codex";
 type OptionalJsonValue = JsonValue | undefined;
 type WebAppDrawerSegment = "files" | "previews" | "integrations";
+/** Panes are side-by-side columns; an absent region is the main (left) pane,
+ * so pre-split documents round-trip unchanged. */
+type WebAppRegion = "main" | "side";
 type WebAppTabType =
   | "claude"
   | "codex"
@@ -24,7 +27,8 @@ type WebAppTabType =
   | "terminal"
   | "chat"
   | "file"
-  | "preview";
+  | "preview"
+  | "panel";
 
 interface WebAppTabV1 {
   id: number;
@@ -33,6 +37,10 @@ interface WebAppTabV1 {
   chatProvider?: WebAppAgent;
   filePath?: string;
   port?: number;
+  url?: string;
+  title?: string;
+  panel?: WebAppDrawerSegment;
+  region?: WebAppRegion;
 }
 
 interface WebAppTabsV1 {
@@ -40,14 +48,18 @@ interface WebAppTabsV1 {
   tabs: WebAppTabV1[];
   activeId: number | null;
   nextId: number;
+  sideActiveId?: number;
 }
 
+/** `open` and `segment` are pre-split fields. The webApp folds them into a
+ * panel tab on read and stops writing them; the parser keeps them when a
+ * stored document still carries them so that migration input survives a GET. */
 interface WebAppDrawerV1 {
   version: 1;
-  open: boolean;
   width: number;
   expanded: string[];
-  segment: WebAppDrawerSegment;
+  open?: boolean;
+  segment?: WebAppDrawerSegment;
 }
 
 export interface GlobalWebAppStateV1 {
@@ -85,6 +97,7 @@ const TAB_TYPES: ReadonlySet<string> = new Set([
   "chat",
   "file",
   "preview",
+  "panel",
 ]);
 
 function boundedString(value: OptionalJsonValue, field: string, maxLength: number): string {
@@ -115,6 +128,35 @@ function parseAgent(value: OptionalJsonValue, field: string): WebAppAgent {
   return value;
 }
 
+function parseSegment(value: OptionalJsonValue, field: string): WebAppDrawerSegment {
+  // Legacy documents stored earlier segment names; they normalize to the
+  // combined integrations panel instead of invalidating the whole document.
+  const segment = value === "leases"
+      || value === "requests"
+      || value === "credentials"
+      || value === "events"
+    ? "integrations"
+    : value;
+  if (segment !== "files" && segment !== "previews" && segment !== "integrations") {
+    throw new HttpError(400, `${field} is invalid`);
+  }
+  return segment;
+}
+
+function parseRegion(value: OptionalJsonValue, field: string): WebAppRegion | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "main" && value !== "side") {
+    throw new HttpError(400, `${field} must be main or side`);
+  }
+  return value;
+}
+
+function withRegion(tab: WebAppTabV1, region: WebAppRegion | undefined): WebAppTabV1 {
+  // `main` is the absent-region default; writing it back would change the
+  // bytes of every pre-split document that passes through.
+  return region === "side" ? { ...tab, region } : tab;
+}
+
 function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   if (!isRecord(value)) throw new HttpError(400, `tabs.tabs[${index}] must be an object`);
   const id = positiveId(value.id, `tabs.tabs[${index}].id`);
@@ -123,19 +165,35 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   }
   // SAFETY: TAB_TYPES contains exactly the WebAppTabType literals declared above.
   const type = value.type as WebAppTabType;
+  const region = parseRegion(value.region, `tabs.tabs[${index}].region`);
   if (type === "file") {
     const filePath = boundedString(value.filePath, `tabs.tabs[${index}].filePath`, 4_096);
     if (filePath === "" || filePath.startsWith("/") || filePath.split("/").includes("..")) {
       throw new HttpError(400, `tabs.tabs[${index}].filePath must be a safe relative path`);
     }
-    return { id, type, filePath };
+    return withRegion({ id, type, filePath }, region);
+  }
+  if (type === "panel") {
+    return withRegion(
+      { id, type, panel: parseSegment(value.panel, `tabs.tabs[${index}].panel`) },
+      region,
+    );
   }
   if (type === "preview") {
-    const port = positiveId(value.port, `tabs.tabs[${index}].port`);
-    if (port > 65_535) throw new HttpError(400, `tabs.tabs[${index}].port is invalid`);
-    return { id, type, port };
+    // Two preview variants ship from the webApp: a local port, and a public
+    // link the box published. Rejecting the link variant would 400 the whole
+    // shared document and stop every tab from persisting.
+    if (value.port !== undefined) {
+      const port = positiveId(value.port, `tabs.tabs[${index}].port`);
+      if (port > 65_535) throw new HttpError(400, `tabs.tabs[${index}].port is invalid`);
+      return withRegion({ id, type, port }, region);
+    }
+    const url = boundedString(value.url, `tabs.tabs[${index}].url`, 2_048);
+    if (url.trim() === "") throw new HttpError(400, `tabs.tabs[${index}].url is invalid`);
+    const title = boundedString(value.title, `tabs.tabs[${index}].title`, 256);
+    return withRegion({ id, type, url, title }, region);
   }
-  if (type !== "chat") return { id, type };
+  if (type !== "chat") return withRegion({ id, type }, region);
   const tab: WebAppTabV1 = { id, type };
   if (value.chatSessionId !== undefined) {
     tab.chatSessionId = boundedString(
@@ -147,7 +205,7 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   if (value.chatProvider !== undefined) {
     tab.chatProvider = parseAgent(value.chatProvider, `tabs.tabs[${index}].chatProvider`);
   }
-  return tab;
+  return withRegion(tab, region);
 }
 
 function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
@@ -162,42 +220,46 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   const activeId = value.activeId === null
     ? null
     : positiveId(value.activeId, "tabs.activeId");
-  if (activeId !== null && !tabs.some(({ id }) => id === activeId)) {
-    throw new HttpError(400, "tabs.activeId must identify a tab");
+  if (activeId !== null && !tabs.some((tab) => tab.id === activeId && tab.region !== "side")) {
+    throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
   }
   const nextId = positiveId(value.nextId, "tabs.nextId");
   if (tabs.some(({ id }) => id >= nextId)) {
     throw new HttpError(400, "tabs.nextId must be greater than every tab id");
   }
-  return { version: 1, tabs, activeId, nextId };
+  const parsed: WebAppTabsV1 = { version: 1, tabs, activeId, nextId };
+  if (value.sideActiveId !== undefined) {
+    const sideActiveId = positiveId(value.sideActiveId, "tabs.sideActiveId");
+    if (!tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {
+      throw new HttpError(400, "tabs.sideActiveId must identify a side-pane tab");
+    }
+    parsed.sideActiveId = sideActiveId;
+  }
+  return parsed;
 }
 
 function parseDrawer(value: OptionalJsonValue): WebAppDrawerV1 {
-  if (!isRecord(value) || value.version !== 1 || (value.open !== true && value.open !== false)) {
+  if (!isRecord(value) || value.version !== 1) {
     throw new HttpError(400, "drawer must be a version 1 drawer document");
   }
   if (!isNumber(value.width) || !Number.isFinite(value.width) || value.width < 200 || value.width > 2000) {
     throw new HttpError(400, "drawer.width must be between 200 and 2000");
   }
-  const expanded = stringList(value.expanded, "drawer.expanded", 1_000);
-  // Legacy docs stored earlier segment names; they normalize to the combined
-  // integrations tab instead of invalidating the whole doc.
-  const segment = value.segment === "leases"
-      || value.segment === "requests"
-      || value.segment === "credentials"
-      || value.segment === "events"
-    ? "integrations"
-    : value.segment;
-  if (segment !== "files" && segment !== "previews" && segment !== "integrations") {
-    throw new HttpError(400, "drawer.segment is invalid");
-  }
-  return {
+  const drawer: WebAppDrawerV1 = {
     version: 1,
-    open: value.open,
     width: value.width,
-    expanded,
-    segment,
+    expanded: stringList(value.expanded, "drawer.expanded", 1_000),
   };
+  // Pre-split documents pair an open flag with one segment. Both are kept
+  // verbatim so a webApp reading the stored row can still fold them into a
+  // panel tab; split-aware writes simply omit them.
+  if (value.open === undefined && value.segment === undefined) return drawer;
+  if (value.open !== true && value.open !== false) {
+    throw new HttpError(400, "drawer.open must be a boolean");
+  }
+  drawer.open = value.open;
+  drawer.segment = parseSegment(value.segment, "drawer.segment");
+  return drawer;
 }
 
 function parseGlobalDoc(value: OptionalJsonValue): GlobalWebAppStateV1 {

@@ -228,6 +228,87 @@ describe("server-side webApp state", () => {
     ).toBe(0);
   });
 
+  /** The webApp folds the pre-split drawer into a panel tab. Both shapes have
+   * to survive a round trip through here, or a rejected write takes the whole
+   * shared document — every tab in it — down with it. */
+  it("stores split documents and preserves pre-split drawer fields for migration", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    const split = {
+      version: 1,
+      agentDefault: "claude",
+      tabs: {
+        version: 1,
+        tabs: [
+          { id: 1, type: "claude" },
+          { id: 2, type: "preview", url: "https://demo.blitz.dev", title: "Demo" },
+          { id: 3, type: "panel", panel: "previews", region: "side" },
+        ],
+        activeId: 1,
+        nextId: 4,
+        sideActiveId: 3,
+      },
+      drawer: { version: 1, width: 340, expanded: ["src"] },
+    };
+    const put = await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(split),
+    });
+    expect(put.status).toBe(200);
+    await expect(put.json()).resolves.toMatchObject({ doc: split });
+
+    // A pre-split row still has to read back with open/segment attached: the
+    // webApp needs them to build the panel tab, and dropping them here would
+    // silently close everyone's drawer.
+    await env.DB.prepare("UPDATE webapp_state SET doc = ?1 WHERE workspace_id = ?2")
+      .bind(JSON.stringify(workspaceDoc), workspace.id).run();
+    const got = await appRequest(app, path, { headers: { Cookie: cookie } });
+    await expect(got.json()).resolves.toMatchObject({
+      doc: { drawer: { open: true, segment: "files", width: 280 } },
+    });
+  });
+
+  it("rejects panel and region fields that name nothing", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    const send = (tabs: unknown) => appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...workspaceDoc, tabs }),
+    });
+    expect((await send({
+      version: 1,
+      tabs: [{ id: 1, type: "panel", panel: "nope" }],
+      activeId: 1,
+      nextId: 2,
+    })).status).toBe(400);
+    expect((await send({
+      version: 1,
+      tabs: [{ id: 1, type: "claude", region: "middle" }],
+      activeId: 1,
+      nextId: 2,
+    })).status).toBe(400);
+    // activeId names the main pane, so it may not point at a side tab.
+    expect((await send({
+      version: 1,
+      tabs: [{ id: 1, type: "claude", region: "side" }],
+      activeId: 1,
+      nextId: 2,
+    })).status).toBe(400);
+    expect((await send({
+      version: 1,
+      tabs: [{ id: 1, type: "claude" }],
+      activeId: 1,
+      nextId: 2,
+      sideActiveId: 1,
+    })).status).toBe(400);
+  });
+
   it("normalizes legacy drawer segments to the merged integrations tab", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);

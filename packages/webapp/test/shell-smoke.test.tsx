@@ -216,11 +216,13 @@ function runningClient(): ControlPlaneClient {
   };
 }
 
+/** Seeds the shared workspace document. `sideActiveId` opens the second pane;
+ * without it every tab given here lives in the single main pane. */
 function saveTabs(
   workspaceId: string,
   tabs: Array<Record<string, unknown>>,
-  activeId: number,
-  drawerOpen = true,
+  activeId: number | null,
+  sideActiveId?: number,
 ): void {
   const state = defaultWorkspaceWebAppState();
   serverWorkspaceStates.set(workspaceId, {
@@ -231,8 +233,9 @@ function saveTabs(
       tabs: tabs as WorkspaceWebAppStateV1["tabs"]["tabs"],
       activeId,
       nextId: Math.max(...tabs.map((tab) => Number(tab.id))) + 1,
+      ...(sideActiveId === undefined ? {} : { sideActiveId }),
     },
-    drawer: { ...defaultWorkspaceFiles(), open: drawerOpen },
+    drawer: defaultWorkspaceFiles(),
   });
 }
 
@@ -351,7 +354,7 @@ describe("webapp shell smoke", () => {
 
   it("opens a workspace with terminal tabs enabled through control-plane surfaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1, false);
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
     const wire = runningClient();
     const view = await render(
       <CloudApp
@@ -384,7 +387,7 @@ describe("webapp shell smoke", () => {
 
   it("does not re-send the shared doc when the workspace poll re-renders it", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1, false);
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
     const wire = runningClient();
     const view = await render(
       <CloudApp
@@ -481,7 +484,7 @@ describe("webapp shell smoke", () => {
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
       { id: 2, type: "preview", port: 3000 },
-    ], 2, false);
+    ], 2);
 
     const view = await render(
       <CloudApp
@@ -577,6 +580,99 @@ describe("webapp shell smoke", () => {
     expect(first.isConnected).toBe(false);
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
+
+    await view.unmount();
+  });
+
+  it("splits the tab area from the right icon strip and collapses it again", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    const filesIcon = view.container.querySelector<HTMLButtonElement>(
+      '.webapp-rail-strip button[aria-label="Files"]',
+    )!;
+    await act(async () => filesIcon.click());
+
+    const strips = [...view.container.querySelectorAll<HTMLElement>(".webapp-pane-strip")];
+    expect(strips.map((strip) => strip.dataset.region)).toEqual(["main", "side"]);
+    expect(strips[1]?.querySelector('[role="tab"]')?.textContent).toContain("Files");
+    expect(filesIcon.getAttribute("aria-pressed")).toBe("true");
+
+    // Clicking the same icon while its tab is in front closes the panel, and
+    // the side pane goes with it.
+    await act(async () => filesIcon.click());
+    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
+      .toEqual([{ id: 1, type: "terminal" }]);
+  });
+
+  it("keeps a visited terminal mounted when its tab is dragged into the other pane", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs(
+      "workspace-running",
+      [
+        { id: 1, type: "terminal" },
+        { id: 2, type: "panel", panel: "files", region: "side" },
+        { id: 3, type: "claude" },
+      ],
+      1,
+      2,
+    );
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const terminal = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="1"]',
+    )!;
+    const mountId = terminal.dataset.mountId;
+    expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.dataset.region).toBe("main");
+
+    const handle = view.container.querySelector<HTMLElement>(
+      '.webapp-pane-strip[data-region="main"] .webapp-tab-cell[data-session-id="1"] [role="tab"]',
+    )!;
+    const panes = view.container.querySelector<HTMLElement>(".webapp-panes")!;
+    await act(async () => {
+      handle.dispatchEvent(new MouseEvent("dragstart", { bubbles: true }));
+    });
+    await act(async () => {
+      // jsdom reports zero-size boxes, so the pointer resolves to the last
+      // pane and the drop is a plain tab move into it.
+      panes.dispatchEvent(new MouseEvent("dragover", { bubbles: true, clientX: 50 }));
+      panes.dispatchEvent(new MouseEvent("drop", { bubbles: true, clientX: 50 }));
+    });
+
+    const moved = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="1"]',
+    );
+    expect(moved).toBe(terminal);
+    expect(moved?.dataset.mountId).toBe(mountId);
+    expect(moved?.closest<HTMLElement>(".webapp-workspace-session")?.dataset.region).toBe("side");
+    expect(webAppHarness.unmounts).not.toHaveBeenCalled();
+    // Two mounts, not a remount: the terminal kept its instance and the tab
+    // the main pane promoted behind it opened for the first time.
+    expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
+    // Wait out the 150ms save debounce: the move has to reach the shared doc.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs.find(
+      (tab) => tab.id === 1,
+    )).toEqual({ id: 1, type: "terminal", region: "side" });
 
     await view.unmount();
   });

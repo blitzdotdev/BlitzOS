@@ -118,6 +118,7 @@ describe('v2 credential surfaces', () => {
         <WorkspaceDrawer
           client={wire}
           workspaceId="workspace-one"
+          orgName="Example"
           mobile={false}
           open
           width={264}
@@ -202,6 +203,7 @@ describe('v2 credential surfaces', () => {
         <WorkspaceDrawer
           client={client()}
           workspaceId="workspace-one"
+          orgName="Example"
           mobile={false}
           open
           width={264}
