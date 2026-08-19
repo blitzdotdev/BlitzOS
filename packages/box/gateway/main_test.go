@@ -1321,6 +1321,107 @@ func TestServePreviewsEmptyAbsentAndMethod(t *testing.T) {
 	}
 }
 
+func TestServePreviewFocusFixtures(t *testing.T) {
+	fixturesDirectory := filepath.Join("..", "..", "schema", "fixtures", "preview-focus")
+	entries, err := os.ReadDir(fixturesDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		fixtureCount++
+		t.Run(entry.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(fixturesDirectory, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fixture struct {
+				Input    json.RawMessage `json:"input"`
+				Expected json.RawMessage `json:"expected"`
+			}
+			if err := json.Unmarshal(data, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(t.TempDir(), "preview-focus.json")
+			// A fixture whose marker is JSON null stands for an absent file.
+			if strings.TrimSpace(string(fixture.Input)) != "null" {
+				if err := os.WriteFile(statePath, fixture.Input, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			handler := &gateway{previewFocusPath: statePath}
+			request := httptest.NewRequest(http.MethodGet, "http://box/preview-focus", nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusOK, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type = %q", got)
+			}
+			if got := response.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+			var gotValue interface{}
+			var expectedValue interface{}
+			if err := json.Unmarshal(response.Body.Bytes(), &gotValue); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(fixture.Expected, &expectedValue); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotValue, expectedValue) {
+				t.Fatalf("response = %s, want %s", response.Body.String(), fixture.Expected)
+			}
+		})
+	}
+	if fixtureCount != 5 {
+		t.Fatalf("preview-focus fixture count = %d, want 5", fixtureCount)
+	}
+}
+
+func TestServePreviewFocusEmptyAbsentAndMethod(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "preview-focus.json")
+	handler := &gateway{previewFocusPath: statePath}
+	request := func(method string) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(method, "http://box/preview-focus", nil))
+		return response
+	}
+
+	for _, test := range []struct {
+		name  string
+		write bool
+	}{
+		{name: "absent"},
+		{name: "empty", write: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.write {
+				if err := os.WriteFile(statePath, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response := request(http.MethodGet)
+			if response.Code != http.StatusOK || response.Body.String() != "{\"focus\":null}\n" {
+				t.Fatalf("status = %d; body = %q", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	response := request(http.MethodPost)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+	if got := response.Header().Get("Allow"); got != "GET, OPTIONS" {
+		t.Fatalf("Allow = %q", got)
+	}
+}
+
 func TestDiscoverPorts(t *testing.T) {
 	procRoot := t.TempDir()
 	mustWrite(t, filepath.Join(procRoot, "net", "tcp"), strings.Join([]string{

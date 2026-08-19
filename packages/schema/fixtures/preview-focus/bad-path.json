@@ -1,0 +1,12 @@
+{
+  "input": {
+    "version": 1,
+    "port": 3000,
+    "path": "dashboard",
+    "title": "No leading slash",
+    "requestedAt": 1787000003000
+  },
+  "expected": {
+    "focus": null
+  }
+}

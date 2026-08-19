@@ -2,7 +2,7 @@
 set -eu
 
 usage() {
-  echo 'usage: blitz preview <add <url> [--title <name>]|list|rm <url>>' >&2
+  echo 'usage: blitz preview <add <url> [--title <name>]|list|rm <url>|open <port> [--path <path>] [--title <name>]>' >&2
   exit 2
 }
 
@@ -12,10 +12,15 @@ action=${1:-}
 [ -n "$action" ] || usage
 shift
 
-exec node - /var/lib/blitz/previews.json "$action" "$@" <<'NODE'
+previews_path=/var/lib/blitz/previews.json
+# The focus marker path is overridable so the producer conformance test can
+# point it at a temp file; in the box it is always the canonical location.
+focus_path="${BLITZ_PREVIEW_FOCUS_PATH:-/var/lib/blitz/preview-focus.json}"
+
+exec node - "$previews_path" "$focus_path" "$action" "$@" <<'NODE'
 const fs = require('node:fs');
 
-const [statePath, action, ...args] = process.argv.slice(2);
+const [previewsPath, focusPath, action, ...args] = process.argv.slice(2);
 
 function fail(message, status = 1) {
   console.error(`blitz preview: ${message}`);
@@ -36,7 +41,7 @@ function entry(value) {
 function readEntries() {
   let source;
   try {
-    source = fs.readFileSync(statePath, 'utf8');
+    source = fs.readFileSync(previewsPath, 'utf8');
   } catch (error) {
     if (error.code === 'ENOENT') return [];
     throw error;
@@ -47,18 +52,52 @@ function readEntries() {
   return value.filter(entry);
 }
 
-function writeEntries(entries) {
-  const temporaryPath = `${statePath}.tmp.${process.pid}.${Date.now()}`;
+function atomicWrite(path, contents) {
+  const temporaryPath = `${path}.tmp.${process.pid}.${Date.now()}`;
   try {
-    fs.writeFileSync(temporaryPath, `${JSON.stringify(entries)}\n`, { flag: 'wx', mode: 0o600 });
+    fs.writeFileSync(temporaryPath, contents, { flag: 'wx', mode: 0o600 });
     fs.chmodSync(temporaryPath, 0o600);
-    fs.renameSync(temporaryPath, statePath);
+    fs.renameSync(temporaryPath, path);
   } catch (error) {
     try {
       fs.unlinkSync(temporaryPath);
     } catch {}
     throw error;
   }
+}
+
+function writeEntries(entries) {
+  atomicWrite(previewsPath, `${JSON.stringify(entries)}\n`);
+}
+
+const RESERVED_PORTS = new Set([22, 7443, 7444, 7445, 7446, 17445]);
+
+function openPreview() {
+  if (args.length === 0) fail('expected open <port> [--path <path>] [--title <name>]', 2);
+  const portText = args[0];
+  if (!/^[0-9]+$/.test(portText)) {
+    fail('port must be an integer between 1024 and 65535', 2);
+  }
+  const port = Number(portText);
+  if (!Number.isSafeInteger(port) || port < 1024 || port > 65535 || RESERVED_PORTS.has(port)) {
+    fail('port must be an integer between 1024 and 65535 and not reserved by the box', 2);
+  }
+  let path = '/';
+  let title = `port ${port}`;
+  for (let index = 1; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (value === undefined) fail(`missing value for ${flag}`, 2);
+    if (flag === '--path') path = value;
+    else if (flag === '--title') title = value;
+    else fail(`unsupported option: ${flag}`, 2);
+  }
+  if (!path.startsWith('/')) fail('--path must start with /', 2);
+  if (path.split('/').includes('..')) fail('--path must not contain a .. segment', 2);
+  if (/[\r\n]/.test(path)) fail('--path must not contain a carriage return or line feed', 2);
+  if (/[\r\n]/.test(title)) fail('--title must not contain a carriage return or line feed', 2);
+  atomicWrite(focusPath, `${JSON.stringify({ version: 1, port, path, title, requestedAt: Date.now() })}\n`);
+  process.exit(0);
 }
 
 try {
@@ -91,7 +130,7 @@ try {
     if (args.length !== 1) fail('expected rm <url>', 2);
     let exists = true;
     try {
-      fs.accessSync(statePath);
+      fs.accessSync(previewsPath);
     } catch (error) {
       if (error.code === 'ENOENT') exists = false;
       else throw error;
@@ -99,6 +138,9 @@ try {
     if (!exists) process.exit(0);
     writeEntries(readEntries().filter((item) => item.url !== args[0]));
     process.exit(0);
+  }
+  if (action === 'open') {
+    openPreview();
   }
   fail(`unsupported command: ${action}`, 2);
 } catch (error) {
