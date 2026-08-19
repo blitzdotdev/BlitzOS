@@ -154,3 +154,35 @@ The 2025–26 industry shift validates the lease design: GitHub user tokens expi
 2. Custody defaults per provider: GitHub `cp` (git needs the real short-lived token), Google `proxy`, Linear `proxy`.
 3. Phase B MCP passthrough gets first-party servers for all three providers — none of them require us to build or host MCP code.
 4. Google's cost is paperwork, not code: pick non-CASA scopes first, use Internal clients for dogfood, budget verification only when the SaaS client needs restricted Gmail.
+
+---
+
+## 10. Repo organization for provider work (agent-ergonomics)
+
+Decided shape (execution pending approval):
+
+```
+core/
+  identity/           # who you are: login, orgs, members, invites (unchanged)
+  connections/        # rename of credentials/ — matches the product noun
+    catalog/          #   one manifest file per provider: github.ts, google-workspace.ts, linear.ts
+    minters/          #   oauth.ts (generic, manifest-driven), static.ts; app-jwt/ parked
+    user-grants.ts    #   user_oauth_grants IO (NOT grants.ts — identity/grants.ts already exists)
+    connect.ts        #   /connect/:provider/start|callback
+    canary.ts         #   in-plane live health cron → provider_health
+    mint.ts leases.ts proxy.ts requests.ts manifest.ts root-crypto.ts types.ts
+  compute/            # rename of providers/ — kills the "provider" collision with connection providers
+  oauth-state.ts      # promoted from identity/ — shared CSRF/PKCE primitives for login + connect
+  oauth.ts            # untouched frozen box device flow
+```
+
+Three existing name collisions this resolves: `providers/` (compute), `grants.ts` (identity workspace grants), `oauth.ts` (box device flow).
+
+**Add-a-provider contract**: a catalog entry is data + two hooks against a strict `ProviderManifest` type — auth endpoints, rotation `'strict'|'graceful'|'none'`, `tokenHeader`, custody default, scopes, surfaces (env/skill/mcp), a **probe** (one cheap authenticated call + expected shape), and **recorded exchange fixtures** (required by the type). One generic `minters/oauth.ts` interprets manifests; no per-provider minter code. Agents copy `linear.ts` and let typecheck teach them.
+
+**Test tiers (the probe powers all three):**
+- **T1 conformance** — parametrized vitest suite over the whole catalog, every PR, no network: manifest validates, skill renders, placements compile inside the frozen box wire, exchange replays fixtures. Providers inherit tests by existing.
+- **T2 canary** — a new cron in the Worker (three schedules already exist): per provider with a canary-principal grant, mint → probe → `provider_health` row + event; surfaced in the panel ("github ✓ checked 2h ago") and the connect inbox on failure. The canary principal is §1's bot-user escape hatch. Always-on live-prod regression with zero external infra.
+- **T3 box e2e** — `e2e/connections.mjs` (successor of `credentials.mjs`, writes `CONNECTIONS-E2E-REPORT.md` per the existing report convention): discovers grants on the target instance, creates a real workspace, asserts env + skill files land on disk, probes from inside the box via the proxy path, revokes, asserts removal. Nightly/on-demand; the only tier that costs a VM.
+
+Tier boundaries are cost boundaries: PR-cheap / cron-cheap / VM-expensive. `npm run provider:check -- <name>` filters T1 to one provider.
