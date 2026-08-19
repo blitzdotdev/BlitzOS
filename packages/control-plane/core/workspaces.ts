@@ -1,6 +1,6 @@
 import { buildUserData } from "./cloud-init.js";
-import { manifestJson, parseManifest } from "./credentials/manifest.js";
-import { revokeWorkspaceLeasesQuery } from "./credentials/leases.js";
+import { manifestJson, parseManifest } from "./connections/manifest.js";
+import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
@@ -18,7 +18,7 @@ import type { Principal } from "./principals.js";
 import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
-import type { WebAppPort, VmProvider } from "./providers/types.js";
+import type { WebAppPort, VmProvider } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import {

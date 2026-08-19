@@ -2,9 +2,9 @@ import type { BlobStore } from "./blobs.js";
 import type { Db } from "./db.js";
 import { isNumber } from "./http.js";
 import type { PrincipalSource } from "./principals.js";
-import type { MicrovmPoolProvider } from "./providers/microvm.js";
-import type { VmProviderRegistry } from "./providers/registry.js";
-import type { VolumeProvider } from "./providers/types.js";
+import type { MicrovmPoolProvider } from "./compute/microvm.js";
+import type { VmProviderRegistry } from "./compute/registry.js";
+import type { VolumeProvider } from "./compute/types.js";
 import type { WorkspaceTunnels } from "./workspace-tunnels.js";
 import type { WorkspaceWebAppAuth } from "./webapp-tickets.js";
 

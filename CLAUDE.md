@@ -20,7 +20,7 @@ npm test              # control-plane, box actor, ui, guest node:test,
   is empty. Re-vendor from upstream instead of patching.
 - `tools/oxlint/blitz-house/` — repo-specific rules:
   - `no-raw-fetch`: control-plane core code must call HTTP through
-    `core/providers/json-fetch.ts` (75s timeout, 64 KiB cap). Grandfathered
+    `core/compute/json-fetch.ts` (75s timeout, 64 KiB cap). Grandfathered
     direct callers carry `TODO(house-canon):` markers.
   - `no-console-in-core`: exact allowlist in `.oxlintrc.json`.
   - `max-lines` warns at 700 lines for package source.
@@ -54,12 +54,12 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | box-image manifest | `scripts/lib/worker-source.mjs` producer ↔ Python inside `core/bootstrap.ts` | `fixtures/box-image-manifest/` | `test/box-image-files.test.ts`, `test/bootstrap-python.test.mjs` (runs real `python3`) |
 | phone-home v1 | bash in `core/bootstrap.ts` + `microvm-host/guest/blitz-microvm-enroll.js` ↔ `core/workspaces.ts` | `fixtures/phone-home/` | `test/phone-home-conformance.test.ts`, `guest/blitz-microvm-enroll.test.js` |
 | ACP | box actor ↔ ui chat reducer | `fixtures/acp/` | existing suites both sides |
-| MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/providers/microvm-hosts.js` imported by both |
+| MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/compute/microvm-hosts.js` imported by both |
 | dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
 | public preview links | box CLI state ↔ Go gateway ↔ browser | `fixtures/previews/` | `gateway/main_test.go`, `webapp/test/preview-v2.test.ts` |
 | webApp ticket v1 | `core/webapp-tickets.ts` mint/verify ↔ `box/gateway/main.go` ↔ `box/actor/src/auth.ts` | `fixtures/webapp-ticket/` | `test/webapp-ticket-conformance.test.ts`, `gateway/main_test.go` (ticket_conformance_test.go), `actor/test/auth-conformance.test.ts` |
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
-| microVM agent protocol | `microvm-host/types.go` ↔ `core/providers/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
+| microVM agent protocol | `microvm-host/types.go` ↔ `core/compute/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 
 Legacy phone-home shapes are accepted ONLY inside
@@ -68,10 +68,10 @@ Do not add aliases anywhere else.
 
 ## VM provider architecture (do not regress)
 
-- The plugin contract is `VmProvider` in `core/providers/types.ts`:
+- The plugin contract is `VmProvider` in `core/compute/types.ts`:
   `id`, `ownsMachineType`, `ownsVmId`, capabilities, lifecycle, optional
   `proxyWebApp`. New backends implement it and register in
-  `VmProviderRegistry` (`core/providers/registry.ts`). That is all.
+  `VmProviderRegistry` (`core/compute/registry.ts`). That is all.
 - Routing rules: resolve by registry lookup, never by string prefix.
   Exactly-one-claimant or fail loudly (400 unknown/ambiguous type, 409
   unowned VM id). Janitors log and skip unowned rows. No fallback provider.

@@ -2,7 +2,7 @@ import { changed, rows, transaction } from "./db.js";
 import {
   revokeWorkspaceLeasesQuery,
   runLeaseSweep,
-} from "./credentials/leases.js";
+} from "./connections/leases.js";
 import type { CoreRuntime } from "./runtime.js";
 import type { WorkspaceRow } from "./workspaces.js";
 

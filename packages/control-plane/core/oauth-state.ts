@@ -1,5 +1,5 @@
-import { randomToken, safeEqualSecret } from "../crypto.js";
-import { isNumber, isRecord, isString, type JsonValue } from "../http.js";
+import { randomToken, safeEqualSecret } from "./crypto.js";
+import { isNumber, isRecord, isString, type JsonValue } from "./http.js";
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
 export const GOOGLE_OAUTH_COOKIE = "blitz_google_oauth";

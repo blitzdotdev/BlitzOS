@@ -10,13 +10,13 @@
       "import": "./dist/src/index.js"
     },
     "./hetzner": {
-      "types": "./dist/core/providers/hetzner.d.ts",
-      "import": "./dist/core/providers/hetzner.js"
+      "types": "./dist/core/compute/hetzner.d.ts",
+      "import": "./dist/core/compute/hetzner.js"
     }
   },
   "files": [
     "dist",
-    "core/providers/microvm-hosts.js",
+    "core/compute/microvm-hosts.js",
     "migrations",
     "README.md",
     "scripts/deploy-helpers.mjs",

@@ -110,7 +110,7 @@ amd64 tag. VM IDs are the raw EC2 instance ID (`i-` plus 8 or 17 hex digits),
 which cannot collide with Hetzner's numeric IDs or microVM's `microvm:` IDs.
 Requests are signed with a hand-rolled SigV4 on Web Crypto — the control-plane
 core may not import npm packages — and EC2's XML replies are read by a small
-targeted scanner, both under `core/providers/`.
+targeted scanner, both under `core/compute/`.
 
 EC2 accepts at most 16 KiB (16,384 bytes) of user data in raw form, before
 base64 encoding: half of Hetzner's budget, of which the generated bootstrap

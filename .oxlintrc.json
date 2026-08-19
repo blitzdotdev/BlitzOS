@@ -67,10 +67,10 @@
           "error",
           {
             "allowFiles": [
-              "packages/control-plane/core/providers/json-fetch.ts",
-              "packages/control-plane/core/credentials/proxy.ts",
-              "packages/control-plane/core/credentials/minters/app-jwt/github-app.ts",
-              "packages/control-plane/core/providers/hetzner.ts",
+              "packages/control-plane/core/compute/json-fetch.ts",
+              "packages/control-plane/core/connections/proxy.ts",
+              "packages/control-plane/core/connections/minters/app-jwt/github-app.ts",
+              "packages/control-plane/core/compute/hetzner.ts",
               "packages/control-plane/core/workspace-tunnels.ts"
             ]
           }
@@ -81,8 +81,8 @@
             "allowFiles": [
               "packages/control-plane/core/app.ts",
               "packages/control-plane/core/janitors.ts",
-              "packages/control-plane/core/providers/microvm-host-registry.ts",
-              "packages/control-plane/core/providers/microvm.ts"
+              "packages/control-plane/core/compute/microvm-host-registry.ts",
+              "packages/control-plane/core/compute/microvm.ts"
             ]
           }
         ]

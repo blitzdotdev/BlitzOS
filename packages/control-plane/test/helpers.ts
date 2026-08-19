@@ -24,7 +24,7 @@ import type {
   VmInspection,
   VmProvider,
   VolumeProvider,
-} from "../core/providers/types.js";
+} from "../core/compute/types.js";
 import config from "../teenybase.js";
 import { hashSecret, randomToken } from "../core/crypto.js";
 
