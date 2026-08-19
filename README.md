@@ -19,6 +19,7 @@
 ## Capabilities
 
 - **Agent workspaces.** Scoped workspaces holding only the credentials and data the agent needs. 
+- **Connections.** Connect GitHub, Slack, and the rest once at the org level. Agents get short-lived, scoped credentials — and must request approval before reaching anything new.
 - **Multiplayer** Share agent workspaces with teammates to share work context
 - **Set it up once, hand it over.** Build a custom workspace template for a role, then share it with the team.
 - **BYO agent.** Run Claude Code, Codex, or any other harness
@@ -26,7 +27,7 @@
 - **webApp** Create, watch, and steer agents in workspaces via chat/terminal. View files and live port previews
 - **Programmable.** Agents provision workspaces for their own subagents through the API.
 - **Shared Drive.** Upload files/folders and share it with teammates and attach folders to the agent workspace
-- **Shared Apps.** Agents ship dashboards, pipelines, and other internal tools as real full-stack apps on Cloudflare.
+- **Shared apps.** Agents ship dashboards, CRMs, and pipelines as deployed apps with a database, auth, and a URL on Cloudflare.
 
 ## Architecture
 
