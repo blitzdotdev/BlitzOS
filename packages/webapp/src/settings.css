@@ -563,7 +563,7 @@
   font: 9.5px/1.35 var(--font-ui);
 }
 
-.settings-integration-form {
+.settings-connection-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -571,7 +571,7 @@
   border: 1px solid var(--rule);
 }
 
-.settings-integration-form label {
+.settings-connection-form label {
   display: grid;
   min-width: 0;
   gap: 5px;
@@ -581,9 +581,9 @@
   text-transform: uppercase;
 }
 
-.settings-integration-form input,
-.settings-integration-form textarea,
-.settings-integration-form select {
+.settings-connection-form input,
+.settings-connection-form textarea,
+.settings-connection-form select {
   width: 100%;
   min-height: 34px;
   padding: 7px 8px;
@@ -596,23 +596,23 @@
   text-transform: none;
 }
 
-.settings-integration-form textarea {
+.settings-connection-form textarea {
   resize: vertical;
 }
 
-.settings-integration-form input:focus,
-.settings-integration-form textarea:focus,
-.settings-integration-form select:focus {
+.settings-connection-form input:focus,
+.settings-connection-form textarea:focus,
+.settings-connection-form select:focus {
   border-color: var(--accent);
   outline: 0;
 }
 
-.settings-integration-form input[readonly] {
+.settings-connection-form input[readonly] {
   color: var(--muted);
   background: color-mix(in oklab, var(--ink) 4%, var(--paper));
 }
 
-.settings-integration-form__wide {
+.settings-connection-form__wide {
   grid-column: 1 / -1;
 }
 
@@ -749,11 +749,11 @@
     flex-wrap: wrap;
   }
 
-  .settings-integration-form {
+  .settings-connection-form {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .settings-integration-form__wide {
+  .settings-connection-form__wide {
     grid-column: 1;
   }
 

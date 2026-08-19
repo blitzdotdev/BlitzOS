@@ -10,7 +10,7 @@ const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
   "/sessions", "/workspaces", "/workspace-templates", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
-  "/hosts/", "/oauth/", "/boxes/", "/integrations", "/leases/", "/requests",
+  "/hosts/", "/oauth/", "/boxes/", "/connections", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
 ]);
 export const CORE_MANIFEST = Object.freeze([
@@ -268,7 +268,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       extensions: [DENY_ALL_RULES],
     },
     {
-      name: "integrations",
+      name: "connections",
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "name", type: "text", sqlType: "text", notNull: true },
@@ -287,17 +287,17 @@ export const BLITZDEV_CONFIG = Object.freeze({
       extensions: [DENY_ALL_RULES],
     },
     {
-      name: "user_connections",
+      name: "user_oauth_grants",
       fields: [
         { name: "user_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
-        { name: "integration_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "integrations", column: "id" } },
+        { name: "connection_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "connections", column: "id" } },
         { name: "refresh_ciphertext", type: "text", sqlType: "text", notNull: true },
         { name: "scopes", type: "text", sqlType: "text", notNull: true },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "revoked_at", type: "integer", sqlType: "integer" },
       ],
       indexes: [
-        { name: "identity", unique: true, fields: ["user_id", "integration_id"] },
+        { name: "identity", unique: true, fields: ["user_id", "connection_id"] },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -307,7 +307,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
         { name: "box_id", type: "text", sqlType: "text", foreignKey: { table: "boxes", column: "id", onDelete: "SET NULL" } },
-        { name: "integration_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "integrations", column: "id" } },
+        { name: "connection_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "connections", column: "id" } },
         { name: "user_id", type: "text", sqlType: "text" },
         { name: "scopes", type: "text", sqlType: "text", notNull: true },
         { name: "mode", type: "text", sqlType: "text", notNull: true, check: "mode IN ('inject','proxy')" },
@@ -339,7 +339,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
         { name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } },
-        { name: "integration_name", type: "text", sqlType: "text", notNull: true },
+        { name: "connection_name", type: "text", sqlType: "text", notNull: true },
         { name: "requested_scopes", type: "text", sqlType: "text", notNull: true },
         { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('pending','approved','denied')" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
@@ -349,7 +349,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       ],
       indexes: [
         { name: "pending", fields: ["state", "created_at"] },
-        { name: "dedup", unique: true, fields: ["workspace_id", "integration_name", "requested_scopes"], where: { q: "state = 'pending'" } },
+        { name: "dedup", unique: true, fields: ["workspace_id", "connection_name", "requested_scopes"], where: { q: "state = 'pending'" } },
       ],
       extensions: [DENY_ALL_RULES],
     },

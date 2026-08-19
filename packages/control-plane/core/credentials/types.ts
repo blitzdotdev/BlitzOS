@@ -7,6 +7,10 @@ export type Placement =
   | { kind: "file"; path: string; value: string; mode?: number }
   | { kind: "unset-env"; name: string };
 
+/** FROZEN box wire: the Go broker baked into the shipped box image decodes
+ * POST /workspaces/self/credentials with DisallowUnknownFields, so the
+ * `integration` key (and mode/placements/expiresAt) must keep these exact
+ * names even though the product noun is now "connection". */
 export interface MintResult {
   integration: string;
   mode: "inject" | "proxy";
@@ -19,7 +23,7 @@ export interface MinterResult extends MintResult {
   tokenHash?: string;
 }
 
-export interface Integration {
+export interface Connection {
   id: string;
   name: string;
   provider: string;
@@ -50,7 +54,7 @@ export interface Minter {
   providers?: string[];
   mint(
     root: string | null,
-    integration: Integration,
+    connection: Connection,
     request: MintRequest,
   ): Promise<MinterResult>;
 }
@@ -59,7 +63,7 @@ export interface Lease {
   id: string;
   workspaceId: string;
   boxId: string | null;
-  integration: string;
+  connection: string;
   userId: string | null;
   scopes: string[];
   mode: "inject" | "proxy";

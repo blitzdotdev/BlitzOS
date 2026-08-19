@@ -118,7 +118,7 @@ export function WorkspaceLeasesPanel({
             return (
             <article className="workspace-credential-row" key={lease.id}>
               <div className="workspace-credential-row__title">
-                <strong>{lease.integration}</strong>
+                <strong>{lease.connection}</strong>
                 <span className={`workspace-state-badge workspace-state-badge--${state}`}>
                   {state}
                 </span>
@@ -144,7 +144,7 @@ export function WorkspaceLeasesPanel({
       {confirmation && (
         <ConfirmationDialog
           title="Revoke credential lease?"
-          description={`Revoke ${confirmation.integration} access for this workspace immediately?`}
+          description={`Revoke ${confirmation.connection} access for this workspace immediately?`}
           confirmLabel="Revoke lease"
           onCancel={() => setConfirmation(null)}
           onConfirm={() => { void revoke(confirmation); }}
@@ -189,11 +189,11 @@ export function WorkspaceRequestsPanel({
           {requests.map((request) => (
             <article className="workspace-credential-row" key={request.id}>
               <div className="workspace-credential-row__title">
-                <strong>{request.integration_name}</strong>
+                <strong>{request.connection_name}</strong>
                 <span className="workspace-state-badge workspace-state-badge--active">pending</span>
               </div>
               <p>{request.requested_scopes.length === 0
-                ? 'Integration access · no named scopes'
+                ? 'Connection access · no named scopes'
                 : request.requested_scopes.join(', ')}</p>
               <div className="workspace-credential-row__meta">
                 <time dateTime={new Date(request.created_at).toISOString()}>
@@ -270,7 +270,7 @@ export function WorkspaceEventsPanel({
   );
 }
 
-export function WorkspaceIntegrationsPanel({
+export function WorkspaceConnectionsPanel({
   client,
   workspaceId,
   visible,
@@ -289,7 +289,7 @@ export function WorkspaceIntegrationsPanel({
   ) => Promise<void>;
 }) {
   return (
-    <div className="workspace-integrations">
+    <div className="workspace-connections">
       <h3 className="workspace-sect workspace-sect--pending">Pending requests</h3>
       <WorkspaceRequestsPanel
         requests={pendingRequests}
@@ -361,7 +361,7 @@ export function WorkspacePanelContent({
     );
   }
   return canManageCredentials ? (
-    <WorkspaceIntegrationsPanel
+    <WorkspaceConnectionsPanel
       client={client}
       workspaceId={workspaceId}
       visible={visible}
@@ -414,12 +414,12 @@ export function WorkspaceDrawer({
   ];
   if (canManageCredentials) {
     tabs.push({
-      id: 'integrations',
-      label: 'Integrations',
+      id: 'connections',
+      label: 'Connections',
       icon: <GenericProviderIcon className="webapp-tab-icon" />,
     });
   }
-  const effectiveSegment = !canManageCredentials && segment === 'integrations' ? 'files' : segment;
+  const effectiveSegment = !canManageCredentials && segment === 'connections' ? 'files' : segment;
 
   return (
     <aside
@@ -466,7 +466,7 @@ export function WorkspaceDrawer({
               >
                 {tab.icon}
                 <span className="webapp-tab-label">{tab.label}</span>
-                {tab.id === 'integrations' && pendingRequests.length > 0 && (
+                {tab.id === 'connections' && pendingRequests.length > 0 && (
                   <span className="workspace-pending-badge" aria-label={`${pendingRequests.length} pending`}>
                     {pendingRequests.length}
                   </span>

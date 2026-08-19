@@ -913,7 +913,7 @@
   font: 11.5px/1.6 var(--font-ui);
 }
 
-/* Section titles + tinted slabs shared by previews and integrations. */
+/* Section titles + tinted slabs shared by previews and connections. */
 .workspace-sect {
   margin: 16px 16px 8px;
   color: var(--soft-ink);
@@ -926,8 +926,8 @@
   font-weight: 400;
 }
 
-/* The integrations column scrolls as one page of slabs. */
-.workspace-integrations {
+/* The connections column scrolls as one page of slabs. */
+.workspace-connections {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
@@ -935,7 +935,7 @@
   scrollbar-width: thin;
 }
 
-.workspace-integrations .workspace-drawer-panel {
+.workspace-connections .workspace-drawer-panel {
   flex: none;
   overflow: visible;
 }

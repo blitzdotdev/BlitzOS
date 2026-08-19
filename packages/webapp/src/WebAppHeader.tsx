@@ -33,7 +33,7 @@ export type WebAppTabModel = {
   filePath?: string;
   title?: string;
   /** Which panel a `panel` tab shows, so the strip can pick its icon. */
-  panel?: 'files' | 'previews' | 'integrations';
+  panel?: 'files' | 'previews' | 'connections';
 };
 
 type WebAppHeaderProps = {
@@ -75,13 +75,13 @@ export function SessionTypeIcon({
   type: WebAppSessionType | 'terminal';
   className: string;
   filePath?: string;
-  panel?: 'files' | 'previews' | 'integrations';
+  panel?: 'files' | 'previews' | 'connections';
 }) {
   if (type === 'panel') {
     if (panel === 'previews') {
       return <span className={`${className} mi-preview`} aria-hidden="true" />;
     }
-    return panel === 'integrations'
+    return panel === 'connections'
       ? <GenericProviderIcon className={className} />
       : <FolderIcon className={className} />;
   }

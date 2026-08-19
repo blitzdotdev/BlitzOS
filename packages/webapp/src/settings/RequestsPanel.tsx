@@ -1,4 +1,4 @@
-import type { CredentialRequestView, IntegrationView } from '@blitzos/schema';
+import type { CredentialRequestView, ConnectionView } from '@blitzos/schema';
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, CredentialRequestState } from '../api';
 import { caughtErrorMessage } from '../error-message';
@@ -12,10 +12,10 @@ export function RequestsPanel({
   onConfigure,
 }: {
   client: ControlPlaneClient;
-  onConfigure: (integrationName: string) => void;
+  onConfigure: (connectionName: string) => void;
 }) {
   const [requests, setRequests] = useState<StatefulCredentialRequest[]>([]);
-  const [integrations, setIntegrations] = useState<IntegrationView[]>([]);
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resolving, setResolving] = useState<string | null>(null);
@@ -24,11 +24,11 @@ export function RequestsPanel({
     try {
       const states: CredentialRequestState[] = ['pending', 'approved', 'denied'];
       const [configured, ...feeds] = await Promise.all([
-        client.listIntegrations(signal),
+        client.listConnections(signal),
         ...states.map((state) => client.listCredentialRequests(signal, state)),
       ]);
       if (signal?.aborted) return;
-      setIntegrations(configured.integrations);
+      setConnections(configured.connections);
       setRequests(feeds.flatMap((feed, index) => feed.requests.map((request) => ({
         ...request,
         state: states[index]!,
@@ -65,7 +65,7 @@ export function RequestsPanel({
     }
   };
 
-  const configured = new Set(integrations.map(({ name }) => name));
+  const configured = new Set(connections.map(({ name }) => name));
   const pendingCount = requests.filter(({ state }) => state === 'pending').length;
 
   return (
@@ -89,26 +89,26 @@ export function RequestsPanel({
             <article className="settings-credential-row settings-request-row" key={`${request.state}:${request.id}`}>
               <div>
                 <div className="settings-credential-row__title">
-                  <h3>{request.integration_name}</h3>
+                  <h3>{request.connection_name}</h3>
                   <span className={`workspace-state-badge workspace-state-badge--${request.state}`}>
                     {request.state}
                   </span>
                 </div>
                 <p>workspace · {request.workspace_id}</p>
                 <small>{request.requested_scopes.length === 0
-                  ? 'Integration access · no named scopes'
+                  ? 'Connection access · no named scopes'
                   : request.requested_scopes.join(', ')}</small>
                 <time dateTime={new Date(request.created_at).toISOString()}>{new Date(request.created_at).toLocaleString()}</time>
               </div>
               {request.state === 'pending' && (
                 <div className="settings-row-actions">
-                  {!configured.has(request.integration_name) && (
-                    <button className="webapp-action" type="button" onClick={() => onConfigure(request.integration_name)}>
-                      Add integration
+                  {!configured.has(request.connection_name) && (
+                    <button className="webapp-action" type="button" onClick={() => onConfigure(request.connection_name)}>
+                      Add connection
                     </button>
                   )}
                   <button className="webapp-action" type="button" disabled={resolving !== null} onClick={() => { void resolve(request, 'deny'); }}>Deny</button>
-                  <button className="webapp-action webapp-action--primary" type="button" disabled={resolving !== null || !configured.has(request.integration_name)} onClick={() => { void resolve(request, 'approve'); }}>
+                  <button className="webapp-action webapp-action--primary" type="button" disabled={resolving !== null || !configured.has(request.connection_name)} onClick={() => { void resolve(request, 'approve'); }}>
                     {resolving === request.id ? 'Working…' : 'Approve'}
                   </button>
                 </div>

@@ -1,6 +1,6 @@
 import type {
   CredentialLeaseView,
-  IntegrationView,
+  ConnectionView,
   MintResult,
   WorkspaceView,
 } from "@blitzos/schema";
@@ -130,7 +130,7 @@ async function createReadyWorkspace(
   return { workspace, box: await enrolled.json<BoxCredential>() };
 }
 
-async function putStaticIntegration(
+async function putStaticConnection(
   app: ReturnType<typeof harness>["app"],
   cookie: string,
   name: string,
@@ -141,7 +141,7 @@ async function putStaticIntegration(
     owners?: string[];
   } = {},
 ): Promise<void> {
-  const response = await appRequest(app, `/integrations/${name}`, {
+  const response = await appRequest(app, `/connections/${name}`, {
     method: "PUT",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -163,7 +163,7 @@ async function putStaticIntegration(
   expect(response.status).toBe(204);
 }
 
-async function putProxyIntegration(
+async function putProxyConnection(
   app: ReturnType<typeof harness>["app"],
   cookie: string,
   name: string,
@@ -173,7 +173,7 @@ async function putProxyIntegration(
     tokenPrefix?: string;
   } = {},
 ): Promise<void> {
-  const response = await appRequest(app, `/integrations/${name}`, {
+  const response = await appRequest(app, `/connections/${name}`, {
     method: "PUT",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -230,12 +230,12 @@ function proxyHandle(result: MintResult): {
   };
 }
 
-async function putGithubIntegration(
+async function putGithubConnection(
   app: ReturnType<typeof harness>["app"],
   cookie: string,
   root: string,
 ): Promise<Response> {
-  return appRequest(app, "/integrations/github", {
+  return appRequest(app, "/connections/github", {
     method: "PUT",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -286,7 +286,7 @@ describe("credential control plane", () => {
     const { privatePem, publicKey } = await githubKeyPair();
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    expect((await putGithubIntegration(app, cookie, privatePem)).status).toBe(204);
+    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       github: { scopes: ["requested:scope"] },
     });
@@ -384,7 +384,7 @@ describe("credential control plane", () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
 
-    const response = await putGithubIntegration(app, cookie, pkcs1Pem);
+    const response = await putGithubConnection(app, cookie, pkcs1Pem);
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({
@@ -394,7 +394,7 @@ describe("credential control plane", () => {
     });
     expect(
       await env.DB
-        .prepare("SELECT COUNT(*) AS count FROM integrations")
+        .prepare("SELECT COUNT(*) AS count FROM connections")
         .first<number>("count"),
     ).toBe(0);
   });
@@ -403,7 +403,7 @@ describe("credential control plane", () => {
     const { privatePem } = await githubKeyPair();
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    expect((await putGithubIntegration(app, cookie, privatePem)).status).toBe(204);
+    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       github: {},
     });
@@ -432,10 +432,10 @@ describe("credential control plane", () => {
     ).toBe(0);
   });
 
-  it("stores a static integration and fills inject placement templates at mint", async () => {
+  it("stores a static connection and fills inject placement templates at mint", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod", {
+    await putStaticConnection(app, cookie, "hetzner-prod", {
       scopes: ["servers:read"],
       placements: [
         { kind: "env", name: "HCLOUD_TOKEN" },
@@ -480,7 +480,7 @@ describe("credential control plane", () => {
       `{"kind":"file","path":"/run/credentials/default","value":"${ROOT}"}`,
     );
     const stored = await env.DB
-      .prepare("SELECT config, root_ciphertext FROM integrations WHERE scoped_name = ?1")
+      .prepare("SELECT config, root_ciphertext FROM connections WHERE scoped_name = ?1")
       .bind("hetzner-prod")
       .first<{ config: string; root_ciphertext: string }>();
     expect(stored?.root_ciphertext).not.toBe(ROOT);
@@ -503,7 +503,7 @@ describe("credential control plane", () => {
   it("mints a default-custody proxy token and streams a header-swapped call", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyIntegration(app, cookie, "static-proxy");
+    await putProxyConnection(app, cookie, "static-proxy");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       "static-proxy": {},
     });
@@ -521,9 +521,9 @@ describe("credential control plane", () => {
     expect(handle.token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     const storedLease = await env.DB
       .prepare(
-        `SELECT lease.token_hash, integration.custody
+        `SELECT lease.token_hash, connection.custody
          FROM credential_leases lease
-         JOIN integrations integration ON integration.id = lease.integration_id
+         JOIN connections connection ON connection.id = lease.connection_id
          WHERE lease.id = ?1`,
       )
       .bind(handle.leaseId)
@@ -584,7 +584,7 @@ describe("credential control plane", () => {
   it("uses a configured x-api-key header with an empty prefix in both directions", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyIntegration(app, cookie, "x-key-proxy", {
+    await putProxyConnection(app, cookie, "x-key-proxy", {
       baseUrl: "https://keys.example",
       tokenHeader: "x-api-key",
       tokenPrefix: "",
@@ -620,7 +620,7 @@ describe("credential control plane", () => {
   it("never accepts a proxy lease token from the URL path or query", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyIntegration(app, cookie, "url-reject-proxy");
+    await putProxyConnection(app, cookie, "url-reject-proxy");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       "url-reject-proxy": {},
     });
@@ -653,7 +653,7 @@ describe("credential control plane", () => {
   it("returns detail-free 401s for revoked and independently expired proxy leases", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putProxyIntegration(app, cookie, "dead-proxy");
+    await putProxyConnection(app, cookie, "dead-proxy");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       "dead-proxy": {},
     });
@@ -709,7 +709,7 @@ describe("credential control plane", () => {
   it("denies a mint outside the manifest and allow-list and writes a value-free event", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod", {
+    await putStaticConnection(app, cookie, "hetzner-prod", {
       scopes: ["servers:read"],
       owners: ["operator"],
     });
@@ -745,7 +745,7 @@ describe("credential control plane", () => {
   it("deduplicates denied mints, lists the request shape, and approves an actual retry", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod", {
+    await putStaticConnection(app, cookie, "hetzner-prod", {
       scopes: ["servers:read"],
     });
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
@@ -781,7 +781,7 @@ describe("credential control plane", () => {
         {
           id: firstBody.request_id,
           workspace_id: workspace.id,
-          integration_name: "hetzner-prod",
+          connection_name: "hetzner-prod",
           requested_scopes: ["servers:read"],
           requester: { boxId: box.box_id, userId: "operator" },
           created_at: expect.any(Number),
@@ -837,7 +837,7 @@ describe("credential control plane", () => {
   it("denies a pending request without widening the workspace manifest", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       "hetzner-prod": { scopes: [] },
     });
@@ -904,7 +904,7 @@ describe("credential control plane", () => {
     const operatorCookie = await operatorSession(app);
     const ownerCookie = await principalSession("workspace-owner");
     const strangerCookie = await principalSession("stranger");
-    await putStaticIntegration(app, operatorCookie, "hetzner-prod", {
+    await putStaticConnection(app, operatorCookie, "hetzner-prod", {
       owners: ["workspace-owner"],
     });
     const { workspace, box } = await createReadyWorkspace(
@@ -937,7 +937,7 @@ describe("credential control plane", () => {
     expect(await strangerFeed.json()).toEqual({ requests: [] });
   });
 
-  it("files and deduplicates requests for explicitly named missing integrations", async () => {
+  it("files and deduplicates requests for explicitly named missing connections", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {});
@@ -962,13 +962,13 @@ describe("credential control plane", () => {
     expect(
       await env.DB
         .prepare(
-          `SELECT integration_name, requested_scopes, state
+          `SELECT connection_name, requested_scopes, state
            FROM credential_requests WHERE id = ?1`,
         )
         .bind(firstBody.request_id)
         .first(),
     ).toEqual({
-      integration_name: "future-provider",
+      connection_name: "future-provider",
       requested_scopes: '["repo:read"]',
       state: "pending",
     });
@@ -977,7 +977,7 @@ describe("credential control plane", () => {
   it("revokes a lease by clearing its token hash in the same state update", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
     expect(
       (await mint(app, workspace.id, box.access_token, {
@@ -1010,7 +1010,7 @@ describe("credential control plane", () => {
   it("destroys a workspace with an active lease while preserving revoked audit", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
     expect(
       (await mint(app, workspace.id, box.access_token, {
@@ -1049,7 +1049,7 @@ describe("credential control plane", () => {
   it("expires overdue active leases without deleting their audit rows", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
     await mint(app, workspace.id, box.access_token, {
       integration: "hetzner-prod",
@@ -1073,13 +1073,13 @@ describe("credential control plane", () => {
     ).toBe(1);
   });
 
-  it("returns an array when a sync-style request mints every allowed integration", async () => {
+  it("returns an array when a sync-style request mints every allowed connection", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod", {
+    await putStaticConnection(app, cookie, "hetzner-prod", {
       placements: [{ kind: "env", name: "HCLOUD_TOKEN" }],
     });
-    await putStaticIntegration(app, cookie, "resend-prod", {
+    await putStaticConnection(app, cookie, "resend-prod", {
       root: "test-only-resend-root",
       placements: [{ kind: "env", name: "RESEND_API_KEY" }],
     });
@@ -1101,19 +1101,19 @@ describe("credential control plane", () => {
     ]);
   });
 
-  it("lists integration status without config, plaintext values, or ciphertext", async () => {
+  it("lists connection status without config, plaintext values, or ciphertext", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
 
-    const response = await appRequest(app, "/integrations", {
+    const response = await appRequest(app, "/connections", {
       headers: { Cookie: cookie },
     });
 
     expect(response.status).toBe(200);
-    const body = await response.json<{ integrations: IntegrationView[] }>();
+    const body = await response.json<{ connections: ConnectionView[] }>();
     expect(body).toEqual({
-      integrations: [
+      connections: [
         {
           name: "hetzner-prod",
           provider: "hetzner",
@@ -1131,16 +1131,16 @@ describe("credential control plane", () => {
     expect(serialized).not.toContain('"value"');
   });
 
-  it("deletes an integration as a soft kill switch and revokes its active leases", async () => {
+  it("deletes a connection as a soft kill switch and revokes its active leases", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
     await mint(app, workspace.id, box.access_token, {
       integration: "hetzner-prod",
     });
 
-    const response = await appRequest(app, "/integrations/hetzner-prod", {
+    const response = await appRequest(app, "/connections/hetzner-prod", {
       method: "DELETE",
       headers: { Cookie: cookie },
     });
@@ -1149,7 +1149,7 @@ describe("credential control plane", () => {
     expect(
       await env.DB
         .prepare(
-          "SELECT revoked_at IS NOT NULL AS revoked, root_ciphertext FROM integrations WHERE scoped_name = ?1",
+          "SELECT revoked_at IS NOT NULL AS revoked, root_ciphertext FROM connections WHERE scoped_name = ?1",
         )
         .bind("hetzner-prod")
         .first(),
@@ -1164,7 +1164,7 @@ describe("credential control plane", () => {
   it("lists minted leases through the session-authenticated audit route", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticIntegration(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod");
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
     await mint(app, workspace.id, box.access_token, {
       integration: "hetzner-prod",
@@ -1180,10 +1180,81 @@ describe("credential control plane", () => {
     expect(body.leases[0]).toMatchObject({
       workspaceId: workspace.id,
       boxId: box.box_id,
-      integration: "hetzner-prod",
+      connection: "hetzner-prod",
       state: "active",
       mode: "inject",
     });
     expect(JSON.stringify(body)).not.toContain(ROOT);
+  });
+
+  /** FROZEN box wire: the Go broker baked into the shipped box image decodes
+   * POST /workspaces/self/credentials with DisallowUnknownFields. This pins
+   * the request body key "integration" and the exact response key set
+   * integration/mode/placements/expiresAt so the connection rename can never
+   * leak into the box-facing route. */
+  it("keeps the frozen box mint wire: body key integration, exact response keys", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    await putStaticConnection(app, cookie, "hetzner-prod");
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": {},
+    });
+
+    const response = await mint(app, "self", box.access_token, {
+      integration: "hetzner-prod",
+    });
+
+    expect(response.status).toBe(200);
+    const raw: unknown = JSON.parse(await response.text());
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("mint response was not a JSON object");
+    }
+    expect(Object.keys(raw).sort()).toEqual([
+      "expiresAt",
+      "integration",
+      "mode",
+      "placements",
+    ]);
+    expect((raw as MintResult).integration).toBe("hetzner-prod");
+    const placement = (raw as MintResult).placements[0];
+    expect(placement).toEqual({ kind: "env", name: "HCLOUD_TOKEN", value: ROOT });
+    expect(Object.keys(placement ?? {})).toEqual(["kind", "name", "value"]);
+  });
+
+  it("keeps /integrations as an alias of the canonical /connections routes", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+
+    const put = await appRequest(app, "/integrations/alias-token", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "hetzner",
+        kind: "static",
+        custody: "cp",
+        root: ROOT,
+        config: { placements: [{ kind: "env", name: "HCLOUD_TOKEN" }] },
+      }),
+    });
+    expect(put.status).toBe(204);
+
+    const aliasList = await appRequest(app, "/integrations", {
+      headers: { Cookie: cookie },
+    });
+    const canonicalList = await appRequest(app, "/connections", {
+      headers: { Cookie: cookie },
+    });
+    expect(aliasList.status).toBe(200);
+    const canonicalBody = await canonicalList.json();
+    await expect(aliasList.json()).resolves.toEqual(canonicalBody);
+    expect(canonicalBody).toMatchObject({
+      connections: [{ name: "alias-token", status: "active" }],
+    });
+
+    const remove = await appRequest(app, "/integrations/alias-token", {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(remove.status).toBe(204);
   });
 });

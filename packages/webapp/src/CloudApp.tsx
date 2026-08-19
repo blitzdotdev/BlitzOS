@@ -164,7 +164,7 @@ type FileCloseConfirmation = {
 const PANEL_LABELS = {
   files: 'Files',
   previews: 'teenyapps',
-  integrations: 'Integrations',
+  connections: 'Connections',
 } satisfies Record<WorkspaceDrawerSegment, string>;
 
 function PasteCodeModal({
@@ -685,11 +685,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   const navigateToSettings = useCallback((
     section: SettingsSection,
-    requestedIntegrationName?: string,
+    requestedConnectionName?: string,
   ) => {
     const path = settingsPath(section);
-    const target = requestedIntegrationName
-      ? `${path}?add=${encodeURIComponent(requestedIntegrationName)}`
+    const target = requestedConnectionName
+      ? `${path}?add=${encodeURIComponent(requestedConnectionName)}`
       : path;
     window.history.pushState({}, '', target);
     setRoute({ workspaceId: null, page: 'settings', settingsSection: section });
@@ -1463,9 +1463,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             client={client}
             viewer={store.viewer}
             section={route.settingsSection}
-            requestedIntegrationName={new URLSearchParams(window.location.search).get('add') ?? undefined}
+            requestedConnectionName={new URLSearchParams(window.location.search).get('add') ?? undefined}
             onNavigate={navigateToSettings}
-            onConfigureIntegration={(name) => navigateToSettings('integrations', name)}
+            onConfigureConnection={(name) => navigateToSettings('connections', name)}
             onSignOut={signOut}
           />
         ) : (

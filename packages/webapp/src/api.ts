@@ -4,7 +4,7 @@ import type {
   ListCredentialEventsResponse,
   CredentialEventView,
   ListCredentialRequestsResponse,
-  ListIntegrationsResponse,
+  ListConnectionsResponse,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   CreateWorkspaceTemplateRequest,
@@ -13,7 +13,7 @@ import type {
   ListWorkspaceTemplatesResponse,
   ListVolumesResponse,
   PollResponse,
-  PutIntegrationRequest,
+  PutConnectionRequest,
   RetryAction,
 } from "@blitzos/schema";
 import {
@@ -156,9 +156,9 @@ export interface ControlPlaneClient extends FileLibraryClient {
   setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
-  listIntegrations(signal?: AbortSignal): Promise<ListIntegrationsResponse>;
-  putIntegration(name: string, input: PutIntegrationRequest): Promise<void>;
-  deleteIntegration(name: string): Promise<void>;
+  listConnections(signal?: AbortSignal): Promise<ListConnectionsResponse>;
+  putConnection(name: string, input: PutConnectionRequest): Promise<void>;
+  deleteConnection(name: string): Promise<void>;
   listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
   listCredentialEvents(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialEventsResponse>;
   revokeLease(id: string): Promise<void>;
@@ -596,16 +596,16 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     listMachineTypes: () => request<ListMachineTypesResponse>("/machine-types"),
     listVolumes: () => request<ListVolumesResponse>("/volumes"),
-    listIntegrations: (signal) =>
-      request<ListIntegrationsResponse>("/integrations", { signal }),
-    putIntegration: (name, input) =>
-      request<void>(`/integrations/${encodeURIComponent(name)}`, {
+    listConnections: (signal) =>
+      request<ListConnectionsResponse>("/connections", { signal }),
+    putConnection: (name, input) =>
+      request<void>(`/connections/${encodeURIComponent(name)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
-    deleteIntegration: (name) =>
-      request<void>(`/integrations/${encodeURIComponent(name)}`, {
+    deleteConnection: (name) =>
+      request<void>(`/connections/${encodeURIComponent(name)}`, {
         method: "DELETE",
       }),
     listLeases: (workspaceId, signal) =>

@@ -19,6 +19,8 @@ const LAZY_SWEEP_PREFIXES = [
   "/machine-types",
   "/oauth/",
   "/boxes/",
+  "/connections",
+  // Alias of /connections kept for old bookmarks and scripts.
   "/integrations",
   "/leases/",
   "/requests",

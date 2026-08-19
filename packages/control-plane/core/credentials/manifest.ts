@@ -1,6 +1,9 @@
 import { HttpError, isRecord, isString } from "../http.js";
-import type { Integration } from "./types.js";
+import type { Connection } from "./types.js";
 
+/** The manifest is stored verbatim in D1 (workspaces.manifest), so its
+ * `integrations` key is a persisted document format, not a renameable client
+ * field; it deliberately keeps the old noun. */
 type CredentialManifest = {
   integrations: Record<string, Record<string, unknown>>;
 };
@@ -44,13 +47,13 @@ function parsedStoredManifest(value: string): CredentialManifest | null {
 
 export function manifestAllows(
   storedManifest: string | null,
-  integrationName: string,
+  connectionName: string,
   requestedScopes: readonly string[],
 ): boolean {
   if (storedManifest === null) return true;
   const manifest = parsedStoredManifest(storedManifest);
   if (manifest === null) return false;
-  const ceiling = manifest.integrations[integrationName];
+  const ceiling = manifest.integrations[connectionName];
   if (ceiling === undefined) return false;
   if (ceiling.scopes === undefined) return true;
   if (!stringArray(ceiling.scopes)) return false;
@@ -59,12 +62,12 @@ export function manifestAllows(
 }
 
 export function usableByAllows(
-  integration: Integration,
+  connection: Connection,
   principalId: string,
 ): boolean {
-  if (integration.usable_by === null) return true;
+  if (connection.usable_by === null) return true;
   try {
-    const value: unknown = JSON.parse(integration.usable_by);
+    const value: unknown = JSON.parse(connection.usable_by);
     return (
       isRecord(value) &&
       stringArray(value.owners) &&
@@ -75,9 +78,9 @@ export function usableByAllows(
   }
 }
 
-export function integrationDefaultScopes(integration: Integration): string[] {
+export function connectionDefaultScopes(connection: Connection): string[] {
   try {
-    const value: unknown = JSON.parse(integration.config);
+    const value: unknown = JSON.parse(connection.config);
     if (!isRecord(value) || value.default_scopes === undefined) return [];
     return stringArray(value.default_scopes) ? value.default_scopes : [];
   } catch {

@@ -135,6 +135,8 @@ describe("pre-split workspace document migration", () => {
   });
 
   it("folds an open drawer into a side-pane panel tab and keeps every session", () => {
+    // 'integrations' is the pre-rename segment value: it must fold to the
+    // 'connections' panel rather than invalidating the stored document.
     const restored = decode(legacy(
       { version: 1, open: true, width: 340, expanded: ["src"], segment: "integrations" },
       [{ id: 1, type: "claude" }, { id: 2, type: "terminal" }, { id: 3, type: "file", filePath: "a.txt" }],
@@ -143,7 +145,7 @@ describe("pre-split workspace document migration", () => {
       { id: 1, type: "claude" },
       { id: 2, type: "terminal" },
       { id: 3, type: "file", filePath: "a.txt" },
-      { id: 4, type: "panel", panel: "integrations", region: "side" },
+      { id: 4, type: "panel", panel: "connections", region: "side" },
     ]);
     expect(restored?.tabs.activeId).toBe(1);
     expect(restored?.tabs.sideActiveId).toBe(4);
@@ -167,7 +169,31 @@ describe("pre-split workspace document migration", () => {
     expect(restored?.tabs.tabs.at(-1)).toEqual({
       id: 2,
       type: "panel",
-      panel: "integrations",
+      panel: "connections",
+      region: "side",
+    });
+  });
+
+  it("folds a stored 'integrations' panel tab to 'connections'", () => {
+    const restored = decode({
+      version: 1,
+      agentDefault: "claude",
+      tabs: {
+        version: 1,
+        tabs: [
+          { id: 1, type: "claude" },
+          { id: 2, type: "panel", panel: "integrations", region: "side" },
+        ],
+        activeId: 1,
+        nextId: 3,
+        sideActiveId: 2,
+      },
+      drawer: { version: 1, width: 340, expanded: [] },
+    });
+    expect(restored?.tabs.tabs.at(-1)).toEqual({
+      id: 2,
+      type: "panel",
+      panel: "connections",
       region: "side",
     });
   });

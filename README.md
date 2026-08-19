@@ -38,7 +38,7 @@
                      VmProvider   credential plane
                    +------+-----+ mint · proxy · broker
                    |            |       |
-              cloud VM   Firecracker    integrations
+              cloud VM   Firecracker     connections
                    |        host         |
                    +------+--+-----------+
                           |

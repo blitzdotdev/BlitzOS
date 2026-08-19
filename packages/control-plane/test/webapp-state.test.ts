@@ -309,28 +309,64 @@ describe("server-side webApp state", () => {
     })).status).toBe(400);
   });
 
-  it("normalizes legacy drawer segments to the merged integrations tab", async () => {
+  it("normalizes legacy drawer segments to the merged connections tab", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
-    const legacy = {
+    // 'integrations' is the pre-rename panel value; the older credential
+    // segments fold the same way. Every legacy spelling lands on 'connections'.
+    for (const legacySegment of ["leases", "integrations"]) {
+      const legacy = {
+        ...workspaceDoc,
+        drawer: { ...workspaceDoc.drawer, segment: legacySegment },
+      };
+      const put = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+        method: "PUT",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify(legacy),
+      });
+      expect(put.status).toBe(200);
+      await expect(put.json()).resolves.toMatchObject({
+        doc: { drawer: { segment: "connections" } },
+      });
+      const got = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+        headers: { Cookie: cookie },
+      });
+      await expect(got.json()).resolves.toMatchObject({
+        doc: { drawer: { segment: "connections" } },
+      });
+    }
+  });
+
+  it("folds a legacy 'integrations' panel tab to 'connections'", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const doc = {
       ...workspaceDoc,
-      drawer: { ...workspaceDoc.drawer, segment: "leases" },
+      tabs: {
+        version: 1,
+        tabs: [
+          { id: 1, type: "claude" },
+          { id: 2, type: "panel", panel: "integrations", region: "side" },
+        ],
+        activeId: 1,
+        nextId: 3,
+        sideActiveId: 2,
+      },
+      drawer: { version: 1, width: 280, expanded: [] },
     };
     const put = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify(legacy),
+      body: JSON.stringify(doc),
     });
     expect(put.status).toBe(200);
     await expect(put.json()).resolves.toMatchObject({
-      doc: { drawer: { segment: "integrations" } },
-    });
-    const got = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
-      headers: { Cookie: cookie },
-    });
-    await expect(got.json()).resolves.toMatchObject({
-      doc: { drawer: { segment: "integrations" } },
+      doc: { tabs: { tabs: [
+        { id: 1, type: "claude" },
+        { id: 2, type: "panel", panel: "connections", region: "side" },
+      ] } },
     });
   });
 

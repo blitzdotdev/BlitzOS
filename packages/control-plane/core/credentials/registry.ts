@@ -1,4 +1,4 @@
-import type { Custody, Integration, Minter, MintKind } from "./types.js";
+import type { Connection, Custody, Minter, MintKind } from "./types.js";
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import {
@@ -11,7 +11,7 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { revokeIntegrationLeasesQuery } from "./leases.js";
+import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
 import {
   githubAppMinter,
@@ -264,53 +264,53 @@ function usableByJson(value: unknown): string | null {
   return JSON.stringify({ owners: stringArray(value.owners, "usable_by.owners") });
 }
 
-export function resolveMinter(integration: Integration): Minter | null {
+export function resolveMinter(connection: Connection): Minter | null {
   return (
     minters.find(
       (minter) =>
-        minter.kind === integration.kind &&
-        minter.providers?.includes(integration.provider) === true,
+        minter.kind === connection.kind &&
+        minter.providers?.includes(connection.provider) === true,
     ) ??
     minters.find(
-      (minter) => minter.kind === integration.kind && minter.providers === undefined,
+      (minter) => minter.kind === connection.kind && minter.providers === undefined,
     ) ??
     null
   );
 }
 
-export async function integrationByName(
+export async function connectionByName(
   db: Db,
   name: string,
   orgId: string,
   activeOnly = true,
-): Promise<Integration | null> {
-  return first<Integration>(db, {
+): Promise<Connection | null> {
+  return first<Connection>(db, {
     q: `SELECT id, scoped_name AS name, provider, kind, custody, config,
                root_ciphertext, usable_by, created_by, created_at, revoked_at,
                org_id, created_by_membership_id
-        FROM integrations
+        FROM connections
         WHERE scoped_name = ?1 AND org_id = ?2${activeOnly ? " AND revoked_at IS NULL" : ""}
         LIMIT 1`,
     v: [name, orgId],
   });
 }
 
-export async function activeIntegrations(db: Db, orgId: string): Promise<Integration[]> {
-  return rows<Integration>(db, {
+export async function activeConnections(db: Db, orgId: string): Promise<Connection[]> {
+  return rows<Connection>(db, {
     q: `SELECT id, scoped_name AS name, provider, kind, custody, config,
                root_ciphertext, usable_by, created_by, created_at, revoked_at,
-               org_id, created_by_membership_id FROM integrations
+               org_id, created_by_membership_id FROM connections
         WHERE org_id = ?1 AND revoked_at IS NULL ORDER BY created_at, scoped_name`,
     v: [orgId],
   });
 }
 
-function validateServedIntegration(
+function validateServedConnection(
   provider: string,
   kind: MintKind,
   custody: Custody,
 ): void {
-  const candidate: Integration = {
+  const candidate: Connection = {
     id: "",
     name: "",
     provider,
@@ -333,34 +333,34 @@ function validateServedIntegration(
   throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
 }
 
-export function addIntegrationRoutes(
+export function addConnectionRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
-  router.get("/integrations", async (context) => {
+  const listConnections = async (context: CoreContext) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
-    const integrations = await rows<
-      Pick<Integration, "name" | "provider" | "kind" | "custody" | "revoked_at" | "created_by">
+    const connections = await rows<
+      Pick<Connection, "name" | "provider" | "kind" | "custody" | "revoked_at" | "created_by">
     >(runtimeFactory(context).db, {
       q: `SELECT scoped_name AS name, provider, kind, custody, revoked_at, created_by
-          FROM integrations WHERE org_id = ?1 ORDER BY created_at, scoped_name`,
+          FROM connections WHERE org_id = ?1 ORDER BY created_at, scoped_name`,
       v: [principal.orgId],
     });
     return context.json({
-      integrations: integrations.map((integration) => ({
-        name: integration.name,
-        provider: integration.provider,
-        kind: integration.kind,
-        custody: integration.custody,
-        status: integration.revoked_at === null ? "active" : "revoked",
-        createdBy: integration.created_by,
+      connections: connections.map((connection) => ({
+        name: connection.name,
+        provider: connection.provider,
+        kind: connection.kind,
+        custody: connection.custody,
+        status: connection.revoked_at === null ? "active" : "revoked",
+        createdBy: connection.created_by,
       })),
     });
-  });
+  };
 
-  router.put("/integrations/:name", async (context) => {
+  const putConnection = async (context: CoreContext) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null || principal.membershipId === null || principal.role !== "admin") {
       throw new HttpError(403, "organization admin required");
@@ -376,18 +376,18 @@ export function addIntegrationRoutes(
     if (!isCustody(custodyValue)) {
       throw new HttpError(400, "custody must be cp, broker, or proxy");
     }
-    validateServedIntegration(provider, value.kind, custodyValue);
+    validateServedConnection(provider, value.kind, custodyValue);
     const config = configJson(value.kind, custodyValue, value.config);
     const root = requiredString(value.root, "root");
     await validateRoot(value.kind, root);
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);
-    const existing = await integrationByName(runtime.db, name, principal.orgId, false);
+    const existing = await connectionByName(runtime.db, name, principal.orgId, false);
     const id = existing?.id ?? crypto.randomUUID();
     const now = Date.now();
     const rootCiphertext = await sealRoot(runtime.credentialMasterKey, name, root);
     await rows(runtime.db, {
-      q: `INSERT INTO integrations
+      q: `INSERT INTO connections
           (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
            usable_by, created_by, created_at, revoked_at, org_id,
            created_by_membership_id)
@@ -418,26 +418,35 @@ export function addIntegrationRoutes(
       ],
     });
     return context.body(null, 204);
-  });
+  };
 
-  router.delete("/integrations/:name", async (context) => {
+  const deleteConnection = async (context: CoreContext) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null || principal.role !== "admin") {
       throw new HttpError(403, "organization admin required");
     }
     const name = requiredString(context.req.param("name"), "name", 256);
     const runtime = runtimeFactory(context);
-    const integration = await integrationByName(runtime.db, name, principal.orgId, false);
-    if (integration === null) throw new HttpError(404, "integration not found");
+    const connection = await connectionByName(runtime.db, name, principal.orgId, false);
+    if (connection === null) throw new HttpError(404, "connection not found");
     await transaction(runtime.db, [
       {
-        q: `UPDATE integrations
+        q: `UPDATE connections
             SET revoked_at = ?1, root_ciphertext = NULL
             WHERE id = ?2`,
-        v: [Date.now(), integration.id],
+        v: [Date.now(), connection.id],
       },
-      revokeIntegrationLeasesQuery(integration.id),
+      revokeConnectionLeasesQuery(connection.id),
     ]);
     return context.body(null, 204);
-  });
+  };
+
+  router.get("/connections", listConnections);
+  router.put("/connections/:name", putConnection);
+  router.delete("/connections/:name", deleteConnection);
+  // Alias paths: the subsystem was called "integrations" before the rename.
+  // Old bookmarks and scripts keep working; the same handlers serve both.
+  router.get("/integrations", listConnections);
+  router.put("/integrations/:name", putConnection);
+  router.delete("/integrations/:name", deleteConnection);
 }

@@ -10,8 +10,8 @@ interface LeaseRow {
   id: string;
   workspace_id: string;
   box_id: string | null;
-  integration_id: string;
-  integration_name: string;
+  connection_id: string;
+  connection_name: string;
   user_id: string | null;
   scopes: string;
   mode: "inject" | "proxy";
@@ -27,8 +27,8 @@ interface CreateLeaseInput {
   id: string;
   workspaceId: string;
   boxId: string;
-  integrationId: string;
-  integrationName: string;
+  connectionId: string;
+  connectionName: string;
   scopes: string[];
   result: MintResult;
   tokenHash: string | null;
@@ -68,7 +68,7 @@ function leaseView(row: LeaseRow): Lease {
     id: row.id,
     workspaceId: row.workspace_id,
     boxId: row.box_id,
-    integration: row.integration_name,
+    connection: row.connection_name,
     userId: row.user_id,
     scopes: scopesFromJson(row.scopes),
     mode: row.mode,
@@ -89,14 +89,14 @@ export async function createLease(
   await transaction(db, [
     {
       q: `INSERT INTO credential_leases
-          (id, workspace_id, box_id, integration_id, user_id, scopes, mode,
+          (id, workspace_id, box_id, connection_id, user_id, scopes, mode,
            token_hash, issued_at, expires_at, state)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')`,
       v: [
         input.id,
         input.workspaceId,
         input.boxId,
-        input.integrationId,
+        input.connectionId,
         input.principal.id,
         scopes,
         input.result.mode,
@@ -110,8 +110,10 @@ export async function createLease(
           VALUES (?1, 'minted', ?2, ?3)`,
       v: [
         input.id,
+        // The detail key stays "integration": append-only audit rows written
+        // before the connection rename keep the same stored key.
         JSON.stringify({
-          integration: input.integrationName,
+          integration: input.connectionName,
           scopes: input.scopes,
           box_id: input.boxId,
           workspace_id: input.workspaceId,
@@ -128,7 +130,7 @@ export async function createLease(
     id: input.id,
     workspaceId: input.workspaceId,
     boxId: input.boxId,
-    integration: input.integrationName,
+    connection: input.connectionName,
     userId: input.principal.id,
     scopes: input.scopes,
     mode: input.result.mode,
@@ -157,10 +159,10 @@ export async function listLeases(
   }
   if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
   const result = await rows<LeaseRow>(db, {
-    q: `SELECT lease.*, integration.scoped_name AS integration_name,
+    q: `SELECT lease.*, connection.scoped_name AS connection_name,
                workspace.owner_id, workspace.org_id, workspace.owner_membership_id
         FROM credential_leases lease
-        JOIN integrations integration ON integration.id = lease.integration_id
+        JOIN connections connection ON connection.id = lease.connection_id
         JOIN workspaces workspace ON workspace.id = lease.workspace_id
         WHERE lease.workspace_id = ?1
         ORDER BY lease.issued_at DESC, lease.id`,
@@ -176,10 +178,10 @@ export async function revokeLease(
   now = Date.now(),
 ): Promise<void> {
   const row = await first<LeaseRow>(db, {
-    q: `SELECT lease.*, integration.scoped_name AS integration_name,
+    q: `SELECT lease.*, connection.scoped_name AS connection_name,
                workspace.owner_id, workspace.org_id, workspace.owner_membership_id
         FROM credential_leases lease
-        JOIN integrations integration ON integration.id = lease.integration_id
+        JOIN connections connection ON connection.id = lease.connection_id
         JOIN workspaces workspace ON workspace.id = lease.workspace_id
         WHERE lease.id = ?1 LIMIT 1`,
     v: [id],
@@ -201,8 +203,9 @@ export async function revokeLease(
           VALUES (?1, 'revoked', ?2, ?3)`,
       v: [
         id,
+        // Audit detail keeps the pre-rename "integration" key (see above).
         JSON.stringify({
-          integration: row.integration_name,
+          integration: row.connection_name,
           scopes: scopesFromJson(row.scopes),
           box_id: row.box_id,
           workspace_id: row.workspace_id,
@@ -280,12 +283,12 @@ export function revokeWorkspaceLeasesQuery(workspaceId: string): Query {
   };
 }
 
-export function revokeIntegrationLeasesQuery(integrationId: string): Query {
+export function revokeConnectionLeasesQuery(connectionId: string): Query {
   return {
     q: `UPDATE credential_leases
         SET state = 'revoked', token_hash = NULL
-        WHERE integration_id = ?1 AND state = 'active'`,
-    v: [integrationId],
+        WHERE connection_id = ?1 AND state = 'active'`,
+    v: [connectionId],
   };
 }
 

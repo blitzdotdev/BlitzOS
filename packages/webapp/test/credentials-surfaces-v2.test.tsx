@@ -55,9 +55,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     destroy: vi.fn(async () => { throw new Error('unused'); }),
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
-    listIntegrations: vi.fn(async () => ({ integrations: [] })),
-    putIntegration: vi.fn(async () => undefined),
-    deleteIntegration: vi.fn(async () => undefined),
+    listConnections: vi.fn(async () => ({ connections: [] })),
+    putConnection: vi.fn(async () => undefined),
+    deleteConnection: vi.fn(async () => undefined),
     listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     revokeLease: vi.fn(async () => undefined),
@@ -141,11 +141,11 @@ describe('v2 credential surfaces', () => {
 
     let view = await render(<Harness />);
     const credentialsTab = [...view.container.querySelectorAll('[role="tab"]')]
-      .find((tab) => tab.textContent?.includes('Integrations'))!;
+      .find((tab) => tab.textContent?.includes('Connections'))!;
     await act(async () => click(credentialsTab));
     expect(credentialsTab.getAttribute('aria-selected')).toBe('true');
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
-      .toContain('Integrations');
+      .toContain('Connections');
     await view.unmount();
   });
 
@@ -155,7 +155,7 @@ describe('v2 credential surfaces', () => {
       id: 'lease-one',
       workspaceId: 'workspace-one',
       boxId: null,
-      integration: 'github',
+      connection: 'github',
       userId: null,
       scopes: ['repo:read'],
       mode: 'inject',
@@ -191,7 +191,7 @@ describe('v2 credential surfaces', () => {
     const request: CredentialRequestView = {
       id: 'request-one',
       workspace_id: 'workspace-one',
-      integration_name: 'github',
+      connection_name: 'github',
       requested_scopes: ['repo:read'],
       created_at: Date.now(),
       requester: { boxId: 'box-one', userId: 'user-one' },
@@ -207,7 +207,7 @@ describe('v2 credential surfaces', () => {
           mobile={false}
           open
           width={264}
-          segment="integrations"
+          segment="connections"
           pendingRequests={requests}
           livePorts={[]}
           previewLinks={[]}

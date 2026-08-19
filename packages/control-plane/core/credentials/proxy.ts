@@ -25,7 +25,7 @@ interface TokenCandidate {
 
 interface ProxyLeaseRow {
   token_hash: string;
-  integration_name: string;
+  connection_name: string;
   root_ciphertext: string | null;
   config: string;
 }
@@ -67,17 +67,17 @@ async function proxyLease(
     .join(", ");
   const nowParameter = candidates.length + 2;
   return first<ProxyLeaseRow>(db, {
-    q: `SELECT lease.token_hash, integration.scoped_name AS integration_name,
-               integration.root_ciphertext, integration.config
+    q: `SELECT lease.token_hash, connection.scoped_name AS connection_name,
+               connection.root_ciphertext, connection.config
         FROM credential_leases lease
-        JOIN integrations integration ON integration.id = lease.integration_id
+        JOIN connections connection ON connection.id = lease.connection_id
         WHERE lease.id = ?1
           AND lease.token_hash IN (${tokenParameters})
           AND lease.state = 'active'
           AND lease.expires_at > ?${nowParameter}
-          AND integration.revoked_at IS NULL
-          AND integration.kind = 'static'
-          AND integration.custody = 'proxy'
+          AND connection.revoked_at IS NULL
+          AND connection.kind = 'static'
+          AND connection.custody = 'proxy'
         LIMIT 1`,
     v: [leaseId, ...candidates.map(({ hash }) => hash), now],
   });
@@ -134,7 +134,7 @@ async function proxyCredential(
       leaseToken: candidate.token,
       root: await openRoot(
         runtime.credentialMasterKey,
-        lease.integration_name,
+        lease.connection_name,
         lease.root_ciphertext,
       ),
     };

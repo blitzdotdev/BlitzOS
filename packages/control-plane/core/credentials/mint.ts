@@ -10,7 +10,7 @@ import {
   revokeLease,
 } from "./leases.js";
 import {
-  integrationDefaultScopes,
+  connectionDefaultScopes,
   manifestAllows,
   usableByAllows,
 } from "./manifest.js";
@@ -18,12 +18,12 @@ import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
 import {
-  activeIntegrations,
-  addIntegrationRoutes,
-  integrationByName,
+  activeConnections,
+  addConnectionRoutes,
+  connectionByName,
   resolveMinter,
 } from "./registry.js";
-import type { Integration, MintResult } from "./types.js";
+import type { Connection, MintResult } from "./types.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
 interface WorkspaceCredentialRow {
@@ -50,6 +50,9 @@ function parseScopes(value: unknown): string[] {
   return [...new Set(value)];
 }
 
+/** FROZEN box wire: the shipped box image's blitz-cred sends the request body
+ * key "integration" to POST /workspaces/self/credentials. Keep accepting it
+ * byte-for-byte; the product noun rename must not touch this route. */
 function parseMintBody(value: unknown): ParsedMintBody {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const result: ParsedMintBody = {};
@@ -66,13 +69,13 @@ function parseMintBody(value: unknown): ParsedMintBody {
 export function authorize(
   principal: Principal,
   workspace: WorkspaceCredentialRow,
-  integration: Integration,
+  connection: Connection,
   requestedScopes: readonly string[],
 ): boolean {
   const callerIsAdminOrOwner = canControlWorkspace(principal, workspace);
   const requestFitsCeiling =
-    manifestAllows(workspace.manifest, integration.name, requestedScopes) &&
-    usableByAllows(integration, principal.id);
+    manifestAllows(workspace.manifest, connection.name, requestedScopes) &&
+    usableByAllows(connection, principal.id);
   return callerIsAdminOrOwner && requestFitsCeiling;
 }
 
@@ -80,7 +83,7 @@ async function recordDenied(
   runtime: ReturnType<RuntimeFactory>,
   workspaceId: string,
   boxId: string,
-  integrationName: string,
+  connectionName: string,
   scopes: readonly string[],
   now: number,
   principal: Principal,
@@ -89,8 +92,11 @@ async function recordDenied(
     q: `INSERT INTO credential_events (lease_id, event, detail, created_at)
         VALUES (NULL, 'denied', ?1, ?2)`,
     v: [
+      // The detail key stays "integration": credential_events is append-only
+      // audit data, and rows written before the connection rename cannot be
+      // rewritten, so new rows keep the stored key uniform.
       JSON.stringify({
-        integration: integrationName,
+        integration: connectionName,
         scopes,
         box_id: boxId,
         workspace_id: workspaceId,
@@ -111,18 +117,18 @@ async function mintOne(
   boxId: string,
   principal: Principal,
   origin: string,
-  integration: Integration,
+  connection: Connection,
   scopes: string[],
   denied: "error" | "skip",
 ): Promise<MintResult | null> {
   const now = Date.now();
-  if (!authorize(principal, workspace, integration, scopes)) {
+  if (!authorize(principal, workspace, connection, scopes)) {
     if (denied === "skip") return null;
     await recordDenied(
       runtime,
       workspace.id,
       boxId,
-      integration.name,
+      connection.name,
       scopes,
       now,
       principal,
@@ -130,31 +136,33 @@ async function mintOne(
     const requestId = await fileRequest(
       runtime.db,
       workspace.id,
-      integration.name,
+      connection.name,
       scopes,
       { boxId, userId: principal.id },
       now,
     );
+    // FROZEN box-route error text (the box CLI classifies by status, but the
+    // string predates the rename and stays byte-identical).
     throw new HttpError(
       403,
       "credential mint exceeds the workspace manifest or integration allow-list",
       requestId,
     );
   }
-  const minter = resolveMinter(integration);
+  const minter = resolveMinter(connection);
   if (minter === null) {
     throw new HttpError(409, "integration credential mechanism is unavailable");
   }
   const root =
-    integration.root_ciphertext === null
+    connection.root_ciphertext === null
       ? null
       : await openRoot(
           runtime.credentialMasterKey,
-          integration.name,
-          integration.root_ciphertext,
+          connection.name,
+          connection.root_ciphertext,
         );
   const leaseId = crypto.randomUUID();
-  const minted = await minter.mint(root, integration, {
+  const minted = await minter.mint(root, connection, {
     workspaceId: workspace.id,
     boxId,
     principalId: principal.id,
@@ -168,8 +176,8 @@ async function mintOne(
     id: leaseId,
     workspaceId: workspace.id,
     boxId,
-    integrationId: integration.id,
-    integrationName: integration.name,
+    connectionId: connection.id,
+    connectionName: connection.name,
     scopes: result.grantedScopes ?? scopes,
     result,
     tokenHash,
@@ -184,10 +192,14 @@ export function addCredentialRoutes(
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
-  addIntegrationRoutes(router, runtimeFactory, requirePrincipal);
+  addConnectionRoutes(router, runtimeFactory, requirePrincipal);
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 
+  // FROZEN box wire: the Go broker in the shipped box image calls this route
+  // and decodes the response with DisallowUnknownFields. The path, the body
+  // key "integration", the response keys integration/mode/placements/
+  // expiresAt, and the error body key request_id may not change.
   router.post("/workspaces/:id/credentials", async (context) => {
     const runtime = runtimeFactory(context);
     const box = await authenticateBox(context.req.raw, runtime.db);
@@ -223,8 +235,8 @@ export function addCredentialRoutes(
     const input = parseMintBody(await readJson(context.req.raw));
     const origin = new URL(context.req.url).origin;
     if (input.integration !== undefined) {
-      const integration = await integrationByName(runtime.db, input.integration, workspace.org_id);
-      if (integration === null) {
+      const connection = await connectionByName(runtime.db, input.integration, workspace.org_id);
+      if (connection === null) {
         const requestId = await fileRequest(
           runtime.db,
           workspace.id,
@@ -232,16 +244,17 @@ export function addCredentialRoutes(
           input.scopes ?? [],
           { boxId: box.id, userId: boxPrincipal.id },
         );
+        // FROZEN box-route error text (see the route comment above).
         throw new HttpError(404, "integration not found", requestId);
       }
-      const scopes = input.scopes ?? integrationDefaultScopes(integration);
+      const scopes = input.scopes ?? connectionDefaultScopes(connection);
       const result = await mintOne(
         runtime,
         workspace,
         box.id,
         boxPrincipal,
         origin,
-        integration,
+        connection,
         scopes,
         "error",
       );
@@ -250,15 +263,15 @@ export function addCredentialRoutes(
     }
 
     const results: MintResult[] = [];
-    for (const integration of await activeIntegrations(runtime.db, workspace.org_id)) {
+    for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
       const result = await mintOne(
         runtime,
         workspace,
         box.id,
         boxPrincipal,
         origin,
-        integration,
-        integrationDefaultScopes(integration),
+        connection,
+        connectionDefaultScopes(connection),
         "skip",
       );
       if (result !== null) results.push(result);

@@ -64,8 +64,9 @@ export type WorkspaceTab = {
   region?: WorkspaceRegion;
 } | {
   id: number;
-  /** Files / teenyapps / Integrations, opened from the right icon strip.
-   * `panel` keeps the pre-split drawer segment names as its wire values. */
+  /** Files / teenyapps / Connections, opened from the right icon strip.
+   * `panel` keeps the drawer segment names as its wire values; legacy
+   * spellings (including 'integrations') fold in parsePanel. */
   type: 'panel';
   panel: WorkspaceDrawerSegment;
   region?: WorkspaceRegion;
@@ -88,8 +89,9 @@ export type WorkspaceFiles = {
 };
 
 /** Wire value of a panel tab. `previews` is the teenyapps panel: the label
- * changed, the persisted name did not. */
-export type WorkspaceDrawerSegment = 'files' | 'previews' | 'integrations';
+ * changed, the persisted name did not. `connections` replaced the persisted
+ * 'integrations' value; readers fold the old spelling below. */
+export type WorkspaceDrawerSegment = 'files' | 'previews' | 'connections';
 
 export type GlobalWebAppStateV1 = {
   version: 1;
@@ -300,15 +302,17 @@ export function reconcileUiPreferences(
 }
 
 function parsePanel(value: OptionalJsonValue): WorkspaceDrawerSegment | null {
-  // Older documents stored 'leases'/'requests'/'credentials'/'events'; they all
-  // land on the combined integrations panel.
+  // Older documents stored 'leases'/'requests'/'credentials'/'events', then
+  // 'integrations'; they all land on the combined connections panel. Writers
+  // only write 'connections'. Mirror parseSegment in the control plane.
   if (
     value === 'leases'
     || value === 'requests'
     || value === 'credentials'
     || value === 'events'
     || value === 'integrations'
-  ) return 'integrations';
+    || value === 'connections'
+  ) return 'connections';
   return value === 'files' || value === 'previews' ? value : null;
 }
 

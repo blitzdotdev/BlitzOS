@@ -13,7 +13,7 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 
 type WebAppAgent = "claude" | "codex";
 type OptionalJsonValue = JsonValue | undefined;
-type WebAppDrawerSegment = "files" | "previews" | "integrations";
+type WebAppDrawerSegment = "files" | "previews" | "connections";
 /** Panes are side-by-side columns; an absent region is the main (left) pane,
  * so pre-split documents round-trip unchanged. */
 type WebAppRegion = "main" | "side";
@@ -129,15 +129,17 @@ function parseAgent(value: OptionalJsonValue, field: string): WebAppAgent {
 }
 
 function parseSegment(value: OptionalJsonValue, field: string): WebAppDrawerSegment {
-  // Legacy documents stored earlier segment names; they normalize to the
-  // combined integrations panel instead of invalidating the whole document.
+  // Legacy documents stored earlier segment names ('integrations' most
+  // recently); they normalize to the combined connections panel instead of
+  // invalidating the whole document. Mirror parsePanel in webapp storage.ts.
   const segment = value === "leases"
       || value === "requests"
       || value === "credentials"
       || value === "events"
-    ? "integrations"
+      || value === "integrations"
+    ? "connections"
     : value;
-  if (segment !== "files" && segment !== "previews" && segment !== "integrations") {
+  if (segment !== "files" && segment !== "previews" && segment !== "connections") {
     throw new HttpError(400, `${field} is invalid`);
   }
   return segment;

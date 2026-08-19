@@ -2,16 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { drivePath, folderPagePath, parseAppRoute, settingsPath } from '../src/sessions-page-state.js';
 
 describe('settings routes', () => {
-  it('routes profile, integrations, and requests with profile as the index', () => {
+  it('routes profile, connections, and requests with profile as the index', () => {
     expect(parseAppRoute('/settings')).toEqual({
       workspaceId: null,
       page: 'settings',
       settingsSection: 'profile',
     });
+    expect(parseAppRoute('/settings/connections')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'connections',
+    });
+    // The pre-rename address stays routable and canonicalizes.
     expect(parseAppRoute('/settings/integrations')).toEqual({
       workspaceId: null,
       page: 'settings',
-      settingsSection: 'integrations',
+      settingsSection: 'connections',
     });
     expect(parseAppRoute('/settings/requests/')).toEqual({
       workspaceId: null,
@@ -23,7 +29,7 @@ describe('settings routes', () => {
       page: 'drive',
     });
     expect(settingsPath('profile')).toBe('/settings');
-    expect(settingsPath('integrations')).toBe('/settings/integrations');
+    expect(settingsPath('connections')).toBe('/settings/connections');
     expect(settingsPath('requests')).toBe('/settings/requests');
   });
 

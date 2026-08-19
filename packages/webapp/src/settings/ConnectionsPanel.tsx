@@ -1,13 +1,13 @@
-import type { IntegrationView, PutIntegrationRequest } from '@blitzos/schema';
+import type { ConnectionView, PutConnectionRequest } from '@blitzos/schema';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
 
-export type IntegrationTemplateId = 'github' | 'anthropic' | 'openai' | 'hetzner' | 'generic';
+export type ConnectionTemplateId = 'github' | 'anthropic' | 'openai' | 'hetzner' | 'generic';
 
 const TEMPLATES: readonly {
-  id: IntegrationTemplateId;
+  id: ConnectionTemplateId;
   name: string;
   detail: string;
 }[] = [
@@ -24,7 +24,7 @@ const DEFAULT_NAMES = {
   openai: 'openai',
   hetzner: 'hetzner',
   generic: '',
-} satisfies Record<IntegrationTemplateId, string>;
+} satisfies Record<ConnectionTemplateId, string>;
 
 function bytes(...parts: readonly Uint8Array[]): Uint8Array {
   const result = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
@@ -76,10 +76,10 @@ function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim();
 }
 
-export function integrationInput(
-  template: IntegrationTemplateId,
+export function connectionInput(
+  template: ConnectionTemplateId,
   data: FormData,
-): PutIntegrationRequest {
+): PutConnectionRequest {
   const root = field(data, 'root');
   if (template === 'github') {
     return {
@@ -176,23 +176,23 @@ export function integrationInput(
   };
 }
 
-function templateFor(integration: IntegrationView): IntegrationTemplateId {
-  if (integration.provider === 'github' && integration.kind === 'app-jwt') return 'github';
-  if (integration.provider === 'anthropic') return 'anthropic';
-  if (integration.provider === 'openai') return 'openai';
-  if (integration.provider === 'hetzner') return 'hetzner';
+function templateFor(connection: ConnectionView): ConnectionTemplateId {
+  if (connection.provider === 'github' && connection.kind === 'app-jwt') return 'github';
+  if (connection.provider === 'anthropic') return 'anthropic';
+  if (connection.provider === 'openai') return 'openai';
+  if (connection.provider === 'hetzner') return 'hetzner';
   return 'generic';
 }
 
-export function IntegrationsPanel({
+export function ConnectionsPanel({
   client,
   requestedName,
 }: {
   client: ControlPlaneClient;
   requestedName?: string;
 }) {
-  const [integrations, setIntegrations] = useState<IntegrationView[]>([]);
-  const [template, setTemplate] = useState<IntegrationTemplateId>('github');
+  const [connections, setConnections] = useState<ConnectionView[]>([]);
+  const [template, setTemplate] = useState<ConnectionTemplateId>('github');
   const [editingName, setEditingName] = useState<string | null>(null);
   const [suggestedName, setSuggestedName] = useState(DEFAULT_NAMES.github);
   const [genericCustody, setGenericCustody] = useState<'cp' | 'proxy'>('cp');
@@ -200,18 +200,18 @@ export function IntegrationsPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [formVersion, setFormVersion] = useState(0);
-  const [deleteTarget, setDeleteTarget] = useState<IntegrationView | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ConnectionView | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [githubKey, setGithubKey] = useState('');
   const formAnchor = useRef<HTMLElement>(null);
 
   const reload = useCallback(async () => {
     try {
-      const response = await client.listIntegrations();
-      setIntegrations(response.integrations);
+      const response = await client.listConnections();
+      setConnections(response.connections);
       setError(null);
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'Integrations failed to load.'));
+      setError(caughtErrorMessage(caught, 'Connections failed to load.'));
     } finally {
       setLoading(false);
     }
@@ -219,7 +219,7 @@ export function IntegrationsPanel({
 
   useEffect(() => { void reload(); }, [reload]);
 
-  const chooseTemplate = useCallback((next: IntegrationTemplateId, name = DEFAULT_NAMES[next]) => {
+  const chooseTemplate = useCallback((next: ConnectionTemplateId, name = DEFAULT_NAMES[next]) => {
     setTemplate(next);
     setEditingName(null);
     setSuggestedName(name);
@@ -235,12 +235,12 @@ export function IntegrationsPanel({
     window.setTimeout(() => formAnchor.current?.scrollIntoView({ block: 'start' }), 0);
   }, [chooseTemplate, requestedName]);
 
-  const edit = (integration: IntegrationView) => {
-    const next = templateFor(integration);
+  const edit = (connection: ConnectionView) => {
+    const next = templateFor(connection);
     setTemplate(next);
-    setEditingName(integration.name);
-    setSuggestedName(integration.name);
-    setGenericCustody(integration.custody === 'proxy' ? 'proxy' : 'cp');
+    setEditingName(connection.name);
+    setSuggestedName(connection.name);
+    setGenericCustody(connection.custody === 'proxy' ? 'proxy' : 'cp');
     setGithubKey('');
     setFormVersion((current) => current + 1);
     setError(null);
@@ -256,7 +256,7 @@ export function IntegrationsPanel({
     setSaving(true);
     setError(null);
     try {
-      await client.putIntegration(name, integrationInput(template, data));
+      await client.putConnection(name, connectionInput(template, data));
       form.reset();
       setEditingName(null);
       setSuggestedName(DEFAULT_NAMES[template]);
@@ -264,22 +264,22 @@ export function IntegrationsPanel({
       setFormVersion((current) => current + 1);
       await reload();
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'Integration save failed.'));
+      setError(caughtErrorMessage(caught, 'Connection save failed.'));
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (integration: IntegrationView) => {
+  const remove = async (connection: ConnectionView) => {
     if (deleting !== null) return;
     setDeleteTarget(null);
-    setDeleting(integration.name);
+    setDeleting(connection.name);
     setError(null);
     try {
-      await client.deleteIntegration(integration.name);
+      await client.deleteConnection(connection.name);
       await reload();
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'Integration delete failed.'));
+      setError(caughtErrorMessage(caught, 'Connection delete failed.'));
     } finally {
       setDeleting(null);
     }
@@ -295,47 +295,47 @@ export function IntegrationsPanel({
   };
 
   return (
-    <section className="settings-panel settings-integrations" role="tabpanel" aria-label="Integrations">
+    <section className="settings-panel settings-connections" role="tabpanel" aria-label="Connections">
       <header className="settings-panel-header">
         <div>
           <p>Credential control plane</p>
-          <h1>Integrations</h1>
+          <h1>Connections</h1>
           <span>Configure credential roots without displaying stored secret values.</span>
         </div>
       </header>
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
-      <section className="settings-credential-section" aria-label="Configured integrations">
+      <section className="settings-credential-section" aria-label="Configured connections">
         <div className="settings-section-heading">
           <div><p>Custody registry</p><h2>Configured</h2></div>
-          <span>{integrations.length} total</span>
+          <span>{connections.length} total</span>
         </div>
         {loading ? (
-          <p className="settings-credential-state">Loading integrations…</p>
-        ) : integrations.length === 0 ? (
-          <p className="settings-credential-state">No integrations configured.</p>
+          <p className="settings-credential-state">Loading connections…</p>
+        ) : connections.length === 0 ? (
+          <p className="settings-credential-state">No connections configured.</p>
         ) : (
           <div className="settings-credential-list">
-            {integrations.map((integration) => (
-              <article className="settings-credential-row" key={integration.name}>
+            {connections.map((connection) => (
+              <article className="settings-credential-row" key={connection.name}>
                 <div>
                   <div className="settings-credential-row__title">
-                    <h3>{integration.name}</h3>
-                    <span className={`workspace-state-badge workspace-state-badge--${integration.status}`}>
-                      {integration.status}
+                    <h3>{connection.name}</h3>
+                    <span className={`workspace-state-badge workspace-state-badge--${connection.status}`}>
+                      {connection.status}
                     </span>
                   </div>
-                  <p>{integration.provider} · {integration.kind}</p>
-                  <small>custody · {integration.custody}</small>
+                  <p>{connection.provider} · {connection.kind}</p>
+                  <small>custody · {connection.custody}</small>
                 </div>
                 <div className="settings-row-actions">
-                  <button className="webapp-action" type="button" onClick={() => edit(integration)}>Replace</button>
+                  <button className="webapp-action" type="button" onClick={() => edit(connection)}>Replace</button>
                   <button
                     className="webapp-action webapp-action--danger"
                     type="button"
                     disabled={deleting !== null}
-                    onClick={() => setDeleteTarget(integration)}
-                  >{deleting === integration.name ? 'Deleting…' : 'Delete'}</button>
+                    onClick={() => setDeleteTarget(connection)}
+                  >{deleting === connection.name ? 'Deleting…' : 'Delete'}</button>
                 </div>
               </article>
             ))}
@@ -343,9 +343,9 @@ export function IntegrationsPanel({
         )}
       </section>
 
-      <section ref={formAnchor} className="settings-credential-section" aria-label="Add or replace integration">
+      <section ref={formAnchor} className="settings-credential-section" aria-label="Add or replace connection">
         <div className="settings-section-heading">
-          <div><p>Provider template</p><h2>{editingName ? `Replace ${editingName}` : 'Add integration'}</h2></div>
+          <div><p>Provider template</p><h2>{editingName ? `Replace ${editingName}` : 'Add connection'}</h2></div>
         </div>
         <div className="settings-template-grid">
           {TEMPLATES.map((candidate) => (
@@ -364,16 +364,16 @@ export function IntegrationsPanel({
           <p className="webapp-form-message">Paste a console-created API key. This is not OAuth; the key remains under proxy custody.</p>
         )}
         <form
-          className="settings-integration-form"
+          className="settings-connection-form"
           key={`${template}:${editingName ?? 'new'}:${formVersion}`}
           onSubmit={(event) => { void save(event); }}
         >
-          <label>Integration name<input name="name" required defaultValue={suggestedName} readOnly={editingName !== null} /></label>
+          <label>Connection name<input name="name" required defaultValue={suggestedName} readOnly={editingName !== null} /></label>
           {template === 'github' && (
             <>
               <label>App ID<input name="appId" inputMode="numeric" required /></label>
               <label>Installation ID<input name="installationId" inputMode="numeric" required /></label>
-              <label className="settings-integration-form__wide">
+              <label className="settings-connection-form__wide">
                 PKCS#8 private key
                 <textarea
                   name="root"
@@ -385,14 +385,14 @@ export function IntegrationsPanel({
                   onChange={(event) => setGithubKey(event.currentTarget.value)}
                 />
               </label>
-              <div className="settings-secret-paste settings-integration-form__wide">
+              <div className="settings-secret-paste settings-connection-form__wide">
                 <p>PKCS#1 RSA keys are converted to PKCS#8 in this browser before upload.</p>
                 <button className="webapp-action" type="button" onClick={() => { void pasteGithubKey(); }}>Paste from clipboard</button>
               </div>
             </>
           )}
           {(template === 'anthropic' || template === 'openai' || template === 'hetzner') && (
-            <label className="settings-integration-form__wide">
+            <label className="settings-connection-form__wide">
               {template === 'hetzner' ? 'API token' : 'Console API key'}
               <input name="root" type="password" required autoComplete="new-password" />
             </label>
@@ -420,22 +420,22 @@ export function IntegrationsPanel({
                   <label>Vendor token prefix<input name="tokenPrefix" defaultValue="Bearer " /></label>
                 </>
               )}
-              <label className="settings-integration-form__wide">Credential value<input name="root" type="password" required autoComplete="new-password" /></label>
+              <label className="settings-connection-form__wide">Credential value<input name="root" type="password" required autoComplete="new-password" /></label>
             </>
           )}
-          <div className="settings-row-actions settings-integration-form__wide">
+          <div className="settings-row-actions settings-connection-form__wide">
             <button className="webapp-action" type="button" onClick={() => chooseTemplate(template)}>Clear</button>
             <button className="webapp-action webapp-action--primary" type="submit" disabled={saving}>
-              {saving ? 'Saving…' : 'Save integration'}
+              {saving ? 'Saving…' : 'Save connection'}
             </button>
           </div>
         </form>
       </section>
       {deleteTarget && (
         <ConfirmationDialog
-          title="Delete integration?"
+          title="Delete connection?"
           description={`Delete ${deleteTarget.name}? This is a kill switch: active leases will be revoked immediately.`}
-          confirmLabel="Delete integration"
+          confirmLabel="Delete connection"
           onCancel={() => setDeleteTarget(null)}
           onConfirm={() => { void remove(deleteTarget); }}
         />

@@ -239,7 +239,7 @@ async function bootstrapMembership(
       v: [user.id],
     },
     {
-      q: `UPDATE integrations SET org_id = ?1, created_by = ?2,
+      q: `UPDATE connections SET org_id = ?1, created_by = ?2,
               created_by_membership_id = ?3
           WHERE created_by = 'operator' AND org_id IS NULL`,
       v: [orgId, user.id, membershipId],

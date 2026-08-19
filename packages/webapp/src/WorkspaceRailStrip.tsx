@@ -30,8 +30,8 @@ export function WorkspaceRailStrip({
   ];
   if (canManageCredentials) {
     panels.push({
-      id: 'integrations',
-      label: 'Integrations',
+      id: 'connections',
+      label: 'Connections',
       icon: <GenericProviderIcon className="webapp-rail-strip__icon" />,
     });
   }
@@ -50,7 +50,7 @@ export function WorkspaceRailStrip({
             onClick={() => onTogglePanel(panel.id)}
           >
             {panel.icon}
-            {panel.id === 'integrations' && pendingRequestCount > 0 && (
+            {panel.id === 'connections' && pendingRequestCount > 0 && (
               <span
                 className="workspace-pending-badge"
                 aria-label={`${pendingRequestCount} pending`}

@@ -7,6 +7,10 @@ export type Placement =
   | { kind: "file"; path: string; value: string; mode?: number }
   | { kind: "unset-env"; name: string };
 
+/** FROZEN box wire: the Go broker baked into the shipped box image decodes
+ * POST /workspaces/self/credentials with DisallowUnknownFields, so the
+ * `integration` key (and mode/placements/expiresAt) must keep these exact
+ * names even though the product noun is now "connection". */
 export interface MintResult {
   integration: string;
   mode: "inject" | "proxy";
@@ -21,7 +25,7 @@ export interface CredentialLeaseView {
   id: string;
   workspaceId: string;
   boxId: string | null;
-  integration: string;
+  connection: string;
   userId: string | null;
   scopes: string[];
   mode: MintResult["mode"];
@@ -30,7 +34,7 @@ export interface CredentialLeaseView {
   state: LeaseState;
 }
 
-export interface IntegrationView {
+export interface ConnectionView {
   name: string;
   provider: string;
   kind: MintKind;
@@ -39,11 +43,11 @@ export interface IntegrationView {
   createdBy: string;
 }
 
-export interface ListIntegrationsResponse {
-  integrations: IntegrationView[];
+export interface ListConnectionsResponse {
+  connections: ConnectionView[];
 }
 
-export interface PutIntegrationRequest {
+export interface PutConnectionRequest {
   provider: string;
   kind: MintKind;
   custody: Custody;
@@ -52,6 +56,9 @@ export interface PutIntegrationRequest {
   usable_by?: { owners: string[] } | null;
 }
 
+/** The manifest is stored verbatim in D1 (workspaces.manifest), so its
+ * `integrations` key is a persisted document format, not a renameable
+ * client field; it deliberately keeps the old noun. */
 export interface CredentialManifest {
   integrations: Record<string, JsonObject>;
 }
@@ -63,7 +70,7 @@ export interface ListCredentialLeasesResponse {
 export interface CredentialRequestView {
   id: string;
   workspace_id: string;
-  integration_name: string;
+  connection_name: string;
   requested_scopes: string[];
   created_at: number;
   requester: { boxId: string; userId: string } | null;

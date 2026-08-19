@@ -196,9 +196,9 @@ function client(): ControlPlaneClient {
     destroy: vi.fn(async () => ({ workspace: creating })),
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
-    listIntegrations: vi.fn(async () => ({ integrations: [] })),
-    putIntegration: vi.fn(async () => undefined),
-    deleteIntegration: vi.fn(async () => undefined),
+    listConnections: vi.fn(async () => ({ connections: [] })),
+    putConnection: vi.fn(async () => undefined),
+    deleteConnection: vi.fn(async () => undefined),
     listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     revokeLease: vi.fn(async () => undefined),
@@ -622,7 +622,7 @@ describe("webapp shell smoke", () => {
     const drawer = view.container.querySelector("#webapp-workspace-drawer")!;
     const segments = [...drawer.querySelectorAll('[role="tab"]')]
       .map((tab) => tab.textContent);
-    expect(segments).toEqual(["Files", "teenyapps", "Integrations"]);
+    expect(segments).toEqual(["Files", "teenyapps", "Connections"]);
     expect(drawer.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
       .toBe("teenyapps");
 
