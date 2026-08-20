@@ -6,9 +6,11 @@ import type {
   SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
+import { HARNESSES, type AuthRequiredParams, type AuthRequiredProvider } from "@blitzos/schema";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isString } from "../type-guards.js";
 import type { Agent } from "../protocol.js";
+import { SPAWN_SESSION_LABELS } from "../WebAppHeader.js";
 import { ArrowIcon, WorkspaceIcon } from "../WebAppIcons.js";
 import { WebAppSelectMenu } from "../WebAppSelectMenu.js";
 import { ChatItemView, ChatTurnView, WorkingIndicator } from "./chat-turn-views.js";
@@ -31,17 +33,16 @@ interface PermissionAnsweredNotification {
   actor?: ChatActor;
 }
 
-interface AuthRequiredNotification {
-  sessionId: string;
-  provider: Agent;
-}
-
 const APPROVAL_PREVIEW_CHARS = 600;
 
-const AGENT_LABELS = {
-  claude: "Claude",
-  codex: "Codex",
-} satisfies Record<Agent, string>;
+/** The runtime half of {@link AuthRequiredProvider}, from the same list.
+ *
+ * `blitz/auth_required` arrives off a socket, so the name still has to be
+ * checked at the boundary — but checking it against a re-spelled union would
+ * let the panel drift from the broker feed that decides which harnesses can be
+ * minted for at all.
+ */
+const HARNESS_NAMES: ReadonlySet<string> = new Set(HARNESSES);
 
 type SelectConfig = {
   id: string;
@@ -174,7 +175,7 @@ export function ChatPanel({
               }
             },
           )
-          .onNotification<AuthRequiredNotification>(
+          .onNotification<AuthRequiredParams>(
             "blitz/auth_required",
             parseAuthRequiredNotification,
             ({ params }) => {
@@ -411,13 +412,13 @@ export function ChatPanel({
       <div className="chat-dock">
         {signInProvider !== null && (
           <div className="chat-auth-required" role="status">
-            <span>{AGENT_LABELS[signInProvider]} could not authenticate on this workspace.</span>
+            <span>{SPAWN_SESSION_LABELS[signInProvider]} could not authenticate on this workspace.</span>
             <button
               type="button"
               className="chat-auth-required-action"
               onClick={() => onSignIn?.(signInProvider)}
             >
-              Sign in to {AGENT_LABELS[signInProvider]}
+              Sign in to {SPAWN_SESSION_LABELS[signInProvider]}
             </button>
           </div>
         )}
@@ -554,15 +555,15 @@ function parsePermissionAnsweredNotification<Value>(value: Value): PermissionAns
   return notification;
 }
 
-function parseAuthRequiredNotification<Value>(value: Value): AuthRequiredNotification {
-  if (!isRecord(value) || !isString(value.sessionId) || !isAgentName(value.provider)) {
+function parseAuthRequiredNotification<Value>(value: Value): AuthRequiredParams {
+  if (!isRecord(value) || !isString(value.sessionId) || !isHarnessName(value.provider)) {
     throw new Error("Malformed auth requirement");
   }
   return { sessionId: value.sessionId, provider: value.provider };
 }
 
-function isAgentName<Value>(value: Value): value is Value & Agent {
-  return isString(value) && (value === "claude" || value === "codex");
+function isHarnessName<Value>(value: Value): value is Value & AuthRequiredProvider {
+  return isString(value) && HARNESS_NAMES.has(value);
 }
 
 function parseActor<Value>(value: Value): ChatActor | undefined {
