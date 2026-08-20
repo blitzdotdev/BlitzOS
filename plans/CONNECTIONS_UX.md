@@ -183,7 +183,7 @@ Three existing name collisions this resolves: `providers/` (compute), `grants.ts
 **Test tiers (the probe powers all three):**
 - **T1 conformance** — parametrized vitest suite over the whole catalog, every PR, no network: manifest validates, skill renders, placements compile inside the frozen box wire, exchange replays fixtures. Providers inherit tests by existing.
 - **T2 canary** — a new cron in the Worker (three schedules already exist): per provider with a canary-principal grant, mint → probe → `provider_health` row + event; surfaced in the panel ("github ✓ checked 2h ago") and the connect inbox on failure. The canary principal is §1's bot-user escape hatch. Always-on live-prod regression with zero external infra.
-- **T3 box e2e** — `e2e/connections.mjs` (successor of `credentials.mjs`, writes `CONNECTIONS-E2E-REPORT.md` per the existing report convention): discovers grants on the target instance, creates a real workspace, asserts env + skill files land on disk, probes from inside the box via the proxy path, revokes, asserts removal. Nightly/on-demand; the only tier that costs a VM.
+- **T3 box e2e** — `e2e/connections.mjs` (the per-user grant half beside `credentials.mjs`, which keeps the org-root surface; writes `CONNECTIONS-E2E-REPORT.md` per the existing report convention): discovers grants on the target instance, creates a real workspace, asserts env + skill files land on disk, probes from inside the box via the proxy path, revokes, asserts removal. Nightly/on-demand; the only tier that costs a VM.
 
 Tier boundaries are cost boundaries: PR-cheap / cron-cheap / VM-expensive. `npm run provider:check -- <name>` filters T1 to one provider.
 

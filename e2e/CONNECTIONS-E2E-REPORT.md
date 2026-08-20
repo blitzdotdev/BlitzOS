@@ -11,8 +11,10 @@ the way `CREDENTIALS-E2E-REPORT.md` was filled.
 
 ## What makes this tier different
 
-`credentials.mjs` created its own org connections from operator-supplied
-provider keys. `connections.mjs` creates nothing: the product path is per-user
+`credentials.mjs` creates its own org connections from operator-supplied
+provider keys, and still owns that surface — the baked box-image bits, the
+approval loop, the proxy leak probe, and destroy-with-active-lease have no
+equivalent here. `connections.mjs` creates nothing: the product path is per-user
 grants, so the suite **discovers** what the target instance already has —
 `GET /connections/catalog` for the provider declarations,
 `GET /connections/grants` for the operator's own authorizations — picks a

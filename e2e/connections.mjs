@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
-// Successor of e2e/credentials.mjs for the connections product noun.
+// The per-user grant half of the box credential e2e.
+//
+// It is NOT a replacement for e2e/credentials.mjs. The two split the work:
+// that one owns the org-root surface — the baked box-image bits, PUT
+// /connections with a real root, the approval loop, the proxy leak probe, and
+// destroy-with-active-lease. Deleting either loses gates the other never had.
 //
 // Discovery-driven: it does not create a grant and it never asks for a
 // provider secret. It reads the target instance's catalog and the operator's
@@ -353,6 +358,31 @@ async function destroyCurrentWorkspace() {
   return response.status;
 }
 
+// FROZEN: these stderr forms come from the blitz-cred CLI baked into the
+// shipped box image; they still say "integration" and may not change here.
+// The `requested` form carries the request id the connect inbox resolves, so
+// its parentheses are load-bearing, not decoration.
+function matchCredentialFailure(stderr, connection, kind) {
+  const text = String(stderr ?? "").trim();
+  const escaped = connection.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const requestedPattern = kind === "access"
+    ? new RegExp(
+      `^blitz: access to ${escaped} requested \\(([^()\\r\\n]+)\\), awaiting approval$`,
+      "u",
+    )
+    : new RegExp(
+      `^blitz: integration ${escaped} requested \\(([^()\\r\\n]+)\\), not configured yet$`,
+      "u",
+    );
+  const fallbackPattern = kind === "access"
+    ? new RegExp(`^blitz: access to ${escaped} denied by workspace policy$`, "u")
+    : new RegExp(`^blitz: integration ${escaped} is not configured$`, "u");
+  const requested = text.match(requestedPattern);
+  if (requested !== null) return { form: "requested", requestId: requested[1], text };
+  if (fallbackPattern.test(text)) return { form: "fallback", requestId: null, text };
+  return null;
+}
+
 function skillPathFor(provider) {
   return `${BOX_HOME}/.claude/skills/${provider}/SKILL.md`;
 }
@@ -567,6 +597,14 @@ await runStep("8", "an unconnected provider files a connect-inbox entry", async 
   if (workspaceId === null || sshInfo === null) return skip("no ready workspace to ask from");
   const asked = runSsh(`blitz-cred token ${shellQuote(UNCONNECTED_PROVIDER)}`, 45_000);
   assert(asked.status !== 0, "asking for an unconnected provider unexpectedly succeeded");
+  // The CLI's failure grammar is as frozen as the mint wire: the box image
+  // that prints it is already shipped, and the panel reads the request id out
+  // of the parenthesised form.
+  const failure = matchCredentialFailure(asked.stderr, UNCONNECTED_PROVIDER, "integration");
+  assert(
+    failure !== null,
+    `blitz-cred stderr left the frozen grammar: ${safeText(asked.stderr)}`,
+  );
   const { response, body } = await controlPlane("/requests?state=pending");
   assert(response.status === 200, `GET /requests HTTP ${response.status}${apiError(body)}`);
   const pending = (body?.requests ?? []).filter(
@@ -575,7 +613,13 @@ await runStep("8", "an unconnected provider files a connect-inbox entry", async 
   );
   assert(pending.length === 1, `expected one pending inbox entry, saw ${pending.length}`);
   inboxRequestId = pending[0].id;
-  return pass(`inbox entry=${inboxRequestId}; stderr=${safeText(asked.stderr)}`);
+  if (failure.form === "requested") {
+    assert(
+      failure.requestId === inboxRequestId,
+      `blitz-cred reported request ${failure.requestId}, the inbox holds ${inboxRequestId}`,
+    );
+  }
+  return pass(`inbox entry=${inboxRequestId}; stderr form=${failure.form}`);
 });
 
 await runStep("T", "teardown", async () => {
