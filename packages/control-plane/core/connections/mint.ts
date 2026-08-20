@@ -148,7 +148,12 @@ async function ownerGrantMint(
     throw new HttpError(409, `connection grant names an unknown provider ${grant.manifest_id}`);
   }
   const config = grantConfig(grant);
-  const secret = await grantSecretForMint(runtime, manifest, grant, request.origin);
+  const { secret, accessExpiresAt } = await grantSecretForMint(
+    runtime,
+    manifest,
+    grant,
+    request.origin,
+  );
   return mintFromGrant({
     manifest,
     grant,
@@ -156,8 +161,19 @@ async function ownerGrantMint(
     connection,
     request,
     secret,
+    accessExpiresAt,
     scopes,
   });
+}
+
+/** A decrypted credential and the moment it dies. The expiry comes back with
+ * the secret rather than being re-read off the grant row: a refresh rotates the
+ * token and persists a new `access_expires_at`, and the row in hand predates
+ * that write. Reading the stale row is how a refreshed grant mints a lease that
+ * expired in the past, and every mint after the first expiry answers 409. */
+interface MintSecret {
+  secret: string;
+  accessExpiresAt: number | null;
 }
 
 async function grantSecretForMint(
@@ -165,11 +181,11 @@ async function grantSecretForMint(
   manifest: ProviderManifest,
   grant: GrantRow,
   origin: string,
-): Promise<string> {
+): Promise<MintSecret> {
   if (grant.kind === "pat") {
     const secret = await openGrantSecret(runtime.credentialMasterKey, grant, "refresh");
     if (secret === null) throw new HttpError(409, "connection grant has no stored key");
-    return secret;
+    return { secret, accessExpiresAt: null };
   }
   const auth = manifest.auth;
   if (auth === null) throw new HttpError(409, "connection grant needs re-authorization");
@@ -190,7 +206,7 @@ async function grantSecretForMint(
     grant,
   );
   if (access === null) throw new HttpError(409, "connection grant needs re-authorization");
-  return access;
+  return { secret: access.accessToken, accessExpiresAt: access.accessExpiresAt };
 }
 
 async function mintOne(

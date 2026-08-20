@@ -128,6 +128,24 @@ function fresh(grant: GrantRow, now: number): boolean {
     && grant.access_expires_at - REFRESH_MARGIN_MS > now;
 }
 
+/** An access token and the moment it dies. The expiry travels with the token
+ * because a refresh rotates it: the caller's `GrantRow` was read before the
+ * rotation, so its `access_expires_at` is the expiry of a token that no longer
+ * exists, and a lease cut from it would be born expired. */
+export interface RefreshedAccess {
+  accessToken: string;
+  accessExpiresAt: number;
+}
+
+async function storedAccess(
+  key: CryptoKey,
+  grant: GrantRow,
+): Promise<RefreshedAccess | null> {
+  const access = await openGrantSecret(key, grant, "access");
+  if (access === null || grant.access_expires_at === null) return null;
+  return { accessToken: access, accessExpiresAt: grant.access_expires_at };
+}
+
 /** Exchanges the owner's refresh token for an access token, storing the
  * rotation under compare-and-set.
  *
@@ -142,8 +160,8 @@ export async function refreshedAccessToken(
   manifest: OAuthProviderManifest,
   grant: GrantRow,
   now = Date.now(),
-): Promise<string | null> {
-  if (fresh(grant, now)) return openGrantSecret(context.key, grant, "access");
+): Promise<RefreshedAccess | null> {
+  if (fresh(grant, now)) return storedAccess(context.key, grant);
   const refreshToken = await openGrantSecret(context.key, grant, "refresh");
   if (refreshToken === null) return null;
   const exchanged = await exchangeTokens({
@@ -156,19 +174,20 @@ export async function refreshedAccessToken(
     codeVerifier: null,
     refreshToken,
   });
+  const accessExpiresAt = now + exchanged.expiresInMs;
   const stored = await rotateGrantTokens(
     context.db,
     context.key,
     grant,
     exchanged.accessToken,
-    now + exchanged.expiresInMs,
+    accessExpiresAt,
     exchanged.refreshToken,
     now,
   );
-  if (stored) return exchanged.accessToken;
+  if (stored) return { accessToken: exchanged.accessToken, accessExpiresAt };
   // Another request rotated first. Its material is the live one; ours may
   // already be invalidated at the provider under strict rotation.
   const current = await grantFor(context.db, grant.user_id, grant.provider);
   if (current === null || !fresh(current, now)) return null;
-  return openGrantSecret(context.key, current, "access");
+  return storedAccess(context.key, current);
 }

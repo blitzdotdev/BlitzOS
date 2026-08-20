@@ -45,6 +45,38 @@ async function connectLinear(
   });
 }
 
+/** Drives the real /connect round trip against a recorded token response, so
+ * the suite gets an oauth-kind grant without a live provider. */
+async function connectLinearOAuth(
+  app: Harness["app"],
+  cookie: string,
+  expiresInSeconds: number,
+): Promise<void> {
+  testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
+  testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
+  const started = await appRequest(app, "/connect/linear/start", {
+    headers: { Cookie: cookie },
+  });
+  expect(started.status).toBe(302);
+  const state = new URL(started.headers.get("location") ?? "")
+    .searchParams.get("state") ?? "";
+  const stateCookie = (started.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(
+    async () => Response.json({
+      access_token: "linear-access-1",
+      refresh_token: "linear-refresh-1",
+      expires_in: expiresInSeconds,
+    }),
+  );
+  const callback = await appRequest(
+    app,
+    `/connect/linear/callback?code=auth-code&state=${state}`,
+    { headers: { Cookie: `${cookie}; ${stateCookie}` } },
+  );
+  expect(callback.status).toBe(302);
+  exchange.mockRestore();
+}
+
 async function readyWorkspace(
   app: Harness["app"],
   providers: Harness["providers"],
@@ -548,6 +580,52 @@ describe("connections: connect flow and canary", () => {
       headers: { Cookie: cookie },
     });
     expect(response.status).toBe(400);
+  });
+
+  /** The refresh writes a new `access_expires_at`, but the caller is holding
+   * the row it read before that write. Cutting the lease from the stale row
+   * gives it an expiry already in the past, and mintFromGrant answers 409 —
+   * for that mint and every mint after it, forever. */
+  it("mints again after the access token expires and the refresh rotates it", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    await connectLinearOAuth(app, cookie, 3_600);
+    const { box } = await readyWorkspace(app, providers, cookie);
+    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+
+    // Wind the stored token past its expiry, the way an hour of wall clock
+    // does in production.
+    await env.DB.prepare(
+      "UPDATE user_oauth_grants SET access_expires_at = ?1 WHERE provider = 'linear'",
+    ).bind(Date.now() - 1_000).run();
+
+    const grantTypes: (string | null)[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      grantTypes.push(new URLSearchParams(String(init?.body)).get("grant_type"));
+      return Response.json({
+        access_token: "linear-access-2",
+        refresh_token: "linear-refresh-2",
+        expires_in: 3_600,
+      });
+    });
+
+    const refreshed = await mint(app, box.access_token, { integration: "linear" });
+    expect(refreshed.status).toBe(200);
+    expect(grantTypes).toEqual(["refresh_token"]);
+    const result = await refreshed.json<MintResult>();
+    expect(result.expiresAt).toBeGreaterThan(Date.now());
+
+    // The lease carries the rotated expiry, not the one the pre-refresh row
+    // still remembers.
+    const lease = await env.DB.prepare(
+      "SELECT expires_at, state FROM credential_leases ORDER BY issued_at DESC, id LIMIT 1",
+    ).first<{ expires_at: number; state: string }>();
+    expect(lease?.state).toBe("active");
+    expect(lease?.expires_at).toBeGreaterThan(Date.now());
+
+    // And the mint after it is an ordinary fresh-token mint, not a second 409.
+    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    expect(grantTypes).toEqual(["refresh_token"]);
   });
 
   it("probes a canary grant, records health, and serves it to the panel", async () => {

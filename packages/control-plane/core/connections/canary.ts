@@ -71,7 +71,7 @@ async function canaryToken(
   const clientId = runtime.vars.connectSecret(auth.clientIdVar);
   const clientSecret = runtime.vars.connectSecret(auth.clientSecretVar);
   if (clientId === undefined || clientSecret === undefined) return null;
-  return refreshedAccessToken(
+  const access = await refreshedAccessToken(
     {
       db: runtime.db,
       key: runtime.credentialMasterKey,
@@ -82,6 +82,7 @@ async function canaryToken(
     { ...manifest, auth },
     grant,
   );
+  return access?.accessToken ?? null;
 }
 
 async function probeProvider(

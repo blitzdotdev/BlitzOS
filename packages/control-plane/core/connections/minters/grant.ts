@@ -19,16 +19,21 @@ export interface GrantMintInput {
   /** Already decrypted: the access token for an oauth grant, the pasted key
    * for a personal one. Never persisted by this module. */
   secret: string;
+  /** When `secret` dies, or null for a pasted key that has no expiry. This is
+   * deliberately not read off `grant`: a refresh on the way in rotates the
+   * token and writes a new expiry, and `grant` is the row from before that
+   * write — trusting it hands every later mint an already-dead lease. */
+  accessExpiresAt: number | null;
   scopes: string[];
 }
 
 function leaseExpiry(input: GrantMintInput): number {
-  if (input.grant.kind === "pat" || input.grant.access_expires_at === null) {
+  if (input.grant.kind === "pat" || input.accessExpiresAt === null) {
     return input.request.now + PAT_LEASE_MS;
   }
   // The lease dies with the token it carries; a box holding a dead access
   // token and a live lease is the one state the sync cadence cannot repair.
-  return input.grant.access_expires_at;
+  return input.accessExpiresAt;
 }
 
 /** Mints from a personal grant. Proxy custody leaves only a per-workspace
