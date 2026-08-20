@@ -10,7 +10,6 @@ export function socketStream(socket: WebSocket): Stream {
       controller = value;
     },
     cancel() {
-      closed = true;
       socket.close();
     },
   });
