@@ -1378,8 +1378,83 @@ func TestServePreviewFocusFixtures(t *testing.T) {
 			}
 		})
 	}
-	if fixtureCount != 5 {
-		t.Fatalf("preview-focus fixture count = %d, want 5", fixtureCount)
+	if fixtureCount != 8 {
+		t.Fatalf("preview-focus fixture count = %d, want 8", fixtureCount)
+	}
+}
+
+// The reserved-port set exists in three runtimes that cannot import each other.
+// A port one of them serves and another drops makes a preview vanish, so pin
+// this mirror to the shared definition.
+func TestExcludedPortsMatchSharedFixture(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "schema", "fixtures", "preview-ports", "reserved.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		MinPort       int   `json:"minPort"`
+		MaxPort       int   `json:"maxPort"`
+		MaxPathLength int   `json:"maxPathLength"`
+		ReservedPorts []int `json:"reservedPorts"`
+	}
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.MinPort != minPreviewPort || fixture.MaxPort != maxPreviewPort {
+		t.Fatalf("port range = %d-%d, want %d-%d", minPreviewPort, maxPreviewPort, fixture.MinPort, fixture.MaxPort)
+	}
+	if fixture.MaxPathLength != maxPreviewPathBytes {
+		t.Fatalf("maxPreviewPathBytes = %d, want %d", maxPreviewPathBytes, fixture.MaxPathLength)
+	}
+	if len(fixture.ReservedPorts) != len(excludedPorts) {
+		t.Fatalf("excludedPorts has %d entries, want %d", len(excludedPorts), len(fixture.ReservedPorts))
+	}
+	for _, port := range fixture.ReservedPorts {
+		if _, reserved := excludedPorts[port]; !reserved {
+			t.Fatalf("excludedPorts is missing reserved port %d", port)
+		}
+	}
+}
+
+func TestIsPreviewPath(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want bool
+	}{
+		{path: "/", want: true},
+		{path: "/dashboard", want: true},
+		{path: "/a..b", want: true},
+		{path: "/" + strings.Repeat("a", maxPreviewPathBytes-1), want: true},
+		{path: "dashboard"},
+		{path: ""},
+		{path: "/.."},
+		{path: "/../workspace/"},
+		{path: "/app/../../workspace/"},
+		{path: "/" + strings.Repeat("a", maxPreviewPathBytes)},
+	} {
+		if got := isPreviewPath(test.path); got != test.want {
+			t.Fatalf("isPreviewPath(%q) = %v, want %v", test.path, got, test.want)
+		}
+	}
+
+	// The same verdicts through the marker parser the gateway actually uses.
+	marker := func(path string) []byte {
+		encoded, err := json.Marshal(map[string]any{
+			"version": 1, "port": 3000, "path": path, "title": "t", "requestedAt": 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+	if parsePreviewFocus(marker("/app/../../workspace/")) != nil {
+		t.Fatal("parsePreviewFocus kept a traversal path")
+	}
+	if parsePreviewFocus(marker("/"+strings.Repeat("a", maxPreviewPathBytes))) != nil {
+		t.Fatal("parsePreviewFocus kept an over-long path")
+	}
+	if parsePreviewFocus(marker("/dashboard")) == nil {
+		t.Fatal("parsePreviewFocus dropped a usable path")
 	}
 }
 

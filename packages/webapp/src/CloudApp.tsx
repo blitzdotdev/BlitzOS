@@ -56,6 +56,7 @@ import {
 import {
   defaultWorkspaceFiles,
   removeDismissedChatAuthProviders,
+  withPreviewTabPath,
   type StorageNamespace,
   type WorkspaceDrawerSegment,
   type WorkspaceTab,
@@ -76,6 +77,7 @@ import {
 } from './workspace-store';
 import { PreviewPanel } from './PreviewPanel';
 import {
+  isPreviewPath,
   isPreviewPort,
   newestPorts,
   newestPreviewLinks,
@@ -953,6 +955,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   };
+  const retargetPreviewTab = (tabId: number, path: string | undefined) => {
+    setWorkspaceTabs((current) => {
+      if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
+      const tabs = withPreviewTabPath(current.value.tabs, tabId, path);
+      return tabs === current.value.tabs
+        ? current
+        : { ...current, value: { ...current.value, tabs } };
+    });
+  };
   const orderedLivePorts = useMemo(() => newestPorts(livePorts), [livePorts]);
   const orderedPreviewLinks = useMemo(
     () => newestPreviewLinks(previewLinks),
@@ -960,17 +971,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const openPreviewPort = (port: number, path?: string) => {
     if (!isPreviewPort(port)) return false;
+    // Only a non-root, usable deep-link is recorded, so plain port opens keep
+    // the bare { id, type, port } tab shape (and its persisted round-trip).
+    const deepLink = path !== undefined && path !== '/' && isPreviewPath(path)
+      ? path
+      : undefined;
     const existing = ttydSessions.find(
       (tab) => tab.type === 'preview' && 'port' in tab && tab.port === port,
     );
     if (existing) {
+      // The agent re-runs `blitz preview open` on every server start, so a
+      // second "open /dashboard" almost always lands on a tab this port already
+      // has. Re-point that tab instead of ignoring the route.
+      retargetPreviewTab(existing.id, deepLink);
       selectTtydSession(String(existing.id));
     } else {
-      // Only a non-root deep-link is recorded, so plain port opens keep the
-      // bare { id, type, port } tab shape (and its persisted round-trip).
-      const deepLink = path !== undefined && path !== '/' && path.startsWith('/')
-        ? path
-        : undefined;
       addWorkspaceTab((id) => deepLink === undefined
         ? { id, type: 'preview', port }
         : { id, type: 'preview', port, path: deepLink });

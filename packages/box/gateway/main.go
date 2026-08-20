@@ -46,12 +46,41 @@ const (
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
 )
 
+// Ports the box runs its own services on. A preview may never claim one, so
+// this set both hides them from the discovered-port list and rejects a focus
+// marker naming them. It mirrors packages/schema/src/preview.ts and the
+// `blitz preview open` producer; all three are pinned to
+// packages/schema/fixtures/preview-ports/reserved.json.
 var excludedPorts = map[int]struct{}{
 	22:    {}, // sshd
 	7443:  {}, // ttyd
 	7444:  {}, // ACP actor
 	7445:  {}, // this gateway
+	7446:  {}, // public dufs file server
 	17445: {}, // private dufs upstream
+}
+
+const (
+	minPreviewPort      = 1024
+	maxPreviewPort      = 65535
+	maxPreviewPathBytes = 4096
+)
+
+// isPreviewPath mirrors isPreviewPath in packages/schema/src/preview.ts. The
+// traversal rule is the load-bearing one: the browser normalizes
+// `/preview/<port>/a/../../workspace/` before the request leaves the tab, so a
+// `..` this reader passes on walks the iframe out of the `/preview/<port>/`
+// prefix onto another box surface.
+func isPreviewPath(path string) bool {
+	if !strings.HasPrefix(path, "/") || len(path) > maxPreviewPathBytes {
+		return false
+	}
+	for _, segment := range strings.Split(path, "/") {
+		if segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 type portInfo struct {
@@ -446,9 +475,11 @@ type previewFocus struct {
 }
 
 // parsePreviewFocus validates the marker `blitz preview open` writes. Anything
-// that is not a version-1 object with a usable, non-reserved port and a
-// rooted path is treated as no focus at all (nil), the same way the browser
-// falls back to null. Unknown extra fields are tolerated for forward
+// that is not a version-1 object with a usable, non-reserved port and a rooted,
+// traversal-free path is treated as no focus at all (nil), the same way the
+// browser falls back to null. The marker is written by the in-box agent's own
+// uid, so the CLI's checks are convenience, not a boundary: this reader repeats
+// every one of them. Unknown extra fields are tolerated for forward
 // compatibility, matching parsePreviewLinks.
 func parsePreviewFocus(data []byte) *previewFocus {
 	var fields struct {
@@ -464,13 +495,13 @@ func parsePreviewFocus(data []byte) *previewFocus {
 	if fields.Version == nil || *fields.Version != 1 {
 		return nil
 	}
-	if fields.Port == nil || *fields.Port < 1024 || *fields.Port > 65535 {
+	if fields.Port == nil || *fields.Port < minPreviewPort || *fields.Port > maxPreviewPort {
 		return nil
 	}
 	if _, reserved := excludedPorts[*fields.Port]; reserved {
 		return nil
 	}
-	if fields.Path == nil || !strings.HasPrefix(*fields.Path, "/") {
+	if fields.Path == nil || !isPreviewPath(*fields.Path) {
 		return nil
 	}
 	if fields.Title == nil {

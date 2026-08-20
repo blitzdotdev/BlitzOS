@@ -70,7 +70,14 @@ function writeEntries(entries) {
   atomicWrite(previewsPath, `${JSON.stringify(entries)}\n`);
 }
 
+// Mirrors packages/schema/src/preview.ts. The Go gateway keeps the same set in
+// `excludedPorts`; all three are pinned to
+// packages/schema/fixtures/preview-ports/reserved.json.
 const RESERVED_PORTS = new Set([22, 7443, 7444, 7445, 7446, 17445]);
+// The control plane refuses a longer `tabs.tabs[].path` outright, and a refused
+// write takes the whole tab layout down with it, so the producer never emits a
+// path the persisted document cannot carry.
+const MAX_PATH_LENGTH = 4096;
 
 function openPreview() {
   if (args.length === 0) fail('expected open <port> [--path <path>] [--title <name>]', 2);
@@ -94,6 +101,7 @@ function openPreview() {
   }
   if (!path.startsWith('/')) fail('--path must start with /', 2);
   if (path.split('/').includes('..')) fail('--path must not contain a .. segment', 2);
+  if (path.length > MAX_PATH_LENGTH) fail(`--path must be at most ${MAX_PATH_LENGTH} characters`, 2);
   if (/[\r\n]/.test(path)) fail('--path must not contain a carriage return or line feed', 2);
   if (/[\r\n]/.test(title)) fail('--title must not contain a carriage return or line feed', 2);
   atomicWrite(focusPath, `${JSON.stringify({ version: 1, port, path, title, requestedAt: Date.now() })}\n`);

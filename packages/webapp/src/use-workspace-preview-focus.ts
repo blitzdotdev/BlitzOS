@@ -3,6 +3,7 @@ import {
   fetchWorkspacePreviewFocus,
   PORTS_POLL_INTERVAL_MS,
   type PreviewFocus,
+  type PreviewFocusResult,
 } from './preview';
 
 /** Polls the box's `/preview-focus` marker on the ports cadence, while the tab
@@ -12,8 +13,9 @@ import {
  * Entering a workspace adopts whatever focus the box already reports as the
  * consumed baseline and never opens it, so a workspace switch — or a return —
  * cannot replay an old focus; only a strictly-newer focus that arrives while
- * the workspace is on screen opens. The baseline is ephemeral (a ref), never
- * persisted to webApp-state. */
+ * the workspace is on screen opens. Only a poll that actually reached the box
+ * may set that baseline. The baseline is ephemeral (a ref), never persisted to
+ * webApp-state. */
 export function useWorkspacePreviewFocus(
   enabled: boolean,
   workspaceId: string,
@@ -31,10 +33,15 @@ export function useWorkspacePreviewFocus(
     if (!enabled || filesBase === null || workspaceId === '') return;
     let disposed = false;
     let request: AbortController | null = null;
-    const consume = (focus: PreviewFocus | null) => {
+    const consume = (result: PreviewFocusResult) => {
+      // A poll that failed says nothing about the box's focus. Adopting its
+      // empty answer as the baseline would make the next successful poll look
+      // like a brand-new focus and re-open a marker from a previous visit.
+      if (!result.ok) return;
+      const focus = result.focus;
       if (consumedRef.current.workspaceId !== workspaceId) {
-        // First observation after entering this workspace: adopt the box's
-        // current focus as already-consumed and do not auto-open it.
+        // First successful observation after entering this workspace: adopt the
+        // box's current focus as already-consumed and do not auto-open it.
         consumedRef.current = {
           workspaceId,
           requestedAt: focus === null ? null : focus.requestedAt,
@@ -51,9 +58,9 @@ export function useWorkspacePreviewFocus(
       if (request !== null || document.visibilityState !== 'visible') return;
       request = new AbortController();
       const current = request;
-      const focus = await fetchWorkspacePreviewFocus(filesBase, fetch, current.signal);
+      const result = await fetchWorkspacePreviewFocus(filesBase, fetch, current.signal);
       if (!disposed && request === current && !current.signal.aborted) {
-        consume(focus);
+        consume(result);
       }
       if (request === current) request = null;
     };

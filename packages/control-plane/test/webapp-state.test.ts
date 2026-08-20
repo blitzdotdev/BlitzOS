@@ -331,6 +331,38 @@ describe("server-side webApp state", () => {
     ])).status).toBe(400);
   });
 
+  // The path travels from the in-box agent (`blitz preview open --path`) to the
+  // focus marker to this document, and the browser renders it as
+  // `/preview/<port><path>` in an iframe. A URL normalizes before it is
+  // requested, so a stored `..` walks the iframe out of the `/preview/<port>/`
+  // prefix and onto another box surface — the proxy's own traversal check never
+  // sees the `..`. Refuse it here the same way a file tab's path is refused.
+  it("refuses a traversal segment in a preview deep-link", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const put = (path: unknown) => appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...workspaceDoc,
+        tabs: {
+          version: 1,
+          tabs: [{ id: 1, type: "preview", port: 3000, path }],
+          activeId: null,
+          nextId: 2,
+        },
+      }),
+    });
+
+    for (const path of ["/..", "/../workspace/", "/app/../../workspace/", "/a/../b"]) {
+      expect((await put(path)).status, path).toBe(400);
+    }
+    // A `..` inside a segment is an ordinary route and is still stored.
+    expect((await put("/a..b")).status).toBe(200);
+    expect((await put(`/${"x".repeat(4_095)}`)).status).toBe(200);
+  });
+
   it("deletes per-workspace state when the orphan sweep finishes destroy", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);

@@ -1,7 +1,12 @@
+import { MAX_PREVIEW_PATH_LENGTH } from "@blitzos/schema";
 import { describe, expect, it } from "vitest";
 import {
   decodeWorkspaceWebAppStateResponse,
+  defaultWorkspaceFiles,
   storedWorkspacePreference,
+  withPreviewTabPath,
+  workspaceWebAppState,
+  type WorkspaceTab,
 } from "../src/storage.js";
 import { ttydHandshake } from "../src/TtydTerminal.js";
 
@@ -140,5 +145,98 @@ describe("UI protocol and persistence object contracts", () => {
       .toEqual([{ id: 1, type: "preview", port: 3000 }]);
     expect(decodeTabs([{ id: 1, type: "preview", port: 3000, path: 42 }]))
       .toEqual([{ id: 1, type: "preview", port: 3000 }]);
+    // A `..` segment is dropped by both parsers. It has to be: the browser
+    // normalizes `/preview/<port>/app/../../workspace/` before the request
+    // leaves the tab, so a kept `..` walks the iframe out of the preview
+    // prefix and onto another box surface.
+    expect(decodeTabs([{ id: 1, type: "preview", port: 3000, path: "/app/../../workspace/" }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000 }]);
+    expect(decodeTabs([{ id: 1, type: "preview", port: 3000, path: "/.." }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000 }]);
+    // `..` inside a segment is an ordinary route and survives.
+    expect(decodeTabs([{ id: 1, type: "preview", port: 3000, path: "/a..b" }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000, path: "/a..b" }]);
+    // Over-long paths are dropped on the way in too.
+    expect(decodeTabs([
+      { id: 1, type: "preview", port: 3000, path: `/${"a".repeat(MAX_PREVIEW_PATH_LENGTH)}` },
+    ])).toEqual([{ id: 1, type: "preview", port: 3000 }]);
+  });
+
+  // The server bounds `tabs.tabs[].path` at 4096 and 400s the whole document
+  // when it is longer, and one rejected write takes every tab's layout down
+  // with it. Nothing upstream of the browser caps the path: it starts life as
+  // `blitz preview open --path` inside the box. So the outgoing document drops
+  // the route rather than losing persistence.
+  it("drops an unusable deep-link from the outgoing document, keeping the rest", () => {
+    const tabs = (entries: WorkspaceTab[]) => workspaceWebAppState(
+      "box-1",
+      "box-1",
+      "claude",
+      { version: 1, tabs: entries, activeId: 1, nextId: entries.length + 1 },
+      defaultWorkspaceFiles(),
+    ).tabs.tabs;
+
+    const longest = `/${"a".repeat(MAX_PREVIEW_PATH_LENGTH - 1)}`;
+    const tooLong = `/${"a".repeat(MAX_PREVIEW_PATH_LENGTH)}`;
+
+    expect(tabs([{ id: 1, type: "preview", port: 3000, path: longest }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000, path: longest }]);
+
+    // The over-long tab keeps its identity and its port; only the route goes,
+    // and every other tab in the document is untouched.
+    expect(tabs([
+      { id: 1, type: "preview", port: 3000, path: tooLong },
+      { id: 2, type: "preview", port: 5173, path: "/dashboard" },
+      { id: 3, type: "claude" },
+    ])).toEqual([
+      { id: 1, type: "preview", port: 3000 },
+      { id: 2, type: "preview", port: 5173, path: "/dashboard" },
+      { id: 3, type: "claude" },
+    ]);
+
+    // Same treatment for a traversal path that reached the tab some other way.
+    expect(tabs([{ id: 1, type: "preview", port: 3000, path: "/app/../../workspace/" }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000 }]);
+  });
+
+  // The in-box agent re-runs `blitz preview open` on every server start, so a
+  // second "open /dashboard" almost always lands on a port that already has a
+  // tab. Selecting that tab without applying the route ignored the request.
+  it("re-points an existing preview tab at a new deep-link", () => {
+    const tabs: WorkspaceTab[] = [
+      { id: 1, type: "claude" },
+      { id: 2, type: "preview", port: 3000 },
+      { id: 3, type: "preview", port: 5173, path: "/docs" },
+    ];
+
+    // A first deep-link onto a bare port tab.
+    expect(withPreviewTabPath(tabs, 2, "/dashboard")).toEqual([
+      { id: 1, type: "claude" },
+      { id: 2, type: "preview", port: 3000, path: "/dashboard" },
+      { id: 3, type: "preview", port: 5173, path: "/docs" },
+    ]);
+
+    // A different route replaces the old one.
+    expect(withPreviewTabPath(tabs, 3, "/docs/api")).toEqual([
+      { id: 1, type: "claude" },
+      { id: 2, type: "preview", port: 3000 },
+      { id: 3, type: "preview", port: 5173, path: "/docs/api" },
+    ]);
+
+    // A plain re-open clears the route back to the server root, and the tab
+    // keeps the bare shape rather than carrying `path: undefined`.
+    const cleared = withPreviewTabPath(tabs, 3, undefined);
+    expect(cleared).toEqual([
+      { id: 1, type: "claude" },
+      { id: 2, type: "preview", port: 3000 },
+      { id: 3, type: "preview", port: 5173 },
+    ]);
+    expect(Object.keys(cleared[2] ?? {})).toEqual(["id", "type", "port"]);
+
+    // No change, no churn: an unchanged route and a tab that is not a port
+    // preview both leave every entry identical.
+    expect(withPreviewTabPath(tabs, 3, "/docs")).toEqual(tabs);
+    expect(withPreviewTabPath(tabs, 1, "/dashboard")).toEqual(tabs);
+    expect(withPreviewTabPath(tabs, 99, "/dashboard")).toEqual(tabs);
   });
 });

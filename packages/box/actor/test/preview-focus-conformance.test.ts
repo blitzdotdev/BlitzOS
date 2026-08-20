@@ -23,10 +23,26 @@ interface Fixture {
   expected: { focus: FocusMarker | null };
 }
 
+interface ReservedPorts {
+  minPort: number;
+  maxPort: number;
+  maxPathLength: number;
+  reservedPorts: number[];
+}
+
 const blitzPath = fileURLToPath(new URL("../../rootfs/usr/local/bin/blitz", import.meta.url));
 const fixturesDirectory = fileURLToPath(
   new URL("../../../schema/fixtures/preview-focus/", import.meta.url),
 );
+const reservedPortsPath = fileURLToPath(
+  new URL("../../../schema/fixtures/preview-ports/reserved.json", import.meta.url),
+);
+
+function reservedPorts(): ReservedPorts {
+  // SAFETY: Trusted local test data authored to the ReservedPorts shape; the Go
+  // gateway test pins the identical file.
+  return JSON.parse(readFileSync(reservedPortsPath, "utf8")) as ReservedPorts;
+}
 
 function fixtureNames(): string[] {
   return readdirSync(fixturesDirectory)
@@ -71,10 +87,44 @@ describe("blitz preview open producer contract", () => {
     expect(fixtureNames()).toEqual([
       "absent.json",
       "bad-path.json",
+      "reserved-port-17445.json",
+      "reserved-port-7446.json",
       "reserved-port.json",
+      "traversal-path.json",
       "valid-defaults.json",
       "valid-with-path.json",
     ]);
+  });
+
+  it("refuses every port the shared reserved set names", () => {
+    const { minPort, maxPort, reservedPorts: reserved } = reservedPorts();
+    expect(reserved.length).toBeGreaterThan(0);
+    for (const port of reserved) {
+      const { status, focusPath } = runOpen([String(port)]);
+      expect(status, `reserved port ${String(port)}`).toBe(2);
+      expect(existsSync(focusPath), `reserved port ${String(port)}`).toBe(false);
+    }
+    // The ends of the usable range still open, so the set is a hole in a range
+    // rather than a narrower range.
+    for (const port of [minPort, maxPort]) {
+      const { status, stderr, focusPath } = runOpen([String(port)]);
+      expect(status, stderr).toBe(0);
+      expect(readMarker(focusPath).port).toBe(port);
+    }
+  });
+
+  it("refuses a path longer than the persisted document allows", () => {
+    const { maxPathLength } = reservedPorts();
+    const longest = `/${"a".repeat(maxPathLength - 1)}`;
+    const tooLong = `/${"a".repeat(maxPathLength)}`;
+
+    const kept = runOpen(["3000", "--path", longest]);
+    expect(kept.status, kept.stderr).toBe(0);
+    expect(readMarker(kept.focusPath).path).toBe(longest);
+
+    const refused = runOpen(["3000", "--path", tooLong]);
+    expect(refused.status).toBe(2);
+    expect(existsSync(refused.focusPath)).toBe(false);
   });
 
   it("emits the fixture marker shape for every valid fixture", () => {

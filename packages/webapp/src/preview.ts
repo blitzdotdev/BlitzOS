@@ -1,3 +1,4 @@
+import { isPreviewPath, isPreviewPort } from '@blitzos/schema';
 import type { WorkspaceTabs } from './storage';
 import {
   asJsonObject,
@@ -7,6 +8,11 @@ import {
   isString,
   type JsonValue,
 } from './type-guards';
+
+// The reserved-port set and the deep-link path rule are one shared definition
+// the Go gateway and the `blitz preview open` producer mirror; see
+// packages/schema/src/preview.ts.
+export { isPreviewPath, isPreviewPort };
 
 export const PORTS_POLL_INTERVAL_MS = 5_000;
 export const EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] = ['blitz.dev'];
@@ -63,13 +69,6 @@ export const initialPortsState: PortsState = {
   revision: 0,
 };
 
-export function isPreviewPort(port: number): boolean {
-  return Number.isInteger(port)
-    && port >= 1_024
-    && port <= 65_535
-    && (port < 7_443 || port > 7_446);
-}
-
 function parsedPorts(value: unknown): Array<{ port: number; process: string }> {
   if (!value || !hasObjectType(value)) return [];
   // SAFETY: The preceding check establishes a non-null object; only the optional ports field is read.
@@ -119,10 +118,12 @@ export function parsedPreviews(value: JsonValue): PreviewLink[] {
 }
 
 /** Parses the `GET /preview-focus` response body. Anything that is not a
- * version-1 object with a usable, non-reserved port and a rooted path — an old
- * box's 404 body, `{ focus: null }`, or a malformed marker — collapses to null.
- * Mirrors the Go gateway's parsePreviewFocus so the browser never trusts a
- * focus the reader would have rejected. */
+ * version-1 object with a usable, non-reserved port and a rooted,
+ * traversal-free path — an old box's 404 body, `{ focus: null }`, or a
+ * malformed marker — collapses to null. Mirrors the Go gateway's
+ * parsePreviewFocus so the browser never trusts a focus the reader would have
+ * rejected, and never builds a `/preview/<port><path>` URL that normalizes out
+ * of the preview prefix. */
 export function parsePreviewFocus(value: JsonValue): PreviewFocus | null {
   const object = asJsonObject(value);
   if (object === null) return null;
@@ -133,7 +134,7 @@ export function parsePreviewFocus(value: JsonValue): PreviewFocus | null {
     || !isNumber(focus.port)
     || !isPreviewPort(focus.port)
     || !isString(focus.path)
-    || !focus.path.startsWith('/')
+    || !isPreviewPath(focus.path)
     || !isString(focus.title)
     || !isNumber(focus.requestedAt)
     || !Number.isSafeInteger(focus.requestedAt)
@@ -223,22 +224,32 @@ export async function fetchWorkspacePreviews(
   }
 }
 
+/** "The box has no focus right now" and "we could not ask the box" are
+ * different answers, and only the first may be adopted as the never-replay
+ * baseline: adopting a baseline from a failed poll makes the next successful
+ * poll look like a brand-new focus and re-opens a stale marker. */
+export type PreviewFocusResult =
+  | { ok: true; focus: PreviewFocus | null }
+  | { ok: false };
+
 export async function fetchWorkspacePreviewFocus(
   filesBase: string,
   fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
-): Promise<PreviewFocus | null> {
+): Promise<PreviewFocusResult> {
   try {
     const response = await fetcher(previewFocusEndpointUrl(filesBase), {
       credentials: 'include',
       signal,
     });
-    if (!response.ok) return null;
+    // An old box 404s the route; that is a failure to read, not a report that
+    // no focus exists, so it never becomes a baseline either.
+    if (!response.ok) return { ok: false };
     // SAFETY: Response.json parses JSON text, whose values are representable by JsonValue.
     const value = await response.json() as JsonValue;
-    return parsePreviewFocus(value);
+    return { ok: true, focus: parsePreviewFocus(value) };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 

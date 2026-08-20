@@ -8,6 +8,7 @@ import {
   isString,
   readJson,
 } from "./http.js";
+import { isPreviewPath, MAX_PREVIEW_PATH_LENGTH } from "./preview.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 
@@ -138,9 +139,13 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     // (packages/webapp/src/storage.ts) accepts the same optional field; a
     // server that dropped it silently reset the tab to "/" on every reload.
     if (value.path === undefined) return { id, type, port };
-    const path = boundedString(value.path, `tabs.tabs[${index}].path`, 4_096);
-    if (!path.startsWith("/")) {
-      throw new HttpError(400, `tabs.tabs[${index}].path must start with /`);
+    const path = boundedString(value.path, `tabs.tabs[${index}].path`, MAX_PREVIEW_PATH_LENGTH);
+    // Rooted and traversal-free, exactly as the filePath rule above: the
+    // browser normalizes `/preview/<port>/a/../../workspace/` before the
+    // request leaves the tab, so a stored `..` walks the iframe out of the
+    // preview prefix onto another box surface.
+    if (!isPreviewPath(path)) {
+      throw new HttpError(400, `tabs.tabs[${index}].path must be a rooted path without ..`);
     }
     return { id, type, port, path };
   }

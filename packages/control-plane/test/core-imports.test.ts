@@ -46,6 +46,7 @@ const expected = [
   "index.ts",
   "janitors.ts",
   "oauth.ts",
+  "preview.ts",
   "principals.ts",
   "providers/cloudflare-tunnels.ts",
   "providers/hetzner.ts",
