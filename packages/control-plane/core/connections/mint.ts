@@ -239,7 +239,9 @@ async function mintOne(
 ): Promise<MintResult | null> {
   const { workspace, boxId, principal, connection, denied } = input;
   const now = Date.now();
-  const deny = async (reason: string, status: 403, message: string): Promise<null> => {
+  /** Both denials answer 403 and file a request: the box classifies by status,
+   * and the inbox is how a person turns either one into a yes. */
+  const deny = async (reason: string, message: string): Promise<null> => {
     if (denied === "skip") return null;
     await recordDenied(
       runtime,
@@ -259,14 +261,13 @@ async function mintOne(
       { boxId, userId: principal.id },
       now,
     );
-    throw new HttpError(status, message, requestId);
+    throw new HttpError(403, message, requestId);
   };
   if (!authorize(principal, workspace, connection, input.scopes)) {
     // FROZEN box-route error text (the box CLI classifies by status, but the
     // string predates the rename and stays byte-identical).
     return deny(
       "outside credential ceiling",
-      403,
       "credential mint exceeds the workspace manifest or integration allow-list",
     );
   }
@@ -302,7 +303,6 @@ async function mintOne(
       const excess = input.scopes.filter((scope) => !scopes.includes(scope));
       return deny(
         "outside owner consent",
-        403,
         `credential mint exceeds the scopes ${connection.name} was connected with: ${excess.join(", ")}`,
       );
     }
