@@ -1,0 +1,18 @@
+{
+  "input": {
+    "version": 1,
+    "port": 5173,
+    "path": "/dashboard",
+    "title": "Docs",
+    "requestedAt": 1787000001000
+  },
+  "expected": {
+    "focus": {
+      "version": 1,
+      "port": 5173,
+      "path": "/dashboard",
+      "title": "Docs",
+      "requestedAt": 1787000001000
+    }
+  }
+}

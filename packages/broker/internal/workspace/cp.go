@@ -27,6 +27,11 @@ const (
 	syncStateFile        = "sync-state.json"
 	syncLockFile         = ".lock"
 	freshnessMarginMS    = int64(60_000)
+	// The workspace's own variables share creds/env.d so the box has exactly
+	// one environment pipeline. The name sorts ahead of every integration file
+	// (blitz-creds.sh sources the glob in order), so a minted credential always
+	// wins a collision with a user-supplied variable of the same name.
+	workspaceEnvironmentEntry = "00-workspace.sh"
 )
 
 var (
@@ -103,7 +108,10 @@ func MintIntegration(ctx context.Context, stateDir, integration string, httpClie
 	return result, nil
 }
 
-func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
+// withCredentialsLock serializes every writer of creds/env.d. A credential
+// sync replaces the whole directory, so the workspace environment file has to
+// be written under the same lock or a concurrent sync would drop it.
+func withCredentialsLock(stateDir string, run func(credsDir string) error) error {
 	credsDir := filepath.Join(stateDir, credentialsDirectory)
 	if err := os.MkdirAll(credsDir, 0o700); err != nil {
 		return err
@@ -117,16 +125,21 @@ func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
 		return err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	return run(credsDir)
+}
 
-	data, err := mintRequest(ctx, stateDir, []byte("{}"), httpClient)
-	if err != nil {
-		return err
-	}
-	results, err := decodeMintResults(data)
-	if err != nil {
-		return err
-	}
-	return applySync(stateDir, results, time.Now().UnixMilli())
+func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
+	return withCredentialsLock(stateDir, func(string) error {
+		data, err := mintRequest(ctx, stateDir, []byte("{}"), httpClient)
+		if err != nil {
+			return err
+		}
+		results, err := decodeMintResults(data)
+		if err != nil {
+			return err
+		}
+		return applySync(stateDir, results, time.Now().UnixMilli())
+	})
 }
 
 func GitHelper(ctx context.Context, stateDir, action string, input io.Reader, output io.Writer, httpClient *http.Client) error {
@@ -368,6 +381,11 @@ func applySync(stateDir string, results []MintResult, nowMS int64) error {
 				return err
 			}
 		}
+	}
+	// The rebuild discards whatever env.d held, so the workspace variables are
+	// re-emitted from their stored state rather than carried over.
+	if err := stageWorkspaceEnvironment(stateDir, stage); err != nil {
+		return err
 	}
 	if err := replaceEnvironmentDirectory(filepath.Join(credsDir, environmentDirectory), stage); err != nil {
 		return err

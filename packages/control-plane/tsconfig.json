@@ -7,5 +7,5 @@
     "rootDir": ".",
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["core/**/*.ts", "core/**/*.js", "src/**/*.ts", "teenybase.ts", "worker-configuration.d.ts"]
+  "include": ["core/**/*.ts", "core/**/*.js", "src/**/*.ts", "teenybase.ts", "worker-configuration.d.ts", "modules.d.ts"]
 }

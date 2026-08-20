@@ -155,6 +155,14 @@ func (c *Client) PostWorkspaceCredentials(ctx context.Context, body []byte) (*ht
 	}, body)
 }
 
+// GetWorkspaceEnvironment fetches this box's immutable workspace environment.
+// The caller owns and must close the returned response body.
+func (c *Client) GetWorkspaceEnvironment(ctx context.Context) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodGet, func(string) string {
+		return "/workspaces/self/environment"
+	}, nil)
+}
+
 func (c *Client) FetchFeed(ctx context.Context, etag string) ([]byte, string, bool, error) {
 	credential, err := store.LoadCredential(c.stateDir)
 	if err != nil {

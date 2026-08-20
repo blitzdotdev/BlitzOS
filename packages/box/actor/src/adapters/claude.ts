@@ -5,7 +5,6 @@ import {
   type PermissionResult,
   type SDKMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { PREVIEW_GUIDANCE } from "../preview-guidance.js";
 import { hasObjectType, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
@@ -144,11 +143,19 @@ export class ClaudeAdapter implements AgentAdapter {
       abortController,
       canUseTool,
       cwd: input.cwd,
-      env: claudeEnv(input.token),
+      env: claudeEnv(input.token, input.environment),
       includePartialMessages: true,
       pathToClaudeCodeExecutable: CLAUDE_BINARY,
       permissionMode: claudePermissionMode(input.config.permission),
-      systemPrompt: { type: "preset", preset: "claude_code", append: PREVIEW_GUIDANCE },
+      // The agent's rules live in ~/.claude/CLAUDE.md (installed each boot by
+      // blitz-init-state), not in an appended system prompt. Load all
+      // filesystem setting sources so that file is read. This is the SDK's own
+      // documented default (settingSources omitted === ["user","project",
+      // "local"]); passing it explicitly forces the `--setting-sources` flag on
+      // the spawned CLI instead of relying on its implicit default, and
+      // "project" is what enables CLAUDE.md discovery.
+      settingSources: ["user", "project", "local"],
+      systemPrompt: { type: "preset", preset: "claude_code" },
     };
     // Assigned rather than written into the literal as `resume: … ?? undefined`:
     // a fresh session must not carry the key at all, and this is the same

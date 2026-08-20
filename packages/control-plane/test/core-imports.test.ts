@@ -7,6 +7,7 @@ const sources = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"],
 });
 
 const expected = [
+  "agent-rules.ts",
   "app.ts",
   "blobs.ts",
   "bootstrap.ts",
@@ -24,12 +25,15 @@ const expected = [
   "credentials/types.ts",
   "crypto.ts",
   "db.ts",
+  "environment.ts",
   "files/access.ts",
   "files/attachments.ts",
   "files/folders.ts",
   "files/keys.ts",
   "files/objects.ts",
+  "files/readiness.ts",
   "files/routes.ts",
+  "files/schedule.ts",
   "files/sync.ts",
   "http.ts",
   "identity/google.ts",
@@ -42,6 +46,7 @@ const expected = [
   "index.ts",
   "janitors.ts",
   "oauth.ts",
+  "preview.ts",
   "principals.ts",
   "providers/cloudflare-tunnels.ts",
   "providers/hetzner.ts",
@@ -86,6 +91,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(61);
+    expect(expected).toHaveLength(66);
   });
 });

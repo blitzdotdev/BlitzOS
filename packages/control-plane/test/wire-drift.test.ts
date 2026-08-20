@@ -33,6 +33,47 @@ const volume: SharedShape<wire.Volume, schema.Volume> = {
   attachedTo: "workspace",
 };
 
+const environment: SharedShape<
+  wire.WorkspaceEnvironment,
+  schema.WorkspaceEnvironment
+> = {
+  env: { API_ORIGIN: "https://api.example" },
+  startupScript: "npm install\n",
+};
+
+const environmentResponse: SharedShape<
+  wire.WorkspaceEnvironmentResponse,
+  schema.WorkspaceEnvironmentResponse
+> = { ...environment, filesReady: true };
+
+const agentRulesResponse: SharedShape<
+  wire.AgentRulesResponse,
+  schema.AgentRulesResponse
+> = { version: "292a5824fd833548", content: "# Blitz box — agent rules\n" };
+
+const agentRule: SharedShape<wire.AgentRuleView, schema.AgentRuleView> = {
+  id: "rule",
+  name: "House rules",
+  content: "# House rules\n",
+  updatedAt: 4,
+  builtIn: false,
+};
+
+const agentRules: SharedShape<
+  wire.ListAgentRulesResponse,
+  schema.ListAgentRulesResponse
+> = { rules: [agentRule] };
+
+const putAgentRuleRequest: SharedShape<
+  wire.PutAgentRuleRequest,
+  schema.PutAgentRuleRequest
+> = { name: agentRule.name, content: agentRule.content };
+
+const putAgentRuleResponse: SharedShape<
+  wire.PutAgentRuleResponse,
+  schema.PutAgentRuleResponse
+> = { rule: agentRule };
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -53,6 +94,8 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   role: "owner",
   orgShareRole: "editor",
   owner: { name: "Owner", avatarUrl: null },
+  environment,
+  agentRuleId: agentRule.id,
 };
 
 const workspaceTemplate: SharedShape<
@@ -64,6 +107,8 @@ const workspaceTemplate: SharedShape<
   machineTypeId: "mv-2c2g@lab",
   createdAt: 1,
   createdBy: { name: "Owner", avatarUrl: null },
+  environment,
+  agentRuleId: agentRule.id,
   folders: [{ id: "folder", name: "Shared", role: "editor" }],
 };
 
@@ -79,6 +124,8 @@ const createWorkspaceTemplate: SharedShape<
   name: "web analysis",
   machineTypeId: "mv-2c2g@lab",
   folderIds: ["folder"],
+  environment,
+  agentRuleId: agentRule.id,
 };
 
 const createdWorkspaceTemplate: SharedShape<
@@ -107,6 +154,8 @@ const createWorkspaceRequest: SharedShape<
       github: { scopes: ["contents:read"] },
     },
   },
+  environment,
+  agentRuleId: agentRule.id,
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -227,6 +276,13 @@ const fullFieldValues = [
   machineType,
   machineTypeFailure,
   volume,
+  environment,
+  environmentResponse,
+  agentRulesResponse,
+  agentRule,
+  agentRules,
+  putAgentRuleRequest,
+  putAgentRuleResponse,
   workspace,
   workspaceTemplate,
   workspaceTemplates,
@@ -261,6 +317,13 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
+    expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
+    expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
+    expectTypeOf<wire.AgentRulesResponse>().toEqualTypeOf<schema.AgentRulesResponse>();
+    expectTypeOf<wire.AgentRuleView>().toEqualTypeOf<schema.AgentRuleView>();
+    expectTypeOf<wire.ListAgentRulesResponse>().toEqualTypeOf<schema.ListAgentRulesResponse>();
+    expectTypeOf<wire.PutAgentRuleRequest>().toEqualTypeOf<schema.PutAgentRuleRequest>();
+    expectTypeOf<wire.PutAgentRuleResponse>().toEqualTypeOf<schema.PutAgentRuleResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.WorkspaceTemplateView>().toEqualTypeOf<schema.WorkspaceTemplateView>();
     expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();

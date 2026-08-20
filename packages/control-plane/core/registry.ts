@@ -77,7 +77,7 @@ interface BrokerRow {
  * DEVIATION from the production original, which slices the id's own hex
  * characters and only falls back to a hash. `broker_members` now carries the
  * same `UNIQUE(broker_box_id, unix_name)` production hangs its collision
- * backstop on (migrations/0018_broker_members.sql), so the old reason given
+ * backstop on (migrations/0020_broker_members.sql), so the old reason given
  * here — that blitz-core had no table to hang the constraint on — is gone. The
  * digest stays for what catching a collision COSTS: the constraint is a
  * detector, not a repair. It surfaces as a failed INSERT in `POST

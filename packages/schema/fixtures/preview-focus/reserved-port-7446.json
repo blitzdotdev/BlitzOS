@@ -1,0 +1,12 @@
+{
+  "input": {
+    "version": 1,
+    "port": 7446,
+    "path": "/",
+    "title": "port 7446",
+    "requestedAt": 1787000005000
+  },
+  "expected": {
+    "focus": null
+  }
+}

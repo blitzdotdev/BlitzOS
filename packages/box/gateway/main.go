@@ -40,17 +40,47 @@ const (
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
 	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
 	previewsPath           = "/var/lib/blitz/previews.json"
+	previewFocusPath       = "/var/lib/blitz/preview-focus.json"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
 )
 
+// Ports the box runs its own services on. A preview may never claim one, so
+// this set both hides them from the discovered-port list and rejects a focus
+// marker naming them. It mirrors packages/schema/src/preview.ts and the
+// `blitz preview open` producer; all three are pinned to
+// packages/schema/fixtures/preview-ports/reserved.json.
 var excludedPorts = map[int]struct{}{
 	22:    {}, // sshd
 	7443:  {}, // ttyd
 	7444:  {}, // ACP actor
 	7445:  {}, // this gateway
+	7446:  {}, // public dufs file server
 	17445: {}, // private dufs upstream
+}
+
+const (
+	minPreviewPort      = 1024
+	maxPreviewPort      = 65535
+	maxPreviewPathBytes = 4096
+)
+
+// isPreviewPath mirrors isPreviewPath in packages/schema/src/preview.ts. The
+// traversal rule is the load-bearing one: the browser normalizes
+// `/preview/<port>/a/../../workspace/` before the request leaves the tab, so a
+// `..` this reader passes on walks the iframe out of the `/preview/<port>/`
+// prefix onto another box surface.
+func isPreviewPath(path string) bool {
+	if !strings.HasPrefix(path, "/") || len(path) > maxPreviewPathBytes {
+		return false
+	}
+	for _, segment := range strings.Split(path, "/") {
+		if segment == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 type portInfo struct {
@@ -74,6 +104,7 @@ type gateway struct {
 	workspaceIDPath        string
 	tunnelTokenPath        string
 	previewsPath           string
+	previewFocusPath       string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
@@ -147,6 +178,7 @@ func main() {
 		workspaceIDPath:        workspaceIDPath,
 		tunnelTokenPath:        tunnelTokenPath,
 		previewsPath:           previewsPath,
+		previewFocusPath:       previewFocusPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -216,6 +248,11 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	if request.URL.Path == "/previews" {
 		removeWebAppTokenHeader(request.Header)
 		g.servePreviews(response, request)
+		return
+	}
+	if request.URL.Path == "/preview-focus" {
+		removeWebAppTokenHeader(request.Header)
+		g.servePreviewFocus(response, request)
 		return
 	}
 	if request.URL.Path == "/terminal/ws" {
@@ -426,6 +463,87 @@ func (g *gateway) servePreviews(response http.ResponseWriter, request *http.Requ
 		Previews []previewLink `json:"previews"`
 	}{Previews: previews}); err != nil {
 		log.Printf("preview response failed: %v", err)
+	}
+}
+
+type previewFocus struct {
+	Version     int    `json:"version"`
+	Port        int    `json:"port"`
+	Path        string `json:"path"`
+	Title       string `json:"title"`
+	RequestedAt int64  `json:"requestedAt"`
+}
+
+// parsePreviewFocus validates the marker `blitz preview open` writes. Anything
+// that is not a version-1 object with a usable, non-reserved port and a rooted,
+// traversal-free path is treated as no focus at all (nil), the same way the
+// browser falls back to null. The marker is written by the in-box agent's own
+// uid, so the CLI's checks are convenience, not a boundary: this reader repeats
+// every one of them. Unknown extra fields are tolerated for forward
+// compatibility, matching parsePreviewLinks.
+func parsePreviewFocus(data []byte) *previewFocus {
+	var fields struct {
+		Version     *int    `json:"version"`
+		Port        *int    `json:"port"`
+		Path        *string `json:"path"`
+		Title       *string `json:"title"`
+		RequestedAt *int64  `json:"requestedAt"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil
+	}
+	if fields.Version == nil || *fields.Version != 1 {
+		return nil
+	}
+	if fields.Port == nil || *fields.Port < minPreviewPort || *fields.Port > maxPreviewPort {
+		return nil
+	}
+	if _, reserved := excludedPorts[*fields.Port]; reserved {
+		return nil
+	}
+	if fields.Path == nil || !isPreviewPath(*fields.Path) {
+		return nil
+	}
+	if fields.Title == nil {
+		return nil
+	}
+	if fields.RequestedAt == nil || *fields.RequestedAt < 0 || *fields.RequestedAt > 9007199254740991 {
+		return nil
+	}
+	return &previewFocus{
+		Version:     *fields.Version,
+		Port:        *fields.Port,
+		Path:        *fields.Path,
+		Title:       *fields.Title,
+		RequestedAt: *fields.RequestedAt,
+	}
+}
+
+func (g *gateway) servePreviewFocus(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var focus *previewFocus
+	data, err := os.ReadFile(g.previewFocusPath)
+	if err == nil && len(bytes.TrimSpace(data)) > 0 {
+		focus = parsePreviewFocus(data)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("preview focus read failed: %v", err)
+	}
+
+	response.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(response).Encode(struct {
+		Focus *previewFocus `json:"focus"`
+	}{Focus: focus}); err != nil {
+		log.Printf("preview focus response failed: %v", err)
 	}
 }
 

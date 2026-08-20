@@ -1,0 +1,21 @@
+#!/command/with-contenv bash
+set -euo pipefail
+
+state_dir=$BLITZ_STATE_DIR
+
+# Needs both the control-plane origin and the box credential that enroll/register
+# wrote. Without them there is nothing to fetch with; the baked rules that
+# blitz-init-state installed stay in place.
+if [ ! -s "$state_dir/origin" ] || [ ! -s "$state_dir/box-credential.json" ]; then
+  echo "rules: skipped (no origin or box credential)"
+  exit 0
+fi
+
+# Runs after register, so the box access token is freshly issued. blitz-rules
+# keeps the baked fallback and exits 0 on any failure, but guard here as well so
+# a rules refresh can never fail the boot transition.
+/command/s6-setuidgid blitz /usr/bin/env \
+  HOME="$state_dir/home" BLITZ_STATE_DIR="$state_dir" \
+  /usr/local/bin/blitz-rules sync \
+  || echo "rules: sync did not complete, keeping baked rules"
+exit 0

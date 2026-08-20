@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { claudeTurnOutput } from "../src/adapters/claude.js";
 import { codexThreadRequestParams } from "../src/adapters/codex.js";
 import { defaultAgentConfig } from "../src/agent-config.js";
-import { PREVIEW_GUIDANCE } from "../src/preview-guidance.js";
 
 // Claude's `resume` used to have a helper and a block of its own here. It does
 // not need one: the SDK reads that option as `if (resume) push('--resume=…')`,
@@ -28,17 +27,17 @@ describe("adapter object omission contracts", () => {
   it("preserves Codex threadId omission before later request fields", () => {
     const config = defaultAgentConfig("codex");
     const absent = codexThreadRequestParams({ resumeId: null, cwd: "/workspace", config });
-    expect(Object.keys(absent)).toEqual(["cwd", "approvalPolicy", "sandbox", "developerInstructions"]);
+    expect(Object.keys(absent)).toEqual(["cwd", "approvalPolicy", "sandbox"]);
     expect("threadId" in absent).toBe(false);
     expect(JSON.stringify(absent)).toBe(
-      `{"cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":${JSON.stringify(PREVIEW_GUIDANCE)}}`,
+      `{"cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write"}`,
     );
 
     const present = codexThreadRequestParams({ resumeId: "thread-1", cwd: "/workspace", config });
-    expect(Object.keys(present)).toEqual(["threadId", "cwd", "approvalPolicy", "sandbox", "developerInstructions"]);
+    expect(Object.keys(present)).toEqual(["threadId", "cwd", "approvalPolicy", "sandbox"]);
     expect("threadId" in present).toBe(true);
     expect(JSON.stringify(present)).toBe(
-      `{"threadId":"thread-1","cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":${JSON.stringify(PREVIEW_GUIDANCE)}}`,
+      `{"threadId":"thread-1","cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write"}`,
     );
   });
 });

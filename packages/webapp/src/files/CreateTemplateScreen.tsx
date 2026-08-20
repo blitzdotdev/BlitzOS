@@ -1,9 +1,20 @@
-import type { MachineType, WorkspaceTemplateView } from '@blitzos/schema';
+import type {
+  CreateWorkspaceTemplateRequest,
+  MachineType,
+  WorkspaceEnvironment,
+  WorkspaceTemplateView,
+} from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { FolderObjectView, FolderView } from '../file-library-api';
+import { AgentRulesPicker } from '../AgentRulesPicker';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
 import { MachineCatalogGrid } from '../MachineCatalogGrid';
+import {
+  EMPTY_WORKSPACE_ENVIRONMENT,
+  EnvironmentEditor,
+  populatedEnvironment,
+} from '../EnvironmentEditor';
 import { DriveAvatar } from './DriveAvatar';
 import { CloseGlyph } from './DriveIcons';
 import { DocDuoIcon, FolderDuoIcon } from '../files-icons';
@@ -63,6 +74,13 @@ export function CreateTemplateScreen({
   const [dropHint, setDropHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
+  // Editing loads the stored environment first, then re-keys the editor onto
+  // it. Null means an edit whose template has not arrived yet.
+  const [loadedEnvironment, setLoadedEnvironment] = useState<WorkspaceEnvironment | null>(
+    editTemplateId === undefined ? EMPTY_WORKSPACE_ENVIRONMENT : null,
+  );
+  const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -188,6 +206,11 @@ export function CreateTemplateScreen({
       // Keep every attached folder id, including ones this editor cannot
       // read — the server preserves them and only checks new additions.
       setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
+      const stored = existing.environment ?? EMPTY_WORKSPACE_ENVIRONMENT;
+      setLoadedEnvironment(stored);
+      // Seed the submitted value too: saving without opening Advanced has to
+      // resubmit what is stored, not wipe it.
+      setEnvironment(stored);
     }).catch((caught: Error) => setError(caught.message));
     return () => { mounted = false; };
   }, [client, editTemplateId]);
@@ -208,11 +231,19 @@ export function CreateTemplateScreen({
           await client.setFolderOrgRole(folder.id, 'viewer');
         }
       }
-      const request = {
+      const request: CreateWorkspaceTemplateRequest = {
         name: trimmed,
         machineTypeId,
         folderIds: [...attachedIds],
       };
+      // The environment rides on both create and edit — the PUT handler
+      // replaces it, so an edit that cleared it has to send the empty one
+      // rather than omit the field. The agent rule rides only on create: the
+      // PUT handler leaves the stored value untouched.
+      const configured = populatedEnvironment(environment);
+      if (configured !== undefined) request.environment = configured;
+      else if (editTemplateId !== undefined) request.environment = EMPTY_WORKSPACE_ENVIRONMENT;
+      if (editTemplateId === undefined && agentRuleId !== null) request.agentRuleId = agentRuleId;
       const { template } = editTemplateId === undefined
         ? await client.createWorkspaceTemplate(request)
         : await client.updateWorkspaceTemplate(editTemplateId, request);
@@ -480,6 +511,26 @@ export function CreateTemplateScreen({
               </span>
             </label>
           </section>
+
+          {loadedEnvironment !== null && (
+            <details className="blueprint-advanced">
+              <summary>Advanced</summary>
+              <div className="blueprint-advanced__content">
+                <EnvironmentEditor
+                  key={editTemplateId ?? 'new'}
+                  initial={loadedEnvironment}
+                  onChange={setEnvironment}
+                />
+                {editTemplateId === undefined && (
+                  <AgentRulesPicker
+                    client={client}
+                    value={agentRuleId}
+                    onChange={setAgentRuleId}
+                  />
+                )}
+              </div>
+            </details>
+          )}
         </div>
 
         <footer className="create-workspace-actions">

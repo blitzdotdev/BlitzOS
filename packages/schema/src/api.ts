@@ -1,5 +1,6 @@
 import type { MachineType } from "./machine.js";
 import type { CredentialManifest } from "./credential.js";
+import type { WorkspaceEnvironment } from "./environment.js";
 import type { Volume } from "./volume.js";
 import type { RetryAction, WorkspaceView } from "./workspace.js";
 
@@ -27,6 +28,10 @@ export interface CreateWorkspaceRequest {
   /** User-data is readable inside the VM; never put secrets here. */
   userData?: string;
   manifest?: CredentialManifest;
+  environment?: WorkspaceEnvironment;
+  /** Overrides the template's rule; null (or absent) falls back to the
+   * template's rule and then the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceResponse {

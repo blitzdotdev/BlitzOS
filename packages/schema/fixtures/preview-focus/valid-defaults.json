@@ -1,0 +1,18 @@
+{
+  "input": {
+    "version": 1,
+    "port": 3000,
+    "path": "/",
+    "title": "port 3000",
+    "requestedAt": 1787000000000
+  },
+  "expected": {
+    "focus": {
+      "version": 1,
+      "port": 3000,
+      "path": "/",
+      "title": "port 3000",
+      "requestedAt": 1787000000000
+    }
+  }
+}

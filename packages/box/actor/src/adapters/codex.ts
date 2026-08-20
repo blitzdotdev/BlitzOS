@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import { PREVIEW_GUIDANCE } from "../preview-guidance.js";
 import { hasObjectType, isNumber, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
@@ -12,7 +11,6 @@ export type ThreadRequestParams = {
   cwd?: string;
   approvalPolicy?: "on-request" | "never";
   sandbox?: "workspace-write";
-  developerInstructions?: string;
 };
 
 export function codexThreadRequestParams(
@@ -23,7 +21,8 @@ export function codexThreadRequestParams(
   params.cwd = input.cwd;
   params.approvalPolicy = input.config.permission === "never" ? "never" : "on-request";
   params.sandbox = "workspace-write";
-  params.developerInstructions = PREVIEW_GUIDANCE;
+  // Codex reads its rules from ~/.codex/AGENTS.md (installed each boot by
+  // blitz-init-state); no per-turn developer instructions are injected here.
   return params;
 }
 
@@ -44,10 +43,11 @@ class AppServer {
     private readonly notify: (method: string, params: JsonObject) => Promise<void>,
     private readonly serverRequest: (method: string, params: JsonObject) => Promise<unknown>,
     configArguments: string[] = [],
+    environment: NodeJS.ProcessEnv = process.env,
   ) {
     this.child = spawn("codex", [...configArguments, "app-server", "--stdio"], {
       cwd: "/workspace",
-      env: process.env,
+      env: environment,
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stderr.resume();
@@ -182,6 +182,7 @@ export class CodexAdapter implements AgentAdapter {
         return { decision };
       },
       codexConfigArguments(input.config),
+      input.environment,
     );
     try {
       await server.request("initialize", {

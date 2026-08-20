@@ -1,3 +1,5 @@
+import type { WorkspaceEnvironment } from "./environment.js";
+
 export const PHASES = [
   "creating",
   "ready",
@@ -47,6 +49,8 @@ export interface WorkspaceView {
     name: string;
     avatarUrl: string | null;
   };
+  environment: WorkspaceEnvironment | null;
+  agentRuleId: string | null;
 }
 
 export interface WorkspaceTemplateView {
@@ -55,6 +59,8 @@ export interface WorkspaceTemplateView {
   machineTypeId: string;
   createdAt: number;
   createdBy: { name: string; avatarUrl: string | null };
+  environment: WorkspaceEnvironment | null;
+  agentRuleId: string | null;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: "owner" | "admin" | "editor" | "viewer" | null }[];
 }
@@ -67,6 +73,10 @@ export interface CreateWorkspaceTemplateRequest {
   name: string;
   machineTypeId: string;
   folderIds: string[];
+  environment?: WorkspaceEnvironment;
+  /** An org agent rule to hand every workspace made from this template; null
+   * (or absent) leaves it on the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceTemplateResponse {

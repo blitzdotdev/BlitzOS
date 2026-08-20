@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
+import { ModalOverlay } from './ModalOverlay';
 
 type ConfirmationDialogProps = {
   title: string;
@@ -21,30 +22,13 @@ export function ConfirmationDialog({
   const descriptionId = useId();
   const cancelButton = useRef<HTMLButtonElement>(null);
 
+  // Focus lands on the safe choice; ModalOverlay restores the opener's focus.
   useEffect(() => {
-    const previouslyFocused = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
     cancelButton.current?.focus();
-    return () => previouslyFocused?.focus();
   }, []);
 
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel();
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onCancel]);
-
   return (
-    <div
-      className="webapp-confirmation-screen"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-    >
+    <ModalOverlay onDismiss={onCancel}>
       <section
         className="webapp-confirmation-dialog"
         role="dialog"
@@ -76,6 +60,6 @@ export function ConfirmationDialog({
           </button>
         </footer>
       </section>
-    </div>
+    </ModalOverlay>
   );
 }

@@ -18,6 +18,8 @@ const workspace: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
 };
 
 describe("standalone endpoint resolver", () => {

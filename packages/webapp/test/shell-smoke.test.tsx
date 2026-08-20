@@ -118,6 +118,8 @@ const creating: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
 };
 
 const running: WorkspaceView = {
@@ -140,6 +142,8 @@ const running: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
 };
 
 const runningTwo: WorkspaceView = {
@@ -197,6 +201,9 @@ function client(): ControlPlaneClient {
     detachFolder: vi.fn(async () => undefined),
     renameFolder: vi.fn(async () => undefined),
   setFolderOrgRole: vi.fn(async () => undefined),
+  listAgentRules: vi.fn(async () => ({ rules: [] })),
+  putAgentRule: vi.fn(async () => { throw new Error("unused"); }),
+  deleteAgentRule: vi.fn(async () => undefined),
   listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
   createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
     updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),

@@ -177,6 +177,13 @@ class SessionActor {
         stopReason = "cancelled";
         return { stopReason };
       }
+      // Workspace variables are optional configuration: this call degrades to
+      // the actor's own environment rather than failing the prompt.
+      const environment = await this.credentials.environment();
+      if (abort.signal.aborted) {
+        stopReason = "cancelled";
+        return { stopReason };
+      }
       try {
         const output = await this.adapter.runTurn({
           sessionId: this.id,
@@ -186,6 +193,7 @@ class SessionActor {
           resumeId: this.resumeId,
           signal: abort.signal,
           token,
+          environment,
           config: this.config,
           emit: (update) => this.emit(update, identity),
           requestPermission: (request) => this.requestPermission(request, identity),
@@ -350,10 +358,16 @@ export class ActorService {
     private readonly credentials: CredentialSource,
     private readonly adapters: AdapterFactory,
     private readonly defaultProvider: Provider,
+    // Fired at session start so a running box can refresh its managed agent
+    // rules without a reboot. Best-effort and non-blocking: createRulesRefresher
+    // swallows its own failures, so this call needs no guard here. Defaults to a
+    // no-op so tests and non-box callers need not wire it.
+    private readonly onSessionStart: () => void = () => undefined,
   ) {}
 
   public async newSession(cwd: string, subscriber: Subscriber): Promise<string> {
     requireEditor(subscriber);
+    this.onSessionStart();
     const id = randomUUID();
     this.journal.createSession({
       id,
@@ -371,6 +385,7 @@ export class ActorService {
   public async loadSession(id: string, cwd: string, subscriber: Subscriber): Promise<void> {
     const stored = this.journal.session(id);
     if (!stored || stored.cwd !== cwd) throw new Error("unknown session");
+    this.onSessionStart();
     await this.restore(id).attach(subscriber, true);
   }
 

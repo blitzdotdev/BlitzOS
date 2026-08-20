@@ -470,6 +470,7 @@ export async function resetDatabase(): Promise<void> {
     "device_authorizations",
     "webapp_state",
     "workspaces",
+    "agent_rules",
     "sessions",
     "invites",
     "memberships",
