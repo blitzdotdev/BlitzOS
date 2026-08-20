@@ -8,8 +8,14 @@ import type {
   WorkspaceView,
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
+import {
+  createExecutionContext,
+  createScheduledController,
+  waitOnExecutionContext,
+} from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runProviderCanary } from "../core/index.js";
+import worker from "../src/worker.js";
 import { CANARY_GRANT_LABEL } from "../core/connections/canary.js";
 import { BOX_HOME } from "../core/connections/catalog/surfaces.js";
 import {
@@ -420,6 +426,35 @@ describe("connections: per-user grants", () => {
     });
   });
 
+  /** storeGrant's whole premise is that the replaced grant is dead. An
+   * inject-mode lease carries the credential itself, so a lease left active
+   * against a re-pasted key is a box holding a value the vendor already
+   * invalidated — and a lease panel saying it is fine. */
+  it("kills the leases the replaced grant backed when a key is re-pasted", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    const before = await env.DB.prepare(
+      "SELECT id, grant_id FROM credential_leases WHERE workspace_id = ?1",
+    ).bind(workspace.id).first<{ id: string; grant_id: string | null }>();
+    expect(before?.grant_id).not.toBeNull();
+
+    // Re-pasting a rotated key replaces the grant rather than editing it.
+    expect((await connectLinear(app, cookie, { token: "lin_api_rotated-key" })).status).toBe(204);
+
+    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
+    expect(rows.map(({ id, state }) => [id, state])).toEqual([[before?.id, "revoked"]]);
+    const stored = await env.DB.prepare(
+      "SELECT token_hash FROM credential_leases WHERE id = ?1",
+    ).bind(before?.id).first<{ token_hash: string | null }>();
+    expect(stored?.token_hash).toBeNull();
+  });
+
   it("revokes leases with the grant and empties the surfaces on the next sync", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
@@ -695,6 +730,24 @@ describe("connections: connect flow and canary", () => {
     // And the mint after it is an ordinary fresh-token mint, not a second 409.
     expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
     expect(grantTypes).toEqual(["refresh_token"]);
+  });
+
+  /** principals.ts guards decodeURIComponent because a cookie is attacker-
+   * controlled text; the local copy this route carried did not, so one bare
+   * "%" threw a URIError out of a route with no handler for it. */
+  it("answers 400, not 500, for a malformed connect state cookie", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
+    testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
+
+    const response = await appRequest(app, "/connect/linear/callback?code=abc&state=xyz", {
+      headers: { Cookie: `${cookie}; blitz_connect_oauth=%` },
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("connect state"),
+    });
   });
 
   it("probes a canary grant, records health, and serves it to the panel", async () => {

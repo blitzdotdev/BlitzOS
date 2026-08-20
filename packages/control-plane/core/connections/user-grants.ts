@@ -181,6 +181,7 @@ export async function storeGrant(
 ): Promise<GrantRow> {
   const label = grantSecretLabel(input.userId, input.provider);
   const id = crypto.randomUUID();
+  const replaced = await grantFor(db, input.userId, input.provider);
   const queries: Query[] = [
     {
       q: `UPDATE user_oauth_grants
@@ -188,6 +189,11 @@ export async function storeGrant(
           WHERE user_id = ?2 AND provider = ?3 AND revoked_at IS NULL`,
       v: [now, input.userId, input.provider],
     },
+    // Re-pasting a rotated key must kill the boxes holding the old one. An
+    // inject-mode lease carries the credential itself, so without this it
+    // stays active — and reads as active in the lease UI — for its full hour
+    // with a value the vendor has already invalidated.
+    ...(replaced === null ? [] : [revokeGrantLeasesQuery(replaced.id)]),
     {
       q: `INSERT INTO user_oauth_grants
           (id, user_id, provider, manifest_id, kind, label, config,

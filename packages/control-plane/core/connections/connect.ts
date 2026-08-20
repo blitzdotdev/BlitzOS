@@ -5,6 +5,7 @@ import {
   createConnectOAuthState,
   verifyConnectOAuthStateCookie,
 } from "../oauth-state.js";
+import { cookieValue } from "../principals.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { providerManifest } from "./catalog/index.js";
@@ -50,18 +51,6 @@ function configuredProvider(
     );
   }
   return { manifest, clientId, clientSecret };
-}
-
-function cookieValue(request: Request, name: string): string | null {
-  const header = request.headers.get("cookie");
-  if (header === null) return null;
-  for (const part of header.split(";")) {
-    const separator = part.indexOf("=");
-    if (separator < 0) continue;
-    if (part.slice(0, separator).trim() !== name) continue;
-    return decodeURIComponent(part.slice(separator + 1).trim());
-  }
-  return null;
 }
 
 function returnUrl(origin: string, status: string, provider: string): string {
