@@ -17,6 +17,7 @@ export type TurnInput = {
   resumeId: string | null;
   signal: AbortSignal;
   token: string | null;
+  environment: NodeJS.ProcessEnv;
   config: AgentConfig;
   emit(update: SessionUpdate): Promise<void>;
   requestPermission(request: RequestPermissionRequest): Promise<RequestPermissionResponse>;

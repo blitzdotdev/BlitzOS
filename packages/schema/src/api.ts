@@ -1,5 +1,6 @@
 import type { MachineType } from "./machine.js";
 import type { CredentialManifest } from "./credential.js";
+import type { WorkspaceEnvironment } from "./environment.js";
 import type { Volume } from "./volume.js";
 import type { RetryAction, WorkspaceView } from "./workspace.js";
 
@@ -27,6 +28,7 @@ export interface CreateWorkspaceRequest {
   /** User-data is readable inside the VM; never put secrets here. */
   userData?: string;
   manifest?: CredentialManifest;
+  environment?: WorkspaceEnvironment;
 }
 
 export interface CreateWorkspaceResponse {

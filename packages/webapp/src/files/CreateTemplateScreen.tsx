@@ -1,9 +1,19 @@
-import type { MachineType, WorkspaceTemplateView } from '@blitzos/schema';
+import type {
+  CreateWorkspaceTemplateRequest,
+  MachineType,
+  WorkspaceEnvironment,
+  WorkspaceTemplateView,
+} from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { FolderObjectView, FolderView } from '../file-library-api';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
 import { MachineCatalogGrid } from '../MachineCatalogGrid';
+import {
+  EMPTY_WORKSPACE_ENVIRONMENT,
+  EnvironmentEditor,
+  populatedEnvironment,
+} from '../EnvironmentEditor';
 import { DriveAvatar } from './DriveAvatar';
 import { CloseGlyph } from './DriveIcons';
 import { DocDuoIcon, FolderDuoIcon } from '../files-icons';
@@ -63,6 +73,12 @@ export function CreateTemplateScreen({
   const [dropHint, setDropHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
+  // Editing loads the stored environment first, then re-keys the editor onto
+  // it. Null means an edit whose template has not arrived yet.
+  const [loadedEnvironment, setLoadedEnvironment] = useState<WorkspaceEnvironment | null>(
+    editTemplateId === undefined ? EMPTY_WORKSPACE_ENVIRONMENT : null,
+  );
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -188,6 +204,11 @@ export function CreateTemplateScreen({
       // Keep every attached folder id, including ones this editor cannot
       // read — the server preserves them and only checks new additions.
       setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
+      const stored = existing.environment ?? EMPTY_WORKSPACE_ENVIRONMENT;
+      setLoadedEnvironment(stored);
+      // Seed the submitted value too: saving without opening Advanced has to
+      // resubmit what is stored, not wipe it.
+      setEnvironment(stored);
     }).catch((caught: Error) => setError(caught.message));
     return () => { mounted = false; };
   }, [client, editTemplateId]);
@@ -208,11 +229,16 @@ export function CreateTemplateScreen({
           await client.setFolderOrgRole(folder.id, 'viewer');
         }
       }
-      const request = {
+      const request: CreateWorkspaceTemplateRequest = {
         name: trimmed,
         machineTypeId,
         folderIds: [...attachedIds],
       };
+      // Both routes take the full create shape, so an edit that cleared the
+      // environment has to send the empty one rather than omit the field.
+      const configured = populatedEnvironment(environment);
+      if (configured !== undefined) request.environment = configured;
+      else if (editTemplateId !== undefined) request.environment = EMPTY_WORKSPACE_ENVIRONMENT;
       const { template } = editTemplateId === undefined
         ? await client.createWorkspaceTemplate(request)
         : await client.updateWorkspaceTemplate(editTemplateId, request);
@@ -480,6 +506,14 @@ export function CreateTemplateScreen({
               </span>
             </label>
           </section>
+
+          {loadedEnvironment !== null && (
+            <EnvironmentEditor
+              key={editTemplateId ?? 'new'}
+              initial={loadedEnvironment}
+              onChange={setEnvironment}
+            />
+          )}
         </div>
 
         <footer className="create-workspace-actions">

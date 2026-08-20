@@ -166,6 +166,13 @@ class SessionActor {
         stopReason = "cancelled";
         return { stopReason };
       }
+      // Workspace variables are optional configuration: this call degrades to
+      // the actor's own environment rather than failing the prompt.
+      const environment = await this.credentials.environment();
+      if (abort.signal.aborted) {
+        stopReason = "cancelled";
+        return { stopReason };
+      }
       try {
         const output = await this.adapter.runTurn({
           sessionId: this.id,
@@ -175,6 +182,7 @@ class SessionActor {
           resumeId: this.resumeId,
           signal: abort.signal,
           token,
+          environment,
           config: this.config,
           emit: (update) => this.emit(update, identity),
           requestPermission: (request) => this.requestPermission(request, identity),

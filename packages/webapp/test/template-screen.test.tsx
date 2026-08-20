@@ -73,6 +73,7 @@ function stub(extra?: (url: URL, init?: RequestInit) => Response | null) {
         machineTypeId: 'cx23@fsn1',
         createdAt: 2,
         createdBy: { name: 'Min Song', avatarUrl: null },
+        environment: null,
         folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
       } }, { status: 201 });
     }
@@ -117,6 +118,7 @@ describe('create template screen', () => {
 
     // One merged list, Google-Drive-style rows with owner attribution.
     expect(view.container.textContent).not.toContain('Shared with me');
+    expect(view.container.querySelector<HTMLDetailsElement>('.blueprint-advanced')?.open).toBe(false);
     expect(row(view, 'datasets').textContent).toContain('me');
     expect(row(view, 'ada-notes').textContent).toContain('Ada Park');
     expect(attachButton(view).disabled).toBe(true);
@@ -234,6 +236,9 @@ describe('create template screen', () => {
     ));
     // The unreadable folder id survives the round trip untouched.
     expect(JSON.parse(String(put?.[1]?.body ?? '{}'))).toEqual({
+      // The edit form always submits the full create shape, environment
+      // included, so clearing it in the editor actually clears it.
+      environment: { env: {}, startupScript: null },
       name: 'starter v2',
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-gone'],
@@ -241,6 +246,117 @@ describe('create template screen', () => {
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();
   });
+
+  it('prefills a stored environment on edit and round-trips it through PUT', async () => {
+    const stored = { env: { PROJECT_MODE: 'analysis' }, startupScript: './setup.sh\n' };
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [{
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          environment: stored,
+          folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
+        }] });
+      }
+      if (url.pathname === '/workspace-templates/template-1' && init?.method === 'PUT') {
+        return Response.json({ template: {
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          environment: stored,
+          folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
+        } });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        editTemplateId="template-1"
+        onCreated={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    // The editor is no longer hidden on edit, and it shows what is stored.
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable key 1"]',
+    )?.value).toBe('PROJECT_MODE');
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable value 1"]',
+    )?.value).toBe('analysis');
+    expect(view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Startup script"]',
+    )?.value).toBe('./setup.sh\n');
+
+    // Saving without touching Advanced resubmits it rather than wiping it.
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    const put = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates/template-1' && init?.method === 'PUT'
+    ));
+    expect(JSON.parse(String(put?.[1]?.body ?? '{}')).environment).toEqual(stored);
+    await view.unmount();
+  });
+
+  it('posts a populated advanced environment', async () => {
+    const fetcher = stub();
+    const { view } = await screenWith(fetcher);
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    const key = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable key 1"]',
+    )!;
+    const value = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable value 1"]',
+    )!;
+    const script = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Startup script"]',
+    )!;
+    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (inputSetter === undefined || textareaSetter === undefined) throw new Error('input setter unavailable');
+    await act(async () => {
+      inputSetter.call(name, 'starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      inputSetter.call(key, 'PROJECT_MODE');
+      key.dispatchEvent(new Event('input', { bubbles: true }));
+      inputSetter.call(value, 'analysis');
+      value.dispatchEvent(new Event('input', { bubbles: true }));
+      textareaSetter.call(script, './setup.sh\n');
+      script.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    const post = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
+    ));
+    expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
+      name: 'starter',
+      machineTypeId: 'cx23@fsn1',
+      folderIds: [],
+      environment: {
+        env: { PROJECT_MODE: 'analysis' },
+        startupScript: './setup.sh\n',
+      },
+    });
+    await view.unmount();
+  });
+
 
   it('enters a folder on double click, walks back up, and keeps the attach target', async () => {
     const { view } = await screenWith();

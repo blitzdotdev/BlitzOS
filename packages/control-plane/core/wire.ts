@@ -59,6 +59,15 @@ export interface CredentialManifest {
   integrations: Record<string, JsonObject>;
 }
 
+export interface WorkspaceEnvironment {
+  env: Record<string, string>;
+  startupScript: string | null;
+}
+
+export interface WorkspaceEnvironmentResponse extends WorkspaceEnvironment {
+  filesReady: boolean;
+}
+
 export const PHASES = [
   "creating",
   "ready",
@@ -130,6 +139,7 @@ export interface WorkspaceView {
     name: string;
     avatarUrl: string | null;
   };
+  environment: WorkspaceEnvironment | null;
 }
 
 export interface WorkspaceTemplateView {
@@ -138,6 +148,7 @@ export interface WorkspaceTemplateView {
   machineTypeId: string;
   createdAt: number;
   createdBy: { name: string; avatarUrl: string | null };
+  environment: WorkspaceEnvironment | null;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: FolderRole | null }[];
 }
@@ -150,6 +161,7 @@ export interface CreateWorkspaceTemplateRequest {
   name: string;
   machineTypeId: string;
   folderIds: string[];
+  environment?: WorkspaceEnvironment;
 }
 
 export interface CreateWorkspaceTemplateResponse {
@@ -173,6 +185,7 @@ export interface CreateWorkspaceRequest {
   volumeId?: string;
   userData?: string;
   manifest?: CredentialManifest;
+  environment?: WorkspaceEnvironment;
 }
 
 export interface CreateWorkspaceResponse {

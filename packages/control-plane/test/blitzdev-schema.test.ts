@@ -88,6 +88,13 @@ describe("blitz.dev managed schema", () => {
           name: "owner_membership_id",
           foreignKey: { table: "memberships", column: "id" },
         }),
+        expect.objectContaining({ name: "environment", type: "text" }),
+        expect.objectContaining({
+          name: "files_ready",
+          type: "bool",
+          default: { l: 0 },
+          check: "files_ready IN (0, 1)",
+        }),
       ]),
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "users")).toMatchObject({
@@ -144,6 +151,7 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_templates")).toMatchObject({
       fields: expect.arrayContaining([
         expect.objectContaining({ name: "machine_type_id", notNull: true }),
+        expect.objectContaining({ name: "environment", type: "text" }),
         expect.objectContaining({
           name: "created_by_membership_id",
           foreignKey: { table: "memberships", column: "id" },

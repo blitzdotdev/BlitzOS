@@ -5,6 +5,12 @@ import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
 import {
+  parseWorkspaceEnvironment,
+  workspaceEnvironmentFromJson,
+  storedWorkspaceEnvironment,
+  WORKSPACE_REQUEST_MAX_BYTES,
+} from "./environment.js";
+import {
   HttpError,
   isRecord,
   isString,
@@ -129,6 +135,9 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     const manifest = parseManifest(value.manifest);
     // SAFETY: This private parser receives JSON.parse output, so all retained ceiling values are JSON values; parseManifest checks each ceiling object and present scopes array.
     result.manifest = manifest as typeof manifest & CreateWorkspaceRequest["manifest"];
+  }
+  if (value.environment !== undefined) {
+    result.environment = parseWorkspaceEnvironment(value.environment);
   }
   return result;
 }
@@ -325,7 +334,7 @@ export function addWorkspaceRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
-    const input = parseCreateWorkspace(await readJson(context.req.raw));
+    const input = parseCreateWorkspace(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     const runtime = runtimeFactory(context);
     const template = input.templateId === undefined
       ? null
@@ -336,6 +345,8 @@ export function addWorkspaceRoutes(
     if (machineTypeId === undefined) {
       throw new HttpError(400, "machineTypeId is required");
     }
+    const environment = input.environment
+      ?? workspaceEnvironmentFromJson(template?.environment ?? null);
     const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
     const providerCapabilities = vmProvider.capabilities();
     if (input.volumeId !== undefined && !providerCapabilities.volumes) {
@@ -361,8 +372,8 @@ export function addWorkspaceRoutes(
       q: `INSERT INTO workspaces
           (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
            phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
-           created_at, updated_at)
-          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?11
+           environment, created_at, updated_at)
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?12
           WHERE (
             SELECT COUNT(*) FROM workspaces
             WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
@@ -381,6 +392,7 @@ export function addWorkspaceRoutes(
         await hashSecret(capability),
         input.manifest === undefined ? null : manifestJson(input.manifest),
         input.orgShareRole ?? null,
+        storedWorkspaceEnvironment(environment ?? undefined),
         now,
       ],
     });
@@ -492,7 +504,8 @@ export function addWorkspaceRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
-    const result = await rows<WorkspaceRow>(runtimeFactory(context).db, {
+    const runtime = runtimeFactory(context);
+    const result = await rows<WorkspaceRow>(runtime.db, {
       q: `SELECT w.*, grant.role AS grant_role,
                  owner_user.name AS owner_name,
                  owner_user.avatar_url AS owner_avatar_url
@@ -506,7 +519,8 @@ export function addWorkspaceRoutes(
       v: [principal.membershipId, principal.orgId],
     });
     return context.json<PollResponse>({
-      workspaces: result.map((row) => workspaceView(row, workspaceRole(principal, row))),
+      workspaces: result.map((row) =>
+        workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
     });
   });
 

@@ -24,6 +24,7 @@ describe("webApp box surface", () => {
     role: "owner",
     orgShareRole: null,
     owner: { name: "Owner", avatarUrl: null },
+    environment: null,
   } as const;
 
   function boxPath(url: string): { port: 7444 | 7445; path: string } {

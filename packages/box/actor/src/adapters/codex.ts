@@ -44,10 +44,11 @@ class AppServer {
     private readonly notify: (method: string, params: JsonObject) => Promise<void>,
     private readonly serverRequest: (method: string, params: JsonObject) => Promise<unknown>,
     configArguments: string[] = [],
+    environment: NodeJS.ProcessEnv = process.env,
   ) {
     this.child = spawn("codex", [...configArguments, "app-server", "--stdio"], {
       cwd: "/workspace",
-      env: process.env,
+      env: environment,
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stderr.resume();
@@ -182,6 +183,7 @@ export class CodexAdapter implements AgentAdapter {
         return { decision };
       },
       codexConfigArguments(input.config),
+      input.environment,
     );
     try {
       await server.request("initialize", {

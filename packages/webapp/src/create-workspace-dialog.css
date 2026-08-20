@@ -294,6 +294,65 @@
   font: 10.5px/1.5 var(--font-ui);
 }
 
+.blueprint-advanced {
+  border-top: 1px solid var(--rule);
+  padding: 18px 0;
+}
+
+.blueprint-advanced summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.blueprint-advanced__content {
+  display: grid;
+  gap: 14px;
+  padding-top: 18px;
+}
+
+.blueprint-environment-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.blueprint-environment-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(180px, 1.3fr) auto;
+  gap: 8px;
+}
+
+.blueprint-environment-row input,
+.blueprint-startup-script textarea {
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 10px 12px;
+}
+
+.blueprint-environment-row input:first-child,
+.blueprint-startup-script textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.blueprint-environment-row button,
+.blueprint-environment-add {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.blueprint-environment-add {
+  justify-self: start;
+  padding: 2px 0;
+}
+
+.blueprint-startup-script textarea {
+  min-height: 150px;
+  resize: vertical;
+}
+
 .blueprint-cancel {
   min-height: 38px;
   margin-right: auto;

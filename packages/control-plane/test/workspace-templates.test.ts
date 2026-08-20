@@ -1,7 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { WorkspaceTemplateView, WorkspaceView } from "@blitzos/schema";
-import { hashSecret, randomToken } from "../core/crypto.js";
 import {
   appRequest,
   harness,
@@ -11,7 +10,7 @@ import {
   userSession,
 } from "./helpers.js";
 
-function json(body: Record<string, string | string[] | null>) {
+function json(body: object) {
   return {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -110,13 +109,52 @@ describe("workspace templates", () => {
       body: JSON.stringify({ orgRole: "viewer" }),
     })).status).toBe(204);
 
+    const templateEnvironment = {
+      env: { API_ORIGIN: "https://api.example" },
+      startupScript: "npm install\n",
+    };
     const created = await appRequest(app, "/workspace-templates", {
-      ...json({ name: "web analysis", machineTypeId: "small", folderIds: [orgFolder, privateFolder] }),
+      ...json({
+        name: "web analysis",
+        machineTypeId: "small",
+        folderIds: [orgFolder, privateFolder],
+        environment: templateEnvironment,
+      }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     });
     expect(created.status).toBe(201);
     const template = (await created.json<{ template: WorkspaceTemplateView }>()).template;
     expect(template.machineTypeId).toBe("small");
+    expect(template.environment).toEqual(templateEnvironment);
+
+    // PUT takes the full create shape, so it replaces the environment too.
+    const edited = { env: { API_ORIGIN: "https://api.example/v2" }, startupScript: null };
+    const updated = await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({
+        name: "web analysis",
+        machineTypeId: "small",
+        folderIds: [orgFolder, privateFolder],
+        environment: edited,
+      }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(updated.status).toBe(200);
+    expect((await updated.json<{ template: WorkspaceTemplateView }>()).template.environment)
+      .toEqual(edited);
+    expect(await env.DB.prepare("SELECT environment FROM workspace_templates WHERE id = ?1")
+      .bind(template.id).first<string>("environment")).toBe(JSON.stringify(edited));
+    // Restore the created environment for the workspace assertions below.
+    expect((await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({
+        name: "web analysis",
+        machineTypeId: "small",
+        folderIds: [orgFolder, privateFolder],
+        environment: templateEnvironment,
+      }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
     expect(template.folders.map(({ role }) => role)).toEqual(["owner", "owner"]);
 
     const memberList = await appRequest(app, "/workspace-templates", {
@@ -139,12 +177,19 @@ describe("workspace templates", () => {
     expect(workspace.machineTypeId).toBe("small");
     expect(workspace.orgShareRole).toBe("editor");
     expect(workspace.name).toBe("web analysis");
+    expect(workspace.environment).toEqual(templateEnvironment);
     const sibling = await appRequest(app, "/workspaces", {
-      ...json({ templateId: template.id }),
+      ...json({
+        templateId: template.id,
+        environment: { env: { OVERRIDE: "yes" }, startupScript: null },
+      }),
       headers: { Cookie: member.cookie, "Content-Type": "application/json" },
     });
     await expect(sibling.json()).resolves.toMatchObject({
-      workspace: { name: "web analysis-2" },
+      workspace: {
+        name: "web analysis-2",
+        environment: { env: { OVERRIDE: "yes" }, startupScript: null },
+      },
     });
     const named = await appRequest(app, "/workspaces", {
       ...json({ templateId: template.id, name: "my own name" }),
@@ -194,6 +239,15 @@ describe("workspace templates", () => {
       ...json({ name: "nope", machineTypeId: "small", folderIds: [privateFolder] }),
       headers: { Cookie: member.cookie, "Content-Type": "application/json" },
     })).status).toBe(403);
+    expect((await appRequest(app, "/workspace-templates", {
+      ...json({
+        name: "bad environment",
+        machineTypeId: "small",
+        folderIds: [],
+        environment: { env: { "NOT-VALID": "x" }, startupScript: null },
+      }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(400);
     expect((await appRequest(app, "/workspaces", {
       ...json({ name: "no-machine" }),
       headers: { Cookie: owner, "Content-Type": "application/json" },

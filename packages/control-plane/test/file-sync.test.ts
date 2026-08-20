@@ -66,6 +66,9 @@ function davTreeResponse(
 
 class WebDavProviders extends FakeProviders {
   readonly files = new Map<string, GuestFile>();
+  /** Folder names whose guest is unreachable, standing in for a tunnel that
+   * has not finished connecting. */
+  readonly unreachableFolders = new Set<string>();
   readonly transfers: string[] = [];
   // A fresh guest has only /workspace; dufs-compliant MKCOL rejects missing
   // intermediates, so the fake enforces the same 409 to pin the chain logic.
@@ -83,6 +86,11 @@ class WebDavProviders extends FakeProviders {
     path: string,
     request: Request,
   ): Promise<Response | null> {
+    for (const name of this.unreachableFolders) {
+      if (path.startsWith(`/workspace/shared/${encodeURIComponent(name)}/`)) {
+        throw new Error("tunnel is still connecting");
+      }
+    }
     if (request.method === "PROPFIND") {
       if (this.files.size === 0 && !this.collections.has(path)) {
         return new Response("not found", { status: 404 });
@@ -289,8 +297,14 @@ describe("control-plane folder sync", () => {
       body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
     });
     expect(ready.status).toBe(200);
+    expect(await env.DB.prepare(
+      "SELECT files_ready FROM workspaces WHERE id = ?1",
+    ).bind(workspace.id).first<number>("files_ready")).toBe(0);
     await scheduledSyncsSettled();
     expect(providers.files.get("note.txt")?.body).toBe("remote");
+    expect(await env.DB.prepare(
+      "SELECT files_ready FROM workspaces WHERE id = ?1",
+    ).bind(workspace.id).first<number>("files_ready")).toBe(1);
   });
 
   it("materializes a folder onto an already-ready workspace right when it is attached", async () => {
@@ -439,5 +453,101 @@ describe("control-plane folder sync", () => {
     const stored = await env.BOX_IMAGES.get(`org/personal/${folderId}/index.html`);
     expect(stored).not.toBeNull();
     expect(await stored?.text()).toContain("</html>");
+  });
+
+  // files_ready releases the box's one-shot startup script against /workspace.
+  // Setting it while files are missing runs the script against an empty tree
+  // and the `.startup-done` marker means it never gets a second chance.
+  describe("files_ready", () => {
+    const filesReady = async (workspaceId: string) => env.DB.prepare(
+      "SELECT files_ready FROM workspaces WHERE id = ?1",
+    ).bind(workspaceId).first<number>("files_ready");
+
+    async function readyWorkspaceWithFolders(
+      providers: WebDavProviders,
+      names: string[],
+    ): Promise<{ workspaceId: string; folderIds: string[] }> {
+      const app = appWithProviders(providers, providers);
+      const cookie = await operatorSession(app);
+      const workspace = await createWorkspace(app, cookie);
+      await env.DB.prepare("UPDATE workspaces SET phase = 'ready' WHERE id = ?1")
+        .bind(workspace.id).run();
+      const folderIds: string[] = [];
+      for (const name of names) {
+        const created = await appRequest(app, "/folders", {
+          method: "POST",
+          headers: { Cookie: cookie, "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        const folderId = (await created.json<{ folder: { id: string } }>()).folder.id;
+        await env.BOX_IMAGES.put(`org/personal/${folderId}/note.txt`, "remote", {
+          customMetadata: { mtime: "1000", "edited-by": "Operator" },
+        });
+        expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
+          method: "POST",
+          headers: { Cookie: cookie, "Content-Type": "application/json" },
+          body: JSON.stringify({ folderId }),
+        })).status).toBe(201);
+        folderIds.push(folderId);
+      }
+      await scheduledSyncsSettled();
+      await env.DB.prepare("UPDATE workspaces SET files_ready = 0 WHERE id = ?1")
+        .bind(workspace.id).run();
+      return { workspaceId: workspace.id, folderIds };
+    }
+
+    it("stays 0 when every attachment failed to sync", async () => {
+      const providers = new WebDavProviders();
+      providers.unreachableFolders.add("Notes");
+      const { workspaceId } = await readyWorkspaceWithFolders(providers, ["Notes"]);
+      const runtime = testRuntime(providers);
+
+      // No retry delays: the in-request retries are what a slow tunnel exhausts.
+      const result = await runReadyWorkspaceFileSync(runtime, workspaceId, []);
+      expect(result.attachments).toBe(0);
+      expect(await filesReady(workspaceId)).toBe(0);
+    });
+
+    it("stays 0 while one of several attachments is still missing", async () => {
+      const providers = new WebDavProviders();
+      providers.unreachableFolders.add("Slow");
+      const { workspaceId } = await readyWorkspaceWithFolders(providers, ["Quick", "Slow"]);
+      const runtime = testRuntime(providers);
+
+      expect(await runReadyWorkspaceFileSync(runtime, workspaceId, []))
+        .toMatchObject({ attachments: 1 });
+      expect(await filesReady(workspaceId)).toBe(0);
+
+      providers.unreachableFolders.clear();
+      await runFileSyncSweep(runtime);
+      expect(await filesReady(workspaceId)).toBe(1);
+    });
+
+    it("converges from the sweep when the phone-home pass was lost", async () => {
+      const providers = new WebDavProviders();
+      const { workspaceId } = await readyWorkspaceWithFolders(providers, ["Notes"]);
+      const runtime = testRuntime(providers);
+
+      // The fire-and-forget pass never ran: the flag is still 0 and the files
+      // are on the guest only because the sweep put them there.
+      expect(await filesReady(workspaceId)).toBe(0);
+      await runFileSyncSweep(runtime);
+      expect(await filesReady(workspaceId)).toBe(1);
+    });
+
+    it("converges a ready workspace that has no attachments at all", async () => {
+      const providers = new WebDavProviders();
+      const app = appWithProviders(providers, providers);
+      const cookie = await operatorSession(app);
+      const workspace = await createWorkspace(app, cookie);
+      // Rows that predate the column read as 0, and boxes created without any
+      // folder never appear in a sync pass.
+      await env.DB.prepare(
+        "UPDATE workspaces SET phase = 'ready', files_ready = 0 WHERE id = ?1",
+      ).bind(workspace.id).run();
+
+      await runFileSyncSweep(testRuntime(providers));
+      expect(await filesReady(workspace.id)).toBe(1);
+    });
   });
 });

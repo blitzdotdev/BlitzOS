@@ -90,6 +90,7 @@ const creating: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
 };
 
 const running: WorkspaceView = {
@@ -112,6 +113,7 @@ const running: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
 };
 
 const runningTwo: WorkspaceView = {
