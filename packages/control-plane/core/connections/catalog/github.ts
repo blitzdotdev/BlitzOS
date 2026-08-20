@@ -98,14 +98,6 @@ export const githubManifest = {
       { name: "GITHUB_PERSONAL_ACCESS_TOKEN", fill: "token" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
-    mcp: {
-      name: "github",
-      transport: "http",
-      url: "https://api.githubcopilot.com/mcp/",
-      command: null,
-      args: [],
-      envFrom: ["GITHUB_PERSONAL_ACCESS_TOKEN"],
-    },
   },
   probe: {
     request: (input) => ({

@@ -104,14 +104,6 @@ export const linearManifest = {
       { name: "LINEAR_API_URL", fill: "proxy-url" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
-    mcp: {
-      name: "linear",
-      transport: "http",
-      url: "https://mcp.linear.app/mcp",
-      command: null,
-      args: [],
-      envFrom: ["LINEAR_API_KEY"],
-    },
   },
   probe: {
     request: (input) => ({

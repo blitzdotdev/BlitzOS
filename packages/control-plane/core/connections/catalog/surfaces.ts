@@ -11,10 +11,6 @@ import type {
  * catalog's home-relative surface paths are resolved against this constant. */
 export const BOX_HOME = "/var/lib/blitz/home";
 
-/** Phase B reads this path; Phase A only renders the entry into the skill so
- * an agent can wire the server itself. Named here so both phases agree. */
-export const BOX_MCP_PATH = "/var/lib/blitz/connections/mcp.json";
-
 const SKILL_MODE = 0o600;
 
 function envSurfaces(
@@ -38,20 +34,6 @@ function baseUrlFor(input: SurfaceInput, manifest: ProviderManifest): string {
 
 export function skillPath(manifest: ProviderManifest, connection: string): string {
   return `${BOX_HOME}/${manifest.surfaces.skill.path.replace("<provider>", connection)}`;
-}
-
-/** Escaped by hand: the file is a JSON document the box writes verbatim, and
- * core may not pull a serializer dependency for three fields. */
-export function renderMcpEntry(
-  manifest: ProviderManifest,
-  input: SurfaceInput,
-): string {
-  const server = manifest.surfaces.mcp;
-  const entry =
-    server.transport === "http"
-      ? { type: "http", url: server.url, headers: { Authorization: `${manifest.tokenHeader.prefix}${input.token}` } }
-      : { type: "stdio", command: server.command, args: [...server.args], env: Object.fromEntries(server.envFrom.map((name) => [name, `\${${name}}`])) };
-  return JSON.stringify({ mcpServers: { [server.name]: entry } }, null, 2);
 }
 
 /** Everything a lease delivers beyond the raw credential, compiled into the

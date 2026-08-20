@@ -113,14 +113,6 @@ export const googleWorkspaceManifest = {
       { name: "GOOGLE_API_BASE_URL", fill: "proxy-url" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
-    mcp: {
-      name: "google-drive",
-      transport: "http",
-      url: "https://drivemcp.googleapis.com/",
-      command: null,
-      args: [],
-      envFrom: ["GOOGLE_OAUTH_TOKEN"],
-    },
   },
   probe: {
     request: (input) => ({

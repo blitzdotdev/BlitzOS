@@ -82,21 +82,9 @@ export interface SkillRenderInput {
   tokenHeader: TokenHeader;
 }
 
-/** Phase B reads this out of the rendered mcp.json; Phase A only renders it. */
-export interface ProviderMcpSurface {
-  name: string;
-  transport: "http" | "stdio";
-  url: string | null;
-  command: string | null;
-  args: readonly string[];
-  /** Environment names the server reads, matched against the env surfaces. */
-  envFrom: readonly string[];
-}
-
 export interface ProviderSurfaces {
   env: readonly ProviderEnvSurface[];
   skill: ProviderSkillSurface;
-  mcp: ProviderMcpSurface;
 }
 
 export interface ProbeInput {

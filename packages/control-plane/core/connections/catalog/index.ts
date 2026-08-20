@@ -52,7 +52,10 @@ export function catalogView(
     oauthConfigured: configured,
     personalTokenLabel: manifest.personalToken?.label ?? null,
     personalTokenHelp: manifest.personalToken?.help ?? null,
-    needsVendorConfig: manifest.auth === null,
+    // Identity, not shape: every other call site asks the same question by id,
+    // and "has no authorize endpoint" would answer yes for the next pasted-key
+    // provider that knows its own vendor perfectly well.
+    needsVendorConfig: manifest.id === GENERIC_MANIFEST_ID,
     environmentNames: manifest.surfaces.env.map((surface) => surface.name),
     scopes: scopeViews(manifest),
   };

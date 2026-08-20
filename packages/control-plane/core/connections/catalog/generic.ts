@@ -60,14 +60,6 @@ export const genericManifest = {
       { name: "SERVICE_BASE_URL", fill: "proxy-url" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
-    mcp: {
-      name: "generic",
-      transport: "stdio",
-      url: null,
-      command: null,
-      args: [],
-      envFrom: ["SERVICE_API_KEY"],
-    },
   },
   probe: {
     request: (input) => ({
