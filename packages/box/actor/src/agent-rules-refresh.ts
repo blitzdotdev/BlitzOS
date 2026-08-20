@@ -11,10 +11,6 @@ import { spawn } from "node:child_process";
 
 const REFRESH_TTL_MS = 5 * 60 * 1000;
 
-export interface RulesRefreshClock {
-  now(): number;
-}
-
 function detachedSync(): void {
   const child = spawn("blitz-rules", ["sync"], { stdio: "ignore", detached: true });
   // A missing binary or spawn error surfaces asynchronously; swallow it so the
@@ -23,25 +19,25 @@ function detachedSync(): void {
   child.unref();
 }
 
-const systemClock: RulesRefreshClock = { now: () => Date.now() };
-
-export class AgentRulesRefresher {
-  private lastAttempt: number | null = null;
-
-  public constructor(
-    private readonly run: () => void = detachedSync,
-    private readonly clock: RulesRefreshClock = systemClock,
-    private readonly ttlMs: number = REFRESH_TTL_MS,
-  ) {}
-
-  public maybeRefresh(): void {
-    const now = this.clock.now();
-    if (this.lastAttempt !== null && now - this.lastAttempt < this.ttlMs) return;
-    this.lastAttempt = now;
+/** Returns the "a session started" callback the actor service calls. The two
+ * optional arguments are test seams; production passes neither. The returned
+ * function never throws, so callers need no guard of their own. */
+export function createRulesRefresher(
+  run: () => void = detachedSync,
+  now: () => number = Date.now,
+  ttlMs: number = REFRESH_TTL_MS,
+): () => void {
+  let lastAttempt: number | null = null;
+  return () => {
+    const attemptedAt = now();
+    if (lastAttempt !== null && attemptedAt - lastAttempt < ttlMs) return;
+    // The attempt counts against the TTL whether or not it works, so a box
+    // whose spawn keeps failing does not spin on every session.
+    lastAttempt = attemptedAt;
     try {
-      this.run();
+      run();
     } catch {
       // Never let a synchronous spawn failure disturb the caller.
     }
-  }
+  };
 }

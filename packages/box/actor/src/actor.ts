@@ -329,14 +329,15 @@ export class ActorService {
     private readonly adapters: AdapterFactory,
     private readonly defaultProvider: Provider,
     // Fired at session start so a running box can refresh its managed agent
-    // rules without a reboot. Best-effort and non-blocking; defaults to a no-op
-    // so tests and non-box callers need not wire it.
+    // rules without a reboot. Best-effort and non-blocking: createRulesRefresher
+    // swallows its own failures, so this call needs no guard here. Defaults to a
+    // no-op so tests and non-box callers need not wire it.
     private readonly onSessionStart: () => void = () => undefined,
   ) {}
 
   public async newSession(cwd: string, subscriber: Subscriber): Promise<string> {
     requireEditor(subscriber);
-    this.refreshAgentRules();
+    this.onSessionStart();
     const id = randomUUID();
     this.journal.createSession({
       id,
@@ -354,16 +355,8 @@ export class ActorService {
   public async loadSession(id: string, cwd: string, subscriber: Subscriber): Promise<void> {
     const stored = this.journal.session(id);
     if (!stored || stored.cwd !== cwd) throw new Error("unknown session");
-    this.refreshAgentRules();
+    this.onSessionStart();
     await this.restore(id).attach(subscriber, true);
-  }
-
-  private refreshAgentRules(): void {
-    try {
-      this.onSessionStart();
-    } catch {
-      // The rules refresh is best-effort; a failure must not block a session.
-    }
   }
 
   public listSessions(): ActorSessionSummary[] {
