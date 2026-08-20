@@ -10,13 +10,13 @@ export type Placement =
 /** FROZEN box wire: the Go broker baked into the shipped box image decodes
  * POST /workspaces/self/credentials with DisallowUnknownFields, so the
  * `integration` key (and mode/placements/expiresAt) must keep these exact
- * names even though the product noun is now "connection". */
+ * names even though the product noun is now "connection". Nothing else may
+ * appear here: an extra key fails the box's decode and aborts the whole sync. */
 export interface MintResult {
   integration: string;
   mode: "inject" | "proxy";
   placements: Placement[];
   expiresAt: number;
-  grantedScopes?: string[];
 }
 
 export type LeaseState = "active" | "revoked" | "expired";

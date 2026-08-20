@@ -266,7 +266,10 @@ async function mintOne(
     ? await legacyRootMint(runtime, connection, request)
     : await ownerGrantMint(runtime, workspace, connection, request, scopes);
   if (minted === null) throw new Error("owner grant vanished mid-mint");
-  const { tokenHash = null, ...result } = minted;
+  // Everything a minter adds beyond the frozen four keys is stripped here: the
+  // shipped box decodes this body with DisallowUnknownFields, so one extra key
+  // fails the decode and the whole credential sync aborts.
+  const { tokenHash = null, grantedScopes, ...result } = minted;
   await createLease(runtime.db, {
     id: leaseId,
     workspaceId: workspace.id,
@@ -275,7 +278,7 @@ async function mintOne(
     connectionName: connection.name,
     userId: workspace.owner_id,
     grantId: grant?.id ?? null,
-    scopes: result.grantedScopes ?? scopes,
+    scopes: grantedScopes ?? scopes,
     result,
     tokenHash,
     now,

@@ -208,6 +208,85 @@ describe("connections: per-user grants", () => {
     expect(skill).toContain("read, write");
   });
 
+  /** FROZEN box wire: the Go broker baked into the shipped box image decodes
+   * POST /workspaces/self/credentials with DisallowUnknownFields. A grant-backed
+   * mint is the default path now, so it is the one that has to be pinned: the
+   * grant minter carries `grantedScopes` for the lease, and letting that reach
+   * the response fails the box's decode and aborts the whole credential sync. */
+  it("keeps the frozen box mint wire on a grant-backed mint", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const { box } = await readyWorkspace(app, providers, cookie);
+
+    const response = await mint(app, box.access_token, { integration: "linear" });
+    expect(response.status).toBe(200);
+    const raw: unknown = JSON.parse(await response.text());
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("mint response was not a JSON object");
+    }
+    expect(Object.keys(raw).sort()).toEqual([
+      "expiresAt",
+      "integration",
+      "mode",
+      "placements",
+    ]);
+
+    // The sync-style call is what blitz-cred actually sends; every element of
+    // the array carries the same four keys and nothing else.
+    const sync = await mint(app, box.access_token, {});
+    expect(sync.status).toBe(200);
+    const results: unknown = JSON.parse(await sync.text());
+    if (!Array.isArray(results) || results.length === 0) {
+      throw new Error("sync response was not a non-empty JSON array");
+    }
+    for (const result of results) {
+      expect(Object.keys(result as object).sort()).toEqual([
+        "expiresAt",
+        "integration",
+        "mode",
+        "placements",
+      ]);
+    }
+
+    // Consented scopes are still recorded — on the lease, where the box wire
+    // cannot see them.
+    const lease = await env.DB.prepare(
+      "SELECT scopes FROM credential_leases ORDER BY issued_at DESC, id LIMIT 1",
+    ).first<{ scopes: string }>();
+    expect(JSON.parse(lease?.scopes ?? "null")).toEqual(["read", "write"]);
+  });
+
+  it("keeps the frozen box mint wire on an inject-custody generic grant", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const connected = await appRequest(app, "/connections/grants/acme", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "generic",
+        token: "acme-test-only-key",
+        vendor: { envName: "ACME_API_KEY" },
+      }),
+    });
+    expect(connected.status).toBe(204);
+    const { box } = await readyWorkspace(app, providers, cookie);
+
+    const response = await mint(app, box.access_token, { integration: "acme" });
+    expect(response.status).toBe(200);
+    const raw: unknown = JSON.parse(await response.text());
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("mint response was not a JSON object");
+    }
+    expect((raw as MintResult).mode).toBe("inject");
+    expect(Object.keys(raw).sort()).toEqual([
+      "expiresAt",
+      "integration",
+      "mode",
+      "placements",
+    ]);
+  });
+
   it("resolves the workspace owner's grant for an editor's box", async () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
