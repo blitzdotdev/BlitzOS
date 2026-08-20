@@ -117,6 +117,12 @@ func runMint(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Fprintln, not Fprint: the mint reply is a line-oriented SSH protocol and
+	// the newline is the TERMINATOR, never part of the token. Both consumers
+	// strip it — internal/workspace/ssh.go trimMintedToken on this box's own
+	// side, and the box's `blitz-cred-<harness>` shim by way of $(...) — and
+	// broker.Mint refuses a token that carries whitespace of its own, so the
+	// terminator stays unambiguous.
 	_, err = fmt.Fprintln(output, token)
 	return err
 }

@@ -21,7 +21,36 @@ func Token(ctx context.Context, stateDir, harness string) ([]byte, error) {
 	if !feed.ValidHarness(harness) {
 		return nil, errors.New("invalid token request")
 	}
-	return runSSH(ctx, stateDir, "mint", harness, nil)
+	output, err := runSSH(ctx, stateDir, "mint", harness, nil)
+	if err != nil {
+		return nil, err
+	}
+	token := trimMintedToken(output)
+	if len(token) == 0 {
+		return nil, errors.New("broker minted an empty access token")
+	}
+	return token, nil
+}
+
+// trimMintedToken strips the mint reply's line terminator, and any other
+// surrounding whitespace, off the bytes the broker wrote to stdout.
+//
+// The mint reply is line-oriented: `blitz-broker mint` ends the token with
+// fmt.Fprintln (cmd/blitz-broker/main.go), so the newline is the terminator and
+// is never part of the token. Everything downstream of this function copies
+// these bytes VERBATIM into CLAUDE_CODE_OAUTH_TOKEN, and only one of those
+// consumers strips anything by accident: the PATH shim substitutes the helper
+// with $(...), which eats trailing newlines, while the actor sets the value
+// straight into options.env. A token with a trailing newline reaches the vendor
+// as an Authorization header value containing a newline — rejected, with an
+// error that names nothing on this box.
+//
+// Trimming here rather than at each consumer is what makes that impossible to
+// reintroduce: this is the single point every workspace-side caller of the mint
+// verb goes through. Deposit's ACK is deliberately NOT trimmed — "ok\n" is an
+// exact wire contract with the broker, not a payload.
+func trimMintedToken(output []byte) []byte {
+	return bytes.TrimSpace(output)
 }
 
 func Deposit(ctx context.Context, stateDir, harness string, blob []byte) error {

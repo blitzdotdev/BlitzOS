@@ -19,18 +19,6 @@ import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
  */
 export const CLAUDE_BINARY = "/opt/blitz/npm/bin/claude";
 
-interface ClaudeOptionalOptions {
-  resume?: string;
-}
-
-export function claudeOptionalOptions(
-  input: Pick<TurnInput, "resumeId">,
-): ClaudeOptionalOptions {
-  const options: ClaudeOptionalOptions = {};
-  if (input.resumeId) options.resume = input.resumeId;
-  return options;
-}
-
 /** The environment the SDK's engine runs in.
  *
  * Two things make this necessary rather than incidental.
@@ -52,6 +40,15 @@ export function claudeOptionalOptions(
  *
  * No token is not an error. An unreachable or unconfigured broker leaves a turn
  * that runs and reports itself signed out, which a member can fix.
+ *
+ * A token carrying whitespace IS an error, and a loud one. The broker prints
+ * the minted token with `fmt.Fprintln` and every hop down to
+ * `CredentialSource.token` passes those bytes along, so a trailing newline is
+ * the exact corruption this path has already shipped once. The terminal shim
+ * survives it because `$(…)` strips it; an environment variable carries it to
+ * the vendor intact, which answers 401 — indistinguishable, from the chat
+ * panel, from a subscription that lapsed. Refusing here turns a hunt through
+ * someone's billing page into one named failure at the boundary that made it.
  */
 export function claudeEnv(
   token: string | null,
@@ -60,7 +57,10 @@ export function claudeEnv(
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   if (home !== undefined) env.HOME = home;
-  if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  if (token) {
+    if (/\s/u.test(token)) throw new Error("refusing to export a whitespace-bearing OAuth token");
+    env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  }
   // The engine must not update itself out of the image pin mid-turn.
   env.DISABLE_AUTOUPDATER = "1";
   return env;
@@ -150,10 +150,18 @@ export class ClaudeAdapter implements AgentAdapter {
       permissionMode: claudePermissionMode(input.config.permission),
       systemPrompt: { type: "preset", preset: "claude_code", append: PREVIEW_GUIDANCE },
     };
+    // Assigned rather than written into the literal as `resume: … ?? undefined`:
+    // a fresh session must not carry the key at all, and this is the same
+    // conditional-assignment shape `model` and `effort` already use, so the
+    // three optional options read as one rule instead of three spellings.
+    // `options` staying plainly typed `Options` is also what keeps a second
+    // token-delivery hook off this object — `env` above is the only one, and
+    // any `getOAuthToken` bolted back on is a typecheck failure rather than
+    // something a reviewer has to catch.
+    if (input.resumeId) options.resume = input.resumeId;
     if (input.config.model !== "default") options.model = input.config.model;
     const effort = claudeEffort(input.config.effort);
     if (effort !== undefined) options.effort = effort;
-    Object.assign(options, claudeOptionalOptions(input));
     let resumeId = input.resumeId ?? undefined;
     let stopReason: TurnOutput["stopReason"] = "refusal";
     let messageId = input.turnId;

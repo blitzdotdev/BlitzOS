@@ -70,6 +70,30 @@ export class CredentialSource {
     if (stdout.length === 0 || stdout.length > 1_048_576) {
       throw new Error("broker returned an invalid token");
     }
-    return stdout.toString("utf8");
+    return parseToken(stdout);
   }
+}
+
+/** The broker's stdout, parsed into a token.
+ *
+ * The TRIM is load-bearing, not tidiness. The broker prints the minted token
+ * with `fmt.Fprintln` (packages/broker/cmd/blitz-broker/main.go), so the bytes
+ * that arrive here always end in a newline, and every hop between there and
+ * here passes them through verbatim. The terminal shim survives it because
+ * `$(…)` strips trailing newlines; the chat path does not — the value goes
+ * straight into CLAUDE_CODE_OAUTH_TOKEN, and a token with a newline in it is
+ * rejected by the vendor on every single request. A signed-in workspace whose
+ * chat says "not logged in" is exactly that newline.
+ *
+ * Control characters are then a REFUSAL rather than something else to strip.
+ * A token is one opaque line; anything else on this channel means the broker
+ * sent something that is not a token, and quietly repairing it would deliver
+ * whichever fragment survived the repair.
+ */
+function parseToken(stdout: Buffer): string {
+  const token = stdout.toString("utf8").trim();
+  if (token.length === 0 || [...token].some((character) => character < " " || character === "\u007F")) {
+    throw new Error("broker returned an invalid token");
+  }
+  return token;
 }
