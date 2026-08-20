@@ -42,6 +42,7 @@ run_worker_first = [
   "/orgs*",
   "/workspaces*",
   "/workspace-templates*",
+  "/agent-rules*",
   "/folders*",
   "/integrations*",
   "/leases*",

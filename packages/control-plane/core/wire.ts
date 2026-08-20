@@ -68,6 +68,30 @@ export interface WorkspaceEnvironmentResponse extends WorkspaceEnvironment {
   filesReady: boolean;
 }
 
+/** One selectable agent-rules document. The built-in doc is served in the same
+ * list with `id: null` and `builtIn: true` so the picker can offer it — and
+ * pre-fill an edit of it — without a second endpoint. */
+export interface AgentRuleView {
+  id: string | null;
+  name: string;
+  content: string;
+  updatedAt: number | null;
+  builtIn: boolean;
+}
+
+export interface ListAgentRulesResponse {
+  rules: AgentRuleView[];
+}
+
+export interface PutAgentRuleRequest {
+  name: string;
+  content: string;
+}
+
+export interface PutAgentRuleResponse {
+  rule: AgentRuleView;
+}
+
 export const PHASES = [
   "creating",
   "ready",
@@ -140,6 +164,7 @@ export interface WorkspaceView {
     avatarUrl: string | null;
   };
   environment: WorkspaceEnvironment | null;
+  agentRuleId: string | null;
 }
 
 export interface WorkspaceTemplateView {
@@ -149,6 +174,7 @@ export interface WorkspaceTemplateView {
   createdAt: number;
   createdBy: { name: string; avatarUrl: string | null };
   environment: WorkspaceEnvironment | null;
+  agentRuleId: string | null;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: FolderRole | null }[];
 }
@@ -162,6 +188,9 @@ export interface CreateWorkspaceTemplateRequest {
   machineTypeId: string;
   folderIds: string[];
   environment?: WorkspaceEnvironment;
+  /** An org agent rule to hand every workspace made from this template; null
+   * (or absent) leaves it on the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceTemplateResponse {
@@ -186,6 +215,9 @@ export interface CreateWorkspaceRequest {
   userData?: string;
   manifest?: CredentialManifest;
   environment?: WorkspaceEnvironment;
+  /** Overrides the template's rule; null (or absent) falls back to the
+   * template's rule and then the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceResponse {

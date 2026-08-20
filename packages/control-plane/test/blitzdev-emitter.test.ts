@@ -23,6 +23,7 @@ const expected = [
   "core/db.ts",
   "core/blobs.ts",
   "core/wire.ts",
+  "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-images.ts",
   "core/cloud-init.ts",

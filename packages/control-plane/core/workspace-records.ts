@@ -25,6 +25,7 @@ export interface WorkspaceRow {
   manifest: string | null;
   environment: string | null;
   files_ready: number;
+  agent_rule_id: string | null;
   tunnel_id: string | null;
   tunnel_hostname: string | null;
   dns_record_id: string | null;
@@ -89,6 +90,7 @@ export function workspaceView(
     // gated on the viewer's role exactly like `ssh` above: a member with no
     // grant and no share must not read either.
     environment: canOpen ? workspaceEnvironmentFromJson(row.environment, reportError) : null,
+    agentRuleId: row.agent_rule_id,
   };
 }
 
