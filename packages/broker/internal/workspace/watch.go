@@ -56,7 +56,9 @@ func Watch(ctx context.Context, stateDir, home string) error {
 	environmentReady := false
 	for {
 		if !environmentReady {
-			ready, _ := environmentTick(ctx, stateDir, "/workspace", nil)
+			// The startup script it may launch runs detached, so this call
+			// never holds up the credential deposits below.
+			ready, _, _ := environmentTick(ctx, stateDir, "/workspace", nil)
 			environmentReady = ready
 		}
 		_ = watcher.Tick(ctx)
