@@ -236,6 +236,9 @@ describe('create template screen', () => {
     ));
     // The unreadable folder id survives the round trip untouched.
     expect(JSON.parse(String(put?.[1]?.body ?? '{}'))).toEqual({
+      // The edit form always submits the full create shape, environment
+      // included, so clearing it in the editor actually clears it.
+      environment: { env: {}, startupScript: null },
       name: 'starter v2',
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-gone'],

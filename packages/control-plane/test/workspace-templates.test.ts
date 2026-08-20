@@ -126,6 +126,35 @@ describe("workspace templates", () => {
     const template = (await created.json<{ template: WorkspaceTemplateView }>()).template;
     expect(template.machineTypeId).toBe("small");
     expect(template.environment).toEqual(templateEnvironment);
+
+    // PUT takes the full create shape, so it replaces the environment too.
+    const edited = { env: { API_ORIGIN: "https://api.example/v2" }, startupScript: null };
+    const updated = await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({
+        name: "web analysis",
+        machineTypeId: "small",
+        folderIds: [orgFolder, privateFolder],
+        environment: edited,
+      }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(updated.status).toBe(200);
+    expect((await updated.json<{ template: WorkspaceTemplateView }>()).template.environment)
+      .toEqual(edited);
+    expect(await env.DB.prepare("SELECT environment FROM workspace_templates WHERE id = ?1")
+      .bind(template.id).first<string>("environment")).toBe(JSON.stringify(edited));
+    // Restore the created environment for the workspace assertions below.
+    expect((await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({
+        name: "web analysis",
+        machineTypeId: "small",
+        folderIds: [orgFolder, privateFolder],
+        environment: templateEnvironment,
+      }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
     expect(template.folders.map(({ role }) => role)).toEqual(["owner", "owner"]);
 
     const memberList = await appRequest(app, "/workspace-templates", {

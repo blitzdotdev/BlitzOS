@@ -3,7 +3,8 @@ import { first, rows } from "./db.js";
 import {
   parseWorkspaceEnvironment,
   workspaceEnvironmentFromJson,
-  workspaceEnvironmentJson,
+  storedWorkspaceEnvironment,
+  WORKSPACE_REQUEST_MAX_BYTES,
 } from "./environment.js";
 import { filesActorForRequest, folderRole, requireFolderAccess } from "./files/access.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
@@ -209,7 +210,7 @@ export function addWorkspaceTemplateRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
-    const input = parseCreateTemplate(await readJson(context.req.raw, 512 * 1024));
+    const input = parseCreateTemplate(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     // Fails loudly on machine types no provider claims, same as create.
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     for (const folderId of input.folderIds) {
@@ -229,7 +230,7 @@ export function addWorkspaceTemplateRoutes(
         input.machineTypeId,
         principal.membershipId,
         now,
-        input.environment === undefined ? null : workspaceEnvironmentJson(input.environment),
+        storedWorkspaceEnvironment(input.environment),
       ],
     });
     for (const folderId of input.folderIds) {
@@ -252,9 +253,7 @@ export function addWorkspaceTemplateRoutes(
         created_by_membership_id: principal.membershipId,
         created_at: now,
         updated_at: now,
-        environment: input.environment === undefined
-          ? null
-          : workspaceEnvironmentJson(input.environment),
+        environment: storedWorkspaceEnvironment(input.environment),
         creator_name: creator?.name ?? principal.id,
         creator_avatar_url: creator?.avatar_url ?? null,
       },
@@ -283,10 +282,11 @@ export function addWorkspaceTemplateRoutes(
       throw new HttpError(403, "forbidden");
     }
     // Full replacement with the create shape: the edit form always submits
-    // name, machine, and the complete folder set. Only newly added folders
-    // need read access — an admin may edit a template whose existing folders
-    // were never shared with them, and keeping those must not fail or drop.
-    const input = parseCreateTemplate(await readJson(context.req.raw));
+    // name, machine, the complete folder set, and the environment. Only newly
+    // added folders need read access — an admin may edit a template whose
+    // existing folders were never shared with them, and keeping those must not
+    // fail or drop.
+    const input = parseCreateTemplate(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     const existingFolderIds = new Set(
       (await templateFolderRows(runtime.db, [template.id], principal.membershipId))
@@ -299,9 +299,15 @@ export function addWorkspaceTemplateRoutes(
     const now = Date.now();
     await rows(runtime.db, {
       q: `UPDATE workspace_templates
-          SET name = ?2, machine_type_id = ?3, updated_at = ?4
+          SET name = ?2, machine_type_id = ?3, updated_at = ?4, environment = ?5
           WHERE id = ?1`,
-      v: [template.id, input.name, input.machineTypeId, now],
+      v: [
+        template.id,
+        input.name,
+        input.machineTypeId,
+        now,
+        storedWorkspaceEnvironment(input.environment),
+      ],
     });
     await rows(runtime.db, {
       q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",

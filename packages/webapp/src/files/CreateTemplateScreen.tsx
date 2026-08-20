@@ -1,6 +1,7 @@
 import type {
   CreateWorkspaceTemplateRequest,
   MachineType,
+  WorkspaceEnvironment,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
@@ -73,6 +74,11 @@ export function CreateTemplateScreen({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
+  // Editing loads the stored environment first, then re-keys the editor onto
+  // it. Null means an edit whose template has not arrived yet.
+  const [loadedEnvironment, setLoadedEnvironment] = useState<WorkspaceEnvironment | null>(
+    editTemplateId === undefined ? EMPTY_WORKSPACE_ENVIRONMENT : null,
+  );
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -198,6 +204,11 @@ export function CreateTemplateScreen({
       // Keep every attached folder id, including ones this editor cannot
       // read — the server preserves them and only checks new additions.
       setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
+      const stored = existing.environment ?? EMPTY_WORKSPACE_ENVIRONMENT;
+      setLoadedEnvironment(stored);
+      // Seed the submitted value too: saving without opening Advanced has to
+      // resubmit what is stored, not wipe it.
+      setEnvironment(stored);
     }).catch((caught: Error) => setError(caught.message));
     return () => { mounted = false; };
   }, [client, editTemplateId]);
@@ -223,10 +234,11 @@ export function CreateTemplateScreen({
         machineTypeId,
         folderIds: [...attachedIds],
       };
-      // Environment rides only on create: the PUT handler replaces name,
-      // machine, and folders, and leaves the stored environment untouched.
+      // Both routes take the full create shape, so an edit that cleared the
+      // environment has to send the empty one rather than omit the field.
       const configured = populatedEnvironment(environment);
-      if (editTemplateId === undefined && configured !== undefined) request.environment = configured;
+      if (configured !== undefined) request.environment = configured;
+      else if (editTemplateId !== undefined) request.environment = EMPTY_WORKSPACE_ENVIRONMENT;
       const { template } = editTemplateId === undefined
         ? await client.createWorkspaceTemplate(request)
         : await client.updateWorkspaceTemplate(editTemplateId, request);
@@ -495,9 +507,10 @@ export function CreateTemplateScreen({
             </label>
           </section>
 
-          {editTemplateId === undefined && (
+          {loadedEnvironment !== null && (
             <EnvironmentEditor
-              initial={EMPTY_WORKSPACE_ENVIRONMENT}
+              key={editTemplateId ?? 'new'}
+              initial={loadedEnvironment}
               onChange={setEnvironment}
             />
           )}
