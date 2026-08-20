@@ -17,6 +17,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runProviderCanary } from "../core/index.js";
 import worker from "../src/worker.js";
 import { CANARY_GRANT_LABEL } from "../core/connections/canary.js";
+import {
+  CONNECT_OAUTH_COOKIE,
+  createConnectOAuthState,
+  verifyConnectOAuthStateCookie,
+} from "../core/oauth-state.js";
 import { BOX_HOME } from "../core/connections/catalog/surfaces.js";
 import {
   appRequest,
@@ -860,5 +865,64 @@ describe("connections: connect flow and canary", () => {
       state: "unhealthy",
       detail: "missing data.viewer.id",
     });
+  });
+});
+
+/** The connect half of the signed-state helper had no unit coverage of its
+ * own: every guarantee below was only ever exercised through the happy-path
+ * route. They are the reason the state is signed at all. */
+describe("connect oauth state", () => {
+  const SECRET = "state-secret";
+  const CREATED_AT = 1_000;
+  const EXPIRES_AT = CREATED_AT + 10 * 60 * 1_000;
+
+  async function signedCookie(provider: string): Promise<{
+    cookie: string;
+    state: string;
+    codeVerifier: string;
+  }> {
+    const created = await createConnectOAuthState(SECRET, provider, CREATED_AT);
+    const pair = (created.cookie.split(";")[0] ?? "");
+    expect(pair.startsWith(`${CONNECT_OAUTH_COOKIE}=`)).toBe(true);
+    expect(created.cookie).toContain("Path=/connect");
+    expect(created.cookie).toContain("HttpOnly");
+    return {
+      cookie: decodeURIComponent(pair.slice(`${CONNECT_OAUTH_COOKIE}=`.length)),
+      state: created.state,
+      codeVerifier: created.codeVerifier,
+    };
+  }
+
+  it("binds the provider, the verifier, and the deadline into the signature", async () => {
+    const { cookie, state, codeVerifier } = await signedCookie("linear");
+
+    await expect(
+      verifyConnectOAuthStateCookie(cookie, state, "linear", SECRET, EXPIRES_AT - 1),
+    ).resolves.toMatchObject({ provider: "linear", codeVerifier });
+
+    // Replayed against a second provider's token endpoint.
+    await expect(
+      verifyConnectOAuthStateCookie(cookie, state, "github", SECRET, CREATED_AT + 1),
+    ).resolves.toBeNull();
+    // Attacker-chosen state, tampered cookie, wrong signing key, expired.
+    await expect(
+      verifyConnectOAuthStateCookie(cookie, "wrong-state", "linear", SECRET, CREATED_AT + 1),
+    ).resolves.toBeNull();
+    await expect(
+      verifyConnectOAuthStateCookie(`${cookie}x`, state, "linear", SECRET, CREATED_AT + 1),
+    ).resolves.toBeNull();
+    await expect(
+      verifyConnectOAuthStateCookie(cookie, state, "linear", "other-secret", CREATED_AT + 1),
+    ).resolves.toBeNull();
+    await expect(
+      verifyConnectOAuthStateCookie(cookie, state, "linear", SECRET, EXPIRES_AT),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps the login cookie and the connect cookie apart", async () => {
+    const connect = await createConnectOAuthState(SECRET, "linear", CREATED_AT);
+    expect(connect.cookie).toContain(`${CONNECT_OAUTH_COOKIE}=`);
+    expect(connect.cookie).not.toContain("blitz_google_oauth=");
+    expect(connect.cookie).not.toContain("Path=/auth/google");
   });
 });
