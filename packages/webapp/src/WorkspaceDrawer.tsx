@@ -13,6 +13,7 @@ import { caughtErrorMessage } from './error-message';
 import type { LivePort, PreviewLink } from './preview';
 import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
 import { TeenyappsPanel } from './TeenyappsPanel';
+import { ConnectPicker } from './settings/ConnectPicker';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
@@ -40,10 +41,12 @@ export function WorkspaceLeasesPanel({
   client,
   workspaceId,
   visible,
+  readOnly,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
   visible: boolean;
+  readOnly?: boolean;
 }) {
   const [leases, setLeases] = useState<CredentialLeaseView[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,12 +133,14 @@ export function WorkspaceLeasesPanel({
                   {state === 'active' ? expiryCountdown(lease.expiresAt, now) : state}
                 </time>
               </div>
-              <button
-                className="webapp-action workspace-credential-row__action"
-                type="button"
-                disabled={state !== 'active' || revoking !== null}
-                onClick={() => setConfirmation(lease)}
-              >{revoking === lease.id ? 'Revoking…' : 'Revoke'}</button>
+              {readOnly !== true && (
+                <button
+                  className="webapp-action workspace-credential-row__action"
+                  type="button"
+                  disabled={state !== 'active' || revoking !== null}
+                  onClick={() => setConfirmation(lease)}
+                >{revoking === lease.id ? 'Revoking…' : 'Revoke'}</button>
+              )}
             </article>
             );
           })}
@@ -154,14 +159,20 @@ export function WorkspaceLeasesPanel({
   );
 }
 
+/** The connect inbox. A pending row is not a decision waiting on an approver —
+ * it is an agent that wanted `@name` and found no grant behind it. */
 export function WorkspaceRequestsPanel({
   requests,
   loadError,
+  readOnly,
   onResolve,
+  onConnect,
 }: {
   requests: CredentialRequestView[];
   loadError?: string | null;
+  readOnly?: boolean;
   onResolve: (request: CredentialRequestView, action: 'approve' | 'deny') => Promise<void>;
+  onConnect?: (connectionName: string) => void;
 }) {
   const [resolving, setResolving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -180,40 +191,42 @@ export function WorkspaceRequestsPanel({
   };
 
   return (
-    <section className="workspace-drawer-panel workspace-requests" aria-label="Workspace pending credential requests">
+    <section className="workspace-drawer-panel workspace-requests" aria-label="Workspace connect inbox">
       {(error ?? loadError) && <p className="webapp-form-message" role="alert">{error ?? loadError}</p>}
       {requests.length === 0 ? (
-        <p className="workspace-drawer-state">No pending requests for this workspace.</p>
+        <p className="workspace-drawer-state">No agent has asked for a connection here.</p>
       ) : (
         <div className="workspace-credential-rows">
           {requests.map((request) => (
             <article className="workspace-credential-row" key={request.id}>
               <div className="workspace-credential-row__title">
-                <strong>{request.connection_name}</strong>
-                <span className="workspace-state-badge workspace-state-badge--active">pending</span>
+                <strong>@{request.connection_name}</strong>
+                <span className="workspace-state-badge workspace-state-badge--active">wanted</span>
               </div>
               <p>{request.requested_scopes.length === 0
-                ? 'Connection access · no named scopes'
-                : request.requested_scopes.join(', ')}</p>
+                ? 'An agent asked for this connection and found nothing behind it.'
+                : `An agent asked for ${request.requested_scopes.join(', ')}.`}</p>
               <div className="workspace-credential-row__meta">
                 <time dateTime={new Date(request.created_at).toISOString()}>
                   {new Date(request.created_at).toLocaleString()}
                 </time>
               </div>
-              <div className="workspace-credential-row__actions">
-                <button
-                  className="webapp-action"
-                  type="button"
-                  disabled={resolving !== null}
-                  onClick={() => { void resolve(request, 'deny'); }}
-                >Deny</button>
-                <button
-                  className="webapp-action webapp-action--primary"
-                  type="button"
-                  disabled={resolving !== null}
-                  onClick={() => { void resolve(request, 'approve'); }}
-                >{resolving === request.id ? 'Working…' : 'Approve'}</button>
-              </div>
+              {readOnly !== true && (
+                <div className="workspace-credential-row__actions">
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    disabled={resolving !== null}
+                    onClick={() => { void resolve(request, 'deny'); }}
+                  >Dismiss</button>
+                  <button
+                    className="webapp-action webapp-action--primary"
+                    type="button"
+                    disabled={resolving !== null}
+                    onClick={() => onConnect?.(request.connection_name)}
+                  >Connect</button>
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -274,6 +287,7 @@ export function WorkspaceConnectionsPanel({
   client,
   workspaceId,
   visible,
+  readOnly,
   pendingRequests,
   pendingRequestsError,
   onResolveRequest,
@@ -281,6 +295,7 @@ export function WorkspaceConnectionsPanel({
   client: ControlPlaneClient;
   workspaceId: string;
   visible: boolean;
+  readOnly?: boolean;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
   onResolveRequest: (
@@ -288,16 +303,39 @@ export function WorkspaceConnectionsPanel({
     action: 'approve' | 'deny',
   ) => Promise<void>;
 }) {
+  const [connecting, setConnecting] = useState<string | null>(null);
   return (
     <div className="workspace-connections">
-      <h3 className="workspace-sect workspace-sect--pending">Pending requests</h3>
+      <h3 className="workspace-sect workspace-sect--pending">Wanted here</h3>
       <WorkspaceRequestsPanel
         requests={pendingRequests}
         loadError={pendingRequestsError}
+        readOnly={readOnly}
         onResolve={onResolveRequest}
+        onConnect={setConnecting}
       />
+      {readOnly !== true && (
+        <ConnectPicker
+          client={client}
+          requestedProvider={connecting}
+          onConnected={() => {
+            const pending = pendingRequests.find(
+              (request) => request.connection_name === connecting,
+            );
+            setConnecting(null);
+            // Connecting is the answer to the inbox entry: resolving it also
+            // widens the workspace ceiling so the next mint succeeds.
+            if (pending !== undefined) void onResolveRequest(pending, 'approve');
+          }}
+        />
+      )}
       <h3 className="workspace-sect">Active leases</h3>
-      <WorkspaceLeasesPanel client={client} workspaceId={workspaceId} visible={visible} />
+      <WorkspaceLeasesPanel
+        client={client}
+        workspaceId={workspaceId}
+        visible={visible}
+        readOnly={readOnly}
+      />
       <h3 className="workspace-sect">Recent activity</h3>
       <WorkspaceEventsPanel client={client} workspaceId={workspaceId} visible={visible} />
     </div>
@@ -312,7 +350,9 @@ export type WorkspacePanelProps = {
   files: ReactNode;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
-  canManageCredentials: boolean;
+  /** Workspace sharing, not an org role: a viewer sees the panel but cannot
+   * revoke a lease or connect on this workspace's behalf. */
+  readOnly?: boolean;
   onResolveRequest: (
     request: CredentialRequestView,
     action: 'approve' | 'deny',
@@ -336,7 +376,7 @@ export function WorkspacePanelContent({
   files,
   pendingRequests,
   pendingRequestsError,
-  canManageCredentials,
+  readOnly,
   onResolveRequest,
   livePorts,
   previewLinks,
@@ -360,16 +400,17 @@ export function WorkspacePanelContent({
       />
     );
   }
-  return canManageCredentials ? (
+  return (
     <WorkspaceConnectionsPanel
       client={client}
       workspaceId={workspaceId}
       visible={visible}
+      readOnly={readOnly}
       pendingRequests={pendingRequests}
       pendingRequestsError={pendingRequestsError}
       onResolveRequest={onResolveRequest}
     />
-  ) : null;
+  );
 }
 
 /** Below the mobile breakpoint the panels stay an off-canvas sheet with its
@@ -382,7 +423,6 @@ export function WorkspaceDrawer({
   onWidthChange,
   onSegmentChange,
   pendingRequests,
-  canManageCredentials,
   ...panelProps
 }: Omit<WorkspacePanelProps, 'visible'> & {
   mobile: boolean;
@@ -411,15 +451,13 @@ export function WorkspaceDrawer({
       label: 'teenyapps',
       icon: <span className="webapp-tab-icon mi-preview" aria-hidden="true" />,
     },
-  ];
-  if (canManageCredentials) {
-    tabs.push({
+    {
       id: 'connections',
       label: 'Connections',
       icon: <GenericProviderIcon className="webapp-tab-icon" />,
-    });
-  }
-  const effectiveSegment = !canManageCredentials && segment === 'connections' ? 'files' : segment;
+    },
+  ];
+  const effectiveSegment = segment;
 
   return (
     <aside
@@ -482,7 +520,6 @@ export function WorkspaceDrawer({
             <WorkspacePanelContent
               panel={tab.id}
               pendingRequests={pendingRequests}
-              canManageCredentials={canManageCredentials}
               {...panelProps}
               visible={open && effectiveSegment === tab.id}
             />

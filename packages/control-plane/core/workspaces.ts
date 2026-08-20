@@ -1,6 +1,6 @@
 import { buildUserData } from "./cloud-init.js";
-import { manifestJson, parseManifest } from "./credentials/manifest.js";
-import { revokeWorkspaceLeasesQuery } from "./credentials/leases.js";
+import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
+import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
@@ -18,14 +18,16 @@ import type { Principal } from "./principals.js";
 import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
-import type { WebAppPort, VmProvider } from "./providers/types.js";
+import type { WebAppPort, VmProvider } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import {
   attachTemplateFolders,
+  templateConnections,
   templateWorkspaceName,
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
+import { grantsForUser } from "./connections/user-grants.js";
 import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
 import type {
   CoreContext,
@@ -129,6 +131,13 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     const manifest = parseManifest(value.manifest);
     // SAFETY: This private parser receives JSON.parse output, so all retained ceiling values are JSON values; parseManifest checks each ceiling object and present scopes array.
     result.manifest = manifest as typeof manifest & CreateWorkspaceRequest["manifest"];
+  }
+  if (value.connections !== undefined) {
+    if (!Array.isArray(value.connections)) {
+      throw new HttpError(400, "connections must be an array");
+    }
+    result.connections = [...new Set(value.connections.map((entry, index) =>
+      requiredString(entry, `connections[${String(index)}]`, 64)))];
   }
   return result;
 }
@@ -352,6 +361,27 @@ export function addWorkspaceRoutes(
       });
       if (owned === null) throw new HttpError(404, "volume not found");
     }
+    // Enablement, not provisioning: a template names providers, the creator
+    // supplies the identity, and the workspace ceiling records what may mint.
+    const templateConnectionList = template === null
+      ? []
+      : await templateConnections(runtime.db, template.id);
+    const requested = [...new Set([
+      ...templateConnectionList.map(({ provider }) => provider),
+      ...(input.connections ?? []),
+    ])];
+    const granted = new Set(
+      (await grantsForUser(runtime.db, principal.id)).map(({ provider }) => provider),
+    );
+    const missingRequired = templateConnectionList
+      .filter(({ provider, required }) => required && !granted.has(provider))
+      .map(({ provider }) => provider);
+    if (missingRequired.length > 0) {
+      throw new HttpError(
+        409,
+        `connect ${missingRequired.join(", ")} before creating from this template`,
+      );
+    }
     const id = crypto.randomUUID();
     const capability = randomToken();
     const now = Date.now();
@@ -379,7 +409,7 @@ export function addWorkspaceRoutes(
         machineTypeId,
         input.volumeId ?? null,
         await hashSecret(capability),
-        input.manifest === undefined ? null : manifestJson(input.manifest),
+        enablementManifestJson(input.manifest, requested),
         input.orgShareRole ?? null,
         now,
       ],

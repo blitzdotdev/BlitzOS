@@ -7,6 +7,7 @@ import {
   createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
+  isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
@@ -14,6 +15,7 @@ import {
   runFileSyncSweep,
   runLeaseSweep,
   runOrphanSweep,
+  runProviderCanary,
   runSessionSweep,
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
@@ -27,6 +29,10 @@ import {
   type Db,
 } from "../core/index.js";
 import config from "../teenybase.js";
+
+/** Must stay one of wrangler.toml's `triggers.crons` entries verbatim: the
+ * scheduled handler routes on the literal expression Cloudflare hands back. */
+const HOURLY_CRON = "0 * * * *";
 
 type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -68,6 +74,13 @@ interface TargetContext {
 function dynamicBinding(env: WorkerBindings, name: string): unknown {
   // SAFETY: The key assertion only enables ordinary bracket lookup; a missing binding still yields undefined and is rejected by the token resolver.
   return env[name as keyof WorkerBindings];
+}
+
+/** Connection OAuth client bindings are named by the provider catalog, not by
+ * this file, so they are read by name and narrowed to a string here. */
+function connectSecretFrom(env: WorkerBindings, name: string): string | undefined {
+  const value = dynamicBinding(env, name);
+  return isString(value) && value.length > 0 ? value : undefined;
 }
 
 function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
@@ -118,6 +131,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => connectSecretFrom(env, name),
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
@@ -151,6 +165,7 @@ function runtimeForScheduled(
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => connectSecretFrom(env, name),
     },
     providers,
     principalSource: createSessionPrincipalSource(),
@@ -213,7 +228,7 @@ export default {
         // Only the hourly and daily schedules run the full janitor set. Any
         // other tick (the */5 backstop today) converges folder sync alone, so
         // renaming that cron can never silently multiply the heavy sweeps.
-        if (event.cron !== "0 * * * *" && event.cron !== "0 3 * * *") {
+        if (event.cron !== HOURLY_CRON && event.cron !== "0 3 * * *") {
           const swept = await runFileSyncSweep(runtime);
           console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
           return;
@@ -224,6 +239,14 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
+        // The canary is the one sweep that costs an authenticated call to a
+        // third party per provider, so it takes the hourly tick alone. On the
+        // daily tick as well it would be counted twice against the same rate
+        // limit for no extra signal.
+        if (event.cron === HOURLY_CRON) {
+          const probed = await runProviderCanary(runtime);
+          console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
+        }
         const swept = await runFileSyncSweep(runtime);
         console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),

@@ -3,7 +3,10 @@ import type { Db } from "../db.js";
 import { first } from "../db.js";
 import { isRecord, isString } from "../http.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import { providerManifest } from "./catalog/index.js";
+import type { TokenHeader } from "./catalog/types.js";
 import { openRoot } from "./root-crypto.js";
+import { grantSecretLabel } from "./user-grants.js";
 
 const LEASE_TOKEN_AT_END = /([A-Za-z0-9_-]{43})$/u;
 const HOP_BY_HOP_HEADERS = [
@@ -28,6 +31,15 @@ interface ProxyLeaseRow {
   connection_name: string;
   root_ciphertext: string | null;
   config: string;
+  grant_id: string | null;
+  grant_user_id: string | null;
+  grant_provider: string | null;
+  grant_kind: "pat" | "oauth" | null;
+  grant_config: string | null;
+  grant_access_ciphertext: string | null;
+  grant_access_expires_at: number | null;
+  grant_refresh_ciphertext: string | null;
+  grant_manifest_id: string | null;
 }
 
 interface ProxyConfig {
@@ -66,21 +78,64 @@ async function proxyLease(
     .map((_, index) => `?${index + 2}`)
     .join(", ");
   const nowParameter = candidates.length + 2;
+  // A grant-backed lease carries its own secret and header shape, so it is not
+  // held to the static-connection rule the org-root path needs.
   return first<ProxyLeaseRow>(db, {
     q: `SELECT lease.token_hash, connection.scoped_name AS connection_name,
-               connection.root_ciphertext, connection.config
+               connection.root_ciphertext, connection.config,
+               lease.grant_id, grant_row.user_id AS grant_user_id,
+               grant_row.provider AS grant_provider, grant_row.kind AS grant_kind,
+               grant_row.config AS grant_config,
+               grant_row.access_ciphertext AS grant_access_ciphertext,
+               grant_row.access_expires_at AS grant_access_expires_at,
+               grant_row.refresh_ciphertext AS grant_refresh_ciphertext,
+               grant_row.manifest_id AS grant_manifest_id
         FROM credential_leases lease
         JOIN connections connection ON connection.id = lease.connection_id
+        LEFT JOIN user_oauth_grants grant_row
+          ON grant_row.id = lease.grant_id AND grant_row.revoked_at IS NULL
         WHERE lease.id = ?1
           AND lease.token_hash IN (${tokenParameters})
           AND lease.state = 'active'
           AND lease.expires_at > ?${nowParameter}
           AND connection.revoked_at IS NULL
-          AND connection.kind = 'static'
           AND connection.custody = 'proxy'
+          AND (
+            (lease.grant_id IS NULL AND connection.kind = 'static')
+            OR grant_row.id IS NOT NULL
+          )
         LIMIT 1`,
     v: [leaseId, ...candidates.map(({ hash }) => hash), now],
   });
+}
+
+/** The grant's own header shape, used on the way out to the vendor. Linear
+ * personal keys take a raw `Authorization: <key>`; OAuth tokens take Bearer. */
+function parseGrantHeader(value: string | null): TokenHeader {
+  const fallback: TokenHeader = { name: "Authorization", prefix: "Bearer " };
+  if (value === null) return fallback;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!isRecord(parsed) || !isRecord(parsed.tokenHeader)) return fallback;
+    const header = parsed.tokenHeader;
+    if (!isString(header.name) || header.name.length === 0 || !isString(header.prefix)) {
+      return fallback;
+    }
+    return { name: header.name, prefix: header.prefix };
+  } catch {
+    return fallback;
+  }
+}
+
+function parseGrantBaseUrl(value: string | null): string | null {
+  if (value === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!isRecord(parsed) || !isString(parsed.baseUrl)) return null;
+    return new URL(parsed.baseUrl).protocol === "https:" ? parsed.baseUrl : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseProxyConfig(value: string): ProxyConfig | null {
@@ -107,6 +162,53 @@ function parseProxyConfig(value: string): ProxyConfig | null {
   }
 }
 
+/** Where the upstream secret and its header shape come from for one lease.
+ * A grant-backed lease answers from the person's own grant; the org-root path
+ * answers from the connection row it always did. */
+async function upstreamSecret(
+  runtime: ReturnType<RuntimeFactory>,
+  lease: ProxyLeaseRow,
+  config: ProxyConfig,
+): Promise<{ root: string; config: ProxyConfig } | null> {
+  if (lease.grant_id === null || lease.grant_user_id === null || lease.grant_provider === null) {
+    if (lease.root_ciphertext === null) return null;
+    return {
+      root: await openRoot(
+        runtime.credentialMasterKey,
+        lease.connection_name,
+        lease.root_ciphertext,
+      ),
+      config,
+    };
+  }
+  const grantHeader = parseGrantHeader(lease.grant_config);
+  const manifest = lease.grant_manifest_id === null
+    ? null
+    : providerManifest(lease.grant_manifest_id);
+  const ciphertext = lease.grant_kind === "pat"
+    ? lease.grant_refresh_ciphertext
+    : lease.grant_access_ciphertext;
+  if (ciphertext === null) return null;
+  if (
+    lease.grant_kind === "oauth" &&
+    (lease.grant_access_expires_at === null || lease.grant_access_expires_at <= Date.now())
+  ) {
+    return null;
+  }
+  return {
+    root: await openRoot(
+      runtime.credentialMasterKey,
+      grantSecretLabel(lease.grant_user_id, lease.grant_provider),
+      ciphertext,
+    ),
+    config: {
+      baseUrl: parseGrantBaseUrl(lease.grant_config) ?? manifest?.baseUrl ?? config.baseUrl,
+      tokenHeader: grantHeader.name,
+      tokenPrefix: grantHeader.prefix,
+    },
+  };
+}
+
 async function proxyCredential(
   context: CoreContext,
   runtime: ReturnType<RuntimeFactory>,
@@ -114,9 +216,11 @@ async function proxyCredential(
 ): Promise<ProxyCredential | null> {
   const candidates = await tokenCandidates(context.req.raw.headers);
   const lease = await proxyLease(runtime.db, leaseId, candidates, Date.now());
-  if (lease === null || lease.root_ciphertext === null) return null;
+  if (lease === null) return null;
   const config = parseProxyConfig(lease.config);
   if (config === null) return null;
+  // The box always presents the lease token in the connection's configured
+  // header; the upstream header shape may differ and is applied on the way out.
   const candidate = candidates.find(
     ({ header }) => header.toLowerCase() === config.tokenHeader.toLowerCase(),
   );
@@ -129,14 +233,12 @@ async function proxyCredential(
     return null;
   }
   try {
+    const upstream = await upstreamSecret(runtime, lease, config);
+    if (upstream === null) return null;
     return {
-      ...config,
+      ...upstream.config,
       leaseToken: candidate.token,
-      root: await openRoot(
-        runtime.credentialMasterKey,
-        lease.connection_name,
-        lease.root_ciphertext,
-      ),
+      root: upstream.root,
     };
   } catch {
     return null;

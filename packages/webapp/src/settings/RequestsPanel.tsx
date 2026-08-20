@@ -1,4 +1,4 @@
-import type { CredentialRequestView, ConnectionView } from '@blitzos/schema';
+import type { CredentialRequestView } from '@blitzos/schema';
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, CredentialRequestState } from '../api';
 import { caughtErrorMessage } from '../error-message';
@@ -15,7 +15,6 @@ export function RequestsPanel({
   onConfigure: (connectionName: string) => void;
 }) {
   const [requests, setRequests] = useState<StatefulCredentialRequest[]>([]);
-  const [connections, setConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resolving, setResolving] = useState<string | null>(null);
@@ -23,12 +22,10 @@ export function RequestsPanel({
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
       const states: CredentialRequestState[] = ['pending', 'approved', 'denied'];
-      const [configured, ...feeds] = await Promise.all([
-        client.listConnections(signal),
-        ...states.map((state) => client.listCredentialRequests(signal, state)),
-      ]);
+      const feeds = await Promise.all(
+        states.map((state) => client.listCredentialRequests(signal, state)),
+      );
       if (signal?.aborted) return;
-      setConnections(configured.connections);
       setRequests(feeds.flatMap((feed, index) => feed.requests.map((request) => ({
         ...request,
         state: states[index]!,
@@ -48,33 +45,31 @@ export function RequestsPanel({
     return () => request.abort();
   }, [reload]);
 
-  const resolve = async (request: StatefulCredentialRequest, action: 'approve' | 'deny') => {
+  const dismiss = async (request: StatefulCredentialRequest) => {
     if (resolving !== null || request.state !== 'pending') return;
     setResolving(request.id);
     setError(null);
     try {
-      if (action === 'approve') await client.approveCredentialRequest(request.id);
-      else await client.denyCredentialRequest(request.id);
+      await client.denyCredentialRequest(request.id);
       setRequests((current) => current.map((entry) => entry.id === request.id
-        ? { ...entry, state: action === 'approve' ? 'approved' : 'denied' }
+        ? { ...entry, state: 'denied' }
         : entry));
     } catch (caught) {
-      setError(caughtErrorMessage(caught, `Request ${action} failed.`));
+      setError(caughtErrorMessage(caught, 'Dismiss failed.'));
     } finally {
       setResolving(null);
     }
   };
 
-  const configured = new Set(connections.map(({ name }) => name));
   const pendingCount = requests.filter(({ state }) => state === 'pending').length;
 
   return (
     <section className="settings-panel settings-requests" role="tabpanel" aria-label="Requests">
       <header className="settings-panel-header">
         <div>
-          <p>Global approval feed</p>
+          <p>Connect inbox</p>
           <h1>Requests</h1>
-          <span>Credential access across every workspace, including resolved decisions.</span>
+          <span>Connections agents asked for and did not find, across every workspace.</span>
         </div>
         <span className="settings-count-badge">{pendingCount} pending</span>
       </header>
@@ -82,35 +77,37 @@ export function RequestsPanel({
       {loading ? (
         <p className="settings-credential-state">Loading access requests…</p>
       ) : requests.length === 0 ? (
-        <p className="settings-credential-state">No credential access requests.</p>
+        <p className="settings-credential-state">No agent has asked for a connection.</p>
       ) : (
         <div className="settings-credential-list">
           {requests.map((request) => (
             <article className="settings-credential-row settings-request-row" key={`${request.state}:${request.id}`}>
               <div>
                 <div className="settings-credential-row__title">
-                  <h3>{request.connection_name}</h3>
+                  <h3>@{request.connection_name}</h3>
                   <span className={`workspace-state-badge workspace-state-badge--${request.state}`}>
                     {request.state}
                   </span>
                 </div>
                 <p>workspace · {request.workspace_id}</p>
                 <small>{request.requested_scopes.length === 0
-                  ? 'Connection access · no named scopes'
-                  : request.requested_scopes.join(', ')}</small>
+                  ? 'An agent asked for this connection and found nothing behind it.'
+                  : `An agent asked for ${request.requested_scopes.join(', ')}.`}</small>
                 <time dateTime={new Date(request.created_at).toISOString()}>{new Date(request.created_at).toLocaleString()}</time>
               </div>
               {request.state === 'pending' && (
                 <div className="settings-row-actions">
-                  {!configured.has(request.connection_name) && (
-                    <button className="webapp-action" type="button" onClick={() => onConfigure(request.connection_name)}>
-                      Add connection
-                    </button>
-                  )}
-                  <button className="webapp-action" type="button" disabled={resolving !== null} onClick={() => { void resolve(request, 'deny'); }}>Deny</button>
-                  <button className="webapp-action webapp-action--primary" type="button" disabled={resolving !== null || !configured.has(request.connection_name)} onClick={() => { void resolve(request, 'approve'); }}>
-                    {resolving === request.id ? 'Working…' : 'Approve'}
-                  </button>
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    disabled={resolving !== null}
+                    onClick={() => { void dismiss(request); }}
+                  >{resolving === request.id ? 'Working…' : 'Dismiss'}</button>
+                  <button
+                    className="webapp-action webapp-action--primary"
+                    type="button"
+                    onClick={() => onConfigure(request.connection_name)}
+                  >Connect</button>
                 </div>
               )}
             </article>

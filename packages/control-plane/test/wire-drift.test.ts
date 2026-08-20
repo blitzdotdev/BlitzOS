@@ -1,5 +1,6 @@
 import * as schema from "@blitzos/schema";
 import { describe, expect, expectTypeOf, it } from "vitest";
+import type * as connections from "../core/connections/types.js";
 import * as wire from "../core/wire.js";
 
 type SharedShape<Wire, Schema> = Wire & Schema;
@@ -55,6 +56,11 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   owner: { name: "Owner", avatarUrl: null },
 };
 
+const templateConnection: SharedShape<
+  wire.TemplateConnectionView,
+  schema.TemplateConnectionView
+> = { provider: "linear", required: true };
+
 const workspaceTemplate: SharedShape<
   wire.WorkspaceTemplateView,
   schema.WorkspaceTemplateView
@@ -65,6 +71,7 @@ const workspaceTemplate: SharedShape<
   createdAt: 1,
   createdBy: { name: "Owner", avatarUrl: null },
   folders: [{ id: "folder", name: "Shared", role: "editor" }],
+  connections: [templateConnection],
 };
 
 const workspaceTemplates: SharedShape<
@@ -79,6 +86,7 @@ const createWorkspaceTemplate: SharedShape<
   name: "web analysis",
   machineTypeId: "mv-2c2g@lab",
   folderIds: ["folder"],
+  connections: [templateConnection],
 };
 
 const createdWorkspaceTemplate: SharedShape<
@@ -107,6 +115,7 @@ const createWorkspaceRequest: SharedShape<
       github: { scopes: ["contents:read"] },
     },
   },
+  connections: ["github"],
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -223,11 +232,100 @@ const folderAttachments: SharedShape<
   schema.ListFolderAttachmentsResponse
 > = { folders: [folderAttachment] };
 
+// The credential module keeps its own copy of the same views in
+// core/connections/types.ts. It is the second hand-mirrored wire in the
+// repository and had no drift coverage at all, which is how MintResult grew a
+// fifth key on one side only.
+const catalogScope: SharedShape<
+  connections.CatalogScopeView,
+  schema.CatalogScopeView
+> = {
+  id: "read",
+  title: "Read",
+  detail: "Read issues, projects, and comments, but change nothing.",
+  default: true,
+};
+
+const catalogEntry: SharedShape<
+  connections.CatalogEntryView,
+  schema.CatalogEntryView
+> = {
+  id: "linear",
+  title: "Linear",
+  summary: "Issues, projects, and comments through one GraphQL endpoint.",
+  docsUrl: "https://linear.app/developers",
+  custody: "proxy",
+  rotation: "graceful",
+  oauthAvailable: true,
+  oauthConfigured: false,
+  personalTokenLabel: "Personal API key",
+  personalTokenHelp: "Create it in Linear's own settings.",
+  needsVendorConfig: false,
+  environmentNames: ["LINEAR_API_KEY"],
+  scopes: [catalogScope],
+};
+
+const userGrant: SharedShape<connections.UserGrantView, schema.UserGrantView> = {
+  provider: "linear",
+  manifestId: "linear",
+  kind: "pat",
+  label: "work",
+  scopes: ["read"],
+  createdAt: 1,
+  updatedAt: 2,
+  accessExpiresAt: null,
+};
+
+const providerHealth: SharedShape<
+  connections.ProviderHealthView,
+  schema.ProviderHealthView
+> = {
+  provider: "linear",
+  state: "healthy",
+  detail: null,
+  checkedAt: 3,
+  latencyMs: 120,
+};
+
+const credentialLease: SharedShape<
+  connections.Lease,
+  schema.CredentialLeaseView
+> = {
+  id: "lease",
+  workspaceId: "workspace",
+  boxId: "box",
+  connection: "linear",
+  userId: "operator",
+  scopes: ["read"],
+  mode: "proxy",
+  issuedAt: 1,
+  expiresAt: 2,
+  state: "active",
+};
+
+/** FROZEN box wire: exactly these four keys, on both sides. */
+const mintResult: SharedShape<connections.MintResult, schema.MintResult> = {
+  integration: "linear",
+  mode: "proxy",
+  placements: [{ kind: "env", name: "LINEAR_API_KEY", value: "lease-token" }],
+  expiresAt: 4,
+};
+
+const catalogResponse: schema.ListCatalogResponse = { providers: [catalogEntry] };
+const userGrantsResponse: schema.ListUserGrantsResponse = { grants: [userGrant] };
+const providerHealthResponse: schema.ListProviderHealthResponse = {
+  providers: [providerHealth],
+};
+const credentialLeasesResponse: schema.ListCredentialLeasesResponse = {
+  leases: [credentialLease],
+};
+
 const fullFieldValues = [
   machineType,
   machineTypeFailure,
   volume,
   workspace,
+  templateConnection,
   workspaceTemplate,
   workspaceTemplates,
   createWorkspaceTemplate,
@@ -251,6 +349,16 @@ const fullFieldValues = [
   folderObjects,
   folderAttachment,
   folderAttachments,
+  catalogScope,
+  catalogEntry,
+  userGrant,
+  providerHealth,
+  credentialLease,
+  mintResult,
+  catalogResponse,
+  userGrantsResponse,
+  providerHealthResponse,
+  credentialLeasesResponse,
 ];
 
 describe("local wire copies", () => {
@@ -262,6 +370,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
+    expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
     expectTypeOf<wire.WorkspaceTemplateView>().toEqualTypeOf<schema.WorkspaceTemplateView>();
     expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();
     expectTypeOf<wire.CreateWorkspaceTemplateRequest>().toEqualTypeOf<schema.CreateWorkspaceTemplateRequest>();
@@ -286,6 +395,18 @@ describe("local wire copies", () => {
     expectTypeOf<wire.ListFolderObjectsResponse>().toEqualTypeOf<schema.ListFolderObjectsResponse>();
     expectTypeOf<wire.FolderAttachmentView>().toEqualTypeOf<schema.FolderAttachmentView>();
     expectTypeOf<wire.ListFolderAttachmentsResponse>().toEqualTypeOf<schema.ListFolderAttachmentsResponse>();
+  });
+
+  it("keeps the credential module's copies exactly equal to @blitzos/schema", () => {
+    expectTypeOf<connections.MintKind>().toEqualTypeOf<schema.MintKind>();
+    expectTypeOf<connections.Custody>().toEqualTypeOf<schema.Custody>();
+    expectTypeOf<connections.Placement>().toEqualTypeOf<schema.Placement>();
+    expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
+    expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
+    expectTypeOf<connections.CatalogScopeView>().toEqualTypeOf<schema.CatalogScopeView>();
+    expectTypeOf<connections.CatalogEntryView>().toEqualTypeOf<schema.CatalogEntryView>();
+    expectTypeOf<connections.UserGrantView>().toEqualTypeOf<schema.UserGrantView>();
+    expectTypeOf<connections.ProviderHealthView>().toEqualTypeOf<schema.ProviderHealthView>();
   });
 
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {

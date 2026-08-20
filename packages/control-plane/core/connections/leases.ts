@@ -3,6 +3,7 @@ import { changed, first, rows, transaction } from "../db.js";
 import { HttpError, isNumber, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
+import { scopesFromJson } from "./manifest.js";
 import type { Lease, MintResult } from "./types.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
@@ -29,6 +30,11 @@ interface CreateLeaseInput {
   boxId: string;
   connectionId: string;
   connectionName: string;
+  /** The workspace owner, always: a box is one disk and one env, so a lease
+   * resolves against the owner's identity even when an editor triggered it. */
+  userId: string;
+  /** The grant this lease was minted from; null for legacy org-root mints. */
+  grantId: string | null;
   scopes: string[];
   result: MintResult;
   tokenHash: string | null;
@@ -50,17 +56,6 @@ export interface CredentialEventView {
   event: CredentialEventRow["event"];
   detail: JsonValue | null;
   createdAt: number;
-}
-
-function scopesFromJson(value: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((scope) => isString(scope))
-      ? parsed
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 function leaseView(row: LeaseRow): Lease {
@@ -89,15 +84,16 @@ export async function createLease(
   await transaction(db, [
     {
       q: `INSERT INTO credential_leases
-          (id, workspace_id, box_id, connection_id, user_id, scopes, mode,
-           token_hash, issued_at, expires_at, state)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'active')`,
+          (id, workspace_id, box_id, connection_id, user_id, grant_id, scopes,
+           mode, token_hash, issued_at, expires_at, state)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active')`,
       v: [
         input.id,
         input.workspaceId,
         input.boxId,
         input.connectionId,
-        input.principal.id,
+        input.userId,
+        input.grantId,
         scopes,
         input.result.mode,
         input.tokenHash,
@@ -131,7 +127,7 @@ export async function createLease(
     workspaceId: input.workspaceId,
     boxId: input.boxId,
     connection: input.connectionName,
-    userId: input.principal.id,
+    userId: input.userId,
     scopes: input.scopes,
     mode: input.result.mode,
     issuedAt: input.now,
@@ -290,6 +286,55 @@ export function revokeConnectionLeasesQuery(connectionId: string): Query {
         WHERE connection_id = ?1 AND state = 'active'`,
     v: [connectionId],
   };
+}
+
+/** Revoking a grant kills every box that borrowed it, in the same transaction
+ * that clears the ciphertext. */
+export function revokeGrantLeasesQuery(grantId: string): Query {
+  return {
+    q: `UPDATE credential_leases
+        SET state = 'revoked', token_hash = NULL
+        WHERE grant_id = ?1 AND state = 'active'`,
+    v: [grantId],
+  };
+}
+
+export interface StaleSurfaceRow {
+  connection_id: string;
+  connection_name: string;
+  config: string;
+}
+
+/** How long a dead connection keeps being overwritten. Past this the file has
+ * been empty for weeks on every box that ever synced. */
+const SURFACE_TOMBSTONE_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+
+/** Connections whose surface files this workspace still carries on disk but
+ * which no longer mint. The running box image has no `remove-file` placement,
+ * so the next sync overwrites them empty — a stale skill for a dead
+ * connection would gaslight the agent into retrying a credential that is gone. */
+export async function staleSurfaceConnections(
+  db: Db,
+  workspaceId: string,
+  liveConnectionIds: readonly string[],
+  now = Date.now(),
+): Promise<StaleSurfaceRow[]> {
+  const excluded = liveConnectionIds
+    .map((_id, index) => `?${String(index + 3)}`)
+    .join(", ");
+  return rows<StaleSurfaceRow>(db, {
+    q: `SELECT lease.connection_id, connection.scoped_name AS connection_name,
+               connection.config
+        FROM credential_leases lease
+        JOIN connections connection ON connection.id = lease.connection_id
+        WHERE lease.workspace_id = ?1
+          AND lease.issued_at >= ?2
+          ${excluded === "" ? "" : `AND lease.connection_id NOT IN (${excluded})`}
+        GROUP BY lease.connection_id
+        HAVING SUM(CASE WHEN lease.state = 'active' THEN 1 ELSE 0 END) = 0
+        ORDER BY connection.scoped_name`,
+    v: [workspaceId, now - SURFACE_TOMBSTONE_WINDOW_MS, ...liveConnectionIds],
+  });
 }
 
 export async function runLeaseSweep(

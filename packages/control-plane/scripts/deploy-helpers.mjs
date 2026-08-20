@@ -1,4 +1,4 @@
-import { parseMicrovmHosts } from "../core/providers/microvm-hosts.js";
+import { parseMicrovmHosts } from "../core/compute/microvm-hosts.js";
 
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
 export const DB_BINDING = "DB";

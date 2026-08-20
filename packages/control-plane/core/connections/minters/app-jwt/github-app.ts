@@ -3,7 +3,7 @@ import type {
   Connection,
   Minter,
   MintRequest,
-  MintResult,
+  MinterResult,
   Placement,
 } from "../../types.js";
 
@@ -135,7 +135,7 @@ export const githubAppMinter: Minter = {
     root: string | null,
     connection: Connection,
     request: MintRequest,
-  ): Promise<MintResult> {
+  ): Promise<MinterResult> {
     if (connection.custody !== "cp") {
       throw new HttpError(409, "github app mint requires cp custody");
     }

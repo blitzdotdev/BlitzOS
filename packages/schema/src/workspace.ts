@@ -49,6 +49,11 @@ export interface WorkspaceView {
   };
 }
 
+export interface TemplateConnectionView {
+  provider: string;
+  required: boolean;
+}
+
 export interface WorkspaceTemplateView {
   id: string;
   name: string;
@@ -57,6 +62,8 @@ export interface WorkspaceTemplateView {
   createdBy: { name: string; avatarUrl: string | null };
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: "owner" | "admin" | "editor" | "viewer" | null }[];
+  /** Provider names only. `required` blocks create until the creator connects. */
+  connections: TemplateConnectionView[];
 }
 
 export interface ListWorkspaceTemplatesResponse {
@@ -67,6 +74,7 @@ export interface CreateWorkspaceTemplateRequest {
   name: string;
   machineTypeId: string;
   folderIds: string[];
+  connections?: TemplateConnectionView[];
 }
 
 export interface CreateWorkspaceTemplateResponse {

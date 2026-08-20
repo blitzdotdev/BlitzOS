@@ -24,7 +24,7 @@ import type {
   VmInspection,
   VmProvider,
   VolumeProvider,
-} from "../core/providers/types.js";
+} from "../core/compute/types.js";
 import config from "../teenybase.js";
 import { hashSecret, randomToken } from "../core/crypto.js";
 
@@ -33,6 +33,10 @@ export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 const credentialMasterKey = await credentialMasterKeyFor(CRED_MASTER_KEY);
 const webAppAuth = new WorkspaceWebAppAuth("test-webapp-root-secret");
+
+/** Stands in for the provider OAuth client bindings. Suites that exercise
+ * /connect fill it; everything else sees an unconfigured instance. */
+export const testConnectSecrets = new Map<string, string>();
 
 interface TestApp {
   request(
@@ -196,6 +200,7 @@ export function appWithVmProviders(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+      connectSecret: (name) => testConnectSecrets.get(name),
     },
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),
@@ -242,6 +247,7 @@ export function testRuntime(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: OPERATOR_KEY,
+      connectSecret: (name) => testConnectSecrets.get(name),
     },
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),
@@ -450,6 +456,8 @@ export async function enrollBox(
 export async function resetDatabase(): Promise<void> {
   const tables = [
     "microvm_hosts",
+    "provider_health",
+    "workspace_template_connections",
     "workspace_template_folders",
     "workspace_templates",
     "folder_grants",

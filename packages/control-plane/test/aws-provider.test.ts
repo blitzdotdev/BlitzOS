@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { HetznerProvider } from "../core/providers/hetzner.js";
-import { MicrovmPoolProvider } from "../core/providers/microvm.js";
-import { VmProviderRegistry } from "../core/providers/registry.js";
+import { HetznerProvider } from "../core/compute/hetzner.js";
+import { MicrovmPoolProvider } from "../core/compute/microvm.js";
+import { VmProviderRegistry } from "../core/compute/registry.js";
 import {
   AWS_USER_DATA_MAX_BYTES,
   AwsProvider,
   awsProviderFromEnv,
   type AwsProviderConfig,
-} from "../core/providers/aws.js";
-import { parseXml, childText, setItems } from "../core/providers/aws-xml.js";
-import type { CreateVmInput } from "../core/providers/types.js";
+} from "../core/compute/aws.js";
+import { parseXml, childText, setItems } from "../core/compute/aws-xml.js";
+import type { CreateVmInput } from "../core/compute/types.js";
 
 const REGION = "us-east-1";
 const INSTANCE_ID = "i-0123456789abcdef0";

@@ -25,7 +25,7 @@ import {
   BOX_IMAGE_TICKETS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
 } from "../core/webapp-tickets.js";
-import { HetznerProvider } from "../core/providers/hetzner.js";
+import { HetznerProvider } from "../core/compute/hetzner.js";
 import worker from "../src/worker.js";
 import {
   OPERATOR_KEY,

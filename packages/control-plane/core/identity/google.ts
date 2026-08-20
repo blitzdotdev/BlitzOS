@@ -6,14 +6,14 @@ import {
   cookieValue,
   sessionCookie,
 } from "../principals.js";
-import { fetchBoundedJson, type JsonValue } from "../providers/json-fetch.js";
+import { fetchBoundedJson, type JsonValue } from "../compute/json-fetch.js";
 import type { CoreRouter, RuntimeFactory } from "../runtime.js";
 import {
   clearGoogleOAuthStateCookie,
   createGoogleOAuthState,
   GOOGLE_OAUTH_COOKIE,
   verifyGoogleOAuthStateCookie,
-} from "./oauth-state.js";
+} from "../oauth-state.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
 import { redeemInviteSession } from "./invites.js";
 

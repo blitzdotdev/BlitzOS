@@ -76,7 +76,7 @@ Revocation symmetry matters: when a lease is revoked (including on unshare), the
 - Templates embed **provider names + a `required` flag** — never grants, never secrets (`workspace_template_connections` join beside the existing folders join).
 - **Create-from-template shows a connect checklist before create**: green check per provider you already have a grant for, Connect button per missing one, inline OAuth/PAT. You become the workspace owner, so it is your SSO. `required` blocks create until connected; optional ones skip and prompt later from the panel.
 - `POST /workspaces` gains `connections?: string[]` (template-fed or ad-hoc). `manifest` stays the ceiling; the new field is the provision list; ceiling wins on conflict.
-- **Mint-at-ready**: on the phone-home ready transition (`workspaces.ts:705`), pre-mint the enabled connections from the owner's grants so the first shell opens with env and skills on disk.
+- **Delivery stays the sync**: the first login shell's `blitz-cred sync` mints the enabled connections from the owner's grants. Pre-minting at the phone-home ready transition was tried and cut — the phone-home response cannot carry placements, so the pre-mint stored lease rows for tokens no box ever held. Revisit when that response can deliver.
 - The demo this exists for: "new workspace from template `frontend` → checklist shows figma ✓ linear ✓ github Connect → one SSO → workspace opens `@`-able in the first prompt."
 
 ## 6. OAuth mechanics (per-user)
@@ -93,7 +93,7 @@ Revocation symmetry matters: when a lease is revoked (including on unshare), the
 |---|---|---|
 | **0** (done, live) | rename integrations → connections: routes (+aliases), persisted panel enum (+fold), D1 0017, UI, schema types | version `2b0e781b` |
 | **1** | provider catalog + per-user PAT grants (`user_oauth_grants` goes live) + panel Connect flow + connect inbox + owner-spine mint resolution | kills the vim workaround |
-| **2** | surfaces Phase A (skills/env via file placements) + per-workspace enablement + templates w/ SSO checklist + mint-at-ready | `@figma` works in CLI harnesses on the current box image |
+| **2** | surfaces Phase A (skills/env via file placements) + per-workspace enablement + templates w/ SSO checklist | `@figma` works in CLI harnesses on the current box image |
 | **3** | OAuth (`/connect/*`, oauth minter) for Figma + Linear | one-click |
 | **4** | MCP passthrough + sync-on-session-start + `remove-file` placement (actor + image rebuild train) | needs a box release |
 
@@ -183,7 +183,7 @@ Three existing name collisions this resolves: `providers/` (compute), `grants.ts
 **Test tiers (the probe powers all three):**
 - **T1 conformance** — parametrized vitest suite over the whole catalog, every PR, no network: manifest validates, skill renders, placements compile inside the frozen box wire, exchange replays fixtures. Providers inherit tests by existing.
 - **T2 canary** — a new cron in the Worker (three schedules already exist): per provider with a canary-principal grant, mint → probe → `provider_health` row + event; surfaced in the panel ("github ✓ checked 2h ago") and the connect inbox on failure. The canary principal is §1's bot-user escape hatch. Always-on live-prod regression with zero external infra.
-- **T3 box e2e** — `e2e/connections.mjs` (successor of `credentials.mjs`, writes `CONNECTIONS-E2E-REPORT.md` per the existing report convention): discovers grants on the target instance, creates a real workspace, asserts env + skill files land on disk, probes from inside the box via the proxy path, revokes, asserts removal. Nightly/on-demand; the only tier that costs a VM.
+- **T3 box e2e** — `e2e/connections.mjs` (the per-user grant half beside `credentials.mjs`, which keeps the org-root surface; writes `CONNECTIONS-E2E-REPORT.md` per the existing report convention): discovers grants on the target instance, creates a real workspace, asserts env + skill files land on disk, probes from inside the box via the proxy path, revokes, asserts removal. Nightly/on-demand; the only tier that costs a VM.
 
 Tier boundaries are cost boundaries: PR-cheap / cron-cheap / VM-expensive. `npm run provider:check -- <name>` filters T1 to one provider.
 

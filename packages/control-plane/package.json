@@ -10,13 +10,13 @@
       "import": "./dist/src/index.js"
     },
     "./hetzner": {
-      "types": "./dist/core/providers/hetzner.d.ts",
-      "import": "./dist/core/providers/hetzner.js"
+      "types": "./dist/core/compute/hetzner.d.ts",
+      "import": "./dist/core/compute/hetzner.js"
     }
   },
   "files": [
     "dist",
-    "core/providers/microvm-hosts.js",
+    "core/compute/microvm-hosts.js",
     "migrations",
     "README.md",
     "scripts/deploy-helpers.mjs",
@@ -26,6 +26,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "deploy": "node scripts/deploy.mjs",
+    "provider:check": "vitest run test/connections-catalog.test.ts -t",
     "test:shell": "sh test/shell-syntax.sh",
     "test:python": "npm run build --silent && node --test test/bootstrap-python.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.wire-drift.json",

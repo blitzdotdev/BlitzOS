@@ -33,6 +33,7 @@
   "scripts": {
     "lint": "oxlint .",
     "lint:gate": "node scripts/lint-gate.mjs",
+    "provider:check": "npm run provider:check --workspace @blitzos/control-plane --",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present && node --test packages/microvm-host/guest/blitz-microvm-enroll.test.js tools/oxlint/blitz-house/*.test.mjs"
   },

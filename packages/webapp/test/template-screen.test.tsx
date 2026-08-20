@@ -167,6 +167,7 @@ describe('create template screen', () => {
       name: 'starter',
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-ada'],
+      connections: [],
     });
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();
@@ -237,6 +238,7 @@ describe('create template screen', () => {
       name: 'starter v2',
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-gone'],
+      connections: [],
     });
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();

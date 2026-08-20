@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceView } from "@blitzos/schema";
 import { hashSecret, randomToken } from "../core/crypto.js";
 import { INVITE_TTL_MS, inviteCodeHash } from "../core/identity/invites.js";
-import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
+import type { CreateVmInput, WebAppPort } from "../core/compute/types.js";
 import {
   BOX_IMAGE_TICKETS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,

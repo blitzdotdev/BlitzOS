@@ -1,12 +1,26 @@
-import { HttpError, isRecord, isString } from "../http.js";
+import { HttpError, isRecord, isString, type JsonObject } from "../http.js";
 import type { Connection } from "./types.js";
 
 /** The manifest is stored verbatim in D1 (workspaces.manifest), so its
  * `integrations` key is a persisted document format, not a renameable client
  * field; it deliberately keeps the old noun. */
-type CredentialManifest = {
-  integrations: Record<string, Record<string, unknown>>;
-};
+export interface CredentialManifest {
+  integrations: Record<string, JsonObject>;
+}
+
+/** Scope lists reach this module as JSON arrays out of D1 — on grants, on
+ * leases, on requests. Unreadable stored data grants nothing, which is the
+ * direction a credential system is allowed to fail in. */
+export function scopesFromJson(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((scope) => isString(scope))
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 function stringArray(value: unknown): value is string[] {
   return (
@@ -19,7 +33,7 @@ export function parseManifest(value: unknown): CredentialManifest {
   if (!isRecord(value) || !isRecord(value.integrations)) {
     throw new HttpError(400, "manifest.integrations must be an object");
   }
-  const integrations: Record<string, Record<string, unknown>> = {};
+  const integrations: CredentialManifest["integrations"] = {};
   for (const [name, ceiling] of Object.entries(value.integrations)) {
     if (name.length === 0 || !isRecord(ceiling)) {
       throw new HttpError(400, "each manifest integration must be an object");
@@ -35,6 +49,32 @@ export function parseManifest(value: unknown): CredentialManifest {
 export function manifestJson(value: unknown): string {
   parseManifest(value);
   return JSON.stringify(value);
+}
+
+/** Per-workspace enablement (§1 rule 3) maps onto the ceiling primitive that
+ * already exists: a grant must not flow into every workspace its owner has
+ * just because they hold it. An explicit ceiling wins on conflict — the
+ * provision list can only enable what the ceiling already allows. */
+export function enablementManifestJson(
+  ceiling: CredentialManifest | undefined,
+  connections: readonly string[],
+): string | null {
+  if (ceiling !== undefined) return manifestJson(ceiling);
+  if (connections.length === 0) return null;
+  const manifest: CredentialManifest = { integrations: {} };
+  for (const name of connections) manifest.integrations[name] = {};
+  return JSON.stringify(manifest);
+}
+
+/** Names the ceiling allows, filtered to the requested provision list. */
+export function enabledConnections(
+  storedManifest: string | null,
+  connections: readonly string[],
+): string[] {
+  if (storedManifest === null) return [...connections];
+  const manifest = parsedStoredManifest(storedManifest);
+  if (manifest === null) return [];
+  return connections.filter((name) => manifest.integrations[name] !== undefined);
 }
 
 function parsedStoredManifest(value: string): CredentialManifest | null {

@@ -7,12 +7,10 @@ import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
  * while its tab is in front closes it. */
 export function WorkspaceRailStrip({
   openPanels,
-  canManageCredentials,
   pendingRequestCount,
   onTogglePanel,
 }: {
   openPanels: ReadonlySet<WorkspaceDrawerSegment>;
-  canManageCredentials: boolean;
   pendingRequestCount: number;
   onTogglePanel: (panel: WorkspaceDrawerSegment) => void;
 }) {
@@ -27,14 +25,12 @@ export function WorkspaceRailStrip({
       label: 'teenyapps',
       icon: <span className="webapp-rail-strip__icon mi-preview" aria-hidden="true" />,
     },
-  ];
-  if (canManageCredentials) {
-    panels.push({
+    {
       id: 'connections',
       label: 'Connections',
       icon: <GenericProviderIcon className="webapp-rail-strip__icon" />,
-    });
-  }
+    },
+  ];
   return (
     <nav className="webapp-rail-strip" aria-label="Workspace panels">
       {panels.map((panel) => {

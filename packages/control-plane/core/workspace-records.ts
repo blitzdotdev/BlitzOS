@@ -1,6 +1,6 @@
 import type { Db } from "./db.js";
 import { first } from "./db.js";
-import { isMicrovmProviderId } from "./providers/microvm.js";
+import { isMicrovmProviderId } from "./compute/microvm.js";
 import type { Phase, RetryAction, WorkspaceView } from "./wire.js";
 
 export interface WorkspaceRow {

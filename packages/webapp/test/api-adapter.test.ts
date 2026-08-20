@@ -97,6 +97,12 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
+    listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
+    listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    putConnectionGrant: vi.fn(async () => undefined),
+    deleteConnectionGrant: vi.fn(async () => undefined),
+    listProviderHealth: vi.fn(async () => ({ providers: [] })),
+    connectStartUrl: (provider: string) => `/connect/${provider}/start`,
     ...overrides,
   };
 }

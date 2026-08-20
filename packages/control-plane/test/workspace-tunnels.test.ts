@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rows } from "../core/db.js";
-import { CloudflareTunnels } from "../core/providers/cloudflare-tunnels.js";
+import { CloudflareTunnels } from "../core/compute/cloudflare-tunnels.js";
 import { WorkspaceTunnels } from "../core/workspace-tunnels.js";
 import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 import type { WorkspaceRow } from "../core/workspaces.js";

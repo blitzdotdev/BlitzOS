@@ -4,7 +4,7 @@ import {
   encodeAwsQueryBody,
   encodeAwsQueryComponent,
   signAwsQueryRequest,
-} from "../core/providers/aws-sigv4.js";
+} from "../core/compute/aws-sigv4.js";
 
 /** The credentials, host, service, and timestamp published with the AWS
  * Signature Version 4 test suite. Every expectation below that quotes a
