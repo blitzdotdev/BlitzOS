@@ -691,6 +691,51 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("drops an abandoned sign-in instead of re-arming it on the way back", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const recorder = recordTerminalSubmits();
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-sign-in"]',
+    )?.click());
+    expect(selectedSessionId(view.container)).toBe("2");
+
+    // Leaving the tab inside the warm-up window is the reader abandoning the
+    // flow, not pausing it.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
+    )?.click());
+    expect(recorder.submits).toEqual([]);
+
+    // Coming back to that tab must not resume the request. The pane is a live
+    // agent TUI by then, and `/login` plus Enter typed into it mid-session
+    // interrupts whatever the reader was actually doing there.
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+    });
+    recorder.stop();
+    expect(recorder.submits).toEqual([]);
+
+    await view.unmount();
+  });
+
   it("tears down retained panes when switching workspaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
