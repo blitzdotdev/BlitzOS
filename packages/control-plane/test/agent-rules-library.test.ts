@@ -1,4 +1,5 @@
 import type {
+  AgentRulesResponse,
   AgentRuleView,
   ListAgentRulesResponse,
   WorkspaceTemplateView,
@@ -6,9 +7,9 @@ import type {
 } from "@blitzos/schema";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  AGENT_RULE_CONTENT_MAX_BYTES,
   AGENT_RULES_DOC,
   BUILT_IN_AGENT_RULE_NAME,
-  type AgentRulesResponse,
 } from "../core/agent-rules.js";
 import {
   appRequest,
@@ -121,14 +122,71 @@ describe("agent rule library", () => {
       { name: "x".repeat(121), content: "# x\n" },
       { name: "ok", content: "" },
       { name: "ok", content: "   \n" },
-      { name: "ok", content: "x".repeat(256 * 1024 + 1) },
+      { name: "ok", content: "x".repeat(AGENT_RULE_CONTENT_MAX_BYTES + 1) },
       { name: 7, content: "# x\n" },
       { name: "ok", content: 7 },
+      // The built-in doc is a synthetic row with no id, so UNIQUE(org_id, name)
+      // cannot stop a stored rule from claiming its label; the name is reserved
+      // here instead, or the picker shows two options with one name.
+      { name: BUILT_IN_AGENT_RULE_NAME, content: "# mine\n" },
+      { name: ` ${BUILT_IN_AGENT_RULE_NAME} `, content: "# mine\n" },
     ];
     for (const candidate of invalid) {
       const response = await putRule(app, cookie, "rule-bad", candidate);
       expect(response.status, JSON.stringify(candidate).slice(0, 80)).toBe(400);
     }
+    // A name that merely contains it is fine.
+    expect((await putRule(app, cookie, "rule-ok", {
+      name: `${BUILT_IN_AGENT_RULE_NAME} (fork)`,
+      content: "# mine\n",
+    })).status).toBe(201);
+    expect((await listRules(app, cookie)).filter(
+      ({ name }) => name === BUILT_IN_AGENT_RULE_NAME,
+    )).toHaveLength(1);
+  });
+
+  // The box refuses to install a document larger than the same cap on the same
+  // quantity — the UTF-8 byte length of `content`. If this route stored more,
+  // the picker would show a rule selected that no box could ever apply.
+  it("caps stored content by UTF-8 bytes, at the same boundary the box uses", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+
+    // Exactly at the cap, all ASCII: stored.
+    expect((await putRule(app, cookie, "rule-edge", {
+      name: "At the cap",
+      content: "x".repeat(AGENT_RULE_CONTENT_MAX_BYTES),
+    })).status).toBe(201);
+
+    // One byte over: refused.
+    expect((await putRule(app, cookie, "rule-over", {
+      name: "Over the cap",
+      content: "x".repeat(AGENT_RULE_CONTENT_MAX_BYTES + 1),
+    })).status).toBe(400);
+
+    // Non-ASCII is measured in bytes, not UTF-16 units: "é" is two bytes, so
+    // half the cap in characters is exactly the cap in bytes and still fits,
+    // while one more character is one byte too many.
+    const twoByte = "é";
+    expect(new TextEncoder().encode(twoByte).byteLength).toBe(2);
+    expect((await putRule(app, cookie, "rule-utf8", {
+      name: "Accented, at the cap",
+      content: twoByte.repeat(AGENT_RULE_CONTENT_MAX_BYTES / 2),
+    })).status).toBe(201);
+    expect((await putRule(app, cookie, "rule-utf8-over", {
+      name: "Accented, over the cap",
+      content: twoByte.repeat(AGENT_RULE_CONTENT_MAX_BYTES / 2 + 1),
+    })).status).toBe(400);
+
+    // A document at the cap whose JSON envelope is far larger than the cap —
+    // every byte escapes to two — is still stored. Capping the envelope instead
+    // of the content would have refused it.
+    const escaped = "\n".repeat(AGENT_RULE_CONTENT_MAX_BYTES);
+    expect(JSON.stringify(escaped).length).toBeGreaterThan(AGENT_RULE_CONTENT_MAX_BYTES * 2);
+    expect((await putRule(app, cookie, "rule-escaped", {
+      name: "Newlines, at the cap",
+      content: `# rules${escaped}`.slice(0, AGENT_RULE_CONTENT_MAX_BYTES),
+    })).status).toBe(201);
   });
 
   it("scopes rules to the org and lets any active member author them", async () => {
@@ -242,6 +300,68 @@ describe("agent rule library", () => {
     expect((await served(cleared.id)).version).toBe(builtInVersion);
     expect((await served(inherited.id)).version).not.toBe(builtInVersion);
     expect((await served(inherited.id)).version).toMatch(/^[0-9a-f]{16}$/u);
+  });
+
+  // A PUT that validated `agentRuleId` and then wrote only name/machine dropped
+  // the caller's choice in silence. The rule is replaced when the request
+  // carries the key and left alone when it does not — the edit form does not
+  // render the picker, and blanking a stored rule because a field was absent is
+  // not an edit anyone asked for.
+  it("replaces a template's agent rule on PUT only when the request carries it", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const outsider = await userSession("outsider");
+    await putRule(app, cookie, "rule-a", { name: "A", content: "# a\n" });
+    await putRule(app, cookie, "rule-b", { name: "B", content: "# b\n" });
+    await putRule(app, outsider, "rule-other", { name: "Theirs", content: "# theirs\n" });
+
+    const created = await appRequest(app, "/workspace-templates", {
+      ...json({
+        name: "ruled", machineTypeId: "small", folderIds: [], agentRuleId: "rule-a",
+      }, "POST"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const id = (await created.json<{ template: WorkspaceTemplateView }>()).template.id;
+
+    const put = async (body: object): Promise<Response> => appRequest(
+      app,
+      `/workspace-templates/${id}`,
+      { ...json(body), headers: { Cookie: cookie, "Content-Type": "application/json" } },
+    );
+    const stored = async (): Promise<string | null> => {
+      const response = await appRequest(app, "/workspace-templates", { headers: { Cookie: cookie } });
+      const templates = (await response.json<{ templates: WorkspaceTemplateView[] }>()).templates;
+      return templates.find((template) => template.id === id)?.agentRuleId ?? null;
+    };
+
+    // Absent: kept.
+    expect((await put({ name: "renamed", machineTypeId: "small", folderIds: [] })).status).toBe(200);
+    expect(await stored()).toBe("rule-a");
+
+    // Present: replaced.
+    expect((await put({
+      name: "renamed", machineTypeId: "small", folderIds: [], agentRuleId: "rule-b",
+    })).status).toBe(200);
+    expect(await stored()).toBe("rule-b");
+
+    // Explicit null: cleared.
+    expect((await put({
+      name: "renamed", machineTypeId: "small", folderIds: [], agentRuleId: null,
+    })).status).toBe(200);
+    expect(await stored()).toBeNull();
+
+    // Another org's rule, and one that does not exist, are 404s — and the 404
+    // lands before any write, so the rest of the edit does not half-apply.
+    expect((await put({
+      name: "reverted", machineTypeId: "small", folderIds: [], agentRuleId: "rule-a",
+    })).status).toBe(200);
+    for (const agentRuleId of ["rule-other", "missing"]) {
+      expect((await put({
+        name: "clobbered", machineTypeId: "small", folderIds: [], agentRuleId,
+      })).status, agentRuleId).toBe(404);
+    }
+    expect(await stored()).toBe("rule-a");
   });
 
   it("rejects a rule from another org on create and frees references on delete", async () => {

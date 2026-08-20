@@ -34,10 +34,22 @@ const fixturesDirectory = fileURLToPath(
 
 const BAKED = "# baked fallback rules\n";
 
+/** limits.json is the shared size definition, not an envelope fixture. */
+const LIMITS_FIXTURE = "limits.json";
+
 function fixtureNames(): string[] {
   return readdirSync(fixturesDirectory)
-    .filter((name) => name.endsWith(".json"))
+    .filter((name) => name.endsWith(".json") && name !== LIMITS_FIXTURE)
     .sort();
+}
+
+function sharedMaxContentBytes(): number {
+  // SAFETY: Trusted local test data authored to the { maxContentBytes } shape;
+  // the control-plane producer test reads the same file.
+  const limits = JSON.parse(
+    readFileSync(join(fixturesDirectory, LIMITS_FIXTURE), "utf8"),
+  ) as { maxContentBytes: number };
+  return limits.maxContentBytes;
 }
 
 function readFixture(name: string): AgentRulesFixture {
@@ -204,6 +216,62 @@ describe("blitz-rules sync consumer contract", () => {
     expect((await runSync(noCredential)).status).toBe(0);
     expectBakedPreserved(noOrigin);
     expectBakedPreserved(noCredential);
+  });
+
+  // The control plane stores a rule whose `content` is at most this many UTF-8
+  // bytes. This reader must accept every one of them, or the picker can select
+  // a rule that no box will ever install. Both sides measure `content` after
+  // parsing: not the JSON envelope (escaping expands it) and not String#length
+  // (which counts UTF-16 units, so a non-ASCII document would be mismeasured).
+  it("installs any document within the shared byte cap and refuses one past it", async () => {
+    const maxBytes = sharedMaxContentBytes();
+
+    // Exactly at the cap.
+    const atCap = "x".repeat(maxBytes);
+    expect(Buffer.byteLength(atCap, "utf8")).toBe(maxBytes);
+    const atCapOrigin = await serveBody(200, JSON.stringify({ version: "v1", content: atCap }));
+    const atCapState = makeState(atCapOrigin, "good-token");
+    expect((await runSync(atCapState)).status).toBe(0);
+    expect(readFileSync(atCapState.claudePath, "utf8")).toBe(atCap);
+
+    // One byte past it: the baked copy stays.
+    const overCap = "x".repeat(maxBytes + 1);
+    const overOrigin = await serveBody(200, JSON.stringify({ version: "v1", content: overCap }));
+    const overState = makeState(overOrigin, "good-token");
+    expect((await runSync(overState)).status).toBe(0);
+    expectBakedPreserved(overState);
+
+    // Non-ASCII at the cap: two bytes per character, so half the cap in
+    // characters. Measuring String#length would have wrongly accepted twice
+    // this much.
+    const accented = "é".repeat(maxBytes / 2);
+    expect(Buffer.byteLength(accented, "utf8")).toBe(maxBytes);
+    const accentedOrigin = await serveBody(
+      200,
+      JSON.stringify({ version: "v1", content: accented }),
+    );
+    const accentedState = makeState(accentedOrigin, "good-token");
+    expect((await runSync(accentedState)).status).toBe(0);
+    expect(readFileSync(accentedState.claudePath, "utf8")).toBe(accented);
+
+    const accentedOver = "é".repeat(maxBytes / 2 + 1);
+    const accentedOverOrigin = await serveBody(
+      200,
+      JSON.stringify({ version: "v1", content: accentedOver }),
+    );
+    const accentedOverState = makeState(accentedOverOrigin, "good-token");
+    expect((await runSync(accentedOverState)).status).toBe(0);
+    expectBakedPreserved(accentedOverState);
+
+    // A document at the cap whose envelope is more than twice the cap, because
+    // every byte escapes. Capping the raw body would have refused it.
+    const newlines = "\n".repeat(maxBytes);
+    const envelope = JSON.stringify({ version: "v1", content: newlines });
+    expect(envelope.length).toBeGreaterThan(maxBytes * 2);
+    const escapedOrigin = await serveBody(200, envelope);
+    const escapedState = makeState(escapedOrigin, "good-token");
+    expect((await runSync(escapedState)).status).toBe(0);
+    expect(readFileSync(escapedState.claudePath, "utf8")).toBe(newlines);
   });
 
   it("rejects an unknown subcommand with exit 2 and writes nothing", async () => {

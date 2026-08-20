@@ -302,11 +302,15 @@ export function addWorkspaceTemplateRoutes(
       throw new HttpError(403, "forbidden");
     }
     // Full replacement with the create shape: the edit form always submits
-    // name, machine, the complete folder set, and the environment. Only newly
-    // added folders need read access — an admin may edit a template whose
-    // existing folders were never shared with them, and keeping those must not
-    // fail or drop. The agent rule is validated but not replaced here: the edit
-    // form does not render it, so writing it would blank it.
+    // name, machine, the complete folder set, and the environment, so an edit
+    // that cleared the environment sends the empty one rather than dropping it.
+    // Only newly added folders need read access — an admin may edit a template
+    // whose existing folders were never shared with them, and keeping those
+    // must not fail or drop. `agentRuleId` is replaced only when the request
+    // actually carries the key: the edit form does not render the picker and
+    // omits it, and blanking a stored rule because a field was absent is not an
+    // edit anyone asked for. A request that does send it — including an explicit
+    // null to clear it — gets what it asked for rather than a silent drop.
     const input = parseCreateTemplate(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     const existingFolderIds = new Set(
@@ -317,6 +321,11 @@ export function addWorkspaceTemplateRoutes(
       if (existingFolderIds.has(folderId)) continue;
       await requireFolderAccess(runtime.db, folderId, actor, "read");
     }
+    // Resolved before the first write so an unknown rule 404s the whole edit
+    // rather than half-applying it.
+    const agentRuleId = input.agentRuleId === undefined
+      ? undefined
+      : await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
     const now = Date.now();
     await rows(runtime.db, {
       q: `UPDATE workspace_templates
@@ -330,6 +339,12 @@ export function addWorkspaceTemplateRoutes(
         storedWorkspaceEnvironment(input.environment),
       ],
     });
+    if (agentRuleId !== undefined) {
+      await rows(runtime.db, {
+        q: "UPDATE workspace_templates SET agent_rule_id = ?2 WHERE id = ?1",
+        v: [template.id, agentRuleId],
+      });
+    }
     await rows(runtime.db, {
       q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",
       v: [template.id],

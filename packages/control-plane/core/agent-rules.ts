@@ -1,3 +1,4 @@
+import agentRulesMarkdown from "../../box/rootfs/opt/blitz/skel/agent-rules.md";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
@@ -5,30 +6,37 @@ import { authenticateBox } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import type {
+  AgentRulesResponse,
   AgentRuleView,
   ListAgentRulesResponse,
   PutAgentRuleRequest,
 } from "./wire.js";
 
-// The single source of truth for these bytes is the box-image skeleton file
-// packages/box/rootfs/opt/blitz/skel/agent-rules.md. That file is baked into
-// every box and installed to ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md at boot
-// (blitz-init-state) as the offline fallback. The control-plane Worker cannot
-// read files at runtime, so the bytes are mirrored here as a compiled string.
+// The box-image skeleton file packages/box/rootfs/opt/blitz/skel/agent-rules.md
+// is the single source of truth for these bytes, at build time and at runtime.
+// That file is baked into every box and installed to ~/.claude/CLAUDE.md and
+// ~/.codex/AGENTS.md at boot (blitz-init-state) as the offline fallback; the
+// import above carries the same bytes into the Worker bundle as a Text module
+// (see the `[[rules]]` block in wrangler.toml), because a Worker has no
+// filesystem to read them from.
 //
-// The mirror is pinned byte-for-byte to the .md by
-// test/agent-rules-drift.test.ts. Do NOT hand-edit AGENT_RULES_DOC: edit the
-// .md (the canonical source) and regenerate this constant. A Worker deploy then
-// ships the edited rules to every box that fetches GET
-// /workspaces/self/agent-rules, without a new box image.
-export const AGENT_RULES_DOC = "# Blitz box — agent rules\n\nThese rules are managed by Blitz. This file is overwritten every time the box\nrestarts, so do not edit it. Put project-specific rules in\n`/workspace/CLAUDE.md` instead — that file is yours and survives restarts.\n\n## Showing a preview to the user\n\nWhen you start a web UI, dev server, or static HTML page for the user, run:\n\n```\nblitz preview open <port>\n```\n\nThis makes the platform **open the preview for the user**. Do it as soon as the\nserver is listening. Never tell a first-time user to go hunt for a preview tab —\nopen it for them.\n\n- `--path <path>` deep-links to a route, e.g. `blitz preview open 3000 --path /dashboard`.\n- `--title <name>` names the preview, e.g. `blitz preview open 5173 --title \"Docs\"`.\n\n### How previews reach the browser\n\n- Listen on a TCP port in the range **1024-65535**. Avoid **7443-7446** and\n  **17445**; the box uses those.\n- Bind to an IPv4 loopback or wildcard address (**`127.0.0.1`** or **`0.0.0.0`**).\n  Do **not** bind IPv6-only (`::1`) — it will not be reached.\n- Within a few seconds the port appears in the workspace preview sidebar. It is\n  served to the browser at `/workspaces/<workspace-id>/webapp/7445/preview/<port>/`.\n- Do **not** try to fetch that URL yourself from inside the box. The browser\n  holds an auth token that the box does not, so the request will fail from here.\n  Just start the server and open the preview.\n\n## Sharing a public link\n\nTo surface a public link you created (for example a `blitz.dev` app you\ndeployed), use:\n\n```\nblitz preview add <url> --title \"<name>\"\nblitz preview list\nblitz preview rm <url>\n```\n\nOnly `https` `*.blitz.dev` links open inline in the preview. Any other link\nopens in a new browser tab.\n\n## Installing packages\n\n- There is no `sudo`. Anything that needs root (including `apt`) will not work.\n- `npm i -g <pkg>` works; global installs go under `/opt/blitz/npm`.\n- `python3` is present, but `pip` is not. Bootstrap pip yourself if you need it\n  (for example with `python3 -m ensurepip` or by fetching `get-pip.py`).\n";
+// Editing the .md is therefore the whole change: a Worker deploy ships the
+// edited rules to every box that fetches GET /workspaces/self/agent-rules,
+// without a new box image and without a second copy to keep in step.
+//
+// Caveat for the `tsc` build: dist/ emits the import specifier unchanged, and
+// the .md sits outside the package, so `dist/src/index.js` cannot be loaded by
+// plain Node. Nothing imports it — the Worker is bundled from src/worker.ts and
+// the only dist consumer is dist/core/bootstrap.js — but do not add one without
+// staging the .md alongside the build.
+export const AGENT_RULES_DOC: string = agentRulesMarkdown;
 
-// A stable content hash of AGENT_RULES_DOC. Boxes store it to detect changes.
-// Computed deterministically at module load with 64-bit FNV-1a over the UTF-8
-// bytes of the doc. It uses no Date.now()/Math.random(), so the version is a
-// pure function of the content and stays reproducible across Worker isolates
-// and tests.
-function contentVersion(text: string): string {
+/** A stable content hash: 64-bit FNV-1a over the UTF-8 bytes of a doc. It uses
+ * no Date.now()/Math.random(), so a version is a pure function of the content
+ * and stays reproducible across Worker isolates and tests. The box logs the
+ * version it installed; it never persists one, so the hash exists to make a
+ * redelivery distinguishable from an edit in the logs and in the fixtures. */
+export function contentVersion(text: string): string {
   const bytes = new TextEncoder().encode(text);
   const mask = 0xffffffffffffffffn;
   let hash = 0xcbf29ce484222325n;
@@ -38,16 +46,25 @@ function contentVersion(text: string): string {
   return hash.toString(16).padStart(16, "0");
 }
 
-export const AGENT_RULES_VERSION = contentVersion(AGENT_RULES_DOC);
-
 /** The name the picker shows for the doc above. Editing it is copy-on-write:
  * the webApp pre-fills this content and a save creates a real org rule. */
 export const BUILT_IN_AGENT_RULE_NAME = "Default (built-in)";
 
-// Matched to MAX_BYTES in packages/box/rootfs/usr/local/bin/blitz-rules: a doc
-// the box would refuse to install must never be storable here.
 const AGENT_RULE_NAME_MAX = 120;
-const AGENT_RULE_CONTENT_MAX_BYTES = 256 * 1024;
+
+/** The one cap on the one quantity both runtimes measure: the UTF-8 byte
+ * length of `content`. `MAX_CONTENT_BYTES` in
+ * packages/box/rootfs/usr/local/bin/blitz-rules is the same number applied to
+ * the same string after parsing, so a doc this route stores is always a doc the
+ * box will install. Comparing envelope bytes instead would break that: JSON
+ * escaping can expand a legal doc several times over. */
+export const AGENT_RULE_CONTENT_MAX_BYTES = 256 * 1024;
+
+/** Request-body headroom for the JSON envelope around `content`. JSON escaping
+ * costs at most six bytes per content byte (a C0 control character becomes
+ * `\u00XX`), so this is the smallest bound that can never reject a body whose
+ * content is within the cap above. The box uses the same multiple. */
+const AGENT_RULE_ENVELOPE_MAX_BYTES = 6 * AGENT_RULE_CONTENT_MAX_BYTES + 8 * 1024;
 
 export interface AgentRuleRow {
   id: string;
@@ -55,15 +72,6 @@ export interface AgentRuleRow {
   name: string;
   content: string;
   updated_at: number;
-}
-
-// The wire shape returned by GET /workspaces/self/agent-rules. This crosses a
-// runtime boundary (control-plane producer -> box consumer); the box parser and
-// this producer are pinned to the same fixtures under
-// packages/schema/fixtures/agent-rules/.
-export interface AgentRulesResponse {
-  version: string;
-  content: string;
 }
 
 /** Content-addressed: an org doc gets a version from its own bytes by the same
@@ -112,6 +120,12 @@ function parsePutAgentRule(value: JsonValue): PutAgentRuleRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const name = requiredString(value.name, "name", AGENT_RULE_NAME_MAX).trim();
   if (name === "") throw new HttpError(400, "name is required");
+  // The built-in doc is a synthetic row the list endpoint prepends; it has no
+  // id, so UNIQUE(org_id, name) cannot stop a stored rule from claiming its
+  // label. Two identically-named options in the picker name different docs.
+  if (name === BUILT_IN_AGENT_RULE_NAME) {
+    throw new HttpError(400, "name is reserved for the built-in document");
+  }
   const content = requiredString(value.content, "content", AGENT_RULE_CONTENT_MAX_BYTES);
   if (content.trim() === "") throw new HttpError(400, "content is required");
   if (new TextEncoder().encode(content).byteLength > AGENT_RULE_CONTENT_MAX_BYTES) {
@@ -182,7 +196,7 @@ export function addAgentRuleLibraryRoutes(
     const orgId = await orgFor(context);
     const id = requiredString(context.req.param("id"), "id", 256);
     const input = parsePutAgentRule(
-      await readJson(context.req.raw, AGENT_RULE_CONTENT_MAX_BYTES + 8 * 1024),
+      await readJson(context.req.raw, AGENT_RULE_ENVELOPE_MAX_BYTES),
     );
     const existing = await first<AgentRuleRow>(runtime.db, {
       q: "SELECT * FROM agent_rules WHERE id = ?1 LIMIT 1",

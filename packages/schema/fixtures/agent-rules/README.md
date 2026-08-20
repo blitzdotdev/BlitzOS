@@ -1,5 +1,15 @@
 # Agent-rules fixtures
 
+`limits.json` is not an envelope fixture: it is the single definition of the one
+size limit both runtimes enforce, the UTF-8 **byte** length of `content` after
+parsing. The control plane refuses to store more (`parsePutAgentRule`) and the
+box refuses to install more (`blitz-rules sync`), so a document either side
+accepts is a document the other accepts. Both measure `content`, never the JSON
+envelope around it: escaping can expand a legal document several times over, and
+`String#length` counts UTF-16 units rather than bytes. The envelope caps on both
+sides are memory rails set well above this number.
+
+
 The control plane serves the managed agent rules to a box at
 `GET /workspaces/self/agent-rules` (box-authenticated). The response body is the
 envelope `{ "version": <string>, "content": <string> }`, where `content` is the

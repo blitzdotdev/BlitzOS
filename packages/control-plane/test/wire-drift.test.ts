@@ -46,6 +46,11 @@ const environmentResponse: SharedShape<
   schema.WorkspaceEnvironmentResponse
 > = { ...environment, filesReady: true };
 
+const agentRulesResponse: SharedShape<
+  wire.AgentRulesResponse,
+  schema.AgentRulesResponse
+> = { version: "292a5824fd833548", content: "# Blitz box — agent rules\n" };
+
 const agentRule: SharedShape<wire.AgentRuleView, schema.AgentRuleView> = {
   id: "rule",
   name: "House rules",
@@ -273,6 +278,7 @@ const fullFieldValues = [
   volume,
   environment,
   environmentResponse,
+  agentRulesResponse,
   agentRule,
   agentRules,
   putAgentRuleRequest,
@@ -313,6 +319,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();
     expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
     expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
+    expectTypeOf<wire.AgentRulesResponse>().toEqualTypeOf<schema.AgentRulesResponse>();
     expectTypeOf<wire.AgentRuleView>().toEqualTypeOf<schema.AgentRuleView>();
     expectTypeOf<wire.ListAgentRulesResponse>().toEqualTypeOf<schema.ListAgentRulesResponse>();
     expectTypeOf<wire.PutAgentRuleRequest>().toEqualTypeOf<schema.PutAgentRuleRequest>();

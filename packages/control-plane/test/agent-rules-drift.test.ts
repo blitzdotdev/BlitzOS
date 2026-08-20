@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_RULES_DOC, AGENT_RULES_VERSION } from "../core/agent-rules.js";
+import { AGENT_RULES_DOC, contentVersion } from "../core/agent-rules.js";
 
-// The box-image skeleton .md is the single source of truth for the rule bytes.
-// Vite inlines it at build time (?raw): the Workers test pool has no runtime
-// filesystem, so this is how the canonical bytes reach the assertion. If the
-// compiled mirror in core/agent-rules.ts drifts from the .md, this fails.
+// The box-image skeleton .md is the single source of truth for the rule bytes,
+// and core/agent-rules.ts now imports it directly (a Text module in the Worker
+// bundle, `?raw` here). This test is the guard that the wiring still reaches
+// that file: a build that silently stopped inlining it, or started inlining a
+// different file, fails here rather than shipping an empty rule doc to boxes.
 const canonicalSources = import.meta.glob<string>(
   "../../box/rootfs/opt/blitz/skel/agent-rules.md",
   { eager: true, import: "default", query: "?raw" },
@@ -20,28 +21,20 @@ function canonicalDoc(): string {
   return doc;
 }
 
-function fnv1a64Hex(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  const mask = 0xffffffffffffffffn;
-  let hash = 0xcbf29ce484222325n;
-  for (const byte of bytes) {
-    hash = ((hash ^ BigInt(byte)) * 0x100000001b3n) & mask;
-  }
-  return hash.toString(16).padStart(16, "0");
-}
-
-describe("agent-rules control-plane mirror", () => {
-  it("keeps AGENT_RULES_DOC byte-identical to the box-image skeleton .md", () => {
-    // A single character of drift (including a trailing-newline change) fails
-    // here, which is the whole point: the .md is canonical, the string mirrors.
+describe("agent-rules canonical document", () => {
+  it("serves the box-image skeleton .md byte for byte", () => {
     expect(AGENT_RULES_DOC).toBe(canonicalDoc());
+    // A doc that arrived empty would still pass an equality check against an
+    // equally empty read, so pin the shape too.
+    expect(AGENT_RULES_DOC.startsWith("# Blitz box")).toBe(true);
+    expect(AGENT_RULES_DOC.length).toBeGreaterThan(1_000);
   });
 
-  it("derives AGENT_RULES_VERSION deterministically from the doc content", () => {
-    expect(AGENT_RULES_VERSION).toMatch(/^[0-9a-f]{16}$/u);
-    // The version is a pure content hash: recomputing over the same bytes must
-    // reproduce it exactly, with no Date.now()/Math.random() in the module.
-    expect(AGENT_RULES_VERSION).toBe(fnv1a64Hex(AGENT_RULES_DOC));
-    expect(AGENT_RULES_VERSION).toBe(fnv1a64Hex(canonicalDoc()));
+  it("versions a document purely from its own content", () => {
+    expect(contentVersion(AGENT_RULES_DOC)).toMatch(/^[0-9a-f]{16}$/u);
+    // No Date.now()/Math.random() anywhere in the hash: the same bytes must
+    // produce the same version in every isolate and on every call.
+    expect(contentVersion(AGENT_RULES_DOC)).toBe(contentVersion(canonicalDoc()));
+    expect(contentVersion("")).not.toBe(contentVersion(AGENT_RULES_DOC));
   });
 });
