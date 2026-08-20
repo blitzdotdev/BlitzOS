@@ -1,9 +1,25 @@
 #!/command/with-contenv bash
-set -euo pipefail
-if [ ! -s /var/lib/blitz/broker.json ]; then
-  echo "watch: skipped (no broker config)"
-  exec /command/s6-pause
-fi
+# Hand a new harness login to the broker, then delete the workspace's copy.
+#
+# It WAITS for broker wiring instead of giving up on it. The previous version
+# execed s6-pause when broker.json was absent, which is evaluated exactly once,
+# at boot: a broker enrolled ten minutes later, or a `blitz-cred register` that
+# succeeded on a retry, would never start this watcher, and every login on the
+# box would stay stranded on local disk until the next reboot.
+#
+# A workspace with no broker simply sits here, which costs one sleeping process.
+set -uo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+announced=0
+while [ ! -s "$state_dir/broker.json" ]; do
+	if [ "$announced" -eq 0 ]; then
+		echo "watch: waiting for broker config"
+		announced=1
+	fi
+	sleep 5
+done
+
 exec /command/s6-setuidgid blitz /usr/bin/env \
-  HOME=/var/lib/blitz/home USER=blitz \
-  /usr/local/bin/blitz-cred watch
+	HOME="$state_dir/home" USER=blitz \
+	/usr/local/bin/blitz-cred watch

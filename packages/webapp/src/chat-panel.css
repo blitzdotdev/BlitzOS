@@ -1165,3 +1165,28 @@
   color: var(--muted);
   font-size: 12px;
 }
+
+/* The box could not mint a credential: offer the harness login instead of
+ * leaving the reader with a dead prompt. */
+.chat-auth-required {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid var(--ansi-yellow);
+  background: color-mix(in srgb, var(--ansi-yellow) 8%, var(--paper));
+  padding: 8px 12px;
+  font-size: 12.5px;
+}
+
+.chat-auth-required-action {
+  border: 1px solid var(--rule);
+  background: var(--accent);
+  color: var(--paper);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 4px 14px;
+}

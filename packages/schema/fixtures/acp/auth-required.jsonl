@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","method":"blitz/auth_required","params":{"sessionId":"session-auth-required","provider":"codex"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-auth-required","update":{"sessionUpdate":"agent_message_chunk","messageId":"message-auth-required","content":{"type":"text","text":"Credential mint failed; the prompt was not sent."}},"actor":{"userId":"user-alice","name":"Alice"}}}

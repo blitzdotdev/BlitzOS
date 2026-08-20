@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,10 +25,27 @@ func NewWatcher(home string, deposit Depositor) *Watcher {
 	return &Watcher{Home: home, Deposit: deposit, deposited: make(map[string][sha256.Size]byte)}
 }
 
+// Tick deposits any credential that changed since the last pass and then
+// DELETES the workspace's copy.
+//
+// The delete is the point, not housekeeping. The broker is meant to hold the
+// only copy of a member's refresh token: it is the only thing that refreshes,
+// the only thing that can blank one, and the only place a second workspace can
+// get one from. A workspace that kept its copy would be a second, unmanaged,
+// never-refreshed replica of the credential on a disposable VM.
+//
+// The copy is removed only when the file still holds exactly the bytes that
+// were ACKed. A login that lands DURING the deposit leaves different bytes on
+// disk, and deleting those would destroy a credential the broker never
+// received; the next tick deposits it instead.
 func (watcher *Watcher) Tick(ctx context.Context) error {
 	var failures []error
+	// The credential paths come off the vendor Definition table, not a config
+	// file: the broker's mint, the broker's deposit and this watcher then read
+	// one field, and the list cannot go missing or drift out from under them.
 	for _, definition := range []vendor.Definition{vendor.Claude, vendor.Codex} {
-		blob, err := readWatchedFile(filepath.Join(watcher.Home, filepath.FromSlash(definition.CredentialPath)))
+		path := filepath.Join(watcher.Home, filepath.FromSlash(definition.CredentialPath))
+		blob, err := readWatchedFile(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -43,10 +61,46 @@ func (watcher *Watcher) Tick(ctx context.Context) error {
 			failures = append(failures, err)
 			continue
 		}
-		// Record the bytes sent, not a post-ACK reread. A concurrent login is sent next tick.
+		// Record the bytes sent, not a post-ACK reread. A concurrent login is
+		// sent next tick.
 		watcher.deposited[definition.Name] = digest
+
+		removed, err := removeIfUnchanged(path, digest)
+		if err != nil {
+			// The broker has it; this workspace also still has it. Say so
+			// rather than re-depositing every second, which would tell the
+			// broker nothing new and hammer it.
+			failures = append(failures, fmt.Errorf("could not remove the workspace copy of the %s credential: %w", definition.Name, err))
+			continue
+		}
+		if removed {
+			// Forget the digest with the file. A later login that happens to
+			// produce byte-identical content is still a login, and it must be
+			// deposited rather than skipped as already-seen.
+			delete(watcher.deposited, definition.Name)
+		}
 	}
 	return errors.Join(failures...)
+}
+
+// removeIfUnchanged deletes path only if it still hashes to digest. Reporting
+// false without an error means the file moved on under us and the caller must
+// leave it alone.
+func removeIfUnchanged(path string, digest [sha256.Size]byte) (bool, error) {
+	current, err := readWatchedFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if sha256.Sum256(current) != digest {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	return true, nil
 }
 
 func Watch(ctx context.Context, stateDir, home string) error {

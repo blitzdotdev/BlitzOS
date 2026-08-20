@@ -463,6 +463,7 @@ export async function resetDatabase(): Promise<void> {
     "user_connections",
     "integrations",
     "broker_keys",
+    "broker_members",
     "broker_boxes",
     "box_token_families",
     "boxes",

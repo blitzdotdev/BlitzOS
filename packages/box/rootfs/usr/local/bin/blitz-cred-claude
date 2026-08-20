@@ -1,0 +1,10 @@
+#!/bin/sh
+# Print one short-lived Claude token on stdout, and nothing else.
+#
+# It exists because the consumer cannot pass arguments: codex's `[auth] command`
+# takes a bare path, and the PATH shim wants one thing to run. The harness has
+# to be in the NAME.
+#
+# Failure is silent and non-zero: every caller treats "no token" as "run signed
+# out", which is a workspace a member can fix.
+exec /usr/local/bin/blitz-cred token claude

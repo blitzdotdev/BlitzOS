@@ -63,6 +63,7 @@ import {
 } from './storage';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
+import { useTerminalSignIn } from './use-terminal-sign-in';
 import { ChatPanel } from './chat/ChatPanel';
 import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
@@ -955,6 +956,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   };
+  const signInToTerminal = useTerminalSignIn({
+    workspaceId: activeWorkspaceId,
+    tabs: activeWorkspaceTabs === null ? null : ttydSessions,
+    nextId: activeWorkspaceTabs?.nextId ?? 0,
+    accessRole: activeWorkspace?.accessRole,
+    ttydActiveId,
+    retainedSessions: retainedSessionIdsRef,
+    selectSession: selectTtydSession,
+    spawnSession: spawnTtydSession,
+  });
   const retargetPreviewTab = (tabId: number, path: string | undefined) => {
     setWorkspaceTabs((current) => {
       if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
@@ -1471,6 +1482,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                                   rememberChatSession(sessionId, chatSessionId, 'claude');
                                 }}
                                 onOpenPreview={openPreviewPort}
+                                onSignIn={signInToTerminal}
                                 readOnly={activeWorkspace?.accessRole === 'viewer'}
                               />
                             </div>

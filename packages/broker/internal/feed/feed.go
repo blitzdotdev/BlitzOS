@@ -13,7 +13,24 @@ import (
 
 const MaxBytes = 1_048_576
 
-var unixNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+// unixNamePattern is the single gate this binary owns over member names, and
+// it is deliberately narrow. A name that gets past it reaches useradd/userdel
+// argv, becomes a path under the members directory, and — the same pattern,
+// the same call — decides which homes reconcile is allowed to DELETE
+// (internal/broker/reconcile.go). Nothing outside `m-<12 hex>` is ever created
+// or removed, so the box's own accounts and any hand-made directory can never
+// be swept by the deprovision half.
+//
+// `m-<12 hex>` is what the control plane derives, server-side, per member
+// (packages/control-plane/core/registry.ts brokerUnixName). The old
+// `^[a-z][a-z0-9-]{0,31}$` admitted the shared literal `blitz`, which put
+// every member's credential in ONE home on a box that holds the only copy of
+// each — the isolation boundary of the whole design, gone.
+//
+// Rejecting a name rejects that MEMBER and preserves their existing account
+// rather than failing the whole feed: a producer that starts emitting a shape
+// this binary does not understand must not cost every other member their keys.
+var unixNamePattern = regexp.MustCompile(`^m-[0-9a-f]{12}$`)
 
 type Key struct {
 	Pubkey string `json:"pubkey"`

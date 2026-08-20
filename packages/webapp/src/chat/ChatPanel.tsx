@@ -6,8 +6,11 @@ import type {
   SessionConfigOption,
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
+import { HARNESSES, type AuthRequiredParams, type AuthRequiredProvider } from "@blitzos/schema";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isString } from "../type-guards.js";
+import type { Agent } from "../protocol.js";
+import { SPAWN_SESSION_LABELS } from "../WebAppHeader.js";
 import { ArrowIcon, WorkspaceIcon } from "../WebAppIcons.js";
 import { WebAppSelectMenu } from "../WebAppSelectMenu.js";
 import { ChatItemView, ChatTurnView, WorkingIndicator } from "./chat-turn-views.js";
@@ -31,6 +34,15 @@ interface PermissionAnsweredNotification {
 }
 
 const APPROVAL_PREVIEW_CHARS = 600;
+
+/** The runtime half of {@link AuthRequiredProvider}, from the same list.
+ *
+ * `blitz/auth_required` arrives off a socket, so the name still has to be
+ * checked at the boundary — but checking it against a re-spelled union would
+ * let the panel drift from the broker feed that decides which harnesses can be
+ * minted for at all.
+ */
+const HARNESS_NAMES: ReadonlySet<string> = new Set(HARNESSES);
 
 type SelectConfig = {
   id: string;
@@ -69,6 +81,7 @@ export function ChatPanel({
   initialSessionId,
   onSessionId,
   onOpenPreview,
+  onSignIn,
   readOnly = false,
 }: {
   url: string;
@@ -76,12 +89,15 @@ export function ChatPanel({
   initialSessionId: string | null;
   onSessionId: (workspaceId: string, sessionId: string) => void;
   onOpenPreview?: (port: number) => boolean;
+  /** Drives the harness's terminal tab into its login flow. */
+  onSignIn?: (provider: Agent) => void;
   readOnly?: boolean;
 }): React.JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState("Connecting…");
   const [draft, setDraft] = useState("");
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
+  const [authRequired, setAuthRequired] = useState<Agent | null>(null);
   const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const connectionRef = useRef<ClientContext | null>(null);
@@ -157,6 +173,13 @@ export function ChatPanel({
                 if (params.actor === undefined) dispatch({ ...answer, actor: undefined });
                 else dispatch(answer);
               }
+            },
+          )
+          .onNotification<AuthRequiredParams>(
+            "blitz/auth_required",
+            parseAuthRequiredNotification,
+            ({ params }) => {
+              if (sessionIdRef.current === params.sessionId) setAuthRequired(params.provider);
             },
           );
         connection = app.connect(stream);
@@ -286,6 +309,9 @@ export function ChatPanel({
         sessionId,
         prompt: [{ type: "text", text }],
       });
+      // A turn the box refused is the turn that raised the sign-in prompt; any
+      // other ending proves the credential works again, so the prompt goes.
+      if (result.stopReason !== "refusal") setAuthRequired(null);
       dispatch({ type: "turn-ended", turnId, stopReason: result.stopReason });
     } catch {
       dispatch({ type: "generic", label: "The connection closed; the prompt was not resent." });
@@ -325,6 +351,8 @@ export function ChatPanel({
     () => deriveChatTranscript(derived.items, derived.toolResults),
     [derived],
   );
+  // Viewers cannot prompt, so they are never the ones who have to sign in.
+  const signInProvider = readOnly || onSignIn === undefined ? null : authRequired;
   const approval: ChatPermission | null = readOnly ? null : derived.activePermission;
   const approvalText = approval === null
     ? ""
@@ -382,6 +410,19 @@ export function ChatPanel({
       </div>
 
       <div className="chat-dock">
+        {signInProvider !== null && (
+          <div className="chat-auth-required" role="status">
+            <span>{SPAWN_SESSION_LABELS[signInProvider]} could not authenticate on this workspace.</span>
+            <button
+              type="button"
+              className="chat-auth-required-action"
+              onClick={() => onSignIn?.(signInProvider)}
+            >
+              Sign in to {SPAWN_SESSION_LABELS[signInProvider]}
+            </button>
+          </div>
+        )}
+
         {approval !== null && (
           <div className="chat-approval" role="alertdialog" aria-label="Tool approval">
             <div className="chat-approval-title">Allow {approval.title}?</div>
@@ -512,6 +553,17 @@ function parsePermissionAnsweredNotification<Value>(value: Value): PermissionAns
   };
   if (actor !== undefined) notification.actor = actor;
   return notification;
+}
+
+function parseAuthRequiredNotification<Value>(value: Value): AuthRequiredParams {
+  if (!isRecord(value) || !isString(value.sessionId) || !isHarnessName(value.provider)) {
+    throw new Error("Malformed auth requirement");
+  }
+  return { sessionId: value.sessionId, provider: value.provider };
+}
+
+function isHarnessName<Value>(value: Value): value is Value & AuthRequiredProvider {
+  return isString(value) && HARNESS_NAMES.has(value);
 }
 
 function parseActor<Value>(value: Value): ChatActor | undefined {

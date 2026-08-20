@@ -127,16 +127,27 @@ COPY --from=actor-build /src/packages/box/actor/node_modules /opt/blitz/actor/no
 COPY env.defaults /etc/blitz/env.defaults
 COPY packages/box/rootfs/ /
 RUN set -eux; \
-    chmod 0755 /usr/local/bin/blitz /usr/local/bin/blitz-rules; \
+    chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude \
+      /usr/local/bin/blitz-cred-claude /usr/local/bin/blitz-cred-codex \
+      /usr/local/bin/blitz-rules; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
 
+# /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shim at
+# /usr/local/bin/claude wins over the real binary it execs — and so a copy a
+# member installs into their own writable prefix cannot shadow it. That
+# shadowing is the single most common way a terminal ends up signed out while
+# the same box's chat is authenticated.
+#
+# DISABLE_AUTOUPDATER is set image-wide for the same reason: an auto-update
+# breaks the version pin above AND drops a second copy into the member's prefix.
 ENV HOME=/var/lib/blitz/home \
     USER=blitz \
     NPM_CONFIG_PREFIX=/opt/blitz/npm \
-    PATH=/opt/blitz/npm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    DISABLE_AUTOUPDATER=1 \
+    PATH=/usr/local/bin:/opt/blitz/npm/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 VOLUME ["/var/lib/blitz"]
 EXPOSE 22 7443 7444 7445

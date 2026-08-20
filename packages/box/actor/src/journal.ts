@@ -28,7 +28,23 @@ export interface PermissionAnsweredFrame {
   };
 }
 
+/** The box could not mint a credential for this provider, so the user has to
+ * sign the harness in again. Deliberately absent from {@link JournalFrame}:
+ * `Journal.append` only accepts journaled frames, so this one cannot be
+ * persisted by accident and replayed hours after the session recovered. */
+export interface AuthRequiredFrame {
+  jsonrpc: "2.0";
+  method: "blitz/auth_required";
+  params: {
+    sessionId: string;
+    provider: Provider;
+  };
+}
+
 export type JournalFrame = SessionUpdateFrame | PermissionAnsweredFrame;
+
+/** Everything a subscriber can receive: the journaled frames plus live-only ones. */
+export type OutboundFrame = JournalFrame | AuthRequiredFrame;
 
 export type StoredSession = {
   id: string;
