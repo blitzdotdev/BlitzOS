@@ -45,6 +45,72 @@ interface WorkspaceResponse {
   workspace: WorkspaceView;
 }
 
+/**
+ * The broker unix name `core/registry.ts` derives for the `operator`
+ * principal. A golden, not a re-derivation: recomputing it with the same
+ * primitive the route uses would pass for any algorithm, including one that
+ * silently started handing two members the same home.
+ */
+const OPERATOR_BROKER_NAME = "m-06e55b633481";
+const BROKER_NAME_PATTERN = /^m-[0-9a-f]{12}$/u;
+
+/** Enrol `box` as a broker box reachable at `host`. */
+async function enrollBroker(
+  app: ReturnType<typeof harness>["app"],
+  box: { box_id: string; access_token: string },
+  host: string,
+): Promise<void> {
+  const response = await appRequest(app, `/boxes/${box.box_id}/broker`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${box.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ host, port: 22, sshHostPublicKey: "ssh-ed25519 AAAAbroker" }),
+  });
+  if (response.status !== 204) throw new Error(`broker enrolment failed: ${response.status}`);
+}
+
+/** Create a workspace for `cookie`'s principal and phone it home into a box. */
+async function workspaceBox(
+  app: ReturnType<typeof harness>["app"],
+  providers: ReturnType<typeof harness>["providers"],
+  cookie: string,
+): Promise<{ box_id: string; access_token: string }> {
+  const workspace = await createWorkspace(app, cookie);
+  const ready = await app.request(
+    phoneHomeUrl(providers, workspace.id),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hostPublicKeys: ["ssh-ed25519 AAAAhost"] }),
+    },
+    { DB: env.DB },
+  );
+  return ready.json<{ box_id: string; access_token: string }>();
+}
+
+/** Register one mint + one deposit key for a workspace box. */
+function registerKeys(
+  app: ReturnType<typeof harness>["app"],
+  box: { box_id: string; access_token: string },
+  suffix = "",
+): Promise<Response> {
+  return appRequest(app, `/boxes/${box.box_id}/keys`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${box.access_token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      keys: [
+        { pubkey: `ssh-ed25519 AAAAmint${suffix}`, op: "mint" },
+        { pubkey: `ssh-ed25519 AAAAdeposit${suffix}`, op: "deposit" },
+      ],
+    }),
+  });
+}
+
 describe("control plane security and lifecycle", () => {
   beforeEach(async () => {
     await resetDatabase();
@@ -1100,7 +1166,7 @@ describe("control plane security and lifecycle", () => {
     });
     expect(registration.status).toBe(200);
     expect(await registration.json<RegisterKeysResponse>()).toEqual({
-      memberUnixName: "blitz",
+      memberUnixName: OPERATOR_BROKER_NAME,
       broker: {
         host: "broker.example",
         port: 22,
@@ -1116,7 +1182,7 @@ describe("control plane security and lifecycle", () => {
     const body = await feed.json<FeedResponse>();
     expect(body.members).toHaveLength(1);
     expect(body.members[0]).toMatchObject({
-      unixName: "blitz",
+      unixName: OPERATOR_BROKER_NAME,
       harnesses: ["claude", "codex"],
     });
     expect(body.members[0]?.keys).toEqual(
@@ -1144,6 +1210,109 @@ describe("control plane security and lifecycle", () => {
       .bind(box.box_id)
       .first<string>("broker_box_id");
     expect(assignment).toBeNull();
+  });
+
+  it("derives one broker unix name per member and never reuses the box login", async () => {
+    const { app, providers } = harness();
+    const operator = await operatorSession(app);
+    const broker = await enrollBox(app, operator);
+    await enrollBroker(app, broker, "broker.example");
+
+    const mine = await workspaceBox(app, providers, operator);
+    const theirs = await workspaceBox(app, providers, await userSession("stranger"));
+    const [minename, theirname] = await Promise.all(
+      [mine, theirs].map(async (box, index) => {
+        const response = await registerKeys(app, box, String(index));
+        expect(response.status).toBe(200);
+        return (await response.json<RegisterKeysResponse>()).memberUnixName;
+      }),
+    );
+
+    // The isolation boundary: two members, two accounts, two homes. A shared
+    // name would put both credentials in one directory on the broker box.
+    expect(minename).toBe(OPERATOR_BROKER_NAME);
+    expect(minename).not.toBe(theirname);
+    expect(minename).toMatch(BROKER_NAME_PATTERN);
+    expect(theirname).toMatch(BROKER_NAME_PATTERN);
+    // And it is NOT the workspace-box login. `principals.unix_name` stays the
+    // shared `blitz` on purpose — one workspace box belongs to one member, so
+    // a shared name there costs nothing, and changing it would rewrite every
+    // box's home path for no gain.
+    const stored = await env.DB
+      .prepare("SELECT unix_name FROM principals WHERE id = 'operator'")
+      .first<string>("unix_name");
+    expect(stored).toBe("blitz");
+    expect(minename).not.toBe(stored);
+
+    // The feed must answer with the SAME names, or the box is handed a login
+    // the broker never creates.
+    const feed = await appRequest(app, `/boxes/${broker.box_id}/feed`, {
+      headers: { Authorization: `Bearer ${broker.access_token}` },
+    });
+    const body = await feed.json<FeedResponse>();
+    expect(body.members.map((member) => member.unixName).sort()).toEqual(
+      [minename, theirname].sort(),
+    );
+  });
+
+  it("keeps every workspace a member owns on the same broker box", async () => {
+    const { app, providers } = harness();
+    const operator = await operatorSession(app);
+    const first = await enrollBox(app, operator);
+    await enrollBroker(app, first, "broker-one.example");
+
+    const one = await workspaceBox(app, providers, operator);
+    expect((await registerKeys(app, one, "1")).status).toBe(200);
+
+    // A second, completely empty broker now exists. Load balancing would send
+    // the member's next workspace there — and strand it, because their
+    // credential lives on the first box.
+    const second = await enrollBox(app, operator);
+    await enrollBroker(app, second, "broker-two.example");
+
+    const two = await workspaceBox(app, providers, operator);
+    const response = await registerKeys(app, two, "2");
+    expect(response.status).toBe(200);
+    expect((await response.json<RegisterKeysResponse>()).broker.host).toBe(
+      "broker-one.example",
+    );
+  });
+
+  it("refuses a new member with no_broker_capacity once member_cap is reached", async () => {
+    const { app, providers } = harness();
+    const operator = await operatorSession(app);
+    const broker = await enrollBox(app, operator);
+    await enrollBroker(app, broker, "broker.example");
+    await env.DB
+      .prepare("UPDATE broker_boxes SET member_cap = 1 WHERE box_id = ?1")
+      .bind(broker.box_id)
+      .run();
+
+    const mine = await workspaceBox(app, providers, operator);
+    expect((await registerKeys(app, mine, "1")).status).toBe(200);
+
+    // The cap counts identities, not boxes: a second workspace for the SAME
+    // member adds no credential home and must still be admitted.
+    const alsoMine = await workspaceBox(app, providers, operator);
+    expect((await registerKeys(app, alsoMine, "2")).status).toBe(200);
+
+    // A different member is a different home, and the box is full.
+    const theirs = await workspaceBox(app, providers, await userSession("stranger"));
+    const refused = await registerKeys(app, theirs, "3");
+    expect(refused.status).toBe(409);
+    expect(await refused.json<{ error: string }>()).toMatchObject({
+      error: "no_broker_capacity",
+    });
+  });
+
+  it("answers no_broker_capacity when no broker box is enrolled at all", async () => {
+    const { app, providers } = harness();
+    const box = await workspaceBox(app, providers, await operatorSession(app));
+    const response = await registerKeys(app, box);
+    expect(response.status).toBe(409);
+    expect(await response.json<{ error: string }>()).toMatchObject({
+      error: "no_broker_capacity",
+    });
   });
 
   it("sweeps stale creation to error and completes orphaned destroy work", async () => {

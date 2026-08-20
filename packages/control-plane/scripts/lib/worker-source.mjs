@@ -250,6 +250,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "host", type: "text", sqlType: "text", notNull: true },
         { name: "port", type: "integer", sqlType: "integer", notNull: true },
         { name: "ssh_host_public_key", type: "text", sqlType: "text", notNull: true },
+        { name: "member_cap", type: "integer", sqlType: "integer", notNull: true, default: { l: 25 }, check: "member_cap > 0" },
       ],
       extensions: [DENY_ALL_RULES],
     },
