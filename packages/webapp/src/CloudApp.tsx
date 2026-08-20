@@ -62,6 +62,10 @@ import {
 } from './storage';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
+import {
+  driveTerminalSignIn,
+  TERMINAL_SIGN_IN_WARMUP_MS,
+} from './terminal-sign-in';
 import { ChatPanel } from './chat/ChatPanel';
 import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
@@ -84,7 +88,7 @@ import {
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
-import type { IdentityRecord } from './protocol';
+import type { Agent, IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
 import { WorkspaceDrawer } from './WorkspaceDrawer';
 import {
@@ -222,6 +226,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
+  const [pendingSignIn, setPendingSignIn] = useState<{
+    sessionKey: string;
+    warmupMs: number;
+  } | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
@@ -799,6 +807,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setDirtyFileIds(new Set());
     setFileCloseConfirmation(null);
     setFilesRefreshVersion(0);
+    setPendingSignIn(null);
   }, [activeWorkspaceId]);
   useEffect(() => {
     if (dirtyFileIds.size === 0) return;
@@ -934,6 +943,30 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   };
+  // Chat reported that the box could not authenticate: create or select the
+  // harness's own terminal tab and drive it into the login flow, where the
+  // existing sign-in-URL scraper and "Paste code" button finish the job.
+  const signInToTerminal = (provider: Agent) => {
+    if (activeWorkspaceTabs === null || activeWorkspace?.accessRole === 'viewer') return;
+    const existing = ttydSessions.find((session) => session.type === provider);
+    const sessionKey = String(existing?.id ?? activeWorkspaceTabs.nextId);
+    if (existing) selectTtydSession(sessionKey);
+    else spawnTtydSession(provider);
+    const mounted = retainedSessionIdsRef.current.workspaceId === activeWorkspaceId
+      && retainedSessionIdsRef.current.ids.has(sessionKey);
+    setPendingSignIn({ sessionKey, warmupMs: mounted ? 0 : TERMINAL_SIGN_IN_WARMUP_MS });
+  };
+  // Only the selected tab consumes terminal input, and a pane that has never
+  // been visited is not even mounted, so the keystrokes wait here until React
+  // has committed the tab switch. Leaving the tab cancels what is still queued.
+  useEffect(() => {
+    if (pendingSignIn === null || ttydActiveId !== pendingSignIn.sessionKey) return;
+    return driveTerminalSignIn(
+      pendingSignIn.sessionKey,
+      pendingSignIn.warmupMs,
+      () => setPendingSignIn(null),
+    );
+  }, [pendingSignIn, ttydActiveId]);
   const orderedLivePorts = useMemo(() => newestPorts(livePorts), [livePorts]);
   const orderedPreviewLinks = useMemo(
     () => newestPreviewLinks(previewLinks),
@@ -1428,6 +1461,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                                   rememberChatSession(sessionId, chatSessionId, 'claude');
                                 }}
                                 onOpenPreview={openPreviewPort}
+                                onSignIn={signInToTerminal}
                                 readOnly={activeWorkspace?.accessRole === 'viewer'}
                               />
                             </div>

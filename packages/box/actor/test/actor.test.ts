@@ -72,6 +72,10 @@ class Client {
     this.socket.send(typeof frame === "string" ? frame : JSON.stringify(frame));
   }
 
+  public has(predicate: (frame: Frame) => boolean): boolean {
+    return this.inbox.some(predicate);
+  }
+
   public async take(predicate: (frame: Frame) => boolean): Promise<Frame> {
     const deadline = Date.now() + 5_000;
     for (;;) {
@@ -318,6 +322,34 @@ describe("ACP actor", () => {
     expect((await client.take((frame) => frame.id === "mint")).result).toEqual({ stopReason: "refusal" });
     expect(calls).toBe(1);
     expect(item.journal.terminals(sessionId)).toEqual(["refusal", "refusal"]);
+    client.close();
+  });
+
+  test("auth_required rides the live wire on a mint failure and is never journaled", async () => {
+    const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } }, "codex");
+    const client = await Client.open(item.url);
+    await client.initialize();
+    const sessionId = await client.newSession();
+    client.send({ jsonrpc: "2.0", id: "signed-in", method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: "one" }] } });
+    expect((await client.take((frame) => frame.id === "signed-in")).result).toEqual({ stopReason: "end_turn" });
+    // Every frame of a turn is written to the socket before its result, so an
+    // empty inbox here is proof a signed-in turn stays silent.
+    expect(client.has((frame) => frame.method === "blitz/auth_required")).toBe(false);
+
+    item.credentials.failure = true;
+    client.send({ jsonrpc: "2.0", id: "signed-out", method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: "two" }] } });
+    const announced = await client.take((frame) => frame.method === "blitz/auth_required");
+    expect(announced.params).toEqual({ sessionId, provider: "codex" });
+    expect(await client.take((frame) => frame.method === "session/update" && JSON.stringify(frame).includes("Credential mint failed"))).toBeTruthy();
+    await client.take((frame) => frame.id === "signed-out");
+
+    // Replayed onto tomorrow's attach this would demand a sign-in the session
+    // no longer needs, so the frame is live-only: the prose bubble persists,
+    // the notification does not.
+    // SAFETY: The journal stores frames this service wrote; the loose Frame shape only reads the method back out.
+    const replayed = item.journal.replay(sessionId, 100).map(({ frame }) => JSON.parse(frame) as Frame);
+    expect(replayed.some(({ method }) => method === "blitz/auth_required")).toBe(false);
+    expect(replayed.some((frame) => JSON.stringify(frame).includes("Credential mint failed"))).toBe(true);
     client.close();
   });
 

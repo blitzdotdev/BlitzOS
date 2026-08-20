@@ -131,8 +131,17 @@ export function TtydTerminal({
     const handleSubmit = (event: Event) => {
       if (!activeRef.current) return;
       // SAFETY: Only the shared event name is assumed here; payload shape is not checked. TODO(deslop-tier-c): validate the CustomEvent detail before reading data and enters.
-      const detail = (event as CustomEvent<{ data?: string; enters?: number }>).detail;
+      const detail = (event as CustomEvent<{
+        data?: string;
+        enters?: number;
+        sessionKey?: string;
+      }>).detail;
       if (!detail?.data) return;
+      // An addressed event names the tab it was aimed at, so a tab switch
+      // between dispatch and delivery cannot type into somebody else's
+      // session. Undirected dispatchers keep the old reach: whichever tab is
+      // selected consumes them.
+      if (detail.sessionKey !== undefined && detail.sessionKey !== sessionKey) return;
       const enters = detail.enters ?? 0;
       sendInput(detail.data);
       if (enters > 0) {
@@ -155,7 +164,7 @@ export function TtydTerminal({
     };
     window.addEventListener(TERMINAL_SUBMIT_EVENT, handleSubmit);
     return () => window.removeEventListener(TERMINAL_SUBMIT_EVENT, handleSubmit);
-  }, [readOnly, sendInput]);
+  }, [readOnly, sendInput, sessionKey]);
 
   useEffect(() => {
     if (!terminalInstance) return;
