@@ -333,8 +333,16 @@ describe("credential control plane", () => {
         { kind: "env", name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
       ],
       expiresAt: Date.parse(expiresAt),
-      grantedScopes: ["repo:granted-repo", "contents:read", "issues:write"],
     });
+    // GitHub's granted-scope truth is lease bookkeeping, not box wire: the
+    // shipped broker decodes with DisallowUnknownFields and a fifth key
+    // fails the decode. It is asserted on the lease row below.
+    expect(Object.keys(result).sort()).toEqual([
+      "expiresAt",
+      "integration",
+      "mode",
+      "placements",
+    ]);
 
     const jwt = authorization.replace(/^Bearer\s+/u, "");
     const parts = jwt.split(".");
