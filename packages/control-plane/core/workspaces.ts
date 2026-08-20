@@ -7,7 +7,8 @@ import { first, rows, transaction } from "./db.js";
 import {
   parseWorkspaceEnvironment,
   workspaceEnvironmentFromJson,
-  workspaceEnvironmentJson,
+  storedWorkspaceEnvironment,
+  WORKSPACE_REQUEST_MAX_BYTES,
 } from "./environment.js";
 import {
   HttpError,
@@ -18,7 +19,7 @@ import {
   readText,
   requiredString,
 } from "./http.js";
-import { authenticateBox, issueBoxTokens } from "./oauth.js";
+import { issueBoxTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
@@ -42,7 +43,6 @@ import type {
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   PollResponse,
-  WorkspaceEnvironmentResponse,
 } from "./wire.js";
 export type { WorkspaceRow } from "./workspace-records.js";
 
@@ -334,7 +334,7 @@ export function addWorkspaceRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
-    const input = parseCreateWorkspace(await readJson(context.req.raw, 1024 * 1024));
+    const input = parseCreateWorkspace(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     const runtime = runtimeFactory(context);
     const template = input.templateId === undefined
       ? null
@@ -392,7 +392,7 @@ export function addWorkspaceRoutes(
         await hashSecret(capability),
         input.manifest === undefined ? null : manifestJson(input.manifest),
         input.orgShareRole ?? null,
-        environment === null ? null : workspaceEnvironmentJson(environment),
+        storedWorkspaceEnvironment(environment ?? undefined),
         now,
       ],
     });
@@ -521,37 +521,6 @@ export function addWorkspaceRoutes(
     return context.json<PollResponse>({
       workspaces: result.map((row) =>
         workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
-    });
-  });
-
-  router.get("/workspaces/:id/environment", async (context) => {
-    const runtime = runtimeFactory(context);
-    const box = await authenticateBox(context.req.raw, runtime.db);
-    if (box === null) throw new HttpError(401, "invalid box access token");
-    if (box.workspaceId === null) {
-      throw new HttpError(403, "box is not attached to a workspace");
-    }
-    const idParam = context.req.param("id");
-    const workspaceId = idParam === "self" ? box.workspaceId : idParam;
-    if (box.workspaceId !== workspaceId) {
-      throw new HttpError(403, "a box may only read its own workspace environment");
-    }
-    const workspace = await first<{
-      environment: string | null;
-      files_ready: number;
-      phase: string;
-    }>(runtime.db, {
-      q: "SELECT environment, files_ready, phase FROM workspaces WHERE id = ?1 LIMIT 1",
-      v: [workspaceId],
-    });
-    if (workspace === null || workspace.phase !== "ready") {
-      throw new HttpError(409, "workspace environment is not ready");
-    }
-    const environment = workspaceEnvironmentFromJson(workspace.environment)
-      ?? { env: {}, startupScript: null };
-    return context.json<WorkspaceEnvironmentResponse>({
-      ...environment,
-      filesReady: workspace.files_ready === 1,
     });
   });
 

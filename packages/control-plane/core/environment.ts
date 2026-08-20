@@ -1,3 +1,4 @@
+import { first } from "./db.js";
 import {
   HttpError,
   isBoolean,
@@ -5,15 +6,23 @@ import {
   isString,
   type JsonValue,
 } from "./http.js";
+import { authenticateBox } from "./oauth.js";
+import type { CoreRouter, RuntimeFactory } from "./runtime.js";
 import type {
   WorkspaceEnvironment,
   WorkspaceEnvironmentResponse,
 } from "./wire.js";
 
 const ENVIRONMENT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
-const ENVIRONMENT_MAX_KEYS = 50;
-const ENVIRONMENT_MAX_BYTES = 8 * 1024;
-const STARTUP_SCRIPT_MAX_BYTES = 64 * 1024;
+/** The box (Go) and the actor (TypeScript) re-declare these numbers in their
+ * own runtimes; `schema/fixtures/workspace-environment/` pins all three. */
+export const ENVIRONMENT_MAX_KEYS = 50;
+export const ENVIRONMENT_MAX_BYTES = 8 * 1024;
+export const STARTUP_SCRIPT_MAX_BYTES = 64 * 1024;
+/** Largest legal create/update body: userData 48 KiB + env 8 KiB + startup
+ * script 64 KiB + a credential manifest and JSON escaping on top. JSON.parse
+ * runs before any of it is validated, so the ceiling stays close to real. */
+export const WORKSPACE_REQUEST_MAX_BYTES = 128 * 1024;
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
@@ -95,6 +104,18 @@ export function workspaceEnvironmentJson(value: WorkspaceEnvironment): string {
   return JSON.stringify(value);
 }
 
+/** Stored form of a submitted environment. An environment with no variables
+ * and no script is stored as NULL so "nothing configured" has one
+ * representation: create omits the field, and an edit that cleared the form
+ * submits the empty one. */
+export function storedWorkspaceEnvironment(
+  value: WorkspaceEnvironment | undefined,
+): string | null {
+  if (value === undefined) return null;
+  if (Object.keys(value.env).length === 0 && value.startupScript === null) return null;
+  return workspaceEnvironmentJson(value);
+}
+
 export function parseWorkspaceEnvironmentResponse(
   value: JsonValue,
 ): WorkspaceEnvironmentResponse {
@@ -114,4 +135,43 @@ export function parseWorkspaceEnvironmentResponse(
     startupScript: value.startupScript,
   });
   return { ...environment, filesReady: value.filesReady };
+}
+
+/** The box's own view of its environment. Serving it through
+ * `parseWorkspaceEnvironmentResponse` is what makes the shared fixture corpus
+ * bind the bytes the box actually receives. */
+export function addWorkspaceEnvironmentRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+): void {
+  router.get("/workspaces/:id/environment", async (context) => {
+    const runtime = runtimeFactory(context);
+    const box = await authenticateBox(context.req.raw, runtime.db);
+    if (box === null) throw new HttpError(401, "invalid box access token");
+    if (box.workspaceId === null) {
+      throw new HttpError(403, "box is not attached to a workspace");
+    }
+    const idParam = context.req.param("id");
+    const workspaceId = idParam === "self" ? box.workspaceId : idParam;
+    if (box.workspaceId !== workspaceId) {
+      throw new HttpError(403, "a box may only read its own workspace environment");
+    }
+    const workspace = await first<{
+      environment: string | null;
+      files_ready: number;
+      phase: string;
+    }>(runtime.db, {
+      q: "SELECT environment, files_ready, phase FROM workspaces WHERE id = ?1 LIMIT 1",
+      v: [workspaceId],
+    });
+    if (workspace === null || workspace.phase !== "ready") {
+      throw new HttpError(409, "workspace environment is not ready");
+    }
+    const environment = workspaceEnvironmentFromJson(workspace.environment, runtime.reportError)
+      ?? { env: {}, startupScript: null };
+    return context.json<WorkspaceEnvironmentResponse>(parseWorkspaceEnvironmentResponse({
+      ...environment,
+      filesReady: workspace.files_ready === 1,
+    }));
+  });
 }

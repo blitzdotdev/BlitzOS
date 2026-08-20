@@ -1,5 +1,6 @@
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./credentials/mint.js";
+import { addWorkspaceEnvironmentRoutes } from "./environment.js";
 import { HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addIdentityRoutes } from "./identity/routes.js";
@@ -41,6 +42,9 @@ export function installControlPlaneRoutes(
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Box-authenticated, so it is registered ahead of the session-authenticated
+  // /workspaces/:id routes it shares a prefix with.
+  addWorkspaceEnvironmentRoutes(router, runtimeFactory);
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);

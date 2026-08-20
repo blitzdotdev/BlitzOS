@@ -158,4 +158,15 @@ describe("workspace environments", () => {
     });
     expect(single.status).toBe(200);
   });
+
+  it("rejects a create body larger than the request ceiling", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const response = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "small", userData: "x".repeat(200 * 1024) }),
+    });
+    expect(response.status).toBe(413);
+  });
 });
