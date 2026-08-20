@@ -782,6 +782,62 @@ describe("connections: connect flow and canary", () => {
     });
   });
 
+  /** The catch branch used to subtract the cron tick's start instead of the
+   * probe's, so a failure inherited every earlier provider's probe time and
+   * the table reported a vendor that was never slow. */
+  it("times a failed probe from the probe, not from the tick", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie, { label: CANARY_GRANT_LABEL })).status).toBe(204);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("connection reset");
+    });
+
+    // A tick that started ten minutes ago: the probe itself still took ~0ms.
+    await runProviderCanary(testRuntime(providers), Date.now() - 10 * 60 * 1_000);
+
+    const health = await appRequest(app, "/connections/health", {
+      headers: { Cookie: cookie },
+    });
+    const { providers: reported } = await health.json<ListProviderHealthResponse>();
+    const linear = reported.find(({ provider }) => provider === "linear");
+    expect(linear?.state).toBe("unhealthy");
+    expect(linear?.detail).toBe("probe request failed");
+    expect(linear?.latencyMs).toBeLessThan(60_000);
+    // A provider that was never probed reports no latency rather than zero.
+    expect(reported.find(({ provider }) => provider === "github")?.latencyMs).toBeNull();
+  });
+
+  /** One authenticated third-party call per canary provider per tick. On the
+   * five-minute backstop that is 288 a day against the vendor's rate limit,
+   * for a signal the hourly tick already carries. */
+  it("probes on the hourly tick alone", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie, { label: CANARY_GRANT_LABEL })).status).toBe(204);
+    const probed: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      probed.push(String(input));
+      return Response.json({ data: { viewer: { id: "viewer", name: "Canary" } } });
+    });
+    const tick = async (cron: string): Promise<void> => {
+      const executionContext = createExecutionContext();
+      await worker.scheduled(
+        createScheduledController({ scheduledTime: Date.now(), cron }),
+        env as never,
+        executionContext,
+      );
+      await waitOnExecutionContext(executionContext);
+    };
+
+    await tick("*/5 * * * *");
+    expect(probed).toEqual([]);
+    await tick("0 3 * * *");
+    expect(probed).toEqual([]);
+    await tick("0 * * * *");
+    expect(probed).toEqual(["https://api.linear.app/graphql"]);
+  });
+
   it("records an unhealthy provider without echoing the response body", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);

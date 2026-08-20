@@ -55,13 +55,20 @@ export async function listProviderHealth(db: Db): Promise<ProviderHealthView[]> 
   return CATALOG.map((manifest) => {
     const row = recorded.get(manifest.id);
     if (row === undefined) {
-      return { provider: manifest.id, state: "unchecked", detail: null, checkedAt: null };
+      return {
+        provider: manifest.id,
+        state: "unchecked",
+        detail: null,
+        checkedAt: null,
+        latencyMs: null,
+      };
     }
     return {
       provider: row.provider,
       state: row.state,
       detail: row.detail,
       checkedAt: row.checked_at,
+      latencyMs: row.latency_ms,
     };
   });
 }

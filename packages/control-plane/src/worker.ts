@@ -30,6 +30,10 @@ import {
 } from "../core/index.js";
 import config from "../teenybase.js";
 
+/** Must stay one of wrangler.toml's `triggers.crons` entries verbatim: the
+ * scheduled handler routes on the literal expression Cloudflare hands back. */
+const HOURLY_CRON = "0 * * * *";
+
 type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
   HETZNER_API_TOKEN: string;
@@ -224,7 +228,7 @@ export default {
         // Only the hourly and daily schedules run the full janitor set. Any
         // other tick (the */5 backstop today) converges folder sync alone, so
         // renaming that cron can never silently multiply the heavy sweeps.
-        if (event.cron !== "0 * * * *" && event.cron !== "0 3 * * *") {
+        if (event.cron !== HOURLY_CRON && event.cron !== "0 3 * * *") {
           const swept = await runFileSyncSweep(runtime);
           console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
           return;
@@ -235,8 +239,14 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
-        const probed = await runProviderCanary(runtime);
-        console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
+        // The canary is the one sweep that costs an authenticated call to a
+        // third party per provider, so it takes the hourly tick alone. On the
+        // daily tick as well it would be counted twice against the same rate
+        // limit for no extra signal.
+        if (event.cron === HOURLY_CRON) {
+          const probed = await runProviderCanary(runtime);
+          console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
+        }
         const swept = await runFileSyncSweep(runtime);
         console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),

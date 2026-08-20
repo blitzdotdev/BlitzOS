@@ -121,4 +121,7 @@ export interface ProviderHealthView {
   state: "healthy" | "unhealthy" | "unchecked";
   detail: string | null;
   checkedAt: number | null;
+  /** Round trip of the last probe. Null when nothing has been checked, or
+   * when the probe never left — no token to present is not a slow vendor. */
+  latencyMs: number | null;
 }

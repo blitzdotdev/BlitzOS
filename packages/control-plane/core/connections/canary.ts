@@ -89,11 +89,12 @@ async function probeProvider(
   runtime: CoreRuntime,
   manifest: ProviderManifest,
   grant: GrantRow,
-  now: number,
-): Promise<{ outcome: ProbeOutcome; latencyMs: number }> {
+): Promise<{ outcome: ProbeOutcome; latencyMs: number | null }> {
   const token = await canaryToken(runtime, manifest, grant);
   if (token === null) {
-    return { outcome: { healthy: false, detail: "no usable token" }, latencyMs: 0 };
+    // No latency to report: nothing was sent. Zero would read as an
+    // instantaneous vendor, which is the opposite of what happened.
+    return { outcome: { healthy: false, detail: "no usable token" }, latencyMs: null };
   }
   const config = grantConfig(grant);
   const request = manifest.probe.request({
@@ -123,7 +124,7 @@ async function probeProvider(
     // failure is the whole signal this table is allowed to keep.
     return {
       outcome: { healthy: false, detail: "probe request failed" },
-      latencyMs: Date.now() - now,
+      latencyMs: Date.now() - started,
     };
   }
 }
@@ -140,7 +141,7 @@ export async function runProviderCanary(
     const grant = (await grantsForProvider(runtime.db, manifest.id))
       .find(({ label }) => label === CANARY_GRANT_LABEL);
     if (grant === undefined) continue;
-    const { outcome, latencyMs } = await probeProvider(runtime, manifest, grant, now);
+    const { outcome, latencyMs } = await probeProvider(runtime, manifest, grant);
     await recordProviderHealth(
       runtime.db,
       {
