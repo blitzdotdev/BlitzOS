@@ -492,6 +492,26 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  // The rules editor used to hand-roll its backdrop and shipped without either
+  // behaviour the shared confirmation dialog already had.
+  it('closes the rules editor on Escape and returns focus to the opener', async () => {
+    const { view } = await screenWith();
+    const edit = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.className === 'blueprint-agent-rules-edit')!;
+    await act(async () => {
+      edit.focus();
+      edit.click();
+    });
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog')).not.toBeNull();
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(view.container.querySelector('.blueprint-agent-rules-dialog')).toBeNull();
+    expect(document.activeElement).toBe(edit);
+    await view.unmount();
+  });
+
   it('warns that deleting a rule drops its holders back to the default', async () => {
     const deleted: string[] = [];
     const fetcher = stub((url, init) => {
@@ -518,14 +538,28 @@ describe('create template screen', () => {
       'input[aria-label="Agent rules name"]',
     )?.value).toBe('House rules');
 
+    // Delete asks through the shared confirmation dialog, which the app already
+    // uses everywhere else — so this step gets Escape and focus restore for
+    // free instead of the bespoke two-click toggle it used to have.
     const remove = view.container.querySelector<HTMLButtonElement>('.blueprint-agent-rules-delete')!;
     await act(async () => { remove.click(); });
-    expect(view.container.querySelector('.blueprint-agent-rules-dialog')?.textContent)
+    const confirmation = view.container.querySelector('.webapp-confirmation-dialog');
+    expect(confirmation?.textContent)
       .toContain('Templates and workspaces that use it fall back to Default (built-in)');
+    expect(deleted).toEqual([]);
+
+    // Escape backs out of the confirmation without deleting anything.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(view.container.querySelector('.webapp-confirmation-dialog')).toBeNull();
     expect(deleted).toEqual([]);
 
     await act(async () => {
       view.container.querySelector<HTMLButtonElement>('.blueprint-agent-rules-delete')?.click();
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
     });
     await settle();
     expect(deleted).toEqual(['rule-1']);

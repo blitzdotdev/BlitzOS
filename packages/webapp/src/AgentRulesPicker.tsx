@@ -5,6 +5,8 @@ import type {
   PutAgentRuleResponse,
 } from '@blitzos/schema';
 import { useEffect, useId, useState } from 'react';
+import { ConfirmationDialog } from './ConfirmationDialog';
+import { ModalOverlay } from './ModalOverlay';
 
 /** The slice of the control-plane client this picker needs. `ControlPlaneClient`
  * satisfies it structurally, so both create screens pass their own client. */
@@ -100,13 +102,15 @@ export function AgentRulesPicker({
     if (draft === null || draft.id === null || busy) return;
     setBusy(true);
     setError(null);
+    // The confirmation has done its job; a failure is reported in the editor
+    // behind it, not under a dialog still asking the same question.
+    setConfirmingDelete(false);
     try {
       const removed = draft.id;
       await client.deleteAgentRule(removed);
       setRules((current) => current.filter((entry) => entry.id !== removed));
       if (value === removed) onChange(null);
       setDraft(null);
-      setConfirmingDelete(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The rule could not be deleted.');
     } finally {
@@ -156,26 +160,20 @@ export function AgentRulesPicker({
       </div>
 
       {draft !== null && (
-        <div
-          className="blueprint-agent-rules-screen"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !busy) setDraft(null);
-          }}
-          // The picker lives inside the create form; a stray Enter in the name
-          // field would submit that form instead of saving the rule.
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
-              event.preventDefault();
-              void save();
-            }
-          }}
-        >
+        <ModalOverlay dismissible={!busy} onDismiss={() => setDraft(null)}>
           <section
             className="blueprint-agent-rules-dialog"
             role="dialog"
             aria-modal="true"
             aria-label={draft.id === null ? 'New agent rules' : 'Edit agent rules'}
+            // The picker lives inside the create form; a stray Enter in the name
+            // field would submit that form instead of saving the rule.
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+                event.preventDefault();
+                void save();
+              }
+            }}
           >
             <header className="blueprint-agent-rules-header">
               <h3>{draft.id === null ? 'New rules document' : 'Edit rules document'}</h3>
@@ -233,12 +231,6 @@ export function AgentRulesPicker({
                   setDraft((current) => current === null ? current : { ...current, content });
                 }}
               />
-              {confirmingDelete && (
-                <p className="blueprint-agent-rules-note" role="alert">
-                  Delete “{draft.name}”? Templates and workspaces that use it fall
-                  back to Default (built-in). This cannot be undone.
-                </p>
-              )}
             </div>
             <footer className="blueprint-agent-rules-actions">
               {draft.id !== null && (
@@ -246,12 +238,9 @@ export function AgentRulesPicker({
                   className="blueprint-agent-rules-delete"
                   type="button"
                   disabled={busy}
-                  onClick={() => {
-                    if (confirmingDelete) void remove();
-                    else setConfirmingDelete(true);
-                  }}
+                  onClick={() => setConfirmingDelete(true)}
                 >
-                  {confirmingDelete ? 'Yes, delete' : 'Delete'}
+                  Delete
                 </button>
               )}
               <button
@@ -272,7 +261,19 @@ export function AgentRulesPicker({
               </button>
             </footer>
           </section>
-        </div>
+        </ModalOverlay>
+      )}
+
+      {/* Rendered after the editor overlay so it paints on top of it. */}
+      {confirmingDelete && draft !== null && draft.id !== null && (
+        <ConfirmationDialog
+          title="Delete rules document?"
+          description={`Delete “${draft.name}”? Templates and workspaces that use it fall back to Default (built-in). This cannot be undone.`}
+          confirmLabel="Yes, delete"
+          cancelLabel="No"
+          onConfirm={() => { void remove(); }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
       )}
     </div>
   );

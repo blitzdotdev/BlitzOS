@@ -394,16 +394,7 @@
   border-color: var(--accent);
 }
 
-.blueprint-agent-rules-screen {
-  position: fixed;
-  z-index: 130;
-  display: grid;
-  inset: 0;
-  padding: 16px;
-  place-items: center;
-  background: color-mix(in oklab, var(--paper) 88%, transparent);
-}
-
+/* The backdrop is .webapp-modal-screen, shared with every other modal. */
 .blueprint-agent-rules-dialog {
   display: grid;
   width: min(680px, 100%);
