@@ -46,6 +46,15 @@ func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
 						if current.Rejected > 0 {
 							log.Printf("broker feed skipped %d invalid member entries", current.Rejected)
 						}
+						// The one POSITIVE line this loop prints, and the only
+						// evidence a provisioning gate can stand on: it is
+						// reached solely after the control plane ACCEPTED this
+						// box's token and returned a feed this box then
+						// rendered. Silence is NOT proof — an unenrolled box
+						// is silent too, because the fetch above is skipped
+						// when there is no credential. See
+						// packages/broker/deploy/verify-broker-box.sh.
+						log.Printf("broker feed applied; members: %d", len(current.Members))
 						etag = nextETag
 					}
 				}

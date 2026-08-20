@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/atomicfile"
 	"github.com/blitzdotdev/blitz-core/broker/internal/controlplane"
@@ -34,6 +35,31 @@ type BrokerConfig struct {
 	Member string `json:"member"`
 }
 
+// registerAttempts is how many times key registration is tried before giving
+// up. A workspace boots at the same moment its network does, so the first call
+// routinely races DNS or a tunnel coming up; one attempt turns that race into
+// a workspace with no broker for its whole life, because nothing retries
+// afterwards.
+const registerAttempts = 3
+
+// registerRetryDelay is the pause between attempts. Deliberately short: this
+// runs on the boot path with other services waiting behind it, and the failure
+// it covers is a few hundred milliseconds of network, not an outage. An outage
+// is what the no-broker path below is for.
+var registerRetryDelay = 500 * time.Millisecond
+
+// Register enrols this workspace with the credential broker and points the
+// harnesses at it.
+//
+// It generates the workspace's keypairs and registers only the PUBLIC halves;
+// the private halves are written here and never leave. It is idempotent —
+// existing keys are reused — so a re-attach does not invalidate the lines the
+// broker already has.
+//
+// NOTHING ABOUT IT IS FATAL BY DESIGN. The broker is optional: no enrolled
+// broker, or every broker full, means the feature is off for this box, and the
+// right outcome is a workspace that runs signed out with no stale wiring left
+// behind. See ErrNoBrokerCapacity.
 func Register(ctx context.Context, stateDir string, httpClient *http.Client) error {
 	origin, err := store.LoadOrigin(stateDir)
 	if err != nil {
@@ -51,10 +77,34 @@ func Register(ctx context.Context, stateDir string, httpClient *http.Client) err
 	if err != nil {
 		return err
 	}
-	registered, err := client.RegisterKeys(ctx, []feed.Key{
+	keys := []feed.Key{
 		{Pubkey: mintPublic, Op: "mint"},
 		{Pubkey: depositPublic, Op: "deposit"},
-	})
+	}
+	var registered controlplane.KeyRegistration
+	for attempt := 1; ; attempt++ {
+		registered, err = client.RegisterKeys(ctx, keys)
+		if err == nil || errors.Is(err, controlplane.ErrNoBrokerCapacity) {
+			break
+		}
+		// Not retryable: a refusal is the same refusal next time, and the
+		// caller's context going away means the box is shutting down.
+		if attempt >= registerAttempts || ctx.Err() != nil {
+			break
+		}
+		timer := time.NewTimer(registerRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+	if errors.Is(err, controlplane.ErrNoBrokerCapacity) {
+		// Remove the wiring rather than leaving it: a broker.json pointing at
+		// a box this workspace is no longer a member of would make every mint
+		// fail slowly, on a host that has no account for it. Gone is honest.
+		return clearBrokerWiring(stateDir)
+	}
 	if err != nil {
 		return err
 	}
@@ -69,7 +119,38 @@ func Register(ctx context.Context, stateDir string, httpClient *http.Client) err
 	if err != nil {
 		return err
 	}
-	return atomicfile.Write(filepath.Join(stateDir, BrokerFile), append(config, '\n'), 0o600)
+	if err := atomicfile.Write(filepath.Join(stateDir, BrokerFile), append(config, '\n'), 0o600); err != nil {
+		return err
+	}
+	return wireHarnesses(homeDir(stateDir))
+}
+
+// clearBrokerWiring removes everything that says "there is a broker" — the
+// config the mint path reads, the pinned host key, and the harness-side
+// wiring. The keypairs stay: they are this workspace's identity, they are
+// registered nowhere yet, and regenerating them on the next boot would only
+// churn.
+func clearBrokerWiring(stateDir string) error {
+	var failures []error
+	for _, name := range []string{BrokerFile, KnownHostsFile} {
+		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, err)
+		}
+	}
+	if err := unwireHarnesses(homeDir(stateDir)); err != nil {
+		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
+}
+
+// homeDir is where the workspace account's dotfiles live. The box runs the
+// register oneshot with HOME already pointed here, so honour it and fall back
+// to the state directory's own home only when it is unset.
+func homeDir(stateDir string) string {
+	if home := os.Getenv("HOME"); home != "" {
+		return home
+	}
+	return filepath.Join(stateDir, "home")
 }
 
 func ensureKeyPair(stateDir, name string) (string, error) {

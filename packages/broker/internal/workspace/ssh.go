@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/feed"
@@ -50,11 +52,25 @@ func runSSH(parent context.Context, stateDir, operation, remoteCommand string, i
 	cmd := exec.CommandContext(ctx, "ssh", sshArguments(stateDir, identity, broker, remoteCommand)...)
 	cmd.Stdin = input
 	var output cappedBuffer
+	var diagnostic cappedBuffer
 	cmd.Stdout = &output
-	cmd.Stderr = io.Discard
+	// The broker's stderr, kept. Without it every broker-side refusal —
+	// "requested harness is not allowed", "the credential lock timed out",
+	// "the incoming credential's refresh token has already expired" — arrived
+	// here as the single word "failed", and the box had no way to tell a
+	// member who must log in again from a box wired to the wrong harness.
+	//
+	// It is a DIAGNOSTIC channel, not a credential one: the token only ever
+	// travels on stdout, so nothing minted can be routed here, and the buffer
+	// is capped like stdout so a chatty remote cannot make this process
+	// allocate without bound.
+	cmd.Stderr = &diagnostic
 	if err := cmd.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, errors.New("broker SSH request timed out")
+		}
+		if reason := brokerReason(diagnostic); reason != "" {
+			return nil, fmt.Errorf("broker SSH request failed: %s", reason)
 		}
 		return nil, errors.New("broker SSH request failed")
 	}
@@ -65,6 +81,32 @@ func runSSH(parent context.Context, stateDir, operation, remoteCommand string, i
 		return nil, errors.New("broker SSH response is empty")
 	}
 	return output.Bytes(), nil
+}
+
+// brokerReason turns the remote's stderr into one short line fit for a log.
+//
+// The LAST non-empty line, because ssh writes its own connection chatter first
+// and the broker's own message is what a reader needs. Bounded and stripped of
+// control characters so a hostile remote cannot forge log lines or repaint a
+// terminal through this path.
+func brokerReason(diagnostic cappedBuffer) string {
+	const maxReason = 200
+	var reason string
+	for _, line := range strings.Split(diagnostic.String(), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			reason = trimmed
+		}
+	}
+	reason = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, reason)
+	if len(reason) > maxReason {
+		reason = reason[:maxReason] + "…"
+	}
+	return reason
 }
 
 func sshArguments(stateDir, identity string, broker BrokerConfig, remoteCommand string) []string {
