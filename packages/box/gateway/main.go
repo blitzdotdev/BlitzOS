@@ -40,7 +40,6 @@ const (
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
 	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
 	previewsPath           = "/var/lib/blitz/previews.json"
-	startupLogPath         = "/var/lib/blitz/env/startup.log"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
@@ -75,7 +74,6 @@ type gateway struct {
 	workspaceIDPath        string
 	tunnelTokenPath        string
 	previewsPath           string
-	startupLogPath         string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
@@ -149,7 +147,6 @@ func main() {
 		workspaceIDPath:        workspaceIDPath,
 		tunnelTokenPath:        tunnelTokenPath,
 		previewsPath:           previewsPath,
-		startupLogPath:         startupLogPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -221,11 +218,6 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.servePreviews(response, request)
 		return
 	}
-	if request.URL.Path == "/startup.log" {
-		removeWebAppTokenHeader(request.Header)
-		g.serveStartupLog(response, request)
-		return
-	}
 	if request.URL.Path == "/terminal/ws" {
 		removeWebAppTokenHeader(request.Header)
 		g.serveTerminal(response, request)
@@ -259,17 +251,6 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		return
 	}
 	g.dufs.ServeHTTP(response, request)
-}
-
-func (g *gateway) serveStartupLog(response http.ResponseWriter, request *http.Request) {
-	if request.Method != http.MethodGet && request.Method != http.MethodHead {
-		response.Header().Set("Allow", "GET, HEAD")
-		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	response.Header().Set("Cache-Control", "no-store")
-	response.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	http.ServeFile(response, request, g.startupLogPath)
 }
 
 func (g *gateway) trackConnection(connection net.Conn, identity webAppIdentity) net.Conn {
