@@ -76,7 +76,7 @@ Revocation symmetry matters: when a lease is revoked (including on unshare), the
 - Templates embed **provider names + a `required` flag** — never grants, never secrets (`workspace_template_connections` join beside the existing folders join).
 - **Create-from-template shows a connect checklist before create**: green check per provider you already have a grant for, Connect button per missing one, inline OAuth/PAT. You become the workspace owner, so it is your SSO. `required` blocks create until connected; optional ones skip and prompt later from the panel.
 - `POST /workspaces` gains `connections?: string[]` (template-fed or ad-hoc). `manifest` stays the ceiling; the new field is the provision list; ceiling wins on conflict.
-- **Mint-at-ready**: on the phone-home ready transition (`workspaces.ts:705`), pre-mint the enabled connections from the owner's grants so the first shell opens with env and skills on disk.
+- **Delivery stays the sync**: the first login shell's `blitz-cred sync` mints the enabled connections from the owner's grants. Pre-minting at the phone-home ready transition was tried and cut — the phone-home response cannot carry placements, so the pre-mint stored lease rows for tokens no box ever held. Revisit when that response can deliver.
 - The demo this exists for: "new workspace from template `frontend` → checklist shows figma ✓ linear ✓ github Connect → one SSO → workspace opens `@`-able in the first prompt."
 
 ## 6. OAuth mechanics (per-user)
@@ -93,7 +93,7 @@ Revocation symmetry matters: when a lease is revoked (including on unshare), the
 |---|---|---|
 | **0** (done, live) | rename integrations → connections: routes (+aliases), persisted panel enum (+fold), D1 0017, UI, schema types | version `2b0e781b` |
 | **1** | provider catalog + per-user PAT grants (`user_oauth_grants` goes live) + panel Connect flow + connect inbox + owner-spine mint resolution | kills the vim workaround |
-| **2** | surfaces Phase A (skills/env via file placements) + per-workspace enablement + templates w/ SSO checklist + mint-at-ready | `@figma` works in CLI harnesses on the current box image |
+| **2** | surfaces Phase A (skills/env via file placements) + per-workspace enablement + templates w/ SSO checklist | `@figma` works in CLI harnesses on the current box image |
 | **3** | OAuth (`/connect/*`, oauth minter) for Figma + Linear | one-click |
 | **4** | MCP passthrough + sync-on-session-start + `remove-file` placement (actor + image rebuild train) | needs a box release |
 

@@ -319,6 +319,66 @@ describe("connections: per-user grants", () => {
     ]);
   });
 
+  it("narrows a default-scoped mint down to what the owner consented to", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    // The catalog default is read,write; this owner consented to read alone.
+    expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+
+    const response = await mint(app, box.access_token, { integration: "linear" });
+    expect(response.status).toBe(200);
+    const result = await response.json<MintResult>();
+    // The skill tells the agent what it may do, so it may not claim `write`.
+    const skill = filePlacement(result, LINEAR_SKILL_PATH) ?? "";
+    expect(skill).toContain("Granted scopes: read.");
+    expect(skill).not.toContain("read, write");
+
+    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
+    expect(rows[0]?.scopes).toEqual(["read"]);
+  });
+
+  /** The workspace ceiling is not a consent boundary: enablement writes
+   * `{linear:{}}`, which names no scopes and therefore allows all of them. Only
+   * the grant knows what the owner agreed to. */
+  it("denies a box that asks past the scopes the owner consented to", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+
+    const response = await mint(app, box.access_token, {
+      integration: "linear",
+      scopes: ["read", "write"],
+    });
+    expect(response.status).toBe(403);
+    const body = await response.json<{ error: string; request_id: string }>();
+    expect(body.error).toContain("write");
+    expect(body.request_id).toMatch(/^[0-9a-f-]+$/u);
+
+    // No lease was cut, and the denial is auditable with its reason.
+    const lease = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM credential_leases WHERE workspace_id = ?1",
+    ).bind(workspace.id).first<{ total: number }>();
+    expect(lease?.total).toBe(0);
+    const events = await appRequest(app, `/workspaces/${workspace.id}/credential-events`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(events.json()).resolves.toMatchObject({
+      events: [{ event: "denied", detail: { reason: "outside owner consent" } }],
+    });
+
+    // Asking only for what was consented still works.
+    const allowed = await mint(app, box.access_token, {
+      integration: "linear",
+      scopes: ["read"],
+    });
+    expect(allowed.status).toBe(200);
+  });
+
   it("resolves the workspace owner's grant for an editor's box", async () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
@@ -504,18 +564,27 @@ describe("connections: templates and enablement", () => {
     expect(JSON.parse(row?.manifest ?? "null")).toEqual({ integrations: {} });
   });
 
-  it("pre-mints the owner's granted connections at the ready transition", async () => {
+  /** Delivery is the box's own sync, not a control-plane push: the phone-home
+   * response has no way to carry placements, so a mint at the ready transition
+   * only ever wrote lease rows for tokens nobody was handed. */
+  it("mints nothing at the ready transition and everything on the first sync", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { workspace } = await readyWorkspace(app, providers, cookie, {
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, {
       connections: ["linear"],
     });
 
-    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+    const atReady = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
-    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
+    await expect(atReady.json()).resolves.toEqual({ leases: [] });
+
+    expect((await mint(app, box.access_token, {})).status).toBe(200);
+    const afterSync = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: rows } = await afterSync.json<{ leases: CredentialLeaseView[] }>();
     expect(rows.map(({ connection, state }) => [connection, state]))
       .toEqual([["linear", "active"]]);
   });

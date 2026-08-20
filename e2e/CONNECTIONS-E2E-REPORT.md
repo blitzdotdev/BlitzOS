@@ -27,7 +27,7 @@ teardown never revokes the discovered grant: it was not this run's to create.
 | 0 | preflight: config, ed25519 keypair | NOT RUN | |
 | 1 | discovery: catalog + grants, no token material in either response | NOT RUN | |
 | 2 | workspace created with `connections: [provider]`, reaches ready | NOT RUN | |
-| 3 | mint-at-ready: an active lease exists before the first shell, and every lease records an owner | NOT RUN | |
+| 3 | the first login shell mints: an active lease exists after it, and every lease records an owner | NOT RUN | |
 | 4 | a fresh login shell exports the manifest's environment names (lengths only, never values) | NOT RUN | |
 | 5 | the skill file lands at `/var/lib/blitz/home/.claude/skills/<provider>/SKILL.md` with the frontmatter naming the connection | NOT RUN | |
 | 6 | proxy data path: an unauthenticated call is 401, the leased call is not | NOT RUN | |

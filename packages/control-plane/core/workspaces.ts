@@ -28,7 +28,6 @@ import {
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
 import { grantsForUser } from "./connections/user-grants.js";
-import { preMintReadyConnections } from "./connections/mint.js";
 import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
 import type {
   CoreContext,
@@ -811,23 +810,6 @@ export function addWorkspaceRoutes(
     // instead of waiting for the next scheduled sweep, retrying briefly while
     // the tunnel finishes connecting.
     scheduleSync(runtime, (syncRuntime) => runReadyWorkspaceFileSync(syncRuntime, id));
-    // Mint-at-ready: the owner's granted connections land before the first
-    // shell, so the environment and the skill files are already on disk. This
-    // runs inline, not deferred — a box that reports ready has its credentials.
-    // A provider failure must never fail the transition the box just earned.
-    try {
-      await preMintReadyConnections(
-        runtime,
-        id,
-        boxId,
-        new URL(context.req.url).origin,
-      );
-    } catch (caught) {
-      runtime.reportError(
-        "premint_connections_failed",
-        caught instanceof Error ? caught : new Error("connection pre-mint failed"),
-      );
-    }
     const webAppToken = runtime.providers.webAppAuth === undefined
       ? undefined
       : await runtime.providers.webAppAuth.tokenFor(id);

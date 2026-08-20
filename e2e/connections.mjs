@@ -451,13 +451,18 @@ if (subject !== null) {
     return pass(`workspace=${workspaceId}; phase=ready`);
   });
 
-  await runStep("3", "mint-at-ready leaves an active lease before the first shell", gated(
+  await runStep("3", "the first login shell mints and leaves an active lease", gated(
     async () => {
+      // Delivery is the blitz-cred sync the profile hook runs, not a pre-mint
+      // at the ready transition: nothing holds a credential the box never
+      // received, so nothing is minted before a shell asks.
+      const login = runFreshLogin("true");
+      assert(login.status === 0, `login shell failed: ${commandFailure(login)}`);
       const leases = await listWorkspaceLeases();
       const active = leases.filter(
         (lease) => lease.connection === subject.grant.provider && lease.state === "active",
       );
-      assert(active.length > 0, "no active lease existed at the ready transition");
+      assert(active.length > 0, "the first login shell left no active lease");
       assert(
         active.every((lease) => typeof lease.userId === "string" && lease.userId.length > 0),
         "a lease has no owner recorded; credential_leases.user_id must always be the workspace owner",

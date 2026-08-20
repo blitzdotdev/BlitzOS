@@ -18,6 +18,7 @@ import {
 import {
   connectionDefaultScopes,
   manifestAllows,
+  scopesFromJson,
   usableByAllows,
 } from "./manifest.js";
 import { mintFromGrant } from "./minters/grant.js";
@@ -37,7 +38,6 @@ import {
   addUserGrantRoutes,
   grantConfig,
   grantFor,
-  grantsForUser,
   openGrantSecret,
 } from "./user-grants.js";
 import { canControlWorkspace } from "../workspace-access.js";
@@ -107,6 +107,7 @@ async function recordDenied(
   scopes: readonly string[],
   now: number,
   principal: Principal,
+  reason: string,
 ): Promise<void> {
   await rows(runtime.db, {
     q: `INSERT INTO credential_events (lease_id, event, detail, created_at)
@@ -120,7 +121,7 @@ async function recordDenied(
         scopes,
         box_id: boxId,
         workspace_id: workspaceId,
-        reason: "outside credential ceiling",
+        reason,
         acting_principal: {
           userId: principal.id,
           membershipId: principal.membershipId,
@@ -131,18 +132,26 @@ async function recordDenied(
   });
 }
 
+/** What the owner consented to when they connected the provider, frozen at
+ * that moment (migrations/0018). An empty list is not an empty consent: it is a
+ * provider with no scope vocabulary — the generic entry — so there is nothing
+ * to bound and the request stands as asked. */
+function consentedScopes(grant: GrantRow, requested: readonly string[]): string[] {
+  const consented = new Set(scopesFromJson(grant.scopes));
+  if (consented.size === 0) return [...requested];
+  return requested.filter((scope) => consented.has(scope));
+}
+
 /** The workspace's identity spine is its owner: one disk, one env, one value
  * per variable. Every mint resolves against the owner's grants no matter which
  * member's box triggered it. */
 async function ownerGrantMint(
   runtime: ReturnType<RuntimeFactory>,
-  workspace: WorkspaceCredentialRow,
+  grant: GrantRow,
   connection: Connection,
   request: MintRequest,
   scopes: string[],
-): Promise<MinterResult | null> {
-  const grant = await grantFor(runtime.db, workspace.owner_id, connection.name);
-  if (grant === null) return null;
+): Promise<MinterResult> {
   const manifest = providerManifest(grant.manifest_id);
   if (manifest === null) {
     throw new HttpError(409, `connection grant names an unknown provider ${grant.manifest_id}`);
@@ -209,54 +218,58 @@ async function grantSecretForMint(
   return { secret: access.accessToken, accessExpiresAt: access.accessExpiresAt };
 }
 
+interface MintOneInput {
+  workspace: WorkspaceCredentialRow;
+  boxId: string;
+  principal: Principal;
+  origin: string;
+  connection: Connection;
+  scopes: string[];
+  /** True when the box named the scopes. A named scope the owner never
+   * consented to is an error; an unnamed default that falls outside consent is
+   * simply narrowed, because a narrower consent must still deliver a narrower
+   * credential rather than nothing at all. */
+  scopesAreExplicit: boolean;
+  denied: "error" | "skip";
+}
+
 async function mintOne(
   runtime: ReturnType<RuntimeFactory>,
-  workspace: WorkspaceCredentialRow,
-  boxId: string,
-  principal: Principal,
-  origin: string,
-  connection: Connection,
-  scopes: string[],
-  denied: "error" | "skip",
+  input: MintOneInput,
 ): Promise<MintResult | null> {
+  const { workspace, boxId, principal, connection, denied } = input;
   const now = Date.now();
-  if (!authorize(principal, workspace, connection, scopes)) {
+  const deny = async (reason: string, status: 403, message: string): Promise<null> => {
     if (denied === "skip") return null;
     await recordDenied(
       runtime,
       workspace.id,
       boxId,
       connection.name,
-      scopes,
+      input.scopes,
       now,
       principal,
+      reason,
     );
     const requestId = await fileRequest(
       runtime.db,
       workspace.id,
       connection.name,
-      scopes,
+      input.scopes,
       { boxId, userId: principal.id },
       now,
     );
+    throw new HttpError(status, message, requestId);
+  };
+  if (!authorize(principal, workspace, connection, input.scopes)) {
     // FROZEN box-route error text (the box CLI classifies by status, but the
     // string predates the rename and stays byte-identical).
-    throw new HttpError(
+    return deny(
+      "outside credential ceiling",
       403,
       "credential mint exceeds the workspace manifest or integration allow-list",
-      requestId,
     );
   }
-  const leaseId = crypto.randomUUID();
-  const request: MintRequest = {
-    workspaceId: workspace.id,
-    boxId,
-    principalId: principal.id,
-    scopes,
-    now,
-    origin,
-    leaseId,
-  };
   const grant = await grantFor(runtime.db, workspace.owner_id, connection.name);
   const minter = grant === null ? resolveMinter(connection) : null;
   if (grant === null && (minter === null || connection.root_ciphertext === null)) {
@@ -268,7 +281,7 @@ async function mintOne(
       runtime.db,
       workspace.id,
       connection.name,
-      scopes,
+      input.scopes,
       { boxId, userId: principal.id },
       now,
     );
@@ -278,10 +291,35 @@ async function mintOne(
       requestId,
     );
   }
+  // The consent the owner gave at connect time is the outer bound on every
+  // mint. Without this the workspace ceiling is the only gate, and a ceiling
+  // that names no scopes allows all of them — so a box could ask for `write`
+  // against a grant the owner deliberately connected read-only.
+  let scopes = input.scopes;
+  if (grant !== null) {
+    scopes = consentedScopes(grant, input.scopes);
+    if (input.scopesAreExplicit && scopes.length !== input.scopes.length) {
+      const excess = input.scopes.filter((scope) => !scopes.includes(scope));
+      return deny(
+        "outside owner consent",
+        403,
+        `credential mint exceeds the scopes ${connection.name} was connected with: ${excess.join(", ")}`,
+      );
+    }
+  }
+  const leaseId = crypto.randomUUID();
+  const request: MintRequest = {
+    workspaceId: workspace.id,
+    boxId,
+    principalId: principal.id,
+    scopes,
+    now,
+    origin: input.origin,
+    leaseId,
+  };
   const minted = grant === null
     ? await legacyRootMint(runtime, connection, request)
-    : await ownerGrantMint(runtime, workspace, connection, request, scopes);
-  if (minted === null) throw new Error("owner grant vanished mid-mint");
+    : await ownerGrantMint(runtime, grant, connection, request, scopes);
   // Everything a minter adds beyond the frozen four keys is stripped here: the
   // shipped box decodes this body with DisallowUnknownFields, so one extra key
   // fails the decode and the whole credential sync aborts.
@@ -386,60 +424,6 @@ function parseConnectionSurfaceConfig(value: string): ConnectionSurfaceConfig | 
   return { manifestId: parsed.manifest_id, environmentNames };
 }
 
-/** Pre-mints the workspace's enabled connections at the phone-home ready
- * transition, so the first shell opens with environment and skills already on
- * disk instead of waiting for a human to run a login. */
-export async function preMintReadyConnections(
-  runtime: ReturnType<RuntimeFactory>,
-  workspaceId: string,
-  boxId: string,
-  origin: string,
-): Promise<number> {
-  const workspace = await first<WorkspaceCredentialRow>(runtime.db, {
-    q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
-        FROM workspaces WHERE id = ?1 LIMIT 1`,
-    v: [workspaceId],
-  });
-  if (workspace === null || workspace.org_id === null || workspace.phase !== "ready") return 0;
-  const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
-    q: `SELECT id, role FROM memberships
-        WHERE user_id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
-    v: [workspace.owner_id, workspace.org_id],
-  });
-  const owner: Principal = {
-    id: workspace.owner_id,
-    unixName: "blitz",
-    harnesses: [],
-    membershipId: membership?.id ?? workspace.owner_membership_id,
-    orgId: workspace.org_id,
-    role: membership?.role ?? null,
-    platformOperator: false,
-  };
-  // Grant-backed connections only. A legacy org-root connection keeps its
-  // first-shell mint: pre-minting one would hand every new box a credential
-  // nobody asked this workspace to hold.
-  const granted = new Set(
-    (await grantsForUser(runtime.db, workspace.owner_id)).map(({ provider }) => provider),
-  );
-  if (granted.size === 0) return 0;
-  let preminted = 0;
-  for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
-    if (!granted.has(connection.name)) continue;
-    const result = await mintOne(
-      runtime,
-      workspace,
-      boxId,
-      owner,
-      origin,
-      connection,
-      connectionDefaultScopes(connection),
-      "skip",
-    );
-    if (result !== null) preminted += 1;
-  }
-  return preminted;
-}
-
 export function addCredentialRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -503,17 +487,16 @@ export function addCredentialRoutes(
         // FROZEN box-route error text (see the route comment above).
         throw new HttpError(404, "integration not found", requestId);
       }
-      const scopes = input.scopes ?? connectionDefaultScopes(connection);
-      const result = await mintOne(
-        runtime,
+      const result = await mintOne(runtime, {
         workspace,
-        box.id,
-        boxPrincipal,
+        boxId: box.id,
+        principal: boxPrincipal,
         origin,
         connection,
-        scopes,
-        "error",
-      );
+        scopes: input.scopes ?? connectionDefaultScopes(connection),
+        scopesAreExplicit: input.scopes !== undefined,
+        denied: "error",
+      });
       if (result === null) throw new Error("specific credential mint was skipped");
       return context.json(result);
     }
@@ -521,16 +504,16 @@ export function addCredentialRoutes(
     const results: MintResult[] = [];
     const minted: string[] = [];
     for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
-      const result = await mintOne(
-        runtime,
+      const result = await mintOne(runtime, {
         workspace,
-        box.id,
-        boxPrincipal,
+        boxId: box.id,
+        principal: boxPrincipal,
         origin,
         connection,
-        connectionDefaultScopes(connection),
-        "skip",
-      );
+        scopes: connectionDefaultScopes(connection),
+        scopesAreExplicit: false,
+        denied: "skip",
+      });
       if (result === null) continue;
       results.push(result);
       minted.push(connection.id);
