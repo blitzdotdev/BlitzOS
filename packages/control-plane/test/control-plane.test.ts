@@ -76,7 +76,7 @@ async function workspaceBox(
   app: ReturnType<typeof harness>["app"],
   providers: ReturnType<typeof harness>["providers"],
   cookie: string,
-): Promise<{ box_id: string; access_token: string }> {
+): Promise<{ box_id: string; access_token: string; workspaceId: string }> {
   const workspace = await createWorkspace(app, cookie);
   const ready = await app.request(
     phoneHomeUrl(providers, workspace.id),
@@ -87,7 +87,20 @@ async function workspaceBox(
     },
     { DB: env.DB },
   );
-  return ready.json<{ box_id: string; access_token: string }>();
+  const box = await ready.json<{ box_id: string; access_token: string }>();
+  return { ...box, workspaceId: workspace.id };
+}
+
+/** The broker's own view of one box: what `blitz-broker sync` would apply. */
+async function brokerFeed(
+  app: ReturnType<typeof harness>["app"],
+  broker: { box_id: string; access_token: string },
+): Promise<FeedResponse> {
+  const response = await appRequest(app, `/boxes/${broker.box_id}/feed`, {
+    headers: { Authorization: `Bearer ${broker.access_token}` },
+  });
+  if (response.status !== 200) throw new Error(`feed failed: ${response.status}`);
+  return response.json<FeedResponse>();
 }
 
 /** Register one mint + one deposit key for a workspace box. */
@@ -1276,6 +1289,87 @@ describe("control plane security and lifecycle", () => {
     expect((await response.json<RegisterKeysResponse>()).broker.host).toBe(
       "broker-one.example",
     );
+  });
+
+  it("destroying the last workspace keeps the member in the broker feed", async () => {
+    const { app, providers } = harness();
+    const operator = await operatorSession(app);
+    const broker = await enrollBox(app, operator);
+    await enrollBroker(app, broker, "broker.example");
+
+    const only = await workspaceBox(app, providers, operator);
+    expect((await registerKeys(app, only, "1")).status).toBe(200);
+
+    const destroy = await appRequest(app, `/workspaces/${only.workspaceId}`, {
+      method: "DELETE",
+      headers: { Cookie: operator },
+    });
+    expect(destroy.status).toBe(200);
+    expect((await destroy.json<WorkspaceResponse>()).workspace.phase).toBe("destroyed");
+
+    // The member has no `boxes` row left anywhere — destroy hard-deletes it.
+    // Absence from this feed is the broker's DEPROVISION signal
+    // (packages/broker/internal/broker/reconcile.go sweeps every managed
+    // account that is neither wanted nor preserved), and the account it would
+    // delete owns the only copy of this member's vendor refresh token. So the
+    // member must still be here, with an empty key list: keep the account,
+    // serve it no keys.
+    const feed = await brokerFeed(app, broker);
+    expect(feed.members).toHaveLength(1);
+    expect(feed.members[0]).toEqual({
+      unixName: OPERATOR_BROKER_NAME,
+      harnesses: ["claude", "codex"],
+      keys: [],
+    });
+  });
+
+  it("a second workspace re-attaches to the same broker and the same unix name", async () => {
+    const { app, providers } = harness();
+    const operator = await operatorSession(app);
+    const broker = await enrollBox(app, operator);
+    await enrollBroker(app, broker, "broker.example");
+
+    const only = await workspaceBox(app, providers, operator);
+    const before = await registerKeys(app, only, "1");
+    expect(before.status).toBe(200);
+    const first = await before.json<RegisterKeysResponse>();
+
+    expect(
+      (
+        await appRequest(app, `/workspaces/${only.workspaceId}`, {
+          method: "DELETE",
+          headers: { Cookie: operator },
+        })
+      ).status,
+    ).toBe(200);
+
+    // A second, emptier broker. Load balancing would send the next workspace
+    // there, because counting memberships the member's own box now looks like
+    // the busy one.
+    const rival = await enrollBox(app, operator);
+    await enrollBroker(app, rival, "broker-two.example");
+
+    // Roaming across an empty gap. The member owns no box at all at this
+    // point, so nothing about the OLD workspace can carry the placement — only
+    // the membership row can. It has to hand back the same home on the same
+    // box, or the new workspace logs into an account that holds no credential.
+    const again = await workspaceBox(app, providers, operator);
+    const after = await registerKeys(app, again, "2");
+    expect(after.status).toBe(200);
+    const second = await after.json<RegisterKeysResponse>();
+    expect(second.memberUnixName).toBe(first.memberUnixName);
+    expect(second.broker.host).toBe(first.broker.host);
+
+    // Same account, mintable again. Exactly two keys, because the destroyed
+    // workspace's pair went with its `boxes` row: surviving the sweep must not
+    // cost the feed its revocation path.
+    const feed = await brokerFeed(app, broker);
+    expect(feed.members).toHaveLength(1);
+    expect(feed.members[0]?.unixName).toBe(first.memberUnixName);
+    expect(feed.members[0]?.keys).toEqual([
+      { pubkey: "ssh-ed25519 AAAAdeposit2", op: "deposit" },
+      { pubkey: "ssh-ed25519 AAAAmint2", op: "mint" },
+    ]);
   });
 
   it("refuses a new member with no_broker_capacity once member_cap is reached", async () => {
