@@ -26,6 +26,15 @@ import {
 } from "../core/connections/minters/oauth.js";
 import type { MintResult, Placement } from "../core/connections/types.js";
 
+/** The repository's env contract. Worker vars carry no value there — only a
+ * documented name and what it is for — and a connect binding missing from it
+ * is a provider an operator cannot switch on because nothing named it. */
+const ENV_DEFAULTS = import.meta.glob<string>("../../../env.defaults", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+});
+
 /** The shipped box's Go decoder uses DisallowUnknownFields on both the mint
  * result and every placement, and validates names against this pattern. These
  * constants are the wire, restated here so a catalog entry that would 500 a
@@ -129,6 +138,22 @@ describe("provider catalog conformance", () => {
     } satisfies StaticProviderManifest;
     expect(pastedKeyVendor.auth).toBeNull();
     expect(catalogView(pastedKeyVendor, () => undefined).needsVendorConfig).toBe(false);
+  });
+
+  it("documents every connect client binding in env.defaults", () => {
+    const source = Object.values(ENV_DEFAULTS)[0];
+    if (source === undefined) throw new Error("env.defaults was not readable");
+    // Worker vars are documentation-only lines: "# NAME (kind): what it is".
+    const documented = new Set(
+      [...source.matchAll(/^# ([A-Z][A-Z0-9_]*) \(/gmu)].map(([, name]) => name),
+    );
+    expect(documented, "env.defaults parsed").toContain("CRED_MASTER_KEY");
+    for (const manifest of CATALOG) {
+      const auth = manifest.auth;
+      if (auth === null) continue;
+      expect(documented, `${manifest.id} client id`).toContain(auth.clientIdVar);
+      expect(documented, `${manifest.id} client secret`).toContain(auth.clientSecretVar);
+    }
   });
 
   it("reports OAuth as unconfigured until both client bindings exist", () => {
