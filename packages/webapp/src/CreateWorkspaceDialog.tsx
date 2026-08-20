@@ -1,5 +1,6 @@
 import type { CreateWorkspaceRequest, MachineType, Volume, WorkspaceTemplateView } from '@blitzos/schema';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
 import {
@@ -14,6 +15,7 @@ type CreateWorkspaceDialogProps = {
   busy: boolean;
   error: string | null;
   orgName: string;
+  client: AgentRulesApi;
   listMachineTypes: () => Promise<MachineType[]>;
   listVolumes: () => Promise<Volume[]>;
   listTemplates: () => Promise<WorkspaceTemplateView[]>;
@@ -26,6 +28,7 @@ export function CreateWorkspaceDialog({
   busy,
   error,
   orgName,
+  client,
   listMachineTypes,
   listVolumes,
   listTemplates,
@@ -41,6 +44,7 @@ export function CreateWorkspaceDialog({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
+  const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
   const submitted = useRef(false);
   const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
   const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
@@ -89,6 +93,9 @@ export function CreateWorkspaceDialog({
       const configured = populatedEnvironment(environment);
       if (configured !== undefined) input.environment = configured;
       else if (selectedTemplate.environment !== null) input.environment = environment;
+      // Sent whenever it differs from what the template already carries, so an
+      // explicit "back to Default" is not read as "leave the template's rule".
+      if (agentRuleId !== selectedTemplate.agentRuleId) input.agentRuleId = agentRuleId;
       onSubmit(input);
       return;
     }
@@ -108,6 +115,7 @@ export function CreateWorkspaceDialog({
     if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
     const configured = populatedEnvironment(environment);
     if (configured !== undefined) input.environment = configured;
+    if (agentRuleId !== null) input.agentRuleId = agentRuleId;
     onSubmit(input);
   };
 
@@ -150,6 +158,7 @@ export function CreateWorkspaceDialog({
                       setEnvironment(active
                         ? EMPTY_WORKSPACE_ENVIRONMENT
                         : template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+                      setAgentRuleId(active ? null : template.agentRuleId);
                     }}
                   >
                     <strong>{template.name}</strong>
@@ -283,11 +292,21 @@ export function CreateWorkspaceDialog({
             />
           </section>}
 
-          <EnvironmentEditor
-            key={selectedTemplateId ?? 'workspace'}
-            initial={selectedTemplate?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT}
-            onChange={setEnvironment}
-          />
+          <details className="blueprint-advanced">
+            <summary>Advanced</summary>
+            <div className="blueprint-advanced__content">
+              <EnvironmentEditor
+                key={selectedTemplateId ?? 'workspace'}
+                initial={selectedTemplate?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT}
+                onChange={setEnvironment}
+              />
+              <AgentRulesPicker
+                client={client}
+                value={agentRuleId}
+                onChange={setAgentRuleId}
+              />
+            </div>
+          </details>
         </div>
 
         <footer className="create-workspace-actions">

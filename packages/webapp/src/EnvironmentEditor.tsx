@@ -60,75 +60,74 @@ export function EnvironmentEditor({
     publish(retained, startupScript);
   };
 
+  // The Advanced <details> shell lives in the create screens, so this editor
+  // and AgentRulesPicker sit inside one collapsed section rather than two.
   return (
-    <details className="blueprint-advanced">
-      <summary>Advanced</summary>
-      <div className="blueprint-advanced__content">
-        <div className="blueprint-selection__heading">
-          <h2>Environment variables</h2>
-          <p>Config only — not for secrets. Use integrations for secrets.</p>
-        </div>
-        <div className="blueprint-environment-rows">
-          {rows.map((row, index) => (
-            <div className="blueprint-environment-row" key={row.id}>
-              <input
-                aria-label={`Environment variable key ${index + 1}`}
-                placeholder="KEY"
-                value={row.name}
-                maxLength={128}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => updateRow(row.id, 'name', event.currentTarget.value)}
-              />
-              <input
-                aria-label={`Environment variable value ${index + 1}`}
-                placeholder="Value"
-                value={row.value}
-                maxLength={8192}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                onChange={(event) => updateRow(row.id, 'value', event.currentTarget.value)}
-              />
-              <button
-                type="button"
-                aria-label={`Remove environment variable ${index + 1}`}
-                onClick={() => removeRow(row.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-        <button
-          className="blueprint-environment-add"
-          type="button"
-          onClick={() => {
-            const next = [...rows, { id: nextId.current++, name: '', value: '' }];
-            setRows(next);
-          }}
-        >
-          + Add variable
-        </button>
-        <label className="blueprint-field blueprint-startup-script">
-          Startup script
-          <textarea
-            aria-label="Startup script"
-            value={startupScript}
-            maxLength={65536}
-            placeholder="#!/usr/bin/env bash"
-            autoCapitalize="off"
-            autoCorrect="off"
-            spellCheck={false}
-            onChange={(event) => {
-              const script = event.currentTarget.value;
-              setStartupScript(script);
-              publish(rows, script);
-            }}
-          />
-        </label>
+    <>
+      <div className="blueprint-selection__heading">
+        <h2>Environment variables</h2>
+        <p>Config only — not for secrets. Use integrations for secrets.</p>
       </div>
-    </details>
+      <div className="blueprint-environment-rows">
+        {rows.map((row, index) => (
+          <div className="blueprint-environment-row" key={row.id}>
+            <input
+              aria-label={`Environment variable key ${index + 1}`}
+              placeholder="KEY"
+              value={row.name}
+              maxLength={128}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(event) => updateRow(row.id, 'name', event.currentTarget.value)}
+            />
+            <input
+              aria-label={`Environment variable value ${index + 1}`}
+              placeholder="Value"
+              value={row.value}
+              maxLength={8192}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(event) => updateRow(row.id, 'value', event.currentTarget.value)}
+            />
+            <button
+              type="button"
+              aria-label={`Remove environment variable ${index + 1}`}
+              onClick={() => removeRow(row.id)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        className="blueprint-environment-add"
+        type="button"
+        onClick={() => {
+          const next = [...rows, { id: nextId.current++, name: '', value: '' }];
+          setRows(next);
+        }}
+      >
+        + Add variable
+      </button>
+      <label className="blueprint-field blueprint-startup-script">
+        Startup script
+        <textarea
+          aria-label="Startup script"
+          value={startupScript}
+          maxLength={65536}
+          placeholder="#!/usr/bin/env bash"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          onChange={(event) => {
+            const script = event.currentTarget.value;
+            setStartupScript(script);
+            publish(rows, script);
+          }}
+        />
+      </label>
+    </>
   );
 }

@@ -4,7 +4,11 @@ import { HttpError, isRecord, readJson, requiredString, type JsonValue } from ".
 import { authenticateBox } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
-import type { AgentRuleView, ListAgentRulesResponse } from "./wire.js";
+import type {
+  AgentRuleView,
+  ListAgentRulesResponse,
+  PutAgentRuleRequest,
+} from "./wire.js";
 
 // The single source of truth for these bytes is the box-image skeleton file
 // packages/box/rootfs/opt/blitz/skel/agent-rules.md. That file is baked into
@@ -104,7 +108,7 @@ export async function agentRuleIdForOrg(
   return rule.id;
 }
 
-function parsePutAgentRule(value: JsonValue): { name: string; content: string } {
+function parsePutAgentRule(value: JsonValue): PutAgentRuleRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const name = requiredString(value.name, "name", AGENT_RULE_NAME_MAX).trim();
   if (name === "") throw new HttpError(400, "name is required");

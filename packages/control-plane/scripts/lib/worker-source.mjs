@@ -131,18 +131,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       ],
       extensions: [DENY_ALL_RULES],
     },
-    {
-      name: "agent_rules",
-      fields: [
-        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
-        { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
-        { name: "name", type: "text", sqlType: "text", notNull: true },
-        { name: "content", type: "text", sqlType: "text", notNull: true },
-        { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
-      ],
-      indexes: [{ name: "identity", unique: true, fields: ["org_id", "name"] }],
-      extensions: [DENY_ALL_RULES],
-    },
+    { name: "agent_rules", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "content", type: "text", sqlType: "text", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["org_id", "name"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "workspaces",
       fields: [

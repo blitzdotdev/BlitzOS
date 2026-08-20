@@ -1175,6 +1175,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             busy={createWorkspaceBusy}
             error={createWorkspaceError}
             orgName={store.viewer?.org.name ?? 'your org'}
+            client={client}
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
             listTemplates={listTemplates}
@@ -1777,6 +1778,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           busy={createWorkspaceBusy}
           error={createWorkspaceError}
           orgName={store.viewer?.org.name ?? 'your org'}
+          client={client}
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
           listTemplates={listTemplates}
