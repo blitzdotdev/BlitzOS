@@ -135,6 +135,13 @@ require_plain container
 require_plain volume
 if [[ "${pass}" == "prepare" ]]; then
   require_plain BROKER_IMAGE
+  # The origin is interpolated into enroll_command, which this pass PRINTS for
+  # an operator to paste into a shell — so it is shell source twice over, and
+  # the paste is the copy nothing here gets to re-check. Every URL an origin may
+  # legally be fits the allowlist: controlplane.ValidateOrigin already refuses a
+  # user-info, query or fragment, leaving scheme, host, port and an optional
+  # trailing slash, all of which are inside [A-Za-z0-9._:/@=+-].
+  require_plain CONTROL_PLANE_ORIGIN
 fi
 
 umask 077

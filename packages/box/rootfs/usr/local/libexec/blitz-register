@@ -11,10 +11,6 @@
 set -uo pipefail
 
 state_dir=$BLITZ_STATE_DIR
-if [ ! -s "$state_dir/origin" ]; then
-	echo "register: skipped (no control-plane origin)"
-	exit 0
-fi
 
 # Claude Code gets NO managed settings file, and this is the root half of that.
 #
@@ -24,11 +20,23 @@ fi
 # apiKeyHelper does not simply lose to a valid CLAUDE_CODE_OAUTH_TOKEN — with
 # both set, claude hangs. So the file cannot be overridden; it must not exist.
 #
-# blitz-core never writes it. This removes one left by an older image on a
-# volume that survived the upgrade, where stale managed settings would hang
-# every session on that box.
+# blitz-core never writes it. /etc/claude-code is in the IMAGE root filesystem,
+# not on the state volume, so anything found here was baked by an older image
+# layer this box is still built on — the file arrives with the image, not with a
+# volume that survived an upgrade.
+#
+# It runs ABOVE the origin check, and it must stay there. No control-plane
+# origin is how the broker feature is turned OFF, and a box with the feature off
+# is precisely the box a stale managed apiKeyHelper hangs: nothing else on the
+# box removes the file, so every claude session on it wedges for the whole life
+# of the box. Below the guard this removal never runs on the boxes that need it.
 rm -f /etc/claude-code/managed-settings.json
 rmdir /etc/claude-code 2>/dev/null || true
+
+if [ ! -s "$state_dir/origin" ]; then
+	echo "register: skipped (no control-plane origin)"
+	exit 0
+fi
 
 # `timeout` is the backstop, not the budget: blitz-cred register carries its own
 # deadline and its own retries. This only catches a process wedged below the

@@ -29,9 +29,19 @@ fail() {
 
 container="${BROKER_CONTAINER:-blitz-broker}"
 
-# How long the sync loop must run clean before its silence counts as evidence.
-# It polls once a second, so this is ~10 consecutive control-plane reads.
-LOG_WINDOW_SECONDS=10
+# How far back check 6 reads the container log, and how long it keeps re-reading
+# before giving up. Both must EXCEED one full control-plane timeout cycle.
+#
+# internal/controlplane/controlplane.go New builds the HTTP client with a 30 s
+# timeout and the sync loop polls once a second, so a box whose route to the
+# plane is blackholed cannot log its first failure before t≈31 s. A 10 s window
+# is a window that box is entirely silent through. internal/broker/sync.go
+# re-states its positive line every feedHeartbeatInterval (30 s), so 45 s is
+# also long enough that a box which IS reaching the plane always has one inside
+# the window, whether it has been up ten seconds or ten days.
+FEED_WINDOW_SECONDS=45
+FEED_POLL_SECONDS=2
+FEED_ATTEMPTS=23
 
 # ---------------------------------------------------------------------------
 # 1. The Docker daemon. `--restart unless-stopped` is the only thing that brings
@@ -98,26 +108,28 @@ pid_one="$(docker exec "${container}" ps -p 1 -o args= 2>/dev/null)" ||
   fail "PID 1 in ${container} is '${pid_one}', not 'blitz-broker sync': this box will never pull a key"
 
 # ---------------------------------------------------------------------------
-# 6. ... and PROOF that the control plane accepted this box.
-#
-#    Production greps the journal for `members: N (version V)`, which
-#    `blitz-broker sync` logs ONLY after the plane accepted its token and
-#    returned a scoped key list — evidence of authentication, not merely of the
-#    process starting. blitz-core's sync (internal/broker/sync.go) has no such
-#    line: on a successful reconcile it logs NOTHING, and it only speaks up when
-#    something failed. Until it gains a positive line, the equivalent evidence
-#    is assembled from two halves, and both are required:
+# 6. ... and PROOF that the control plane accepted this box, in two halves that
+#    are both required:
 #
 #      a. the box credential exists on the state volume. store.SaveCredential
 #         writes it only after the device flow returned tokens, so its presence
 #         is the control plane having authenticated this box and issued it a
 #         credential. It is never read here — existence is the whole signal.
-#      b. the loop has run a window without complaining. sync logs on every
-#         failed poll, so silence across ~10 polls means GET /boxes/{id}/feed
-#         answered 200 or 304, which needs a bearer token the plane accepts.
+#      b. `broker feed applied; members: N` appears in the last FEED_WINDOW_SECONDS
+#         of log. internal/broker/sync.go prints that line only after the plane
+#         answered a request carrying this box's bearer token and the box
+#         rendered the member list it got back, and re-prints it every 30 s for
+#         as long as the plane keeps answering. It is the equivalent of the
+#         `members: N (version V)` line production greps out of the journal.
 #
-#    Neither half is sufficient alone: an un-enrolled container is silent too,
-#    because sync skips the fetch entirely when no credential exists.
+#    (b) is a POSITIVE requirement, not the absence of complaints. This gate
+#    used to pass on a quiet 10 s window, and quiet is what a box whose route to
+#    the control plane is blackholed looks like for the first ~31 s: the HTTP
+#    client's own timeout is 30 s, so the first failing poll has not logged yet.
+#    Such a box passed at t≈0. Requiring the line inside a window longer than
+#    that timeout cycle is what closes it — silence now fails, and the four
+#    failure markers still fail on their own so a box that IS complaining is
+#    named by its complaint rather than by a missing line.
 # ---------------------------------------------------------------------------
 state_dir="$(docker exec "${container}" sh -c 'if [ -z "${BLITZ_BROKER_STATE_DIR:-}" ]; then set -a; . /etc/blitz/env.defaults; set +a; fi; printf %s "${BLITZ_BROKER_STATE_DIR}"' 2>/dev/null)" ||
   fail "cannot resolve BLITZ_BROKER_STATE_DIR inside ${container}"
@@ -127,7 +139,7 @@ docker exec "${container}" test -s "${state_dir}/box-credential.json" ||
   fail "${container} holds no box credential: 'blitz-broker enroll' was never run or never approved"
 
 synced="false"
-for ((attempt = 1; attempt <= 15; attempt++)); do
+for ((attempt = 1; attempt <= FEED_ATTEMPTS; attempt++)); do
   # NOT a pipeline. `grep -q` exits on the first match and closes the pipe, the
   # producer dies of SIGPIPE, and `set -o pipefail` turns a SUCCESSFUL match into
   # a failed condition. It passes at provisioning time, when the log is short
@@ -135,19 +147,20 @@ for ((attempt = 1; attempt <= 15; attempt++)); do
   # that has been up a while — observed on the production broker box on
   # 2026-08-08, on a box that was healthy and logging every minute. Capture into
   # a variable, then match.
-  recent="$(docker logs --since "${LOG_WINDOW_SECONDS}s" "${container}" 2>&1)" ||
+  recent="$(docker logs --since "${FEED_WINDOW_SECONDS}s" "${container}" 2>&1)" ||
     fail "cannot read the log of ${container}"
-  if [[ "${recent}" != *"broker feed unavailable"* &&
+  if [[ "${recent}" == *"broker feed applied; members: "* &&
+    "${recent}" != *"broker feed unavailable"* &&
     "${recent}" != *"broker feed rejected"* &&
     "${recent}" != *"broker reconciliation incomplete"* &&
     "${recent}" != *"broker enrollment state is invalid"* ]]; then
     synced="true"
     break
   fi
-  sleep 2
+  sleep "${FEED_POLL_SECONDS}"
 done
 [[ "${synced}" == "true" ]] ||
-  fail "${container} kept reporting sync failures for 30 seconds: it is not reaching the control plane with a credential the plane accepts"
+  fail "${container} did not log 'broker feed applied; members:' in a clean ${FEED_WINDOW_SECONDS}s window within $((FEED_ATTEMPTS * FEED_POLL_SECONDS)) seconds: it is not reaching the control plane with a credential the plane accepts"
 
 # ---------------------------------------------------------------------------
 # 7. The authorized_keys directory sshd will actually read, cross-checked
@@ -201,4 +214,4 @@ if [[ "$(timedatectl show --property=NTPSynchronized --value)" != "yes" ]]; then
   fail "the clock is not NTP synchronised: this broker's TLS and token lifetimes are unreliable"
 fi
 
-echo "verified: ${container} running on :${published_port}, sshd up, sync loop enrolled and quiet, ${authorized_keys_dir} root:root 0755, clock UTC/synced"
+echo "verified: ${container} running on :${published_port}, sshd up, sync loop enrolled and applying the control-plane feed, ${authorized_keys_dir} root:root 0755, clock UTC/synced"

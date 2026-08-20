@@ -10,8 +10,13 @@ set -eu
 # invoked as bash.
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH='' cd -- "$script_dir/../../.." && pwd)
 provision="$script_dir/provision-broker.sh"
 gate="$script_dir/verify-broker-box.sh"
+# The box-side half of the broker feature. It is asserted from here because this
+# is the only shell suite `npm test` runs, and the property below is a
+# broker-feature-off property: no other suite would exercise it.
+register="$repo_root/packages/box/rootfs/usr/local/libexec/blitz-register"
 
 test_dir=$(mktemp -d "${TMPDIR:-/tmp}/blitz-broker-deploy.XXXXXX")
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
@@ -26,6 +31,22 @@ fail() {
 # ===========================================================================
 bash -n "$provision" || fail "provision-broker.sh does not parse"
 bash -n "$gate" || fail "verify-broker-box.sh does not parse"
+bash -n "$register" || fail "blitz-register does not parse"
+
+# blitz-register must delete a stale /etc/claude-code/managed-settings.json
+# BEFORE it returns on a box with no control-plane origin. No origin is how the
+# broker feature is turned off, and a box with the feature off is exactly the
+# box a managed apiKeyHelper hangs: with both it and CLAUDE_CODE_OAUTH_TOKEN in
+# play claude does not lose to one, it wedges, and nothing else on the box
+# removes the file. Line order is the whole property, so assert on it.
+managed_settings_line=$(grep -n 'rm -f /etc/claude-code/managed-settings.json' "$register" | cut -d: -f1)
+origin_guard_line=$(grep -n 'state_dir/origin' "$register" | cut -d: -f1)
+[ -n "$managed_settings_line" ] ||
+  fail "blitz-register no longer removes a stale managed-settings.json"
+[ -n "$origin_guard_line" ] ||
+  fail "blitz-register no longer skips on a missing control-plane origin"
+[ "$managed_settings_line" -lt "$origin_guard_line" ] ||
+  fail "blitz-register removes managed-settings.json below the origin guard: the boxes that need it most never reach the line"
 
 # `grep -q` exits on the first match and closes the pipe, the producer dies of
 # SIGPIPE, and pipefail turns a SUCCESSFUL match into a failed check: green on a
@@ -38,6 +59,14 @@ fi
 if grep -Eq '(docker port|docker logs)[^|]*\| *(head|tail)' "$gate"; then
   fail "the gate pipes a docker producer into head/tail; that is the same SIGPIPE trap"
 fi
+
+# The gate matches sync.go's positive line as a literal, across two runtimes.
+# Edit the text on one side only and the gate goes on finding nothing: it would
+# fail every healthy box, and it would say the control plane refused it.
+grep -Fq 'broker feed applied; members: ' "$gate" ||
+  fail "the gate no longer requires the sync loop's positive line"
+grep -Fq 'broker feed applied; members: ' "$repo_root/packages/broker/internal/broker/sync.go" ||
+  fail "the sync loop no longer prints the line the gate matches on"
 
 # ===========================================================================
 # 2. Fakes.
@@ -88,8 +117,16 @@ case "$subcommand" in
     [ "${BLITZ_TEST_PORT_PUBLISHED:-true}" = true ] || exit 1
     printf '0.0.0.0:%s\n[::]:%s\n' "${BLITZ_TEST_PORT:-2222}" "${BLITZ_TEST_PORT:-2222}" ;;
   logs)
-    [ "${BLITZ_TEST_FEED_OK:-true}" = true ] ||
-      printf 'broker feed unavailable; keeping rendered state\n' ;;
+    # Three shapes of sync log, one per cause. `silent` is the blackholed box:
+    # the control-plane HTTP client waits 30 s before it can report anything, so
+    # for the first half-minute a box with no route to the plane produces a log
+    # that carries neither the positive line nor a complaint.
+    case "${BLITZ_TEST_FEED:-applied}" in
+      applied) printf 'broker feed applied; members: 3\n' ;;
+      failing) printf 'broker feed unavailable; keeping rendered state\n' ;;
+      silent) ;;
+      *) printf 'unexpected BLITZ_TEST_FEED: %s\n' "${BLITZ_TEST_FEED}" >&2; exit 2 ;;
+    esac ;;
   exec)
     shift # the container name
     case "$1" in
@@ -177,11 +214,14 @@ grep -Fq 'ss -H -ltn sport = :2222' "$BLITZ_TEST_ARGV_LOG" ||
 grep -Fq 'docker exec blitz-broker pgrep -x sshd' "$BLITZ_TEST_ARGV_LOG" ||
   fail "the gate never checks that sshd is alive inside the container"
 # The blitz-core equivalent of production's `members:` line: an existing box
-# credential plus a quiet window from the 1 s sync loop.
+# credential plus sync's own positive line inside a bounded log window.
 grep -Fq 'box-credential.json' "$BLITZ_TEST_ARGV_LOG" ||
   fail "the gate never checks that the box holds a control-plane credential"
-grep -Fq 'docker logs --since 10s blitz-broker' "$BLITZ_TEST_ARGV_LOG" ||
-  fail "the gate never reads the sync loop's log"
+# 45 s, not 10 s. The control-plane HTTP client's timeout is 30 s
+# (internal/controlplane/controlplane.go New), so a shorter window is one a box
+# with no route to the plane is still silent through.
+grep -Fq 'docker logs --since 45s blitz-broker' "$BLITZ_TEST_ARGV_LOG" ||
+  fail "the gate reads a log window shorter than one control-plane timeout cycle"
 # The directory sshd reads must be the directory the daemon renders into.
 grep -Fq 'AuthorizedKeysFile' "$BLITZ_TEST_ARGV_LOG" ||
   fail "the gate never cross-checks authorized_keys against sshd_config"
@@ -217,8 +257,14 @@ expect_gate_failure "a container whose PID 1 is not the sync loop passed the gat
   BLITZ_TEST_PID1=/bin/sleep
 expect_gate_failure "an un-enrolled broker passed the gate" \
   BLITZ_TEST_ENROLLED=false
-expect_gate_failure "a sync loop that never reached the control plane passed the gate" \
-  BLITZ_TEST_FEED_OK=false
+expect_gate_failure "a sync loop reporting feed failures passed the gate" \
+  BLITZ_TEST_FEED=failing
+# The one the gate was built to catch and did not: a box whose route to the
+# control plane is blackholed logs NOTHING until the 30 s HTTP timeout lands, so
+# the old quiet-window gate passed it at t≈0. Absence of complaints is not
+# evidence; the positive line is.
+expect_gate_failure "a sync loop that logged neither success nor failure passed the gate" \
+  BLITZ_TEST_FEED=silent
 expect_gate_failure "an authorized_keys directory sshd does not read passed the gate" \
   BLITZ_TEST_AUTHORIZED_KEYS_FILE=.ssh/authorized_keys
 expect_gate_failure "a member-owned authorized_keys directory passed the gate" \
@@ -282,6 +328,11 @@ expect_provision_failure "an invalid SSH_PORT was accepted" verify \
 expect_provision_failure "an image reference carrying a shell command was accepted" prepare \
   BROKER_HOST=broker.example CONTROL_PLANE_ORIGIN=https://cp.example \
   'BROKER_IMAGE=broker@sha256:feed; rm -rf /'
+# So is the origin: it is interpolated into the enroll command pass 1 prints for
+# an operator to paste into a shell.
+expect_provision_failure "a control-plane origin carrying a shell command was accepted" prepare \
+  BROKER_HOST=broker.example BROKER_IMAGE=broker@sha256:feed \
+  'CONTROL_PLANE_ORIGIN=https://cp.example; rm -rf /'
 
 # ---- pass 1 for real, against the fakes ------------------------------------
 : >"$BLITZ_TEST_ARGV_LOG"
