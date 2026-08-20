@@ -33,6 +33,7 @@ interface WebAppTabV1 {
   chatProvider?: WebAppAgent;
   filePath?: string;
   port?: number;
+  path?: string;
 }
 
 interface WebAppTabsV1 {
@@ -133,7 +134,15 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   if (type === "preview") {
     const port = positiveId(value.port, `tabs.tabs[${index}].port`);
     if (port > 65_535) throw new HttpError(400, `tabs.tabs[${index}].port is invalid`);
-    return { id, type, port };
+    // A deep-linked preview keeps its route. The webApp's own parser
+    // (packages/webapp/src/storage.ts) accepts the same optional field; a
+    // server that dropped it silently reset the tab to "/" on every reload.
+    if (value.path === undefined) return { id, type, port };
+    const path = boundedString(value.path, `tabs.tabs[${index}].path`, 4_096);
+    if (!path.startsWith("/")) {
+      throw new HttpError(400, `tabs.tabs[${index}].path must start with /`);
+    }
+    return { id, type, port, path };
   }
   if (type !== "chat") return { id, type };
   const tab: WebAppTabV1 = { id, type };

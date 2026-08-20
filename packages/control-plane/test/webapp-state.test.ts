@@ -284,6 +284,53 @@ describe("server-side webApp state", () => {
     ).toBe(1);
   });
 
+  // The webApp's own parser (packages/webapp/src/storage.ts) keeps the same
+  // optional field. When this mirror dropped it, a deep-linked preview tab
+  // came back from the server pointing at "/" after every reload.
+  it("keeps the optional deep-link path on a preview tab", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const withPreviews = (tabs: object[]) => ({
+      ...workspaceDoc,
+      tabs: { version: 1, tabs, activeId: null, nextId: tabs.length + 1 },
+    });
+    const put = (tabs: object[]) => appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(withPreviews(tabs)),
+    });
+
+    const stored = await put([
+      { id: 1, type: "preview", port: 3000, path: "/dashboard" },
+      { id: 2, type: "preview", port: 5173 },
+    ]);
+    expect(stored.status).toBe(200);
+    await expect(stored.json()).resolves.toMatchObject({
+      doc: {
+        tabs: {
+          tabs: [
+            { id: 1, type: "preview", port: 3000, path: "/dashboard" },
+            { id: 2, type: "preview", port: 5173 },
+          ],
+        },
+      },
+    });
+    const reloaded = await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(reloaded.json()).resolves.toMatchObject({
+      doc: { tabs: { tabs: [{ id: 1, path: "/dashboard" }, { id: 2 }] } },
+    });
+
+    expect((await put([{ id: 1, type: "preview", port: 3000, path: "dashboard" }])).status)
+      .toBe(400);
+    expect((await put([{ id: 1, type: "preview", port: 3000, path: 42 }])).status).toBe(400);
+    expect((await put([
+      { id: 1, type: "preview", port: 3000, path: `/${"x".repeat(4_096)}` },
+    ])).status).toBe(400);
+  });
+
   it("deletes per-workspace state when the orphan sweep finishes destroy", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);

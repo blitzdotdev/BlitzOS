@@ -113,4 +113,32 @@ describe("UI protocol and persistence object contracts", () => {
       { id: 1, type: "preview", url: "https://demo.blitz.dev", title: 42 },
     ])).toThrow("webApp state response has invalid doc");
   });
+
+  // The server mirror (packages/control-plane/core/webapp-state.ts) accepts the
+  // same optional field with the same "/"-rooted rule. The two parsers must
+  // agree, or a deep-linked preview loses its route on the round trip.
+  it("keeps the optional deep-link path on a port preview tab", () => {
+    const decodeTabs = (tabs: object[]) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs: { version: 1, tabs, activeId: 1, nextId: tabs.length + 1 },
+        drawer: { version: 1, open: true, width: 264, expanded: [], segment: "previews" },
+      },
+      updatedAt: 1,
+    })).doc?.tabs.tabs;
+
+    expect(decodeTabs([
+      { id: 1, type: "preview", port: 3000, path: "/dashboard" },
+      { id: 2, type: "preview", port: 5173 },
+    ])).toEqual([
+      { id: 1, type: "preview", port: 3000, path: "/dashboard" },
+      { id: 2, type: "preview", port: 5173 },
+    ]);
+    // A relative or non-string path is dropped, not kept as-is.
+    expect(decodeTabs([{ id: 1, type: "preview", port: 3000, path: "dashboard" }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000 }]);
+    expect(decodeTabs([{ id: 1, type: "preview", port: 3000, path: 42 }]))
+      .toEqual([{ id: 1, type: "preview", port: 3000 }]);
+  });
 });
