@@ -46,9 +46,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the twenty-seven domain tables plus the deny-all file support table", () => {
+  it("contains the twenty-eight domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(28);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(29);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
