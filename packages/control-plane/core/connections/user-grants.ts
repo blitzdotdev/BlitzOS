@@ -17,6 +17,7 @@ import {
 } from "./catalog/index.js";
 import type { ProviderManifest, SurfaceOverrides, TokenHeader } from "./catalog/types.js";
 import { revokeGrantLeasesQuery } from "./leases.js";
+import { scopesFromJson } from "./manifest.js";
 import { ensureCatalogConnection } from "./registry.js";
 import { openRoot, sealRoot } from "./root-crypto.js";
 import type { Custody, UserGrantView } from "./types.js";
@@ -58,17 +59,6 @@ const GRANT_FIELDS = `id, user_id, provider, manifest_id, kind, label, config,
 
 export function grantSecretLabel(userId: string, provider: string): string {
   return `grant:${userId}:${provider}`;
-}
-
-function scopesFromJson(value: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((scope) => isString(scope))
-      ? parsed
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 export function grantConfig(row: GrantRow): GrantConfig {
@@ -280,15 +270,14 @@ export async function rotateGrantTokens(
 
 function parseScopes(value: JsonValue | undefined, manifest: ProviderManifest): string[] {
   if (value === undefined) return [...manifest.defaultScopes];
-  if (
-    !Array.isArray(value) ||
-    !value.every((scope) => isString(scope) && scope.length > 0)
-  ) {
+  if (!Array.isArray(value)) {
     throw new HttpError(400, "scopes must be an array of non-empty strings");
   }
   const requested: string[] = [];
   for (const scope of value) {
-    if (!isString(scope)) throw new HttpError(400, "scopes must be an array of non-empty strings");
+    if (!isString(scope) || scope.length === 0) {
+      throw new HttpError(400, "scopes must be an array of non-empty strings");
+    }
     requested.push(scope);
   }
   const known = new Set(manifest.scopes.map((scope) => scope.id));

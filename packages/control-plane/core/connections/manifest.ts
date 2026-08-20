@@ -8,6 +8,20 @@ export interface CredentialManifest {
   integrations: Record<string, JsonObject>;
 }
 
+/** Scope lists reach this module as JSON arrays out of D1 — on grants, on
+ * leases, on requests. Unreadable stored data grants nothing, which is the
+ * direction a credential system is allowed to fail in. */
+export function scopesFromJson(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((scope) => isString(scope))
+      ? parsed
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function stringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) &&

@@ -3,6 +3,7 @@ import { changed, first, rows, transaction } from "../db.js";
 import { HttpError, isNumber, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
+import { scopesFromJson } from "./manifest.js";
 import type { Lease, MintResult } from "./types.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
@@ -55,17 +56,6 @@ export interface CredentialEventView {
   event: CredentialEventRow["event"];
   detail: JsonValue | null;
   createdAt: number;
-}
-
-function scopesFromJson(value: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.every((scope) => isString(scope))
-      ? parsed
-      : [];
-  } catch {
-    return [];
-  }
 }
 
 function leaseView(row: LeaseRow): Lease {
