@@ -2,8 +2,6 @@ package broker
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +13,6 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 )
 
-// eventsFile records credential swaps, by fingerprint only.
-const eventsFile = ".blitz-broker-events"
-
 // Deposit stages an incoming credential, verifies it under a staging HOME,
 // stores the result, and only then lets the caller ACK.
 //
@@ -26,8 +21,13 @@ const eventsFile = ".blitz-broker-events"
 // copy on ACK, so a deposit that half-succeeded would destroy the credential
 // from both ends at once.
 //
-// Cross-account replacement is allowed — nothing here compares account
-// identity — but it is recorded, so a swap is visible after the fact.
+// Cross-account replacement is allowed and is NOT recorded. Deposit is verify,
+// store, ACK, and nothing else (packages/broker/TODO.md, founder 2026-08-11).
+// The log used to be the last write on the success path, which put an
+// unbounded append between a stored credential and the ACK the workspace waits
+// for: a full disk or a bad mode turned a deposit that had already succeeded
+// into a failure, the watcher kept its copy, and it re-deposited every second
+// — a real vendor round trip per tick, forever.
 func Deposit(ctx context.Context, home string, definition vendor.Definition, input io.Reader, runner vendor.Runner) error {
 	blob, err := io.ReadAll(io.LimitReader(input, FeedMaxBytes+1))
 	if err != nil {
@@ -97,40 +97,8 @@ func Deposit(ctx context.Context, home string, definition vendor.Definition, inp
 		if err := os.Chmod(filepath.Dir(target), 0o700); err != nil {
 			return err
 		}
-		previous, _ := readCredential(target)
-		if err := atomicfile.Write(target, verified, 0o600); err != nil {
-			return err
-		}
-		return recordDeposit(home, definition.Name, previous, verified)
+		// The last write on the success path, so the ACK the caller sends next
+		// means exactly "the stored credential is the one you handed me".
+		return atomicfile.Write(target, verified, 0o600)
 	})
-}
-
-// recordDeposit appends one line to the member's own record so a credential
-// swap — including a swap to a different account — is visible after the fact.
-// The fingerprints are truncated SHA-256 digests, never the credential: a
-// change shows up as a different fingerprint without any secret reaching the
-// file.
-func recordDeposit(home, harness string, previous, replacement []byte) error {
-	line := fmt.Sprintf(
-		"%s deposit harness=%s previous=%s replacement=%s\n",
-		time.Now().UTC().Format(time.RFC3339),
-		harness,
-		fingerprint(previous),
-		fingerprint(replacement),
-	)
-	file, err := os.OpenFile(filepath.Join(home, eventsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	_, err = file.WriteString(line)
-	return err
-}
-
-func fingerprint(blob []byte) string {
-	if len(blob) == 0 {
-		return "none"
-	}
-	digest := sha256.Sum256(blob)
-	return hex.EncodeToString(digest[:])[:12]
 }

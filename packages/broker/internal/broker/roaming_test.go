@@ -110,6 +110,66 @@ func TestMintKilledMidRefreshLeavesTheStoredCredentialIntact(t *testing.T) {
 	}
 }
 
+// TestMintRefusesAnAccessTokenCarryingWhitespace covers the one thing the mint
+// wire format cannot express. The reply is a single line — main.go writes the
+// token with fmt.Fprintln — and every consumer down the chain copies the bytes
+// into CLAUDE_CODE_OAUTH_TOKEN verbatim, so a token that carries whitespace of
+// its own is indistinguishable from the terminator and the box's two consumers
+// disagree about where it ends: the PATH shim's $(...) eats it, the actor's
+// options.env keeps it, and the vendor rejects an Authorization header holding
+// a newline. Failing the mint is the only answer that names the harness.
+func TestMintRefusesAnAccessTokenCarryingWhitespace(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A live, far-from-expiry credential, so no refresh runs and the token that
+	// comes back is exactly what the vendor CLI wrote.
+	dirty := `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-live\n","refreshToken":"refresh","expiresAt":4102444800000}}`
+	if err := os.WriteFile(path, []byte(dirty), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	token, err := Mint(context.Background(), home, []string{"claude"}, "claude", vendor.Claude,
+		func(context.Context, string, []string, string) error {
+			t.Error("a live credential was sent to the vendor CLI for a refresh")
+			return nil
+		})
+	if err == nil {
+		t.Fatalf("Mint returned a token carrying whitespace: %q", token)
+	}
+	if token != "" {
+		t.Errorf("Mint refused the token and returned it anyway: %q", token)
+	}
+}
+
+// TestFeedHeartbeatRestatesOnACadence pins the decision the provisioning gate
+// reads. The positive line used to be printed only when the feed CHANGED, so
+// after the first apply the ETag made every later poll `unchanged` and the line
+// never came back — a windowed gate on a box that had been up a while would
+// find nothing and would have to treat silence as success, which is also what a
+// blackholed box produces. Sync refuses to run as non-root, so the cadence is
+// only testable through this helper.
+func TestFeedHeartbeatRestatesOnACadence(t *testing.T) {
+	start := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	if !feedHeartbeatDue(time.Time{}, start) {
+		t.Error("the first answered poll did not state the line")
+	}
+	if feedHeartbeatDue(start, start.Add(feedHeartbeatInterval-time.Second)) {
+		t.Error("the line was restated before the interval elapsed")
+	}
+	if !feedHeartbeatDue(start, start.Add(feedHeartbeatInterval)) {
+		t.Error("the line was not restated once the interval elapsed")
+	}
+	// The gate reads a 45 s window (packages/broker/deploy/verify-broker-box.sh)
+	// and requires the line inside it, so a cadence at or above that window
+	// would fail a box that is working.
+	if feedHeartbeatInterval >= 45*time.Second {
+		t.Fatalf("feedHeartbeatInterval %s does not fit inside the gate's window", feedHeartbeatInterval)
+	}
+}
+
 // TestDepositRefusesACredentialWhoseRefreshTokenIsAlreadyDead closes the gap
 // verification cannot: a live access token proves nothing about the refresh
 // chain behind it, and storing a dead one replaces a working credential with
@@ -146,10 +206,16 @@ func TestDepositRefusesACredentialWhoseRefreshTokenIsAlreadyDead(t *testing.T) {
 	}
 }
 
-// TestDepositRecordsAFingerprintTrail proves a credential swap is visible
-// after the fact — including a swap to a different account — and that nothing
-// from the credential itself reaches the record.
-func TestDepositRecordsAFingerprintTrail(t *testing.T) {
+// TestDepositReplacesAcrossAccountsAndWritesNothingElse pins the whole of what
+// a successful deposit leaves behind: the replacement credential, and nothing
+// else in the member's home.
+//
+// The "nothing else" half is the contract, not tidiness. An extra write after
+// the stored credential is already replaced sits between success and the ACK
+// the workspace is waiting for, and a failure there makes the workspace keep
+// its copy and re-deposit on the next tick — a vendor round trip a second, for
+// a deposit that had already succeeded.
+func TestDepositReplacesAcrossAccountsAndWritesNothingElse(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -165,19 +231,25 @@ func TestDepositRecordsAFingerprintTrail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	record, err := os.ReadFile(filepath.Join(home, eventsFile))
+	stored, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	line := string(record)
-	if !strings.Contains(line, "deposit harness=claude") {
-		t.Fatalf("event line = %q", line)
+	if string(stored) != replacement {
+		t.Fatalf("stored credential = %q, want the deposited one", stored)
 	}
-	if strings.Contains(line, "other-account") || strings.Contains(line, "other") {
-		t.Fatalf("the event record leaked credential material: %q", line)
+
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(line, "previous=none") {
-		t.Fatalf("event line lost the replaced credential's fingerprint: %q", line)
+	for _, entry := range entries {
+		// The credential directory and the per-member lock are the whole
+		// expected surface; the staging directory is removed on the way out.
+		if entry.Name() == ".claude" || entry.Name() == ".blitz-credential.lock" {
+			continue
+		}
+		t.Errorf("deposit left %q in the member's home", entry.Name())
 	}
 }
 
