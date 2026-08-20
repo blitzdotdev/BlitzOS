@@ -247,6 +247,69 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  it('prefills a stored environment on edit and round-trips it through PUT', async () => {
+    const stored = { env: { PROJECT_MODE: 'analysis' }, startupScript: './setup.sh\n' };
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [{
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          environment: stored,
+          folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
+        }] });
+      }
+      if (url.pathname === '/workspace-templates/template-1' && init?.method === 'PUT') {
+        return Response.json({ template: {
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          environment: stored,
+          folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
+        } });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        editTemplateId="template-1"
+        onCreated={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    // The editor is no longer hidden on edit, and it shows what is stored.
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable key 1"]',
+    )?.value).toBe('PROJECT_MODE');
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable value 1"]',
+    )?.value).toBe('analysis');
+    expect(view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Startup script"]',
+    )?.value).toBe('./setup.sh\n');
+
+    // Saving without touching Advanced resubmits it rather than wiping it.
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    const put = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates/template-1' && init?.method === 'PUT'
+    ));
+    expect(JSON.parse(String(put?.[1]?.body ?? '{}')).environment).toEqual(stored);
+    await view.unmount();
+  });
+
   it('posts a populated advanced environment', async () => {
     const fetcher = stub();
     const { view } = await screenWith(fetcher);
