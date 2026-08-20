@@ -3,7 +3,7 @@
 Open core. The closed control plane imports it and adds around it.
 Inclusion test: workspace mechanics = core. Tenancy, money, fleet ops = closed.
 Derived 2026-08-11. Map: session scratchpad `codex-cp-carve.txt`.
-Decisions: `sessions/2026-08-11-box-redesign-acp-docker.md`.
+Decisions: `plans/PORT-DESIGN.md` (the original session notes are not in this repo).
 
 ## In core
 

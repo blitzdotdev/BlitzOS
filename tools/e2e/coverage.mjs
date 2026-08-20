@@ -85,14 +85,14 @@ if (options.help) {
 const selectedSuiteNames = new Set(options.selectedSuiteNames);
 
 const DEFAULT_CP_URL = "https://blitz-control-plane.blitzapp.workers.dev";
-const DEFAULT_LEDGER =
-  "/private/tmp/claude-501/-Users-minjunes-blitz-core/04b1d3bc-f75f-42dd-8392-58b453d06f5a/scratchpad/w3-workspace-id";
-const DEFAULT_WORK_ROOT =
-  "/private/tmp/claude-501/-Users-minjunes-blitz-core/04b1d3bc-f75f-42dd-8392-58b453d06f5a/scratchpad/coverage";
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Overridable with WORKSPACE_LEDGER / WORK_DIR; defaults stay inside the
+// repo's gitignored scratchpad.
+const DEFAULT_WORK_ROOT = join(repoRoot, "scratchpad", "coverage");
+const DEFAULT_LEDGER = join(DEFAULT_WORK_ROOT, "workspace-ids");
 const HETZNER_API = "https://api.hetzner.cloud/v1";
 const MAX_WORKSPACE_CREATES = 4;
 const ACTIVE_PHASES = new Set(["creating", "ready", "destroying", "error"]);
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const envPath = join(repoRoot, ".env");
 const runToken = randomBytes(6).toString("hex");
 const runLabel = `blitz-coverage-${runToken}`;

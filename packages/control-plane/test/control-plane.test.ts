@@ -25,7 +25,11 @@ import {
   BOX_IMAGE_TICKETS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
 } from "../core/webapp-tickets.js";
-import { HetznerProvider } from "../core/providers/hetzner.js";
+import {
+  DEFAULT_HETZNER_MACHINE_TYPES,
+  HetznerProvider,
+  hetznerMachineTypeAllowlistFromEnv,
+} from "../core/providers/hetzner.js";
 import worker from "../src/worker.js";
 import {
   OPERATOR_KEY,
@@ -490,6 +494,105 @@ describe("control plane security and lifecycle", () => {
     expect((await provider.listMachineTypes()).map(({ id }) => id)).toEqual([
       "cpx21@hil",
     ]);
+  });
+
+  it("keeps the two-type default catalog when HETZNER_MACHINE_TYPES is unset or blank", () => {
+    expect(DEFAULT_HETZNER_MACHINE_TYPES).toEqual(["cpx21@hil", "cpx31@hil"]);
+    expect([...hetznerMachineTypeAllowlistFromEnv(undefined)].sort()).toEqual([
+      "cpx21@hil",
+      "cpx31@hil",
+    ]);
+    expect([...hetznerMachineTypeAllowlistFromEnv("  ")].sort()).toEqual([
+      "cpx21@hil",
+      "cpx31@hil",
+    ]);
+  });
+
+  it("offers the HETZNER_MACHINE_TYPES catalog instead of the default", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        server_types: [
+          {
+            name: "cpx21",
+            cores: 3,
+            memory: 4,
+            disk: 80,
+            architecture: "x86",
+            deprecation: null,
+            locations: [
+              { name: "hil", available: true, deprecation: null },
+              { name: "ash", available: true, deprecation: null },
+            ],
+          },
+          {
+            name: "cx23",
+            cores: 2,
+            memory: 4,
+            disk: 40,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "fsn1", available: true, deprecation: null }],
+          },
+        ],
+        meta: { pagination: { next_page: null } },
+      }),
+    );
+    const provider = new HetznerProvider("test-token", {
+      machineTypeCatalog: " cpx21@ash, cx23@fsn1 ",
+    });
+
+    // cpx21@hil is in the default catalog but not the configured one.
+    expect((await provider.listMachineTypes()).map(({ id }) => id)).toEqual([
+      "cpx21@ash",
+      "cx23@fsn1",
+    ]);
+  });
+
+  it("skips malformed HETZNER_MACHINE_TYPES entries with a structured warning", async () => {
+    const warn = vi.fn();
+    const allowlist = hetznerMachineTypeAllowlistFromEnv(
+      "cpx21@ash,bogus!,cx-22@fsn1,cpx21,cpx31@,,",
+      warn,
+    );
+
+    expect([...allowlist]).toEqual(["cpx21@ash"]);
+    expect(warn.mock.calls.map(([warning]) => warning)).toEqual([
+      "bogus!",
+      "cx-22@fsn1",
+      "cpx21",
+      "cpx31@",
+    ].map((entry) => ({
+      event: "hetzner_machine_type_catalog_entry_rejected",
+      entry,
+      reason: 'expected "<server-type>@<location>" (for example "cpx21@hil")',
+    })));
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        server_types: [
+          {
+            name: "cpx21",
+            cores: 3,
+            memory: 4,
+            disk: 80,
+            architecture: "x86",
+            deprecation: null,
+            locations: [
+              { name: "hil", available: true, deprecation: null },
+              { name: "ash", available: true, deprecation: null },
+            ],
+          },
+        ],
+        meta: { pagination: { next_page: null } },
+      }),
+    );
+    const provider = new HetznerProvider("test-token", {
+      machineTypeCatalog: "cpx21@ash,bogus!",
+      warn,
+    });
+
+    // The malformed entry is dropped without failing the listing.
+    expect((await provider.listMachineTypes()).map(({ id }) => id)).toEqual(["cpx21@ash"]);
   });
 
   it("maps numeric Hetzner type IDs back to names in webAppd provider errors", async () => {

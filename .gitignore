@@ -14,3 +14,9 @@ scratchpad/
 
 # local go build output (the box image builds a linux binary from source)
 packages/box/gateway/box-gateway
+
+# per-deployment Worker config (copy wrangler.toml.example, never commit it)
+packages/control-plane/wrangler.toml
+
+# local regression tests (agent-run, credential-adjacent; never committed)
+/tests/

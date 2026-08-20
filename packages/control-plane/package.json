@@ -21,20 +21,23 @@
     "README.md",
     "scripts/deploy-helpers.mjs",
     "scripts/deploy.mjs",
-    "wrangler.toml"
+    "scripts/ensure-wrangler-config.mjs",
+    "wrangler.toml.example"
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "deploy": "node scripts/deploy.mjs",
     "test:shell": "sh test/shell-syntax.sh",
     "test:python": "npm run build --silent && node --test test/bootstrap-python.test.mjs",
+    "test:scripts": "node --test test/publish-box-image.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.wire-drift.json",
-    "test": "vitest run && npm run test:python"
+    "pretest": "node scripts/ensure-wrangler-config.mjs",
+    "test": "vitest run && npm run test:python && npm run test:scripts"
   },
   "dependencies": {
     "hono": "4.13.1",
     "smol-toml": "^1.8.0",
-    "teenybase": "0.0.15"
+    "teenybase": "0.0.14"
   },
   "devDependencies": {
     "@blitzos/schema": "0.0.0",

@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
   CORE_MANIFEST,
@@ -7,6 +8,10 @@ import {
   importSpecifiers,
   redactSecrets,
 } from "../scripts/build-blitzdev.mjs";
+
+// Vendor-only: this suite pins the worker source emitted for the blitz.dev
+// managed platform, which forks do not use. Skipped unless BLITZDEV_MANAGED=1.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
 const rawCore = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"], {
   eager: true,
@@ -86,7 +91,7 @@ function coreSources(): Map<string, string> {
   }));
 }
 
-describe("blitz.dev managed emitter", () => {
+describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("emits the exact deterministic manifest within platform limits", () => {
     const first = createUploadSet(coreSources());
     const second = createUploadSet(coreSources());

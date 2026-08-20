@@ -39,7 +39,7 @@ describe("create workspace dialog", () => {
         client={rulesClient()}
         listTemplates={async () => []}
         onNewTemplate={() => undefined}
-        listMachineTypes={async () => machines}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
@@ -81,7 +81,7 @@ describe("create workspace dialog", () => {
         client={rulesClient()}
         listTemplates={async () => []}
         onNewTemplate={() => undefined}
-        listMachineTypes={async () => machines}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => [{
           id: "vol-1",
           name: "home",
@@ -134,7 +134,7 @@ describe("create workspace dialog", () => {
         client={rulesClient()}
         listTemplates={async () => []}
         onNewTemplate={() => undefined}
-        listMachineTypes={async () => machines}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
@@ -177,6 +177,59 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
+  it("summarizes provider failures when the machine catalog is empty", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient()}
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({
+          machineTypes: [],
+          failures: [
+            { providerId: "hetzner", error: "Hetzner API request failed with status 403" },
+            { providerId: "microvm", error: "no microVM hosts are reachable" },
+          ],
+        })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain("No machine types are available.");
+    expect(view.container.textContent).toContain(
+      "hetzner: Hetzner API request failed with status 403",
+    );
+    expect(view.container.textContent).toContain("microvm: no microVM hosts are reachable");
+    await view.unmount();
+  });
+
+  it("keeps the bare empty-catalog message when no provider failed", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient()}
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: [], failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain("No machine types are available.");
+    expect(view.container.textContent).not.toContain("hetzner:");
+    await view.unmount();
+  });
+
   it("disables volume selection for a provider without volume support", async () => {
     const submit = vi.fn();
     const view = await render(
@@ -187,7 +240,7 @@ describe("create workspace dialog", () => {
         client={rulesClient()}
         listTemplates={async () => []}
         onNewTemplate={() => undefined}
-        listMachineTypes={async () => machines}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => [{
           id: "vol-1",
           name: "home",
@@ -245,7 +298,7 @@ describe("create workspace dialog", () => {
         client={rulesClient()}
         listTemplates={async () => [template]}
         onNewTemplate={onNewTemplate}
-        listMachineTypes={async () => machines}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
@@ -304,7 +357,7 @@ describe("create workspace dialog", () => {
         client={rulesClient([BUILT_IN_RULE, orgRule])}
         listTemplates={async () => []}
         onNewTemplate={() => undefined}
-        listMachineTypes={async () => machines}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
@@ -378,7 +431,7 @@ describe("create workspace dialog", () => {
           client={rulesClient([BUILT_IN_RULE, orgRule])}
           listTemplates={async () => [template]}
           onNewTemplate={() => undefined}
-          listMachineTypes={async () => machines}
+          listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
           listVolumes={async () => []}
           onCancel={() => undefined}
           onSubmit={submit}

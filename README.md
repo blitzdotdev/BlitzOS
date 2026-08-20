@@ -86,6 +86,33 @@ holds a long-lived secret.
 - [`schema`](packages/schema/README.md) — shared wire types and ACP conformance fixtures.
 
 
+# Installation
+
+Self-hosting BlitzOS needs:
+
+- a Cloudflare account — the control plane is one Worker using D1, R2, and cron triggers;
+- a spare domain you can add as a zone on that account, for workspace tunnels;
+- a Google Cloud project — Google OAuth is the only login method;
+- workspace compute: a Hetzner Cloud project, **or** your own Firecracker host running the microvm-host agent;
+- Node.js 22.13+, npm, and Docker.
+
+Then follow the [self-host guide](docs/SELF-HOST.md): clone → deploy the
+control plane → Google OAuth → tunnel → box image → first workspace.
+
+Built-in providers are Hetzner and Firecracker. Any other cloud is one
+`VmProvider` implementation, not a fork — see the
+[control-plane README](packages/control-plane/README.md).
+
+# Docs
+
+- [Self-host guide](docs/SELF-HOST.md) — clone to first workspace, in order.
+- [Workspace tunnels](docs/TUNNEL.md) — browser access to cloud-VM workspaces.
+- [Box image](docs/BOX-IMAGE.md) — build, publish, and upgrade the workspace image.
+- [Contributing](CONTRIBUTING.md) — the three gates, the lint ratchet, fixtures, commit style.
+- [Security](SECURITY.md) — reporting, secret blast radius, the workspace trust model.
+- Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [microvm-host](packages/microvm-host/README.md) · [webapp](packages/webapp/README.md) · [broker](packages/broker/README.md) · [schema](packages/schema/README.md)
+
+
 # Roadmap
 
 - [ ] recipes

@@ -12,11 +12,11 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_WORK_DIR =
-  "/private/tmp/claude-501/-Users-minjunes-blitz-core/04b1d3bc-f75f-42dd-8392-58b453d06f5a/scratchpad/microvm-m3/e2e";
-const DEFAULT_LEDGER =
-  "/private/tmp/claude-501/-Users-minjunes-blitz-core/04b1d3bc-f75f-42dd-8392-58b453d06f5a/scratchpad/microvm-m3/workspace-ids";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+// Overridable with WORK_DIR / WORKSPACE_LEDGER; defaults stay inside the
+// repo's gitignored scratchpad.
+const DEFAULT_WORK_DIR = join(repoRoot, "scratchpad", "microvm-m3", "e2e");
+const DEFAULT_LEDGER = join(repoRoot, "scratchpad", "microvm-m3", "workspace-ids");
 const envPath = join(repoRoot, ".env");
 
 function readEnvValue(name) {

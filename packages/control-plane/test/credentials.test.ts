@@ -5,7 +5,6 @@ import type {
   WorkspaceView,
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
-import { $DatabaseRawImpl } from "teenybase/worker";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runLeaseSweep } from "../core/index.js";
 import {

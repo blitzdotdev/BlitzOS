@@ -1,14 +1,43 @@
 # broker
 
-Broker images are not published yet; build the image locally before using the
-commands below.
+**Optional.** No part of a deployment breaks without it. Skip this package
+until per-workspace agent login becomes a chore.
+
+The broker is fleet credential delivery: one dedicated box holds an agent
+subscription login (Claude or Codex) and mints short-lived credentials for
+every workspace its owner spawns, over forced-command SSH, before each agent
+turn. The control plane's registry holds public keys and routing only — never
+a credential. The no-broker alternative is documented in the
+[box README](../box/README.md): sign in once inside each workspace with
+`claude login` or `codex login` over SSH; agent HOME persists on the state
+volume.
+
+## Run and enroll
+
+The registry reference below works once a `v*` release has published images
+(the release notes carry the immutable digest). With no release yet, build
+locally from the repository root:
+`docker build -f packages/broker/Dockerfile -t blitz-broker:local .` and use
+that tag instead.
+
+Enrolling needs three things in place:
+
+- a deployed control plane (the `--origin`);
+- the broker container running with its state volume;
+- a host and SSH port that workspace boxes can reach (`--host`/`--port` are
+  what gets advertised to them).
 
 ```sh
 docker volume create blitz-broker
-docker pull ghcr.io/blitzdotdev/blitz-broker@sha256:<image-digest>
-docker run -d --name blitz-broker --restart unless-stopped --env-file env.defaults -p 2222:22 -v blitz-broker:/var/lib/blitz-broker ghcr.io/blitzdotdev/blitz-broker@sha256:<image-digest>
-docker exec blitz-broker blitz-broker enroll --origin https://control.example --host broker.example --port 2222
+docker pull ghcr.io/<your-github-owner>/blitz-broker@sha256:<image-digest>
+docker run -d --name blitz-broker --restart unless-stopped --env-file env.defaults -p 2222:22 -v blitz-broker:/var/lib/blitz-broker ghcr.io/<your-github-owner>/blitz-broker@sha256:<image-digest>
+docker exec blitz-broker blitz-broker enroll --origin <your-control-plane-origin> --host broker.example --port 2222
 ```
+
+The enroll command runs the device flow: it prints a verification URL and
+user code, and a signed-in control-plane user confirms it. The confirming
+account owns the broker, and the command registers the broker's advertised
+address and SSH host key with the control plane.
 
 ## Provisioning a broker box
 

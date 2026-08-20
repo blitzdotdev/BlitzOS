@@ -6,12 +6,12 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/blitzdotdev/blitz-core.git"
+    "url": "git+https://github.com/blitzdotdev/BlitzOS.git"
   },
   "bugs": {
-    "url": "https://github.com/blitzdotdev/blitz-core/issues"
+    "url": "https://github.com/blitzdotdev/BlitzOS/issues"
   },
-  "homepage": "https://github.com/blitzdotdev/blitz-core#readme",
+  "homepage": "https://github.com/blitzdotdev/BlitzOS#readme",
   "type": "commonjs",
   "engines": {
     "node": "^22.13.0 || >=24.0.0"
@@ -31,6 +31,7 @@
     "packages/webapp"
   ],
   "scripts": {
+    "build": "npm run build -w @blitzos/webapp && npm run typecheck",
     "lint": "oxlint .",
     "lint:gate": "node scripts/lint-gate.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",

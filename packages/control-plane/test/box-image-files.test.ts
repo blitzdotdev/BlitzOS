@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   WORKER_SOURCE,
@@ -9,6 +10,11 @@ import {
   managedFileId,
   validateBoxImageManifest,
 } from "../scripts/build-blitzdev.mjs";
+
+// The fixture-conformance suite below guards the cross-runtime box-image
+// manifest contract and always runs. Only the blitz.dev managed-upload suite
+// is vendor-only and skipped unless BLITZDEV_MANAGED=1.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
 const temporaryDirectories: string[] = [];
 const manifestFixtureSources = import.meta.glob<string>(
@@ -30,7 +36,7 @@ function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-describe("managed box-image file attempt", () => {
+describe("box-image manifest fixture conformance", () => {
   it("matches every shared box-image manifest fixture", async () => {
     const validEntries = manifestFixtureEntries("valid");
     const invalidEntries = manifestFixtureEntries("invalid");
@@ -49,7 +55,9 @@ describe("managed box-image file attempt", () => {
       `box-image manifest producer conformance: ${validEntries.length} valid + ${invalidEntries.length} invalid fixtures`,
     );
   });
+});
 
+describe.skipIf(!managedToolchainEnabled)("managed box-image file attempt [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("preserves manifest/part logical keys, verifies hashes, and activates the manifest last", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "blitz-box-files-"));
     temporaryDirectories.push(directory);

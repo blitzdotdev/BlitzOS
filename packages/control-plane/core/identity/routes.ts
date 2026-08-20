@@ -152,6 +152,12 @@ export function addIdentityRoutes(
     return context.json(await loadMe(runtimeFactory, context, principal));
   });
 
+  // Signup gating (SIGNUP_MODE / ALLOWED_EMAIL_DOMAINS) is enforced at the
+  // Google callback, where users are created. Org creation deliberately
+  // stays open to any signed-in user, including under SIGNUP_MODE=invite:
+  // a session only exists for accounts that got in through an invite, the
+  // bootstrap secret, or before the gate — refusing them here would add a
+  // second gate with no additional access control.
   router.post("/orgs", async (context) => {
     const principal = await requirePrincipal(context);
     if (principal.membershipId !== null) {

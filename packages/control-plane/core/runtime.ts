@@ -48,6 +48,8 @@ export interface CoreRouter {
   ): CoreRouter;
 }
 
+export type SignupMode = "open" | "invite";
+
 export interface RuntimeVariables {
   boxImageRef: string;
   boxImageSha256: string;
@@ -57,6 +59,13 @@ export interface RuntimeVariables {
   googleClientId: string;
   googleClientSecret: string;
   bootstrapSecret: string;
+  /** Signup gate mode parsed from SIGNUP_MODE. Runtimes that predate the
+   * var (the managed worker source) omit it; absent means "open", which is
+   * the pre-gate behavior. */
+  signupMode?: SignupMode;
+  /** Lowercased bare domains parsed from ALLOWED_EMAIL_DOMAINS. Absent or
+   * empty means any email domain may sign in. */
+  allowedEmailDomains?: readonly string[];
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -75,6 +84,35 @@ export function maxConcurrentWorkspacesFromEnv(value: string | number | null | u
     throw new Error("MAX_CONCURRENT_WORKSPACES must be an integer from 1 through 1000");
   }
   return limit;
+}
+
+export function signupModeFromEnv(value: string | null | undefined): SignupMode {
+  const mode = (value ?? "").trim().toLowerCase();
+  if (mode === "" || mode === "open") return "open";
+  if (mode === "invite") return "invite";
+  throw new Error("SIGNUP_MODE must be 'open' or 'invite'");
+}
+
+const EMAIL_DOMAIN_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u;
+
+export function allowedEmailDomainsFromEnv(
+  value: string | null | undefined,
+): readonly string[] {
+  const raw = (value ?? "").trim();
+  if (raw === "") return [];
+  const domains = raw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry !== "");
+  for (const domain of domains) {
+    if (!EMAIL_DOMAIN_PATTERN.test(domain)) {
+      throw new Error(
+        "ALLOWED_EMAIL_DOMAINS entries must be bare domains like example.com",
+      );
+    }
+  }
+  return domains;
 }
 
 export interface CoreRuntime {

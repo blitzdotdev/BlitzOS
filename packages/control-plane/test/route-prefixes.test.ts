@@ -1,7 +1,12 @@
+import { env } from "cloudflare:test";
 import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { API_PREFIXES } from "../scripts/build-blitzdev.mjs";
 import wranglerToml from "../wrangler.toml?raw";
+
+// The managed-worker prefix check is vendor-only (blitz.dev deployment);
+// the standalone wrangler.toml check below always runs.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
 const coreSources = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"], {
   eager: true,
@@ -36,8 +41,19 @@ function coreRoutePaths(): string[] {
   return paths;
 }
 
+function requiredCoreSegments(): string[] {
+  const routeSegments = new Set(coreRoutePaths().map(firstSegment));
+  expect(
+    [...INTENTIONALLY_ASSET_SERVED_SEGMENTS].filter((segment) => !routeSegments.has(segment)),
+    "asset-served exclusions must name registered core route segments",
+  ).toEqual([]);
+  return [...routeSegments]
+    .filter((segment) => !INTENTIONALLY_ASSET_SERVED_SEGMENTS.has(segment))
+    .sort();
+}
+
 describe("core route asset precedence", () => {
-  it("runs every core route segment through both Workers", () => {
+  it("runs every core route segment through the standalone Worker", () => {
     const config = parse(wranglerToml);
     // SAFETY: The array and every entry are validated immediately below before use.
     const assets = config.assets as AssetRoutingConfig;
@@ -47,23 +63,17 @@ describe("core route asset precedence", () => {
       || !runWorkerFirst.every((prefix) => String(prefix) === prefix)
     ) throw new Error("assets.run_worker_first must be a string array");
 
-    const routeSegments = new Set(coreRoutePaths().map(firstSegment));
-    const requiredSegments = [...routeSegments]
-      .filter((segment) => !INTENTIONALLY_ASSET_SERVED_SEGMENTS.has(segment))
-      .sort();
     const wranglerSegments = new Set(runWorkerFirst.map((prefix) => firstSegment(String(prefix))));
-    const managedWorkerSegments = new Set(API_PREFIXES.map(firstSegment));
-
     expect(
-      [...INTENTIONALLY_ASSET_SERVED_SEGMENTS].filter((segment) => !routeSegments.has(segment)),
-      "asset-served exclusions must name registered core route segments",
-    ).toEqual([]);
-    expect(
-      requiredSegments.filter((segment) => !wranglerSegments.has(segment)),
+      requiredCoreSegments().filter((segment) => !wranglerSegments.has(segment)),
       "wrangler assets.run_worker_first is missing core route segments",
     ).toEqual([]);
+  });
+
+  it.skipIf(!managedToolchainEnabled)("runs every core route segment through the managed Worker [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
+    const managedWorkerSegments = new Set(API_PREFIXES.map(firstSegment));
     expect(
-      requiredSegments.filter((segment) => !managedWorkerSegments.has(segment)),
+      requiredCoreSegments().filter((segment) => !managedWorkerSegments.has(segment)),
       "managed-worker API_PREFIXES is missing core route segments",
     ).toEqual([]);
   });

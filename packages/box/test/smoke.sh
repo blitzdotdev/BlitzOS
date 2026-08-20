@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
+# Image selection (override with IMAGE=<tag>):
+#   IMAGE set    -> smoke-test that tag as-is (never builds).
+#   IMAGE unset  -> use blitz-box:local when that tag already exists locally,
+#                   otherwise build a fresh blitz-box:smoke from this tree.
 set -euo pipefail
 
 script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
-image="${IMAGE:-blitz-box:smoke}"
+build_image=false
+if [ -n "${IMAGE:-}" ]; then
+  image="$IMAGE"
+elif docker image inspect blitz-box:local >/dev/null 2>&1; then
+  image="blitz-box:local"
+else
+  image="blitz-box:smoke"
+  build_image=true
+fi
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
 unprivileged_container="blitz-box-smoke-unprivileged-$$"
@@ -51,7 +63,7 @@ fail() {
 }
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
-if [ -z "${IMAGE:-}" ]; then
+if [ "$build_image" = true ]; then
   docker build --progress=plain \
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \

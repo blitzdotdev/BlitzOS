@@ -101,8 +101,8 @@ Severity: **[B]** release blocker · **[F]** friction · **[D]** doc bug · **[e
 
 ## Test-run ledger (2026-08-12)
 
-- Worker: https://blitz-control-plane.blitzapp.workers.dev (account "Blitz Development Sandbox", d25a778b…)
-- D1: `blitz-control-plane` `51bebbfa-dc55-4f64-bbbe-e71c02a9c899`, migration 0001 applied.
+- Worker: https://blitz-control-plane.blitzapp.workers.dev (account "Blitz Development Sandbox", `<account-id redacted>`)
+- D1: `blitz-control-plane` `<database-id redacted>`, migration 0001 applied.
 - Secrets set: `HETZNER_API_TOKEN`, `OPERATOR_API_KEY` (values in `.env`, gitignored).
 - e2e scripts: `e2e/selfhost.mjs` (API lifecycle, 8 steps), `e2e/bridge.mjs` (box-on-VM bridge).
 - Workspaces created/destroyed this run: selfhost cx22 error-path ×2, cx23 full-pass, webApp cx23 (`ac27a559…`), bridge cax probes ×5 (placement failures), bridge cx23 full-pass (`7300f18f…`). Every id tombstone-verified `destroyed`.

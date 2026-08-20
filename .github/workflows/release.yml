@@ -29,6 +29,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR image names must be lowercase; the repository owner may not be.
+      - name: Compute lowercase image namespace
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: echo "IMAGE_OWNER=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Build and push box
         id: box
         uses: docker/build-push-action@v6
@@ -39,8 +45,8 @@ jobs:
           push: true
           provenance: true
           tags: |
-            ghcr.io/blitzdotdev/blitz-box:${{ github.ref_name }}
-            ghcr.io/blitzdotdev/blitz-box:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:${{ github.ref_name }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:latest
 
       - name: Build and push broker
         id: broker
@@ -52,8 +58,8 @@ jobs:
           push: true
           provenance: true
           tags: |
-            ghcr.io/blitzdotdev/blitz-broker:${{ github.ref_name }}
-            ghcr.io/blitzdotdev/blitz-broker:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:${{ github.ref_name }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:latest
 
   release-notes:
     name: Add image digests to GitHub Release
@@ -70,6 +76,8 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
+          # GHCR image names must be lowercase; the repository owner may not be.
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --generate-notes
           fi
@@ -78,7 +86,7 @@ jobs:
           {
             printf '%s\n' "$existing_body"
             printf '\n## Container image digests\n\n'
-            printf -- '- `ghcr.io/blitzdotdev/blitz-box:%s` — `%s`\n' "$tag" "$BOX_DIGEST"
-            printf -- '- `ghcr.io/blitzdotdev/blitz-broker:%s` — `%s`\n' "$tag" "$BROKER_DIGEST"
+            printf -- '- `ghcr.io/%s/blitz-box:%s` — `%s`\n' "$owner" "$tag" "$BOX_DIGEST"
+            printf -- '- `ghcr.io/%s/blitz-broker:%s` — `%s`\n' "$owner" "$tag" "$BROKER_DIGEST"
           } >"$RUNNER_TEMP/release-notes.md"
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"

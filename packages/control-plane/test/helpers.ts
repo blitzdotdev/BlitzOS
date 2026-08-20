@@ -1,13 +1,16 @@
 import type { CreateVolumeRequest, Volume, WorkspaceView } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
-import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
+import { $Database, teenyHono } from "teenybase/worker";
+import { rawDb } from "../src/raw-db.js";
 import type { $Env } from "teenybase/worker";
 import {
+  allowedEmailDomainsFromEnv,
   createSessionPrincipalSource,
   credentialMasterKeyFor,
   installControlPlaneRoutes,
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
+  signupModeFromEnv,
   VmProviderRegistry,
   WorkspaceWebAppAuth,
   type WorkspaceTunnels,
@@ -46,6 +49,8 @@ type TestBindings = Env & {
   JWT_SECRET_MAIN?: string;
   SESSION_TTL_DAYS: string;
   MAX_CONCURRENT_WORKSPACES: string;
+  SIGNUP_MODE?: string;
+  ALLOWED_EMAIL_DOMAINS?: string;
   CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
@@ -196,6 +201,10 @@ export function appWithVmProviders(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+      signupMode: signupModeFromEnv((context.env as TestBindings).SIGNUP_MODE),
+      allowedEmailDomains: allowedEmailDomainsFromEnv(
+        (context.env as TestBindings).ALLOWED_EMAIL_DOMAINS,
+      ),
     },
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),
@@ -227,7 +236,7 @@ export function testRuntime(
   workspaceTunnels?: WorkspaceTunnels,
 ): CoreRuntime {
   return {
-    db: new $DatabaseRawImpl(env.DB),
+    db: rawDb(env.DB),
     blobs: env.BOX_IMAGES as BlobStore,
     fileObjects: env.BOX_IMAGES,
     credentialMasterKey,

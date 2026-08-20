@@ -7,7 +7,7 @@ import {
   sessionCookie,
 } from "../principals.js";
 import { fetchBoundedJson, type JsonValue } from "../providers/json-fetch.js";
-import type { CoreRouter, RuntimeFactory } from "../runtime.js";
+import type { CoreRouter, RuntimeFactory, RuntimeVariables } from "../runtime.js";
 import {
   clearGoogleOAuthStateCookie,
   createGoogleOAuthState,
@@ -15,7 +15,7 @@ import {
   verifyGoogleOAuthStateCookie,
 } from "./oauth-state.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
-import { redeemInviteSession } from "./invites.js";
+import { inviteCodeHash, redeemInviteSession } from "./invites.js";
 
 const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -116,6 +116,64 @@ async function googleProfile(
   return parseGoogleProfile(userinfo.body);
 }
 
+/** Signup gate, parsed once per callback from the runtime vars.
+ *
+ * Semantics shipped here:
+ * - `signupMode` "invite": a Google sign-in that would CREATE a user is
+ *   refused unless it carries a redeemable invite or the verified bootstrap
+ *   secret. Existing users always sign in.
+ * - `allowedEmailDomains` non-empty: EVERY sign-in (new or existing user,
+ *   invited or bootstrap) is refused when the email domain is not listed.
+ *   Blocking existing users outright is deliberate — an allowlist that only
+ *   gated signup would keep grandfathered accounts alive forever.
+ * - Both vars absent (older runtimes omit them entirely) = open signup, any
+ *   domain: exactly the pre-gate behavior. */
+interface SignupPolicy {
+  inviteOnly: boolean;
+  allowedEmailDomains: readonly string[];
+}
+
+function signupPolicyFor(vars: RuntimeVariables): SignupPolicy {
+  return {
+    inviteOnly: (vars.signupMode ?? "open") === "invite",
+    allowedEmailDomains: vars.allowedEmailDomains ?? [],
+  };
+}
+
+function assertAllowedEmailDomain(policy: SignupPolicy, email: string): void {
+  if (policy.allowedEmailDomains.length === 0) return;
+  const separator = email.lastIndexOf("@");
+  const domain = separator === -1 ? "" : email.slice(separator + 1);
+  if (!policy.allowedEmailDomains.includes(domain)) {
+    throw new HttpError(
+      403,
+      "this email domain is not allowed to sign in on this deployment",
+    );
+  }
+}
+
+/** Pre-check used only in invite mode, BEFORE the user row is created.
+ * Without it, a well-formed but bogus invite code would still create the
+ * user (redemption fails later), and the next plain sign-in would pass the
+ * gate as an "existing user". Redemption itself stays transactional in
+ * redeemInviteSession and re-validates everything checked here. */
+async function hasRedeemableInvite(
+  db: Db,
+  inviteCode: string | undefined,
+  email: string,
+  now: number,
+): Promise<boolean> {
+  if (inviteCode === undefined) return false;
+  const invite = await first<{ id: string }>(db, {
+    q: `SELECT id FROM invites
+        WHERE code_hash = ?1 AND state = 'ready' AND expires_at > ?2
+          AND (email IS NULL OR email = ?3)
+        LIMIT 1`,
+    v: [await inviteCodeHash(inviteCode), now, email],
+  });
+  return invite !== null;
+}
+
 async function activeMembership(db: Db, userId: string): Promise<MembershipRow | null> {
   return first<MembershipRow>(db, {
     q: `SELECT m.id FROM memberships m
@@ -133,6 +191,7 @@ async function resolveUser(
   profile: GoogleProfile,
   now: number,
   bootstrapEnabled: boolean,
+  gate: { requireInvite: boolean; inviteCode: string | undefined },
 ): Promise<UserRow> {
   let user = await first<UserRow>(db, {
     q: "SELECT id, platform_operator, name FROM users WHERE google_user_id = ?1 LIMIT 1",
@@ -151,7 +210,30 @@ async function resolveUser(
           WHERE id = ?5`,
       v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
     });
+    if (bootstrapEnabled) {
+      // The bootstrap secret was already verified at /auth/google/start, so
+      // this only widens WHICH user can become the first operator: an
+      // existing row now promotes exactly like the insert branch below. The
+      // NOT EXISTS guard keeps promotion first-operator-only, and a wrong or
+      // absent secret still never reaches this branch.
+      await rows(db, {
+        q: `UPDATE users SET platform_operator = 1, updated_at = ?2
+            WHERE id = ?1 AND NOT EXISTS (
+              SELECT 1 FROM users WHERE platform_operator = 1
+            )`,
+        v: [user.id, now],
+      });
+    }
   } else {
+    if (
+      gate.requireInvite
+      && !(await hasRedeemableInvite(db, gate.inviteCode, profile.email, now))
+    ) {
+      throw new HttpError(
+        403,
+        "sign-ups are invite-only on this deployment; ask an organization admin for an invite link",
+      );
+    }
     const emailOwner = await first<{ id: string }>(db, {
       q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
       v: [profile.email],
@@ -329,11 +411,22 @@ export function addGoogleAuthRoutes(
       runtime.vars.googleClientSecret,
     );
     const now = Date.now();
+    const policy = signupPolicyFor(runtime.vars);
+    assertAllowedEmailDomain(policy, profile.email);
+    const bootstrapEnabled =
+      state.bootstrap === true && runtime.vars.bootstrapSecret !== "";
     const user = await resolveUser(
       runtime.db,
       profile,
       now,
-      state.bootstrap === true && runtime.vars.bootstrapSecret !== "",
+      bootstrapEnabled,
+      {
+        // The verified bootstrap secret is the operator credential, so it
+        // may create the first account on an invite-only deployment; the
+        // domain allowlist above still applies even to bootstrap.
+        requireInvite: policy.inviteOnly && !bootstrapEnabled,
+        inviteCode: state.inviteCode,
+      },
     );
     let membership = await activeMembership(runtime.db, user.id);
     if (membership === null && user.platform_operator === 1) {
