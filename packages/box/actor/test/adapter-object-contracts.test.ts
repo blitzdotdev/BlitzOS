@@ -9,17 +9,25 @@ import { PREVIEW_GUIDANCE } from "../src/preview-guidance.js";
 
 describe("adapter object omission contracts", () => {
   it("preserves Claude optional-key absence and insertion order", () => {
-    const absent = claudeOptionalOptions({ resumeId: null, token: null });
+    const absent = claudeOptionalOptions({ resumeId: null });
     expect(Object.keys(absent)).toEqual([]);
     expect("resume" in absent).toBe(false);
-    expect("getOAuthToken" in absent).toBe(false);
     expect(JSON.stringify(absent)).toBe("{}");
 
-    const present = claudeOptionalOptions({ resumeId: "session-1", token: "token-1" });
-    expect(Object.keys(present)).toEqual(["resume", "getOAuthToken"]);
+    const present = claudeOptionalOptions({ resumeId: "session-1" });
+    expect(Object.keys(present)).toEqual(["resume"]);
     expect("resume" in present).toBe(true);
-    expect("getOAuthToken" in present).toBe(true);
     expect(JSON.stringify(present)).toBe('{"resume":"session-1"}');
+  });
+
+  // The token no longer travels on the options object at all: `getOAuthToken`
+  // is not an SDK option, it was bolted on with an intersection type, and it
+  // reached no code path in the shipped SDK. It is gone, and this pins that it
+  // stays gone rather than quietly returning as a second delivery mechanism.
+  it("carries no token on the Claude options object", () => {
+    const present: Record<string, unknown> = claudeOptionalOptions({ resumeId: "session-1" });
+    expect("getOAuthToken" in present).toBe(false);
+    expect("token" in present).toBe(false);
   });
 
   it("preserves Claude turn-output resume omission", () => {

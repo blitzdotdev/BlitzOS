@@ -1,0 +1,39 @@
+#!/bin/sh
+# PATH shim for Claude Code. Every terminal `claude` comes through here, picks
+# up a freshly minted token, and execs the pinned binary.
+#
+# WHY AN ENVIRONMENT VARIABLE, and specifically this one: the broker mints an
+# OAuth access token (`sk-ant-oat01-…`). `CLAUDE_CODE_OAUTH_TOKEN` is the OAuth
+# hook and accepts it. `ANTHROPIC_API_KEY` is the API-KEY hook, rejects an OAuth
+# token outright, and switches a subscription to per-token billing on the way.
+# A managed `apiKeyHelper` does not merely lose to a valid
+# CLAUDE_CODE_OAUTH_TOKEN either — with both set, claude hangs — which is why
+# /etc/claude-code/managed-settings.json is DELETED at register rather than
+# overridden.
+#
+# WHY A SHIM AND NOT A LOGIN-SHELL EXPORT: a token exported once at login is the
+# token you still have three hours later. Minting per process start is what
+# keeps a long-lived terminal signed in.
+#
+# NOTHING HERE IS FATAL. An unreachable broker leaves claude running and saying
+# it is signed out — a workspace a member can fix — rather than a dead command.
+#
+# An already-set token is left alone, so a caller can override.
+
+# A self-updating vendor CLI drops a second copy into the member's own npm
+# prefix, which then wins the PATH and shadows this shim: a terminal signed out
+# while the same box's chat is authenticated. A fresh box has no user-local
+# copy, so the first run comes through here and never acquires one.
+DISABLE_AUTOUPDATER=1
+export DISABLE_AUTOUPDATER
+
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -x /usr/local/bin/blitz-cred-claude ]; then
+	token="$(/usr/local/bin/blitz-cred-claude 2>/dev/null || true)"
+	if [ -n "$token" ]; then
+		CLAUDE_CODE_OAUTH_TOKEN="$token"
+		export CLAUDE_CODE_OAUTH_TOKEN
+	fi
+	unset token
+fi
+
+exec /opt/blitz/npm/bin/claude "$@"

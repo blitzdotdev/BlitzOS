@@ -9,25 +9,61 @@ import { PREVIEW_GUIDANCE } from "../preview-guidance.js";
 import { hasObjectType, isString } from "../type-guards.js";
 import type { AgentAdapter, TurnInput, TurnOutput } from "../types.js";
 
-type TokenOptions = Options & {
-  getOAuthToken?: (options: { signal: AbortSignal }) => Promise<string>;
-};
+/** The real, pinned Claude Code binary — never the PATH shim.
+ *
+ * The shim at /usr/local/bin/claude mints a token for ITSELF and execs this
+ * path, which is right for a terminal and wrong here: a probe or a turn routed
+ * through it reports on the shim's own token rather than the one this process
+ * was given, and answers "signed in" for a session whose next turn says "not
+ * logged in". Absolute, so PATH cannot route it back through the shim.
+ */
+export const CLAUDE_BINARY = "/opt/blitz/npm/bin/claude";
 
 interface ClaudeOptionalOptions {
   resume?: string;
-  getOAuthToken?: TokenOptions["getOAuthToken"];
 }
 
 export function claudeOptionalOptions(
-  input: Pick<TurnInput, "resumeId" | "token">,
+  input: Pick<TurnInput, "resumeId">,
 ): ClaudeOptionalOptions {
   const options: ClaudeOptionalOptions = {};
   if (input.resumeId) options.resume = input.resumeId;
-  if (input.token) {
-    // SAFETY: This branch is evaluated only when the nullable string token is truthy.
-    options.getOAuthToken = async () => input.token as string;
-  }
   return options;
+}
+
+/** The environment the SDK's engine runs in.
+ *
+ * Two things make this necessary rather than incidental.
+ *
+ * First, `options.env` REPLACES `process.env` in this SDK rather than merging
+ * with it, so the spread is load-bearing: drop it and the engine loses the VM's
+ * whole environment. HOME is then set explicitly, because HOME is what decides
+ * which credential files the engine consults and inheriting an ambiguous one is
+ * how a turn ends up reading somebody else's.
+ *
+ * Second, the token has to arrive HERE at all. The SDK spawns its own copy of
+ * the Claude Code CLI, so the PATH shim that puts a token in front of every
+ * other caller on the box never runs for a chat turn; this process has to mint
+ * it and hand it over.
+ *
+ * CLAUDE_CODE_OAUTH_TOKEN, never ANTHROPIC_API_KEY: the broker mints an OAuth
+ * access token (`sk-ant-oat01-…`), and the API-key path rejects it outright
+ * while switching a subscription to per-token billing.
+ *
+ * No token is not an error. An unreachable or unconfigured broker leaves a turn
+ * that runs and reports itself signed out, which a member can fix.
+ */
+export function claudeEnv(
+  token: string | null,
+  base: NodeJS.ProcessEnv = process.env,
+  home: string | undefined = base.HOME,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  if (home !== undefined) env.HOME = home;
+  if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  // The engine must not update itself out of the image pin mid-turn.
+  env.DISABLE_AUTOUPDATER = "1";
+  return env;
 }
 
 const PERMISSION_MODES: ReadonlySet<string> = new Set([
@@ -104,12 +140,13 @@ export class ClaudeAdapter implements AgentAdapter {
           : { behavior: "deny", message: "The user rejected this operation." };
       return result;
     };
-    const options: TokenOptions = {
+    const options: Options = {
       abortController,
       canUseTool,
       cwd: input.cwd,
+      env: claudeEnv(input.token),
       includePartialMessages: true,
-      pathToClaudeCodeExecutable: "/opt/blitz/npm/bin/claude",
+      pathToClaudeCodeExecutable: CLAUDE_BINARY,
       permissionMode: claudePermissionMode(input.config.permission),
       systemPrompt: { type: "preset", preset: "claude_code", append: PREVIEW_GUIDANCE },
     };

@@ -1,11 +1,41 @@
 #!/command/with-contenv bash
-set -euo pipefail
+# Enrol this workspace with the credential broker. Runs as root, once, at boot.
+#
+# NOTHING HERE IS FATAL, and that is the whole point. Every long-run service on
+# this box is ordered behind this oneshot, so an s6 failure here would leave a
+# workspace with no terminal, no chat and no SSH because a credential broker was
+# unreachable. The broker is OPTIONAL — zero enrolled brokers is how the feature
+# is turned off — and the correct outcome of every failure is a workspace that
+# boots and says it is signed out. That is something a member can fix from
+# inside; a workspace that never booted is not.
+set -uo pipefail
 
 state_dir=$BLITZ_STATE_DIR
 if [ ! -s "$state_dir/origin" ]; then
-  echo "register: skipped (no control-plane origin)"
-  exit 0
+	echo "register: skipped (no control-plane origin)"
+	exit 0
 fi
-exec /command/s6-setuidgid blitz /usr/bin/env \
-  HOME="$state_dir/home" BLITZ_STATE_DIR="$state_dir" \
-  /usr/local/bin/blitz-cred register
+
+# Claude Code gets NO managed settings file, and this is the root half of that.
+#
+# The broker mints an OAuth access token (`sk-ant-oat01-…`). `apiKeyHelper` is
+# the API-KEY hook: whatever it returns is used as an API key, so it rejects an
+# OAuth token AND switches a subscription to per-token billing. Worse, a managed
+# apiKeyHelper does not simply lose to a valid CLAUDE_CODE_OAUTH_TOKEN — with
+# both set, claude hangs. So the file cannot be overridden; it must not exist.
+#
+# blitz-core never writes it. This removes one left by an older image on a
+# volume that survived the upgrade, where stale managed settings would hang
+# every session on that box.
+rm -f /etc/claude-code/managed-settings.json
+rmdir /etc/claude-code 2>/dev/null || true
+
+# `timeout` is the backstop, not the budget: blitz-cred register carries its own
+# deadline and its own retries. This only catches a process wedged below the
+# level any Go timer can see.
+if ! timeout 60 /command/s6-setuidgid blitz /usr/bin/env \
+	HOME="$state_dir/home" BLITZ_STATE_DIR="$state_dir" \
+	/usr/local/bin/blitz-cred register; then
+	echo "register: broker enrolment did not complete; the workspace runs signed out" >&2
+fi
+exit 0
