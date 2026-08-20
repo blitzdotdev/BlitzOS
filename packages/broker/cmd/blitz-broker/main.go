@@ -20,6 +20,22 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 )
 
+// commandTimeout is the last-resort bound on one forced command, and it is
+// deliberately the LOOSEST of the three deadlines in play, not the tightest.
+//
+// The real bounds are broker.LockWait (how long this run queues) and
+// vendor.TriggerTimeout (how long the vendor CLI itself may take). A caller
+// deadline shorter than their sum would cancel the child context and KILL a
+// vendor CLI half-way through rewriting the only copy of a credential — the
+// 2026-08-07 incident class this whole design exists to avoid. So it sits
+// above both, with slack, and only catches a process wedged on something no
+// other timer covers.
+//
+// The workspace's ssh client gives up sooner (internal/workspace/ssh.go). That
+// is fine and intended: the client sees a clean failure and retries, while the
+// refresh it started runs to completion instead of being cut in half.
+const commandTimeout = broker.LockWait + vendor.TriggerTimeout + 10*time.Second
+
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stdin); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -95,7 +111,7 @@ func runMint(args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 	token, err := broker.Mint(ctx, home, allowed, definition.Name, definition, nil)
 	if err != nil {
@@ -110,7 +126,7 @@ func runDeposit(args []string, output io.Writer, input io.Reader) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 	if err := broker.Deposit(ctx, home, definition, input, nil); err != nil {
 		return err

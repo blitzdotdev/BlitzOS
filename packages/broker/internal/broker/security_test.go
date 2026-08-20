@@ -45,23 +45,24 @@ func TestDecodeFeedRejectsPoisonedEntriesWithoutDroppingValidEntry(t *testing.T)
 	body := `{
   "version":"opaque",
   "members":[
-    {"unixName":"alice","harnesses":["claude"],"keys":[]},
+    {"unixName":"m-aaaaaaaaaaaa","harnesses":["claude"],"keys":[]},
     {"unixName":"../root","harnesses":["claude"],"keys":[]},
-    {"unixName":"bob","harnesses":["unknown"],"keys":[]}
+    {"unixName":"blitz","harnesses":["claude"],"keys":[]},
+    {"unixName":"m-bbbbbbbbbbbb","harnesses":["unknown"],"keys":[]}
   ]
 }`
 	feed, err := DecodeFeed(strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(feed.Members) != 1 || feed.Members[0].UnixName != "alice" {
-		t.Fatalf("valid members = %#v, want only alice", feed.Members)
+	if len(feed.Members) != 1 || feed.Members[0].UnixName != "m-aaaaaaaaaaaa" {
+		t.Fatalf("valid members = %#v, want only m-aaaaaaaaaaaa", feed.Members)
 	}
-	if feed.Rejected != 2 {
-		t.Fatalf("rejected = %d, want 2", feed.Rejected)
+	if feed.Rejected != 3 {
+		t.Fatalf("rejected = %d, want 3", feed.Rejected)
 	}
-	if !feed.Preserve["bob"] {
-		t.Fatal("existing bob state would be removed because of a poisoned harness")
+	if !feed.Preserve["m-bbbbbbbbbbbb"] {
+		t.Fatal("existing member state would be removed because of a poisoned harness")
 	}
 }
 
@@ -91,14 +92,14 @@ func TestAuthorizedKeysUsesRootOwnedPathAndModes(t *testing.T) {
 	}
 	root := t.TempDir()
 	path, err := RenderAuthorizedKeys(root, Member{
-		UnixName:  "alice",
+		UnixName:  "m-aaaaaaaaaaaa",
 		Harnesses: []string{"claude"},
 		Keys:      []Key{{Pubkey: "ssh-ed25519 AAAAalice", Op: "mint"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != filepath.Join(root, "alice") {
+	if path != filepath.Join(root, "m-aaaaaaaaaaaa") {
 		t.Fatalf("path = %q", path)
 	}
 	dirInfo, err := os.Stat(root)
@@ -122,7 +123,7 @@ func TestAuthorizedKeysUsesRootOwnedPathAndModes(t *testing.T) {
 	if strings.Contains(string(content), "expiry") || strings.Contains(string(content), "expires") {
 		t.Fatalf("authorized_keys contains expiry text: %q", content)
 	}
-	if !strings.HasPrefix(string(content), `restrict,command="/usr/local/bin/blitz-broker mint alice claude" `) {
+	if !strings.HasPrefix(string(content), `restrict,command="/usr/local/bin/blitz-broker mint m-aaaaaaaaaaaa claude" `) {
 		t.Fatalf("unexpected authorized_keys line: %q", content)
 	}
 }

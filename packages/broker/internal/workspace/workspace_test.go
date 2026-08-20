@@ -54,7 +54,7 @@ func TestWatcherRedepositsLoginThatChangesDuringDeposit(t *testing.T) {
 }
 
 func TestSSHArgumentsPinOnlyTheRegisteredHostKey(t *testing.T) {
-	args := sshArguments("/state", "/state/mint_key", BrokerConfig{Host: "broker.example", Port: 2222, Member: "operator"}, "claude")
+	args := sshArguments("/state", "/state/mint_key", BrokerConfig{Host: "broker.example", Port: 2222, Member: "m-0123456789ab"}, "claude")
 	for _, required := range []string{
 		"StrictHostKeyChecking=yes",
 		"UserKnownHostsFile=/state/known_hosts",
@@ -66,7 +66,7 @@ func TestSSHArgumentsPinOnlyTheRegisteredHostKey(t *testing.T) {
 			t.Errorf("SSH args missing %q: %#v", required, args)
 		}
 	}
-	if args[len(args)-2] != "operator@broker.example" || args[len(args)-1] != "claude" {
+	if args[len(args)-2] != "m-0123456789ab@broker.example" || args[len(args)-1] != "claude" {
 		t.Fatalf("SSH target/command = %#v", args[len(args)-2:])
 	}
 }
@@ -96,7 +96,7 @@ func TestRegisterCreatesIdempotentKeysAndPinnedBrokerFiles(t *testing.T) {
 		if len(body.Keys) != 2 || body.Keys[0].Op != "mint" || body.Keys[1].Op != "deposit" || !feed.ValidPublicKey(body.Keys[0].Pubkey) || !feed.ValidPublicKey(body.Keys[1].Pubkey) {
 			t.Errorf("keys = %#v", body.Keys)
 		}
-		io.WriteString(writer, `{"memberUnixName":"operator","broker":{"host":"broker.example","port":2222,"sshHostPublicKey":"ssh-ed25519 AAAA"}}`)
+		io.WriteString(writer, `{"memberUnixName":"m-0123456789ab","broker":{"host":"broker.example","port":2222,"sshHostPublicKey":"ssh-ed25519 AAAA"}}`)
 	}))
 	defer server.Close()
 	if err := store.SaveOrigin(stateDir, server.URL); err != nil {
@@ -139,7 +139,7 @@ func TestRegisterCreatesIdempotentKeysAndPinnedBrokerFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config != (BrokerConfig{Host: "broker.example", Port: 2222, Member: "operator"}) {
+	if config != (BrokerConfig{Host: "broker.example", Port: 2222, Member: "m-0123456789ab"}) {
 		t.Fatalf("broker config = %#v", config)
 	}
 }

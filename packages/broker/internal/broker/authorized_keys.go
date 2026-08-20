@@ -25,13 +25,17 @@ func RenderAuthorizedKeys(dir string, member Member) (string, error) {
 		}
 	}
 	path := filepath.Join(dir, member.UnixName)
-	if err := atomicfile.Write(path, authorizedKeys(member), 0o644); err != nil {
-		return "", err
-	}
+	// Root-owned BEFORE the rename, not after. sshd refuses to read an
+	// authorized_keys file it does not trust the ownership of, and a window in
+	// which the real path is live under the wrong owner is a window in which a
+	// member either cannot log in or — worse, if the directory were ever
+	// member-writable — could rewrite their own forced command.
+	owner := -1
 	if os.Geteuid() == 0 {
-		if err := os.Chown(path, 0, 0); err != nil {
-			return "", err
-		}
+		owner = 0
+	}
+	if err := atomicfile.WriteOwned(path, authorizedKeys(member), 0o644, owner, owner); err != nil {
+		return "", err
 	}
 	return path, nil
 }
