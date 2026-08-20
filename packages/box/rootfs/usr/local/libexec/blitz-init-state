@@ -48,6 +48,16 @@ find "$state_dir" -maxdepth 1 -type f -exec chown "$uid:$gid" {} +
 chown -R "$uid:$gid" "$state_dir/home"
 chown "$uid:$gid" /workspace
 
+# Managed, authoritative agent rules. Both agents read a canonical file under
+# HOME (=$state_dir/home): Claude reads ~/.claude/CLAUDE.md, Codex reads
+# ~/.codex/AGENTS.md. Overwrite every boot so the platform rules always win;
+# project rules belong in /workspace/CLAUDE.md. `install -D` creates the parent
+# directories. Skip silently if the skel doc is absent.
+if [ -f /opt/blitz/skel/agent-rules.md ]; then
+  install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.claude/CLAUDE.md"
+  install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.codex/AGENTS.md"
+fi
+
 host_key="$state_dir/ssh/ssh_host_ed25519_key"
 if [ ! -f "$host_key" ]; then
   key_stage=$(mktemp -d "$state_dir/ssh/.host-key.XXXXXX")

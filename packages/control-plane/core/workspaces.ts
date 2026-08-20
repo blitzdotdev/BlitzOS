@@ -1,5 +1,6 @@
 import { buildUserData } from "./cloud-init.js";
 import { manifestJson, parseManifest } from "./credentials/manifest.js";
+import { agentRuleIdForOrg } from "./agent-rules.js";
 import { revokeWorkspaceLeasesQuery } from "./credentials/leases.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
@@ -138,6 +139,12 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   }
   if (value.environment !== undefined) {
     result.environment = parseWorkspaceEnvironment(value.environment);
+  }
+  if (value.agentRuleId !== undefined) {
+    if (!(value.agentRuleId === null || isString(value.agentRuleId))) {
+      throw new HttpError(400, "agentRuleId must be a string or null");
+    }
+    result.agentRuleId = value.agentRuleId;
   }
   return result;
 }
@@ -347,6 +354,12 @@ export function addWorkspaceRoutes(
     }
     const environment = input.environment
       ?? workspaceEnvironmentFromJson(template?.environment ?? null);
+    // The request wins, then the template's rule, then null — which the box
+    // read resolves to the built-in doc. Resolved once, at create, so the
+    // workspace keeps the rule it started with even if the template moves on.
+    const agentRuleId = input.agentRuleId === undefined
+      ? template?.agent_rule_id ?? null
+      : await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
     const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
     const providerCapabilities = vmProvider.capabilities();
     if (input.volumeId !== undefined && !providerCapabilities.volumes) {
@@ -372,8 +385,8 @@ export function addWorkspaceRoutes(
       q: `INSERT INTO workspaces
           (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
            phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
-           environment, created_at, updated_at)
-          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?12
+           environment, agent_rule_id, created_at, updated_at)
+          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13
           WHERE (
             SELECT COUNT(*) FROM workspaces
             WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
@@ -393,6 +406,7 @@ export function addWorkspaceRoutes(
         input.manifest === undefined ? null : manifestJson(input.manifest),
         input.orgShareRole ?? null,
         storedWorkspaceEnvironment(environment ?? undefined),
+        agentRuleId,
         now,
       ],
     });

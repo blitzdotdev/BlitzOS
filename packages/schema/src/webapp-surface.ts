@@ -14,7 +14,7 @@
 export const WEBAPP_AGENT_SURFACES = ["/"] as const;
 
 /** Exact paths served on port 7445. */
-export const WEBAPP_FILES_SURFACES = ["/ports", "/previews", "/terminal/ws"] as const;
+export const WEBAPP_FILES_SURFACES = ["/ports", "/previews", "/preview-focus", "/terminal/ws"] as const;
 
 /** Path prefixes served on port 7445. `/workspace` also matches exactly. */
 export const WEBAPP_FILES_SURFACE_PREFIXES = ["/workspace/", "/preview/"] as const;

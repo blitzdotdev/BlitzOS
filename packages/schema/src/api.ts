@@ -29,6 +29,9 @@ export interface CreateWorkspaceRequest {
   userData?: string;
   manifest?: CredentialManifest;
   environment?: WorkspaceEnvironment;
+  /** Overrides the template's rule; null (or absent) falls back to the
+   * template's rule and then the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceResponse {

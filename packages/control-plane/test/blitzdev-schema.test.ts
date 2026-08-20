@@ -12,6 +12,7 @@ const expectedTables = [
   "orgs",
   "memberships",
   "sessions",
+  "agent_rules",
   "workspaces",
   "invites",
   "volume_ownership",
@@ -44,9 +45,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the twenty-six domain tables plus the deny-all file support table", () => {
+  it("contains the twenty-seven domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(27);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(28);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -95,7 +96,25 @@ describe("blitz.dev managed schema", () => {
           default: { l: 0 },
           check: "files_ready IN (0, 1)",
         }),
+        expect.objectContaining({
+          name: "agent_rule_id",
+          foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" },
+        }),
       ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "agent_rules")).toMatchObject({
+      fields: [
+        expect.objectContaining({ name: "id", primary: true }),
+        expect.objectContaining({
+          name: "org_id",
+          notNull: true,
+          foreignKey: { table: "orgs", column: "id" },
+        }),
+        expect.objectContaining({ name: "name", notNull: true }),
+        expect.objectContaining({ name: "content", notNull: true }),
+        expect.objectContaining({ name: "updated_at", type: "integer", notNull: true }),
+      ],
+      indexes: [{ name: "identity", unique: true, fields: ["org_id", "name"] }],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "users")).toMatchObject({
       fields: expect.arrayContaining([
@@ -152,6 +171,10 @@ describe("blitz.dev managed schema", () => {
       fields: expect.arrayContaining([
         expect.objectContaining({ name: "machine_type_id", notNull: true }),
         expect.objectContaining({ name: "environment", type: "text" }),
+        expect.objectContaining({
+          name: "agent_rule_id",
+          foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" },
+        }),
         expect.objectContaining({
           name: "created_by_membership_id",
           foreignKey: { table: "memberships", column: "id" },
@@ -243,6 +266,7 @@ describe("blitz.dev managed schema", () => {
     expect([...sql.matchAll(/CREATE (?:UNIQUE )?INDEX\s+([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1])).toEqual([
       "idx_memberships_identity",
       "idx_sessions_expires_at",
+      "idx_agent_rules_identity",
       "idx_workspaces_owner",
       "idx_workspaces_phase",
       "idx_workspace_grants_identity",

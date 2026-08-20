@@ -7,6 +7,7 @@ import type {
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { FolderObjectView, FolderView } from '../file-library-api';
+import { AgentRulesPicker } from '../AgentRulesPicker';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
 import { MachineCatalogGrid } from '../MachineCatalogGrid';
 import {
@@ -79,6 +80,7 @@ export function CreateTemplateScreen({
   const [loadedEnvironment, setLoadedEnvironment] = useState<WorkspaceEnvironment | null>(
     editTemplateId === undefined ? EMPTY_WORKSPACE_ENVIRONMENT : null,
   );
+  const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
   const dragDepth = useRef(0);
 
   useEffect(() => {
@@ -234,11 +236,14 @@ export function CreateTemplateScreen({
         machineTypeId,
         folderIds: [...attachedIds],
       };
-      // Both routes take the full create shape, so an edit that cleared the
-      // environment has to send the empty one rather than omit the field.
+      // The environment rides on both create and edit — the PUT handler
+      // replaces it, so an edit that cleared it has to send the empty one
+      // rather than omit the field. The agent rule rides only on create: the
+      // PUT handler leaves the stored value untouched.
       const configured = populatedEnvironment(environment);
       if (configured !== undefined) request.environment = configured;
       else if (editTemplateId !== undefined) request.environment = EMPTY_WORKSPACE_ENVIRONMENT;
+      if (editTemplateId === undefined && agentRuleId !== null) request.agentRuleId = agentRuleId;
       const { template } = editTemplateId === undefined
         ? await client.createWorkspaceTemplate(request)
         : await client.updateWorkspaceTemplate(editTemplateId, request);
@@ -508,11 +513,23 @@ export function CreateTemplateScreen({
           </section>
 
           {loadedEnvironment !== null && (
-            <EnvironmentEditor
-              key={editTemplateId ?? 'new'}
-              initial={loadedEnvironment}
-              onChange={setEnvironment}
-            />
+            <details className="blueprint-advanced">
+              <summary>Advanced</summary>
+              <div className="blueprint-advanced__content">
+                <EnvironmentEditor
+                  key={editTemplateId ?? 'new'}
+                  initial={loadedEnvironment}
+                  onChange={setEnvironment}
+                />
+                {editTemplateId === undefined && (
+                  <AgentRulesPicker
+                    client={client}
+                    value={agentRuleId}
+                    onChange={setAgentRuleId}
+                  />
+                )}
+              </div>
+            </details>
           )}
         </div>
 

@@ -1,0 +1,6 @@
+{
+  "minPort": 1024,
+  "maxPort": 65535,
+  "maxPathLength": 4096,
+  "reservedPorts": [22, 7443, 7444, 7445, 7446, 17445]
+}

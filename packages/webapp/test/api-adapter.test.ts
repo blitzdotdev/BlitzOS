@@ -24,6 +24,7 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
   environment: null,
+  agentRuleId: null,
   };
 }
 
@@ -54,6 +55,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     detachFolder: vi.fn(async () => undefined),
     renameFolder: vi.fn(async () => undefined),
     setFolderOrgRole: async () => undefined,
+    listAgentRules: async () => ({ rules: [] }),
+    putAgentRule: async () => { throw new Error('unused'); },
+    deleteAgentRule: async () => undefined,
     listWorkspaceTemplates: async () => ({ templates: [] }),
     createWorkspaceTemplate: async () => { throw new Error('unused'); },
     updateWorkspaceTemplate: async () => { throw new Error('unused'); },

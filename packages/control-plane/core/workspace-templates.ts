@@ -1,3 +1,4 @@
+import { agentRuleIdForOrg } from "./agent-rules.js";
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 import {
@@ -7,7 +8,14 @@ import {
   WORKSPACE_REQUEST_MAX_BYTES,
 } from "./environment.js";
 import { filesActorForRequest, folderRole, requireFolderAccess } from "./files/access.js";
-import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
+import {
+  HttpError,
+  isRecord,
+  isString,
+  readJson,
+  requiredString,
+  type JsonValue,
+} from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import type { WorkspaceEnvironment, WorkspaceTemplateView } from "./wire.js";
@@ -21,6 +29,7 @@ export interface WorkspaceTemplateRow {
   created_at: number;
   updated_at: number;
   environment: string | null;
+  agent_rule_id: string | null;
 }
 
 interface TemplateListRow extends WorkspaceTemplateRow {
@@ -43,6 +52,7 @@ interface CreateTemplateInput {
   machineTypeId: string;
   folderIds: string[];
   environment?: WorkspaceEnvironment;
+  agentRuleId?: string | null;
 }
 
 const MAX_TEMPLATE_FOLDERS = 16;
@@ -63,6 +73,12 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
   const result: CreateTemplateInput = { name, machineTypeId, folderIds };
   if (value.environment !== undefined) {
     result.environment = parseWorkspaceEnvironment(value.environment);
+  }
+  if (value.agentRuleId !== undefined) {
+    if (!(value.agentRuleId === null || isString(value.agentRuleId))) {
+      throw new HttpError(400, "agentRuleId must be a string or null");
+    }
+    result.agentRuleId = value.agentRuleId;
   }
   return result;
 }
@@ -159,6 +175,7 @@ function templateView(
     createdAt: row.created_at,
     createdBy: { name: row.creator_name, avatarUrl: row.creator_avatar_url },
     environment: workspaceEnvironmentFromJson(row.environment),
+    agentRuleId: row.agent_rule_id,
     folders: folders.map((folder) => ({
       id: folder.folder_id,
       name: folder.name,
@@ -216,13 +233,14 @@ export function addWorkspaceTemplateRoutes(
     for (const folderId of input.folderIds) {
       await requireFolderAccess(runtime.db, folderId, actor, "read");
     }
+    const agentRuleId = await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
     const id = crypto.randomUUID();
     const now = Date.now();
     await rows(runtime.db, {
       q: `INSERT INTO workspace_templates
           (id, org_id, name, machine_type_id, created_by_membership_id,
-           created_at, updated_at, environment)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)`,
+           created_at, updated_at, environment, agent_rule_id)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8)`,
       v: [
         id,
         principal.orgId,
@@ -231,6 +249,7 @@ export function addWorkspaceTemplateRoutes(
         principal.membershipId,
         now,
         storedWorkspaceEnvironment(input.environment),
+        agentRuleId,
       ],
     });
     for (const folderId of input.folderIds) {
@@ -254,6 +273,7 @@ export function addWorkspaceTemplateRoutes(
         created_at: now,
         updated_at: now,
         environment: storedWorkspaceEnvironment(input.environment),
+        agent_rule_id: agentRuleId,
         creator_name: creator?.name ?? principal.id,
         creator_avatar_url: creator?.avatar_url ?? null,
       },
@@ -282,10 +302,15 @@ export function addWorkspaceTemplateRoutes(
       throw new HttpError(403, "forbidden");
     }
     // Full replacement with the create shape: the edit form always submits
-    // name, machine, the complete folder set, and the environment. Only newly
-    // added folders need read access — an admin may edit a template whose
-    // existing folders were never shared with them, and keeping those must not
-    // fail or drop.
+    // name, machine, the complete folder set, and the environment, so an edit
+    // that cleared the environment sends the empty one rather than dropping it.
+    // Only newly added folders need read access — an admin may edit a template
+    // whose existing folders were never shared with them, and keeping those
+    // must not fail or drop. `agentRuleId` is replaced only when the request
+    // actually carries the key: the edit form does not render the picker and
+    // omits it, and blanking a stored rule because a field was absent is not an
+    // edit anyone asked for. A request that does send it — including an explicit
+    // null to clear it — gets what it asked for rather than a silent drop.
     const input = parseCreateTemplate(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     const existingFolderIds = new Set(
@@ -296,6 +321,11 @@ export function addWorkspaceTemplateRoutes(
       if (existingFolderIds.has(folderId)) continue;
       await requireFolderAccess(runtime.db, folderId, actor, "read");
     }
+    // Resolved before the first write so an unknown rule 404s the whole edit
+    // rather than half-applying it.
+    const agentRuleId = input.agentRuleId === undefined
+      ? undefined
+      : await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
     const now = Date.now();
     await rows(runtime.db, {
       q: `UPDATE workspace_templates
@@ -309,6 +339,12 @@ export function addWorkspaceTemplateRoutes(
         storedWorkspaceEnvironment(input.environment),
       ],
     });
+    if (agentRuleId !== undefined) {
+      await rows(runtime.db, {
+        q: "UPDATE workspace_templates SET agent_rule_id = ?2 WHERE id = ?1",
+        v: [template.id, agentRuleId],
+      });
+    }
     await rows(runtime.db, {
       q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",
       v: [template.id],

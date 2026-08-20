@@ -23,6 +23,7 @@ const expected = [
   "core/db.ts",
   "core/blobs.ts",
   "core/wire.ts",
+  "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-images.ts",
   "core/cloud-init.ts",
@@ -92,7 +93,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(60);
+    expect(first.files).toHaveLength(61);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

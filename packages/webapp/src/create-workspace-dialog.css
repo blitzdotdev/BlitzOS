@@ -353,6 +353,164 @@
   resize: vertical;
 }
 
+.blueprint-agent-rules {
+  display: grid;
+  gap: 10px;
+}
+
+.blueprint-agent-rules-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.blueprint-agent-rules-row .blueprint-field {
+  grid-column: 1 / -1;
+  margin-bottom: -6px;
+}
+
+.blueprint-agent-rules-row select {
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 10px 12px;
+}
+
+.blueprint-agent-rules-edit {
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: 11px/1 var(--font-ui);
+}
+
+.blueprint-agent-rules-edit:hover,
+.blueprint-agent-rules-edit:focus-visible {
+  border-color: var(--accent);
+}
+
+/* The backdrop is .webapp-modal-screen, shared with every other modal. */
+.blueprint-agent-rules-dialog {
+  display: grid;
+  width: min(680px, 100%);
+  max-height: min(760px, 100%);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border: 1px solid var(--rule);
+  color: var(--ink);
+  background: color-mix(in oklab, var(--ink) 2%, var(--paper));
+  font-family: var(--font-ui);
+}
+
+.blueprint-agent-rules-header {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.blueprint-agent-rules-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.blueprint-agent-rules-header button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.blueprint-agent-rules-body {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 16px;
+  overflow: auto;
+}
+
+.blueprint-agent-rules-body input {
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 10px 12px;
+}
+
+.blueprint-agent-rules-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 340px;
+  padding: 10px 12px;
+  resize: vertical;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--paper);
+  outline: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.blueprint-agent-rules-content:focus {
+  border-color: var(--accent);
+}
+
+.blueprint-agent-rules-note {
+  margin: 0;
+  color: var(--faint);
+  font: 10.5px/1.6 var(--font-ui);
+}
+
+.blueprint-agent-rules-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.blueprint-agent-rules-delete {
+  min-height: 38px;
+  margin-right: auto;
+  padding: 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ansi-red);
+  cursor: pointer;
+  font: 11px/1 var(--font-ui);
+}
+
+.blueprint-agent-rules-delete:hover,
+.blueprint-agent-rules-delete:focus-visible {
+  border-color: var(--ansi-red);
+}
+
+.blueprint-agent-rules-actions .blueprint-cancel {
+  margin-right: 0;
+}
+
+@media (max-width: 520px) {
+  .blueprint-agent-rules-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .blueprint-agent-rules-content {
+    min-height: 220px;
+  }
+}
+
 .blueprint-cancel {
   min-height: 38px;
   margin-right: auto;

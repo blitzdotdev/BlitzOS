@@ -50,6 +50,7 @@ export interface WorkspaceView {
     avatarUrl: string | null;
   };
   environment: WorkspaceEnvironment | null;
+  agentRuleId: string | null;
 }
 
 export interface WorkspaceTemplateView {
@@ -59,6 +60,7 @@ export interface WorkspaceTemplateView {
   createdAt: number;
   createdBy: { name: string; avatarUrl: string | null };
   environment: WorkspaceEnvironment | null;
+  agentRuleId: string | null;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: "owner" | "admin" | "editor" | "viewer" | null }[];
 }
@@ -72,6 +74,9 @@ export interface CreateWorkspaceTemplateRequest {
   machineTypeId: string;
   folderIds: string[];
   environment?: WorkspaceEnvironment;
+  /** An org agent rule to hand every workspace made from this template; null
+   * (or absent) leaves it on the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceTemplateResponse {

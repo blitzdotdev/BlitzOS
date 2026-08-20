@@ -1,3 +1,4 @@
+import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js";
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./credentials/mint.js";
 import { addWorkspaceEnvironmentRoutes } from "./environment.js";
@@ -21,6 +22,8 @@ export function installControlPlaneRoutes(
 ): void {
   addBoxImageRoutes(router, runtimeFactory);
   addMicrovmHostRoutes(router, runtimeFactory);
+  // Box-authenticated read of the managed agent rules; no session principal.
+  addAgentRulesRoutes(router, runtimeFactory);
 
   async function requirePrincipal(context: CoreContext): Promise<Principal> {
     const runtime = runtimeFactory(context);
@@ -41,6 +44,7 @@ export function installControlPlaneRoutes(
   addIdentityRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Box-authenticated, so it is registered ahead of the session-authenticated
   // /workspaces/:id routes it shares a prefix with.

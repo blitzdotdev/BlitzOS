@@ -42,6 +42,7 @@ run_worker_first = [
   "/orgs*",
   "/workspaces*",
   "/workspace-templates*",
+  "/agent-rules*",
   "/folders*",
   "/integrations*",
   "/leases*",
@@ -59,3 +60,12 @@ run_worker_first = [
 
 [triggers]
 crons = ["*/5 * * * *", "0 * * * *", "0 3 * * *"]
+
+# The canonical agent-rules document is the box-image skeleton file, and the
+# Worker has no filesystem, so it travels into the bundle as a Text module
+# instead of being hand-mirrored into a TypeScript string. `wrangler deploy`
+# emits it as its own module and core/agent-rules.ts imports its default export;
+# the vitest Workers pool reads the same rule from this file.
+[[rules]]
+type = "Text"
+globs = ["**/agent-rules.md"]

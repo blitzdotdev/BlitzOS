@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ActorService } from "./actor.js";
+import { createRulesRefresher } from "./agent-rules-refresh.js";
 import { ClaudeAdapter } from "./adapters/claude.js";
 import { CodexAdapter } from "./adapters/codex.js";
 import { CredentialSource } from "./credentials.js";
@@ -19,6 +20,7 @@ const service = new ActorService(
   new CredentialSource(stateDir),
   (name: Provider) => (name === "claude" ? new ClaudeAdapter() : new CodexAdapter()),
   provider,
+  createRulesRefresher(),
 );
 const server = new ActorServer(service);
 await server.start();
