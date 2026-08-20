@@ -9,6 +9,7 @@ import {
   operatorSession,
   phoneHomeUrl,
   resetDatabase,
+  sameOrgSession,
 } from "./helpers.js";
 
 describe("workspace environments", () => {
@@ -100,5 +101,61 @@ describe("workspace environments", () => {
       headers: { Authorization: `Bearer ${box.access_token}` },
     });
     await expect(complete.json()).resolves.toEqual({ ...environment, filesReady: true });
+  });
+
+  it("hides env values and the startup script from members who cannot open the workspace", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const environment = {
+      env: { API_ORIGIN: "https://api.example" },
+      startupScript: "printf secret\n",
+    };
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "small", environment }),
+    });
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    const member = await sameOrgSession("bystander");
+
+    // GET /workspaces returns every row in the org. A member with no grant and
+    // no org share reads the row, so the environment has to be gated the same
+    // way `ssh` is or the whole org reads the config.
+    const listed = await appRequest(app, "/workspaces", { headers: { Cookie: member.cookie } });
+    const rows = (await listed.json<{ workspaces: WorkspaceView[] }>()).workspaces;
+    const seen = rows.find(({ id }) => id === workspace.id);
+    expect(seen?.role).toBeNull();
+    expect(seen?.environment).toBeNull();
+
+    expect((await appRequest(app, `/workspaces/${workspace.id}/org-role`, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "viewer" }),
+    })).status).toBe(204);
+    const shared = await appRequest(app, "/workspaces", { headers: { Cookie: member.cookie } });
+    const visible = (await shared.json<{ workspaces: WorkspaceView[] }>()).workspaces
+      .find(({ id }) => id === workspace.id);
+    expect(visible?.environment).toEqual(environment);
+  });
+
+  it("treats an unparseable stored environment as none configured", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const healthy = await createWorkspace(app, cookie);
+    await env.DB.prepare("UPDATE workspaces SET environment = ?2 WHERE id = ?1")
+      .bind(workspace.id, '{"env":{"BAD-KEY":"x"},"startupScript":null}').run();
+
+    // One corrupt row must not take down the list for the whole org.
+    const listed = await appRequest(app, "/workspaces", { headers: { Cookie: cookie } });
+    expect(listed.status).toBe(200);
+    const rows = (await listed.json<{ workspaces: WorkspaceView[] }>()).workspaces;
+    expect(rows.find(({ id }) => id === workspace.id)?.environment).toBeNull();
+    expect(rows.map(({ id }) => id)).toContain(healthy.id);
+
+    const single = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: cookie, Accept: "application/json" },
+    });
+    expect(single.status).toBe(200);
   });
 });

@@ -55,6 +55,7 @@ function machineTypeIdForRow(row: WorkspaceRow): string {
 export function workspaceView(
   row: WorkspaceRow,
   role: WorkspaceView["role"] = "owner",
+  reportError?: (code: string, error: Error) => void,
 ): WorkspaceView {
   const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
   const canOpen = role !== null;
@@ -83,7 +84,11 @@ export function workspaceView(
       name: row.owner_name ?? row.owner_id,
       avatarUrl: row.owner_avatar_url ?? null,
     },
-    environment: workspaceEnvironmentFromJson(row.environment),
+    // Env values and the startup script are workspace configuration, not
+    // catalogue data. GET /workspaces returns every row in the org, so this is
+    // gated on the viewer's role exactly like `ssh` above: a member with no
+    // grant and no share must not read either.
+    environment: canOpen ? workspaceEnvironmentFromJson(row.environment, reportError) : null,
   };
 }
 

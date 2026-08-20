@@ -504,7 +504,8 @@ export function addWorkspaceRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
-    const result = await rows<WorkspaceRow>(runtimeFactory(context).db, {
+    const runtime = runtimeFactory(context);
+    const result = await rows<WorkspaceRow>(runtime.db, {
       q: `SELECT w.*, grant.role AS grant_role,
                  owner_user.name AS owner_name,
                  owner_user.avatar_url AS owner_avatar_url
@@ -518,7 +519,8 @@ export function addWorkspaceRoutes(
       v: [principal.membershipId, principal.orgId],
     });
     return context.json<PollResponse>({
-      workspaces: result.map((row) => workspaceView(row, workspaceRole(principal, row))),
+      workspaces: result.map((row) =>
+        workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
     });
   });
 

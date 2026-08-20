@@ -71,16 +71,23 @@ export function parseWorkspaceEnvironment(value: JsonValue): WorkspaceEnvironmen
   }
 }
 
+/** Stored environment that no longer parses reads as "none configured". One
+ * unreadable row must not take down the list route that projects every
+ * workspace in the org. */
 export function workspaceEnvironmentFromJson(
   value: string | null,
+  reportError?: (code: string, error: Error) => void,
 ): WorkspaceEnvironment | null {
   if (value === null) return null;
-  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(value);
-    return parseEnvironmentValue(parsed);
-  } catch {
-    throw new Error("stored workspace environment is invalid");
+    return parseEnvironmentValue(JSON.parse(value));
+  } catch (caught) {
+    const detail = caught instanceof Error ? caught.message : "unparseable";
+    reportError?.(
+      "workspace_environment_unreadable",
+      new Error(`stored workspace environment is invalid: ${detail}`),
+    );
+    return null;
   }
 }
 
