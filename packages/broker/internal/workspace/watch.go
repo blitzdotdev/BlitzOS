@@ -25,20 +25,6 @@ func NewWatcher(home string, deposit Depositor) *Watcher {
 	return &Watcher{Home: home, Deposit: deposit, deposited: make(map[string][sha256.Size]byte)}
 }
 
-// watchedPaths is the list of rotating vendor credential files this workspace
-// hands to the broker.
-//
-// It reads the paths off the vendor definitions rather than a config file. The
-// production original kept them in a text file so the set the broker holds and
-// the set the backup lane must never see could not drift apart; blitz-core has
-// no backup lane, so that file would have exactly one consumer and would only
-// add a way for the list to go missing. The Definition table is already the
-// single source — the broker's mint, the broker's deposit and this watcher all
-// read the same field.
-func watchedPaths() []vendor.Definition {
-	return []vendor.Definition{vendor.Claude, vendor.Codex}
-}
-
 // Tick deposits any credential that changed since the last pass and then
 // DELETES the workspace's copy.
 //
@@ -54,7 +40,10 @@ func watchedPaths() []vendor.Definition {
 // received; the next tick deposits it instead.
 func (watcher *Watcher) Tick(ctx context.Context) error {
 	var failures []error
-	for _, definition := range watchedPaths() {
+	// The credential paths come off the vendor Definition table, not a config
+	// file: the broker's mint, the broker's deposit and this watcher then read
+	// one field, and the list cannot go missing or drift out from under them.
+	for _, definition := range []vendor.Definition{vendor.Claude, vendor.Codex} {
 		path := filepath.Join(watcher.Home, filepath.FromSlash(definition.CredentialPath))
 		blob, err := readWatchedFile(path)
 		if errors.Is(err, os.ErrNotExist) {
