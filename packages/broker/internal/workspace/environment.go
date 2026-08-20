@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/atomicfile"
 	"github.com/blitzdotdev/blitz-core/broker/internal/controlplane"
@@ -28,6 +29,11 @@ const (
 	environmentMaxKeys            = 50
 	environmentMaxBytes           = 8 * 1024
 	startupScriptMaxBytes         = 64 * 1024
+	// Hard ceiling on the startup script's own process. Anything it
+	// deliberately leaves behind — a backgrounded dev server — outlives this;
+	// it only stops a `bash -c` that never returns from holding a process and
+	// an open log for the life of the box, with no record of why.
+	startupScriptTimeout = 10 * time.Minute
 )
 
 type WorkspaceEnvironment struct {
@@ -219,9 +225,13 @@ var closedStartup = func() <-chan struct{} {
 // startup script in its own goroutine. User code must never sit on the caller's
 // path: the deposit loop that calls this also ships vendor credentials, and a
 // script that legitimately never exits (a dev server, `tail -f`) would wedge it
-// forever. The script's own lifetime is bound to ctx — the broker's, so the
-// box's — instead of an arbitrary timeout, because killing a server the script
-// started on purpose is worse than letting it run as long as the box does.
+// forever.
+//
+// The script gets its own deadline on top of ctx. Anything it backgrounds on
+// purpose is reparented and keeps running past it, so the deadline costs a
+// deliberate server nothing; what it buys is that a script that simply never
+// returns stops, and says so in its log, instead of holding a process for the
+// life of the box.
 //
 // The returned channel closes when the script exits, and is already closed when
 // nothing ran. Only tests wait on it.
@@ -229,6 +239,7 @@ func startStartupOnce(
 	ctx context.Context,
 	stateDir, workspaceDir string,
 	environment WorkspaceEnvironment,
+	timeout time.Duration,
 ) (<-chan struct{}, error) {
 	directory := filepath.Join(stateDir, workspaceEnvironmentDirectory)
 	markerPath := filepath.Join(directory, startupDoneFile)
@@ -251,12 +262,14 @@ func startStartupOnce(
 	if environment.StartupScript == nil {
 		return closedStartup, log.Close()
 	}
-	command := exec.CommandContext(ctx, "bash", "-c", *environment.StartupScript)
+	runContext, cancel := context.WithTimeout(ctx, timeout)
+	command := exec.CommandContext(runContext, "bash", "-c", *environment.StartupScript)
 	command.Dir = workspaceDir
 	command.Env = commandEnvironment(environment.Env)
 	command.Stdout = log
 	command.Stderr = log
 	if err := command.Start(); err != nil {
+		cancel()
 		_ = log.Close()
 		return closedStartup, fmt.Errorf("workspace startup script failed to start: %w", err)
 	}
@@ -264,9 +277,16 @@ func startStartupOnce(
 	go func() {
 		defer close(done)
 		defer log.Close()
-		if err := command.Wait(); err != nil {
-			fmt.Fprintf(log, "\nblitz: workspace startup script failed: %v\n", err)
+		defer cancel()
+		err := command.Wait()
+		if err == nil {
+			return
 		}
+		if errors.Is(runContext.Err(), context.DeadlineExceeded) {
+			fmt.Fprintf(log, "\nblitz: workspace startup script stopped after %s\n", timeout)
+			return
+		}
+		fmt.Fprintf(log, "\nblitz: workspace startup script failed: %v\n", err)
 	}()
 	return done, nil
 }
@@ -290,7 +310,7 @@ func environmentTick(
 	if !environment.FilesReady {
 		return false, closedStartup, nil
 	}
-	done, err := startStartupOnce(ctx, stateDir, workspaceDir, environment)
+	done, err := startStartupOnce(ctx, stateDir, workspaceDir, environment, startupScriptTimeout)
 	if err != nil {
 		return false, done, err
 	}

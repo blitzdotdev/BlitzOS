@@ -170,7 +170,7 @@ func TestStartupScriptNeverBlocksTheWatchLoop(t *testing.T) {
 		defer close(ticks)
 		if _, err := startStartupOnce(ctx, stateDir, workspaceDir, WorkspaceEnvironment{
 			Env: map[string]string{}, StartupScript: &script,
-		}); err != nil {
+		}, startupScriptTimeout); err != nil {
 			t.Error(err)
 		}
 		// The watch loop keeps depositing while the script above still runs.
@@ -238,5 +238,39 @@ func TestCredentialSyncKeepsWorkspaceEnvironmentAndWinsCollisions(t *testing.T) 
 	}
 	if string(workspaceEntry) != "export SHARED='workspace'\nexport WORKSPACE_ONLY='yes'\n" {
 		t.Fatalf("workspace entry = %q", workspaceEntry)
+	}
+}
+
+func TestStartupScriptStopsAtItsDeadline(t *testing.T) {
+	stateDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(stateDir, workspaceEnvironmentDirectory), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A script that backgrounds work and then never returns. The parent context
+	// stays live for the whole test: only the deadline may end this.
+	script := "(sleep 120 &) \nwhile true; do sleep 1; done\n"
+	started := time.Now()
+	done, err := startStartupOnce(context.Background(), stateDir, workspaceDir, WorkspaceEnvironment{
+		Env: map[string]string{}, StartupScript: &script,
+	}, 200*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("a non-exiting startup script outlived its deadline")
+	}
+	if elapsed := time.Since(started); elapsed > 30*time.Second {
+		t.Fatalf("startup script ran for %s", elapsed)
+	}
+	logged, err := os.ReadFile(filepath.Join(stateDir, workspaceEnvironmentDirectory, startupLogFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The author has to be able to see why their script stopped.
+	if !strings.Contains(string(logged), "stopped after 200ms") {
+		t.Fatalf("startup log = %q", logged)
 	}
 }
