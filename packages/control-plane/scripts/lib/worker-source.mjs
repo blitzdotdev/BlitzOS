@@ -28,7 +28,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/credentials/types.ts", "core/credentials/root-crypto.ts", "core/credentials/manifest.ts", "core/credentials/leases.ts",
   "core/credentials/minters/static.ts", "core/credentials/minters/app-jwt/github-app.ts", "core/credentials/registry.ts", "core/credentials/requests.ts", "core/credentials/mint.ts", "core/credentials/proxy.ts",
   "core/http.ts",
-  "core/files/access.ts", "core/files/attachments.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/routes.ts", "core/files/schedule.ts", "core/files/sync.ts",
+  "core/files/access.ts", "core/files/attachments.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/readiness.ts", "core/files/routes.ts", "core/files/schedule.ts", "core/files/sync.ts",
   "core/identity/google.ts", "core/identity/grants.ts", "core/identity/invites.ts", "core/identity/members.ts", "core/identity/oauth-state.ts", "core/identity/orgs.ts", "core/identity/routes.ts",
   "core/janitors.ts",
   "core/oauth.ts",

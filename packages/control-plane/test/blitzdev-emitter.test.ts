@@ -44,6 +44,7 @@ const expected = [
   "core/files/folders.ts",
   "core/files/keys.ts",
   "core/files/objects.ts",
+  "core/files/readiness.ts",
   "core/files/routes.ts",
   "core/files/schedule.ts",
   "core/files/sync.ts",
@@ -91,7 +92,7 @@ describe("blitz.dev managed emitter", () => {
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(59);
+    expect(first.files).toHaveLength(60);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

@@ -30,6 +30,7 @@ const expected = [
   "files/folders.ts",
   "files/keys.ts",
   "files/objects.ts",
+  "files/readiness.ts",
   "files/routes.ts",
   "files/schedule.ts",
   "files/sync.ts",
@@ -88,6 +89,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(63);
+    expect(expected).toHaveLength(64);
   });
 });
