@@ -69,9 +69,9 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("systemctl mask ssh.socket");
     expect(userData).toContain("Port 2222");
     expect(userData).toContain("systemctl restart ssh");
-    // A socket-activated sshd ignores Port directives, so the script must
-    // prove the running config moved before it waits on the port.
-    expect(userData).toContain('if [ "$effective_port" != "2222" ]; then');
+    // A socket-activated sshd ignores Port directives, so the script proves
+    // the move by behavior: a listener on :2222 must appear.
+    expect(userData).toContain("host sshd never bound :2222");
     expect(userData).toContain(`readonly BOX_IMAGE_REF='${BOX_IMAGE_REF}'`);
     expect(userData).toContain('retry docker pull "$BOX_IMAGE_REF"');
     expect(userData).toContain("--privileged");

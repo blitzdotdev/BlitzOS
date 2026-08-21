@@ -314,15 +314,17 @@ systemctl disable ssh.socket 2>/dev/null || true
 systemctl mask ssh.socket
 systemctl enable ssh
 systemctl restart ssh
-# Prove the running config moved before waiting on the port.
-effective_port=unknown
-if sshd_port=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}'); then
-  if [ -n "$sshd_port" ]; then effective_port="$sshd_port"; fi
-fi
-if [ "$effective_port" != "2222" ]; then
-  ls -la /etc/ssh/sshd_config.d/ || true
-  fail "host sshd effective port is $effective_port, not 2222"
-fi
+# Prove the move by behavior, not by config parsing: a listener on :2222 is
+# the invariant every failure mode violates.
+sshd_moved_deadline=$((SECONDS + 20))
+until ss -tln 2>/dev/null | grep -qE ':2222[[:space:]]'; do
+  if (( SECONDS >= sshd_moved_deadline )); then
+    ss -tlnp 2>/dev/null || true
+    ls -la /etc/ssh/sshd_config.d/ || true
+    fail "host sshd never bound :2222 after the config move"
+  fi
+  sleep 1
+done
 
 # systemctl returns as soon as it has signalled the unit, not once the old
 # listener has released the port. The box container binds host port 22, so
