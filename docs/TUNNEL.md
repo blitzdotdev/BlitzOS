@@ -91,11 +91,12 @@ Leave the vars empty only for a microVM-only deployment.
 npx wrangler secret put CLOUDFLARE_API_TOKEN --config packages/control-plane/wrangler.toml
 # paste the token from step 2
 
-openssl rand -base64 32
 npx wrangler secret put WEBAPP_TOKEN_SECRET --config packages/control-plane/wrangler.toml
-# paste the random string; the control plane derives per-workspace
-# webapp-auth tokens from it
 ```
+
+`WEBAPP_TOKEN_SECRET` is in the deploy gate's required set, so it may already
+be set. Its value and what it protects are in
+[step 3 of the self-host guide](SELF-HOST.md#3-set-the-secrets).
 
 ### 6. Deploy
 

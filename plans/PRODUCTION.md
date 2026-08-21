@@ -32,7 +32,7 @@ Keep surfaces (terminal / chat / files) tunnel-only for v1. Hosted ingress stays
 ## The work, in order
 
 **1. Bootstrap** (the fix above). Blocks everything else.
-Done when `tools/e2e/selfhost.mjs` passes all steps, including box surfaces + credentials + volume survival.
+Done when `tools/e2e/coverage.mjs` passes every suite, including box surfaces + credentials + volume survival. (It replaced `selfhost.mjs`, which was removed.)
 
 **2. Publish images.**
 CI builds amd64 + arm64, pushes public ghcr, writes digests into release notes. (Today: private, and we streamed 640 MB over ssh for 4 minutes.)
@@ -50,7 +50,7 @@ Steps 2–5 run in parallel behind step 1.
 
 ## Done means
 
-1. Fresh accounts, clean machine: `selfhost.mjs` fully green.
+1. Fresh accounts, clean machine: `coverage.mjs` fully green.
 2. Real-browser webApp tests green in CI.
 3. Broker flow tested live.
 4. An agent follows the READMEs word for word and gets a working box. Zero secret knowledge.

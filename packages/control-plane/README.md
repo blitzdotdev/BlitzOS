@@ -42,29 +42,14 @@ applies remote migrations, creates the configured R2 bucket
 their values, builds the webApp, and deploys.
 
 If the secret check fails, set only the reported missing secrets and rerun the
-same deploy command:
+same deploy command. What each secret is, where to get it, and what breaks
+without it is one table, in
+[step 3 of the self-host guide](../../docs/SELF-HOST.md#3-set-the-secrets).
 
-```sh
-npx wrangler secret put HETZNER_API_TOKEN --config packages/control-plane/wrangler.toml
-npx wrangler secret put GOOGLE_CLIENT_ID --config packages/control-plane/wrangler.toml
-npx wrangler secret put GOOGLE_CLIENT_SECRET --config packages/control-plane/wrangler.toml
-npx wrangler secret put WEBAPP_TOKEN_SECRET --config packages/control-plane/wrangler.toml
-npx wrangler secret put CRED_MASTER_KEY --config packages/control-plane/wrangler.toml
-```
+`CLOUDFLARE_API_TOKEN` is deliberately outside the deploy gate: it is required
+only for workspace tunnels, without which cloud-VM workspaces have no browser
+access. Scope and setup: [docs/TUNNEL.md](../../docs/TUNNEL.md).
 
-`WEBAPP_TOKEN_SECRET` derives the per-workspace guest credential and signs
-the per-request webApp tickets. Every webApp surface request 503s without
-it — it is required for tunnel and microVM deployments alike.
-
-`CRED_MASTER_KEY` encrypts stored integration credentials. It must be the
-base64 encoding of exactly 32 bytes — generate it with `openssl rand -base64
-32`. A malformed value makes every API request return 500.
-
-`CLOUDFLARE_API_TOKEN` is not checked by the deploy gate but is required for
-workspace tunnels, and cloud-VM workspaces have no browser access without
-those. Scope and setup: [docs/TUNNEL.md](../../docs/TUNNEL.md).
-
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` configure Google OAuth.
 `OPERATOR_API_KEY` is optional and no longer an API credential: it is only
 the bootstrap secret, and the deploy gate does not require it. When migrating
 a pre-identity database, set it

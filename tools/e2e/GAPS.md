@@ -104,7 +104,7 @@ Severity: **[B]** release blocker · **[F]** friction · **[D]** doc bug · **[e
 - Worker: https://blitz-control-plane.blitzapp.workers.dev (account "Blitz Development Sandbox", `<account-id redacted>`)
 - D1: `blitz-control-plane` `<database-id redacted>`, migration 0001 applied.
 - Secrets set: `HETZNER_API_TOKEN`, `OPERATOR_API_KEY` (values in `.env`, gitignored).
-- e2e scripts: `e2e/selfhost.mjs` (API lifecycle, 8 steps), `e2e/bridge.mjs` (box-on-VM bridge).
+- e2e scripts: `e2e/selfhost.mjs` (API lifecycle, 8 steps), `e2e/bridge.mjs` (box-on-VM bridge). `selfhost.mjs` has since been removed; `tools/e2e/coverage.mjs` is its successor.
 - Workspaces created/destroyed this run: selfhost cx22 error-path ×2, cx23 full-pass, webApp cx23 (`ac27a559…`), bridge cax probes ×5 (placement failures), bridge cx23 full-pass (`7300f18f…`). Every id tombstone-verified `destroyed`.
 - Final Hetzner audit (2026-08-12): zero e2e servers, volumes, or ssh keys remain. The project's 14 servers / 24 volumes / 3 keys all pre-date the test (v2 ingress/broker/workspace infra) and were never touched. Compute cost of the whole test: a few euro-cents.
 - Cloud left deployed on purpose: Worker `blitz-control-plane` + D1 + secrets (the user's own self-host deployment).

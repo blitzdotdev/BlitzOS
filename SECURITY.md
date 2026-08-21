@@ -34,10 +34,7 @@ in front of the Worker, or restrict sign-in at Google's side with an
 | `MICROVM_*_TOKEN` | Worker + host | Bearer token for a Firecracker host agent: create and destroy microVMs on that host. Rotate by updating the Worker secret and the host's token file together. |
 
 Worker secrets are set with `wrangler secret put`; updating one creates a new
-deployment, and running isolates drain. One sharp edge: the control plane
-caches the imported `CRED_MASTER_KEY` per isolate, so a malformed value
-poisons every request that isolate serves until it is replaced — fix the
-secret and redeploy rather than retrying.
+deployment, and running isolates drain.
 
 ## Workspace trust model
 
