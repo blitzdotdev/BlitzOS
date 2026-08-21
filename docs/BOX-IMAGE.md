@@ -72,7 +72,10 @@ only checks that they exist on the Worker.
 
 Without the secrets the job skips with a notice, so forks and CI-only
 checkouts are unaffected. The one manual step left is one-time: make the
-`blitz-box` GHCR package public after your first release (step 1 above).
+`blitz-box` GHCR package public (step 1 above). The deploy job verifies the
+digest is publicly pullable before deploying and fails otherwise — so on
+your very first release, flip the visibility when that step fails, then
+re-run the job. Nothing deploys an image workspaces cannot pull.
 
 ## Mode B: host the archive in R2
 

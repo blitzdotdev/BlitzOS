@@ -111,6 +111,25 @@ jobs:
           IMAGE_OWNER: ${{ needs.images.outputs.image-owner }}
           BOX_DIGEST: ${{ needs.images.outputs.box-digest }}
         run: node packages/control-plane/scripts/set-box-image-ref.mjs --ref "ghcr.io/$IMAGE_OWNER/blitz-box@$BOX_DIGEST"
+      # VM bootstraps pull with no registry login, and GHCR packages are
+      # born private, so deploying an unpullable digest would break every new
+      # workspace. Failing here leaves the deployment on its previous image —
+      # flip the package public (one-time) and re-run this job.
+      - name: Verify the image is publicly pullable
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          IMAGE_OWNER: ${{ needs.images.outputs.image-owner }}
+          BOX_DIGEST: ${{ needs.images.outputs.box-digest }}
+        run: |
+          token="$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${IMAGE_OWNER}/blitz-box:pull" | jq -r '.token // empty')"
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${IMAGE_OWNER}/blitz-box/manifests/${BOX_DIGEST}")"
+          if [ "$code" != "200" ]; then
+            echo "::error::ghcr.io/${IMAGE_OWNER}/blitz-box is not publicly pullable (manifest HTTP $code). Make the package public (Package settings → Danger zone → Change visibility), then re-run this job. Not deploying an image workspaces cannot pull."
+            exit 1
+          fi
       - name: Deploy
         if: steps.gate.outputs.configured == 'true'
         env:
