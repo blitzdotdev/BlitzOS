@@ -27,14 +27,18 @@ function readEnvValue(name) {
   return undefined;
 }
 
-const CP = (process.env.CP_URL ?? "https://blitz-control-plane.blitzapp.workers.dev").replace(/\/+$/u, "");
+const CP = (process.env.CP_URL ?? readEnvValue("CP_URL") ?? "").replace(/\/+$/u, "");
 const LOG = new URL("connectivity-e2e.log", import.meta.url).pathname;
 const OPERATOR_KEY = process.env.OPERATOR_API_KEY ?? readEnvValue("OPERATOR_API_KEY") ?? "";
 const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN ?? readEnvValue("CLOUDFLARE_API_TOKEN") ?? "";
 const ZONE_ID = process.env.CLOUDFLARE_ZONE_ID ?? readEnvValue("CLOUDFLARE_ZONE_ID") ?? "";
 const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID ?? readEnvValue("CLOUDFLARE_ACCOUNT_ID") ?? "";
 
+// CP_URL joins the hard-required set rather than defaulting: this suite
+// creates and destroys workspaces, and a forgotten value must not silently
+// aim that at whichever deployment the default names.
 const missing = [
+  ["CP_URL", CP],
   ["OPERATOR_API_KEY", OPERATOR_KEY],
   ["CLOUDFLARE_API_TOKEN", CF_TOKEN],
   ["CLOUDFLARE_ZONE_ID", ZONE_ID],
@@ -43,8 +47,8 @@ const missing = [
 if (missing.length > 0) {
   console.error(`Missing required configuration: ${missing.join(", ")}`);
   console.error(
-    "Usage: OPERATOR_API_KEY=... CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ZONE_ID=<dns zone id> " +
-      "CLOUDFLARE_ACCOUNT_ID=<tunnel account id> [CP_URL=<worker origin>] node tools/e2e/connectivity-e2e.mjs",
+    "Usage: CP_URL=<worker origin> OPERATOR_API_KEY=... CLOUDFLARE_API_TOKEN=... " +
+      "CLOUDFLARE_ZONE_ID=<dns zone id> CLOUDFLARE_ACCOUNT_ID=<tunnel account id> node tools/e2e/connectivity-e2e.mjs",
   );
   console.error(`Each value may also be set in ${envPath}.`);
   process.exit(1);

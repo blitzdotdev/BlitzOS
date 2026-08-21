@@ -84,7 +84,6 @@ if (options.help) {
 
 const selectedSuiteNames = new Set(options.selectedSuiteNames);
 
-const DEFAULT_CP_URL = "https://blitz-control-plane.blitzapp.workers.dev";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 // Overridable with WORKSPACE_LEDGER / WORK_DIR; defaults stay inside the
 // repo's gitignored scratchpad.
@@ -98,7 +97,14 @@ const runToken = randomBytes(6).toString("hex");
 const runLabel = `blitz-coverage-${runToken}`;
 const workDir = join(process.env.WORK_DIR ?? DEFAULT_WORK_ROOT, runToken);
 const ledgerPath = process.env.WORKSPACE_LEDGER ?? DEFAULT_LEDGER;
-const cpUrl = (process.env.CP_URL ?? DEFAULT_CP_URL).replace(/\/+$/u, "");
+// No default. This suite creates and destroys workspaces, so a default that
+// happened to be the upstream production deployment would aim a destructive
+// run at it whenever CP_URL was forgotten.
+const cpUrl = (process.env.CP_URL ?? "").replace(/\/+$/u, "");
+if (cpUrl === "") {
+  console.error("CP_URL is required: set it to the control-plane origin this run may create and destroy workspaces on.");
+  process.exit(1);
+}
 const machineTypeId = process.env.MACHINE_TYPE ?? "cx23@fsn1";
 const volumeLocation = process.env.VOLUME_LOCATION ?? "fsn1";
 

@@ -18,10 +18,14 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const envPath = join(repoRoot, ".env");
 const defaultScratch = join(repoRoot, ".bridge-e2e");
 const scratchDir = resolve(process.env.BRIDGE_SCRATCH_DIR ?? defaultScratch);
-const cpUrl = (process.env.CP_URL ?? "https://blitz-control-plane.blitzapp.workers.dev").replace(
-  /\/+$/u,
-  "",
-);
+// No default. This suite creates and destroys workspaces, so a default that
+// happened to be the upstream production deployment would aim a destructive
+// run at it whenever CP_URL was forgotten.
+const cpUrl = (process.env.CP_URL ?? "").replace(/\/+$/u, "");
+if (cpUrl === "") {
+  console.error("CP_URL is required: set it to the control-plane origin this run may create and destroy workspaces on.");
+  process.exit(1);
+}
 const privateKeyPath = resolve(process.env.SSH_KEY_PATH ?? join(scratchDir, "id_ed25519"));
 const publicKeyPath = `${privateKeyPath}.pub`;
 const imageArchive = resolve(

@@ -25,7 +25,14 @@ export function rawDb(d1: D1Database): Db {
           const results = await adapter.runBatch<T>(
             queries.map(({ q, v }) => ({ q, v })),
           );
-          return results.map((result) => result.results);
+          return results.map((result) => {
+            // Same contract as rawSQL above. Callers read row counts to decide
+            // whether a guarded write landed, so a failed statement reported as
+            // an empty result set would read as "the guard refused" and be
+            // swallowed as a 409 instead of surfacing the error.
+            if (!result.success) throw new Error(result.error ?? "SQL error");
+            return result.results;
+          });
         },
       };
     },
