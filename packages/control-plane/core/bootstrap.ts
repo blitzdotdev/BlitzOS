@@ -234,7 +234,9 @@ main().catch(function (error) {
  * `test/bootstrap-python.test.mjs` and the phone-home fixtures — edit them
  * the way you would edit a wire format, not a script. Recipe launches add
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
- * without a recipe or usage capture emits byte-identical output. */
+ * without a recipe or usage capture emits byte-identical output. Every create
+ * additionally emits the `term-3` remote-control session exec (pinned by the
+ * same suite). */
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");
@@ -387,6 +389,17 @@ nohup docker exec \\
   node /var/lib/blitz/recipe/sender.cjs >>/var/lib/blitz/recipe/sender.log 2>&1 &
 
 `;
+  // Unconditional on every create: pre-creates the webApp's default terminal
+  // tab session (tab id 3 -> tmux session `term-3`; blitz-term's
+  // `tmux new-session -A` then attaches instead of starting a shell), so the
+  // tab opens onto the running remote-control TUI. Emitted after box health
+  // and after the recipe segments. /opt/blitz/npm/bin/claude bypasses the
+  // /usr/local/bin/claude PATH shim so no OAuth token is injected
+  // (remote-control rejects CLAUDE_CODE_OAUTH_TOKEN and needs an interactive
+  // claude.ai login); the `env -u` flags defend against template-env
+  // injection; `|| true` keeps bootstrap fail-open.
+  const remoteControlSession =
+    "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n\n";
 
   const sshPublicKeyDeclaration = sshPublicKey === undefined
     ? ""
@@ -661,7 +674,7 @@ while (( SECONDS < health_deadline )); do
 done
 [ "$box_healthy" = true ] || fail "box health timeout after 180 seconds"
 
-${promptSender}read_host_key() {
+${promptSender}${remoteControlSession}read_host_key() {
   local key_path="/var/lib/blitz/ssh/ssh_host_$1_key.pub"
   if [ -s "$key_path" ]; then
     sed -n '1p' "$key_path"

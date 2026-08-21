@@ -492,8 +492,11 @@ describe("webapp shell smoke", () => {
     const sessionTabs = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"]',
     )];
-    expect(sessionTabs).toHaveLength(1);
+    // The default tab set: Claude in front, plus the remote-control terminal
+    // tab that attaches to the bootstrap's pre-created `term-3` session.
+    expect(sessionTabs).toHaveLength(2);
     expect(sessionTabs[0]?.textContent ?? "").toMatch(/claude/i);
+    expect(sessionTabs[1]?.textContent ?? "").toMatch(/terminal/i);
     expect(vi.mocked(wire.putWorkspaceWebAppState)).not.toHaveBeenCalled();
     expect(serverWorkspaceStates.size).toBe(0);
 

@@ -198,6 +198,39 @@ describe("recipe invocation fixture conformance", () => {
     }
   });
 
+  it("pre-creates the remote-control terminal session on every create", () => {
+    // The webApp's default terminal tab (id 3) attaches to tmux session
+    // `term-3` through blitz-term's `new-session -A`; the bootstrap creates
+    // that session running claude remote-control. The un-shimmed
+    // /opt/blitz/npm/bin/claude path and the env -u flags keep every OAuth
+    // credential out of the process (remote-control rejects
+    // CLAUDE_CODE_OAUTH_TOKEN), and `|| true` keeps the boot fail-open.
+    const execLine =
+      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n";
+    const plain = buildBootstrapScript({
+      boxImageSha256: "",
+      boxImageRef: "ghcr.io/blitzdotdev/blitz-box@sha256:" + "a".repeat(64),
+      boxImageTag: "",
+      phoneHomeUrl: "https://cp.example/workspaces/workspace/phone-home/token",
+      sshPublicKey: "ssh-ed25519 AAAAcaller",
+    });
+    const scripts: Array<[string, string]> = [
+      ["non-recipe", plain],
+      ...cases.map(({ name, bootstrap }): [string, string] => [name, scriptFor(bootstrap)]),
+    ];
+    for (const [name, script] of scripts) {
+      const at = script.indexOf(execLine);
+      expect(at, name).toBeGreaterThan(-1);
+      expect(script.indexOf(execLine, at + 1), name).toBe(-1);
+      // After the box is healthy (and after the chat sender when one is
+      // emitted), before the phone-home host-key read.
+      expect(at, name).toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
+      expect(at, name).toBeLessThan(script.indexOf("read_host_key()"));
+      const sender = script.indexOf("<<'RECIPE_SENDER'");
+      if (sender !== -1) expect(at, name).toBeGreaterThan(sender);
+    }
+  });
+
   it("keeps the non-recipe bootstrap free of every recipe segment", () => {
     const script = buildBootstrapScript({
       boxImageSha256: "",
