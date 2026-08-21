@@ -220,6 +220,17 @@ export function requiredSecretsForConfig(rawConfig) {
   return [...new Set([...REQUIRED_SECRETS, ...tokenVars])];
 }
 
+// Wrangler prints the actionable half of a failure on stderr, and the deploy
+// captures stderr for every command it parses output from. Dropping it left
+// real errors reading only "<command> failed with exit 1".
+export function commandFailureMessage(tool, args, reason, stderr = "") {
+  const command = `${tool} ${args.join(" ")}`;
+  const detail = String(stderr).trim();
+  return detail === ""
+    ? `${command} failed with ${reason}`
+    : `${command} failed with ${reason}\n${detail}`;
+}
+
 export function missingSecretsMessage(missing) {
   const commands = missing.map(
     (name) => `npx wrangler secret put ${name} --config ${CONFIG_PATH}`,

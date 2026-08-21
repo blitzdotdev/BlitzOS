@@ -11,6 +11,7 @@ import {
 // The committed template, not the gitignored wrangler.toml a local run writes.
 import wranglerExample from "../wrangler.toml.example?raw";
 import {
+  commandFailureMessage,
   configVarProblems,
   configuredAccountId,
   deployControlPlane,
@@ -222,6 +223,23 @@ describe("control-plane deploy command", () => {
         { database_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
       ],
     });
+  });
+
+  it("carries captured stderr into the failure a wrangler command reports", () => {
+    // A blocker that reads only "failed with exit 1" costs an operator half an
+    // hour: wrangler said exactly what was wrong, on stderr, and it was dropped.
+    expect(commandFailureMessage(
+      "wrangler",
+      ["r2", "bucket", "list", "--config", "packages/control-plane/wrangler.toml"],
+      "exit 1",
+      "✘ [ERROR] More than one account available but unable to select one in non-interactive mode.\n",
+    )).toBe(
+      "wrangler r2 bucket list --config packages/control-plane/wrangler.toml failed with exit 1\n✘ [ERROR] More than one account available but unable to select one in non-interactive mode.",
+    );
+    for (const empty of ["", "  \n", undefined]) {
+      expect(commandFailureMessage("wrangler", ["deploy"], "signal SIGTERM", empty))
+        .toBe("wrangler deploy failed with signal SIGTERM");
+    }
   });
 
   it("scopes every wrangler command to the configured account", async () => {

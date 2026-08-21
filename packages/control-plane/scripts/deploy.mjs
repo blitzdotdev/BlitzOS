@@ -8,7 +8,11 @@ import {
   experimental_patchConfig as patchWranglerConfig,
   experimental_readRawConfig as readRawWranglerConfig,
 } from "wrangler";
-import { CONFIG_PATH, deployControlPlane } from "./deploy-helpers.mjs";
+import {
+  CONFIG_PATH,
+  commandFailureMessage,
+  deployControlPlane,
+} from "./deploy-helpers.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../../..");
@@ -38,7 +42,7 @@ function run(tool, args, { capture, env }) {
         return;
       }
       const reason = signal === null ? `exit ${code}` : `signal ${signal}`;
-      reject(new Error(`${tool} ${args.join(" ")} failed with ${reason}`));
+      reject(new Error(commandFailureMessage(tool, args, reason, stderr)));
     });
   });
 }
