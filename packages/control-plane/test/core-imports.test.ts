@@ -24,6 +24,7 @@ const expected = [
   "connections/catalog/youtrack.ts",
   "connections/canary.ts",
   "connections/connect.ts",
+  "connections/github-repos.ts",
   "connections/health.ts",
   "connections/leases.ts",
   "connections/manifest.ts",
@@ -83,6 +84,7 @@ const expected = [
   "runtime.ts",
   "sessions.ts",
   "signup-config.js",
+  "template-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
   "workspace-templates.ts",
@@ -113,6 +115,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(88);
+    expect(expected).toHaveLength(90);
   });
 });

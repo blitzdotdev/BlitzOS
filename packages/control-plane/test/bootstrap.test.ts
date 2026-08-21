@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildBootstrapScript } from "../core/bootstrap.js";
 import { buildUserData } from "../core/cloud-init.js";
 import { HetznerProvider } from "../core/compute/hetzner.js";
 import {
@@ -637,6 +638,63 @@ write_files:
 
     const missing = await appRequest(app, "/box-image/missing-part");
     expect(missing.status).toBe(404);
+  });
+
+  it("emits the template repo cloner as a detached best-effort loop outside the container spec", () => {
+    const base = {
+      boxImageSha256: "",
+      boxImageRef: BOX_IMAGE_REF,
+      boxImageTag: "",
+      phoneHomeUrl: PHONE_HOME_URL,
+      sshPublicKey: SSH_PUBLIC_KEY,
+    };
+    const script = buildBootstrapScript({
+      ...base,
+      repos: ["blitzdotdev/blitz-core", "acme/tools"],
+    });
+
+    expect(script).toContain(
+      'echo "blitz bootstrap: template repo cloner starting in the background (best-effort)"',
+    );
+    expect(script).toContain(
+      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
+    );
+    expect(script).toContain(
+      "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || cloned=false",
+    );
+    // One nohup'd docker exec running the retry loop as the blitz user: 5s
+    // interval, 10-minute deadline, || true overall, logged under
+    // /var/lib/blitz/ — a failed clone never fails the boot.
+    expect(script).toContain("deadline=$(( $(date +%s) + 600 ))");
+    expect(script).toContain("sleep 5");
+    expect(script).toContain(
+      "done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &",
+    );
+    const cloner = script.indexOf("template repo cloner starting");
+    const clonerExec = script.indexOf("nohup docker exec", cloner);
+    const clonerUser = script.indexOf("--user 1000:1000", clonerExec);
+    expect(cloner).toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
+    expect(cloner).toBeLessThan(script.indexOf("read_host_key()"));
+    expect(clonerExec).toBeGreaterThan(cloner);
+    expect(clonerUser).toBeGreaterThan(clonerExec);
+
+    // The container spec itself is untouched: the segment lives after the
+    // health wait, never inside the docker run block.
+    const runStart = script.indexOf("docker run --detach");
+    const runEnd = script.indexOf("\n\nhealth_deadline=", runStart);
+    expect(script.slice(runStart, runEnd)).not.toContain("git clone");
+
+    // No repos — explicitly byte-identical to the pinned ordinary create,
+    // whether the field is absent or an empty list.
+    const plain = buildBootstrapScript(base);
+    expect(plain).not.toContain("git clone");
+    expect(plain).not.toContain("repo-clone.log");
+    expect(buildBootstrapScript({ ...base, repos: [] })).toBe(plain);
+
+    // The emitter is the shell-interpolation boundary: anything that is not
+    // owner/name shaped is refused outright, never quoted around.
+    expect(() => buildBootstrapScript({ ...base, repos: ["bad'; rm -rf /'"] }))
+      .toThrow("template repo is not owner/name shaped");
   });
 
   it("injects the configured image through workspace creation instead of the fake default", async () => {

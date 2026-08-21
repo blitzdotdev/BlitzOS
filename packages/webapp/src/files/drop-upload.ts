@@ -19,13 +19,21 @@ export interface DroppedPayload {
 
 export const MAX_DROP_FILES = 500;
 export const MAX_DROP_BYTES = 1024 * 1024 * 1024;
+/** Per-file ceiling; the multipart path handles anything under it. */
+export const MAX_FILE_BYTES = 256 * 1024 * 1024;
 
 /** A drop past the caps is refused whole rather than partially uploaded. */
 export class DropLimitError extends Error {
-  public constructor(public readonly fileCount: number, public readonly totalBytes: number) {
-    super(fileCount > MAX_DROP_FILES
-      ? `That drop has over ${String(MAX_DROP_FILES)} files — zip it or sync it through a workspace instead`
-      : 'That drop is over 1 GB — zip it or sync it through a workspace instead');
+  public constructor(
+    public readonly fileCount: number,
+    public readonly totalBytes: number,
+    oversizedFileName?: string,
+  ) {
+    super(oversizedFileName !== undefined
+      ? `${oversizedFileName} is over 256 MiB — sync it through a workspace instead`
+      : fileCount > MAX_DROP_FILES
+        ? `That drop has over ${String(MAX_DROP_FILES)} files — zip it or sync it through a workspace instead`
+        : 'That drop is over 1 GB — zip it or sync it through a workspace instead');
     this.name = 'DropLimitError';
   }
 }
@@ -36,6 +44,9 @@ interface DropBudget {
 }
 
 function reserveDropBudget(budget: DropBudget, file: File): void {
+  if (file.size > MAX_FILE_BYTES) {
+    throw new DropLimitError(budget.files + 1, budget.bytes + file.size, file.name);
+  }
   budget.files += 1;
   budget.bytes += file.size;
   if (budget.files > MAX_DROP_FILES || budget.bytes > MAX_DROP_BYTES) {

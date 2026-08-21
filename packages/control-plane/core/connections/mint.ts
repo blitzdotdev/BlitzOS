@@ -7,6 +7,7 @@ import { providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { tombstoneSurfaces } from "./catalog/surfaces.js";
 import { addConnectRoutes } from "./connect.js";
+import { addGithubRepositoryRoutes } from "./github-repos.js";
 import { addConnectionHealthRoutes } from "./health.js";
 import {
   createLease,
@@ -537,6 +538,7 @@ export function addCredentialRoutes(
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
   addConnectionRoutes(router, runtimeFactory, requirePrincipal);
+  addGithubRepositoryRoutes(router, runtimeFactory, requirePrincipal);
   addUserGrantRoutes(router, runtimeFactory, requirePrincipal);
   addConnectionHealthRoutes(router, runtimeFactory, requirePrincipal);
   addConnectRoutes(router, runtimeFactory, requirePrincipal, connectAfterGrant);

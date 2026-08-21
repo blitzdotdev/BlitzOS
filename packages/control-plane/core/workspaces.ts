@@ -31,6 +31,7 @@ import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
+import { templateRepos } from "./template-repos.js";
 import {
   attachTemplateFolders,
   templateConnections,
@@ -466,6 +467,10 @@ export async function performWorkspaceCreate(
     usageCapture: orgCapture?.usage_capture === 1,
   };
   if (recipe !== undefined) shaping.recipe = recipe.bootstrap;
+  // Template repos ride the bootstrap as a detached clone loop; an empty
+  // list stays absent so the emitted bytes match every pre-repo pin.
+  const repos = template === null ? [] : await templateRepos(runtime.db, template.id);
+  if (repos.length > 0) shaping.repos = repos;
   const id = crypto.randomUUID();
   const capability = randomToken();
   const now = Date.now();

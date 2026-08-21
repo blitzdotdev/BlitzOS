@@ -27,9 +27,11 @@ import {
   entriesAt,
   formatBytes,
   formatWhen,
-  normalizeFolderName,
 } from './drive-model';
 import { collectDropped, DropLimitError } from './drop-upload';
+import { TemplateRepoPicker } from './TemplateRepoPicker';
+import { useTemplateUploads } from './use-template-uploads';
+import { orgCredentialFor } from '../connections/ProviderAdminForm';
 
 function BackGlyph() {
   return (
@@ -45,15 +47,17 @@ interface BrowseState {
 }
 
 /** Dedicated screen for building a workspace template: name it, pick a
- * machine, and attach the Drive folders every workspace created from it
- * starts with. The folder browser merges My Drive and Shared with me:
+ * machine, and attach what every workspace created from it starts with —
+ * Drive folders, loose files (wrapped into an auto-created files folder),
+ * and GitHub repos. The folder browser merges My Drive and Shared with me:
  * single click selects, double click enters, Back walks up, and the drop
- * strip uploads a local directory as a new attached folder. */
+ * strip uploads dropped directories and files alike. */
 export function CreateTemplateScreen({
   client,
   orgName,
   admin = false,
   editTemplateId,
+  isAdmin = false,
   onCreated,
   onCancel,
 }: {
@@ -64,6 +68,8 @@ export function CreateTemplateScreen({
   admin?: boolean;
   /** When set, the screen edits this template instead of creating one. */
   editTemplateId?: string;
+  /** Renders the org-default checkbox; the server enforces it regardless. */
+  isAdmin?: boolean;
   onCreated: (template: WorkspaceTemplateView) => void;
   onCancel: () => void;
 }) {
@@ -84,9 +90,7 @@ export function CreateTemplateScreen({
   const [templateConnections, setTemplateConnections] = useState<Map<string, TemplateConnectionView>>(new Map());
   const [orgConnections, setOrgConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
-  const [dropHint, setDropHint] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
@@ -96,7 +100,25 @@ export function CreateTemplateScreen({
     editTemplateId === undefined ? EMPTY_WORKSPACE_ENVIRONMENT : null,
   );
   const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
+  const [isOrgDefault, setIsOrgDefault] = useState(false);
+  const [repos, setRepos] = useState<string[]>([]);
   const dragDepth = useRef(0);
+  const filePickerRef = useRef<HTMLInputElement | null>(null);
+  const {
+    uploading,
+    dropHint,
+    setDropHint,
+    fileCounts,
+    looseFolderName,
+    uploadDropped,
+    uploadPickedFiles,
+  } = useTemplateUploads({
+    client,
+    templateName: name,
+    onAttach: (folderId) => setAttachedIds((current) => new Set([...current, folderId])),
+    onFolders: setFolders,
+    onError: setError,
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -183,38 +205,6 @@ export function CreateTemplateScreen({
     });
   };
 
-
-  const uploadDroppedFolders = async (
-    dropped: { name: string; files: { file: File; relativePath: string }[] }[],
-    looseFiles: number,
-  ) => {
-    if (dropped.length === 0) {
-      setDropHint(looseFiles > 0 ? 'Drop folders, not loose files' : 'Nothing to upload in that drop');
-      return;
-    }
-    setDropHint(null);
-    for (const entry of dropped) {
-      const folderName = normalizeFolderName(entry.name);
-      if (folderName === '') continue;
-      setUploading(folderName);
-      try {
-        const { folder } = await client.createFolder(folderName);
-        for (const { file, relativePath } of entry.files) {
-          await client.uploadFolderObject(folder.id, relativePath, file);
-        }
-        setAttachedIds((current) => new Set([...current, folder.id]));
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : 'Upload failed.');
-        setUploading(null);
-        return;
-      }
-    }
-    setUploading(null);
-    await client.listFolders()
-      .then(({ folders: loaded }) => setFolders(loaded))
-      .catch((caught: Error) => setError(caught.message));
-  };
-
   useEffect(() => {
     if (editTemplateId === undefined) return;
     let mounted = true;
@@ -227,6 +217,8 @@ export function CreateTemplateScreen({
       }
       setName(existing.name);
       setMachineTypeId(existing.machineTypeId);
+      setIsOrgDefault(existing.isOrgDefault);
+      setRepos(existing.repos);
       // Keep every attached folder id, including ones this editor cannot
       // read — the server preserves them and only checks new additions.
       setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
@@ -263,7 +255,11 @@ export function CreateTemplateScreen({
         machineTypeId,
         folderIds: [...attachedIds],
         connections: [...templateConnections.values()],
+        repos,
       };
+      // Only admins see the checkbox, so only admins speak about the org
+      // default at all — absence leaves the org pointer untouched.
+      if (isAdmin) request.isOrgDefault = isOrgDefault;
       // The environment rides on both create and edit — the PUT handler
       // replaces it, so an edit that cleared it has to send the empty one
       // rather than omit the field. The agent rule rides only on create: the
@@ -414,11 +410,12 @@ export function CreateTemplateScreen({
 
           <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
-              <h2>Attach folders</h2>
+              <h2>Attachments</h2>
               <p>
-                Attached folders sync into every workspace created from this template.
-                Click to select, double-click to look inside — or drop a folder from
-                your computer anywhere in the list to upload and attach it.
+                Attachments sync into every workspace created from this template.
+                Click to select, double-click to look inside — or drop folders or
+                files from your computer anywhere in the list. Loose files land in
+                a “{looseFolderName}” Drive folder made for this template.
               </p>
             </div>
             <div className="tplf">
@@ -450,7 +447,7 @@ export function CreateTemplateScreen({
                     Array.from(event.dataTransfer.items),
                     Array.from(event.dataTransfer.files),
                   )
-                    .then((payload) => uploadDroppedFolders(payload.folders, payload.files.length))
+                    .then(uploadDropped)
                     .catch((caught: Error) => {
                       if (caught instanceof DropLimitError) setDropHint(caught.message);
                       else setError(caught.message);
@@ -489,15 +486,20 @@ export function CreateTemplateScreen({
                   </div>
                 )}
               </div>
-              <aside className="tplf-side" aria-label="Attached folders">
+              <aside className="tplf-side" aria-label="Attachments">
                 <h3>In this template</h3>
                 <div className="tplf-side-list">
                   {attached.length === 0
-                    ? <p className="tplf-side-empty">Nothing attached yet. Select a folder and press Attach.</p>
+                    ? <p className="tplf-side-empty">Nothing attached yet. Select a folder and press Attach, or upload files.</p>
                     : attached.map((folder) => (
                       <div className="tplf-side-item" key={folder.id}>
                         <FolderDuoIcon className="drive-folder-icon" />
-                        <span>{folder.name}</span>
+                        <span>
+                          {folder.name}
+                          {fileCounts.has(folder.id) && (
+                            ` · ${String(fileCounts.get(folder.id))} ${fileCounts.get(folder.id) === 1 ? 'file' : 'files'}`
+                          )}
+                        </span>
                         <button
                           type="button"
                           aria-label={`Remove ${folder.name} from template`}
@@ -512,9 +514,29 @@ export function CreateTemplateScreen({
               <div className="tplf-foot">
                 <span className="tplf-foot-hint">
                   {attached.length === 0
-                    ? 'No folders attached'
-                    : `${attached.length} ${attached.length === 1 ? 'folder' : 'folders'} attached`}
+                    ? 'Nothing attached'
+                    : `${attached.length} ${attached.length === 1 ? 'attachment' : 'attachments'}`}
                 </span>
+                <input
+                  ref={filePickerRef}
+                  type="file"
+                  multiple
+                  hidden
+                  aria-label="Upload files"
+                  onChange={(event) => {
+                    const picked = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = '';
+                    if (picked.length > 0) uploadPickedFiles(picked);
+                  }}
+                />
+                <button
+                  className="webapp-action"
+                  type="button"
+                  disabled={uploading !== null}
+                  onClick={() => filePickerRef.current?.click()}
+                >
+                  Upload files
+                </button>
                 <button
                   className={`webapp-action${targetAttached ? '' : ' webapp-action--primary'}`}
                   type="button"
@@ -536,6 +558,20 @@ export function CreateTemplateScreen({
               value={templateConnections}
               onChange={setTemplateConnections}
             />
+            <div className="tplf-repos">
+              <h2>Repositories</h2>
+              <p>
+                GitHub repos cloned into /workspace when a workspace starts from
+                this template. Picking any attaches the GitHub connection above.
+              </p>
+              <TemplateRepoPicker
+                client={client}
+                admin={admin}
+                githubConfigured={orgCredentialFor(orgConnections, 'github')}
+                value={repos}
+                onChange={setRepos}
+              />
+            </div>
             <label className="tplf-share">
               <input
                 type="checkbox"
@@ -543,10 +579,24 @@ export function CreateTemplateScreen({
                 onChange={(event) => setShareWithOrg(event.currentTarget.checked)}
               />
               <span>
-                Share attached folders you own with everyone at {orgName} (viewer),
+                Share attachments you own with everyone at {orgName} (viewer),
                 so the template works without individual grants
               </span>
             </label>
+            {isAdmin && (
+              <label className="tplf-share">
+                <input
+                  type="checkbox"
+                  aria-label={`Default template for ${orgName}`}
+                  checked={isOrgDefault}
+                  onChange={(event) => setIsOrgDefault(event.currentTarget.checked)}
+                />
+                <span>
+                  Default template for {orgName} — the create-workspace page
+                  starts on it for every member
+                </span>
+              </label>
+            )}
           </section>
 
           {loadedEnvironment !== null && (

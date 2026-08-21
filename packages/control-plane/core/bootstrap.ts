@@ -37,6 +37,10 @@ export interface BootstrapOptions {
   /** Org-level agent-usage capture: pre-creates the two transcript HOME dirs
    * and bind-mounts them read-only under /workspace/shared/agent-usage/. */
   usageCapture?: boolean;
+  /** Template repos ("owner/name") cloned into /workspace/<name> by a
+   * detached best-effort retry loop (TEMPLATES-V2). Absent or empty leaves
+   * the emitted bytes untouched for every ordinary create. */
+  repos?: string[];
 }
 
 /** Shell-escapes a value into one single-quoted token. Exported because the
@@ -401,6 +405,48 @@ nohup docker exec \\
   const remoteControlSession =
     "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n\n";
 
+  // ---- TEMPLATES-V2 repo cloner (keep as one self-contained segment) ----
+  // "" on every create without template repos, so the emitted bytes stay
+  // identical and every existing bootstrap pin holds. With repos it starts
+  // one detached best-effort retry loop inside the box: each pass skips
+  // repos that already have a .git (idempotent across reboots) and retries
+  // every 5s for up to 10 minutes, because cloning can only succeed once
+  // registration completes and the baked /etc/gitconfig credential helper
+  // (`blitz-cred git-helper`, CP-direct) can mint. `|| true` overall: a
+  // failed clone never fails the boot; output lands in
+  // /var/lib/blitz/repo-clone.log.
+  const repos = options.repos ?? [];
+  for (const repo of repos) {
+    // The save-time validator is the real gate; this re-check keeps the
+    // shell-interpolation boundary local to the emitter.
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repo)) {
+      throw new Error(`template repo is not owner/name shaped: ${repo}`);
+    }
+  }
+  const repoCloneAttempts = repos.map((repo) => {
+    const directory = repo.slice(repo.indexOf("/") + 1);
+    return `  [ -d /workspace/${directory}/.git ] || git clone https://github.com/${repo} /workspace/${directory} || cloned=false`;
+  }).join("\n");
+  const repoCloner = repos.length === 0
+    ? ""
+    : `echo "blitz bootstrap: template repo cloner starting in the background (best-effort)"
+nohup docker exec \\
+  --user 1000:1000 \\
+  --env HOME=/var/lib/blitz/home \\
+  --env USER=blitz \\
+  blitz-box \\
+  sh -c 'deadline=$(( $(date +%s) + 600 ))
+while :; do
+  cloned=true
+${repoCloneAttempts}
+  [ "$cloned" = true ] && { echo "template repos cloned"; break; }
+  [ "$(date +%s)" -lt "$deadline" ] || { echo "template repo clone gave up after 600 seconds"; break; }
+  sleep 5
+done' >>/var/lib/blitz/repo-clone.log 2>&1 || true &
+
+`;
+  // ---- end TEMPLATES-V2 repo cloner ----
+
   const sshPublicKeyDeclaration = sshPublicKey === undefined
     ? ""
     : `readonly SSH_PUBLIC_KEY=${shellQuote(sshPublicKey)}\n`;
@@ -674,7 +720,7 @@ while (( SECONDS < health_deadline )); do
 done
 [ "$box_healthy" = true ] || fail "box health timeout after 180 seconds"
 
-${promptSender}${remoteControlSession}read_host_key() {
+${promptSender}${remoteControlSession}${repoCloner}read_host_key() {
   local key_path="/var/lib/blitz/ssh/ssh_host_$1_key.pub"
   if [ -s "$key_path" ]; then
     sed -n '1p' "$key_path"

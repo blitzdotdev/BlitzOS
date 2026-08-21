@@ -281,6 +281,7 @@ describe("create workspace dialog", () => {
       createdAt: 1,
       createdBy: { name: "Ada Park", avatarUrl: null },
       agentRuleId: null,
+      isOrgDefault: false,
       environment: {
         env: { FROM_TEMPLATE: "yes" },
         startupScript: "./setup.sh\n",
@@ -290,6 +291,7 @@ describe("create workspace dialog", () => {
         { id: "folder-b", name: "private", role: null },
       ],
       connections: [{ provider: "linear" }],
+      repos: [],
     };
     const view = await render(
       <CreateWorkspaceDialog
@@ -340,6 +342,116 @@ describe("create workspace dialog", () => {
       newTile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onNewTemplate).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it("preselects the org-default template from initialTemplateId, deselectably", async () => {
+    const submit = vi.fn();
+    const template = {
+      id: "template-default",
+      name: "org starter",
+      machineTypeId: "cx23@fsn1",
+      createdAt: 1,
+      createdBy: { name: "Ada Park", avatarUrl: null },
+      agentRuleId: "rule-1",
+      isOrgDefault: true,
+      environment: {
+        env: { FROM_TEMPLATE: "yes" },
+        startupScript: "./setup.sh\n",
+      },
+      folders: [],
+      connections: [],
+      repos: [],
+    };
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient([BUILT_IN_RULE, {
+          id: "rule-1",
+          name: "House rules",
+          content: "# House rules\n",
+          updatedAt: 3,
+          builtIn: false,
+        }])}
+        listTemplates={async () => [template]}
+        initialTemplateId="template-default"
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+
+    // Seeding behaves exactly like a click on the tile: the manual form is
+    // collapsed and the template's environment and rule ride along.
+    expect(view.container.querySelector('input[name="name"]')).toBeNull();
+    const tile = [...view.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("org starter"))!;
+    expect(tile.getAttribute("aria-pressed")).toBe("true");
+    expect(view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Agent rules document"]',
+    )?.value).toBe("rule-1");
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith({
+      templateId: "template-default",
+      orgShareRole: "editor",
+      environment: template.environment,
+    });
+    await view.unmount();
+
+    // The member can still walk away from the default to the manual form.
+    const deselected = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient()}
+        listTemplates={async () => [template]}
+        initialTemplateId="template-default"
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+    const pressed = [...deselected.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.includes("org starter"))!;
+    await act(async () => {
+      pressed.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(deselected.container.querySelector('input[name="name"]')).not.toBeNull();
+    await deselected.unmount();
+  });
+
+  it("ignores an initialTemplateId the list no longer carries and stays manual", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient()}
+        listTemplates={async () => []}
+        initialTemplateId="template-deleted"
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+    expect(view.container.querySelector('input[name="name"]')).not.toBeNull();
     await view.unmount();
   });
 
@@ -420,9 +532,11 @@ describe("create workspace dialog", () => {
       createdAt: 1,
       createdBy: { name: "Ada Park", avatarUrl: null },
       agentRuleId: "rule-1",
+      isOrgDefault: false,
       environment: null,
       folders: [],
       connections: [],
+      repos: [],
     };
     // The dialog refuses a second submit per mount, so each expectation gets
     // its own render.

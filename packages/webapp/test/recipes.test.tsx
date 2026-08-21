@@ -25,8 +25,10 @@ const templates = [{
   createdBy: { name: 'Ada Park', avatarUrl: null },
   environment: null,
   agentRuleId: null,
+  isOrgDefault: false,
   folders: [],
   connections: [],
+  repos: [],
 }];
 
 const recipe: RecipeView = {
@@ -140,6 +142,35 @@ describe('recipes home', () => {
 });
 
 describe('templates home', () => {
+  it('badges the org-default template card', async () => {
+    stub((url, init) => {
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [
+          { ...templates[0], isOrgDefault: true },
+          { ...templates[0], id: 'template-2', name: 'plain starter' },
+        ] });
+      }
+      return null;
+    });
+    const view = await render(
+      <TemplatesHome
+        client={createControlPlaneClient('https://cp.example')}
+        creating={false}
+        onNewTemplate={() => undefined}
+        onEditTemplate={() => undefined}
+        onUseTemplate={() => undefined}
+        onOpenRail={() => undefined}
+      />,
+    );
+    await settle();
+
+    const cards = [...view.container.querySelectorAll('.tpl-card')];
+    expect(cards).toHaveLength(2);
+    expect(cards[0]?.querySelector('.tpl-default-badge')?.textContent).toBe('Org default');
+    expect(cards[1]?.querySelector('.tpl-default-badge')).toBeNull();
+    await view.unmount();
+  });
+
   it('surfaces the control-plane 409 naming the blocking recipes on delete failure', async () => {
     stub((url, init) => {
       if (url.pathname === '/workspace-templates/template-1' && init?.method === 'DELETE') {
@@ -507,6 +538,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    listGithubRepositories: vi.fn(async () => ({ repositories: [] })),
     putConnectionGrant: vi.fn(async () => undefined),
     deleteConnectionGrant: vi.fn(async () => undefined),
     listProviderHealth: vi.fn(async () => ({ providers: [] })),

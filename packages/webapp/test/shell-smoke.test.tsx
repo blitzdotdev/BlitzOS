@@ -253,6 +253,7 @@ function client(): ControlPlaneClient {
     denyCredentialRequest: vi.fn(async () => undefined),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    listGithubRepositories: vi.fn(async () => ({ repositories: [] })),
     putConnectionGrant: vi.fn(async () => undefined),
     deleteConnectionGrant: vi.fn(async () => undefined),
     listProviderHealth: vi.fn(async () => ({ providers: [] })),

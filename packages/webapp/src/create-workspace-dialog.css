@@ -717,6 +717,62 @@
   font: 11px/1.6 var(--font-ui);
 }
 
+/* ------------------------------------------------ template repo picker */
+.tplf-repos {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+}
+
+.tplf-repos h2 {
+  margin: 0;
+  font: 600 12px/1.4 var(--font-ui);
+}
+
+.tplf-repos p {
+  margin: 0;
+  color: var(--muted);
+  font: 11px/1.6 var(--font-ui);
+}
+
+.tplf-repos-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.tplf-repos-picker input[aria-label='Filter repositories'] {
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font: 12px/1.5 var(--font-ui);
+}
+
+.tplf-repos-list {
+  display: grid;
+  max-height: 180px;
+  gap: 2px;
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  padding: 6px 8px;
+}
+
+.tplf-repo {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font: 12px/1.5 var(--font-ui);
+}
+
+.tplf-repo input { accent-color: var(--accent); }
+
+.tplf-repos-hint,
+.tplf-repos-count {
+  margin: 0;
+  color: var(--muted);
+  font: 11px/1.6 var(--font-ui);
+}
+
 /* --------------------------------------------- template folder browser */
 .tplf {
   display: grid;

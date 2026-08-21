@@ -26,6 +26,10 @@ type CreateWorkspaceDialogProps = {
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
   listTemplates: () => Promise<WorkspaceTemplateView[]>;
+  /** Template to preselect — the org default. Seeded once (environment and
+   * agent rule included) when both the id and the loaded list carry it; the
+   * member can still deselect. */
+  initialTemplateId?: string | null;
   onNewTemplate: () => void;
   onCancel: () => void;
   onSubmit: (input: CreateWorkspaceDialogInput) => void;
@@ -39,6 +43,7 @@ export function CreateWorkspaceDialog({
   listMachineTypes,
   listVolumes,
   listTemplates,
+  initialTemplateId,
   onNewTemplate,
   onCancel,
   onSubmit,
@@ -47,7 +52,9 @@ export function CreateWorkspaceDialog({
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
+    initialTemplateId ?? null,
+  );
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -60,6 +67,23 @@ export function CreateWorkspaceDialog({
   useEffect(() => {
     if (!busy) submitted.current = false;
   }, [busy]);
+
+  // Seeding needs the template row, not just its id: selecting a template
+  // also loads its environment and agent rule, exactly like a click on the
+  // tile. Runs at most once — the prop may arrive after the list (or the
+  // list after the prop), and a member who deselected must stay deselected.
+  const seededTemplate = useRef(false);
+  useEffect(() => {
+    if (seededTemplate.current || initialTemplateId === null || initialTemplateId === undefined) {
+      return;
+    }
+    const template = templates.find(({ id }) => id === initialTemplateId);
+    if (template === undefined) return;
+    seededTemplate.current = true;
+    setSelectedTemplateId(template.id);
+    setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+    setAgentRuleId(template.agentRuleId);
+  }, [templates, initialTemplateId]);
 
   useEffect(() => {
     let mounted = true;

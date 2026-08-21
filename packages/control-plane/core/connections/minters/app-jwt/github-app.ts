@@ -57,7 +57,14 @@ function encodeBase64Url(value: Uint8Array): string {
   return btoa(binary).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_");
 }
 
-async function appJwt(root: string, config: GithubAppConfig, now: number): Promise<string> {
+/** Exported for the repository-listing route (`github-repos.ts`), which
+ * mints its own short-lived installation token instead of duplicating the
+ * RS256 signing here. */
+export async function appJwt(
+  root: string,
+  config: Pick<GithubAppConfig, "app_id">,
+  now: number,
+): Promise<string> {
   const seconds = Math.floor(now / 1000);
   const encodeJson = <Value>(value: Value): string =>
     encodeBase64Url(new TextEncoder().encode(JSON.stringify(value)));
