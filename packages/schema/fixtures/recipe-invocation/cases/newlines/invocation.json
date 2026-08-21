@@ -1,0 +1,5 @@
+{
+  "harness": "chat",
+  "agentProvider": "codex",
+  "model": "gpt-5-codex"
+}

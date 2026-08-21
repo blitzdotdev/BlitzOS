@@ -3,13 +3,13 @@ import type { IdentityRecord, OrgRecord } from '../protocol';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { SessionTypeIcon, type WebAppTabModel } from '../WebAppHeader';
 import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
-import { DriveGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
+import { DriveGlyph, RecipeGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
 
 /** Brandon's cockpit rail (monorepov2 PR #252) with one insertion: the flat
- * Templates and Drive locations sit between the organization header and a
- * divider, and the workspace tree keeps the section header below it. */
+ * Templates, Recipes, and Drive locations sit between the organization header
+ * and a divider, and the workspace tree keeps the section header below it. */
 
-export type DriveRailNav = 'templates' | 'drive';
+export type DriveRailNav = 'templates' | 'recipes' | 'drive';
 
 function workspaceStateLabel(workspace: CloudWorkspaceModel): string {
   if (workspace.lifecycleStatus === 'creating') return 'creating';
@@ -53,6 +53,7 @@ export function DriveRail({
   onSelectSession,
   onOpenDrive,
   onOpenTemplates,
+  onOpenRecipes,
   onSelectWorkspace,
   onCreateWorkspace,
   onSwitchOrg,
@@ -73,6 +74,7 @@ export function DriveRail({
   onSelectSession: (sessionId: string) => void;
   onOpenDrive: () => void;
   onOpenTemplates: () => void;
+  onOpenRecipes: () => void;
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
   onSwitchOrg: (orgId: string) => void;
@@ -171,6 +173,14 @@ export function DriveRail({
             onClick={onOpenTemplates}
           >
             <TemplateGlyph /><span>Templates</span>
+          </button>
+          <button
+            className={`drive-rail-row${nav === 'recipes' ? ' drive-rail-row--active' : ''}`}
+            type="button"
+            aria-current={nav === 'recipes' ? 'page' : undefined}
+            onClick={onOpenRecipes}
+          >
+            <RecipeGlyph /><span>Recipes</span>
           </button>
           <button
             className={`drive-rail-row${nav === 'drive' ? ' drive-rail-row--active' : ''}`}

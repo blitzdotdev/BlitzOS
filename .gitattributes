@@ -1,0 +1,2 @@
+# Fixture corpora are byte-exact contracts; never normalize line endings.
+packages/schema/fixtures/** -text

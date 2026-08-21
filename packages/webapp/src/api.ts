@@ -8,15 +8,19 @@ import type {
   CredentialEventView,
   ListCredentialRequestsResponse,
   ListIntegrationsResponse,
+  CreateRecipeRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   CreateWorkspaceTemplateRequest,
   CreateWorkspaceTemplateResponse,
   ListMachineTypesResponse,
+  ListRecipesResponse,
   ListWorkspaceTemplatesResponse,
   ListVolumesResponse,
+  OrgUsageCaptureResponse,
   PollResponse,
   PutIntegrationRequest,
+  RecipeResponse,
   RetryAction,
 } from "@blitzos/schema";
 import {
@@ -159,6 +163,16 @@ export interface ControlPlaneClient extends FileLibraryClient {
     input: CreateWorkspaceTemplateRequest,
   ): Promise<CreateWorkspaceTemplateResponse>;
   deleteWorkspaceTemplate(id: string): Promise<void>;
+  listRecipes(): Promise<ListRecipesResponse>;
+  getRecipe(id: string): Promise<RecipeResponse>;
+  createRecipe(input: CreateRecipeRequest): Promise<RecipeResponse>;
+  updateRecipe(id: string, input: CreateRecipeRequest): Promise<RecipeResponse>;
+  deleteRecipe(id: string): Promise<void>;
+  /** Launches a workspace from the recipe; answers with the same envelope as
+   * create, so callers reuse the create-workspace navigation flow. */
+  launchRecipe(id: string): Promise<CreateWorkspaceResponse>;
+  getUsageCapture(): Promise<OrgUsageCaptureResponse>;
+  putUsageCapture(enabled: boolean): Promise<OrgUsageCaptureResponse>;
   setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
@@ -602,6 +616,33 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     deleteWorkspaceTemplate: (id) =>
       request<void>(`/workspace-templates/${encodeURIComponent(id)}`, {
         method: "DELETE",
+      }),
+    listRecipes: () => request<ListRecipesResponse>("/workspace-recipes"),
+    getRecipe: (id) => request<RecipeResponse>(`/workspace-recipes/${encodeURIComponent(id)}`),
+    createRecipe: (input) =>
+      request<RecipeResponse>("/workspace-recipes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    updateRecipe: (id, input) =>
+      request<RecipeResponse>(`/workspace-recipes/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    deleteRecipe: (id) =>
+      request<void>(`/workspace-recipes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    launchRecipe: (id) =>
+      request<CreateWorkspaceResponse>(`/workspace-recipes/${encodeURIComponent(id)}/launch`, {
+        method: "POST",
+      }),
+    getUsageCapture: () => request<OrgUsageCaptureResponse>("/orgs/self/usage-capture"),
+    putUsageCapture: (enabled) =>
+      request<OrgUsageCaptureResponse>("/orgs/self/usage-capture", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
       }),
     setWorkspaceOrgRole: (workspaceId, role) =>
       request<void>(`/workspaces/${encodeURIComponent(workspaceId)}/org-role`, {

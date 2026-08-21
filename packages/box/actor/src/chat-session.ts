@@ -1,11 +1,23 @@
+// ---------------------------------------------------------------------------
+// SCOPE FENCE — read this before adding anything to this module.
+//
+// The chat-session store serves the chat session list, replay, and resume.
+// ONLY that. Two tables: `sessions` and `events`. Both journaled frame
+// shapes — `session/update` and `blitz/permission_answered` — live in
+// `events`, so replay keeps permission history without any side table.
+//
+// This is deliberately NOT an analytics, metering, or usage store. Usage and
+// eval data comes from the native harness transcripts in the agent HOME on
+// the state volume (`~/.claude/projects/…`, `~/.codex/sessions/…`). Do not
+// add tables, columns, or queries here to answer usage questions; do not
+// extend this store beyond chat.
+// ---------------------------------------------------------------------------
+
+import { existsSync, renameSync } from "node:fs";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import type {
-  RequestPermissionRequest,
-  RequestPermissionResponse,
-  SessionUpdate,
-} from "@agentclientprotocol/sdk";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { Provider } from "./types.js";
-import type { ConnectionIdentity } from "./auth.js";
 
 export interface SessionUpdateFrame {
   jsonrpc: "2.0";
@@ -30,8 +42,8 @@ export interface PermissionAnsweredFrame {
 
 /** The box could not mint a credential for this provider, so the user has to
  * sign the harness in again. Deliberately absent from {@link JournalFrame}:
- * `Journal.append` only accepts journaled frames, so this one cannot be
- * persisted by accident and replayed hours after the session recovered. */
+ * `ChatSessionStore.append` only accepts journaled frames, so this one cannot
+ * be persisted by accident and replayed hours after the session recovered. */
 export interface AuthRequiredFrame {
   jsonrpc: "2.0";
   method: "blitz/auth_required";
@@ -67,14 +79,33 @@ export type JournalEvent = {
   frame: string;
 };
 
-export class Journal {
+/** The store was named journal.db before the chat_session rename, so a reused
+ * state volume may still carry that file. Adopt it — together with its SQLite
+ * WAL and SHM siblings — under the new name before the first open. */
+function adoptLegacyJournalFile(path: string): void {
+  const legacy = join(dirname(path), "journal.db");
+  if (!existsSync(legacy) || existsSync(path)) return;
+  renameSync(legacy, path);
+  for (const suffix of ["-wal", "-shm"]) {
+    if (existsSync(`${legacy}${suffix}`)) renameSync(`${legacy}${suffix}`, `${path}${suffix}`);
+  }
+}
+
+export class ChatSessionStore {
   private readonly database: Database.Database;
 
   public constructor(path: string) {
+    adoptLegacyJournalFile(path);
     this.database = new Database(path);
     this.database.pragma("journal_mode = WAL");
     this.database.pragma("foreign_keys = ON");
+    // The DROPs retire the pre-rename side tables on reused volumes. Their
+    // only consumer-visible content — permission answers — already lives in
+    // `events` as `blitz/permission_answered` frames.
     this.database.exec(`
+      DROP TABLE IF EXISTS turns;
+      DROP TABLE IF EXISTS permissions;
+      DROP TABLE IF EXISTS participants;
       CREATE TABLE IF NOT EXISTS sessions (
         id TEXT PRIMARY KEY,
         provider TEXT NOT NULL CHECK (provider IN ('claude', 'codex')),
@@ -90,28 +121,6 @@ export class Journal {
         frame TEXT NOT NULL,
         PRIMARY KEY (session_id, seq)
       );
-      CREATE TABLE IF NOT EXISTS turns (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        terminal TEXT
-      );
-      CREATE TABLE IF NOT EXISTS permissions (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        request TEXT NOT NULL,
-        response TEXT,
-        responded_by TEXT,
-        responded_name TEXT
-      );
-      CREATE TABLE IF NOT EXISTS participants (
-        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-        user_id TEXT NOT NULL,
-        membership_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        name TEXT,
-        joined_at INTEGER NOT NULL,
-        PRIMARY KEY (session_id, user_id)
-      );
     `);
     const rawSessionColumns = this.database.prepare("PRAGMA table_info(sessions)").all();
     // SAFETY: SQLite PRAGMA table_info rows always include the string column name used below.
@@ -122,16 +131,6 @@ export class Journal {
     if (!sessionColumns.has("updated_at")) {
       this.database.exec("ALTER TABLE sessions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
     }
-    const rawPermissionColumns = this.database.prepare("PRAGMA table_info(permissions)").all();
-    // SAFETY: SQLite PRAGMA table_info rows always include the string column name used below.
-    const permissionColumns = new Set((rawPermissionColumns as Array<{ name: string }>).map(({ name }) => name));
-    if (!permissionColumns.has("responded_by")) {
-      this.database.exec("ALTER TABLE permissions ADD COLUMN responded_by TEXT");
-    }
-    if (!permissionColumns.has("responded_name")) {
-      this.database.exec("ALTER TABLE permissions ADD COLUMN responded_name TEXT");
-    }
-    this.database.prepare("UPDATE turns SET terminal = 'refusal' WHERE terminal IS NULL").run();
   }
 
   public close(): void {
@@ -163,16 +162,6 @@ export class Journal {
     ).all() as SessionSummary[];
   }
 
-  public addParticipant(sessionId: string, identity: ConnectionIdentity, now = Date.now()): void {
-    this.database.prepare(
-      `INSERT INTO participants (session_id, user_id, membership_id, role, name, joined_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(session_id, user_id) DO UPDATE SET
-         membership_id = excluded.membership_id, role = excluded.role,
-         name = excluded.name, joined_at = excluded.joined_at`,
-    ).run(sessionId, identity.userId, identity.membershipId, identity.role, identity.name ?? null, now);
-  }
-
   public append(sessionId: string, frame: JournalFrame): number {
     return this.database.transaction(() => {
       // SAFETY: The schema-owned sessions table declares next_seq as a non-null integer, aliased here as seq.
@@ -200,41 +189,6 @@ export class Journal {
     return rows;
   }
 
-  public startTurn(id: string, sessionId: string): void {
-    this.database.prepare("INSERT INTO turns (id, session_id) VALUES (?, ?)").run(id, sessionId);
-  }
-
-  public finishTurn(id: string, terminal: string): boolean {
-    return this.database.prepare("UPDATE turns SET terminal = ? WHERE id = ? AND terminal IS NULL").run(terminal, id)
-      .changes === 1;
-  }
-
-  public terminal(id: string): string | null | undefined {
-    // SAFETY: The query projects the nullable terminal column from at most one schema-owned turn row.
-    return (this.database.prepare("SELECT terminal FROM turns WHERE id = ?").get(id) as
-      | { terminal: string | null }
-      | undefined)?.terminal;
-  }
-
-  public addPermission(id: string, sessionId: string, request: RequestPermissionRequest): void {
-    this.database
-      .prepare("INSERT INTO permissions (id, session_id, request) VALUES (?, ?, ?)")
-      .run(id, sessionId, JSON.stringify(request));
-  }
-
-  public answerPermission(id: string, response: RequestPermissionResponse, identity: ConnectionIdentity): boolean {
-    return this.database
-      .prepare("UPDATE permissions SET response = ?, responded_by = ?, responded_name = ? WHERE id = ? AND response IS NULL")
-      .run(JSON.stringify(response), identity.userId, identity.name ?? null, id).changes === 1;
-  }
-
-  public pendingPermissions(sessionId: string): Array<{ id: string; request: string }> {
-    // SAFETY: The query projects the non-null id and request text columns from schema-owned permission rows.
-    return this.database
-      .prepare("SELECT id, request FROM permissions WHERE session_id = ? AND response IS NULL ORDER BY rowid")
-      .all(sessionId) as Array<{ id: string; request: string }>;
-  }
-
   public sequences(sessionId: string): number[] {
     // SAFETY: The query projects the integer seq column from schema-owned event rows.
     return (
@@ -242,23 +196,5 @@ export class Journal {
         seq: number;
       }>
     ).map(({ seq }) => seq);
-  }
-
-  public terminals(sessionId: string): string[] {
-    // SAFETY: The WHERE clause excludes null terminals before projecting schema-owned turn rows.
-    return (
-      this.database.prepare("SELECT terminal FROM turns WHERE session_id = ? ORDER BY rowid").all(sessionId) as Array<{
-        terminal: string;
-      }>
-    ).map(({ terminal }) => terminal);
-  }
-
-  public answeredPermissions(sessionId: string): number {
-    // SAFETY: COUNT(*) always produces one row with an integer count value.
-    return (
-      this.database
-        .prepare("SELECT count(*) AS count FROM permissions WHERE session_id = ? AND response IS NOT NULL")
-        .get(sessionId) as { count: number }
-    ).count;
   }
 }

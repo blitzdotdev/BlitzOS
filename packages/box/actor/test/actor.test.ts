@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,8 +10,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { WebSocket } from "ws";
 import { ActorService } from "../src/actor.js";
 import { CredentialSource } from "../src/credentials.js";
-import { Journal } from "../src/journal.js";
-import type { JournalFrame } from "../src/journal.js";
+import { ChatSessionStore } from "../src/chat-session.js";
+import type { JournalFrame } from "../src/chat-session.js";
 import { ActorServer } from "../src/server.js";
 import { asJsonObject, isString } from "../src/type-guards.js";
 import type { AdapterFactory, AgentAdapter, Provider, TurnInput } from "../src/types.js";
@@ -119,18 +119,18 @@ class FakeCredentials extends CredentialSource {
   }
 }
 
-type Running = { server: ActorServer; journal: Journal; credentials: FakeCredentials; url: string; dir: string };
+type Running = { server: ActorServer; store: ChatSessionStore; credentials: FakeCredentials; url: string; dir: string };
 const running: Running[] = [];
 
 async function start(adapter: AgentAdapter, provider: Provider = "claude"): Promise<Running> {
   const dir = mkdtempSync(join(tmpdir(), "blitz-actor-"));
-  const journal = new Journal(join(dir, "journal.db"));
+  const store = new ChatSessionStore(join(dir, "chat-session.db"));
   const credentials = new FakeCredentials(dir);
   const factory: AdapterFactory = () => adapter;
-  const service = new ActorService(journal, credentials, factory, provider);
+  const service = new ActorService(store, credentials, factory, provider);
   const server = new ActorServer(service, "127.0.0.1", 0, undefined, testAuthenticator(dir));
   const address = (await server.start()) as AddressInfo;
-  const item = { server, journal, credentials, url: `ws://127.0.0.1:${address.port}`, dir };
+  const item = { server, store, credentials, url: `ws://127.0.0.1:${address.port}`, dir };
   running.push(item);
   return item;
 }
@@ -138,7 +138,7 @@ async function start(adapter: AgentAdapter, provider: Provider = "claude"): Prom
 afterEach(async () => {
   for (const item of running.splice(0)) {
     await item.server.close();
-    item.journal.close();
+    item.store.close();
     rmSync(item.dir, { recursive: true, force: true });
   }
 });
@@ -176,9 +176,9 @@ function fixtureBubbleText(frame: Frame | undefined): string {
 describe("ACP actor", () => {
   test("persists the shared attributed-event and session-list fixture shapes", () => {
     const directory = mkdtempSync(join(tmpdir(), "blitz-actor-fixture-"));
-    const journal = new Journal(join(directory, "journal.db"));
+    const store = new ChatSessionStore(join(directory, "chat-session.db"));
     const attributed = fixtureFrames("attribution.jsonl")[2] as JournalFrame;
-    journal.createSession({
+    store.createSession({
       id: "session-attributed",
       provider: "claude",
       cwd: "/workspace",
@@ -186,7 +186,7 @@ describe("ACP actor", () => {
       createdBy: "user-alice",
       updatedAt: Date.parse("2026-08-16T00:00:00.000Z"),
     });
-    const listed = journal.listSessions()[0];
+    const listed = store.listSessions()[0];
     const fixtureInfo = ((fixtureFrames("session-list.jsonl")[1]?.result as { sessions: unknown[] }).sessions[0]);
     expect({
       sessionId: listed?.id,
@@ -194,10 +194,59 @@ describe("ACP actor", () => {
       updatedAt: listed === undefined ? undefined : new Date(listed.updatedAt).toISOString(),
       _meta: { id: listed?.id, provider: listed?.provider, createdBy: listed?.createdBy },
     }).toMatchObject(fixtureInfo as object);
-    journal.append("session-attributed", attributed);
-    expect(JSON.parse(journal.replay("session-attributed", 10)[0]!.frame)).toEqual(attributed);
-    journal.close();
+    store.append("session-attributed", attributed);
+    expect(JSON.parse(store.replay("session-attributed", 10)[0]!.frame)).toEqual(attributed);
+    store.close();
     rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("adopts a reused volume's journal.db and drops the retired tables", () => {
+    const dir = mkdtempSync(join(tmpdir(), "blitz-actor-migrate-"));
+    // A pre-rename journal.db: sessions without the later columns, plus the
+    // three tables the chat_session rename retired.
+    const legacy = new Database(join(dir, "journal.db"));
+    legacy.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        resume_id TEXT,
+        next_seq INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE TABLE events (
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        frame TEXT NOT NULL,
+        PRIMARY KEY (session_id, seq)
+      );
+      CREATE TABLE turns (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, terminal TEXT);
+      CREATE TABLE permissions (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, request TEXT NOT NULL, response TEXT);
+      CREATE TABLE participants (session_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (session_id, user_id));
+    `);
+    const attributed = fixtureFrames("attribution.jsonl")[2];
+    legacy.prepare("INSERT INTO sessions (id, provider, cwd, next_seq) VALUES ('legacy-session', 'claude', '/workspace', 2)").run();
+    legacy.prepare("INSERT INTO events (session_id, seq, frame) VALUES ('legacy-session', 1, ?)").run(JSON.stringify(attributed));
+    legacy.prepare("INSERT INTO turns (id, session_id, terminal) VALUES ('turn-1', 'legacy-session', 'end_turn')").run();
+    legacy.prepare("INSERT INTO permissions (id, session_id, request) VALUES ('perm-1', 'legacy-session', '{}')").run();
+    legacy.prepare("INSERT INTO participants (session_id, user_id) VALUES ('legacy-session', 'user-1')").run();
+    legacy.close();
+    writeFileSync(join(dir, "journal.db-wal"), "");
+    writeFileSync(join(dir, "journal.db-shm"), "");
+
+    const store = new ChatSessionStore(join(dir, "chat-session.db"));
+    for (const leftover of ["journal.db", "journal.db-wal", "journal.db-shm"]) {
+      expect(existsSync(join(dir, leftover)), leftover).toBe(false);
+    }
+    // History survives the file rename, including the legacy column backfill.
+    expect(store.listSessions()).toMatchObject([{ id: "legacy-session", createdBy: "legacy-owner", updatedAt: 0 }]);
+    expect(store.replay("legacy-session", 10).map(({ frame }) => JSON.parse(frame))).toEqual([attributed]);
+    store.close();
+
+    const migrated = new Database(join(dir, "chat-session.db"), { readonly: true });
+    const tables = migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
+    migrated.close();
+    expect(tables).toEqual([{ name: "events" }, { name: "sessions" }]);
+    rmSync(dir, { recursive: true, force: true });
   });
   test("admin drain closes every active websocket", async () => {
     const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } });
@@ -251,8 +300,7 @@ describe("ACP actor", () => {
     const terminal = await client.take((frame) => frame.id === "prompt-fixture");
     expect((terminal.result as { stopReason: string }).stopReason).toBe("end_turn");
     expect(observed.slice(1)).toEqual(updates);
-    expect(item.journal.sequences(sessionId)).toEqual(observed.map((_value, index) => index + 1));
-    expect(item.journal.terminals(sessionId)).toEqual(["end_turn"]);
+    expect(item.store.sequences(sessionId)).toEqual(observed.map((_value, index) => index + 1));
     client.close();
   });
 
@@ -273,14 +321,6 @@ describe("ACP actor", () => {
     });
     viewer.send({ jsonrpc: "2.0", id: "load", method: "session/load", params: { sessionId, cwd: "/workspace", mcpServers: [] } });
     await viewer.take((frame) => frame.id === "load");
-    const participantDatabase = new Database(join(item.dir, "journal.db"), { readonly: true });
-    expect(participantDatabase.prepare(
-      "SELECT user_id, membership_id, role FROM participants WHERE session_id = ? ORDER BY user_id",
-    ).all(sessionId)).toEqual([
-      { user_id: "editor-user", membership_id: "editor-member", role: "editor" },
-      { user_id: "viewer-user", membership_id: "viewer-member", role: "viewer" },
-    ]);
-    participantDatabase.close();
     viewer.send({ jsonrpc: "2.0", id: "viewer-new", method: "session/new", params: { cwd: "/workspace", mcpServers: [] } });
     expect(await viewer.take((frame) => frame.id === "viewer-new")).toHaveProperty("error");
     viewer.send({ jsonrpc: "2.0", id: "viewer-prompt", method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: "no" }] } });
@@ -304,7 +344,6 @@ describe("ACP actor", () => {
     client.send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
     const terminal = await client.take((frame) => frame.id === "turn");
     expect((terminal.result as { stopReason: string }).stopReason).toBe("cancelled");
-    expect(item.journal.terminals(sessionId)).toEqual(["cancelled"]);
     client.close();
   });
 
@@ -330,7 +369,6 @@ describe("ACP actor", () => {
     expect(await client.take((frame) => frame.method === "session/update" && JSON.stringify(frame).includes("Credential mint failed"))).toBeTruthy();
     expect((await client.take((frame) => frame.id === "mint")).result).toEqual({ stopReason: "refusal" });
     expect(calls).toBe(1);
-    expect(item.journal.terminals(sessionId)).toEqual(["refusal", "refusal"]);
     client.close();
   });
 
@@ -371,8 +409,8 @@ describe("ACP actor", () => {
     // Replayed onto tomorrow's attach this would demand a sign-in the session
     // no longer needs, so the frame is live-only: the prose bubble persists,
     // the notification does not. That split is why the fixture carries both.
-    // SAFETY: The journal stores frames this service wrote; the loose Frame shape only reads the method back out.
-    const replayed = item.journal.replay(sessionId, 100).map(({ frame }) => JSON.parse(frame) as Frame);
+    // SAFETY: The store journals frames this service wrote; the loose Frame shape only reads the method back out.
+    const replayed = item.store.replay(sessionId, 100).map(({ frame }) => JSON.parse(frame) as Frame);
     expect(replayed.some(({ method }) => method === "blitz/auth_required")).toBe(false);
     expect(replayed.some((frame) => JSON.stringify(frame).includes(journaledText))).toBe(true);
     client.close();
@@ -489,13 +527,19 @@ describe("ACP actor", () => {
     await first.take((frame) => frame.method === "session/update" && JSON.stringify(frame).includes("allow-once"));
     second.send({ jsonrpc: "2.0", id: request2.id, result: { outcome: { outcome: "selected", optionId: "reject-once" } } });
     await first.take((frame) => frame.id === "turn");
-    expect(item.journal.answeredPermissions(sessionId)).toBe(1);
-    expect(item.journal.pendingPermissions(sessionId)).toEqual([]);
-    const permissionDatabase = new Database(join(item.dir, "journal.db"), { readonly: true });
-    expect(permissionDatabase.prepare(
-      "SELECT responded_by, responded_name FROM permissions WHERE session_id = ?",
-    ).get(sessionId)).toEqual({ responded_by: "legacy-owner", responded_name: "Legacy owner" });
-    permissionDatabase.close();
+    // The late second answer is dropped: replay carries exactly one
+    // blitz/permission_answered frame, attributed to the first responder, so
+    // permission history survives without any side table.
+    // SAFETY: The store journals frames this service wrote; the loose Frame shape only reads the method and params back out.
+    const answered = item.store.replay(sessionId, 100)
+      .map(({ frame }) => JSON.parse(frame) as Frame)
+      .filter((frame) => frame.method === "blitz/permission_answered");
+    expect(answered).toHaveLength(1);
+    expect(answered[0]?.params).toMatchObject({
+      toolCallId: "tool",
+      optionId: "allow-once",
+      actor: { userId: "legacy-owner", name: "Legacy owner" },
+    });
     first.close();
     second.close();
   });
@@ -503,10 +547,10 @@ describe("ACP actor", () => {
   test.each(["claude", "codex"] as const)("creates one %s adapter per session", async (provider) => {
     let factories = 0;
     const dir = mkdtempSync(join(tmpdir(), "blitz-provider-"));
-    const journal = new Journal(join(dir, "journal.db"));
+    const store = new ChatSessionStore(join(dir, "chat-session.db"));
     const credentials = new FakeCredentials(dir);
     const service = new ActorService(
-      journal,
+      store,
       credentials,
       (selected) => {
         expect(selected).toBe(provider);
@@ -523,7 +567,7 @@ describe("ACP actor", () => {
     expect(factories).toBe(1);
     client.close();
     await server.close();
-    journal.close();
+    store.close();
     rmSync(dir, { recursive: true, force: true });
   });
 });
