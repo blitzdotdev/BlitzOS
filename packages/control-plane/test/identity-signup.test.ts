@@ -132,6 +132,49 @@ describe("identity signup gate", () => {
     expect(membership).toEqual({ role: "member", status: "active" });
   });
 
+  it("invite mode leaves no account behind when redemption fails after the gate", async () => {
+    const { app } = harness();
+    const operatorCookie = await operatorSession(app);
+    const minted = await appRequest(app, "/invites", {
+      method: "POST",
+      headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "member" }),
+    });
+    expect(minted.status).toBe(201);
+    const { code } = await minted.json<{ code: string }>();
+
+    // The gate reads the invite; redemption writes it, one round trip later.
+    // Losing that race — a second redeemer, or an admin revoking mid-flight —
+    // is only observable as the write failing after the gate passed, so the
+    // trigger below fails exactly that write and nothing else.
+    await env.DB.prepare(
+      `CREATE TRIGGER invite_taken_concurrently
+       BEFORE UPDATE OF state ON invites WHEN NEW.state = 'redeemed'
+       BEGIN SELECT RAISE(ABORT, 'invite was redeemed concurrently'); END`,
+    ).run();
+    try {
+      const callback = await signIn(app, "raced@example.com", {
+        startPath: `/auth/google/start?invite=${code}`,
+        bindings: { SIGNUP_MODE: "invite" },
+      });
+      expect(callback.status).not.toBe(302);
+    } finally {
+      await env.DB.prepare("DROP TRIGGER invite_taken_concurrently").run();
+    }
+    expect(await userCount("google-raced@example.com")).toBe(0);
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM principals WHERE id NOT IN (SELECT id FROM users)",
+    ).first<number>("count")).toBe(0);
+
+    // The orphan's real damage was the NEXT sign-in: the existing-user branch
+    // never consults the gate, so a surviving row is a permanent bypass.
+    const retry = await signIn(app, "raced@example.com", {
+      bindings: { SIGNUP_MODE: "invite" },
+    });
+    expect(retry.status).toBe(403);
+    expect(await userCount("google-raced@example.com")).toBe(0);
+  });
+
   it("invite mode still signs in an existing user without an invite", async () => {
     const { app } = harness();
     await seedUser("veteran", "veteran@example.com");

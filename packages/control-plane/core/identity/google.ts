@@ -186,17 +186,33 @@ async function activeMembership(db: Db, userId: string): Promise<MembershipRow |
   });
 }
 
+/** Removes the rows a sign-in just created. Called only when the invite that
+ * admitted a brand-new account then fails to redeem: the account must not
+ * outlive its invite, because the existing-user branch of resolveUser never
+ * consults the signup gate again, and a survivor is grandfathered into an
+ * invite-only deployment forever. A fresh account owns nothing else, so the
+ * four tables below are the whole footprint. */
+async function deleteProvisionalUser(db: Db, userId: string): Promise<void> {
+  await transaction(db, [
+    { q: "DELETE FROM sessions WHERE principal_id = ?1", v: [userId] },
+    { q: "DELETE FROM memberships WHERE user_id = ?1", v: [userId] },
+    { q: "DELETE FROM users WHERE id = ?1", v: [userId] },
+    { q: "DELETE FROM principals WHERE id = ?1", v: [userId] },
+  ]);
+}
+
 async function resolveUser(
   db: Db,
   profile: GoogleProfile,
   now: number,
   bootstrapEnabled: boolean,
   gate: { requireInvite: boolean; inviteCode: string | undefined },
-): Promise<UserRow> {
+): Promise<{ user: UserRow; created: boolean }> {
   let user = await first<UserRow>(db, {
     q: "SELECT id, platform_operator, name FROM users WHERE google_user_id = ?1 LIMIT 1",
     v: [profile.googleUserId],
   });
+  const created = user === null;
   if (user !== null) {
     const emailOwner = await first<{ id: string }>(db, {
       q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
@@ -274,7 +290,7 @@ async function resolveUser(
     v: [user.id],
   });
   if (refreshed === null) throw new Error("Google user disappeared during login");
-  return refreshed;
+  return { user: refreshed, created };
 }
 
 async function bootstrapMembership(
@@ -415,7 +431,7 @@ export function addGoogleAuthRoutes(
     assertAllowedEmailDomain(policy, profile.email);
     const bootstrapEnabled =
       state.bootstrap === true && runtime.vars.bootstrapSecret !== "";
-    const user = await resolveUser(
+    const { user, created } = await resolveUser(
       runtime.db,
       profile,
       now,
@@ -434,15 +450,23 @@ export function addGoogleAuthRoutes(
     }
     const token = randomToken();
     if (state.inviteCode !== undefined) {
-      await redeemInviteSession(
-        runtime.db,
-        state.inviteCode,
-        user.id,
-        profile.email,
-        await hashSecret(token),
-        runtime.vars.sessionTtlMs,
-        now,
-      );
+      try {
+        await redeemInviteSession(
+          runtime.db,
+          state.inviteCode,
+          user.id,
+          profile.email,
+          await hashSecret(token),
+          runtime.vars.sessionTtlMs,
+          now,
+        );
+      } catch (error) {
+        // hasRedeemableInvite only pre-checked the invite; redemption can
+        // still lose a race for a single-use code, or find the invite
+        // revoked. The account this invite admitted must not survive it.
+        if (created) await deleteProvisionalUser(runtime.db, user.id);
+        throw error;
+      }
     } else {
       await rows(runtime.db, {
         q: `INSERT INTO sessions
