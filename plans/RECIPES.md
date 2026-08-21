@@ -170,6 +170,46 @@ the object.
    workspace. A human can open a routine mid-run, watch the terminal, answer a
    permission prompt, or take over. Cloud-agent products cannot offer this;
    lean into it in the product language.
+8. **Workspace snapshots.** *(Direction accepted 2026-08-21 — see the section
+   below.)* Frozen `/workspace` trees in R2 make re-execution evals possible:
+   put a new agent into a predecessor's starting state and grade the diff.
+
+## Workspace snapshots (accepted direction, 2026-08-21)
+
+Why: capture saves the trajectory, not the world. A transcript shows what
+agent A did. It does not preserve the state A started from. So today an eval
+can only judge A's transcript after the fact. It cannot re-run agent B on the
+same task from the same starting conditions. Snapshots close that gap.
+
+Mechanism — every step is an existing primitive:
+
+- A snapshot is the `/workspace` tree copied to an R2 prefix,
+  `snapshots/<workspace-id>/<label>/`. The walk is the same budgeted WebDAV
+  read `usage-push` uses, pointed at `/workspace`.
+- Restore is the existing R2 → guest materialization path Drive sync already
+  runs (`MKCOL` + `PUT`) into a fresh workspace.
+- Two labels per recipe run: `initial`, taken after the setup script and
+  before prompt delivery (the bootstrap already has that exact hook point),
+  and `final`, taken at turn end.
+- The re-execution eval loop: launch from the same template → materialize
+  `initial` → send the same prompt → grade the resulting tree against `final`
+  or a task grader.
+
+Accepted limits (the thin version):
+
+- `/workspace` only. The agent HOME is deliberately excluded — a fresh agent
+  brain is the point of the eval.
+- OS state outside `/workspace` (mid-task apt installs, Docker images) is not
+  captured. This is a feature: it forces environments to be declared in the
+  template's startup script, which is what makes them reproducible at all.
+- Needs an ignore list (`node_modules`, build dirs); the sync budgets already
+  exist, the excludes are new.
+- v0 shortcut for coding tasks: pin a git SHA as the initial state and grade
+  the diff — cheaper than tree copies, covers repo work only.
+
+Not chosen: block-level snapshots (Hetzner volume snapshots, Firecracker
+snapshot/restore). Full fidelity, but provider-specific, costly, and microVM
+has no volume support — the opposite of thin.
 
 ## Decisions
 
@@ -223,7 +263,8 @@ re-verify against main while implementing.
 
 ## Out of scope
 
-- VM snapshots / commit-image.
+- Block-level VM snapshots / commit-image (tree snapshots are the planned
+  substitute — see "Workspace snapshots" above).
 - Raising `orgs.vm_limit`; batch surfaces the 409.
 - An eval runner or scoring UI — evals are files in Drive; running them is
   another recipe.
