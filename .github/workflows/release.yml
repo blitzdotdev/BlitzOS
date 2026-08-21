@@ -68,6 +68,74 @@ jobs:
             ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:${{ github.ref_name }}
             ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:latest
 
+  # Deploys the control plane pinned to the box image this run just pushed, so
+  # a version tag is a complete release with no manual publish step. Opt-in via
+  # two repository secrets (docs/BOX-IMAGE.md § Automatic releases); without
+  # them the job skips with a notice, so forks and CI-only checkouts are
+  # unaffected. Secrets stay in Cloudflare: the deploy only checks their
+  # presence with `wrangler secret list`.
+  deploy-control-plane:
+    name: Deploy control plane with the released box image
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for deploy configuration
+        id: gate
+        env:
+          PROD_WRANGLER_TOML: ${{ secrets.PROD_WRANGLER_TOML }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$PROD_WRANGLER_TOML" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Control-plane deploy skipped: set the PROD_WRANGLER_TOML and CLOUDFLARE_API_TOKEN repository secrets to deploy on tag pushes (docs/BOX-IMAGE.md)."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: steps.gate.outputs.configured == 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.gate.outputs.configured == 'true'
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+        if: steps.gate.outputs.configured == 'true'
+      - name: Write the deployment wrangler.toml
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          PROD_WRANGLER_TOML: ${{ secrets.PROD_WRANGLER_TOML }}
+        run: printf '%s\n' "$PROD_WRANGLER_TOML" > packages/control-plane/wrangler.toml
+      - name: Pin the released box image
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          IMAGE_OWNER: ${{ needs.images.outputs.image-owner }}
+          BOX_DIGEST: ${{ needs.images.outputs.box-digest }}
+        run: node packages/control-plane/scripts/set-box-image-ref.mjs --ref "ghcr.io/$IMAGE_OWNER/blitz-box@$BOX_DIGEST"
+      # VM bootstraps pull with no registry login, and GHCR packages are
+      # born private, so deploying an unpullable digest would break every new
+      # workspace. Failing here leaves the deployment on its previous image —
+      # flip the package public (one-time) and re-run this job.
+      - name: Verify the image is publicly pullable
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          IMAGE_OWNER: ${{ needs.images.outputs.image-owner }}
+          BOX_DIGEST: ${{ needs.images.outputs.box-digest }}
+        run: |
+          token="$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${IMAGE_OWNER}/blitz-box:pull" | jq -r '.token // empty')"
+          code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/${IMAGE_OWNER}/blitz-box/manifests/${BOX_DIGEST}")"
+          if [ "$code" != "200" ]; then
+            echo "::error::ghcr.io/${IMAGE_OWNER}/blitz-box is not publicly pullable (manifest HTTP $code). Make the package public (Package settings → Danger zone → Change visibility), then re-run this job. Not deploying an image workspaces cannot pull."
+            exit 1
+          fi
+      - name: Deploy
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy -w packages/control-plane
+
   release-notes:
     name: Add image digests to GitHub Release
     needs: images
