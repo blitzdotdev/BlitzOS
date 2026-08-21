@@ -2,10 +2,13 @@ import { env } from "cloudflare:test";
 import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { API_PREFIXES } from "../scripts/build-blitzdev.mjs";
-import wranglerToml from "../wrangler.toml?raw";
+// The committed template, never the gitignored wrangler.toml: a local copy
+// is per-deployment and may have drifted, which would make this gate report
+// on a file no other clone has.
+import wranglerExample from "../wrangler.toml.example?raw";
 
 // The managed-worker prefix check is vendor-only (blitz.dev deployment);
-// the standalone wrangler.toml check below always runs.
+// the wrangler.toml.example check below always runs.
 const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
 const coreSources = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"], {
@@ -54,7 +57,7 @@ function requiredCoreSegments(): string[] {
 
 describe("core route asset precedence", () => {
   it("runs every core route segment through the standalone Worker", () => {
-    const config = parse(wranglerToml);
+    const config = parse(wranglerExample);
     // SAFETY: The array and every entry are validated immediately below before use.
     const assets = config.assets as AssetRoutingConfig;
     const runWorkerFirst = assets.run_worker_first;

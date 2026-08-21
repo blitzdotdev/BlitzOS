@@ -21,6 +21,11 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint:gate
       - run: npm test
+        # The CORE_MANIFEST <-> API_PREFIXES drift gate and the other
+        # managed-toolchain suites need no secrets, only this opt-in. Without
+        # it six suites skip and the drift they guard ships unnoticed.
+        env:
+          BLITZDEV_MANAGED: "1"
 
   broker:
     name: Go broker
