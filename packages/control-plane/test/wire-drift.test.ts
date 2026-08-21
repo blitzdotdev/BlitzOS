@@ -408,6 +408,16 @@ describe("local wire copies", () => {
     expect(wire.AGENT_PROVIDERS).toEqual(schema.AGENT_PROVIDERS);
     expect(wire.AGENT_MODELS).toEqual(schema.AGENT_MODELS);
     expect(wire.AGENT_EFFORTS).toEqual(schema.AGENT_EFFORTS);
+    expect(wire.AGENT_MODEL_EFFORTS).toEqual(schema.AGENT_MODEL_EFFORTS);
+    // The helper too: same effective list for every catalog model and for the
+    // absent-model (provider base) case, on both sides.
+    for (const provider of schema.AGENT_PROVIDERS) {
+      expect(wire.agentEffortsForModel(provider)).toEqual(schema.agentEffortsForModel(provider));
+      for (const model of schema.AGENT_MODELS[provider]) {
+        expect(wire.agentEffortsForModel(provider, model))
+          .toEqual(schema.agentEffortsForModel(provider, model));
+      }
+    }
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);

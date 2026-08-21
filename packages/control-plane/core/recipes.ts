@@ -15,6 +15,7 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import {
   AGENT_MODELS,
   AGENT_PROVIDERS,
+  agentEffortsForModel,
   RECIPE_HARNESSES,
   type AgentProvider,
   type CreateRecipeRequest,
@@ -104,6 +105,17 @@ function parseRecipe(value: JsonValue): CreateRecipeRequest {
     }
   } else if (provider !== null && provider !== result.harness) {
     throw new HttpError(400, `a ${result.harness} recipe may only pin a ${result.harness} model`);
+  }
+  // Effort ↔ catalog gate: the shell-safety pattern above bounds the bytes;
+  // this bounds the value to the pinned model's effective effort list, or to
+  // the provider base when no model is pinned. Chat always has a provider
+  // here — the model requirement above already threw without one.
+  const effortProvider = result.harness === "chat" ? provider : result.harness;
+  if (result.effort !== undefined && effortProvider !== null) {
+    const efforts = agentEffortsForModel(effortProvider, result.model);
+    if (!efforts.includes(result.effort)) {
+      throw new HttpError(400, `effort must be one of: ${efforts.join(", ")}`);
+    }
   }
   return result;
 }

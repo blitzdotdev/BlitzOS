@@ -34,6 +34,13 @@ describe("agent config selectors", () => {
       .some(({ value }) => value === "bypassPermissions")).toBe(true);
     expect(codex.at(-1)?.type === "select" && codex.at(-1)?.options
       .some(({ value }) => value === "never")).toBe(true);
+    // The newest claude model leads the list, right after Default.
+    expect(claude[0]?.type === "select" && claude[0]?.options[1])
+      .toEqual({ value: "claude-fable-5", name: "Fable 5" });
+    // Codex offers the cross-model superset here; the schema catalog narrows
+    // per model and the harness rejects unsupported combos at runtime.
+    expect(codex[1]?.type === "select" && codex[1]?.options.map(({ value }) => value))
+      .toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
   });
 
   it("maps claude effort choices to SDK levels and leaves default alone", () => {

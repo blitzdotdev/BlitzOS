@@ -211,6 +211,7 @@ describe('create recipe screen', () => {
 
     expect([...select(view, 'Model').options].map((option) => option.textContent)).toEqual([
       'Harness default',
+      'claude-fable-5',
       'claude-opus-5',
       'claude-sonnet-5',
       'claude-haiku-4-5-20251001',
@@ -278,13 +279,14 @@ describe('create recipe screen', () => {
     const model = select(view, 'Model');
     expect([...model.options].map((option) => option.textContent)).toEqual([
       'Choose a model…',
-      'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001',
+      'claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001',
       'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra',
       'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark',
     ]);
     await choose(model, 'gpt-5.6-sol');
+    // sol carries the full extension: base + max + ultra.
     expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
-      'Default', 'low', 'medium', 'high',
+      'Default', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra',
     ]);
     await choose(select(view, 'Effort'), 'high');
     await submit(view);
@@ -307,19 +309,50 @@ describe('create recipe screen', () => {
   it('drops a model and effort the next harness cannot run', async () => {
     const { view } = await screenWith();
     await choose(select(view, 'Model'), 'claude-opus-5');
-    await choose(select(view, 'Effort'), 'xhigh');
+    // `max` is claude-wide but outside the codex base, so the switch drops it.
+    await choose(select(view, 'Effort'), 'max');
 
     await choose(select(view, 'Harness'), 'codex');
     expect(select(view, 'Model').value).toBe('');
     expect(select(view, 'Effort').value).toBe('');
+    // No model pinned: the codex provider base.
     expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
-      'Default', 'low', 'medium', 'high',
+      'Default', 'low', 'medium', 'high', 'xhigh',
     ]);
 
     // Chat accepts any catalog model, so a codex pick survives the switch.
     await choose(select(view, 'Model'), 'gpt-5.6-sol');
     await choose(select(view, 'Harness'), 'chat');
     expect(select(view, 'Model').value).toBe('gpt-5.6-sol');
+    await view.unmount();
+  });
+
+  it('scopes efforts to the pinned codex model and resets an orphaned tier', async () => {
+    const { view } = await screenWith();
+    await choose(select(view, 'Harness'), 'codex');
+    await choose(select(view, 'Model'), 'gpt-5.6-sol');
+    await choose(select(view, 'Effort'), 'ultra');
+
+    // terra also grants ultra, so the pick survives that model change.
+    await choose(select(view, 'Model'), 'gpt-5.6-terra');
+    expect(select(view, 'Effort').value).toBe('ultra');
+
+    // gpt-5.5 is base-only: the list narrows and the orphaned ultra resets.
+    await choose(select(view, 'Model'), 'gpt-5.5');
+    expect(select(view, 'Effort').value).toBe('');
+    expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
+      'Default', 'low', 'medium', 'high', 'xhigh',
+    ]);
+
+    // luna grants max but not ultra.
+    await choose(select(view, 'Model'), 'gpt-5.6-luna');
+    expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
+      'Default', 'low', 'medium', 'high', 'xhigh', 'max',
+    ]);
+    // A base tier survives dropping back to the harness default.
+    await choose(select(view, 'Effort'), 'xhigh');
+    await choose(select(view, 'Model'), '');
+    expect(select(view, 'Effort').value).toBe('xhigh');
     await view.unmount();
   });
 

@@ -1,6 +1,6 @@
 import {
-  AGENT_EFFORTS,
   AGENT_MODELS,
+  agentEffortsForModel,
   agentProviderForModel,
   RECIPE_HARNESSES,
   type AgentProvider,
@@ -80,7 +80,9 @@ export function CreateRecipeScreen({
   }, [client, editRecipeId]);
 
   const provider = recipeProvider(harness, model);
-  const efforts = provider === null ? [] : AGENT_EFFORTS[provider];
+  // The effort list follows the pinned model (AGENT_MODEL_EFFORTS); with no
+  // model pinned it falls back to the provider base.
+  const efforts = provider === null ? [] : agentEffortsForModel(provider, model);
   const chatNeedsModel = harness === 'chat' && model === '';
   const ready = name.trim() !== ''
     && templateId !== ''
@@ -97,7 +99,7 @@ export function CreateRecipeScreen({
       : (AGENT_MODELS[next].some((candidate) => candidate === model) ? model : '');
     setModel(nextModel);
     const nextProvider = recipeProvider(next, nextModel);
-    if (nextProvider === null || !AGENT_EFFORTS[nextProvider].some((candidate) => candidate === effort)) {
+    if (nextProvider === null || !agentEffortsForModel(nextProvider, nextModel).some((candidate) => candidate === effort)) {
       setEffort('');
     }
   };
@@ -105,7 +107,7 @@ export function CreateRecipeScreen({
   const pickModel = (next: string) => {
     setModel(next);
     const nextProvider = recipeProvider(harness, next);
-    if (nextProvider === null || !AGENT_EFFORTS[nextProvider].some((candidate) => candidate === effort)) {
+    if (nextProvider === null || !agentEffortsForModel(nextProvider, next).some((candidate) => candidate === effort)) {
       setEffort('');
     }
   };

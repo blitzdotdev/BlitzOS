@@ -183,6 +183,13 @@ describe("recipes", () => {
       [{ ...base, harness: "codex", model: "claude-opus-5" }, 400, "codex recipe with a claude model"],
       [{ ...base, harness: "claude", effort: "hi gh" }, 400, "effort with whitespace"],
       [{ ...base, harness: "claude", effort: "x'high" }, 400, "effort with a quote"],
+      // Shell-safe but outside the catalog: agentEffortsForModel gates the
+      // value against the pinned model, or the provider base without one.
+      [{ ...base, harness: "claude", effort: "ultra" }, 400, "no claude model has ultra"],
+      [{ ...base, harness: "codex", effort: "max" }, 400, "max needs a gpt-5.6 model pinned"],
+      [{ ...base, harness: "codex", model: "gpt-5.5", effort: "ultra" }, 400, "ultra outside gpt-5.5's efforts"],
+      [{ ...base, harness: "codex", model: "gpt-5.6-luna", effort: "ultra" }, 400, "ultra is sol/terra only"],
+      [{ ...base, harness: "chat", model: "gpt-5.6-luna", effort: "ultra" }, 400, "chat gates on the pinned model too"],
       [{ ...base, harness: "claude", templateId: "missing" }, 404, "unknown template"],
       [{ ...base, harness: "claude", prompt: "" }, 400, "empty prompt"],
     ];
@@ -191,9 +198,14 @@ describe("recipes", () => {
     }
 
     // Valid pairings pass: harness-matching model, and codex/claude models on chat.
+    expect((await createRecipe(app, cookie, { ...base, harness: "claude", model: "claude-fable-5" })).status).toBe(201);
     expect((await createRecipe(app, cookie, { ...base, harness: "claude", model: "claude-opus-5" })).status).toBe(201);
     expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5.6-sol", effort: "low" })).status).toBe(201);
     expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5.6-sol" })).status).toBe(201);
+    // Extended tiers pass exactly where the model grants them.
+    expect((await createRecipe(app, cookie, { ...base, harness: "codex", effort: "xhigh" })).status).toBe(201);
+    expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5.6-terra", effort: "ultra" })).status).toBe(201);
+    expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5.6-luna", effort: "max" })).status).toBe(201);
 
     // Another org can neither see this org's recipes nor build on its template.
     const stranger = await userSession("stranger");
