@@ -219,3 +219,16 @@ test("CLI rejects a tag the manifest contract rejects, before any work happens",
   assert.match(run.stderr, /--image is not a valid image tag/u);
   assert.match(run.stderr, /Usage:/u);
 });
+
+// docs/BOX-IMAGE.md sends readers here for the option list, so --help is a
+// documented entry point: it must print usage on stdout and exit 0, not fall
+// through to the unknown-argument path.
+test("CLI --help prints the option list and succeeds", () => {
+  for (const flag of ["--help", "-h"]) {
+    const run = spawnSync(process.execPath, [scriptPath, flag], { encoding: "utf8" });
+    assert.equal(run.status, 0, flag);
+    assert.equal(run.stderr, "", flag);
+    assert.match(run.stdout, /Usage:/u);
+    assert.match(run.stdout, /--part-size-mb/u);
+  }
+});

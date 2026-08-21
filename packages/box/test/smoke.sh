@@ -1,21 +1,14 @@
 #!/usr/bin/env bash
-# Image selection (override with IMAGE=<tag>):
-#   IMAGE set    -> smoke-test that tag as-is (never builds).
-#   IMAGE unset  -> use blitz-box:local when that tag already exists locally,
-#                   otherwise build a fresh blitz-box:smoke from this tree.
+# This is the only gate that exercises the s6 service graph, so it builds from
+# this tree by default: silently adopting an existing tag lets an edit to
+# rootfs/ or an s6 unit pass against an image that predates it. Reusing an
+# image is possible but must be said out loud: IMAGE=<tag> tests that tag
+# as-is and never builds.
 set -euo pipefail
 
 script_dir=$(realpath "$(dirname "$0")")
 repo_root=$(realpath "$script_dir/../../..")
-build_image=false
-if [ -n "${IMAGE:-}" ]; then
-  image="$IMAGE"
-elif docker image inspect blitz-box:local >/dev/null 2>&1; then
-  image="blitz-box:local"
-else
-  image="blitz-box:smoke"
-  build_image=true
-fi
+image="${IMAGE:-blitz-box:smoke}"
 container="blitz-box-smoke-$$"
 state_volume="blitz-box-smoke-state-$$"
 unprivileged_container="blitz-box-smoke-unprivileged-$$"
@@ -63,7 +56,7 @@ fail() {
 }
 trap 'fail "unexpected command failure at line $LINENO"' ERR
 
-if [ "$build_image" = true ]; then
+if [ -z "${IMAGE:-}" ]; then
   docker build --progress=plain \
     --file "$repo_root/packages/box/Dockerfile" \
     --tag "$image" \

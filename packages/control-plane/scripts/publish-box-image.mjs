@@ -52,7 +52,8 @@ Options:
                        (default: APP_URL in wrangler.toml).
   --part-size-mb <n>   Part size in MiB, at least 1 (default ${DEFAULT_PART_SIZE_MIB}).
   --dry-run            Build and verify the release and print the values; skip the
-                       upload.`;
+                       upload.
+  --help, -h           Print this text.`;
 }
 
 export function boxImagePartName(index) {
@@ -177,9 +178,14 @@ function parseCli(argv) {
     appUrl: undefined,
     partSizeMib: DEFAULT_PART_SIZE_MIB,
     dryRun: false,
+    help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
+    if (arg === "--help" || arg === "-h") {
+      options.help = true;
+      return options;
+    }
     if (arg === "--dry-run") {
       options.dryRun = true;
       continue;
@@ -281,9 +287,12 @@ async function runWrangler(args) {
     throw new Error(`wrangler binary is missing at ${WRANGLER_BIN}; run npm install first`);
   }
   await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(WRANGLER_BIN, args, {
+    // --config and CI=1 match scripts/deploy-helpers.mjs: without the config
+    // wrangler picks an account from ambient state, and without CI it can stop
+    // to prompt for one, which an upload loop cannot answer.
+    const child = spawn(WRANGLER_BIN, [...args, "--config", WRANGLER_CONFIG_PATH], {
       cwd: REPO_ROOT,
-      env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
+      env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
       stdio: ["ignore", "inherit", "inherit"],
     });
     child.once("error", rejectRun);
@@ -310,6 +319,12 @@ async function uploadRelease(assetSet, bucket) {
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseCli(argv);
+  // docs/BOX-IMAGE.md points readers here for the option list, so --help is a
+  // documented entry point and must succeed.
+  if (options.help) {
+    process.stdout.write(`${usage()}\n`);
+    return;
+  }
   const defaults = await wranglerConfigDefaults();
   const bucket = options.bucket ?? defaults.bucket ?? DEFAULT_BUCKET;
   // wrangler.toml may still hold the wrangler.toml.example placeholder text;

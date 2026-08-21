@@ -173,29 +173,13 @@ docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:loca
 packages/box/test/smoke.sh
 ```
 
-With `IMAGE` unset, `smoke.sh` tests `blitz-box:local` when that tag already
-exists locally (as after the build above) and otherwise builds its own
-throwaway image tagged `blitz-box:smoke`. Set `IMAGE=<tag>` to smoke-test a
-specific image.
+With `IMAGE` unset, `smoke.sh` builds its own image tagged `blitz-box:smoke`
+from this tree — it is the only gate that runs the s6 service graph, so it
+never adopts a tag that might predate your edits. `IMAGE=<tag>` smoke-tests
+that image instead and skips the build.
 
 To run the local image, use the [Install](#install) `docker run` command with
-`blitz-box:local` in place of the registry reference:
-
-```sh
-docker volume create blitz-box-state
-docker run -d \
-  --name blitz-box \
-  --restart unless-stopped \
-  --privileged \
-  --env-file env.defaults \
-  -e BLITZ_UID="$(id -u)" \
-  -e BLITZ_GID="$(id -g)" \
-  --mount type=volume,source=blitz-box-state,target=/var/lib/blitz \
-  --mount type=bind,source="$PWD",target=/workspace \
-  --mount type=bind,source="$HOME/.ssh/id_ed25519.pub",target=/run/blitz/authorized_key,readonly \
-  -p 127.0.0.1:2222:22 \
-  blitz-box:local
-```
+`blitz-box:local` in place of the registry reference.
 
 Publishing the image for workspace VMs — registry or R2 archive — is covered
 in [docs/BOX-IMAGE.md](../../docs/BOX-IMAGE.md).

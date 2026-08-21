@@ -5,7 +5,7 @@ terminal, the ACP chat actor, the files/preview gateway, and Docker-in-Docker
 ([packages/box](../packages/box/README.md)). At boot, the VM's bootstrap
 fetches the image named by the three `BOX_IMAGE_*` vars in
 `packages/control-plane/wrangler.toml`. This page covers building the image,
-the three ways to serve it, and how upgrades behave.
+the two ways to serve it, and how upgrades behave.
 
 Part of the [self-host guide](SELF-HOST.md) (step 9).
 
@@ -14,11 +14,10 @@ Part of the [self-host guide](SELF-HOST.md) (step 9).
 | Mode | `BOX_IMAGE_REF` | `BOX_IMAGE_TAG` | `BOX_IMAGE_SHA256` | Choose when |
 |---|---|---|---|---|
 | **A — registry** (recommended) | immutable image reference, e.g. `ghcr.io/<owner>/blitz-box@sha256:<digest>` | `""` | `""` | You can publish the image publicly. Simplest, multi-arch, no R2 plumbing. |
-| **B — single R2 archive** | `<your-worker-origin>/box-image` | the tag inside the archive | SHA-256 of the gzipped archive | The image must stay out of a registry and fits one reliable upload. |
-| **C — multipart R2 archive** | `<your-worker-origin>/box-image/manifest.json` | the manifest's `imageTag` | the concatenated-archive digest (equals `totalSha256`) | Same as B, but the archive is too large for one upload; parts keep each object small. |
+| **B — R2 archive** | `<your-worker-origin>/box-image/manifest.json` | the manifest's `imageTag` | the concatenated-archive digest (equals `totalSha256`) | The image must stay out of a registry. The archive is split into parts, so its size does not matter. |
 
-In modes B and C the archive lives in your `blitz-box-images` R2 bucket and is
-served by your own Worker. **Both image routes are intentionally public** — the
+In mode B the archive lives in your `blitz-box-images` R2 bucket and is served
+by your own Worker. **Both image routes are intentionally public** — the
 VM bootstrap fetches them with no credential, so anyone with your Worker URL
 can download the archive. The same is true of mode A: the bootstrap runs
 `docker pull` with no registry login, so **the registry image must be publicly
@@ -53,7 +52,7 @@ The workflow appends the immutable digests to the GitHub release notes. Then:
 Pin by digest, not by tag: the VM pulls whatever the reference resolves to at
 boot, and a digest is the only immutable reference.
 
-## Modes B and C: host the archive in R2
+## Mode B: host the archive in R2
 
 Build the image (see below), then publish it with the packaging script:
 
@@ -66,19 +65,23 @@ computes the per-part and total SHA-256 digests, writes the `manifest.json`,
 uploads everything to the `blitz-box-images` bucket with `wrangler r2 object
 put`, and prints the exact `BOX_IMAGE_*` values to set. Copy them into
 `wrangler.toml` and redeploy. Add `--dry-run` to build and verify the release
-without uploading; `--help`-style details (`--archive`, `--out`, `--bucket`,
-`--app-url`, `--part-size-mb`) are in the script's usage text.
+without uploading. The remaining options (`--archive`, `--out`, `--bucket`,
+`--app-url`, `--part-size-mb`) are listed by `--help`.
 
-What lands in R2 (mode C):
+What lands in R2:
 
 - `box-image/manifest.json` —
   `{"parts":[{"name":"part-000","sha256":"<64 hex>"}, …],"totalSha256":"<64 hex>","imageTag":"blitz-box:<tag>"}`
 - `box-image/<part-name>` for every part.
 
-Mode B is the degenerate case: one gzipped archive at R2 key `box-image`, no
-manifest. The manifest shape is a cross-runtime contract — the fixture corpus
-in `packages/schema/fixtures/box-image-manifest/` is its source of truth; do
-not hand-edit one side.
+A single-part archive is just a manifest with one part, so there is no
+separate "small archive" mode to choose. The Worker still serves an
+unsplit archive at `GET /box-image` for deployments configured that way
+before the packaging script existed; nothing produces one now.
+
+The manifest shape is a cross-runtime contract — the fixture corpus in
+`packages/schema/fixtures/box-image-manifest/` is its source of truth; do not
+hand-edit one side.
 
 **Single-arch warning.** A `docker save` archive carries one architecture.
 An amd64 archive boots amd64 machines only. Keep the archive's architecture
@@ -104,24 +107,10 @@ colima start --cpu 4 --memory 8
 unset DOCKER_HOST
 ```
 
-Run the image you built (same shape as the install command in the
-[box README](../packages/box/README.md), pointed at the local tag):
-
-```sh
-docker volume create blitz-box-state
-docker run -d \
-  --name blitz-box \
-  --restart unless-stopped \
-  --privileged \
-  --env-file env.defaults \
-  -e BLITZ_UID="$(id -u)" \
-  -e BLITZ_GID="$(id -g)" \
-  --mount type=volume,source=blitz-box-state,target=/var/lib/blitz \
-  --mount type=bind,source="$PWD",target=/workspace \
-  --mount type=bind,source="$HOME/.ssh/id_ed25519.pub",target=/run/blitz/authorized_key,readonly \
-  -p 127.0.0.1:2222:22 \
-  blitz-box:local
-```
+Run the image you built with the `docker run` command in the box README's
+[Install](../packages/box/README.md#install) section, substituting
+`blitz-box:local` for the registry reference. That command is the one canonical
+copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 
 ## Smoke test
 
@@ -130,16 +119,17 @@ key-only SSH, ttyd/tmux, ACP, files, ports, previews, DinD, and the
 unprivileged degradation path.
 
 ```sh
-# Test a specific image:
-IMAGE=blitz-box:local packages/box/test/smoke.sh
-
-# With IMAGE unset the script tests blitz-box:local when that tag already
-# exists locally; otherwise it builds a throwaway blitz-box:smoke first:
+# Builds a throwaway blitz-box:smoke from this tree, then tests it:
 packages/box/test/smoke.sh
+
+# Tests an image you already have, and never builds:
+IMAGE=blitz-box:local packages/box/test/smoke.sh
 ```
 
-After `docker build -t blitz-box:local`, a plain `packages/box/test/smoke.sh`
-therefore tests that image without a redundant second build.
+Building is the default on purpose. This is the only gate that runs the s6
+service graph, so a run that silently adopted an existing tag could pass an
+edit to `rootfs/` or an s6 unit against an image that predates it. `IMAGE=`
+skips the build, and then the freshness of that tag is yours to guarantee.
 
 ## Upgrade and rollback
 
