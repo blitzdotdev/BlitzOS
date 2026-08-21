@@ -1,10 +1,26 @@
-import type { CatalogEntryView, PutUserGrantRequest } from '@blitzos/schema';
+import type { CatalogEntryView, Custody, PutUserGrantRequest } from '@blitzos/schema';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { ControlPlaneClient } from '../api';
 
 import { caughtErrorMessage } from '../error-message';
 
 const GENERIC_ID = 'generic';
+
+/** Where the key sits once a lease is minted. The words match what a lease row
+ * already prints as its mode, so the badge teaches the same vocabulary. */
+const CUSTODY_BADGE = {
+  cp: 'injected',
+  broker: 'brokered',
+  proxy: 'proxied',
+} satisfies Record<Custody, string>;
+
+/** Information wants a glyph, not a box: an outlined mark keeps a notice from
+ * reading as a disabled input. */
+function InfoGlyph() {
+  return (
+    <svg className="connect-note__glyph" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.1" /><path d="M8 7.3v3.5" /><path d="M8 5.1h.01" /></svg>
+  );
+}
 
 /** Exactly what connecting needs. Narrow so the create-workspace dialog can
  * host the same component without taking the whole client surface. */
@@ -117,82 +133,105 @@ export function ConnectPicker({
 
   return (
     <section className="settings-credential-section connect-picker" aria-label="Connect a provider">
-      <div className="settings-section-heading">
+      <div className="settings-section-heading connect-picker__heading">
         <div><p>Your account</p><h2>Connect</h2></div>
+        {catalog.length > 0 && <span>{catalog.length} available</span>}
       </div>
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {loading ? (
-        <p className="settings-credential-state">Loading providers…</p>
+        <p className="connect-state">Loading providers…</p>
       ) : (
-        <div className="settings-template-grid">
-          {catalog.map((entry) => (
-            <button
-              className={entry.id === selectedId
-                ? 'settings-template-card settings-template-card--active'
-                : 'settings-template-card'}
-              type="button"
-              key={entry.id}
-              aria-pressed={entry.id === selectedId}
-              onClick={() => choose(entry)}
-            >
-              <strong>{entry.title}</strong>
-              <small>{entry.summary}</small>
-            </button>
-          ))}
+        <div className="connect-grid">
+          {catalog.map((entry) => {
+            const active = entry.id === selectedId;
+            return (
+              <button
+                className={active ? 'connect-card connect-card--active' : 'connect-card'}
+                type="button"
+                key={entry.id}
+                aria-pressed={active}
+                onClick={() => choose(entry)}
+              >
+                <span className="connect-card__title">{entry.title}</span>
+                <span className="connect-card__summary">{entry.summary}</span>
+                <span className="connect-card__badges">
+                  {entry.oauthAvailable && <span className="connect-badge">OAuth</span>}
+                  {entry.personalTokenLabel !== null && <span className="connect-badge">API key</span>}
+                  <span className="connect-badge connect-badge--quiet">{CUSTODY_BADGE[entry.custody]}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
       {selected !== null && (
-        <>
+        <div className="connect-detail">
+          <div className="connect-detail__head">
+            <h3>{selected.title}</h3>
+            <p>{selected.summary}</p>
+          </div>
+
           {selected.scopes.length > 0 && (
             <fieldset className="connect-scopes">
-              <legend>What this connection lets an agent do</legend>
-              {selected.scopes.map((scope) => (
-                <label key={scope.id}>
-                  <input
-                    type="checkbox"
-                    name="scope"
-                    value={scope.id}
-                    checked={scopes.includes(scope.id)}
-                    onChange={(event) => setScopes((current) => (
-                      event.currentTarget.checked
-                        ? [...new Set([...current, scope.id])]
-                        : current.filter((entry) => entry !== scope.id)
-                    ))}
-                  />
-                  <span><strong>{scope.title}</strong> — {scope.detail}</span>
-                </label>
-              ))}
+              <legend className="connect-scopes__legend">What this connection lets an agent do</legend>
+              <div className="connect-scopes__list">
+                {selected.scopes.map((scope) => (
+                  <label className="connect-scope" key={scope.id}>
+                    <input
+                      className="connect-scope__box"
+                      type="checkbox"
+                      name="scope"
+                      value={scope.id}
+                      checked={scopes.includes(scope.id)}
+                      onChange={(event) => setScopes((current) => (
+                        event.currentTarget.checked
+                          ? [...new Set([...current, scope.id])]
+                          : current.filter((entry) => entry !== scope.id)
+                      ))}
+                    />
+                    <span className="connect-scope__copy">
+                      <span className="connect-scope__title">{scope.title}</span>
+                      <span className="connect-scope__detail">{scope.detail}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </fieldset>
           )}
 
-          {selected.oauthAvailable && (
-            <div className="connect-oauth">
-              {selected.oauthConfigured ? (
-                <a className="webapp-action webapp-action--primary" href={client.connectStartUrl(selected.id)}>
-                  Connect with {selected.title}
-                </a>
-              ) : (
-                <p className="webapp-form-message">
-                  {selected.title} OAuth is not configured on this instance. Paste a token below, or
-                  ask an operator to register the app and set its client secret.
-                </p>
-              )}
+          {selected.oauthAvailable && (selected.oauthConfigured ? (
+            <div className="connect-actions">
+              <a
+                className="webapp-action webapp-action--primary connect-cta"
+                href={client.connectStartUrl(selected.id)}
+              >
+                Connect with {selected.title}
+              </a>
             </div>
-          )}
+          ) : (
+            <p className="connect-note">
+              <InfoGlyph />
+              <span>
+                {selected.title} OAuth is not configured on this instance. Paste a token below, or
+                ask an operator to register the app and set its client secret.
+              </span>
+            </p>
+          ))}
 
           {selected.personalTokenLabel === null ? (
-            <p className="settings-credential-state">
-              {selected.title} issues no personal token. Connecting requires OAuth.
+            <p className="connect-note">
+              <InfoGlyph />
+              <span>{selected.title} issues no personal token. Connecting requires OAuth.</span>
             </p>
           ) : (
             <form
-              className="settings-connection-form"
+              className="connect-form"
               key={`${selected.id}:${formVersion}`}
               onSubmit={(event) => { void submit(event); }}
             >
-              <label>
-                Connection name
+              <label className="connect-field">
+                <span className="connect-field__label">Connection name</span>
                 <input
                   name="name"
                   required
@@ -201,22 +240,34 @@ export function ConnectPicker({
                   onChange={(event) => setName(event.currentTarget.value)}
                 />
               </label>
-              <label>Label (optional)<input name="label" placeholder="work account" /></label>
+              <label className="connect-field">
+                <span className="connect-field__label">Label (optional)</span>
+                <input name="label" placeholder="work account" />
+              </label>
               {selected.needsVendorConfig && (
                 <>
-                  <label>Environment variable<input name="envName" required placeholder="SERVICE_API_KEY" /></label>
-                  <label>Vendor base URL (optional)<input name="baseUrl" type="url" placeholder="https://api.example.com" /></label>
-                  <label>Base URL variable (optional)<input name="baseUrlEnvName" placeholder="SERVICE_BASE_URL" /></label>
+                  <label className="connect-field">
+                    <span className="connect-field__label">Environment variable</span>
+                    <input name="envName" required placeholder="SERVICE_API_KEY" />
+                  </label>
+                  <label className="connect-field">
+                    <span className="connect-field__label">Vendor base URL (optional)</span>
+                    <input name="baseUrl" type="url" placeholder="https://api.example.com" />
+                  </label>
+                  <label className="connect-field">
+                    <span className="connect-field__label">Base URL variable (optional)</span>
+                    <input name="baseUrlEnvName" placeholder="SERVICE_BASE_URL" />
+                  </label>
                 </>
               )}
-              <label className="settings-connection-form__wide">
-                {selected.personalTokenLabel}
+              <label className="connect-field connect-field--wide">
+                <span className="connect-field__label">{selected.personalTokenLabel}</span>
                 <input name="token" type="password" required autoComplete="new-password" />
               </label>
-              <p className="settings-secret-paste settings-connection-form__wide">
-                {selected.personalTokenHelp}
-              </p>
-              <div className="settings-row-actions settings-connection-form__wide">
+              {selected.personalTokenHelp !== null && (
+                <p className="connect-help connect-field--wide">{selected.personalTokenHelp}</p>
+              )}
+              <div className="connect-actions connect-field--wide">
                 <button className="webapp-action" type="button" onClick={() => setSelectedId(null)}>Cancel</button>
                 <button className="webapp-action webapp-action--primary" type="submit" disabled={saving}>
                   {saving ? 'Connecting…' : 'Connect'}
@@ -224,7 +275,7 @@ export function ConnectPicker({
               </div>
             </form>
           )}
-        </>
+        </div>
       )}
     </section>
   );

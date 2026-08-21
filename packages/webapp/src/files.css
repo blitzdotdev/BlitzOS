@@ -931,6 +931,7 @@
   min-height: 0;
   flex: 1;
   overflow-y: auto;
+  padding-bottom: 16px;
   scrollbar-color: var(--faint) transparent;
   scrollbar-width: thin;
 }
@@ -938,6 +939,59 @@
 .workspace-connections .workspace-drawer-panel {
   flex: none;
   overflow: visible;
+}
+
+/* Four sections, one rhythm: every slab is a bordered card inset 14px, every
+ * title sits 16px in and 8px above it. */
+.workspace-connections .workspace-credential-rows,
+.workspace-connections .workspace-drawer-state {
+  border: 1px solid var(--rule);
+}
+
+.workspace-connections .workspace-requests .workspace-credential-rows {
+  border-color: color-mix(in oklab, var(--status-warm-yellow) 30%, var(--rule));
+}
+
+/* The picker carries its own heading; here it has to read as one of those four
+ * titles, so the settings eyebrow trails the name instead of stacking on it. */
+.workspace-connections .connect-picker {
+  margin-top: 16px;
+  padding: 0 14px;
+  gap: 8px;
+}
+
+.workspace-connections .connect-picker__heading {
+  align-items: baseline;
+  margin: 0 2px;
+}
+
+.workspace-connections .connect-picker__heading > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.workspace-connections .connect-picker__heading h2 {
+  color: var(--soft-ink);
+  font: 600 12px/1.3 var(--font-ui);
+}
+
+.workspace-connections .connect-picker__heading p {
+  order: 2;
+  color: var(--faint);
+  font: 400 11px/1.3 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.workspace-connections .connect-picker__heading > span {
+  flex: none;
+  font-size: 10.5px;
+}
+
+.workspace-connections .connect-detail {
+  background: var(--sheet);
 }
 
 .workspace-credential-rows {
