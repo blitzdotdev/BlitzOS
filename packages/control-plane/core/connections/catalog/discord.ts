@@ -77,6 +77,11 @@ export const discordManifest = {
   baseUrl: "https://discord.com/api/v10",
   auth: null,
   personalToken: null,
+  adminForm: {
+    rootLabel: "Bot token",
+    rootHelp: "discord.com/developers/applications → your application → Bot → Reset Token. The bot must also be invited to the servers agents should reach.",
+    baseUrlLabel: null,
+  },
   scopes: [],
   defaultScopes: [],
   surfaces: {

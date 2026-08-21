@@ -90,6 +90,7 @@ export const linearManifest = {
     // a raw Authorization value, with no Bearer prefix.
     header: { name: "Authorization", prefix: "" },
   },
+  adminForm: null,
   scopes: [
     { id: "read", title: "Read", detail: "Read issues, projects, comments, and team structure." },
     { id: "write", title: "Write", detail: "Create and edit issues, projects, and comments." },

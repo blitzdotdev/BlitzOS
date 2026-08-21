@@ -2565,6 +2565,20 @@ describe("connections: admin-configured providers through templates", () => {
       personalTokenLabel: null,
       needsVendorConfig: false,
       environmentNames: ["YOUTRACK_TOKEN", "YOUTRACK_BASE_URL"],
+      // Everything the admin panel needs to render the form and submit the
+      // PUT this suite performs below, and no secret anywhere near it.
+      adminForm: {
+        rootLabel: "Permanent token",
+        placements: [
+          { kind: "env", name: "YOUTRACK_TOKEN", fill: "token" },
+          { kind: "env", name: "YOUTRACK_BASE_URL", fill: "proxy-url" },
+        ],
+        proxy: {
+          baseUrlLabel: "Instance URL",
+          tokenHeader: "Authorization",
+          tokenPrefix: "Bearer ",
+        },
+      },
     });
     const discord = providers.find(({ id }) => id === "discord");
     expect(discord).toMatchObject({
@@ -2573,6 +2587,11 @@ describe("connections: admin-configured providers through templates", () => {
       personalTokenLabel: null,
       needsVendorConfig: false,
       environmentNames: ["DISCORD_BOT_TOKEN"],
+      adminForm: {
+        rootLabel: "Bot token",
+        placements: [{ kind: "env", name: "DISCORD_BOT_TOKEN", fill: "token" }],
+        proxy: null,
+      },
     });
 
     // Admin-configured means exactly that: the grants route refuses a pasted

@@ -333,6 +333,23 @@ const catalogScope: SharedShape<
   default: true,
 };
 
+const catalogAdminForm: SharedShape<
+  connections.CatalogAdminFormView,
+  schema.CatalogAdminFormView
+> = {
+  rootLabel: "Permanent token",
+  rootHelp: "Create it in the vendor's own settings.",
+  placements: [
+    { kind: "env", name: "VENDOR_TOKEN", fill: "token" },
+    { kind: "env", name: "VENDOR_BASE_URL", fill: "proxy-url" },
+  ],
+  proxy: {
+    baseUrlLabel: "Instance URL",
+    tokenHeader: "Authorization",
+    tokenPrefix: "Bearer ",
+  },
+};
+
 const catalogEntry: SharedShape<
   connections.CatalogEntryView,
   schema.CatalogEntryView
@@ -348,6 +365,7 @@ const catalogEntry: SharedShape<
   personalTokenLabel: "Personal API key",
   personalTokenHelp: "Create it in Linear's own settings.",
   needsVendorConfig: false,
+  adminForm: catalogAdminForm,
   environmentNames: ["LINEAR_API_KEY"],
   scopes: [catalogScope],
 };
@@ -449,6 +467,7 @@ const fullFieldValues = [
   folderAttachment,
   folderAttachments,
   catalogScope,
+  catalogAdminForm,
   catalogEntry,
   userGrant,
   providerHealth,
@@ -517,6 +536,8 @@ describe("local wire copies", () => {
     expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
     expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
     expectTypeOf<connections.CatalogScopeView>().toEqualTypeOf<schema.CatalogScopeView>();
+    expectTypeOf<connections.CatalogAdminPlacement>().toEqualTypeOf<schema.CatalogAdminPlacement>();
+    expectTypeOf<connections.CatalogAdminFormView>().toEqualTypeOf<schema.CatalogAdminFormView>();
     expectTypeOf<connections.CatalogEntryView>().toEqualTypeOf<schema.CatalogEntryView>();
     expectTypeOf<connections.UserGrantView>().toEqualTypeOf<schema.UserGrantView>();
     expectTypeOf<connections.ProviderHealthView>().toEqualTypeOf<schema.ProviderHealthView>();

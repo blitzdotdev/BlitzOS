@@ -400,7 +400,11 @@ export function ConnectPicker({
           {stage === 'authorize' && (selected.personalTokenLabel === null ? (
             <p className="connect-note">
               <InfoGlyph />
-              <span>{selected.title} issues no personal token. Connecting requires OAuth.</span>
+              <span>
+                {selected.adminForm !== null
+                  ? `An organization admin configures ${selected.title} once for everyone, in Settings → Connections. Workspaces that enable it get credentials automatically — no step here.`
+                  : `${selected.title} issues no personal token. Connecting requires OAuth.`}
+              </span>
             </p>
           ) : (
             <form

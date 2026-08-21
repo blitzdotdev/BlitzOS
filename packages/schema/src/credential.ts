@@ -105,6 +105,26 @@ export interface CatalogScopeView {
   default: boolean;
 }
 
+/** An env entry for `config.placements` on `PUT /connections/:id`, sent by
+ * the admin form verbatim. Distinct from `Placement`: this is a template with
+ * a fill, not a filled value. */
+export interface CatalogAdminPlacement {
+  kind: "env";
+  name: string;
+  fill: "token" | "proxy-url";
+}
+
+/** How the settings panel configures an admin-custody provider: labels for
+ * the form plus exactly what the PUT body needs. Carries no secret. */
+export interface CatalogAdminFormView {
+  rootLabel: string;
+  rootHelp: string;
+  placements: CatalogAdminPlacement[];
+  /** Present exactly when custody is "proxy": the collected URL becomes
+   * `config.proxy.base_url` and the header pair rides along unchanged. */
+  proxy: { baseUrlLabel: string; tokenHeader: string; tokenPrefix: string } | null;
+}
+
 /** What the connect picker renders. Carries no secret and no binding value —
  * `oauthConfigured` is the presence answer, not the credential. */
 export interface CatalogEntryView {
@@ -120,6 +140,8 @@ export interface CatalogEntryView {
   personalTokenHelp: string | null;
   /** The generic entry needs the person to name the variable and base URL. */
   needsVendorConfig: boolean;
+  /** Non-null for providers an org admin configures once, org-wide. */
+  adminForm: CatalogAdminFormView | null;
   environmentNames: string[];
   scopes: CatalogScopeView[];
 }

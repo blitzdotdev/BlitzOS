@@ -79,6 +79,9 @@ export const githubManifest = {
     help: "github.com → Settings → Developer settings → Personal access tokens → Fine-grained. Scope it to the repositories the agent needs. Some organizations require an owner to approve each token.",
     header: { name: "Authorization", prefix: "Bearer " },
   },
+  // The admin path here is the app-jwt kind (app id, installation id, PKCS#8
+  // key), which the static-root form cannot express; it stays API-configured.
+  adminForm: null,
   // GitHub App user tokens carry no OAuth scope string: reach comes from the
   // App's installation permissions. These entries name what the person is
   // consenting to hand an agent, and double as the mint ceiling.

@@ -110,6 +110,7 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     personalTokenLabel: 'API key',
     personalTokenHelp: null,
     needsVendorConfig: false,
+    adminForm: null,
     environmentNames: [],
     scopes: [],
   };

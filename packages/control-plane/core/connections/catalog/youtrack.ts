@@ -88,6 +88,11 @@ export const youtrackManifest = {
   baseUrl: "https://youtrack.invalid",
   auth: null,
   personalToken: null,
+  adminForm: {
+    rootLabel: "Permanent token",
+    rootHelp: "Your instance → profile avatar → Account Security → Tokens → New token. Create it under an account whose project access matches what agents should reach; every workspace acts as that account.",
+    baseUrlLabel: "Instance URL",
+  },
   scopes: [],
   defaultScopes: [],
   surfaces: {

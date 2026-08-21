@@ -50,6 +50,9 @@ export const genericManifest = {
     help: "Create the key in the vendor's own console. Nothing about it is verified here beyond being non-empty.",
     header: { name: "Authorization", prefix: "Bearer " },
   },
+  // Custom connections carry per-grant vendor config; there is no one form an
+  // admin could fill once for every vendor this entry might name.
+  adminForm: null,
   scopes: [],
   defaultScopes: [],
   surfaces: {
