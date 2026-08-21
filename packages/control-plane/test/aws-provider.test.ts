@@ -9,6 +9,7 @@ import {
   awsProviderFromEnv,
   type AwsProviderConfig,
 } from "../core/compute/aws.js";
+import { signAwsQueryRequest } from "../core/compute/aws-sigv4.js";
 import { parseXml, childText, setItems } from "../core/compute/aws-xml.js";
 import type { CreateVmInput } from "../core/compute/types.js";
 
@@ -28,7 +29,9 @@ interface Ec2Call {
   readonly url: string;
   readonly action: string;
   readonly authorization: string;
+  readonly amzDate: string;
   readonly contentType: string;
+  readonly body: string;
   readonly parameters: URLSearchParams;
 }
 
@@ -60,7 +63,9 @@ function fakeEc2(handler: Ec2Handler): FakeEc2 {
         url: String(input),
         action,
         authorization: headerValue(init, "authorization"),
+        amzDate: headerValue(init, "x-amz-date"),
         contentType: headerValue(init, "content-type"),
+        body,
         parameters,
       });
       const reply = handler(action, parameters);
@@ -239,14 +244,36 @@ describe("AWS provider createVm", () => {
     if (call === undefined) throw new Error("expected a RunInstances call");
     expect(call.url).toBe("https://ec2.us-east-1.amazonaws.com/");
     expect(call.contentType).toBe("application/x-www-form-urlencoded; charset=utf-8");
-    // Golden signature over the exact RunInstances body below. Correctness of
-    // the algorithm is proved in `aws-sigv4.test.ts` against the published AWS
-    // vector; this pins the request this provider actually signs, so a change
-    // to the parameter set or its order cannot pass unnoticed.
-    expect(call.authorization).toBe(
+    // The signed body embeds base64(gzip(userData)), and workerd's
+    // CompressionStream emits different deflate bytes on different platform
+    // builds (linux vs darwin), so a golden signature cannot hold on both.
+    // Instead, re-sign the captured request with the exported signer under the
+    // same credentials, scope, and clock: a drift in the parameter set, its
+    // order, the date wiring, or the key still breaks the match. Correctness
+    // of the algorithm itself is proved in `aws-sigv4.test.ts` against the
+    // published AWS vector, whose input is deterministic.
+    expect(call.amzDate).toBe("20260818T120000Z");
+    expect(call.authorization).toContain(
       "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260818/us-east-1/ec2/aws4_request,"
         + " SignedHeaders=content-type;host;x-amz-date,"
-        + " Signature=cf77bc9083343d88aa979a83563fe1b6dc0c258501bba31d98871f391019d60d",
+        + " Signature=",
+    );
+    const resigned = await signAwsQueryRequest({
+      credentials: {
+        accessKeyId: "AKIDEXAMPLE",
+        secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+      },
+      region: REGION,
+      service: "ec2",
+      host: "ec2.us-east-1.amazonaws.com",
+      parameters: [...call.parameters],
+      signedAt: new Date(NOW_MS),
+    });
+    // The captured parameters must re-encode to the exact bytes the provider
+    // sent, or the re-signed request would prove nothing about the wire one.
+    expect(resigned.body).toBe(call.body);
+    expect(call.authorization).toBe(
+      resigned.headers.find(([name]) => name === "authorization")?.[1] ?? "",
     );
     expect(call.parameters.get("Version")).toBe("2016-11-15");
     expect(call.parameters.get("ImageId")).toBe(IMAGE_ID);
