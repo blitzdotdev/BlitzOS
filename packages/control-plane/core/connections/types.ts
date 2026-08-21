@@ -45,7 +45,9 @@ export interface Connection {
 
 export interface MintRequest {
   workspaceId: string;
-  boxId: string;
+  /** The box that asked, or null when a person did: the webApp mints a lease
+   * from the connect grid and no box is involved in that click. */
+  boxId: string | null;
   principalId: string;
   scopes: string[];
   now: number;

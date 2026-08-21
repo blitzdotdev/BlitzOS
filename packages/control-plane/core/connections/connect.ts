@@ -1,4 +1,6 @@
+import { first } from "../db.js";
 import { HttpError, requiredString } from "../http.js";
+import { canControlWorkspace, type WorkspaceAccessRow } from "../workspace-access.js";
 import {
   clearConnectOAuthStateCookie,
   CONNECT_OAUTH_COOKIE,
@@ -18,6 +20,19 @@ import type { GrantConfig } from "./user-grants.js";
 /** Where the browser lands after a round trip, success or failure. The panel
  * reads the query and says what happened. */
 const CONNECT_RETURN_PATH = "/settings/connections";
+
+/** Turns the grant this round trip just stored into a lease in the workspace it
+ * started from. Injected by the mint module, which owns every path that writes
+ * a lease. Answers false when the workspace refuses — the grant still stands. */
+export type ConnectAfterGrant = (
+  runtime: ReturnType<RuntimeFactory>,
+  input: {
+    workspaceId: string;
+    principal: Principal;
+    origin: string;
+    connectionName: string;
+  },
+) => Promise<boolean>;
 
 interface ConfiguredProvider {
   manifest: OAuthProviderManifest;
@@ -53,11 +68,43 @@ function configuredProvider(
   return { manifest, clientId, clientSecret };
 }
 
-function returnUrl(origin: string, status: string, provider: string): string {
-  const url = new URL(CONNECT_RETURN_PATH, origin);
+/** A round trip that began in a workspace ends there: connecting is a thing
+ * that happened to that workspace, and the connect grid it started from is the
+ * surface that has to show it. Everything else lands back in settings. */
+function returnUrl(
+  origin: string,
+  status: string,
+  provider: string,
+  workspaceId: string | null = null,
+): string {
+  const path = workspaceId === null
+    ? CONNECT_RETURN_PATH
+    : `/workspaces/${encodeURIComponent(workspaceId)}`;
+  const url = new URL(path, origin);
   url.searchParams.set("connect", status);
   url.searchParams.set("provider", provider);
   return url.toString();
+}
+
+/** The workspace a connect round trip may be aimed at. An id the caller cannot
+ * control never reaches the signed state, so the callback cannot be talked into
+ * minting into somebody else's workspace. */
+async function controllableWorkspace(
+  runtime: ReturnType<RuntimeFactory>,
+  principal: Principal,
+  requested: string | null,
+): Promise<string | null> {
+  if (requested === null) return null;
+  const id = requiredString(requested, "workspaceId", 64);
+  const workspace = await first<WorkspaceAccessRow>(runtime.db, {
+    q: "SELECT id, org_id, owner_membership_id FROM workspaces WHERE id = ?1 LIMIT 1",
+    v: [id],
+  });
+  if (workspace === null || workspace.org_id !== principal.orgId) {
+    throw new HttpError(404, "workspace not found");
+  }
+  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  return id;
 }
 
 function catalogGrantConfig(manifest: ProviderManifest): GrantConfig {
@@ -73,6 +120,7 @@ export function addConnectRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
+  connectAfterGrant: ConnectAfterGrant,
 ): void {
   router.get("/connect/:provider/start", async (context) => {
     const principal = await requirePrincipal(context);
@@ -81,11 +129,19 @@ export function addConnectRoutes(
     const id = requiredString(context.req.param("provider"), "provider", 64);
     const { manifest, clientId } = configuredProvider(id, runtime.vars.connectSecret);
     const origin = new URL(context.req.url).origin;
+    // Only the connect grid inside a workspace sends this, and only the person
+    // who may control that workspace gets it signed into their state.
+    const workspaceId = await controllableWorkspace(
+      runtime,
+      principal,
+      new URL(context.req.url).searchParams.get("workspaceId"),
+    );
     const oauth = await createConnectOAuthState(
       runtime.vars.googleClientSecret,
       manifest.id,
       principal.id,
       principal.membershipId,
+      workspaceId,
     );
     const authorize = new URL(manifest.auth.authorizeUrl);
     const parameters = new URLSearchParams({
@@ -181,6 +237,26 @@ export function addConnectRoutes(
       },
       now,
     );
-    return context.body(null, 302, { Location: returnUrl(origin, "ok", manifest.id) });
+    // Started in settings: authorizing the account is the whole errand.
+    if (state.workspaceId === null) {
+      return context.body(null, 302, { Location: returnUrl(origin, "ok", manifest.id) });
+    }
+    // Started in a workspace: the errand was connecting it, so the grant is
+    // only half of it. A ceiling that refuses leaves the grant standing and
+    // says "authorized" rather than claiming a connection nobody has.
+    const connected = await connectAfterGrant(runtime, {
+      workspaceId: state.workspaceId,
+      principal,
+      origin,
+      connectionName: manifest.id,
+    });
+    return context.body(null, 302, {
+      Location: returnUrl(
+        origin,
+        connected ? "ok" : "authorized",
+        manifest.id,
+        state.workspaceId,
+      ),
+    });
   });
 }

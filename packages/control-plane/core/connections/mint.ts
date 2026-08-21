@@ -33,7 +33,7 @@ import {
   connectionByName,
   resolveMinter,
 } from "./registry.js";
-import type { Connection, MinterResult, MintRequest, MintResult } from "./types.js";
+import type { Connection, Lease, MinterResult, MintRequest, MintResult } from "./types.js";
 import type { GrantRow } from "./user-grants.js";
 import {
   addUserGrantRoutes,
@@ -47,7 +47,7 @@ import { canControlWorkspace } from "../workspace-access.js";
  * sync that applied it without shortening the box's freshness window. */
 const TOMBSTONE_TTL_MS = 60 * 60 * 1_000;
 
-interface WorkspaceCredentialRow {
+export interface WorkspaceCredentialRow {
   id: string;
   owner_id: string;
   phase: string;
@@ -103,7 +103,7 @@ export function authorize(
 async function recordDenied(
   runtime: ReturnType<RuntimeFactory>,
   workspaceId: string,
-  boxId: string,
+  boxId: string | null,
   connectionName: string,
   scopes: readonly string[],
   now: number,
@@ -219,9 +219,17 @@ async function grantSecretForMint(
   return { secret: access.accessToken, accessExpiresAt: access.accessExpiresAt };
 }
 
+/** What a mint produced: the frozen wire body for whoever asked, and the row
+ * that now says this workspace holds the connection. */
+export interface MintOutcome {
+  result: MintResult;
+  lease: Lease;
+}
+
 interface MintOneInput {
   workspace: WorkspaceCredentialRow;
-  boxId: string;
+  /** Null when a person minted from the webApp rather than a box syncing. */
+  boxId: string | null;
   principal: Principal;
   origin: string;
   connection: Connection;
@@ -237,11 +245,13 @@ interface MintOneInput {
 async function mintOne(
   runtime: ReturnType<RuntimeFactory>,
   input: MintOneInput,
-): Promise<MintResult | null> {
+): Promise<MintOutcome | null> {
   const { workspace, boxId, principal, connection, denied } = input;
   const now = Date.now();
   /** Both denials answer 403 and file a request: the box classifies by status,
-   * and the inbox is how a person turns either one into a yes. */
+   * and the inbox is how a person turns either one into a yes. A person who
+   * clicked Connect is already that person, so their own refusal comes back as
+   * the error rather than landing in their own inbox. */
   const deny = async (reason: string, message: string): Promise<null> => {
     if (denied === "skip") return null;
     await recordDenied(
@@ -254,7 +264,7 @@ async function mintOne(
       principal,
       reason,
     );
-    const requestId = await fileRequest(
+    const requestId = boxId === null ? undefined : await fileRequest(
       runtime.db,
       workspace.id,
       connection.name,
@@ -279,7 +289,7 @@ async function mintOne(
     // connect inbox, not a failure: 404 is the status the box turns into
     // "not configured", and it carries the request id the panel resolves.
     if (denied === "skip") return null;
-    const requestId = await fileRequest(
+    const requestId = boxId === null ? undefined : await fileRequest(
       runtime.db,
       workspace.id,
       connection.name,
@@ -334,7 +344,7 @@ async function mintOne(
   // open dies on the next mint. Surfaces are login-fresh by design — a new
   // shell, a new agent run, and the proxy all read the freshest lease.
   await rows(runtime.db, revokeWorkspaceConnectionLeasesQuery(workspace.id, connection.id));
-  await createLease(runtime.db, {
+  const lease = await createLease(runtime.db, {
     id: leaseId,
     workspaceId: workspace.id,
     boxId,
@@ -348,7 +358,94 @@ async function mintOne(
     now,
     principal,
   });
-  return result;
+  return { result, lease };
+}
+
+/** Connecting a provider inside the webApp: one workspace, one connection, one
+ * lease, minted through the same machinery a box sync uses so the ceiling and
+ * the owner's consent bound it identically.
+ *
+ * A proxy lease minted here holds a token nobody has yet — the box learns it on
+ * its next sync, which supersedes this row with an identical one. That is the
+ * point: the lease row IS the connected state, and the box replaces it
+ * invisibly rather than being the thing that creates it. */
+export async function mintWorkspaceConnection(
+  runtime: ReturnType<RuntimeFactory>,
+  input: {
+    workspace: WorkspaceCredentialRow;
+    principal: Principal;
+    origin: string;
+    connection: Connection;
+    denied: "error" | "skip";
+  },
+): Promise<MintOutcome | null> {
+  return mintOne(runtime, {
+    workspace: input.workspace,
+    boxId: null,
+    principal: input.principal,
+    origin: input.origin,
+    connection: input.connection,
+    // The grid asks for the connection, never for a scope list, so a consent
+    // narrower than the default narrows the lease instead of refusing it.
+    scopes: connectionDefaultScopes(input.connection),
+    scopesAreExplicit: false,
+    denied: input.denied,
+  });
+}
+
+/** The tail of an OAuth round trip that began inside a workspace: the grant is
+ * stored, so now the workspace gets the lease that makes it connected. Quiet on
+ * refusal — the grant stood up either way, and the grid showing the provider
+ * unconnected is the honest report of a ceiling that said no.
+ *
+ * Handed to the connect routes rather than imported by them, so `connect.ts`
+ * stays a leaf of this module instead of importing back into it. */
+async function connectAfterGrant(
+  runtime: ReturnType<RuntimeFactory>,
+  input: {
+    workspaceId: string;
+    principal: Principal;
+    origin: string;
+    connectionName: string;
+  },
+): Promise<boolean> {
+  const workspace = await workspaceForMint(runtime, input.workspaceId);
+  if (workspace === null || workspace.org_id === null
+    || workspace.org_id !== input.principal.orgId) return false;
+  const connection = await connectionByName(
+    runtime.db,
+    input.connectionName,
+    workspace.org_id,
+  );
+  if (connection === null) return false;
+  try {
+    const outcome = await mintWorkspaceConnection(runtime, {
+      workspace,
+      principal: input.principal,
+      origin: input.origin,
+      connection,
+      denied: "skip",
+    });
+    return outcome !== null;
+  } catch (caught) {
+    // A provider that needs re-authorization or is unconfigured on this
+    // instance answers 409 from deep inside the minter. The grant is real
+    // regardless, so the round trip lands rather than erroring the browser.
+    if (caught instanceof HttpError) return false;
+    throw caught;
+  }
+}
+
+/** The workspace fields every mint needs, without the rest of the row. */
+export async function workspaceForMint(
+  runtime: ReturnType<RuntimeFactory>,
+  workspaceId: string,
+): Promise<WorkspaceCredentialRow | null> {
+  return first<WorkspaceCredentialRow>(runtime.db, {
+    q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
+        FROM workspaces WHERE id = ?1 LIMIT 1`,
+    v: [workspaceId],
+  });
 }
 
 /** Static org-root minting predates per-user grants. It stays for rows that
@@ -442,7 +539,7 @@ export function addCredentialRoutes(
   addConnectionRoutes(router, runtimeFactory, requirePrincipal);
   addUserGrantRoutes(router, runtimeFactory, requirePrincipal);
   addConnectionHealthRoutes(router, runtimeFactory, requirePrincipal);
-  addConnectRoutes(router, runtimeFactory, requirePrincipal);
+  addConnectRoutes(router, runtimeFactory, requirePrincipal, connectAfterGrant);
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 
@@ -497,7 +594,7 @@ export function addCredentialRoutes(
         // FROZEN box-route error text (see the route comment above).
         throw new HttpError(404, "integration not found", requestId);
       }
-      const result = await mintOne(runtime, {
+      const outcome = await mintOne(runtime, {
         workspace,
         boxId: box.id,
         principal: boxPrincipal,
@@ -507,14 +604,14 @@ export function addCredentialRoutes(
         scopesAreExplicit: input.scopes !== undefined,
         denied: "error",
       });
-      if (result === null) throw new Error("specific credential mint was skipped");
-      return context.json(result);
+      if (outcome === null) throw new Error("specific credential mint was skipped");
+      return context.json(outcome.result);
     }
 
     const results: MintResult[] = [];
     const minted: string[] = [];
     for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
-      const result = await mintOne(runtime, {
+      const outcome = await mintOne(runtime, {
         workspace,
         boxId: box.id,
         principal: boxPrincipal,
@@ -524,12 +621,40 @@ export function addCredentialRoutes(
         scopesAreExplicit: false,
         denied: "skip",
       });
-      if (result === null) continue;
-      results.push(result);
+      if (outcome === null) continue;
+      results.push(outcome.result);
       minted.push(connection.id);
     }
     results.push(...(await surfaceTombstones(runtime, workspace.id, minted)));
     return context.json(results);
+  });
+
+  /** Connecting, from the webApp. "Connected" means this workspace holds a live
+   * lease, and this is how a person gives it one without waiting for a box to
+   * sync. Session-authed and owner-or-admin, unlike the frozen box route above,
+   * which stays exactly as the shipped image expects it. */
+  router.post("/workspaces/:id/connections/:name/lease", async (context) => {
+    const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
+    const workspaceId = requiredString(context.req.param("id"), "id", 64);
+    const name = requiredString(context.req.param("name"), "name", 256);
+    const workspace = await workspaceForMint(runtime, workspaceId);
+    if (workspace === null || workspace.org_id === null
+      || workspace.org_id !== principal.orgId) {
+      throw new HttpError(404, "workspace not found");
+    }
+    if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+    const connection = await connectionByName(runtime.db, name, workspace.org_id);
+    if (connection === null) throw new HttpError(404, `connection ${name} not found`);
+    const outcome = await mintWorkspaceConnection(runtime, {
+      workspace,
+      principal,
+      origin: new URL(context.req.url).origin,
+      connection,
+      denied: "error",
+    });
+    if (outcome === null) throw new Error("workspace connect mint was skipped");
+    return context.json({ lease: outcome.lease });
   });
 
   router.get("/workspaces/:id/leases", async (context) => {

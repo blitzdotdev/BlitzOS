@@ -671,10 +671,11 @@ describe("connections: templates and enablement", () => {
     expect(JSON.parse(row?.manifest ?? "null")).toEqual({ integrations: {} });
   });
 
-  /** Delivery is the box's own sync, not a control-plane push: the phone-home
-   * response has no way to carry placements, so a mint at the ready transition
-   * only ever wrote lease rows for tokens nobody was handed. */
-  it("mints nothing at the ready transition and everything on the first sync", async () => {
+  /** A create that names connections promises a workspace that has them, so
+   * the lease exists before any box does — the row IS the connected state, and
+   * the box's first sync supersedes it with an identical one rather than being
+   * the thing that creates it. */
+  it("mints the named connections at create and supersedes them on the first sync", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
@@ -682,18 +683,37 @@ describe("connections: templates and enablement", () => {
       connections: ["linear"],
     });
 
-    const atReady = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+    const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
-    await expect(atReady.json()).resolves.toEqual({ leases: [] });
+    const { leases: created } = await atCreate.json<{ leases: CredentialLeaseView[] }>();
+    expect(created.map(({ connection, state, boxId }) => [connection, state, boxId]))
+      .toEqual([["linear", "active", null]]);
 
     expect((await mint(app, box.access_token, {})).status).toBe(200);
     const afterSync = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
     const { leases: rows } = await afterSync.json<{ leases: CredentialLeaseView[] }>();
-    expect(rows.map(({ connection, state }) => [connection, state]))
-      .toEqual([["linear", "active"]]);
+    expect(rows.filter(({ state }) => state === "active")
+      .map(({ connection, boxId }) => [connection, boxId]))
+      .toEqual([["linear", box.box_id]]);
+    expect(rows.filter(({ state }) => state === "revoked")
+      .map(({ connection }) => connection)).toEqual(["linear"]);
+  });
+
+  /** A provider the creator never authorized is not an error at create; the
+   * grid simply shows it unconnected. */
+  it("skips a named connection the creator never authorized", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const { workspace } = await readyWorkspace(app, providers, cookie, {
+      connections: ["linear"],
+    });
+    const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(listed.json()).resolves.toEqual({ leases: [] });
   });
 });
 
@@ -935,6 +955,200 @@ describe("connections: connect flow and canary", () => {
   });
 });
 
+/** Connecting is giving a workspace a lease, and this is the route a person
+ * uses to do it. The frozen box route above is untouched by any of it. */
+describe("connections: connecting from the webApp", () => {
+  beforeEach(async () => {
+    await resetDatabase();
+    testConnectSecrets.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function connectHere(
+    app: Harness["app"],
+    cookie: string,
+    workspaceId: string,
+    name = "linear",
+  ): Promise<Response> {
+    return appRequest(
+      app,
+      `/workspaces/${workspaceId}/connections/${name}/lease`,
+      { method: "POST", headers: { Cookie: cookie } },
+    );
+  }
+
+  it("mints a lease from the caller's grant and hands the row back", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const { workspace } = await readyWorkspace(app, providers, cookie);
+
+    const response = await connectHere(app, cookie, workspace.id);
+    expect(response.status).toBe(200);
+    const { lease } = await response.json<{ lease: CredentialLeaseView }>();
+    expect(lease).toMatchObject({
+      workspaceId: workspace.id,
+      connection: "linear",
+      state: "active",
+      // No box asked for this one, and audit says so rather than inventing one.
+      boxId: null,
+    });
+
+    const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases } = await listed.json<{ leases: CredentialLeaseView[] }>();
+    expect(leases.map(({ id, state }) => [id, state])).toEqual([[lease.id, "active"]]);
+  });
+
+  it("refuses a member who cannot control the workspace", async () => {
+    const { app, providers } = harness();
+    const owner = await operatorSession(app);
+    expect((await connectLinear(app, owner)).status).toBe(204);
+    const { workspace } = await readyWorkspace(app, providers, owner, {
+      orgShareRole: "editor",
+    });
+    const editor = await sameOrgSession("editor-one");
+
+    expect((await connectHere(app, editor.cookie, workspace.id)).status).toBe(403);
+  });
+
+  it("stays inside the workspace ceiling", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    // A ceiling naming no connections allows none of them.
+    const { workspace } = await readyWorkspace(app, providers, cookie, {
+      manifest: { integrations: {} },
+    });
+
+    const response = await connectHere(app, cookie, workspace.id);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("exceeds the workspace manifest"),
+    });
+    // A person's own refusal is an answer, not an entry in their own inbox.
+    const inbox = await appRequest(app, "/requests", { headers: { Cookie: cookie } });
+    await expect(inbox.json()).resolves.toEqual({ requests: [] });
+  });
+
+  it("narrows the lease to what the owner consented to", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
+    const { workspace } = await readyWorkspace(app, providers, cookie);
+
+    const response = await connectHere(app, cookie, workspace.id);
+    expect(response.status).toBe(200);
+    const { lease } = await response.json<{ lease: CredentialLeaseView }>();
+    expect(lease.scopes).toEqual(["read"]);
+  });
+
+  it("answers a provider the account never authorized", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const { workspace } = await readyWorkspace(app, providers, cookie);
+
+    expect((await connectHere(app, cookie, workspace.id, "github")).status).toBe(404);
+  });
+
+  it("supersedes, so connecting twice leaves one live lease", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const { workspace } = await readyWorkspace(app, providers, cookie);
+
+    expect((await connectHere(app, cookie, workspace.id)).status).toBe(200);
+    const second = await connectHere(app, cookie, workspace.id);
+    expect(second.status).toBe(200);
+    const { lease } = await second.json<{ lease: CredentialLeaseView }>();
+
+    const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases } = await listed.json<{ leases: CredentialLeaseView[] }>();
+    expect(leases.filter(({ state }) => state === "active").map(({ id }) => id))
+      .toEqual([lease.id]);
+    expect(leases.filter(({ state }) => state === "revoked")).toHaveLength(1);
+  });
+
+  it("connects the workspace an OAuth round trip started from", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const { workspace } = await readyWorkspace(app, providers, cookie);
+    testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
+    testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
+
+    const started = await appRequest(
+      app,
+      `/connect/linear/start?workspaceId=${workspace.id}`,
+      { headers: { Cookie: cookie } },
+    );
+    expect(started.status).toBe(302);
+    const state = new URL(started.headers.get("location") ?? "")
+      .searchParams.get("state") ?? "";
+    const stateCookie = (started.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const exchange = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => Response.json({
+        access_token: "linear-access-1",
+        refresh_token: "linear-refresh-1",
+        expires_in: 3_600,
+      }),
+    );
+    const callback = await appRequest(
+      app,
+      `/connect/linear/callback?code=auth-code&state=${state}`,
+      { headers: { Cookie: stateCookie } },
+    );
+    exchange.mockRestore();
+    expect(callback.status).toBe(302);
+    // Back where connecting started, not in settings.
+    expect(new URL(callback.headers.get("location") ?? "").pathname)
+      .toBe(`/workspaces/${workspace.id}`);
+
+    const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases } = await listed.json<{ leases: CredentialLeaseView[] }>();
+    expect(leases.map(({ connection, state: leaseState }) => [connection, leaseState]))
+      .toEqual([["linear", "active"]]);
+  });
+
+  it("leaves a settings round trip in settings, with no lease anywhere", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const { workspace } = await readyWorkspace(app, providers, cookie);
+    await connectLinearOAuth(app, cookie, 3_600);
+
+    const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    await expect(listed.json()).resolves.toEqual({ leases: [] });
+  });
+
+  it("refuses to sign a workspace the caller cannot control into the state", async () => {
+    const { app, providers } = harness();
+    const owner = await operatorSession(app);
+    const { workspace } = await readyWorkspace(app, providers, owner, {
+      orgShareRole: "editor",
+    });
+    const editor = await sameOrgSession("editor-one");
+    testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
+    testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
+
+    const started = await appRequest(
+      app,
+      `/connect/linear/start?workspaceId=${workspace.id}`,
+      { headers: { Cookie: editor.cookie } },
+    );
+    expect(started.status).toBe(403);
+  });
+});
+
 /** The connect half of the signed-state helper had no unit coverage of its
  * own: every guarantee below was only ever exercised through the happy-path
  * route. They are the reason the state is signed at all. */
@@ -948,7 +1162,7 @@ describe("connect oauth state", () => {
     state: string;
     codeVerifier: string;
   }> {
-    const created = await createConnectOAuthState(SECRET, provider, "user-1", "membership-1", CREATED_AT);
+    const created = await createConnectOAuthState(SECRET, provider, "user-1", "membership-1", null, CREATED_AT);
     const pair = (created.cookie.split(";")[0] ?? "");
     expect(pair.startsWith(`${CONNECT_OAUTH_COOKIE}=`)).toBe(true);
     expect(created.cookie).toContain("Path=/connect");
@@ -992,7 +1206,7 @@ describe("connect oauth state", () => {
   });
 
   it("keeps the login cookie and the connect cookie apart", async () => {
-    const connect = await createConnectOAuthState(SECRET, "linear", "user-1", null, CREATED_AT);
+    const connect = await createConnectOAuthState(SECRET, "linear", "user-1", null, null, CREATED_AT);
     expect(connect.cookie).toContain(`${CONNECT_OAUTH_COOKIE}=`);
     expect(connect.cookie).not.toContain("blitz_google_oauth=");
     expect(connect.cookie).not.toContain("Path=/auth/google");

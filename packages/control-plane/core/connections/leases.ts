@@ -27,7 +27,9 @@ interface LeaseRow {
 interface CreateLeaseInput {
   id: string;
   workspaceId: string;
-  boxId: string;
+  /** Null for a lease a person minted from the connect grid: audit records
+   * which box received a credential, and no box received this one yet. */
+  boxId: string | null;
   connectionId: string;
   connectionName: string;
   /** The workspace owner, always: a box is one disk and one env, so a lease

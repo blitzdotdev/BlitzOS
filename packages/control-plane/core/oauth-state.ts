@@ -224,6 +224,11 @@ export interface ConnectOAuthExtra {
   provider: string;
   userId: string;
   membershipId: string | null;
+  /** Set when the round trip started inside a workspace. Connecting there means
+   * a lease in that workspace, so the callback has to know which one — and it
+   * is signed like everything else, because an attacker-chosen workspace id
+   * would aim a freshly stored grant at someone else's box. */
+  workspaceId: string | null;
 }
 
 export type ConnectOAuthStateV1 = OAuthStateBase & ConnectOAuthExtra;
@@ -232,9 +237,10 @@ export type CreatedConnectOAuthState = CreatedOAuthState;
 const connectFlow: OAuthStateFlow<ConnectOAuthExtra> = {
   cookieName: CONNECT_OAUTH_COOKIE,
   cookiePath: CONNECT_COOKIE_PATH,
-  bind({ provider, userId, membershipId }) {
+  bind({ provider, userId, membershipId, workspaceId }) {
     const bound: JsonObject = { provider, userId };
     if (membershipId !== null) bound.membershipId = membershipId;
+    if (workspaceId !== null) bound.workspaceId = workspaceId;
     return bound;
   },
   read(parsed) {
@@ -244,10 +250,15 @@ const connectFlow: OAuthStateFlow<ConnectOAuthExtra> = {
       parsed.membershipId !== undefined
       && (!isString(parsed.membershipId) || parsed.membershipId.length === 0)
     ) return null;
+    if (
+      parsed.workspaceId !== undefined
+      && (!isString(parsed.workspaceId) || parsed.workspaceId.length === 0)
+    ) return null;
     return {
       provider: parsed.provider,
       userId: parsed.userId,
       membershipId: isString(parsed.membershipId) ? parsed.membershipId : null,
+      workspaceId: isString(parsed.workspaceId) ? parsed.workspaceId : null,
     };
   },
 };
@@ -257,9 +268,15 @@ export async function createConnectOAuthState(
   provider: string,
   userId: string,
   membershipId: string | null,
+  workspaceId: string | null = null,
   now = Date.now(),
 ): Promise<CreatedConnectOAuthState> {
-  return createOAuthState(connectFlow, signingSecret, { provider, userId, membershipId }, now);
+  return createOAuthState(
+    connectFlow,
+    signingSecret,
+    { provider, userId, membershipId, workspaceId },
+    now,
+  );
 }
 
 export async function verifyConnectOAuthStateCookie(

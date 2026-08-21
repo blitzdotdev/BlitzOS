@@ -1,6 +1,8 @@
 import { buildUserData } from "./cloud-init.js";
 import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
+import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
+import { connectionByName } from "./connections/registry.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
@@ -324,6 +326,46 @@ async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
   );
 }
 
+/** A create that names connections promises a workspace that has them, so it
+ * mints their leases from the creator's grants before the box exists.
+ *
+ * Minting at create was removed once as useless, back when only a box sync
+ * could make a credential real. Under the model where the lease row IS the
+ * connected state it is the opposite of useless, and supersede keeps it clean:
+ * the box's first sync replaces each row with an identical one.
+ *
+ * Silent per connection. A provider the creator never authorized, or one the
+ * workspace ceiling refuses, simply reads as unconnected in the grid. */
+async function connectRequested(
+  runtime: ReturnType<RuntimeFactory>,
+  workspaceId: string,
+  principal: Principal,
+  origin: string,
+  connectionNames: readonly string[],
+): Promise<void> {
+  if (connectionNames.length === 0) return;
+  const workspace = await workspaceForMint(runtime, workspaceId);
+  if (workspace === null || workspace.org_id === null) return;
+  for (const name of connectionNames) {
+    const connection = await connectionByName(runtime.db, name, workspace.org_id);
+    if (connection === null) continue;
+    try {
+      await mintWorkspaceConnection(runtime, {
+        workspace,
+        principal,
+        origin,
+        connection,
+        denied: "skip",
+      });
+    } catch (caught) {
+      // A grant needing re-authorization, or a provider unconfigured on this
+      // instance, answers 409 from inside the minter. Creating a workspace is
+      // not the moment to fail on that.
+      if (!(caught instanceof HttpError)) throw caught;
+    }
+  }
+}
+
 export function addWorkspaceRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -423,6 +465,13 @@ export function addWorkspaceRoutes(
     if (template !== null) {
       await attachTemplateFolders(runtime.db, template.id, id, principal, now);
     }
+    await connectRequested(
+      runtime,
+      id,
+      principal,
+      new URL(context.req.url).origin,
+      requested,
+    );
 
     try {
       // The size check runs on a tunnel-less build so a 413 always fires
