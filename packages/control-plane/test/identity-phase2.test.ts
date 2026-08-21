@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceView } from "@blitzos/schema";
 import { hashSecret, randomToken } from "../core/crypto.js";
 import { INVITE_TTL_MS, inviteCodeHash } from "../core/identity/invites.js";
-import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
+import type { CreateVmInput, WebAppPort } from "../core/compute/types.js";
 import {
   BOX_IMAGE_TICKETS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
@@ -424,7 +424,7 @@ describe("identity phase 2", () => {
     await expect(appRequest(app, `/invite/${secondBody.code}`).then((response) => response.json())).resolves.toMatchObject({ invite: { state: "revoked" } });
   });
 
-  it("switches sessions among active memberships and scopes volumes and integrations", async () => {
+  it("switches sessions among active memberships and scopes volumes and connections", async () => {
     const { app, providers } = harness();
     const operatorCookie = await operatorSession(app);
     const now = Date.now();
@@ -451,7 +451,7 @@ describe("identity phase 2", () => {
     await expect(appRequest(app, "/volumes", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toEqual({ volumes: [] });
     expect((await appRequest(app, `/volumes/${secondVolumeId}`, { method: "DELETE", headers: { Cookie: operatorCookie } })).status).toBe(404);
 
-    const configured = await appRequest(app, "/integrations/team-token", {
+    const configured = await appRequest(app, "/connections/team-token", {
       method: "PUT",
       headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
       body: JSON.stringify({ provider: "hetzner", kind: "static", custody: "cp", config: { placements: [] }, root: "secret" }),
@@ -461,15 +461,15 @@ describe("identity phase 2", () => {
       ...json({ orgId: "second" }),
       headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
     });
-    await expect(appRequest(app, "/integrations", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toEqual({ integrations: [] });
-    expect((await appRequest(app, "/integrations/team-token", { method: "DELETE", headers: { Cookie: operatorCookie } })).status).toBe(404);
-    expect((await appRequest(app, "/integrations/team-token", {
+    await expect(appRequest(app, "/connections", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toEqual({ connections: [] });
+    expect((await appRequest(app, "/connections/team-token", { method: "DELETE", headers: { Cookie: operatorCookie } })).status).toBe(404);
+    expect((await appRequest(app, "/connections/team-token", {
       method: "PUT",
       headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
       body: JSON.stringify({ provider: "hetzner", kind: "static", custody: "cp", config: { placements: [] }, root: "second-secret" }),
     })).status).toBe(204);
-    await expect(appRequest(app, "/integrations", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toMatchObject({
-      integrations: [{ name: "team-token", createdBy: "operator" }],
+    await expect(appRequest(app, "/connections", { headers: { Cookie: operatorCookie } }).then((response) => response.json())).resolves.toMatchObject({
+      connections: [{ name: "team-token", createdBy: "operator" }],
     });
   });
 });

@@ -5,6 +5,8 @@ import {
   useReducer,
   useRef,
   useState,
+  type CSSProperties,
+  type ReactNode,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
 import {
@@ -61,12 +63,31 @@ import {
 } from './sessions-page-state';
 import {
   defaultWorkspaceFiles,
+  maxDrawerWidth,
   removeDismissedChatAuthProviders,
+  tabRegion,
   withPreviewTabPath,
   type StorageNamespace,
   type WorkspaceDrawerSegment,
+  type WorkspaceRegion,
   type WorkspaceTab,
+  type WorkspaceTabs,
 } from './storage';
+import {
+  appendTab,
+  closeTab as closePaneTab,
+  filesHostRegion,
+  moveTab,
+  paneRegions,
+  panelTab,
+  regionActiveId,
+  showPanelTab,
+  splitTab,
+  togglePanelTab,
+  withRegionActiveId,
+} from './workspace-panes';
+import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
+import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
 import { useTerminalSignIn } from './use-terminal-sign-in';
@@ -95,7 +116,7 @@ import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
-import { WorkspaceDrawer } from './WorkspaceDrawer';
+import { WorkspaceDrawer, WorkspacePanelContent } from './WorkspaceDrawer';
 import {
   rememberWorkspaceEndpoints,
   type WorkspaceEndpoints,
@@ -148,6 +169,13 @@ type FileCloseConfirmation = {
   id: string;
   label: string;
 };
+
+
+const PANEL_LABELS = {
+  files: 'Files',
+  previews: 'teenyapps',
+  connections: 'Connections',
+} satisfies Record<WorkspaceDrawerSegment, string>;
 
 function PasteCodeModal({
   onCancel,
@@ -244,6 +272,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [shareToDrivePath, setShareToDrivePath] = useState<string | null>(null);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
+  // Which column the keyboard, statusline and rail follow. Not persisted: the
+  // panes are, but the focus between them is a per-view detail.
+  const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
+  const panesRef = useRef<HTMLDivElement>(null);
+  const paneResizeOrigin = useRef<{ x: number; width: number } | null>(null);
   const shellRef = useRef<HTMLElement>(null);
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
@@ -333,6 +366,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     () => client.listWorkspaceTemplates().then(({ templates }) => templates),
     [client],
   );
+  const listGrants = useCallback(
+    () => client.listConnectionGrants().then(({ grants }) => grants),
+    [client],
+  );
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
       const records = await api.listWorkspaces();
@@ -381,8 +418,36 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeFiles = workspaceFiles.workspaceId === activeWorkspaceId
     ? workspaceFiles.value
     : defaultWorkspaceFiles();
-  const filesOpen = mobileWebApp ? filesDrawerOpen : activeFiles.open;
-  const filesSegmentVisible = filesOpen && activeFiles.segment === 'files';
+  const activeWorkspaceTabs = workspaceTabs.workspaceId === activeWorkspaceId
+    && workspaceTabs.loaded
+    ? workspaceTabs.value
+    : null;
+  // Below the mobile breakpoint the panes never split: the workspace keeps one
+  // tab strip and the panels stay an off-canvas sheet.
+  const splitEnabled = !mobileWebApp;
+  const openPanels = new Set(
+    (activeWorkspaceTabs?.tabs ?? []).flatMap(
+      (tab) => (tab.type === 'panel' ? [tab.panel] : []),
+    ),
+  );
+  const sidePanelTab = activeWorkspaceTabs === null
+    ? null
+    : activeWorkspaceTabs.tabs.find(
+        (tab) => tab.type === 'panel' && tab.id === regionActiveId(activeWorkspaceTabs, 'side'),
+      ) ?? null;
+  // The sheet needs a selected segment even before its panel tab exists.
+  const drawerSegment: WorkspaceDrawerSegment = sidePanelTab?.type === 'panel'
+    ? sidePanelTab.panel
+    : 'files';
+  const filesTab = activeWorkspaceTabs === null
+    ? null
+    : panelTab(activeWorkspaceTabs, 'files');
+  const filesOpen = mobileWebApp ? filesDrawerOpen : filesTab !== null;
+  const filesSegmentVisible = mobileWebApp
+    ? filesDrawerOpen && drawerSegment === 'files'
+    : activeWorkspaceTabs !== null
+      && filesTab !== null
+      && regionActiveId(activeWorkspaceTabs, tabRegion(filesTab)) === filesTab.id;
   const { livePorts, previewLinks } = useWorkspacePreviewSources(
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
@@ -391,19 +456,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // The in-box agent's `blitz preview open` raises a focus marker; open it as a
   // tab so the user never hunts for the preview. `openPreviewPort` is defined
   // below and only referenced when a focus arrives (after render), so its
-  // temporal position is fine. Setting the drawer segment is optional polish —
-  // it never forces the drawer open if the user closed it.
+  // temporal position is fine. The pre-split drawer-segment nudge is gone:
+  // panels are tabs now, and forcing one open would steal the pane.
   useWorkspacePreviewFocus(
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
     activeFilesBase,
     (focus) => {
-      if (!openPreviewPort(focus.port, focus.path)) return;
-      setWorkspaceFiles((current) => (
-        current.workspaceId === activeWorkspaceId && current.value.segment !== 'previews'
-          ? { ...current, value: { ...current.value, segment: 'previews' } }
-          : current
-      ));
+      openPreviewPort(focus.port, focus.path);
     },
   );
 
@@ -652,11 +712,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   const navigateToSettings = useCallback((
     section: SettingsSection,
-    requestedIntegrationName?: string,
+    requestedConnectionName?: string,
   ) => {
     const path = settingsPath(section);
-    const target = requestedIntegrationName
-      ? `${path}?add=${encodeURIComponent(requestedIntegrationName)}`
+    const target = requestedConnectionName
+      ? `${path}?add=${encodeURIComponent(requestedConnectionName)}`
       : path;
     window.history.pushState({}, '', target);
     setRoute({ workspaceId: null, page: 'settings', settingsSection: section });
@@ -755,6 +815,20 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     [adoptCreatedWorkspace, api],
   );
 
+  const setSidePaneWidth = useCallback((width: number) => {
+    setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+      ? { ...current, value: { ...current.value, width } }
+      : current);
+  }, [activeWorkspaceId, setWorkspaceFiles]);
+
+  const updateWorkspaceTabs = useCallback((update: (tabs: WorkspaceTabs) => WorkspaceTabs) => {
+    setWorkspaceTabs((current) => {
+      if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
+      const value = update(current.value);
+      return value === current.value ? current : { ...current, value };
+    });
+  }, [activeWorkspaceId, setWorkspaceTabs]);
+
   const toggleFiles = useCallback(() => {
     if (!activeWorkspaceId) return;
     if (mobileWebApp) {
@@ -762,10 +836,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       setFilesDrawerOpen((open) => !open);
       return;
     }
-    setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-      ? { ...current, value: { ...current.value, open: !current.value.open } }
-      : current);
-  }, [activeWorkspaceId, mobileWebApp]);
+    updateWorkspaceTabs((tabs) => togglePanelTab(tabs, 'files'));
+  }, [activeWorkspaceId, mobileWebApp, updateWorkspaceTabs]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -851,36 +923,66 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [dirtyFileIds.size]);
-  const activeWorkspaceTabs = workspaceTabs.workspaceId === activeWorkspaceId
-    && workspaceTabs.loaded
-    ? workspaceTabs.value
-    : null;
   const ttydSessions = activeWorkspaceTabs?.tabs ?? [];
-  const ttydActiveId = activeWorkspaceTabs?.activeId === null
-    || activeWorkspaceTabs?.activeId === undefined
+  // The pane a tab is drawn in. Mobile has one column, so a tab parked in the
+  // side pane on a desktop still shows up in the single strip there.
+  const surfaceRegion = (session: WorkspaceTab): WorkspaceRegion => (
+    splitEnabled ? tabRegion(session) : 'main'
+  );
+  const visibleRegions: WorkspaceRegion[] = splitEnabled && activeWorkspaceTabs !== null
+    ? paneRegions(activeWorkspaceTabs)
+    : ['main'];
+  const mainActiveId = activeWorkspaceTabs === null
     ? null
-    : String(activeWorkspaceTabs.activeId);
+    : regionActiveId(activeWorkspaceTabs, 'main');
+  const sideActiveId = activeWorkspaceTabs === null
+    ? null
+    : regionActiveId(activeWorkspaceTabs, 'side');
+  // The focused session drives the statusline, the rail and terminal keyboard
+  // events. Mobile skips panel tabs: those live in the sheet, not the strip.
+  const focusedSessionId = (() => {
+    const preferred = focusedRegion === 'side' ? sideActiveId : mainActiveId;
+    for (const candidate of [preferred, mainActiveId, sideActiveId]) {
+      if (candidate === null) continue;
+      const session = ttydSessions.find((entry) => entry.id === candidate);
+      if (session === undefined) continue;
+      if (!splitEnabled && session.type === 'panel') continue;
+      return String(candidate);
+    }
+    return null;
+  })();
+  const ttydActiveId = focusedSessionId;
+  const paneActiveId = (region: WorkspaceRegion): string | null => {
+    if (!splitEnabled) return focusedSessionId;
+    const id = region === 'main' ? mainActiveId : sideActiveId;
+    return id === null ? null : String(id);
+  };
   useEffect(() => {
     if (retainedSessionIdsRef.current.workspaceId !== activeWorkspaceId) {
       retainedSessionIdsRef.current = { workspaceId: activeWorkspaceId, ids: new Set() };
     }
-    if (ttydActiveId !== null) retainedSessionIdsRef.current.ids.add(ttydActiveId);
-  }, [activeWorkspaceId, ttydActiveId]);
+    // Both panes show a tab at once, so both of their active tabs are visited.
+    for (const id of [mainActiveId, sideActiveId]) {
+      if (id !== null) retainedSessionIdsRef.current.ids.add(String(id));
+    }
+  }, [activeWorkspaceId, mainActiveId, sideActiveId]);
   const tabsLoaded = activeWorkspaceTabs !== null;
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
-    : session.type === 'preview'
-      ? 'port' in session
-        ? `:${session.port}`
-        : previewLinkLabel(session.url, session.title)
-      : (
-        session.type === 'chat'
-        || session.type === 'claude'
-        || session.type === 'codex'
-        || session.type === 'terminal'
-          ? SPAWN_SESSION_LABELS[session.type]
-          : session.type
-      );
+    : session.type === 'panel'
+      ? PANEL_LABELS[session.panel]
+      : session.type === 'preview'
+        ? 'port' in session
+          ? `:${session.port}`
+          : previewLinkLabel(session.url, session.title)
+        : (
+          session.type === 'chat'
+          || session.type === 'claude'
+          || session.type === 'codex'
+          || session.type === 'terminal'
+            ? SPAWN_SESSION_LABELS[session.type]
+            : session.type
+        );
   const ttydTabs = useMemo<WebAppTabModel[]>(() => {
     const basenameCounts = new Map<string, number>();
     for (const session of ttydSessions) {
@@ -889,15 +991,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       basenameCounts.set(basename, (basenameCounts.get(basename) ?? 0) + 1);
     }
     return ttydSessions.map((session) => {
+      if (session.type === 'panel') {
+        return {
+          id: String(session.id),
+          label: PANEL_LABELS[session.panel],
+          agent: 'panel',
+          panel: session.panel,
+          pending: false,
+        };
+      }
       if (session.type !== 'file') {
-        if (session.type === 'preview') {
-          return {
-            id: String(session.id),
-            label: ttydLabel(session),
-            agent: session.type,
-            pending: false,
-          };
-        }
         return {
           id: String(session.id),
           label: ttydLabel(session),
@@ -919,6 +1022,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   }, [dirtyFileIds, ttydSessions]);
+  /** Tab models for one column, in the order that column draws them. */
+  const paneTabModels = (region: WorkspaceRegion): WebAppTabModel[] => ttydTabs.filter(
+    (tab, index) => {
+      const session = ttydSessions[index];
+      if (session === undefined) return false;
+      if (!splitEnabled && session.type === 'panel') return false;
+      return surfaceRegion(session) === region;
+    },
+  );
   const ttydActiveSession = ttydSessions.find(
     (session) => String(session.id) === ttydActiveId,
   ) ?? null;
@@ -932,25 +1044,23 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     || ttydActiveType === 'terminal'
     ? ttydActiveType
     : null;
-  const addWorkspaceTab = (createTab: (id: number) => WorkspaceTab) => {
-    setWorkspaceTabs((current) => {
-      if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
-      const id = current.value.nextId;
-      return {
-        ...current,
-        value: {
-          ...current.value,
-          tabs: [...current.value.tabs, createTab(id)],
-          activeId: id,
-          nextId: id + 1,
-        },
-      };
-    });
+  const addWorkspaceTab = (
+    createTab: (id: number) => WorkspaceTab,
+    region: WorkspaceRegion = 'main',
+  ) => {
+    updateWorkspaceTabs((tabs) => appendTab(tabs, region, createTab));
+    setFocusedRegion(region);
   };
   const spawnTtydSession = (type: SpawnSessionType) => {
     addWorkspaceTab((id) => type === 'chat'
       ? { id, type, chatProvider: 'claude' }
       : { id, type });
+  };
+  const selectTtydSession = (id: string) => {
+    const session = ttydSessions.find((tab) => String(tab.id) === id);
+    if (session === undefined) return;
+    setFocusedRegion(surfaceRegion(session));
+    updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
   };
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
@@ -959,22 +1069,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (existing) {
       selectTtydSession(String(existing.id));
     } else {
-      addWorkspaceTab((id) => ({ id, type: 'file', filePath }));
+      // Files opens files beside itself. Deliberately unlike IntelliJ: the
+      // tree and what it opens stay in one column.
+      const region = splitEnabled && activeWorkspaceTabs !== null
+        ? filesHostRegion(activeWorkspaceTabs)
+        : 'main';
+      addWorkspaceTab((id) => ({ id, type: 'file', filePath }), region);
     }
     if (mobileWebApp) setFilesDrawerOpen(false);
-  };
-  const selectTtydSession = (id: string) => {
-    setWorkspaceTabs((current) => {
-      if (
-        current.workspaceId !== activeWorkspaceId
-        || !current.loaded
-      ) return current;
-      const activeId = current.value.tabs.find((tab) => String(tab.id) === id)?.id;
-      return activeId === undefined ? current : {
-        ...current,
-        value: { ...current.value, activeId },
-      };
-    });
   };
   const signInToTerminal = useTerminalSignIn({
     workspaceId: activeWorkspaceId,
@@ -1047,23 +1149,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ({ workspace_id }) => workspace_id === activeWorkspaceId,
   );
   const closeTtydSessionNow = (id: string) => {
-    setWorkspaceTabs((current) => {
-      if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
-      const numericId = current.value.tabs.find((tab) => String(tab.id) === id)?.id;
-      if (numericId === undefined) return current;
-      const index = current.value.tabs.findIndex((tab) => tab.id === numericId);
-      const remaining = current.value.tabs.filter((tab) => tab.id !== numericId);
-      if (index < 0) return current;
-      return {
-        ...current,
-        value: {
-          ...current.value,
-          tabs: remaining,
-          activeId: numericId === current.value.activeId
-            ? remaining[Math.min(index, remaining.length - 1)]?.id ?? null
-            : current.value.activeId,
-        },
-      };
+    updateWorkspaceTabs((tabs) => {
+      const numericId = tabs.tabs.find((tab) => String(tab.id) === id)?.id;
+      return numericId === undefined ? tabs : closePaneTab(tabs, numericId);
     });
     setDirtyFileIds((current) => {
       if (!current.has(id)) return current;
@@ -1097,30 +1185,46 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     chatSessionId: string | undefined,
     chatProvider: 'claude' | 'codex',
   ) => {
-    setWorkspaceTabs((current) => {
-      if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
-      const numericId = current.value.tabs.find((tab) => String(tab.id) === id)?.id;
+    updateWorkspaceTabs((current) => {
+      const numericId = current.tabs.find((tab) => String(tab.id) === id)?.id;
       if (numericId === undefined) return current;
-      const tab = current.value.tabs.find((entry) => entry.id === numericId);
+      const tab = current.tabs.find((entry) => entry.id === numericId);
       if (
         tab?.type !== 'chat'
         || (tab.chatSessionId === chatSessionId && tab.chatProvider === chatProvider)
       ) return current;
       return {
         ...current,
-        value: {
-          ...current.value,
-          tabs: current.value.tabs.map((entry) => entry.id === numericId && entry.type === 'chat'
-            ? {
-                ...entry,
-                ...(chatSessionId ? { chatSessionId } : { chatSessionId: undefined }),
-                chatProvider,
-              }
-            : entry),
-        },
+        tabs: current.tabs.map((entry) => entry.id === numericId && entry.type === 'chat'
+          ? {
+              ...entry,
+              ...(chatSessionId ? { chatSessionId } : { chatSessionId: undefined }),
+              chatProvider,
+            }
+          : entry),
       };
     });
   };
+
+  const {
+    tabDrag,
+    beginTabDrag,
+    trackTabDrag,
+    dropTabDrag,
+    clearTabDrag,
+    dropTargetLabel,
+  } = useWorkspaceTabDrag({
+    panesRef,
+    visibleRegions,
+    enabled: splitEnabled,
+    labelFor: (sessionId) => ttydTabs.find((tab) => tab.id === sessionId)?.label ?? '',
+    onDrop: (id, target) => {
+      setFocusedRegion(target.region);
+      updateWorkspaceTabs((tabs) => (target.kind === 'split'
+        ? splitTab(tabs, id, target.region)
+        : moveTab(tabs, id, target.region, target.beforeId)));
+    },
+  });
   const statusWorkspace = activeWorkspace
     ? `workspace ${activeWorkspace.lifecycleStatus}`
     : 'workspace pending';
@@ -1138,7 +1242,128 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       ? 'waking · requesting compute'
       : 'waking · reattaching drive'
     : undefined;
-  const activeFilePane = ttydActiveType === 'file' && filesClient !== null;
+  const workspaceErrored = activeWorkspace !== undefined && (
+    activeWorkspace.lifecycleStatus === 'error'
+    || (activeWorkspace.lifecycleStatus === 'parked' && activeWorkspace.errorDetail !== null)
+  );
+  // Terminals and chat need a live box; files, previews and panels draw their
+  // own unavailable states and stay mounted while the box wakes.
+  const sessionsRenderable = !workspaceErrored
+    && activeSessionUrl !== null
+    && !workspaceProvisioning
+    && tabsLoaded;
+  const retainedSessions = retainedSessionIdsRef.current;
+  // One renderer for every surface, all siblings in the pane grid. A tab that
+  // changes column changes a grid placement, not a parent — so a visited
+  // terminal survives the move, and an unvisited one still never mounts.
+  const renderedSessions = ttydSessions.filter((session) => {
+    if (!splitEnabled && session.type === 'panel') return false;
+    const needsBox = session.type !== 'panel'
+      && session.type !== 'file'
+      && session.type !== 'preview';
+    if (needsBox && !sessionsRenderable) return false;
+    const sessionId = String(session.id);
+    return sessionId === paneActiveId(surfaceRegion(session))
+      || (
+        retainedSessions.workspaceId === activeWorkspaceId
+        && retainedSessions.ids.has(sessionId)
+      );
+  });
+  const loadingStage = activeWorkspace === undefined
+    ? 'starting · workspace terminal'
+    : workspaceProvisioning
+      ? activeWorkspace.lifecycleStatus === 'creating'
+        ? `allocating · ${activeWorkspace.machineType
+          ? machineTypeLabel(activeWorkspace.machineType)
+          : 'workspace VM'}`
+        : `starting · ${activeWorkspace.machineType
+          ? machineTypeLabel(activeWorkspace.machineType)
+          : 'workspace VM'}`
+      : workspaceWakingStage ?? 'starting · workspace terminal';
+  const loadingLabel = workspaceProvisioning
+    ? activeWorkspace?.lifecycleStatus === 'creating'
+      ? 'Creating workspace'
+      : 'Provisioning workspace'
+    : workspaceWaking ? 'Waking workspace' : 'Loading workspace';
+  /** What a column shows when its active tab cannot draw itself yet. Files,
+   * previews and panels always draw themselves, so they never see this. */
+  const paneFallback = (region: WorkspaceRegion): ReactNode => {
+    const activeId = paneActiveId(region);
+    const session = ttydSessions.find((entry) => String(entry.id) === activeId) ?? null;
+    if (
+      session !== null
+      && (session.type === 'file' || session.type === 'preview' || session.type === 'panel')
+    ) return null;
+    if (workspaceErrored && activeWorkspace) {
+      return (
+        <WorkspaceErrorState
+          workspaceName={activeWorkspace.title}
+          errorDetail={activeWorkspace.errorDetail}
+          retryAction={activeWorkspace.retryAction}
+          onRetry={() => retryWorkspace(activeWorkspace.id)}
+        />
+      );
+    }
+    if (!activeWorkspace) {
+      return region !== 'main' ? null : (
+        <div className="webapp-empty">
+          <TerminalIcon />
+          <h1>{store.workspaces.length > 0 ? 'No controllable workspaces' : 'No cloud workspaces'}</h1>
+          <p>{store.workspaces.length > 0
+            ? 'Workspace metadata remains visible in the rail. Only owners and admins can open terminals.'
+            : 'Create a workspace from the rail to open a terminal.'}</p>
+          <button className="webapp-action webapp-action--primary" type="button" onClick={() => {
+            setShowCreateWorkspace(true);
+          }}>Create workspace</button>
+        </div>
+      );
+    }
+    if (activeSessionUrl === null || workspaceProvisioning) {
+      return <WebAppLoadingPane ariaLabel={loadingLabel} stage={loadingStage} />;
+    }
+    if (!tabsLoaded) {
+      return <WebAppLoadingPane ariaLabel="Loading workspace" stage="loading · local tabs" />;
+    }
+    return session === null
+      ? <p className="webapp-pane-empty">Empty pane</p>
+      : null;
+  };
+  const filesSidebar = activeWorkspace === undefined ? null : (
+    <FilesSidebar
+      key={activeWorkspace.id}
+      client={filesClient}
+      expanded={activeFiles.expanded}
+      getClient={getFilesClient}
+      mobile={mobileWebApp}
+      open={filesOpen}
+      ready={activeWorkspaceRunning}
+      refreshVersion={filesRefreshVersion}
+      visible={filesSegmentVisible}
+      wakingStage={workspaceWakingStage}
+      width={activeFiles.width}
+      sharedFolders={workspaceAttachments.workspaceId === activeWorkspace.id
+        ? workspaceAttachments.folders
+        : []}
+      canShare={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
+      onClose={() => {
+        if (mobileWebApp) setFilesDrawerOpen(false);
+        else updateWorkspaceTabs((tabs) => {
+          const files = panelTab(tabs, 'files');
+          return files === null ? tabs : closePaneTab(tabs, files.id);
+        });
+      }}
+      onExpandedChange={(expanded) => {
+        setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
+          ? { ...current, value: { ...current.value, expanded } }
+          : current);
+      }}
+      onOpenFile={openFile}
+      onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
+      onShareToDrive={setShareToDrivePath}
+      onUnauthorized={handleUnauthorized}
+      onWidthChange={setSidePaneWidth}
+    />
+  );
   const updateNotice = updateAvailableHash && (
     <div className="webapp-notice webapp-notice--update" role="status">
       <span>Updated version available</span>
@@ -1162,7 +1387,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       identity={store.viewer?.identity ?? null}
       org={store.viewer?.org ?? null}
       organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
-      sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId ? ttydTabs : []}
+      sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
+        ? ttydTabs.filter((tab) => tab.agent !== 'panel')
+        : []}
       activeSessionId={ttydActiveId ?? ''}
       onSelectSession={selectTtydSession}
       onOpenDrive={() => navigateTo(drivePath())}
@@ -1226,6 +1453,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
             listTemplates={listTemplates}
+            listGrants={listGrants}
+            connectClient={client}
             onNewTemplate={() => navigateTo(templateNewPath())}
             onCancel={() => {
               if (!createWorkspaceBusy) setShowCreateWorkspace(false);
@@ -1356,9 +1585,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             client={client}
             viewer={store.viewer}
             section={route.settingsSection}
-            requestedIntegrationName={new URLSearchParams(window.location.search).get('add') ?? undefined}
+            requestedConnectionName={new URLSearchParams(window.location.search).get('add') ?? undefined}
             onNavigate={navigateToSettings}
-            onConfigureIntegration={(name) => navigateToSettings('integrations', name)}
+            onConfigureConnection={(name) => navigateToSettings('connections', name)}
             onSignOut={signOut}
           />
         ) : (
@@ -1398,7 +1627,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       className="drive-shell drive-shell--workspace"
       onDragOver={(event) => {
         if (filesClient === null) return;
-        if (!event.dataTransfer.types.includes('Files')) return;
+        if (!event.dataTransfer?.types.includes('Files')) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = 'copy';
         if (!dropActive) setDropActive(true);
@@ -1411,7 +1640,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onDrop={(event) => {
         if (filesClient === null) return;
-        if (!event.dataTransfer.types.includes('Files')) return;
+        if (!event.dataTransfer?.types.includes('Files')) return;
         event.preventDefault();
         setDropActive(false);
         void handleFilesDropped([...event.dataTransfer.files]);
@@ -1442,27 +1671,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       })()}
 
       <div className="drive-ws-frame">
-          <WebAppHeader
-            tabs={ttydTabs}
-            activeSessionId={ttydActiveId ?? ''}
-            sessionBusy={false}
-            terminalDisabled={workspaceWaking || !tabsLoaded}
-            mobile={mobileWebApp}
-            paneStrips={false}
-            drawerOpen={drawerOpen}
-            onOpenDrawer={() => {
-              setFilesDrawerOpen(false);
-              setDrawerOpen(true);
-            }}
-            onSelect={selectTtydSession}
-            onClose={closeTtydSession}
-            onSpawn={spawnTtydSession}
-            livePorts={orderedLivePorts}
-            previewLinks={orderedPreviewLinks}
-            onOpenPreview={openPreviewPort}
-            onOpenPreviewLink={openPreviewLink}
-          />
-
           <section className="webapp-workspace-view">
             {activeWorkspace?.accessRole === 'viewer' && (
               <div className="ws-viewer-hold" role="status">
@@ -1474,155 +1682,224 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 </span>
               </div>
             )}
-            <div className="webapp-workspace-main">
-              {ttydSessions.map((session) => session.type === 'preview' && (
-                <div
-                  key={session.id}
-                  hidden={ttydActiveId !== String(session.id)}
-                  style={ttydActiveId === String(session.id) ? { display: 'contents' } : undefined}
-                >
-                  <PreviewPanel
-                    target={'port' in session
-                      ? session.port
-                      : { url: session.url, title: session.title }}
-                    path={'port' in session ? session.path : undefined}
-                    filesBase={activeFilesBase}
-                    running={activeWorkspaceRunning}
+            <div
+              className={`webapp-panes${visibleRegions.length > 1 ? ' webapp-panes--split' : ''}`}
+              ref={panesRef}
+              style={
+                // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
+                { '--side-pane-width': `${activeFiles.width}px` } as CSSProperties
+              }
+              onDragOver={(event) => {
+                if (tabDrag === null) return;
+                event.preventDefault();
+                if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+                trackTabDrag(event);
+              }}
+              onDrop={dropTabDrag}
+            >
+              {visibleRegions.map((region) => (
+                <div className="webapp-pane-strip" data-region={region} key={`strip-${region}`}>
+                  <WebAppHeader
+                    tabs={paneTabModels(region)}
+                    activeSessionId={paneActiveId(region) ?? ''}
+                    sessionBusy={false}
+                    terminalDisabled={workspaceWaking || !tabsLoaded}
+                    mobile={mobileWebApp}
+                    paneStrips={false}
+                    drawerOpen={drawerOpen}
+                    stripLabel={region === 'main'
+                      ? 'Workspace sessions'
+                      : 'Workspace side pane sessions'}
+                    spawnable={region === 'main'}
+                    onOpenDrawer={() => {
+                      setFilesDrawerOpen(false);
+                      setDrawerOpen(true);
+                    }}
+                    onSelect={selectTtydSession}
+                    onClose={closeTtydSession}
+                    onSpawn={spawnTtydSession}
+                    onTabDragStart={splitEnabled ? beginTabDrag : undefined}
+                    onTabDragEnd={clearTabDrag}
+                    draggingSessionId={tabDrag?.sessionId ?? null}
+                    insertBeforeId={tabDrag !== null
+                      && tabDrag.target.kind === 'tab'
+                      && tabDrag.target.region === region
+                      ? tabDrag.target.beforeId === null
+                        ? null
+                        : String(tabDrag.target.beforeId)
+                      : undefined}
+                    livePorts={orderedLivePorts}
+                    previewLinks={orderedPreviewLinks}
+                    onOpenPreview={openPreviewPort}
+                    onOpenPreviewLink={openPreviewLink}
                   />
                 </div>
               ))}
-              <div
-                className="webapp-workspace-pane"
-                hidden={activeFilePane || ttydActiveType === 'preview'}
-              >
-                {activeWorkspace?.lifecycleStatus === 'error'
-                  || (
-                    activeWorkspace?.lifecycleStatus === 'parked'
-                    && activeWorkspace.errorDetail
-                  ) ? (
-                  <WorkspaceErrorState
-                    workspaceName={activeWorkspace.title}
-                    errorDetail={activeWorkspace.errorDetail}
-                    retryAction={activeWorkspace.retryAction}
-                    onRetry={() => retryWorkspace(activeWorkspace.id)}
-                  />
-                ) : activeSessionUrl ? (
-                  workspaceProvisioning && activeWorkspace ? (
-                    <WebAppLoadingPane
-                      ariaLabel={activeWorkspace.lifecycleStatus === 'creating'
-                        ? 'Creating workspace'
-                        : 'Provisioning workspace'}
-                      stage={activeWorkspace.lifecycleStatus === 'creating'
-                        ? `allocating · ${activeWorkspace.machineType
-                          ? machineTypeLabel(activeWorkspace.machineType)
-                          : 'workspace VM'}`
-                        : `starting · ${activeWorkspace.machineType
-                          ? machineTypeLabel(activeWorkspace.machineType)
-                          : 'workspace VM'}`}
-                    />
-                  ) : !tabsLoaded ? (
-                    <WebAppLoadingPane
-                      ariaLabel="Loading workspace"
-                      stage="loading · local tabs"
-                    />
-                  ) : (
-                    ttydSessions
-                      .filter((session) => (
-                        String(session.id) === ttydActiveId
-                        || (
-                          retainedSessionIdsRef.current.workspaceId === activeWorkspaceId
-                          && retainedSessionIdsRef.current.ids.has(String(session.id))
-                        )
-                      ))
-                      .sort((left, right) => Number(String(right.id) === ttydActiveId)
-                        - Number(String(left.id) === ttydActiveId))
-                      .map((session) => {
-                        const sessionId = String(session.id);
-                        const active = ttydActiveId === sessionId;
-                        if (session.type === 'chat') {
-                          return (
-                            <div key={sessionId} hidden={!active} className="webapp-workspace-session">
-                              <ChatPanel
-                                url={activeAcpUrl ?? ''}
-                                workspaceId={activeWorkspaceId}
-                                initialSessionId={session.chatSessionId ?? null}
-                                onSessionId={(_workspaceId, chatSessionId) => {
-                                  rememberChatSession(sessionId, chatSessionId, 'claude');
-                                }}
-                                onOpenPreview={openPreviewPort}
-                                onSignIn={signInToTerminal}
-                                readOnly={activeWorkspace?.accessRole === 'viewer'}
-                              />
-                            </div>
-                          );
-                        }
-                        if (session.type === 'file' || session.type === 'preview') return null;
-                        return (
-                          <div key={sessionId} hidden={!active} className="webapp-workspace-session">
-                            <TtydTerminal
-                              url={activeSessionUrl}
-                              sessionType={session.type}
-                              sessionKey={sessionId}
-                              active={active}
-                              readOnly={activeWorkspace?.accessRole === 'viewer'}
-                              onSignInUrl={setTerminalSignInUrl}
-                              onOpenPreview={openPreviewPort}
-                            />
-                          </div>
-                        );
-                      })
-                  )
-                ) : activeWorkspace ? (
-                  <WebAppLoadingPane
-                    ariaLabel={workspaceProvisioning
-                      ? activeWorkspace.lifecycleStatus === 'creating'
-                        ? 'Creating workspace'
-                        : 'Provisioning workspace'
-                      : workspaceWaking ? 'Waking workspace'
-                      : 'Loading workspace'}
-                    stage={workspaceProvisioning
-                      ? activeWorkspace.lifecycleStatus === 'creating'
-                        ? `allocating · ${activeWorkspace.machineType
-                          ? machineTypeLabel(activeWorkspace.machineType)
-                          : 'workspace VM'}`
-                        : `starting · ${activeWorkspace.machineType
-                          ? machineTypeLabel(activeWorkspace.machineType)
-                          : 'workspace VM'}`
-                      : workspaceWakingStage ?? 'starting · workspace terminal'}
-                  />
-                ) : (
-                  <div className="webapp-empty">
-                    <TerminalIcon />
-                    <h1>{store.workspaces.length > 0 ? 'No controllable workspaces' : 'No cloud workspaces'}</h1>
-                    <p>{store.workspaces.length > 0
-                      ? 'Workspace metadata remains visible in the rail. Only owners and admins can open terminals.'
-                      : 'Create a workspace from the rail to open a terminal.'}</p>
-                    <button className="webapp-action webapp-action--primary" type="button" onClick={() => {
-                      setShowCreateWorkspace(true);
-                    }}>Create workspace</button>
-                  </div>
-                )}
-              </div>
-              {ttydSessions
-                .filter((session) => session.type === 'file')
-                .map((session) => (
+              {visibleRegions.map((region) => {
+                const fallback = paneFallback(region);
+                return fallback === null ? null : (
                   <div
-                    className="webapp-workspace-pane"
-                    hidden={ttydActiveId !== String(session.id) || filesClient === null}
-                    key={session.id}
+                    className="webapp-workspace-session webapp-pane-fallback"
+                    data-region={region}
+                    key={`fallback-${region}`}
+                  >{fallback}</div>
+                );
+              })}
+              {renderedSessions.map((session) => {
+                const sessionId = String(session.id);
+                const region = surfaceRegion(session);
+                const active = paneActiveId(region) === sessionId;
+                if (session.type === 'panel') {
+                  return (
+                    <div
+                      className="webapp-workspace-session webapp-pane-panel"
+                      data-region={region}
+                      hidden={!active}
+                      key={sessionId}
+                    >
+                      <WorkspacePanelContent
+                        panel={session.panel}
+                        client={client}
+                        workspaceId={activeWorkspaceId}
+                        orgName={store.viewer?.org.name ?? 'Organization'}
+                        visible={active}
+                        files={filesSidebar}
+                        pendingRequests={activePendingRequests}
+                        pendingRequestsError={pendingRequestsError}
+                        readOnly={activeWorkspace?.accessRole === 'viewer'}
+                        onResolveRequest={resolveWorkspaceRequest}
+                        livePorts={orderedLivePorts}
+                        previewLinks={orderedPreviewLinks}
+                        filesBase={activeFilesBase}
+                        previewReady={activeWorkspaceRunning}
+                        onOpenPreview={(port) => { openPreviewPort(port); }}
+                        onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
+                      />
+                    </div>
+                  );
+                }
+                if (session.type === 'preview') {
+                  return (
+                    <div
+                      className="webapp-workspace-session webapp-pane-preview"
+                      data-region={region}
+                      hidden={!active}
+                      key={sessionId}
+                    >
+                      <PreviewPanel
+                        target={'port' in session
+                          ? session.port
+                          : { url: session.url, title: session.title }}
+                        path={'port' in session ? session.path : undefined}
+                        filesBase={activeFilesBase}
+                        running={activeWorkspaceRunning}
+                      />
+                    </div>
+                  );
+                }
+                if (session.type === 'file') {
+                  return (
+                    <div
+                      className="webapp-workspace-session"
+                      data-region={region}
+                      hidden={!active || filesClient === null}
+                      key={sessionId}
+                    >
+                      <FileEditor
+                        active={active}
+                        client={filesClient}
+                        filePath={session.filePath}
+                        unavailableStage={workspaceWakingStage}
+                        onDirtyChange={(dirty) => updateFileDirty(sessionId, dirty)}
+                        onSaved={() => setFilesRefreshVersion((version) => version + 1)}
+                        onTreeRefresh={() => setFilesRefreshVersion((version) => version + 1)}
+                        onUnauthorized={handleUnauthorized}
+                      />
+                    </div>
+                  );
+                }
+                if (session.type === 'chat') {
+                  return (
+                    <div
+                      className="webapp-workspace-session"
+                      data-region={region}
+                      hidden={!active}
+                      key={sessionId}
+                    >
+                      <ChatPanel
+                        url={activeAcpUrl ?? ''}
+                        workspaceId={activeWorkspaceId}
+                        initialSessionId={session.chatSessionId ?? null}
+                        onSessionId={(_workspaceId, chatSessionId) => {
+                          rememberChatSession(sessionId, chatSessionId, 'claude');
+                        }}
+                        onOpenPreview={openPreviewPort}
+                        onSignIn={signInToTerminal}
+                        readOnly={activeWorkspace?.accessRole === 'viewer'}
+                      />
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    className="webapp-workspace-session"
+                    data-region={region}
+                    hidden={!active}
+                    key={sessionId}
                   >
-                    <FileEditor
-                      active={ttydActiveId === String(session.id)}
-                      client={filesClient}
-                      filePath={session.filePath}
-                      unavailableStage={workspaceWakingStage}
-                      onDirtyChange={(dirty) => updateFileDirty(String(session.id), dirty)}
-                      onSaved={() => setFilesRefreshVersion((version) => version + 1)}
-                      onTreeRefresh={() => setFilesRefreshVersion((version) => version + 1)}
-                      onUnauthorized={handleUnauthorized}
+                    <TtydTerminal
+                      url={activeSessionUrl ?? ''}
+                      sessionType={session.type}
+                      sessionKey={sessionId}
+                      active={active}
+                      readOnly={activeWorkspace?.accessRole === 'viewer'}
+                      onSignInUrl={setTerminalSignInUrl}
+                      onOpenPreview={openPreviewPort}
                     />
                   </div>
-                ))}
+                );
+              })}
+              {visibleRegions.length > 1 && (
+                <div
+                  className="webapp-pane-resizer"
+                  role="separator"
+                  aria-label="Resize side pane"
+                  aria-orientation="vertical"
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    paneResizeOrigin.current = { x: event.clientX, width: activeFiles.width };
+                    event.currentTarget.setPointerCapture(event.pointerId);
+                  }}
+                  onPointerMove={(event) => {
+                    const origin = paneResizeOrigin.current;
+                    if (origin === null) return;
+                    setSidePaneWidth(Math.max(
+                      200,
+                      Math.min(
+                        maxDrawerWidth(window.innerWidth),
+                        origin.width + origin.x - event.clientX,
+                      ),
+                    ));
+                  }}
+                  onPointerUp={(event) => {
+                    paneResizeOrigin.current = null;
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }}
+                  onPointerCancel={() => { paneResizeOrigin.current = null; }}
+                />
+              )}
+              {tabDrag !== null && (
+                <div
+                  className="webapp-pane-drop"
+                  aria-hidden="true"
+                  style={{
+                    left: `${tabDrag.box.left}px`,
+                    top: `${tabDrag.box.top}px`,
+                    width: `${tabDrag.box.width}px`,
+                    height: `${tabDrag.box.height}px`,
+                  }}
+                />
+              )}
             </div>
             {mobileWebApp && activeWorkspace && (
               <button
@@ -1751,7 +2028,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   className="webapp-statusline__files"
                   type="button"
                   aria-label={filesOpen ? 'Close workspace drawer' : 'Open workspace drawer'}
-                  aria-controls="webapp-workspace-drawer"
+                  aria-controls={mobileWebApp ? 'webapp-workspace-drawer' : undefined}
                   aria-expanded={mobileWebApp ? filesDrawerOpen : undefined}
                   aria-pressed={filesOpen}
                   title={`${filesOpen ? 'Hide' : 'Show'} workspace drawer (Cmd/Ctrl+B)`}
@@ -1780,26 +2057,32 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           )}
       </div>
 
-      {activeWorkspace && (mobileWebApp || activeFiles.open) && (
+      {activeWorkspace && !mobileWebApp && (
+        <WorkspaceRailStrip
+          openPanels={openPanels}
+          pendingRequestCount={activePendingRequests.length}
+          onTogglePanel={(panel) => {
+            updateWorkspaceTabs((tabs) => togglePanelTab(tabs, panel));
+            setFocusedRegion('side');
+          }}
+        />
+      )}
+
+      {activeWorkspace && mobileWebApp && (
         <WorkspaceDrawer
           client={client}
           workspaceId={activeWorkspace.id}
-          mobile={mobileWebApp}
+          mobile
           open={filesOpen}
           width={activeFiles.width}
-          segment={activeFiles.segment}
+          segment={drawerSegment}
+          orgName={store.viewer?.org.name ?? 'Organization'}
           pendingRequests={activePendingRequests}
           pendingRequestsError={pendingRequestsError}
-          canManageCredentials={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
-          onWidthChange={(width) => {
-            setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-              ? { ...current, value: { ...current.value, width } }
-              : current);
-          }}
-          onSegmentChange={(segment: WorkspaceDrawerSegment) => {
-            setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-              ? { ...current, value: { ...current.value, segment } }
-              : current);
+          readOnly={activeWorkspace.accessRole === 'viewer'}
+          onWidthChange={setSidePaneWidth}
+          onSegmentChange={(panel: WorkspaceDrawerSegment) => {
+            updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
           }}
           onResolveRequest={resolveWorkspaceRequest}
           livePorts={orderedLivePorts}
@@ -1808,48 +2091,29 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           previewReady={activeWorkspaceRunning}
           onOpenPreview={(port) => { openPreviewPort(port); }}
           onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
-          files={(
-            <FilesSidebar
-              key={activeWorkspace.id}
-              client={filesClient}
-              expanded={activeFiles.expanded}
-              getClient={getFilesClient}
-              mobile={mobileWebApp}
-              open={filesOpen}
-              ready={activeWorkspaceRunning}
-              refreshVersion={filesRefreshVersion}
-              visible={filesSegmentVisible}
-              wakingStage={workspaceWakingStage}
-              width={activeFiles.width}
-              sharedFolders={workspaceAttachments.workspaceId === activeWorkspace.id
-                ? workspaceAttachments.folders
-                : []}
-              canShare={activeWorkspace.accessRole === 'owner' || activeWorkspace.accessRole === 'admin'}
-              onClose={() => {
-                if (mobileWebApp) setFilesDrawerOpen(false);
-                else {
-                  setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                    ? { ...current, value: { ...current.value, open: false } }
-                    : current);
-                }
-              }}
-              onExpandedChange={(expanded) => {
-                setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                  ? { ...current, value: { ...current.value, expanded } }
-                  : current);
-              }}
-              onOpenFile={openFile}
-              onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
-              onShareToDrive={setShareToDrivePath}
-              onUnauthorized={handleUnauthorized}
-              onWidthChange={(width) => {
-                setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
-                  ? { ...current, value: { ...current.value, width } }
-                  : current);
-              }}
-            />
-          )}
+          files={filesSidebar}
         />
+      )}
+
+      {tabDrag !== null && (
+        <>
+          <div
+            className="webapp-pane-ghost"
+            aria-hidden="true"
+            style={{
+              left: `${tabDrag.pointer.x + 14}px`,
+              top: `${tabDrag.pointer.y - 12}px`,
+            }}
+          >{tabDrag.label}</div>
+          <div
+            className="webapp-pane-droptip"
+            role="status"
+            style={{
+              left: `${tabDrag.pointer.x + 16}px`,
+              top: `${tabDrag.pointer.y + 20}px`,
+            }}
+          >{dropTargetLabel(tabDrag.target)}</div>
+        </>
       )}
 
       {shareToDrivePath !== null && activeWorkspace && (
@@ -1877,6 +2141,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
           listTemplates={listTemplates}
+          listGrants={listGrants}
+          connectClient={client}
           onNewTemplate={() => navigateTo(templateNewPath())}
           onCancel={() => {
             if (!createWorkspaceBusy) {

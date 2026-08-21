@@ -18,7 +18,7 @@ import {
 } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
-import type { WorkspaceEnvironment, WorkspaceTemplateView } from "./wire.js";
+import type { TemplateConnectionView, WorkspaceEnvironment, WorkspaceTemplateView } from "./wire.js";
 
 export interface WorkspaceTemplateRow {
   id: string;
@@ -51,11 +51,42 @@ interface CreateTemplateInput {
   name: string;
   machineTypeId: string;
   folderIds: string[];
+  connections: TemplateConnectionView[];
   environment?: WorkspaceEnvironment;
   agentRuleId?: string | null;
 }
 
+interface TemplateConnectionRow {
+  template_id: string;
+  provider: string;
+  required: number;
+}
+
 const MAX_TEMPLATE_FOLDERS = 16;
+const MAX_TEMPLATE_CONNECTIONS = 16;
+
+function parseTemplateConnections(value: JsonValue | undefined): TemplateConnectionView[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new HttpError(400, "connections must be an array");
+  const byProvider = new Map<string, TemplateConnectionView>();
+  for (const [index, entry] of value.entries()) {
+    if (!isRecord(entry)) {
+      throw new HttpError(400, `connections[${String(index)}] must be an object`);
+    }
+    const provider = requiredString(entry.provider, `connections[${String(index)}].provider`, 64);
+    if (entry.required !== undefined && entry.required !== true && entry.required !== false) {
+      throw new HttpError(400, `connections[${String(index)}].required must be a boolean`);
+    }
+    byProvider.set(provider, { provider, required: entry.required === true });
+  }
+  if (byProvider.size > MAX_TEMPLATE_CONNECTIONS) {
+    throw new HttpError(
+      400,
+      `connections must have at most ${String(MAX_TEMPLATE_CONNECTIONS)} entries`,
+    );
+  }
+  return [...byProvider.values()];
+}
 
 function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
@@ -70,7 +101,12 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
   if (folderIds.length > MAX_TEMPLATE_FOLDERS) {
     throw new HttpError(400, `folderIds must have at most ${String(MAX_TEMPLATE_FOLDERS)} entries`);
   }
-  const result: CreateTemplateInput = { name, machineTypeId, folderIds };
+  const result: CreateTemplateInput = {
+    name,
+    machineTypeId,
+    folderIds,
+    connections: parseTemplateConnections(value.connections),
+  };
   if (value.environment !== undefined) {
     result.environment = parseWorkspaceEnvironment(value.environment);
   }
@@ -81,6 +117,52 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
     result.agentRuleId = value.agentRuleId;
   }
   return result;
+}
+
+async function templateConnectionRows(
+  db: Db,
+  templateIds: string[],
+): Promise<TemplateConnectionRow[]> {
+  if (templateIds.length === 0) return [];
+  return rows<TemplateConnectionRow>(db, {
+    q: `SELECT template_id, provider, required
+        FROM workspace_template_connections
+        WHERE template_id IN (${templateIds.map((_id, index) => `?${String(index + 1)}`).join(",")})
+        ORDER BY created_at, provider`,
+    v: templateIds,
+  });
+}
+
+/** Template connections referenced by name; the creator supplies the identity
+ * at instantiate. Full replacement matches the folder set's edit semantics. */
+async function replaceTemplateConnections(
+  db: Db,
+  templateId: string,
+  connections: readonly TemplateConnectionView[],
+  now: number,
+): Promise<void> {
+  await rows(db, {
+    q: "DELETE FROM workspace_template_connections WHERE template_id = ?1",
+    v: [templateId],
+  });
+  for (const connection of connections) {
+    await rows(db, {
+      q: `INSERT INTO workspace_template_connections
+          (template_id, provider, required, created_at)
+          VALUES (?1, ?2, ?3, ?4)`,
+      v: [templateId, connection.provider, connection.required ? 1 : 0, now],
+    });
+  }
+}
+
+export async function templateConnections(
+  db: Db,
+  templateId: string,
+): Promise<TemplateConnectionView[]> {
+  return (await templateConnectionRows(db, [templateId])).map((row) => ({
+    provider: row.provider,
+    required: row.required === 1,
+  }));
 }
 
 export async function workspaceTemplateForCreate(
@@ -167,6 +249,7 @@ function templateView(
   row: TemplateListRow,
   principal: Principal,
   folders: TemplateFolderRow[],
+  connections: TemplateConnectionRow[],
 ): WorkspaceTemplateView {
   return {
     id: row.id,
@@ -180,6 +263,10 @@ function templateView(
       id: folder.folder_id,
       name: folder.name,
       role: folderRole(principal, folder),
+    })),
+    connections: connections.map((connection) => ({
+      provider: connection.provider,
+      required: connection.required === 1,
     })),
   };
 }
@@ -214,9 +301,23 @@ export function addWorkspaceTemplateRoutes(
       existing.push(folder);
       byTemplate.set(folder.template_id, existing);
     }
+    const connections = await templateConnectionRows(
+      runtime.db,
+      templates.map(({ id }) => id),
+    );
+    const connectionsByTemplate = new Map<string, TemplateConnectionRow[]>();
+    for (const connection of connections) {
+      const existing = connectionsByTemplate.get(connection.template_id) ?? [];
+      existing.push(connection);
+      connectionsByTemplate.set(connection.template_id, existing);
+    }
     return context.json({
-      templates: templates.map((row) =>
-        templateView(row, principal, byTemplate.get(row.id) ?? [])),
+      templates: templates.map((row) => templateView(
+        row,
+        principal,
+        byTemplate.get(row.id) ?? [],
+        connectionsByTemplate.get(row.id) ?? [],
+      )),
     });
   });
 
@@ -259,6 +360,7 @@ export function addWorkspaceTemplateRoutes(
         v: [id, folderId, now],
       });
     }
+    await replaceTemplateConnections(runtime.db, id, input.connections, now);
     const creator = await first<{ name: string; avatar_url: string | null }>(runtime.db, {
       q: "SELECT name, avatar_url FROM users WHERE id = ?1 LIMIT 1",
       v: [principal.id],
@@ -279,6 +381,7 @@ export function addWorkspaceTemplateRoutes(
       },
       principal,
       await templateFolderRows(runtime.db, [id], principal.membershipId),
+      await templateConnectionRows(runtime.db, [id]),
     );
     return context.json({ template }, 201);
   });
@@ -356,6 +459,7 @@ export function addWorkspaceTemplateRoutes(
         v: [template.id, folderId, now],
       });
     }
+    await replaceTemplateConnections(runtime.db, template.id, input.connections, now);
     const updated = await first<TemplateListRow>(runtime.db, {
       q: `SELECT t.*, creator_user.name AS creator_name,
                  creator_user.avatar_url AS creator_avatar_url
@@ -371,6 +475,7 @@ export function addWorkspaceTemplateRoutes(
         updated,
         principal,
         await templateFolderRows(runtime.db, [template.id], principal.membershipId),
+        await templateConnectionRows(runtime.db, [template.id]),
       ),
     });
   });
@@ -408,6 +513,10 @@ export function addWorkspaceTemplateRoutes(
     }
     await rows(runtime.db, {
       q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",
+      v: [template.id],
+    });
+    await rows(runtime.db, {
+      q: "DELETE FROM workspace_template_connections WHERE template_id = ?1",
       v: [template.id],
     });
     await rows(runtime.db, {

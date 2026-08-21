@@ -234,7 +234,6 @@
 
 /* Legacy workspace internals hosted inside the ws frame: the old grid
  * children become flex rows. Grid placement props are inert under flex. */
-.drive-ws-frame > .webapp-header { flex: none; }
 .drive-ws-frame > .webapp-workspace-view { flex: 1 1 0; min-height: 0; }
 .drive-ws-frame > .webapp-statusline { flex: none; }
 
@@ -256,15 +255,18 @@
 
 .ws-viewer-hold strong { color: var(--ink); }
 
-/* Workspace mode: the right rail spans the full viewport height, like the
- * cockpit's files sidebar. */
+/* Workspace mode: the panes own the middle column and the icon strip pins the
+ * right edge, full viewport height. The panels themselves are tabs inside the
+ * panes, not a third column. */
 .drive-shell--workspace {
+  /* `auto` and not a literal 44px: the strip only exists once a workspace is
+   * open, and an empty reserved column would show as a gap. */
   grid-template-columns: 264px minmax(0, 1fr) auto;
 }
 
 .drive-shell--workspace > .drive-ws-frame { grid-column: 2; }
 
-.drive-shell--workspace > .workspace-drawer {
+.drive-shell--workspace > .webapp-rail-strip {
   grid-column: 3;
   grid-row: 1 / 3;
   height: 100%;

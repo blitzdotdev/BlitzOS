@@ -4,10 +4,15 @@ import type {
   PutAgentRuleRequest,
   PutAgentRuleResponse,
   ListCredentialLeasesResponse,
+  MintWorkspaceConnectionResponse,
   ListCredentialEventsResponse,
   CredentialEventView,
   ListCredentialRequestsResponse,
-  ListIntegrationsResponse,
+  ListCatalogResponse,
+  ListConnectionsResponse,
+  ListProviderHealthResponse,
+  ListUserGrantsResponse,
+  PutUserGrantRequest,
   CreateRecipeRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
@@ -19,7 +24,7 @@ import type {
   ListVolumesResponse,
   OrgUsageCaptureResponse,
   PollResponse,
-  PutIntegrationRequest,
+  PutConnectionRequest,
   RecipeResponse,
   RetryAction,
 } from "@blitzos/schema";
@@ -176,10 +181,26 @@ export interface ControlPlaneClient extends FileLibraryClient {
   setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
-  listIntegrations(signal?: AbortSignal): Promise<ListIntegrationsResponse>;
-  putIntegration(name: string, input: PutIntegrationRequest): Promise<void>;
-  deleteIntegration(name: string): Promise<void>;
+  listConnections(signal?: AbortSignal): Promise<ListConnectionsResponse>;
+  putConnection(name: string, input: PutConnectionRequest): Promise<void>;
+  deleteConnection(name: string): Promise<void>;
+  listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
+  listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
+  putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
+  deleteConnectionGrant(provider: string): Promise<void>;
+  listProviderHealth(signal?: AbortSignal): Promise<ListProviderHealthResponse>;
+  /** Full-page navigation target: the provider redirect cannot ride fetch.
+   * A workspace id sends the round trip back to that workspace with the lease
+   * already minted; without one it is an account authorization and lands in
+   * settings. */
+  connectStartUrl(provider: string, workspaceId?: string): string;
   listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
+  /** Connects a provider in one workspace: mints the lease that makes the
+   * workspace hold it, from the grant the account already carries. */
+  mintWorkspaceConnection(
+    workspaceId: string,
+    connectionName: string,
+  ): Promise<MintWorkspaceConnectionResponse>;
   listCredentialEvents(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialEventsResponse>;
   revokeLease(id: string): Promise<void>;
   listCredentialRequests(
@@ -652,18 +673,40 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     listMachineTypes: () => request<ListMachineTypesResponse>("/machine-types"),
     listVolumes: () => request<ListVolumesResponse>("/volumes"),
-    listIntegrations: (signal) =>
-      request<ListIntegrationsResponse>("/integrations", { signal }),
-    putIntegration: (name, input) =>
-      request<void>(`/integrations/${encodeURIComponent(name)}`, {
+    listConnections: (signal) =>
+      request<ListConnectionsResponse>("/connections", { signal }),
+    putConnection: (name, input) =>
+      request<void>(`/connections/${encodeURIComponent(name)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
-    deleteIntegration: (name) =>
-      request<void>(`/integrations/${encodeURIComponent(name)}`, {
+    deleteConnection: (name) =>
+      request<void>(`/connections/${encodeURIComponent(name)}`, {
         method: "DELETE",
       }),
+    listConnectionCatalog: (signal) =>
+      request<ListCatalogResponse>("/connections/catalog", { signal }),
+    listConnectionGrants: (signal) =>
+      request<ListUserGrantsResponse>("/connections/grants", { signal }),
+    putConnectionGrant: (provider, input) =>
+      request<void>(`/connections/grants/${encodeURIComponent(provider)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    deleteConnectionGrant: (provider) =>
+      request<void>(`/connections/grants/${encodeURIComponent(provider)}`, {
+        method: "DELETE",
+      }),
+    listProviderHealth: (signal) =>
+      request<ListProviderHealthResponse>("/connections/health", { signal }),
+    connectStartUrl: (provider, workspaceId) =>
+      `${base}/connect/${encodeURIComponent(provider)}/start${
+        workspaceId === undefined
+          ? ""
+          : `?workspaceId=${encodeURIComponent(workspaceId)}`
+      }`,
     listLeases: (workspaceId, signal) =>
       request<ListCredentialLeasesResponse>(
         `/workspaces/${encodeURIComponent(workspaceId)}/leases`,
@@ -674,6 +717,11 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         `/workspaces/${encodeURIComponent(workspaceId)}/credential-events`,
         { signal },
         decodeCredentialEvents,
+      ),
+    mintWorkspaceConnection: (workspaceId, connectionName) =>
+      request<MintWorkspaceConnectionResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/connections/${encodeURIComponent(connectionName)}/lease`,
+        { method: "POST" },
       ),
     revokeLease: (id) =>
       request<void>(`/leases/${encodeURIComponent(id)}`, { method: "DELETE" }),

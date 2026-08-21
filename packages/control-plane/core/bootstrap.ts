@@ -469,8 +469,48 @@ fail() {
 }
 
 export DEBIAN_FRONTEND=noninteractive
-retry apt-get update
-retry apt-get install -y docker.io curl
+# Canonical's regional EC2 mirrors (<region>.ec2.archive.ubuntu.com) accept the TCP
+# connection and then never answer. Without a timeout apt blocks forever, retry
+# never sees a failure to act on, and the workspace sits in creating until the
+# caller gives up instead of reporting an error. These timeouts turn that hang
+# into a failure; the probe below then moves off the dead mirror.
+cat >/etc/apt/apt.conf.d/99blitz-acquire <<'APTCONF'
+Acquire::http::Timeout "15";
+Acquire::https::Timeout "15";
+Acquire::Retries "2";
+APTCONF
+# apt-get update exits 0 even when every component of a source is Ign:, so its exit
+# code cannot gate the fallback. Probe the configured mirror directly instead and
+# rewrite before the first update, or the package lists are silently incomplete and
+# the docker.io install fails later for a reason that looks unrelated.
+ec2_mirror=$(grep -rhoE 'https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com' \
+  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1)
+if [ -n "$ec2_mirror" ] && ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/dists/noble/InRelease"; then
+  echo "blitz: $ec2_mirror is unreachable; falling back to archive.ubuntu.com"
+  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+fi
+# The probe above catches a dead mirror; a live one can still trickle at
+# hundreds of KB/s, which passes every timeout while turning a 90-second
+# install into a 20-minute hang. Cap each attempt and move to the fallback
+# mirror between attempts — a stall is a failure, not a wait.
+apt_mirror_fallback() {
+  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+}
+apt_watchdog() {
+  local attempt
+  for attempt in 1 2 3; do
+    if timeout 360 apt-get "$@"; then return 0; fi
+    echo "blitz: apt-get $1 failed or stalled (attempt $attempt); switching to the fallback mirror"
+    apt_mirror_fallback
+    dpkg --configure -a 2>/dev/null || true
+    sleep 5
+  done
+  fail "apt-get $1 kept failing or stalling after the mirror fallback"
+}
+apt_watchdog update
+apt_watchdog install -y docker.io curl
 systemctl enable --now docker
 
 mkdir -p /var/lib/blitz
@@ -548,14 +588,48 @@ rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin
 # replacement listener before stopping that socket so Docker can safely claim
 # host port 22 without losing the host SSH recovery path.
 install -d -m 0755 /etc/ssh/sshd_config.d
-cat >/etc/ssh/sshd_config.d/blitz.conf <<'SSHD_CONFIG'
+# 00- sorts ahead of image drop-ins; sshd takes the first Port it sees.
+cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
 Port 2222
 SSHD_CONFIG
 install -d -o root -g root -m 0755 /run/sshd
 /usr/sbin/sshd -t
-systemctl disable --now ssh.socket
+# Stop both units (a scanner-activated sshd holds the :22 fd itself), then
+# mask the socket so no postinst or preset re-apply can put :22 back.
+systemctl stop ssh.service ssh.socket 2>/dev/null || true
+systemctl disable ssh.socket 2>/dev/null || true
+systemctl mask ssh.socket
 systemctl enable ssh
 systemctl restart ssh
+# Prove the move by behavior, not by config parsing: a listener on :2222 is
+# the invariant every failure mode violates.
+sshd_moved_deadline=$((SECONDS + 20))
+until ss -tln 2>/dev/null | grep -qE ':2222[[:space:]]'; do
+  if (( SECONDS >= sshd_moved_deadline )); then
+    ss -tlnp 2>/dev/null || true
+    ls -la /etc/ssh/sshd_config.d/ || true
+    fail "host sshd never bound :2222 after the config move"
+  fi
+  sleep 1
+done
+
+# systemctl returns as soon as it has signalled the unit, not once the old
+# listener has released the port. The box container binds host port 22, so
+# racing ahead here makes docker run die with
+# "failed to bind host port 0.0.0.0:22/tcp: address already in use" (exit 125)
+# on whichever boots fast enough to lose the race. Wait for the port to be
+# genuinely free, and say so plainly if it never is.
+port_22_free() {
+  ! ss -tln 2>/dev/null | grep -qE '(^|[^0-9.:])(0\.0\.0\.0|\[::\]|\*):22[[:space:]]'
+}
+sshd_release_deadline=$((SECONDS + 60))
+until port_22_free; do
+  if (( SECONDS >= sshd_release_deadline )); then
+    ss -tlnp 2>/dev/null | grep ':22 ' || true
+    fail "host sshd still holds port 22 after 60s; the box container cannot bind it"
+  fi
+  sleep 1
+done
 
 ${imageSetup}
 install -d -m 0755 /etc/blitz

@@ -20,7 +20,7 @@ const DEFAULT_LEDGER = join(DEFAULT_WORK_DIR, "workspace-ids");
 const PROTECTED_WORKSPACE_ID = process.env.PROTECTED_WORKSPACE_ID ?? "";
 const INJECT_SENTINEL = "blitz-e2e-inject-sentinel-7f3a";
 const RESEND_SENTINEL = "blitz-e2e-resend-sentinel-31c9";
-const INTEGRATION_NAMES = ["hetzner-inject", "hetzner", "resend-e2e"];
+const CONNECTION_NAMES = ["hetzner-inject", "hetzner", "resend-e2e"];
 const readyTimeoutMs = Number(process.env.READY_TIMEOUT_MS ?? 180_000);
 const runToken = randomBytes(6).toString("hex");
 
@@ -43,8 +43,8 @@ const sensitiveValues = [
   hetznerProbe,
   githubRepo,
 ].filter((value) => value.length > 0);
-const integrationPutAttempted = new Set();
-const integrationUpserted = new Map(INTEGRATION_NAMES.map((name) => [name, false]));
+const connectionPutAttempted = new Set();
+const connectionUpserted = new Map(CONNECTION_NAMES.map((name) => [name, false]));
 const ledgeredWorkspaceIds = new Set();
 
 let cookie = null;
@@ -233,6 +233,8 @@ function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
 }
 
+// FROZEN: these stderr forms come from the blitz-cred CLI baked into the
+// shipped box image; they still say "integration" and may not change here.
 function matchCredentialFailure(stderr, integration, kind) {
   const text = String(stderr ?? "").trim();
   const escapedIntegration = integration.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -495,7 +497,7 @@ try {
     return pass("GOOS=linux GOARCH=amd64 blitz-cred cross-compiled");
   });
 
-  await runStep("B", "configure-integrations", async () => {
+  await runStep("B", "configure-connections", async () => {
     if (cookie === null) return fail("preflight session prerequisite failed");
     const definitions = [
       {
@@ -531,14 +533,14 @@ try {
     ];
     const problems = [];
     for (const definition of definitions) {
-      integrationPutAttempted.add(definition.name);
+      connectionPutAttempted.add(definition.name);
       try {
         const { response, body } = await controlPlane(
-          `/integrations/${encodeURIComponent(definition.name)}`,
+          `/connections/${encodeURIComponent(definition.name)}`,
           { method: "PUT", body: JSON.stringify(definition.body) },
         );
         if (response.status === 204) {
-          integrationUpserted.set(definition.name, true);
+          connectionUpserted.set(definition.name, true);
         } else {
           problems.push(`${definition.name}=HTTP ${response.status}${apiError(body)}`);
         }
@@ -546,8 +548,8 @@ try {
         problems.push(`${definition.name}=${error instanceof Error ? error.message : error}`);
       }
     }
-    if (problems.length > 0) return fail(`integration upsert failures: ${problems.join("; ")}`);
-    return pass("three integration upserts returned HTTP 204; roots were not echoed");
+    if (problems.length > 0) return fail(`connection upsert failures: ${problems.join("; ")}`);
+    return pass("three connection upserts returned HTTP 204; roots were not echoed");
   });
 
   await runStep("1", "create-ready-ssh", async () => {
@@ -701,7 +703,7 @@ try {
   });
 
   await runStep("3", "zero-agent-action", async () => {
-    if (!integrationUpserted.get("hetzner-inject")) {
+    if (!connectionUpserted.get("hetzner-inject")) {
       return fail("hetzner-inject upsert prerequisite failed");
     }
     if (sshInfo === null || knownHostsPath === null) {
@@ -729,7 +731,7 @@ try {
     const leases = await listWorkspaceLeases();
     const activeInject = leases.filter(
       (lease) =>
-        lease?.integration === "hetzner-inject" &&
+        lease?.connection === "hetzner-inject" &&
         lease?.mode === "inject" &&
         lease?.state === "active",
     );
@@ -742,7 +744,7 @@ try {
   });
 
   await runStep("5", "denied-mint", async () => {
-    if (!integrationUpserted.get("resend-e2e")) {
+    if (!connectionUpserted.get("resend-e2e")) {
       return fail("resend-e2e upsert prerequisite failed");
     }
     if (sshInfo === null || knownHostsPath === null) {
@@ -773,7 +775,7 @@ try {
   });
 
   await runStep("6", "proxy-gate", async () => {
-    if (!integrationUpserted.get("hetzner")) {
+    if (!connectionUpserted.get("hetzner")) {
       return fail("hetzner proxy upsert prerequisite failed; phase 3 may not be deployed");
     }
     if (sshInfo === null || knownHostsPath === null) {
@@ -813,13 +815,13 @@ try {
   });
 
   await runStep("7", "revoke-kills-token", async () => {
-    if (!integrationUpserted.get("hetzner")) {
+    if (!connectionUpserted.get("hetzner")) {
       return fail("hetzner proxy upsert prerequisite failed; phase 3 may not be deployed");
     }
     const leases = await listWorkspaceLeases();
     const proxyLease = leases.find(
       (lease) =>
-        lease?.integration === "hetzner" &&
+        lease?.connection === "hetzner" &&
         lease?.mode === "proxy" &&
         lease?.state === "active" &&
         typeof lease?.id === "string",
@@ -878,9 +880,9 @@ try {
       );
     }
     const request = mine[0];
-    const requestIntegration =
-      request?.integration ?? request?.integrationName ?? request?.integration_name;
-    if (typeof request?.id !== "string" || requestIntegration !== "resend-e2e") {
+    const requestConnection =
+      request?.connection_name ?? request?.connection ?? request?.integration_name;
+    if (typeof request?.id !== "string" || requestConnection !== "resend-e2e") {
       return fail("pending request did not identify this workspace and resend-e2e");
     }
     const approved = await controlPlane(
@@ -1038,8 +1040,8 @@ try {
 } finally {
   await runStep("T", "teardown", async () => {
     const needsSession =
-      (workspaceId !== null && !workspaceDestroyed) || integrationPutAttempted.size > 0;
-    if (!needsSession) return pass("no workspace or attempted integration upserts to clean up");
+      (workspaceId !== null && !workspaceDestroyed) || connectionPutAttempted.size > 0;
+    if (!needsSession) return pass("no workspace or attempted connection upserts to clean up");
 
     let usedFreshSession = false;
     try {
@@ -1092,30 +1094,30 @@ try {
       }
     }
 
-    let integrationsCleaned = 0;
-    for (const name of INTEGRATION_NAMES) {
-      if (!integrationPutAttempted.has(name)) continue;
+    let connectionsCleaned = 0;
+    for (const name of CONNECTION_NAMES) {
+      if (!connectionPutAttempted.has(name)) continue;
       try {
         const { response, body } = await controlPlane(
-          `/integrations/${encodeURIComponent(name)}`,
+          `/connections/${encodeURIComponent(name)}`,
           { method: "DELETE" },
         );
         if (response.status === 204 || response.status === 404) {
-          integrationsCleaned += 1;
+          connectionsCleaned += 1;
         } else {
           problems.push(
-            `DELETE integration ${name} HTTP ${response.status}${apiError(body)}`,
+            `DELETE connection ${name} HTTP ${response.status}${apiError(body)}`,
           );
         }
       } catch (error) {
         problems.push(
-          `DELETE integration ${name} failed: ${error instanceof Error ? error.message : error}`,
+          `DELETE connection ${name} failed: ${error instanceof Error ? error.message : error}`,
         );
       }
     }
     if (problems.length > 0) return fail(problems.join("; "));
     return pass(
-      `workspace=${workspaceId === null ? "none" : "destroyed"}; integration deletes=${integrationsCleaned}; fresh_session=${usedFreshSession}`,
+      `workspace=${workspaceId === null ? "none" : "destroyed"}; connection deletes=${connectionsCleaned}; fresh_session=${usedFreshSession}`,
     );
   });
 }

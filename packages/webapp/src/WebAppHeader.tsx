@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
-import { CodexIcon, FileIcon, GenericProviderIcon, ShellIcon } from './WebAppIcons';
+import { Fragment, useEffect, useRef, useState, type DragEvent } from 'react';
+import { CodexIcon, FileIcon, FolderIcon, GenericProviderIcon, ShellIcon } from './WebAppIcons';
 import { FileTypeIcon } from './FileTypeIcon';
 import { previewLinkLabel, type LivePort, type PreviewLink } from './preview';
 import type { TerminalAgent } from './protocol';
 
-export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview';
+export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview' | 'panel';
 export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
 export const SESSION_TITLE_MAX_LENGTH = 64;
 
@@ -32,6 +32,8 @@ export type WebAppTabModel = {
   dirty?: boolean;
   filePath?: string;
   title?: string;
+  /** Which panel a `panel` tab shows, so the strip can pick its icon. */
+  panel?: 'files' | 'previews' | 'connections';
 };
 
 type WebAppHeaderProps = {
@@ -52,17 +54,37 @@ type WebAppHeaderProps = {
   onOpenPreview?: (port: number) => boolean;
   onOpenPreviewLink?: (url: string, title: string) => boolean;
   onMenuOpenChange?: (open: boolean) => void;
+  /** Names the tab list for assistive tech; each pane gets its own strip. */
+  stripLabel?: string;
+  /** The side pane is a destination, not a spawn point. */
+  spawnable?: boolean;
+  onTabDragStart?: (sessionId: string, event: DragEvent<HTMLElement>) => void;
+  onTabDragEnd?: () => void;
+  /** `undefined` hides the insertion bar, `null` puts it after the last tab,
+   * and a session id puts it in front of that tab. */
+  insertBeforeId?: string | null;
+  draggingSessionId?: string | null;
 };
 
 export function SessionTypeIcon({
   type,
   className,
   filePath,
+  panel,
 }: {
   type: WebAppSessionType | 'terminal';
   className: string;
   filePath?: string;
+  panel?: 'files' | 'previews' | 'connections';
 }) {
+  if (type === 'panel') {
+    if (panel === 'previews') {
+      return <span className={`${className} mi-preview`} aria-hidden="true" />;
+    }
+    return panel === 'connections'
+      ? <GenericProviderIcon className={className} />
+      : <FolderIcon className={className} />;
+  }
   if (type === 'chat') return <span className={`${className} mi-chat`} aria-hidden="true" />;
   if (type === 'claude') return <span className={`${className} mi-claude`} aria-hidden="true" />;
   if (type === 'opencode') return <span className={`${className} mi-opencode`} aria-hidden="true" />;
@@ -98,6 +120,12 @@ export function WebAppHeader({
   onOpenPreview = () => false,
   onOpenPreviewLink = () => false,
   onMenuOpenChange = () => undefined,
+  stripLabel = 'Workspace sessions',
+  spawnable = true,
+  onTabDragStart,
+  onTabDragEnd,
+  insertBeforeId,
+  draggingSessionId = null,
 }: WebAppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
@@ -192,14 +220,18 @@ export function WebAppHeader({
         )}
         {!paneStrips && (
           <>
-            <div className="webapp-tabstrip" ref={tabstrip} role="tablist" aria-label="Workspace sessions">
+            <div className="webapp-tabstrip" ref={tabstrip} role="tablist" aria-label={stripLabel}>
             {tabs.map((tab) => {
               const active = tab.id === activeSessionId;
               return (
+                <Fragment key={tab.id}>
+                {insertBeforeId === tab.id && (
+                  <span className="webapp-tab-insert" aria-hidden="true" />
+                )}
                 <div
-                  className={`webapp-tab-cell${active ? ' webapp-tab-cell--active' : ''}`}
+                  className={`webapp-tab-cell${active ? ' webapp-tab-cell--active' : ''}${
+                    draggingSessionId === tab.id ? ' webapp-tab-cell--dragging' : ''}`}
                   data-session-id={tab.id}
-                  key={tab.id}
                 >
                   {renaming?.id === tab.id ? (
                     <div className="webapp-tab-select webapp-tab-select--editing">
@@ -207,6 +239,7 @@ export function WebAppHeader({
                         type={tab.agent}
                         className="webapp-tab-icon"
                         filePath={tab.filePath}
+                        panel={tab.panel}
                       />
                       <input
                         ref={renameInput}
@@ -237,12 +270,16 @@ export function WebAppHeader({
                       role="tab"
                       aria-selected={active}
                       title={tab.title ?? tab.label}
+                      draggable={onTabDragStart !== undefined}
+                      onDragStart={(event) => onTabDragStart?.(tab.id, event)}
+                      onDragEnd={() => onTabDragEnd?.()}
                       onClick={() => onSelect(tab.id)}
                     >
                       <SessionTypeIcon
                         type={tab.agent}
                         className="webapp-tab-icon"
                         filePath={tab.filePath}
+                        panel={tab.panel}
                       />
                       <span
                         className="webapp-tab-label"
@@ -264,11 +301,14 @@ export function WebAppHeader({
                     >×</button>
                   )}
                 </div>
+                </Fragment>
               );
             })}
-
+            {insertBeforeId === null && (
+              <span className="webapp-tab-insert" aria-hidden="true" />
+            )}
             </div>
-            <div
+            {spawnable && <div
               className="webapp-new-tab-control"
               ref={newTabControl}
               role="group"
@@ -327,7 +367,7 @@ export function WebAppHeader({
                   </>
                 )}
               </div>
-            </div>
+            </div>}
           </>
         )}
 

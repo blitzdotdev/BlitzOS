@@ -5,7 +5,7 @@ import {
   createGoogleOAuthState,
   GOOGLE_OAUTH_COOKIE,
   verifyGoogleOAuthStateCookie,
-} from "../core/identity/oauth-state.js";
+} from "../core/oauth-state.js";
 import {
   OPERATOR_KEY,
   appRequest,

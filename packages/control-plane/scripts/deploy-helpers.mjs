@@ -1,4 +1,4 @@
-import { parseMicrovmHosts } from "../core/providers/microvm-hosts.js";
+import { parseMicrovmHosts } from "../core/compute/microvm-hosts.js";
 import {
   allowedEmailDomainsFromEnv,
   signupModeFromEnv,

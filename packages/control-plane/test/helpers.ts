@@ -27,7 +27,7 @@ import type {
   VmInspection,
   VmProvider,
   VolumeProvider,
-} from "../core/providers/types.js";
+} from "../core/compute/types.js";
 import config from "../teenybase.js";
 import { hashSecret, randomToken } from "../core/crypto.js";
 
@@ -36,6 +36,10 @@ export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 const credentialMasterKey = await credentialMasterKeyFor(CRED_MASTER_KEY);
 const webAppAuth = new WorkspaceWebAppAuth("test-webapp-root-secret");
+
+/** Stands in for the provider OAuth client bindings. Suites that exercise
+ * /connect fill it; everything else sees an unconfigured instance. */
+export const testConnectSecrets = new Map<string, string>();
 
 interface TestApp {
   request(
@@ -200,6 +204,7 @@ export function appWithVmProviders(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+      connectSecret: (name) => testConnectSecrets.get(name),
       signupMode: signupModeFromEnv((context.env as TestBindings).SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(
         (context.env as TestBindings).ALLOWED_EMAIL_DOMAINS,
@@ -250,6 +255,7 @@ export function testRuntime(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: OPERATOR_KEY,
+      connectSecret: (name) => testConnectSecrets.get(name),
     },
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),
@@ -461,6 +467,8 @@ export async function resetDatabase(): Promise<void> {
   // (which recipes reference).
   const tables = [
     "microvm_hosts",
+    "provider_health",
+    "workspace_template_connections",
     "workspace_template_folders",
     "folder_grants",
     "folder_attachments",
@@ -470,8 +478,8 @@ export async function resetDatabase(): Promise<void> {
     "credential_leases",
     "workspace_grants",
     "volume_ownership",
-    "user_connections",
-    "integrations",
+    "user_oauth_grants",
+    "connections",
     "broker_keys",
     "broker_members",
     "broker_boxes",

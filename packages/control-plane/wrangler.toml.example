@@ -89,6 +89,8 @@ run_worker_first = [
   "/workspace-recipes*",
   "/agent-rules*",
   "/folders*",
+  "/connections*",
+  "/connect/*",
   "/integrations*",
   "/leases*",
   "/requests*",

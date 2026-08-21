@@ -31,46 +31,68 @@ export type UiPreferences = {
   workspaces: Record<string, WorkspacePreference>;
 };
 
+/** Panes are side-by-side columns: `main` renders left, `side` renders right.
+ * A tab without a region is a main tab, so pre-split documents round-trip
+ * byte-identically. */
+export type WorkspaceRegion = 'main' | 'side';
+
 export type WorkspaceTab = {
   id: number;
   type: TerminalAgent | 'terminal';
+  region?: WorkspaceRegion;
 } | {
   id: number;
   type: 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
+  region?: WorkspaceRegion;
 } | {
   id: number;
   type: 'file';
   filePath: string;
+  region?: WorkspaceRegion;
 } | {
   id: number;
   type: 'preview';
   port: number;
   path?: string;
+  region?: WorkspaceRegion;
 } | {
   id: number;
   type: 'preview';
   url: string;
   title: string;
+  region?: WorkspaceRegion;
+} | {
+  id: number;
+  /** Files / teenyapps / Connections, opened from the right icon strip.
+   * `panel` keeps the drawer segment names as its wire values; legacy
+   * spellings (including 'integrations') fold in parsePanel. */
+  type: 'panel';
+  panel: WorkspaceDrawerSegment;
+  region?: WorkspaceRegion;
 };
 
 export type WorkspaceTabs = {
   version: 1;
   tabs: WorkspaceTab[];
+  /** Active tab of the main (left) pane. */
   activeId: number | null;
   nextId: number;
+  /** Active tab of the side (right) pane; absent while the split is collapsed. */
+  sideActiveId?: number;
 };
 
 export type WorkspaceFiles = {
   version: 1;
-  open: boolean;
   width: number;
   expanded: string[];
-  segment: WorkspaceDrawerSegment;
 };
 
-export type WorkspaceDrawerSegment = 'files' | 'previews' | 'integrations';
+/** Wire value of a panel tab. `previews` is the teenyapps panel: the label
+ * changed, the persisted name did not. `connections` replaced the persisted
+ * 'integrations' value; readers fold the old spelling below. */
+export type WorkspaceDrawerSegment = 'files' | 'previews' | 'connections';
 
 export type GlobalWebAppStateV1 = {
   version: 1;
@@ -133,12 +155,37 @@ export function storedWorkspacePreference(
 
 export function defaultWorkspaceTabs(): WorkspaceTabs {
   // A fresh workspace opens straight into Claude; terminals spawn on demand.
+  // Files rides along in the side pane, the way the drawer used to default open.
   return {
     version: 1,
-    tabs: [{ id: 1, type: 'claude' }],
+    tabs: [
+      { id: 1, type: 'claude' },
+      { id: 2, type: 'panel', panel: 'files', region: 'side' },
+    ],
     activeId: 1,
-    nextId: 2,
+    nextId: 3,
+    sideActiveId: 2,
   };
+}
+
+/** A tab with no stored region lives in the main pane. */
+export function tabRegion(tab: WorkspaceTab): WorkspaceRegion {
+  return tab.region ?? 'main';
+}
+
+/** `main` is the absent-region default, so it is written as an absent key and
+ * a document that never split serializes exactly as it did before panes. */
+export function withRegion<Tab extends WorkspaceTab>(
+  tab: Tab,
+  region: WorkspaceRegion,
+): Tab {
+  if (region === 'main') {
+    if (tab.region === undefined) return tab;
+    const { region: _dropped, ...rest } = tab;
+    // SAFETY: Removing the optional region key leaves the same tab variant.
+    return rest as Tab;
+  }
+  return tab.region === region ? tab : { ...tab, region };
 }
 
 /** The drawer opens up to 65% of the viewport beyond the 264px rail, and
@@ -150,11 +197,9 @@ export function maxDrawerWidth(viewportWidth: number): number {
 export function defaultWorkspaceFiles(): WorkspaceFiles {
   return {
     version: 1,
-    open: true,
     // Wide enough for the Finder view's Name + Modified + Size columns.
     width: 340,
     expanded: [],
-    segment: 'files',
   };
 }
 
@@ -209,23 +254,43 @@ function clampedTab(tab: WorkspaceTab): WorkspaceTab {
   return { id: tab.id, type: 'preview', port: tab.port };
 }
 
+/** Keeps the two panes coherent: a side pane only exists while it holds tabs,
+ * a pane's active id always names one of its own tabs, and the side pane never
+ * outlives an emptied main pane — the split collapses left instead. */
+export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
+  const collapse = tabs.tabs.length > 0 && tabs.tabs.every((tab) => tabRegion(tab) === 'side');
+  const entries = collapse
+    ? tabs.tabs.map((tab) => withRegion(tab, 'main'))
+    : tabs.tabs;
+  const main = entries.filter((tab) => tabRegion(tab) === 'main');
+  const side = entries.filter((tab) => tabRegion(tab) === 'side');
+  const requestedActive = collapse ? tabs.sideActiveId ?? tabs.activeId : tabs.activeId;
+  const activeId = main.some(({ id }) => id === requestedActive)
+    ? requestedActive ?? null
+    : main.at(-1)?.id ?? null;
+  const sideActiveId = side.some(({ id }) => id === tabs.sideActiveId)
+    ? tabs.sideActiveId
+    : side.at(-1)?.id;
+  const highestId = entries.reduce((highest, tab) => Math.max(highest, tab.id), 0);
+  const next: WorkspaceTabs = {
+    version: 1,
+    tabs: entries,
+    activeId,
+    nextId: Math.max(tabs.nextId, highestId + 1),
+  };
+  if (sideActiveId !== undefined) next.sideActiveId = sideActiveId;
+  return next;
+}
+
 /** The server rejects an out-of-range document whole, and a rejected write
  * takes the entire shared doc — tabs included — down with it. Local state can
  * drift out of range from a resize or a stale device, so clamp to the wire
  * limits here rather than letting one field end persistence. Mirror
  * `parseWorkspaceDoc` in the control plane. */
 function clampedDoc(doc: WorkspaceWebAppStateV1): WorkspaceWebAppStateV1 {
-  const tabs = doc.tabs.tabs.slice(0, 100).map(clampedTab);
-  const highestId = tabs.reduce((highest, tab) => Math.max(highest, tab.id), 0);
-  const activeId = tabs.some(({ id }) => id === doc.tabs.activeId) ? doc.tabs.activeId : null;
   return {
     ...doc,
-    tabs: {
-      version: 1,
-      tabs,
-      activeId,
-      nextId: Math.max(doc.tabs.nextId, highestId + 1),
-    },
+    tabs: normalizedWorkspaceTabs({ ...doc.tabs, tabs: doc.tabs.tabs.slice(0, 100).map(clampedTab) }),
     drawer: {
       ...doc.drawer,
       width: Math.min(2000, Math.max(200, Math.round(doc.drawer.width))),
@@ -275,16 +340,40 @@ export function reconcileUiPreferences(
   };
 }
 
+function parsePanel(value: OptionalJsonValue): WorkspaceDrawerSegment | null {
+  // Older documents stored 'leases'/'requests'/'credentials'/'events', then
+  // 'integrations'; they all land on the combined connections panel. Writers
+  // only write 'connections'. Mirror parseSegment in the control plane.
+  if (
+    value === 'leases'
+    || value === 'requests'
+    || value === 'credentials'
+    || value === 'events'
+    || value === 'integrations'
+    || value === 'connections'
+  ) return 'connections';
+  return value === 'files' || value === 'previews' ? value : null;
+}
+
 function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | null {
   const object = asJsonObject(entry);
   if (object === null) return null;
   const id = isNumber(object.id) && Number.isSafeInteger(object.id) ? object.id : 0;
   if (id < 1 || seen.has(id) || !isString(object.type)) return null;
+  // Pre-split documents carry no region at all; anything else must name a pane.
+  if (object.region !== undefined && object.region !== 'main' && object.region !== 'side') {
+    return null;
+  }
+  const region: WorkspaceRegion = object.region === 'side' ? 'side' : 'main';
   seen.add(id);
   if (object.type === 'file') {
     return isSafeRelativePath(object.filePath)
-      ? { id, type: 'file', filePath: object.filePath }
+      ? withRegion({ id, type: 'file', filePath: object.filePath }, region)
       : null;
+  }
+  if (object.type === 'panel') {
+    const panel = parsePanel(object.panel);
+    return panel === null ? null : withRegion({ id, type: 'panel', panel }, region);
   }
   if (object.type === 'preview') {
     if (isNumber(object.port) && isPreviewPort(object.port)) {
@@ -296,14 +385,14 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
         ? object.path
         : undefined;
       return path === undefined
-        ? { id, type: 'preview', port: object.port }
-        : { id, type: 'preview', port: object.port, path };
+        ? withRegion({ id, type: 'preview', port: object.port }, region)
+        : withRegion({ id, type: 'preview', port: object.port, path }, region);
     }
     return object.port === undefined
       && isString(object.url)
       && object.url.trim() !== ''
       && isString(object.title)
-      ? { id, type: 'preview', url: object.url, title: object.title }
+      ? withRegion({ id, type: 'preview', url: object.url, title: object.title }, region)
       : null;
   }
   if (object.type === 'chat') {
@@ -313,7 +402,7 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
       tab.chatProvider = object.chatProvider;
     }
     // SAFETY: The chat branch and checked optional fields establish the chat tab variant.
-    return tab as WorkspaceTab;
+    return withRegion(tab as WorkspaceTab, region);
   }
   if (
     object.type === 'terminal'
@@ -325,7 +414,7 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
     || object.type === 'prime'
   ) {
     // SAFETY: The branch checks every TerminalAgent literal plus terminal.
-    return { id, type: object.type as TerminalAgent | 'terminal' };
+    return withRegion({ id, type: object.type as TerminalAgent | 'terminal' }, region);
   }
   return null;
 }
@@ -346,7 +435,8 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     : isNumber(object.activeId) && Number.isSafeInteger(object.activeId)
       ? object.activeId
       : -1;
-  if (activeId !== null && !tabs.some(({ id }) => id === activeId)) return null;
+  const mainTabs = tabs.filter((tab) => tabRegion(tab) === 'main');
+  if (activeId !== null && !mainTabs.some(({ id }) => id === activeId)) return null;
   const minimumNextId = Math.max(...tabs.map(({ id }) => id)) + 1;
   if (
     !isNumber(object.nextId)
@@ -355,15 +445,30 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
   ) {
     return null;
   }
-  return { version: 1, tabs, activeId, nextId: object.nextId };
+  const restored: WorkspaceTabs = { version: 1, tabs, activeId, nextId: object.nextId };
+  if (object.sideActiveId !== undefined) {
+    if (
+      !isNumber(object.sideActiveId)
+      || !Number.isSafeInteger(object.sideActiveId)
+      || !tabs.some((tab) => tab.id === object.sideActiveId && tabRegion(tab) === 'side')
+    ) return null;
+    restored.sideActiveId = object.sideActiveId;
+  }
+  return restored;
 }
 
-function parseDrawer(value: OptionalJsonValue): WorkspaceFiles | null {
+type RestoredDrawer = {
+  drawer: WorkspaceFiles;
+  /** Present only for pre-split documents, which stored the right panel as an
+   * open flag plus one segment instead of a tab. */
+  legacy: { open: boolean; segment: WorkspaceDrawerSegment } | null;
+};
+
+function parseDrawer(value: OptionalJsonValue): RestoredDrawer | null {
   const object = asJsonObject(value);
   if (
     object === null
     || object.version !== 1
-    || !isBoolean(object.open)
     || !isNumber(object.width)
     || object.width < 200
     || object.width > 2000
@@ -371,20 +476,34 @@ function parseDrawer(value: OptionalJsonValue): WorkspaceFiles | null {
   ) return null;
   const expanded = object.expanded.filter(isSafeRelativePath);
   if (expanded.length !== object.expanded.length) return null;
-  // Older docs stored 'leases'/'requests'/'credentials'/'events'; they all
-  // land on the combined integrations tab.
-  const segment = object.segment === 'leases'
-    || object.segment === 'requests'
-    || object.segment === 'credentials'
-    || object.segment === 'events'
-    || object.segment === 'integrations'
-    ? 'integrations'
-    : object.segment === 'files' || object.segment === 'previews'
-      ? object.segment
-      : null;
-  return segment === null
-    ? null
-    : { version: 1, open: object.open, width: object.width, expanded, segment };
+  const drawer: WorkspaceFiles = { version: 1, width: object.width, expanded };
+  if (object.open === undefined && object.segment === undefined) {
+    return { drawer, legacy: null };
+  }
+  const segment = parsePanel(object.segment);
+  if (!isBoolean(object.open) || segment === null) return null;
+  return { drawer, legacy: { open: object.open, segment } };
+}
+
+/** Pre-split documents are upgraded, never rejected: the old drawer becomes a
+ * panel tab pinned to the side pane, and a closed drawer becomes no tab at all
+ * — which is exactly the collapsed split. Nothing else in the document moves. */
+function migratedTabs(
+  tabs: WorkspaceTabs,
+  legacy: { open: boolean; segment: WorkspaceDrawerSegment } | null,
+): WorkspaceTabs {
+  if (legacy === null || !legacy.open) return tabs;
+  // A document that already carries panel tabs was written by a split-aware
+  // client; its tab list wins over the stale drawer fields beside it.
+  if (tabs.tabs.some((tab) => tab.type === 'panel')) return tabs;
+  const id = tabs.nextId;
+  return {
+    version: 1,
+    tabs: [...tabs.tabs, { id, type: 'panel', panel: legacy.segment, region: 'side' }],
+    activeId: tabs.activeId,
+    nextId: id + 1,
+    sideActiveId: id,
+  };
 }
 
 function parseGlobalDoc(value: OptionalJsonValue): GlobalWebAppStateV1 | null {
@@ -404,13 +523,13 @@ function parseWorkspaceDoc(value: OptionalJsonValue): WorkspaceWebAppStateV1 | n
   if (object === null || object.version !== 1) return null;
   if (object.agentDefault !== 'claude' && object.agentDefault !== 'codex') return null;
   const tabs = parseTabs(object.tabs);
-  const drawer = parseDrawer(object.drawer);
-  if (tabs === null || drawer === null) return null;
+  const restored = parseDrawer(object.drawer);
+  if (tabs === null || restored === null) return null;
   const doc: WorkspaceWebAppStateV1 = {
     version: 1,
     agentDefault: object.agentDefault,
-    tabs,
-    drawer,
+    tabs: normalizedWorkspaceTabs(migratedTabs(tabs, restored.legacy)),
+    drawer: restored.drawer,
   };
   if (object.title !== undefined) {
     if (!isString(object.title)) return null;

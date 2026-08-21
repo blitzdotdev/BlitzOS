@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HetznerProvider } from "../core/providers/hetzner.js";
+import { HetznerProvider } from "../core/compute/hetzner.js";
 import {
   appRequest,
   appWithProviders,

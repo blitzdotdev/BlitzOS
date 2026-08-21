@@ -191,6 +191,7 @@ describe('create template screen', () => {
       name: 'starter',
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-ada'],
+      connections: [],
     });
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();
@@ -264,6 +265,7 @@ describe('create template screen', () => {
       name: 'starter v2',
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-gone'],
+      connections: [],
     });
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();
@@ -280,6 +282,7 @@ describe('create template screen', () => {
           createdAt: 2,
           createdBy: { name: 'Min Song', avatarUrl: null },
           environment: stored,
+          connections: [],
           folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
         }] });
       }
@@ -291,6 +294,7 @@ describe('create template screen', () => {
           createdAt: 2,
           createdBy: { name: 'Min Song', avatarUrl: null },
           environment: stored,
+          connections: [],
           folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
         } });
       }
@@ -371,6 +375,7 @@ describe('create template screen', () => {
       name: 'starter',
       machineTypeId: 'cx23@fsn1',
       folderIds: [],
+      connections: [],
       environment: {
         env: { PROJECT_MODE: 'analysis' },
         startupScript: './setup.sh\n',
@@ -424,6 +429,7 @@ describe('create template screen', () => {
       name: 'starter',
       machineTypeId: 'cx23@fsn1',
       folderIds: [],
+      connections: [],
       agentRuleId: 'rule-1',
     });
     await view.unmount();

@@ -1,6 +1,8 @@
 import type { CredentialEventView, CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
 import {
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -10,13 +12,10 @@ import {
 import type { ControlPlaneClient } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
-import {
-  previewLinkLabel,
-  previewUrl,
-  type LivePort,
-  type PreviewLink,
-} from './preview';
+import type { LivePort, PreviewLink } from './preview';
 import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
+import { TeenyappsPanel } from './TeenyappsPanel';
+import { ConnectPicker, CUSTODY_BADGE, type ConnectWorkspace } from './settings/ConnectPicker';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
@@ -27,6 +26,42 @@ export function portAge(firstSeenAt: number, now = Date.now()): string {
   if (minutes < 1) return 'now';
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h`;
+}
+
+/** A workspace row prints its transport with the words the connect card prints
+ * for custody: an `inject` lease is the cp column's `injected`. */
+const MODE_BADGE = {
+  inject: CUSTODY_BADGE.cp,
+  proxy: CUSTODY_BADGE.proxy,
+} satisfies Record<CredentialLeaseView['mode'], string>;
+
+function isLive(lease: CredentialLeaseView, now: number): boolean {
+  return lease.state === 'active' && lease.expiresAt > now;
+}
+
+/** One row per connection. Before mint learned to supersede, every credential
+ * sync minted another lease and retired none, so workspaces in the wild carry
+ * duplicates of the same connection. The live one is the truth; where nothing
+ * is live the newest row still shows, so revoking here never blanks the panel. */
+export function newestPerConnection(
+  leases: readonly CredentialLeaseView[],
+  now = Date.now(),
+): CredentialLeaseView[] {
+  const shown = new Map<string, CredentialLeaseView>();
+  for (const lease of leases) {
+    const held = shown.get(lease.connection);
+    if (held === undefined) {
+      shown.set(lease.connection, lease);
+      continue;
+    }
+    const live = isLive(lease, now);
+    if (live !== isLive(held, now)) {
+      if (live) shown.set(lease.connection, lease);
+      continue;
+    }
+    if (lease.issuedAt > held.issuedAt) shown.set(lease.connection, lease);
+  }
+  return [...shown.values()];
 }
 
 export function expiryCountdown(expiresAt: number, now = Date.now()): string {
@@ -40,20 +75,33 @@ export function expiryCountdown(expiresAt: number, now = Date.now()): string {
   return `${Math.ceil(hours / 24)}d left`;
 }
 
-export function WorkspaceLeasesPanel({
-  client,
-  workspaceId,
-  visible,
-}: {
-  client: ControlPlaneClient;
-  workspaceId: string;
-  visible: boolean;
-}) {
+/** What this workspace holds, read once. */
+export type WorkspaceLeaseFeed = {
+  /** One row per connection: the live lease where there is one. */
+  rows: CredentialLeaseView[];
+  /** The connections holding a live lease in this workspace, by name. */
+  live: ReadonlySet<string>;
+  loading: boolean;
+  error: string | null;
+  now: number;
+  revoking: string | null;
+  revoke: (lease: CredentialLeaseView) => Promise<void>;
+  noteLease: (lease: CredentialLeaseView) => void;
+};
+
+/** The lease poll, hoisted out of the section that lists it. The connect grid
+ * needs the same fact to tell a connection that is live here from an account
+ * grant that has not landed here yet, and two readers of one fact owe the
+ * server one request. */
+export function useWorkspaceLeases(
+  client: Pick<ControlPlaneClient, 'listLeases' | 'revokeLease'>,
+  workspaceId: string,
+  visible: boolean,
+): WorkspaceLeaseFeed {
   const [leases, setLeases] = useState<CredentialLeaseView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<CredentialLeaseView | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -73,7 +121,7 @@ export function WorkspaceLeasesPanel({
       } catch (caught) {
         if (!active || request !== current || current.signal.aborted) return;
         setLoading(false);
-        setError(caughtErrorMessage(caught, 'Credential leases failed to load.'));
+        setError(caughtErrorMessage(caught, 'Connections failed to load.'));
       } finally {
         if (request === current) request = null;
       }
@@ -91,7 +139,6 @@ export function WorkspaceLeasesPanel({
 
   const revoke = async (lease: CredentialLeaseView) => {
     if (revoking !== null) return;
-    setConfirmation(null);
     setRevoking(lease.id);
     setError(null);
     try {
@@ -100,46 +147,78 @@ export function WorkspaceLeasesPanel({
         entry.id === lease.id ? { ...entry, state: 'revoked' } : entry
       )));
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'Credential lease revoke failed.'));
+      setError(caughtErrorMessage(caught, 'Revoke failed.'));
     } finally {
       setRevoking(null);
     }
   };
 
+  /** A lease minted from the grid shows up before the next poll confirms it:
+   * the server already wrote it, and supersede means the poll can only agree. */
+  const noteLease = useCallback((lease: CredentialLeaseView) => {
+    setLeases((current) => [lease, ...current]);
+  }, []);
+
+  const rows = newestPerConnection(leases, now);
+  // The grid reads membership, not identity. Keying the set on its own names
+  // keeps the prop steady through the once-a-second clock tick.
+  const liveNames = rows.filter((lease) => isLive(lease, now))
+    .map((lease) => lease.connection).sort().join('\n');
+  const live = useMemo(
+    () => new Set(liveNames === '' ? [] : liveNames.split('\n')),
+    [liveNames],
+  );
+
+  return { rows, live, loading, error, now, revoking, revoke, noteLease };
+}
+
+/** The workspace's own connections. An empty list is not a section: a heading
+ * over an apology for holding nothing is worse than the silence of a workspace
+ * that plainly has nothing connected. The host decides that; this draws what
+ * the feed holds, and a failed load still speaks. */
+export function WorkspaceLeasesPanel({
+  feed,
+  readOnly,
+}: {
+  feed: WorkspaceLeaseFeed;
+  readOnly?: boolean;
+}) {
+  const { rows, loading, error, now, revoking, revoke } = feed;
+  const [confirmation, setConfirmation] = useState<CredentialLeaseView | null>(null);
+
   return (
-    <section className="workspace-drawer-panel workspace-leases" aria-label="Workspace credential leases">
-      {error && <p className="webapp-form-message" role="alert">{error}</p>}
-      {loading ? (
-        <p className="workspace-drawer-state">Loading leases…</p>
-      ) : leases.length === 0 ? (
-        <p className="workspace-drawer-state">No credential leases for this workspace.</p>
-      ) : (
+    <section className="workspace-drawer-panel workspace-leases" aria-label="Workspace connections">
+      {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
+      {loading && <p className="workspace-drawer-state">Loading connections…</p>}
+      {rows.length > 0 && (
         <div className="workspace-credential-rows">
-          {leases.map((lease) => {
+          {rows.map((lease) => {
             const state = lease.state === 'active' && lease.expiresAt <= now
               ? 'expired'
               : lease.state;
             return (
             <article className="workspace-credential-row" key={lease.id}>
               <div className="workspace-credential-row__title">
-                <strong>{lease.integration}</strong>
+                <strong>{lease.connection}</strong>
                 <span className={`workspace-state-badge workspace-state-badge--${state}`}>
                   {state}
                 </span>
               </div>
               <p>{lease.scopes.length === 0 ? 'No named scopes' : lease.scopes.join(', ')}</p>
               <div className="workspace-credential-row__meta">
-                <span>{lease.mode}</span>
+                <span>{MODE_BADGE[lease.mode]}</span>
                 <time dateTime={new Date(lease.expiresAt).toISOString()}>
                   {state === 'active' ? expiryCountdown(lease.expiresAt, now) : state}
                 </time>
               </div>
-              <button
-                className="webapp-action workspace-credential-row__action"
-                type="button"
-                disabled={state !== 'active' || revoking !== null}
-                onClick={() => setConfirmation(lease)}
-              >{revoking === lease.id ? 'Revoking…' : 'Revoke'}</button>
+              {readOnly !== true && (
+                <button
+                  className="webapp-action workspace-credential-row__action"
+                  type="button"
+                  disabled={state !== 'active' || revoking !== null}
+                  onClick={() => setConfirmation(lease)}
+                >{revoking === lease.id ? 'Revoking…' : 'Revoke'}</button>
+              )}
             </article>
             );
           })}
@@ -147,25 +226,36 @@ export function WorkspaceLeasesPanel({
       )}
       {confirmation && (
         <ConfirmationDialog
-          title="Revoke credential lease?"
-          description={`Revoke ${confirmation.integration} access for this workspace immediately?`}
-          confirmLabel="Revoke lease"
+          title="Revoke this connection?"
+          description={`Revoke ${confirmation.connection} access for this workspace immediately?`}
+          confirmLabel="Revoke access"
           onCancel={() => setConfirmation(null)}
-          onConfirm={() => { void revoke(confirmation); }}
+          onConfirm={() => {
+            setConfirmation(null);
+            void revoke(confirmation);
+          }}
         />
       )}
     </section>
   );
 }
 
+/** The connect inbox. A pending row is not a decision waiting on an approver —
+ * it is an agent that wanted `@name` and found no grant behind it. An empty
+ * inbox is a success, so it draws nothing; a failed load still speaks, because
+ * an error is information the person does not otherwise have. */
 export function WorkspaceRequestsPanel({
   requests,
   loadError,
+  readOnly,
   onResolve,
+  onConnect,
 }: {
   requests: CredentialRequestView[];
   loadError?: string | null;
+  readOnly?: boolean;
   onResolve: (request: CredentialRequestView, action: 'approve' | 'deny') => Promise<void>;
+  onConnect?: (connectionName: string) => void;
 }) {
   const [resolving, setResolving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -184,40 +274,40 @@ export function WorkspaceRequestsPanel({
   };
 
   return (
-    <section className="workspace-drawer-panel workspace-requests" aria-label="Workspace pending credential requests">
+    <section className="workspace-drawer-panel workspace-requests" aria-label="Workspace connect inbox">
       {(error ?? loadError) && <p className="webapp-form-message" role="alert">{error ?? loadError}</p>}
-      {requests.length === 0 ? (
-        <p className="workspace-drawer-state">No pending requests for this workspace.</p>
-      ) : (
+      {requests.length > 0 && (
         <div className="workspace-credential-rows">
           {requests.map((request) => (
             <article className="workspace-credential-row" key={request.id}>
               <div className="workspace-credential-row__title">
-                <strong>{request.integration_name}</strong>
-                <span className="workspace-state-badge workspace-state-badge--active">pending</span>
+                <strong>@{request.connection_name}</strong>
+                <span className="workspace-state-badge workspace-state-badge--active">wanted</span>
               </div>
               <p>{request.requested_scopes.length === 0
-                ? 'Integration access · no named scopes'
-                : request.requested_scopes.join(', ')}</p>
+                ? 'An agent asked for this connection and found nothing behind it.'
+                : `An agent asked for ${request.requested_scopes.join(', ')}.`}</p>
               <div className="workspace-credential-row__meta">
                 <time dateTime={new Date(request.created_at).toISOString()}>
                   {new Date(request.created_at).toLocaleString()}
                 </time>
               </div>
-              <div className="workspace-credential-row__actions">
-                <button
-                  className="webapp-action"
-                  type="button"
-                  disabled={resolving !== null}
-                  onClick={() => { void resolve(request, 'deny'); }}
-                >Deny</button>
-                <button
-                  className="webapp-action webapp-action--primary"
-                  type="button"
-                  disabled={resolving !== null}
-                  onClick={() => { void resolve(request, 'approve'); }}
-                >{resolving === request.id ? 'Working…' : 'Approve'}</button>
-              </div>
+              {readOnly !== true && (
+                <div className="workspace-credential-row__actions">
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    disabled={resolving !== null}
+                    onClick={() => { void resolve(request, 'deny'); }}
+                  >Dismiss</button>
+                  <button
+                    className="webapp-action webapp-action--primary"
+                    type="button"
+                    disabled={resolving !== null}
+                    onClick={() => onConnect?.(request.connection_name)}
+                  >Connect</button>
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -232,15 +322,19 @@ function eventActor(event: CredentialEventView): string | null {
   return acting !== null && isString(acting.userId) ? acting.userId : null;
 }
 
-function WorkspaceEventsPanel({
-  client,
-  workspaceId,
-  visible,
-}: {
-  client: ControlPlaneClient;
-  workspaceId: string;
-  visible: boolean;
-}) {
+/** What this workspace has logged, read once. */
+export type WorkspaceEventFeed = {
+  events: CredentialEventView[];
+  error: string | null;
+};
+
+/** The credential log for this workspace. The host needs the count to decide
+ * whether there is a section at all, so the read lives out here with it. */
+export function useWorkspaceCredentialEvents(
+  client: Pick<ControlPlaneClient, 'listCredentialEvents'>,
+  workspaceId: string,
+  visible: boolean,
+): WorkspaceEventFeed {
   const [events, setEvents] = useState<CredentialEventView[]>([]);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -254,10 +348,14 @@ function WorkspaceEventsPanel({
     );
     return () => request.abort();
   }, [client, visible, workspaceId]);
+  return { events, error };
+}
+
+export function WorkspaceEventsPanel({ events, error }: WorkspaceEventFeed) {
   return (
     <section className="workspace-drawer-panel" aria-label="Workspace credential events">
-      {error && <p className="webapp-form-message" role="alert">{error}</p>}
-      {events.length === 0 ? <p className="workspace-drawer-state">No credential events for this workspace.</p> : (
+      {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
+      {events.length > 0 && (
         <div className="workspace-credential-rows">
           {events.map((event) => (
             <article className="workspace-credential-row" key={event.id}>
@@ -274,56 +372,187 @@ function WorkspaceEventsPanel({
   );
 }
 
-export function WorkspaceDrawer({
+export function WorkspaceConnectionsPanel({
   client,
   workspaceId,
-  mobile,
-  open,
-  width,
-  segment,
+  visible,
+  readOnly,
   pendingRequests,
   pendingRequestsError,
-  files,
-  onWidthChange,
-  onSegmentChange,
   onResolveRequest,
-  canManageCredentials,
-  livePorts,
-  previewLinks,
-  filesBase,
-  previewReady,
-  onOpenPreview,
-  onOpenPreviewLink,
 }: {
   client: ControlPlaneClient;
   workspaceId: string;
-  mobile: boolean;
-  open: boolean;
-  width: number;
-  segment: WorkspaceDrawerSegment;
+  visible: boolean;
+  readOnly?: boolean;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
-  files: ReactNode;
-  onWidthChange: (width: number) => void;
-  onSegmentChange: (segment: WorkspaceDrawerSegment) => void;
   onResolveRequest: (
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
-  canManageCredentials: boolean;
+}) {
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const leases = useWorkspaceLeases(client, workspaceId, visible);
+  const { events, error: eventsError } = useWorkspaceCredentialEvents(client, workspaceId, visible);
+  const { live, noteLease } = leases;
+  const connectWorkspace = useMemo<ConnectWorkspace>(() => ({
+    id: workspaceId,
+    connections: live,
+    connect: async (connectionName: string) => {
+      const { lease } = await client.mintWorkspaceConnection(workspaceId, connectionName);
+      noteLease(lease);
+    },
+  }), [client, live, noteLease, workspaceId]);
+  // Nothing wanted is the everyday state, and a heading over an apology for
+  // having nothing to say is worse than silence. The pending count on the
+  // connections rail icon is what tells a person there is something here.
+  const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
+  // Every section keeps that rule. A workspace with nothing connected and
+  // nothing logged is a page with a connect grid on it and no apologies. A
+  // failed load still draws, because an error is information; so does the
+  // first read, because "not yet known" is not the same as "nothing".
+  const connections = leases.loading || leases.error !== null || leases.rows.length > 0;
+  const activity = eventsError !== null || events.length > 0;
+  return (
+    <div className="workspace-connections">
+      {wanted && (
+        <>
+          <h3 className="workspace-sect workspace-sect--pending">Wanted here</h3>
+          <WorkspaceRequestsPanel
+            requests={pendingRequests}
+            loadError={pendingRequestsError}
+            readOnly={readOnly}
+            onResolve={onResolveRequest}
+            onConnect={setConnecting}
+          />
+        </>
+      )}
+      {readOnly !== true && (
+        <ConnectPicker
+          client={client}
+          requestedProvider={connecting}
+          // Connecting is a thing that happens to a workspace, so the grid gets
+          // the workspace: what it already holds, and how to give it one more.
+          workspace={connectWorkspace}
+          onConnected={() => {
+            const pending = pendingRequests.find(
+              (request) => request.connection_name === connecting,
+            );
+            setConnecting(null);
+            // Connecting is the answer to the inbox entry: resolving it also
+            // widens the workspace ceiling so the next mint succeeds.
+            if (pending !== undefined) void onResolveRequest(pending, 'approve');
+          }}
+        />
+      )}
+      {connections && (
+        <>
+          <h3 className="workspace-sect">Connections</h3>
+          <WorkspaceLeasesPanel feed={leases} readOnly={readOnly} />
+        </>
+      )}
+      {activity && (
+        <>
+          <h3 className="workspace-sect">Recent activity</h3>
+          <WorkspaceEventsPanel events={events} error={eventsError} />
+        </>
+      )}
+    </div>
+  );
+}
+
+export type WorkspacePanelProps = {
+  client: ControlPlaneClient;
+  workspaceId: string;
+  orgName: string;
+  visible: boolean;
+  files: ReactNode;
+  pendingRequests: CredentialRequestView[];
+  pendingRequestsError?: string | null;
+  /** Workspace sharing, not an org role: a viewer sees the panel but cannot
+   * revoke a lease or connect on this workspace's behalf. */
+  readOnly?: boolean;
+  onResolveRequest: (
+    request: CredentialRequestView,
+    action: 'approve' | 'deny',
+  ) => Promise<void>;
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
   filesBase: string | null;
   previewReady: boolean;
   onOpenPreview: (port: number) => void;
   onOpenPreviewLink: (url: string, title: string) => void;
+};
+
+/** One panel body, wherever it is hosted: a tab in a workspace pane on the
+ * desktop, a segment of the off-canvas sheet below the mobile breakpoint. */
+export function WorkspacePanelContent({
+  panel,
+  client,
+  workspaceId,
+  orgName,
+  visible,
+  files,
+  pendingRequests,
+  pendingRequestsError,
+  readOnly,
+  onResolveRequest,
+  livePorts,
+  previewLinks,
+  filesBase,
+  previewReady,
+  onOpenPreview,
+  onOpenPreviewLink,
+}: WorkspacePanelProps & { panel: WorkspaceDrawerSegment }) {
+  if (panel === 'files') return <>{files}</>;
+  if (panel === 'previews') {
+    return (
+      <TeenyappsPanel
+        orgName={orgName}
+        workspaceId={workspaceId}
+        livePorts={livePorts}
+        previewLinks={previewLinks}
+        filesBase={filesBase}
+        previewReady={previewReady}
+        onOpenPreview={onOpenPreview}
+        onOpenPreviewLink={onOpenPreviewLink}
+      />
+    );
+  }
+  return (
+    <WorkspaceConnectionsPanel
+      client={client}
+      workspaceId={workspaceId}
+      visible={visible}
+      readOnly={readOnly}
+      pendingRequests={pendingRequests}
+      pendingRequestsError={pendingRequestsError}
+      onResolveRequest={onResolveRequest}
+    />
+  );
+}
+
+/** Below the mobile breakpoint the panels stay an off-canvas sheet with its
+ * own segment strip — the panes never split there. */
+export function WorkspaceDrawer({
+  mobile,
+  open,
+  width,
+  segment,
+  onWidthChange,
+  onSegmentChange,
+  pendingRequests,
+  ...panelProps
+}: Omit<WorkspacePanelProps, 'visible'> & {
+  mobile: boolean;
+  open: boolean;
+  width: number;
+  segment: WorkspaceDrawerSegment;
+  onWidthChange: (width: number) => void;
+  onSegmentChange: (segment: WorkspaceDrawerSegment) => void;
 }) {
   const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
-  const [openedPort, setOpenedPort] = useState<number | null>(null);
-  const [previewNonce, setPreviewNonce] = useState(0);
-  useEffect(() => {
-    setOpenedPort(null);
-  }, [workspaceId]);
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mobile || event.button !== 0) return;
     resizeOrigin.current = { x: event.clientX, width };
@@ -339,18 +568,16 @@ export function WorkspaceDrawer({
     { id: 'files', label: 'Files', icon: <FolderIcon className="webapp-tab-icon" /> },
     {
       id: 'previews',
-      label: 'Previews',
+      label: 'teenyapps',
       icon: <span className="webapp-tab-icon mi-preview" aria-hidden="true" />,
     },
-  ];
-  if (canManageCredentials) {
-    tabs.push({
-      id: 'integrations',
-      label: 'Integrations',
+    {
+      id: 'connections',
+      label: 'Connections',
       icon: <GenericProviderIcon className="webapp-tab-icon" />,
-    });
-  }
-  const effectiveSegment = !canManageCredentials && segment === 'integrations' ? 'files' : segment;
+    },
+  ];
+  const effectiveSegment = segment;
 
   return (
     <aside
@@ -397,7 +624,7 @@ export function WorkspaceDrawer({
               >
                 {tab.icon}
                 <span className="webapp-tab-label">{tab.label}</span>
-                {tab.id === 'integrations' && pendingRequests.length > 0 && (
+                {tab.id === 'connections' && pendingRequests.length > 0 && (
                   <span className="workspace-pending-badge" aria-label={`${pendingRequests.length} pending`}>
                     {pendingRequests.length}
                   </span>
@@ -408,171 +635,16 @@ export function WorkspaceDrawer({
         })}
       </header>
       <div className="workspace-drawer-body">
-        <div role="tabpanel" hidden={effectiveSegment !== 'files'}>{files}</div>
-        <div role="tabpanel" hidden={effectiveSegment !== 'previews'}>
-          {openedPort !== null && (
-            <div className="workspace-preview-open">
-              <div className="workspace-preview-bar">
-                <button
-                  className="fnd-tbtn"
-                  type="button"
-                  aria-label="Back to ports"
-                  onClick={() => setOpenedPort(null)}
-                >
-                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
-                </button>
-                <button
-                  className="fnd-tbtn"
-                  type="button"
-                  aria-label="Reload preview"
-                  onClick={() => setPreviewNonce((nonce) => nonce + 1)}
-                >
-                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.2-3.2" /><path d="M13 2.6v2.6h-2.6" /></svg>
-                </button>
-                <span className="workspace-preview-addr">
-                  <span className="workspace-preview-addr-text">
-                    {livePorts.find((entry) => entry.port === openedPort)?.process ?? 'stopped'}
-                    {' · '}
-                    <b>:{openedPort}</b>
-                  </span>
-                </span>
-                <button
-                  className="fnd-tbtn"
-                  type="button"
-                  aria-label="Open as a workspace tab"
-                  title="Open as a workspace tab"
-                  onClick={() => onOpenPreview(openedPort)}
-                >
-                  <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
-                </button>
-              </div>
-              {previewReady && filesBase !== null
-                ? (
-                  <iframe
-                    key={previewNonce}
-                    className="workspace-preview-frame"
-                    src={previewUrl(filesBase, openedPort)}
-                    title={`Preview :${openedPort}`}
-                    referrerPolicy="no-referrer"
-                  />
-                )
-                : <p className="workspace-drawer-state">Box is asleep.</p>}
-            </div>
-          )}
-          {openedPort === null && (
-            <section className="workspace-drawer-panel workspace-previews" aria-label="Preview sources">
-              <h3 className="workspace-sect">
-                Previews
-                {(livePorts.length > 0 || previewLinks.length > 0) && (
-                  <small>{livePorts.length + previewLinks.length}</small>
-                )}
-              </h3>
-              {livePorts.length === 0 && previewLinks.length === 0
-                ? (
-                  <p className="workspace-drawer-state">
-                    Nothing running yet — start a dev server in the terminal and
-                    its live preview shows up here.
-                  </p>
-                )
-                : (
-                  <div className="workspace-preview-cards">
-                    {livePorts.map((entry) => (
-                      <button
-                        className="workspace-preview-card"
-                        type="button"
-                        key={entry.port}
-                        aria-label={`Open preview of ${entry.process}`}
-                        onClick={() => setOpenedPort(entry.port)}
-                      >
-                        <span className="workspace-preview-shot" aria-hidden="true">
-                          {previewReady && filesBase !== null && (
-                            <iframe
-                              className="workspace-preview-thumb"
-                              src={previewUrl(filesBase, entry.port)}
-                              title={`Preview of ${entry.process}`}
-                              tabIndex={-1}
-                              loading="lazy"
-                              referrerPolicy="no-referrer"
-                              onLoad={(event) => {
-                                event.currentTarget.classList.add('workspace-preview-thumb--ready');
-                              }}
-                            />
-                          )}
-                          <span className="workspace-preview-shimmer" />
-                          <span className="workspace-preview-wait">Starting preview…</span>
-                        </span>
-                        <span className="workspace-preview-caption">
-                          <b>{entry.process}</b>
-                          <span className="workspace-preview-meta">
-                            started {portAge(entry.firstSeenAt)} ago · :{entry.port}
-                          </span>
-                          <span
-                            className="workspace-preview-open-tab"
-                            role="button"
-                            tabIndex={0}
-                            aria-label={`Open ${entry.process} as a workspace tab`}
-                            title="Open as a workspace tab"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onOpenPreview(entry.port);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key !== 'Enter' && event.key !== ' ') return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              onOpenPreview(entry.port);
-                            }}
-                          >
-                            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                    {previewLinks.map((entry) => (
-                      <button
-                        className="workspace-preview-card"
-                        type="button"
-                        key={entry.url}
-                        aria-label={`Open preview link ${previewLinkLabel(entry.url, entry.title)}`}
-                        onClick={() => onOpenPreviewLink(entry.url, entry.title)}
-                      >
-                        <span className="workspace-preview-shot" aria-hidden="true">
-                          <span className="workspace-preview-wait">Public link ↗</span>
-                        </span>
-                        <span className="workspace-preview-caption">
-                          <b>{previewLinkLabel(entry.url, entry.title)}</b>
-                          <span className="workspace-preview-meta">{entry.url}</span>
-                          <span className="workspace-preview-open-tab" aria-hidden="true">
-                            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M6.5 3.5H3.6A1.1 1.1 0 0 0 2.5 4.6v7.8a1.1 1.1 0 0 0 1.1 1.1h7.8a1.1 1.1 0 0 0 1.1-1.1V9.5" /><path d="M9.8 2.5h3.7v3.7M13.2 2.8 7.6 8.4" /></svg>
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-            </section>
-          )}
-        </div>
-        {canManageCredentials && <div className="workspace-integrations" role="tabpanel" hidden={effectiveSegment !== 'integrations'}>
-          <h3 className="workspace-sect workspace-sect--pending">Pending requests</h3>
-          <WorkspaceRequestsPanel
-            requests={pendingRequests}
-            loadError={pendingRequestsError}
-            onResolve={onResolveRequest}
-          />
-          <h3 className="workspace-sect">Active leases</h3>
-          <WorkspaceLeasesPanel
-            client={client}
-            workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'integrations'}
-          />
-          <h3 className="workspace-sect">Recent activity</h3>
-          <WorkspaceEventsPanel
-            client={client}
-            workspaceId={workspaceId}
-            visible={open && effectiveSegment === 'integrations'}
-          />
-        </div>}
+        {tabs.map((tab) => (
+          <div role="tabpanel" hidden={effectiveSegment !== tab.id} key={tab.id}>
+            <WorkspacePanelContent
+              panel={tab.id}
+              pendingRequests={pendingRequests}
+              {...panelProps}
+              visible={open && effectiveSegment === tab.id}
+            />
+          </div>
+        ))}
       </div>
     </aside>
   );

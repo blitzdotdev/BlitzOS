@@ -2,33 +2,231 @@
   display: flex;
 }
 
-.webapp-workspace-main {
+/* One grid holds both columns: row 1 is the tab strips, row 2 is every
+ * surface stacked in its own column. A tab that changes pane changes a grid
+ * placement, so the live terminal underneath it is never re-parented. */
+.webapp-panes {
   position: relative;
+  display: grid;
   min-width: 0;
   min-height: 0;
   flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
-.webapp-workspace-pane {
-  position: absolute;
-  inset: 0;
+.webapp-panes--split {
+  /* A stored width survives a move to a narrower screen: the side pane never
+   * exceeds 65% of the space left by the 264px rail and the 44px strip. */
+  grid-template-columns:
+    minmax(0, 1fr)
+    min(var(--side-pane-width, 340px), calc((100vw - 308px) * 0.65));
+}
+
+.webapp-pane-strip {
   min-width: 0;
-  min-height: 0;
+  grid-row: 1;
+}
+
+.webapp-pane-strip[data-region='side'] {
+  border-left: 1px solid var(--rule);
 }
 
 .webapp-workspace-session {
-  position: absolute;
-  inset: 0;
   min-width: 0;
   min-height: 0;
+  grid-row: 2;
+  overflow: hidden;
+}
+
+.webapp-pane-strip[data-region='main'],
+.webapp-workspace-session[data-region='main'] {
+  grid-column: 1;
+}
+
+.webapp-panes--split .webapp-pane-strip[data-region='side'],
+.webapp-panes--split .webapp-workspace-session[data-region='side'] {
+  grid-column: 2;
+  border-left: 1px solid var(--rule);
 }
 
 .webapp-workspace-session[hidden] {
   display: none;
 }
 
-.webapp-workspace-pane[hidden] {
-  display: none;
+.webapp-pane-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+.webapp-pane-empty {
+  display: grid;
+  height: 100%;
+  place-items: center;
+  margin: 0;
+  color: var(--faint);
+  font: 12.5px/1.5 var(--font-ui);
+}
+
+.webapp-pane-fallback {
+  display: block;
+  overflow: auto;
+}
+
+/* ------------------------------------------------------------- teenyapps */
+.teenyapps {
+  padding-bottom: 14px;
+}
+
+.teenyapps-section {
+  padding: 0 12px;
+}
+
+.teenyapps-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 2px 8px;
+  color: var(--faint);
+  font: 650 10.5px/1.3 var(--font-ui);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.teenyapps-heading__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teenyapps-heading__count {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  font: 10px/1.6 var(--font-mono);
+  letter-spacing: 0;
+}
+
+/* Same gap, border and radius as the machine grid: every pickable grid in the
+ * app is one family, whatever it is a grid of. */
+.teenyapps-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+}
+
+.teenyapps-empty {
+  margin: 0 2px;
+  color: var(--faint);
+  font: 11.5px/1.6 var(--font-ui);
+}
+
+.teenyapps-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--muted);
+  /* Unfilled like the machine card; without this the UA button face fills it. */
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* These cards open a thing; they are never a chosen thing. So they get a hover
+ * fill and no check glyph, and the border stays the plain rule. */
+.teenyapps-card:hover {
+  background: var(--hover);
+}
+
+.teenyapps-card:focus-visible {
+  background: var(--hover);
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.teenyapps-card__thumb {
+  position: relative;
+  display: grid;
+  height: 84px;
+  place-items: center;
+  overflow: hidden;
+  padding: 0 8px;
+  color: var(--faint);
+  background: color-mix(in oklab, var(--ink) 4%, var(--paper));
+  font: 10.5px/1.4 var(--font-mono);
+  text-align: center;
+  word-break: break-all;
+}
+
+/* The thumb carries its own fill, so it has to take the hover with the rest of
+ * the card or only the meta strip would light up. */
+.teenyapps-card:hover .teenyapps-card__thumb,
+.teenyapps-card:focus-visible .teenyapps-card__thumb {
+  background: var(--hover);
+}
+
+.teenyapps-card__host {
+  position: relative;
+  z-index: 1;
+}
+
+.teenyapps-card__badge {
+  position: absolute;
+  z-index: 2;
+  bottom: 6px;
+  left: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  background: color-mix(in oklab, var(--paper) 78%, transparent);
+  font: 9.5px/1.6 var(--font-ui);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.teenyapps-live {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--r-pill);
+  background: var(--ansi-green);
+}
+
+/* The machine card's facts row: ruled off from the panel above it, muted, and
+ * the same 10px inset. */
+.teenyapps-card__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--rule);
+  font: 12px/1.4 var(--font-ui);
+}
+
+.teenyapps-card__meta b {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teenyapps-card__aside {
+  flex: none;
+  color: var(--muted);
+  font: 11px/1.4 var(--font-mono);
 }
 
 .files-sidebar {
@@ -569,8 +767,10 @@
 /* Editorial paper (plans/mockups/workspace-tabs-editorial.html) on the app's
  * neutral palette: sections are soft ink washes, controls are pills, status
  * is a dot plus a word. Warmth is reserved for pending-request urgency. */
-.workspace-drawer {
-  container: drawer / inline-size;
+/* Panel chrome is shared by the desktop pane and the mobile sheet, so the
+ * washes it paints with are defined for both hosts. */
+.workspace-drawer,
+.webapp-pane-panel {
   --sheet: var(--paper);
   --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
   --wash: color-mix(in oklab, var(--ink) 5%, var(--paper));
@@ -579,6 +779,29 @@
   --quiet: color-mix(in oklab, var(--ink) 8%, var(--paper));
   --quiet-hover: color-mix(in oklab, var(--ink) 12%, var(--paper));
   --rule-soft: color-mix(in oklab, var(--ink) 9%, var(--paper));
+}
+
+/* FilesSidebar remains the single file-tree implementation; the pane owns the
+ * chrome, exactly as the drawer does on mobile. */
+.webapp-pane-panel .files-sidebar {
+  position: relative;
+  z-index: auto;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  margin-top: 0;
+  transform: none;
+  border-left: 0;
+}
+
+.webapp-pane-panel .files-sidebar > .files-sidebar-resizer,
+.webapp-pane-panel .files-sidebar > .files-sidebar-header {
+  display: none;
+}
+
+.workspace-drawer {
+  container: drawer / inline-size;
   /* A stored width survives window shrinks: the drawer never exceeds 65% of
    * the viewport beyond the 264px rail. */
   --drawer-width: min(var(--files-sidebar-width), calc((100vw - 264px) * 0.65));
@@ -710,7 +933,7 @@
   font: 11.5px/1.6 var(--font-ui);
 }
 
-/* Section titles + tinted slabs shared by previews and integrations. */
+/* Section titles + tinted slabs shared by previews and connections. */
 .workspace-sect {
   margin: 16px 16px 8px;
   color: var(--soft-ink);
@@ -723,16 +946,72 @@
   font-weight: 400;
 }
 
-/* The integrations column scrolls as one page of slabs. */
-.workspace-integrations {
+/* The connections column scrolls as one page of slabs. */
+.workspace-connections {
+  min-height: 0;
+  flex: 1;
   overflow-y: auto;
+  padding-bottom: 16px;
   scrollbar-color: var(--faint) transparent;
   scrollbar-width: thin;
 }
 
-.workspace-integrations .workspace-drawer-panel {
+.workspace-connections .workspace-drawer-panel {
   flex: none;
   overflow: visible;
+}
+
+/* Four sections, one rhythm: every slab is a bordered card inset 14px, every
+ * title sits 16px in and 8px above it. */
+.workspace-connections .workspace-credential-rows,
+.workspace-connections .workspace-drawer-state {
+  border: 1px solid var(--rule);
+}
+
+.workspace-connections .workspace-requests .workspace-credential-rows {
+  border-color: color-mix(in oklab, var(--status-warm-yellow) 30%, var(--rule));
+}
+
+/* The picker carries its own heading; here it has to read as one of those four
+ * titles, so the settings eyebrow trails the name instead of stacking on it. */
+.workspace-connections .connect-picker {
+  margin-top: 16px;
+  padding: 0 14px;
+  gap: 8px;
+}
+
+.workspace-connections .connect-picker__heading {
+  align-items: baseline;
+  margin: 0 2px;
+}
+
+.workspace-connections .connect-picker__heading > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.workspace-connections .connect-picker__heading h2 {
+  color: var(--soft-ink);
+  font: 600 12px/1.3 var(--font-ui);
+}
+
+.workspace-connections .connect-picker__heading p {
+  order: 2;
+  color: var(--faint);
+  font: 400 11px/1.3 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.workspace-connections .connect-picker__heading > span {
+  flex: none;
+  font-size: 10.5px;
+}
+
+.workspace-connections .connect-detail {
+  background: var(--sheet);
 }
 
 .workspace-credential-rows {

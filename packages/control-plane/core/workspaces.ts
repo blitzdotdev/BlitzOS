@@ -1,8 +1,10 @@
 import type { RecipeBootstrap } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
-import { manifestJson, parseManifest } from "./credentials/manifest.js";
+import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
-import { revokeWorkspaceLeasesQuery } from "./credentials/leases.js";
+import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
+import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
+import { connectionByName } from "./connections/registry.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
@@ -26,14 +28,16 @@ import type { Principal } from "./principals.js";
 import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
-import type { WebAppPort, VmProvider } from "./providers/types.js";
+import type { WebAppPort, VmProvider } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import {
   attachTemplateFolders,
+  templateConnections,
   templateWorkspaceName,
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
+import { grantsForUser } from "./connections/user-grants.js";
 import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
 import type {
   CoreContext,
@@ -137,6 +141,13 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     const manifest = parseManifest(value.manifest);
     // SAFETY: This private parser receives JSON.parse output, so all retained ceiling values are JSON values; parseManifest checks each ceiling object and present scopes array.
     result.manifest = manifest as typeof manifest & CreateWorkspaceRequest["manifest"];
+  }
+  if (value.connections !== undefined) {
+    if (!Array.isArray(value.connections)) {
+      throw new HttpError(400, "connections must be an array");
+    }
+    result.connections = [...new Set(value.connections.map((entry, index) =>
+      requiredString(entry, `connections[${String(index)}]`, 64)))];
   }
   if (value.environment !== undefined) {
     result.environment = parseWorkspaceEnvironment(value.environment);
@@ -332,6 +343,46 @@ async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
   );
 }
 
+/** A create that names connections promises a workspace that has them, so it
+ * mints their leases from the creator's grants before the box exists.
+ *
+ * Minting at create was removed once as useless, back when only a box sync
+ * could make a credential real. Under the model where the lease row IS the
+ * connected state it is the opposite of useless, and supersede keeps it clean:
+ * the box's first sync replaces each row with an identical one.
+ *
+ * Silent per connection. A provider the creator never authorized, or one the
+ * workspace ceiling refuses, simply reads as unconnected in the grid. */
+async function connectRequested(
+  runtime: ReturnType<RuntimeFactory>,
+  workspaceId: string,
+  principal: Principal,
+  origin: string,
+  connectionNames: readonly string[],
+): Promise<void> {
+  if (connectionNames.length === 0) return;
+  const workspace = await workspaceForMint(runtime, workspaceId);
+  if (workspace === null || workspace.org_id === null) return;
+  for (const name of connectionNames) {
+    const connection = await connectionByName(runtime.db, name, workspace.org_id);
+    if (connection === null) continue;
+    try {
+      await mintWorkspaceConnection(runtime, {
+        workspace,
+        principal,
+        origin,
+        connection,
+        denied: "skip",
+      });
+    } catch (caught) {
+      // A grant needing re-authorization, or a provider unconfigured on this
+      // instance, answers 409 from inside the minter. Creating a workspace is
+      // not the moment to fail on that.
+      if (!(caught instanceof HttpError)) throw caught;
+    }
+  }
+}
+
 export interface RecipeLaunch {
   recipeId: string;
   bootstrap: RecipeBootstrap;
@@ -374,6 +425,27 @@ export async function performWorkspaceCreate(
   const agentRuleId = input.agentRuleId === undefined
     ? template?.agent_rule_id ?? null
     : await agentRuleIdForOrg(runtime.db, input.agentRuleId, orgId);
+  // Enablement, not provisioning: a template names providers, the creator
+  // supplies the identity, and the workspace ceiling records what may mint.
+  const templateConnectionList = template === null
+    ? []
+    : await templateConnections(runtime.db, template.id);
+  const requested = [...new Set([
+    ...templateConnectionList.map(({ provider }) => provider),
+    ...(input.connections ?? []),
+  ])];
+  const granted = new Set(
+    (await grantsForUser(runtime.db, principal.id)).map(({ provider }) => provider),
+  );
+  const missingRequired = templateConnectionList
+    .filter(({ provider, required }) => required && !granted.has(provider))
+    .map(({ provider }) => provider);
+  if (missingRequired.length > 0) {
+    throw new HttpError(
+      409,
+      `connect ${missingRequired.join(", ")} before creating from this template`,
+    );
+  }
   const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
   const providerCapabilities = vmProvider.capabilities();
   if (input.volumeId !== undefined && !providerCapabilities.volumes) {
@@ -428,7 +500,7 @@ export async function performWorkspaceCreate(
       machineTypeId,
       input.volumeId ?? null,
       await hashSecret(capability),
-      input.manifest === undefined ? null : manifestJson(input.manifest),
+      enablementManifestJson(input.manifest, requested),
       input.orgShareRole ?? null,
       storedWorkspaceEnvironment(environment ?? undefined),
       agentRuleId,
@@ -445,6 +517,7 @@ export async function performWorkspaceCreate(
   if (template !== null) {
     await attachTemplateFolders(runtime.db, template.id, id, principal, now);
   }
+  await connectRequested(runtime, id, principal, requestOrigin, requested);
 
   try {
     // The size check runs on a tunnel-less build so a 413 always fires

@@ -79,6 +79,39 @@ export function createSessionPrincipalSource(): PrincipalSource {
   return { authenticate: findSessionPrincipal };
 }
 
+/** Re-resolves the principal a signed OAuth state names. OAuth callbacks
+ * arrive as cross-site navigations, which the SameSite=Strict session cookie
+ * deliberately does not accompany, so the connect flow binds the principal
+ * into its signed state at /start and loads it fresh here — a user disabled
+ * or removed from the org mid-flow resolves to null, exactly like an expired
+ * session. */
+export async function findStatePrincipal(
+  db: Db,
+  userId: string,
+  membershipId: string | null,
+): Promise<Principal | null> {
+  const row = await first<Omit<SessionRow, "token_hash"> & { membership_id: string | null }>(db, {
+    q: `SELECT u.id, u.platform_operator, m.id AS membership_id,
+              m.org_id, m.role, m.status
+       FROM users u
+       LEFT JOIN memberships m ON m.id = ?2 AND m.user_id = u.id
+       WHERE u.id = ?1 LIMIT 1`,
+    v: [userId, membershipId],
+  });
+  if (row === null) return null;
+  if (membershipId !== null && row.membership_id === null) return null;
+  if (row.membership_id !== null && row.status !== "active") return null;
+  return {
+    id: row.id,
+    unixName: "blitz",
+    harnesses: ["claude", "codex"],
+    membershipId: row.membership_id,
+    orgId: row.org_id,
+    role: row.role,
+    platformOperator: row.platform_operator === 1,
+  };
+}
+
 export async function ensurePrincipal(db: Db, principal: Principal): Promise<void> {
   await rows(db, {
     q: `INSERT INTO principals (id, unix_name, harnesses) VALUES (?1, ?2, ?3)

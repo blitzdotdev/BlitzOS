@@ -6,14 +6,14 @@ import {
   cookieValue,
   sessionCookie,
 } from "../principals.js";
-import { fetchBoundedJson, type JsonValue } from "../providers/json-fetch.js";
+import { fetchBoundedJson, type JsonValue } from "../compute/json-fetch.js";
 import type { CoreRouter, RuntimeFactory, RuntimeVariables } from "../runtime.js";
 import {
   clearGoogleOAuthStateCookie,
   createGoogleOAuthState,
   GOOGLE_OAUTH_COOKIE,
   verifyGoogleOAuthStateCookie,
-} from "./oauth-state.js";
+} from "../oauth-state.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
 import { inviteCodeHash, redeemInviteSession } from "./invites.js";
 
@@ -337,7 +337,7 @@ async function bootstrapMembership(
       v: [user.id],
     },
     {
-      q: `UPDATE integrations SET org_id = ?1, created_by = ?2,
+      q: `UPDATE connections SET org_id = ?1, created_by = ?2,
               created_by_membership_id = ?3
           WHERE created_by = 'operator' AND org_id IS NULL`,
       v: [orgId, user.id, membershipId],

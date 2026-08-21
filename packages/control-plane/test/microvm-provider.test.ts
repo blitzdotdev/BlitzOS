@@ -3,19 +3,19 @@ import { env } from "cloudflare:workers";
 import { rawDb } from "../src/raw-db.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../core/db.js";
-import { VmProviderRegistry } from "../core/providers/registry.js";
+import { VmProviderRegistry } from "../core/compute/registry.js";
 import {
   MicrovmPoolProvider,
   parseMicrovmHosts,
   parseMicrovmMachineTypeId,
-} from "../core/providers/microvm.js";
+} from "../core/compute/microvm.js";
 import type {
   CreatedVm,
   CreateVmInput,
   ProviderMachineType,
   VmInspection,
   VmProvider,
-} from "../core/providers/types.js";
+} from "../core/compute/types.js";
 import {
   FakeProviders,
   appRequest,

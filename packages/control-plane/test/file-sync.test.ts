@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CreateVmInput, WebAppPort } from "../core/providers/types.js";
+import type { CreateVmInput, WebAppPort } from "../core/compute/types.js";
 import {
   parseDavListing,
   runFileSyncSweep,

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { HttpError } from "../core/http.js";
-import { VmProviderRegistry } from "../core/providers/registry.js";
+import { VmProviderRegistry } from "../core/compute/registry.js";
 import type {
   CreatedVm,
   CreateVmInput,
   ProviderMachineType,
   VmInspection,
   VmProvider,
-} from "../core/providers/types.js";
+} from "../core/compute/types.js";
 
 class StubVmProvider implements VmProvider {
   constructor(

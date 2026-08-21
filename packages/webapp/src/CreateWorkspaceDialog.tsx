@@ -3,6 +3,7 @@ import type {
   ListMachineTypesResponse,
   MachineType,
   MachineTypeProviderFailure,
+  UserGrantView,
   Volume,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
@@ -10,6 +11,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
+import { ConnectPicker, type ConnectClient } from './settings/ConnectPicker';
 import {
   EMPTY_WORKSPACE_ENVIRONMENT,
   EnvironmentEditor,
@@ -26,6 +28,8 @@ type CreateWorkspaceDialogProps = {
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
   listTemplates: () => Promise<WorkspaceTemplateView[]>;
+  listGrants: () => Promise<UserGrantView[]>;
+  connectClient: ConnectClient;
   onNewTemplate: () => void;
   onCancel: () => void;
   onSubmit: (input: CreateWorkspaceDialogInput) => void;
@@ -39,6 +43,8 @@ export function CreateWorkspaceDialog({
   listMachineTypes,
   listVolumes,
   listTemplates,
+  listGrants,
+  connectClient,
   onNewTemplate,
   onCancel,
   onSubmit,
@@ -47,6 +53,8 @@ export function CreateWorkspaceDialog({
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
+  const [grants, setGrants] = useState<string[]>([]);
+  const [connecting, setConnecting] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
@@ -70,9 +78,13 @@ export function CreateWorkspaceDialog({
       listMachineTypes(),
       listVolumes(),
       listTemplates(),
-    ]).then(([machineResult, volumeResult, templateResult]) => {
+      listGrants(),
+    ]).then(([machineResult, volumeResult, templateResult, grantResult]) => {
       if (!mounted) return;
       setTemplates(templateResult.status === 'fulfilled' ? templateResult.value : []);
+      setGrants(grantResult.status === 'fulfilled'
+        ? grantResult.value.map(({ provider }) => provider)
+        : []);
       if (machineResult.status === 'rejected') {
         setLoadError(machineResult.reason instanceof Error
           ? machineResult.reason.message
@@ -87,19 +99,29 @@ export function CreateWorkspaceDialog({
       setLoading(false);
     });
     return () => { mounted = false; };
-  }, [listMachineTypes, listVolumes, listTemplates]);
+  }, [listMachineTypes, listVolumes, listTemplates, listGrants]);
 
   const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId) ?? null;
+  // You become the workspace owner, so the identity the template needs is
+  // yours. A required provider you have not connected blocks create.
+  const missingRequired = (selectedTemplate?.connections ?? [])
+    .filter(({ provider, required }) => required && !grants.includes(provider))
+    .map(({ provider }) => provider);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy || submitted.current) return;
     if (selectedTemplate !== null) {
+      if (missingRequired.length > 0) return;
       submitted.current = true;
       const input: CreateWorkspaceDialogInput = {
         templateId: selectedTemplate.id,
         orgShareRole: 'editor',
       };
+      const enabled = selectedTemplate.connections
+        .map(({ provider }) => provider)
+        .filter((provider) => grants.includes(provider));
+      if (enabled.length > 0) input.connections = enabled;
       const configured = populatedEnvironment(environment);
       if (configured !== undefined) input.environment = configured;
       else if (selectedTemplate.environment !== null) input.environment = environment;
@@ -211,6 +233,40 @@ export function CreateWorkspaceDialog({
                     </li>
                   ))}
                 </ul>
+              )}
+              {selectedTemplate.connections.length > 0 && (
+                <ul className="template-connection-list">
+                  {/* A tick here is an authorized account, not a connection:
+                    * the workspace does not exist yet. Creating it is what
+                    * turns each tick into a lease. */}
+                  {selectedTemplate.connections.map((connection) => {
+                    const authorized = grants.includes(connection.provider);
+                    return (
+                      <li key={connection.provider}>
+                        <span aria-hidden="true">{authorized ? '✓' : '—'}</span>
+                        {' '}{connection.provider}
+                        {connection.required ? ' · required' : ' · optional'}
+                        {!authorized && (
+                          <button
+                            className="webapp-action"
+                            type="button"
+                            onClick={() => setConnecting(connection.provider)}
+                          >Authorize</button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {connecting !== null && (
+                <ConnectPicker
+                  client={connectClient}
+                  requestedProvider={connecting}
+                  onConnected={() => {
+                    setGrants((current) => [...new Set([...current, connecting])]);
+                    setConnecting(null);
+                  }}
+                />
               )}
             </section>
           )}
@@ -333,7 +389,9 @@ export function CreateWorkspaceDialog({
           <button
             className="create-workspace-primary"
             type="submit"
-            disabled={busy || (selectedTemplate === null && (loading || selectedMachineType === ''))}
+            disabled={busy
+              || missingRequired.length > 0
+              || (selectedTemplate === null && (loading || selectedMachineType === ''))}
           >
             {busy ? 'Creating…' : selectedTemplate === null ? 'Create workspace' : `Create from ${selectedTemplate.name}`}
           </button>

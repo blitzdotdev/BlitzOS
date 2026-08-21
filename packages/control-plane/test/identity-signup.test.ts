@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { GOOGLE_OAUTH_COOKIE } from "../core/identity/oauth-state.js";
+import { GOOGLE_OAUTH_COOKIE } from "../core/oauth-state.js";
 import {
   allowedEmailDomainsFromEnv,
   signupModeFromEnv,

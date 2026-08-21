@@ -29,7 +29,7 @@ import {
   DEFAULT_HETZNER_MACHINE_TYPES,
   HetznerProvider,
   hetznerMachineTypeAllowlistFromEnv,
-} from "../core/providers/hetzner.js";
+} from "../core/compute/hetzner.js";
 import worker from "../src/worker.js";
 import {
   OPERATOR_KEY,

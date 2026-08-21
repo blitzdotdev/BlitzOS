@@ -28,6 +28,13 @@ const machines = [
   { id: "mv-2c2g@lab", providerId: "microvm", supportsVolumes: false, name: "Lab 2C/2G", cpuCores: 2, memGb: 2, diskGb: 20, arch: "x86" as const, location: "lab" },
 ];
 
+const connectClient = {
+  listConnectionCatalog: async () => ({ providers: [] }),
+  listConnectionGrants: async () => ({ grants: [] }),
+  putConnectionGrant: async () => undefined,
+  connectStartUrl: (provider: string) => `/connect/${provider}/start`,
+};
+
 describe("create workspace dialog", () => {
   it("groups machine types and submits the keyless wire body", async () => {
     const submit = vi.fn();
@@ -38,6 +45,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
@@ -80,6 +89,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => [{
@@ -133,6 +144,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
@@ -185,6 +198,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({
           machineTypes: [],
@@ -216,6 +231,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: [], failures: [] })}
         listVolumes={async () => []}
@@ -239,6 +256,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => [{
@@ -289,6 +308,7 @@ describe("create workspace dialog", () => {
         { id: "folder-a", name: "datasets", role: "viewer" as const },
         { id: "folder-b", name: "private", role: null },
       ],
+      connections: [{ provider: "linear", required: false }],
     };
     const view = await render(
       <CreateWorkspaceDialog
@@ -297,6 +317,17 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listTemplates={async () => [template]}
+        listGrants={async () => [{
+          provider: "linear",
+          manifestId: "linear",
+          kind: "pat" as const,
+          label: null,
+          scopes: ["read"],
+          createdAt: 1,
+          updatedAt: 1,
+          accessExpiresAt: null,
+        }]}
+        connectClient={connectClient}
         onNewTemplate={onNewTemplate}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
@@ -325,9 +356,11 @@ describe("create workspace dialog", () => {
         new Event("submit", { bubbles: true, cancelable: true }),
       );
     });
+    // The template's connections ride along as the workspace's enablement list.
     expect(submit).toHaveBeenCalledWith({
       templateId: "template-1",
       orgShareRole: "editor",
+      connections: ["linear"],
       environment: template.environment,
     });
 
@@ -356,6 +389,8 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient([BUILT_IN_RULE, orgRule])}
         listTemplates={async () => []}
+        listGrants={async () => []}
+        connectClient={connectClient}
         onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
@@ -419,6 +454,7 @@ describe("create workspace dialog", () => {
       agentRuleId: "rule-1",
       environment: null,
       folders: [],
+      connections: [],
     };
     // The dialog refuses a second submit per mount, so each expectation gets
     // its own render.
@@ -430,6 +466,8 @@ describe("create workspace dialog", () => {
           orgName="acme"
           client={rulesClient([BUILT_IN_RULE, orgRule])}
           listTemplates={async () => [template]}
+          listGrants={async () => []}
+          connectClient={connectClient}
           onNewTemplate={() => undefined}
           listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
           listVolumes={async () => []}

@@ -26,6 +26,7 @@ const templates = [{
   environment: null,
   agentRuleId: null,
   folders: [],
+  connections: [],
 }];
 
 const recipe: RecipeView = {
@@ -499,9 +500,16 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     destroy: vi.fn(async () => { throw new Error('unused'); }),
     listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
     listVolumes: vi.fn(async () => ({ volumes: [] })),
-    listIntegrations: vi.fn(async () => ({ integrations: [] })),
-    putIntegration: vi.fn(async () => undefined),
-    deleteIntegration: vi.fn(async () => undefined),
+    listConnections: vi.fn(async () => ({ connections: [] })),
+    putConnection: vi.fn(async () => undefined),
+    deleteConnection: vi.fn(async () => undefined),
+    mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
+    listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
+    listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    putConnectionGrant: vi.fn(async () => undefined),
+    deleteConnectionGrant: vi.fn(async () => undefined),
+    listProviderHealth: vi.fn(async () => ({ providers: [] })),
+    connectStartUrl: (provider: string) => `/connect/${provider}/start`,
     listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     revokeLease: vi.fn(async () => undefined),
@@ -524,7 +532,7 @@ describe('usage capture settings', () => {
         viewer={viewer}
         section={section}
         onNavigate={() => undefined}
-        onConfigureIntegration={() => undefined}
+        onConfigureConnection={() => undefined}
         onSignOut={async () => undefined}
       />
     );

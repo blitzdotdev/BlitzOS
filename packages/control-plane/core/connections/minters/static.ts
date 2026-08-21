@@ -1,7 +1,7 @@
 import { hashSecret, randomToken } from "../../crypto.js";
 import { HttpError, isNumber, isRecord, isString } from "../../http.js";
 import type {
-  Integration,
+  Connection,
   Minter,
   MintRequest,
   MinterResult,
@@ -19,10 +19,10 @@ function staticPlacements(
   try {
     value = JSON.parse(configText);
   } catch {
-    throw new Error("static integration config is invalid");
+    throw new Error("static connection config is invalid");
   }
   if (!isRecord(value) || !Array.isArray(value.placements)) {
-    throw new Error("static integration config requires placements");
+    throw new Error("static connection config requires placements");
   }
   return value.placements.map((placement) => {
     if (!isRecord(placement)) throw new Error("static placement is invalid");
@@ -76,17 +76,19 @@ export const staticMinter: Minter = {
   kind: "static",
   async mint(
     root: string | null,
-    integration: Integration,
+    connection: Connection,
     request: MintRequest,
   ): Promise<MinterResult> {
+    // FROZEN box-route error text: the string predates the connection rename.
     if (root === null) throw new HttpError(409, "integration has no active root");
-    if (integration.custody === "proxy") {
+    if (connection.custody === "proxy") {
       const token = randomToken();
       return {
-        integration: integration.name,
+        // FROZEN box wire key: the shipped broker requires "integration".
+        integration: connection.name,
         mode: "proxy",
         placements: staticPlacements(
-          integration.config,
+          connection.config,
           token,
           `${request.origin}/proxy/${request.leaseId}`,
         ),
@@ -94,13 +96,14 @@ export const staticMinter: Minter = {
         tokenHash: await hashSecret(token),
       };
     }
-    if (integration.custody !== "cp") {
+    if (connection.custody !== "cp") {
       throw new HttpError(409, "static mint requires cp or proxy custody");
     }
     return {
-      integration: integration.name,
+      // FROZEN box wire key: the shipped broker requires "integration".
+      integration: connection.name,
       mode: "inject",
-      placements: staticPlacements(integration.config, root, root),
+      placements: staticPlacements(connection.config, root, root),
       expiresAt: request.now + STATIC_LEASE_MS,
     };
   },

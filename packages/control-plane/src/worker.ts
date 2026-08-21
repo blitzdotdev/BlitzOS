@@ -4,10 +4,12 @@ import { $Database, teenyHono } from "teenybase/worker";
 import { rawDb } from "./raw-db.js";
 import {
   allowedEmailDomainsFromEnv,
+  awsProviderFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
+  isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
   maxConcurrentWorkspacesFromEnv,
@@ -15,6 +17,7 @@ import {
   runFileSyncSweep,
   runLeaseSweep,
   runOrphanSweep,
+  runProviderCanary,
   runSessionSweep,
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
@@ -29,6 +32,10 @@ import {
   type Db,
 } from "../core/index.js";
 import config from "../teenybase.js";
+
+/** Must stay one of wrangler.toml's `triggers.crons` entries verbatim: the
+ * scheduled handler routes on the literal expression Cloudflare hands back. */
+const HOURLY_CRON = "0 * * * *";
 
 type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -45,6 +52,13 @@ type WorkerBindings = Env & {
   CRED_MASTER_KEY: string;
   CLOUDFLARE_API_TOKEN?: string;
   WEBAPP_TOKEN_SECRET?: string;
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
+  AWS_SESSION_TOKEN?: string;
+  AWS_REGION?: string;
+  AWS_IMAGE_ID?: string;
+  AWS_SUBNET_ID?: string;
+  AWS_SECURITY_GROUP_IDS?: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
 };
@@ -67,6 +81,13 @@ function dynamicBinding(env: WorkerBindings, name: string): unknown {
   return env[name as keyof WorkerBindings];
 }
 
+/** Connection OAuth client bindings are named by the provider catalog, not by
+ * this file, so they are read by name and narrowed to a string here. */
+function connectSecretFrom(env: WorkerBindings, name: string): string | undefined {
+  const value = dynamicBinding(env, name);
+  return isString(value) && value.length > 0 ? value : undefined;
+}
+
 function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
   const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN, {
     machineTypeCatalog: env.HETZNER_MACHINE_TYPES,
@@ -77,8 +98,15 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
     (tokenVar) => dynamicBinding(env, tokenVar),
     { db },
   );
+  // AWS joins the registry only when its variables are configured, so
+  // deployments without AWS keep exactly the providers they had. Volumes still
+  // route to Hetzner: `providers.volume` is single-valued.
+  const aws = awsProviderFromEnv(env);
+  const vmProviders = aws === undefined
+    ? [hetzner, microvm]
+    : [hetzner, microvm, aws];
   return {
-    vmRegistry: new VmProviderRegistry([hetzner, microvm]),
+    vmRegistry: new VmProviderRegistry(vmProviders),
     volume: hetzner,
     microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),
@@ -111,6 +139,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
     },
@@ -146,6 +175,7 @@ function runtimeForScheduled(
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
     },
@@ -232,7 +262,7 @@ export default {
         // Only the hourly and daily schedules run the full janitor set. Any
         // other tick (the */5 backstop today) converges folder sync alone, so
         // renaming that cron can never silently multiply the heavy sweeps.
-        if (event.cron !== "0 * * * *" && event.cron !== "0 3 * * *") {
+        if (event.cron !== HOURLY_CRON && event.cron !== "0 3 * * *") {
           const swept = await runFileSyncSweep(runtime);
           console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
           return;
@@ -243,6 +273,14 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
+        // The canary is the one sweep that costs an authenticated call to a
+        // third party per provider, so it takes the hourly tick alone. On the
+        // daily tick as well it would be counted twice against the same rate
+        // limit for no extra signal.
+        if (event.cron === HOURLY_CRON) {
+          const probed = await runProviderCanary(runtime);
+          console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
+        }
         const swept = await runFileSyncSweep(runtime);
         console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
       })(),

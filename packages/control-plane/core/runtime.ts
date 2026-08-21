@@ -2,9 +2,9 @@ import type { BlobStore } from "./blobs.js";
 import type { Db } from "./db.js";
 import { isNumber } from "./http.js";
 import type { PrincipalSource } from "./principals.js";
-import type { MicrovmPoolProvider } from "./providers/microvm.js";
-import type { VmProviderRegistry } from "./providers/registry.js";
-import type { VolumeProvider } from "./providers/types.js";
+import type { MicrovmPoolProvider } from "./compute/microvm.js";
+import type { VmProviderRegistry } from "./compute/registry.js";
+import type { VolumeProvider } from "./compute/types.js";
 import type { WorkspaceTunnels } from "./workspace-tunnels.js";
 import type { WorkspaceWebAppAuth } from "./webapp-tickets.js";
 
@@ -59,6 +59,10 @@ export interface RuntimeVariables {
   googleClientId: string;
   googleClientSecret: string;
   bootstrapSecret: string;
+  /** Reads a provider's OAuth client binding by the name its catalog manifest
+   * declares. Returning undefined is the supported answer: an instance that
+   * never registered an app simply has no Connect button for that provider. */
+  connectSecret(name: string): string | undefined;
   /** Signup gate mode parsed from SIGNUP_MODE. Runtimes that predate the
    * var (the managed worker source) omit it; absent means "open", which is
    * the pre-gate behavior. */

@@ -1,9 +1,9 @@
 import { HttpError, isRecord, isString } from "../../../http.js";
 import type {
-  Integration,
+  Connection,
   Minter,
   MintRequest,
-  MintResult,
+  MinterResult,
   Placement,
 } from "../../types.js";
 
@@ -83,7 +83,7 @@ function parseConfig(value: string): GithubAppConfig {
     !isString(parsed.app_id) ||
     !isString(parsed.installation_id)
   ) {
-    throw new Error("github app integration config is invalid");
+    throw new Error("github app connection config is invalid");
   }
   // SAFETY: app_id and installation_id are strings; optional nested config is not checked. TODO(deslop-tier-c): validate placements, repositories, and permissions before constructing GithubAppConfig.
   return parsed as typeof parsed & GithubAppConfig;
@@ -133,14 +133,15 @@ export const githubAppMinter: Minter = {
   providers: ["github"],
   async mint(
     root: string | null,
-    integration: Integration,
+    connection: Connection,
     request: MintRequest,
-  ): Promise<MintResult> {
-    if (integration.custody !== "cp") {
+  ): Promise<MinterResult> {
+    if (connection.custody !== "cp") {
       throw new HttpError(409, "github app mint requires cp custody");
     }
+    // FROZEN box-route error text: the string predates the connection rename.
     if (root === null) throw new HttpError(409, "integration has no active root");
-    const config = parseConfig(integration.config);
+    const config = parseConfig(connection.config);
     const body: GithubTokenRequestBody = {};
     if (config.repositories !== undefined) body.repositories = config.repositories;
     if (config.permissions !== undefined) body.permissions = config.permissions;
@@ -168,7 +169,8 @@ export const githubAppMinter: Minter = {
       throw new HttpError(502, "github returned an invalid installation token response");
     }
     return {
-      integration: integration.name,
+      // FROZEN box wire key: the shipped broker requires "integration".
+      integration: connection.name,
       mode: "inject",
       placements: fillPlacements(config, value.token),
       expiresAt,

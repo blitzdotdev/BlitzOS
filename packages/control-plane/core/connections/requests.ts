@@ -4,7 +4,7 @@ import { HttpError, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { parseManifest, usableByAllows } from "./manifest.js";
-import { integrationByName } from "./registry.js";
+import { connectionByName } from "./registry.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
 type RequestState = "pending" | "approved" | "denied";
@@ -12,7 +12,7 @@ type RequestState = "pending" | "approved" | "denied";
 interface CredentialRequestRow {
   id: string;
   workspace_id: string;
-  integration_name: string;
+  connection_name: string;
   requested_scopes: string;
   state: RequestState;
   created_at: number;
@@ -36,7 +36,7 @@ interface RequestResolutionRow extends CredentialRequestRow {
 export interface CredentialRequestView {
   id: string;
   workspace_id: string;
-  integration_name: string;
+  connection_name: string;
   requested_scopes: string[];
   created_at: number;
   requester: CredentialRequester | null;
@@ -64,7 +64,7 @@ function scopesFromJson(value: string): string[] {
 export async function fileRequest(
   db: Db,
   workspaceId: string,
-  integrationName: string,
+  connectionName: string,
   requestedScopes: readonly string[],
   requester: CredentialRequester,
   now = Date.now(),
@@ -73,20 +73,20 @@ export async function fileRequest(
   const requestedScopesJson = scopesJson(requestedScopes);
   const inserted = await rows<{ id: string }>(db, {
     q: `INSERT INTO credential_requests
-        (id, workspace_id, integration_name, requested_scopes, state, created_at,
+        (id, workspace_id, connection_name, requested_scopes, state, created_at,
          resolved_at, resolved_by, requester)
         VALUES (?1, ?2, ?3, ?4, 'pending', ?5, NULL, NULL, ?6)
         ON CONFLICT DO NOTHING
         RETURNING id`,
-    v: [id, workspaceId, integrationName, requestedScopesJson, now, JSON.stringify(requester)],
+    v: [id, workspaceId, connectionName, requestedScopesJson, now, JSON.stringify(requester)],
   });
   if (inserted[0] !== undefined) return inserted[0].id;
   const pending = await first<{ id: string }>(db, {
     q: `SELECT id FROM credential_requests
-        WHERE workspace_id = ?1 AND integration_name = ?2
+        WHERE workspace_id = ?1 AND connection_name = ?2
           AND requested_scopes = ?3 AND state = 'pending'
         LIMIT 1`,
-    v: [workspaceId, integrationName, requestedScopesJson],
+    v: [workspaceId, connectionName, requestedScopesJson],
   });
   if (pending === null) throw new Error("pending credential request disappeared");
   return pending.id;
@@ -115,23 +115,23 @@ async function requestForResolution(
   return request;
 }
 
-async function requireGrantableIntegration(
+async function requireGrantableConnection(
   db: Db,
   request: RequestResolutionRow,
 ): Promise<void> {
   if (request.org_id === null) throw new HttpError(409, "workspace has no organization");
-  const integration = await integrationByName(db, request.integration_name, request.org_id);
-  if (integration === null) {
-    throw new HttpError(409, "integration is not configured");
+  const connection = await connectionByName(db, request.connection_name, request.org_id);
+  if (connection === null) {
+    throw new HttpError(409, "connection is not configured");
   }
-  if (!usableByAllows(integration, request.owner_id)) {
-    throw new HttpError(403, "integration is not available to the workspace owner");
+  if (!usableByAllows(connection, request.owner_id)) {
+    throw new HttpError(403, "connection is not available to the workspace owner");
   }
 }
 
 function widenedManifest(
   storedManifest: string | null,
-  integrationName: string,
+  connectionName: string,
   requestedScopes: readonly string[],
 ): string | null {
   if (storedManifest === null) return null;
@@ -141,9 +141,9 @@ function widenedManifest(
   } catch {
     throw new HttpError(409, "workspace credential manifest is invalid");
   }
-  const current = manifest.integrations[integrationName];
+  const current = manifest.integrations[connectionName];
   if (current === undefined) {
-    manifest.integrations[integrationName] = { scopes: [...requestedScopes] };
+    manifest.integrations[connectionName] = { scopes: [...requestedScopes] };
   } else if (current.scopes !== undefined) {
     // SAFETY: parseManifest establishes that a present scopes member is a string array.
     const allowed = new Set(current.scopes as string[]);
@@ -160,11 +160,11 @@ export async function approve(
   now = Date.now(),
 ): Promise<void> {
   const request = await requestForResolution(db, requestId, principal);
-  await requireGrantableIntegration(db, request);
+  await requireGrantableConnection(db, request);
   const requestedScopes = scopesFromJson(request.requested_scopes);
   const manifest = widenedManifest(
     request.manifest,
-    request.integration_name,
+    request.connection_name,
     requestedScopes,
   );
   const result = await transaction(db, [
@@ -184,8 +184,10 @@ export async function approve(
             WHERE id = ?3 AND state = 'pending'
           )`,
       v: [
+        // Audit detail keeps the pre-rename "integration" key: credential_events
+        // is append-only and older rows cannot be rewritten.
         JSON.stringify({
-          integration: request.integration_name,
+          integration: request.connection_name,
           scopes: requestedScopes,
           workspace_id: request.workspace_id,
           resolved_by: principal.id,
@@ -234,8 +236,9 @@ export async function deny(
             WHERE id = ?3 AND state = 'denied' AND resolved_at = ?2
           )`,
       v: [
+        // Audit detail keeps the pre-rename "integration" key (see approve).
         JSON.stringify({
-          integration: request.integration_name,
+          integration: request.connection_name,
           scopes: scopesFromJson(request.requested_scopes),
           workspace_id: request.workspace_id,
           resolution: "denied",
@@ -272,7 +275,7 @@ export async function listRequests(
   return requests.map((request) => ({
     id: request.id,
     workspace_id: request.workspace_id,
-    integration_name: request.integration_name,
+    connection_name: request.connection_name,
     requested_scopes: scopesFromJson(request.requested_scopes),
     created_at: request.created_at,
     requester: requesterFromJson(request.requester),

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildUserData } from "../core/cloud-init.js";
-import { HetznerProvider } from "../core/providers/hetzner.js";
+import { HetznerProvider } from "../core/compute/hetzner.js";
 import {
   appRequest,
   harness,
@@ -59,15 +59,19 @@ describe("production VM bootstrap", () => {
   it("generates the ordered host and box bootstrap without cloud-init phone_home", () => {
     const userData = registryUserData();
 
-    expect(userData).toContain("retry apt-get install -y docker.io curl");
+    expect(userData).toContain("apt_watchdog install -y docker.io curl");
     expect(userData).toContain("systemctl enable --now docker");
     expect(userData).toContain("/dev/disk/by-id/scsi-0HC_Volume_*");
     expect(userData).toContain("/var/lib/blitz/authorized_key");
     expect(userData).toContain("chmod 0644 /var/lib/blitz/authorized_key");
     expect(userData).toContain("install -d -o root -g root -m 0755 /run/sshd");
-    expect(userData).toContain("systemctl disable --now ssh.socket");
+    expect(userData).toContain("systemctl stop ssh.service ssh.socket");
+    expect(userData).toContain("systemctl mask ssh.socket");
     expect(userData).toContain("Port 2222");
     expect(userData).toContain("systemctl restart ssh");
+    // A socket-activated sshd ignores Port directives, so the script proves
+    // the move by behavior: a listener on :2222 must appear.
+    expect(userData).toContain("host sshd never bound :2222");
     expect(userData).toContain(`readonly BOX_IMAGE_REF='${BOX_IMAGE_REF}'`);
     expect(userData).toContain('retry docker pull "$BOX_IMAGE_REF"');
     expect(userData).toContain("--privileged");
@@ -90,7 +94,7 @@ describe("production VM bootstrap", () => {
       "install -d -o root -g root -m 0755 /run/sshd",
     );
     const validateHostSsh = userData.indexOf("/usr/sbin/sshd -t");
-    const moveHostSsh = userData.indexOf("systemctl disable --now ssh.socket");
+    const moveHostSsh = userData.indexOf("systemctl mask ssh.socket");
     const restartHostSsh = userData.indexOf("systemctl restart ssh");
     const runBox = userData.indexOf("docker run");
     expect(createSshRuntime).toBeGreaterThan(-1);
@@ -159,7 +163,7 @@ describe("production VM bootstrap", () => {
     const userData = registryUserData();
 
     const initialCapture = userData.indexOf('exec >>"$BOOTSTRAP_LOG" 2>&1');
-    const apt = userData.indexOf("retry apt-get update");
+    const apt = userData.indexOf("apt_watchdog update");
     const mount = userData.indexOf('mount "$volume_device" /var/lib/blitz');
     const durableCopy = userData.indexOf(
       'cat "$BOOTSTRAP_LOG" >"$DURABLE_BOOTSTRAP_LOG"',
@@ -263,7 +267,7 @@ describe("production VM bootstrap", () => {
       reload,
     );
     const sshDropIn = userData.indexOf(
-      "cat >/etc/ssh/sshd_config.d/blitz.conf <<'SSHD_CONFIG'",
+      "cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'",
       enableShutdown,
     );
     const validateSsh = userData.indexOf("/usr/sbin/sshd -t", sshDropIn);
@@ -381,7 +385,7 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("readonly BOOTSTRAP_ERROR_MAX_BYTES=1006");
     expect(userData).toContain(`trap 'report_bootstrap_failure "$?" "$LINENO"' ERR`);
     expect(userData.indexOf("trap 'report_bootstrap_failure")).toBeLessThan(
-      userData.indexOf("retry apt-get update"),
+      userData.indexOf("apt_watchdog update"),
     );
     expect(body).toContain('message=$(sanitize_bootstrap_error "$message")');
     expect(body).toContain('--data-urlencode "bootstrap_error=$message"');

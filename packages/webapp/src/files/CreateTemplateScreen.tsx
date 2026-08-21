@@ -1,6 +1,8 @@
 import type {
+  CatalogEntryView,
   CreateWorkspaceTemplateRequest,
   MachineType,
+  TemplateConnectionView,
   WorkspaceEnvironment,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
@@ -68,6 +70,10 @@ export function CreateTemplateScreen({
   const [browse, setBrowse] = useState<BrowseState | null>(null);
   const [objectsByFolder, setObjectsByFolder] = useState<Map<string, FolderObjectView[]>>(new Map());
   const [shareWithOrg, setShareWithOrg] = useState(true);
+  const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
+  // A template references providers by name. It never carries a grant, so an
+  // instantiating member always supplies their own identity.
+  const [templateConnections, setTemplateConnections] = useState<Map<string, TemplateConnectionView>>(new Map());
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -88,8 +94,10 @@ export function CreateTemplateScreen({
     void Promise.allSettled([
       client.listMachineTypes(),
       client.listFolders(),
-    ]).then(([machineResult, folderResult]) => {
+      client.listConnectionCatalog(),
+    ]).then(([machineResult, folderResult, catalogResult]) => {
       if (!mounted) return;
+      if (catalogResult.status === 'fulfilled') setCatalog(catalogResult.value.providers);
       if (machineResult.status === 'fulfilled') {
         setMachines(machineResult.value.machineTypes);
         setMachineTypeId((current) => current || machineResult.value.machineTypes[0]?.id || '');
@@ -206,6 +214,9 @@ export function CreateTemplateScreen({
       // Keep every attached folder id, including ones this editor cannot
       // read — the server preserves them and only checks new additions.
       setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
+      setTemplateConnections(new Map(
+        existing.connections.map((connection) => [connection.provider, connection]),
+      ));
       const stored = existing.environment ?? EMPTY_WORKSPACE_ENVIRONMENT;
       setLoadedEnvironment(stored);
       // Seed the submitted value too: saving without opening Advanced has to
@@ -235,6 +246,7 @@ export function CreateTemplateScreen({
         name: trimmed,
         machineTypeId,
         folderIds: [...attachedIds],
+        connections: [...templateConnections.values()],
       };
       // The environment rides on both create and edit — the PUT handler
       // replaces it, so an edit that cleared it has to send the empty one
@@ -498,6 +510,43 @@ export function CreateTemplateScreen({
                     : targetAttached ? `Detach “${target.name}”` : `Attach “${target.name}”`}
                 </button>
               </div>
+            </div>
+            <div className="tplf-connections">
+              <h2>Connections</h2>
+              <p>
+                Named here, connected by whoever creates a workspace from this
+                template. Required ones block create until they connect.
+              </p>
+              {catalog.map((entry) => {
+                const chosen = templateConnections.get(entry.id) ?? null;
+                return (
+                  <label className="tplf-connection" key={entry.id}>
+                    <input
+                      type="checkbox"
+                      checked={chosen !== null}
+                      onChange={(event) => setTemplateConnections((current) => {
+                        const next = new Map(current);
+                        if (event.currentTarget.checked) next.set(entry.id, { provider: entry.id, required: false });
+                        else next.delete(entry.id);
+                        return next;
+                      })}
+                    />
+                    <span>{entry.title}</span>
+                    {chosen !== null && (
+                      <button
+                        className="webapp-action"
+                        type="button"
+                        aria-pressed={chosen.required}
+                        onClick={() => setTemplateConnections((current) => {
+                          const next = new Map(current);
+                          next.set(entry.id, { provider: entry.id, required: !chosen.required });
+                          return next;
+                        })}
+                      >{chosen.required ? 'Required' : 'Optional'}</button>
+                    )}
+                  </label>
+                );
+              })}
             </div>
             <label className="tplf-share">
               <input

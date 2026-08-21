@@ -3,7 +3,7 @@ import type { TenantMe } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import { appliedTheme, chooseTheme, type ThemeChoice } from './theme';
 import type { SettingsSection } from './sessions-page-state';
-import { IntegrationsPanel } from './settings/IntegrationsPanel';
+import { ConnectionsPanel } from './settings/ConnectionsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
 import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
@@ -133,24 +133,24 @@ export function SettingsPage({
   client,
   viewer,
   section,
-  requestedIntegrationName,
+  requestedConnectionName,
   onNavigate,
-  onConfigureIntegration,
+  onConfigureConnection,
   onSignOut,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
   section: SettingsSection;
-  requestedIntegrationName?: string;
+  requestedConnectionName?: string;
   onNavigate: (section: SettingsSection) => void;
-  onConfigureIntegration: (name: string) => void;
+  onConfigureConnection: (name: string) => void;
   onSignOut: () => Promise<void>;
 }) {
   const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'profile', label: 'Profile' },
     { id: 'members', label: 'Members' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'invites' as const, label: 'Invites' }] : []),
-    { id: 'integrations', label: 'Integrations' },
+    { id: 'connections', label: 'Connections' },
     { id: 'requests', label: 'Requests' },
     // The usage-capture routes are admin-only server-side; the tab matches.
     ...(viewer.membership.role === 'admin' ? [{ id: 'usage' as const, label: 'Usage' }] : []),
@@ -182,11 +182,11 @@ export function SettingsPage({
         {section === 'profile' && <ProfilePanel viewer={viewer} onSignOut={onSignOut} />}
         {section === 'members' && <MembersPanel client={client} admin={viewer.membership.role === 'admin'} />}
         {section === 'invites' && viewer.membership.role === 'admin' && <InvitesPanel client={client} />}
-        {section === 'integrations' && (
-          <IntegrationsPanel client={client} requestedName={requestedIntegrationName} />
+        {section === 'connections' && (
+          <ConnectionsPanel client={client} requestedName={requestedConnectionName} />
         )}
         {section === 'requests' && (
-          <RequestsPanel client={client} onConfigure={onConfigureIntegration} />
+          <RequestsPanel client={client} onConfigure={onConfigureConnection} />
         )}
         {section === 'usage' && viewer.membership.role === 'admin' && (
           <UsagePanel client={client} />

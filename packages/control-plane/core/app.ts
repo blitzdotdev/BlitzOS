@@ -1,13 +1,13 @@
 import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js";
 import { addBoxImageRoutes } from "./box-images.js";
-import { addCredentialRoutes } from "./credentials/mint.js";
+import { addCredentialRoutes } from "./connections/mint.js";
 import { addWorkspaceEnvironmentRoutes } from "./environment.js";
 import { HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
-import { addMicrovmHostRoutes } from "./providers/microvm.js";
+import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addRecipeRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";

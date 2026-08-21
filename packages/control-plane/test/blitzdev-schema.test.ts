@@ -35,8 +35,10 @@ const expectedTables = [
   "broker_boxes",
   "broker_keys",
   "broker_members",
-  "integrations",
-  "user_connections",
+  "connections",
+  "user_oauth_grants",
+  "workspace_template_connections",
+  "provider_health",
   "credential_leases",
   "credential_events",
   "credential_requests",
@@ -52,9 +54,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the twenty-nine domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-one domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(30);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(32);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -349,12 +351,15 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_broker_keys_identity",
       "idx_broker_members_box",
       "idx_broker_members_identity",
-      "idx_integrations_org_name",
-      "idx_integrations_org",
-      "idx_user_connections_identity",
+      "idx_connections_org_name",
+      "idx_connections_org",
+      "idx_user_oauth_grants_live",
+      "idx_user_oauth_grants_provider",
+      "idx_workspace_template_connections_provider",
       "idx_credential_leases_workspace",
       "idx_credential_leases_expiry",
       "idx_credential_leases_token",
+      "idx_credential_leases_grant",
       "idx_credential_requests_pending",
       "idx_credential_requests_dedup",
       "idx_blitz_files_logical",

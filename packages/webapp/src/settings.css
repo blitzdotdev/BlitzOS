@@ -432,12 +432,15 @@
   margin: 0;
   padding: 15px 14px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-card);
   color: var(--faint);
   font: 11px/1.5 var(--font-ui);
 }
 
 .settings-credential-list {
+  overflow: hidden;
   border: 1px solid var(--rule);
+  border-radius: var(--r-card);
 }
 
 .settings-credential-row {
@@ -509,126 +512,6 @@
   color: var(--accent);
 }
 
-.settings-template-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  margin-bottom: 12px;
-  border-top: 1px solid var(--rule);
-  border-left: 1px solid var(--rule);
-}
-
-.settings-template-card {
-  display: grid;
-  min-width: 0;
-  min-height: 76px;
-  align-content: center;
-  gap: 3px;
-  padding: 9px;
-  border: 0;
-  border-right: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  color: var(--muted);
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.settings-template-card:hover,
-.settings-template-card:focus-visible,
-.settings-template-card--active {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 4%, var(--paper));
-  outline: 0;
-}
-
-.settings-template-card--active {
-  box-shadow: inset 0 -1px var(--accent);
-}
-
-.settings-template-card strong,
-.settings-template-card small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.settings-template-card strong {
-  font-size: 11.5px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.settings-template-card small {
-  color: var(--faint);
-  font: 9.5px/1.35 var(--font-ui);
-}
-
-.settings-integration-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--rule);
-}
-
-.settings-integration-form label {
-  display: grid;
-  min-width: 0;
-  gap: 5px;
-  color: var(--faint);
-  font: 700 9.5px/1.4 var(--font-ui);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.settings-integration-form input,
-.settings-integration-form textarea,
-.settings-integration-form select {
-  width: 100%;
-  min-height: 34px;
-  padding: 7px 8px;
-  border: 1px solid var(--rule);
-  border-radius: 0;
-  color: var(--ink);
-  background: var(--paper);
-  font: 12px/1.45 var(--font-ui);
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.settings-integration-form textarea {
-  resize: vertical;
-}
-
-.settings-integration-form input:focus,
-.settings-integration-form textarea:focus,
-.settings-integration-form select:focus {
-  border-color: var(--accent);
-  outline: 0;
-}
-
-.settings-integration-form input[readonly] {
-  color: var(--muted);
-  background: color-mix(in oklab, var(--ink) 4%, var(--paper));
-}
-
-.settings-integration-form__wide {
-  grid-column: 1 / -1;
-}
-
-.settings-secret-paste {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.settings-secret-paste p {
-  margin: 0;
-  color: var(--faint);
-  font: 10.5px/1.5 var(--font-ui);
-}
-
 .settings-request-row time {
   margin-top: 5px;
 }
@@ -696,10 +579,6 @@
     width: calc(100% - 28px);
     padding-top: 26px;
   }
-
-  .settings-template-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 520px) {
@@ -748,19 +627,7 @@
     justify-content: flex-start;
     flex-wrap: wrap;
   }
-
-  .settings-integration-form {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .settings-integration-form__wide {
-    grid-column: 1;
-  }
-
-  .settings-secret-paste {
-    align-items: stretch;
-    flex-direction: column;
-  }}
+}
 
 /* ================= blitz additions: appearance ============ */
 
@@ -952,4 +819,359 @@
   color: var(--ink);
   background: var(--paper);
   font: 12px/1 var(--font-ui);
+}
+/* --------------------------------------------- connect picker
+ * One component, three hosts (settings page, workspace drawer, create-workspace
+ * dialog), so every rule here paints with global tokens only. The drawer adds
+ * its own section rhythm on top, in files.css. */
+.connect-picker {
+  display: grid;
+  gap: 12px;
+}
+
+.connect-picker__heading {
+  margin-bottom: 0;
+}
+
+/* The picker is a grid; its own gap owns the spacing, not the message. */
+.connect-picker .webapp-form-message {
+  margin: 0;
+  border-radius: var(--r-item);
+}
+
+.connect-state {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--rule);
+  border-radius: var(--r-card);
+  color: var(--faint);
+  font: 11.5px/1.6 var(--font-ui);
+}
+
+/* Cards, not a table: an auto-fill track count never leaves the empty trailing
+ * cell a fixed five-column grid drew when the catalog held four providers. The
+ * gap, the rule border and the 8px radius are the machine grid's, so a person
+ * who picks a box and a person who picks a provider read the same shape. */
+.connect-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+
+.connect-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 5px;
+  padding: 12px 10px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  color: var(--muted);
+  /* A button with no background of its own falls back to the UA button face,
+   * which is a grey slab. The machine card is unfilled, so this one says so. */
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* Hover is a fill, never a border: the outline carries state here, and a
+ * pointer passing over a card must not overwrite what the card reports. */
+.connect-card:hover {
+  background: var(--hover);
+}
+
+.connect-card:focus-visible {
+  background: var(--hover);
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A provider this account already holds a key for, whether or not it is the one
+ * open in the form. Green is the app's "this is live" colour, the same one the
+ * teenyapp live dot burns. */
+.connect-card--connected {
+  border-color: var(--ansi-green);
+}
+
+/* Selection outranks connection, so a connected card that is also open takes
+ * the accent and leaves the Connected badge to report the rest. */
+.connect-card--active {
+  border-color: var(--accent);
+  padding-left: 28px;
+}
+
+.connect-card__check {
+  position: absolute;
+  top: 12px;
+  left: 10px;
+  color: var(--accent);
+  font: 12px var(--font-ui);
+}
+
+.connect-card__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font: 650 13px/1.35 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two lines then an ellipsis: a long summary never sets the card's height. */
+.connect-card__summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font: 11px/1.5 var(--font-ui);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.connect-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.connect-badge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 1.5px 7px;
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  font: 600 9.5px/1.6 var(--font-ui);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.connect-badge--quiet {
+  color: var(--faint);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+/* The two badges that report a state rather than a capability, one per scope:
+ * a workspace is Connected because it holds a lease, an account is Authorized
+ * because it holds a grant. Same green, because in their own surface both mean
+ * "you have this" — and the accent still means one thing only: the card you
+ * are working in. */
+.connect-badge--connected,
+.connect-badge--authorized {
+  color: color-mix(in oklab, var(--ansi-green) 60%, var(--ink));
+  background: color-mix(in oklab, var(--ansi-green) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ansi-green) 38%, transparent);
+}
+
+/* The chosen provider is one card, not four stacked boxes. */
+.connect-detail {
+  display: grid;
+  gap: 13px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, var(--rule));
+  border-radius: var(--r-card);
+  background: var(--paper);
+}
+
+.connect-detail__head {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.connect-detail__head h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font: 650 13.5px/1.4 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-detail__head p {
+  margin: 0;
+  color: var(--muted);
+  font: 11.5px/1.5 var(--font-ui);
+}
+
+.connect-detail__head .connect-detail__connected {
+  margin-top: 2px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Same line, quieter claim: an authorized account is plumbing behind the
+ * connection, so it reports without competing with it. */
+.connect-detail__head .connect-detail__authorized {
+  margin-top: 2px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.connect-scopes {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.connect-scopes__legend {
+  padding: 0;
+  color: var(--faint);
+  font: 700 9.5px/1.5 var(--font-ui);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.connect-scopes__list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--sunken);
+}
+
+/* A scope is a list row: consent line first, what it permits underneath. */
+.connect-scope {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  padding: 9px 11px;
+  cursor: pointer;
+}
+
+.connect-scope + .connect-scope {
+  border-top: 1px solid color-mix(in oklab, var(--ink) 7%, transparent);
+}
+
+.connect-scope:hover {
+  background: var(--hover);
+}
+
+.connect-scope__box {
+  width: 14px;
+  height: 14px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.connect-scope__copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.connect-scope__title {
+  color: var(--ink);
+  font: 600 12px/1.4 var(--font-ui);
+}
+
+.connect-scope__detail {
+  color: var(--muted);
+  font: 11px/1.5 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+/* Information, not an input: a glyph and a line, never a filled box. */
+.connect-note {
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font: 11.5px/1.55 var(--font-ui);
+}
+
+.connect-note__glyph {
+  flex: none;
+  margin-top: 2px;
+  color: var(--faint);
+}
+
+.connect-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
+  gap: 11px 12px;
+}
+
+.connect-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.connect-field--wide {
+  grid-column: 1 / -1;
+}
+
+.connect-field__label {
+  color: var(--faint);
+  font: 700 9.5px/1.4 var(--font-ui);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.connect-field input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12px/1.45 var(--font-ui);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.connect-field input:focus {
+  border-color: var(--accent);
+  outline: 0;
+}
+
+.connect-field input[readonly] {
+  color: var(--muted);
+  background: color-mix(in oklab, var(--ink) 5%, var(--paper));
+}
+
+.connect-help {
+  margin: 0;
+  color: var(--faint);
+  font: 10.5px/1.55 var(--font-ui);
+  overflow-wrap: anywhere;
+}
+
+.connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.connect-actions .webapp-action {
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: var(--r-control);
+  font: 600 12px/1 var(--font-ui);
+}
+
+/* The OAuth entry point is an anchor, so it needs the button box an anchor
+ * never gets from `.webapp-action` alone. */
+.connect-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }

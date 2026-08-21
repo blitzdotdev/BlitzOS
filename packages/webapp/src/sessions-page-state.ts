@@ -1,4 +1,4 @@
-export type SettingsSection = 'profile' | 'members' | 'invites' | 'integrations' | 'requests' | 'usage';
+export type SettingsSection = 'profile' | 'members' | 'invites' | 'connections' | 'requests' | 'usage';
 
 export type DriveScope = 'mine' | 'shared';
 
@@ -17,13 +17,16 @@ export type AppRoute =
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests|usage))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|requests|usage))?\/?$/u);
   if (settings) {
+    // '/settings/integrations' is the pre-rename address; old bookmarks
+    // canonicalize to the connections section.
+    const section = settings[1] === 'integrations' ? 'connections' : settings[1];
     return {
       workspaceId: null,
       page: 'settings',
-      // SAFETY: The regular expression captures only the SettingsSection literals in group 1.
-      settingsSection: (settings[1] as SettingsSection | undefined) ?? 'profile',
+      // SAFETY: After the fold, group 1 holds only SettingsSection literals.
+      settingsSection: (section as SettingsSection | undefined) ?? 'profile',
     };
   }
   if (/^\/templates\/new\/?$/u.test(pathname)) {

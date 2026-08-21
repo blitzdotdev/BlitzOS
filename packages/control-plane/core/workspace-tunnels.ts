@@ -3,9 +3,9 @@ import { rows } from "./db.js";
 import {
   CloudflareTunnels,
   type SurfaceCleanupResult,
-} from "./providers/cloudflare-tunnels.js";
-import type { Fetcher } from "./providers/json-fetch.js";
-import type { WebAppPort } from "./providers/types.js";
+} from "./compute/cloudflare-tunnels.js";
+import type { Fetcher } from "./compute/json-fetch.js";
+import type { WebAppPort } from "./compute/types.js";
 import { WEBAPP_TOKEN_HEADER, WorkspaceWebAppAuth } from "./webapp-tickets.js";
 
 export { WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
