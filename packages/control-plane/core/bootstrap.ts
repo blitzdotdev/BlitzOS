@@ -222,8 +222,27 @@ if [ -n "$ec2_mirror" ] && ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/di
   sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
     /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
 fi
-retry apt-get update
-retry apt-get install -y docker.io curl
+# The probe above catches a dead mirror; a live one can still trickle at
+# hundreds of KB/s, which passes every timeout while turning a 90-second
+# install into a 20-minute hang. Cap each attempt and move to the fallback
+# mirror between attempts — a stall is a failure, not a wait.
+apt_mirror_fallback() {
+  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+}
+apt_watchdog() {
+  local attempt
+  for attempt in 1 2 3; do
+    if timeout 360 apt-get "$@"; then return 0; fi
+    echo "blitz: apt-get $1 failed or stalled (attempt $attempt); switching to the fallback mirror"
+    apt_mirror_fallback
+    dpkg --configure -a 2>/dev/null || true
+    sleep 5
+  done
+  fail "apt-get $1 kept failing or stalling after the mirror fallback"
+}
+apt_watchdog update
+apt_watchdog install -y docker.io curl
 systemctl enable --now docker
 
 mkdir -p /var/lib/blitz

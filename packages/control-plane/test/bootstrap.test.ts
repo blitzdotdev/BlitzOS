@@ -59,7 +59,7 @@ describe("production VM bootstrap", () => {
   it("generates the ordered host and box bootstrap without cloud-init phone_home", () => {
     const userData = registryUserData();
 
-    expect(userData).toContain("retry apt-get install -y docker.io curl");
+    expect(userData).toContain("apt_watchdog install -y docker.io curl");
     expect(userData).toContain("systemctl enable --now docker");
     expect(userData).toContain("/dev/disk/by-id/scsi-0HC_Volume_*");
     expect(userData).toContain("/var/lib/blitz/authorized_key");
@@ -163,7 +163,7 @@ describe("production VM bootstrap", () => {
     const userData = registryUserData();
 
     const initialCapture = userData.indexOf('exec >>"$BOOTSTRAP_LOG" 2>&1');
-    const apt = userData.indexOf("retry apt-get update");
+    const apt = userData.indexOf("apt_watchdog update");
     const mount = userData.indexOf('mount "$volume_device" /var/lib/blitz');
     const durableCopy = userData.indexOf(
       'cat "$BOOTSTRAP_LOG" >"$DURABLE_BOOTSTRAP_LOG"',
@@ -385,7 +385,7 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("readonly BOOTSTRAP_ERROR_MAX_BYTES=1006");
     expect(userData).toContain(`trap 'report_bootstrap_failure "$?" "$LINENO"' ERR`);
     expect(userData.indexOf("trap 'report_bootstrap_failure")).toBeLessThan(
-      userData.indexOf("retry apt-get update"),
+      userData.indexOf("apt_watchdog update"),
     );
     expect(body).toContain('message=$(sanitize_bootstrap_error "$message")');
     expect(body).toContain('--data-urlencode "bootstrap_error=$message"');
