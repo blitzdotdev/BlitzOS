@@ -1,6 +1,7 @@
 import type {
   ApiError,
   ListCredentialLeasesResponse,
+  MintWorkspaceConnectionResponse,
   ListCredentialEventsResponse,
   CredentialEventView,
   ListCredentialRequestsResponse,
@@ -168,9 +169,18 @@ export interface ControlPlaneClient extends FileLibraryClient {
   putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
   deleteConnectionGrant(provider: string): Promise<void>;
   listProviderHealth(signal?: AbortSignal): Promise<ListProviderHealthResponse>;
-  /** Full-page navigation target: the provider redirect cannot ride fetch. */
-  connectStartUrl(provider: string): string;
+  /** Full-page navigation target: the provider redirect cannot ride fetch.
+   * A workspace id sends the round trip back to that workspace with the lease
+   * already minted; without one it is an account authorization and lands in
+   * settings. */
+  connectStartUrl(provider: string, workspaceId?: string): string;
   listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
+  /** Connects a provider in one workspace: mints the lease that makes the
+   * workspace hold it, from the grant the account already carries. */
+  mintWorkspaceConnection(
+    workspaceId: string,
+    connectionName: string,
+  ): Promise<MintWorkspaceConnectionResponse>;
   listCredentialEvents(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialEventsResponse>;
   revokeLease(id: string): Promise<void>;
   listCredentialRequests(
@@ -635,8 +645,12 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     listProviderHealth: (signal) =>
       request<ListProviderHealthResponse>("/connections/health", { signal }),
-    connectStartUrl: (provider) =>
-      `${base}/connect/${encodeURIComponent(provider)}/start`,
+    connectStartUrl: (provider, workspaceId) =>
+      `${base}/connect/${encodeURIComponent(provider)}/start${
+        workspaceId === undefined
+          ? ""
+          : `?workspaceId=${encodeURIComponent(workspaceId)}`
+      }`,
     listLeases: (workspaceId, signal) =>
       request<ListCredentialLeasesResponse>(
         `/workspaces/${encodeURIComponent(workspaceId)}/leases`,
@@ -647,6 +661,11 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         `/workspaces/${encodeURIComponent(workspaceId)}/credential-events`,
         { signal },
         decodeCredentialEvents,
+      ),
+    mintWorkspaceConnection: (workspaceId, connectionName) =>
+      request<MintWorkspaceConnectionResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/connections/${encodeURIComponent(connectionName)}/lease`,
+        { method: "POST" },
       ),
     revokeLease: (id) =>
       request<void>(`/leases/${encodeURIComponent(id)}`, { method: "DELETE" }),

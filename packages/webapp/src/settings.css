@@ -956,10 +956,13 @@
   box-shadow: inset 0 0 0 1px var(--rule);
 }
 
-/* The one badge that reports a state rather than a capability. It wears the
- * same green as the card's connected outline, which leaves the accent to mean
- * one thing only: the card you are working in. */
-.connect-badge--connected {
+/* The two badges that report a state rather than a capability, one per scope:
+ * a workspace is Connected because it holds a lease, an account is Authorized
+ * because it holds a grant. Same green, because in their own surface both mean
+ * "you have this" — and the accent still means one thing only: the card you
+ * are working in. */
+.connect-badge--connected,
+.connect-badge--authorized {
   color: color-mix(in oklab, var(--ansi-green) 60%, var(--ink));
   background: color-mix(in oklab, var(--ansi-green) 14%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ansi-green) 38%, transparent);
@@ -1001,6 +1004,14 @@
   margin-top: 2px;
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Same line, quieter claim: an authorized account is plumbing behind the
+ * connection, so it reports without competing with it. */
+.connect-detail__head .connect-detail__authorized {
+  margin-top: 2px;
+  color: var(--muted);
+  font-weight: 500;
 }
 
 .connect-scopes {

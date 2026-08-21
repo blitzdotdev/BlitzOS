@@ -2,6 +2,7 @@ import type {
   CatalogEntryView,
   CredentialLeaseView,
   CredentialRequestView,
+  UserGrantView,
 } from '@blitzos/schema';
 import { act, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,7 +11,6 @@ import type { WorkspaceDrawerSegment } from '../src/storage.js';
 import {
   WorkspaceConnectionsPanel,
   WorkspaceDrawer,
-  WorkspaceLeasesPanel,
 } from '../src/WorkspaceDrawer.js';
 import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
 import { ConnectPicker } from '../src/settings/ConnectPicker.js';
@@ -67,6 +67,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     deleteConnection: vi.fn(async () => undefined),
     listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
+    mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
     revokeLease: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
@@ -105,6 +106,47 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
 
 const linear = catalogEntry('linear', 'Linear');
 const notion = catalogEntry('notion', 'Notion');
+
+function accountGrant(provider: string): UserGrantView {
+  return {
+    provider,
+    manifestId: provider,
+    kind: 'oauth',
+    label: null,
+    scopes: ['read'],
+    createdAt: 1,
+    updatedAt: 1,
+    accessExpiresAt: null,
+  };
+}
+
+function liveLease(connection: string): CredentialLeaseView {
+  return {
+    id: `lease-${connection}`,
+    workspaceId: 'workspace-one',
+    boxId: null,
+    connection,
+    userId: null,
+    scopes: [],
+    mode: 'proxy',
+    issuedAt: Date.now() - 1_000,
+    expiresAt: Date.now() + 600_000,
+    state: 'active',
+  };
+}
+
+/** The connections panel as the drawer hosts it, with nothing pending. */
+function connectionsPanel(wire: ControlPlaneClient) {
+  return (
+    <WorkspaceConnectionsPanel
+      client={wire}
+      workspaceId="workspace-one"
+      visible
+      pendingRequests={[]}
+      onResolveRequest={async () => undefined}
+    />
+  );
+}
 
 describe('v2 credential surfaces', () => {
   it('mints an email-pinned invite from the members panel and shows its link once', async () => {
@@ -202,9 +244,7 @@ describe('v2 credential surfaces', () => {
         leases: [lease],
       })),
     });
-    const view = await render(
-      <WorkspaceLeasesPanel client={wire} workspaceId="workspace-one" visible />,
-    );
+    const view = await render(connectionsPanel(wire));
     await settle();
     expect(view.container.textContent).toContain('github');
     expect(view.container.textContent).toContain('repo:read');
@@ -251,9 +291,7 @@ describe('v2 credential surfaces', () => {
       revokeLease,
       listLeases: vi.fn(async () => ({ leases: [fresh, stale] })),
     });
-    const view = await render(
-      <WorkspaceLeasesPanel client={wire} workspaceId="workspace-one" visible />,
-    );
+    const view = await render(connectionsPanel(wire));
     await settle();
     expect(view.container.querySelectorAll('.workspace-credential-row').length).toBe(1);
     expect(view.container.textContent).toContain('proxied');
@@ -357,51 +395,175 @@ describe('v2 credential surfaces', () => {
     await view.unmount();
   });
 
-  it('marks a connected provider on its card and offers to reconnect', async () => {
+  /** Settings is account scope: nothing is connected there, because there is no
+   * workspace to hold a lease. A grant is an authorization, and says so. */
+  it('marks an authorized provider on the settings page and offers to replace it', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
-      listConnectionGrants: vi.fn(async () => ({
-        grants: [{
-          provider: 'linear',
-          manifestId: 'linear',
-          kind: 'oauth' as const,
-          label: null,
-          scopes: ['read'],
-          createdAt: 1,
-          updatedAt: 1,
-          accessExpiresAt: null,
-        }],
-      })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
     });
     const view = await render(<ConnectPicker client={wire} />);
     await settle();
 
     const cards = [...view.container.querySelectorAll('.connect-card')];
-    const connected = cards.find((card) => card.textContent?.includes('Linear'))!;
+    const authorized = cards.find((card) => card.textContent?.includes('Linear'))!;
     const untouched = cards.find((card) => card.textContent?.includes('Notion'))!;
-    expect(connected.querySelector('.connect-badge--connected')?.textContent).toBe('Connected');
-    expect(untouched.querySelector('.connect-badge--connected')).toBeNull();
+    expect(authorized.querySelector('.connect-badge--authorized')?.textContent).toBe('Authorized');
+    expect(untouched.querySelector('.connect-badge--authorized')).toBeNull();
+    // The word "Connected" belongs to a workspace holding a lease, and this
+    // page has no workspace.
+    expect(view.container.querySelector('.connect-badge--connected')).toBeNull();
+    expect(view.container.textContent).not.toContain('Connected');
 
-    await act(async () => click(connected));
-    expect(view.container.querySelector('.connect-detail__connected')?.textContent)
-      .toBe('Connected · oauth');
+    await act(async () => click(authorized));
+    expect(view.container.querySelector('.connect-detail__authorized')?.textContent)
+      .toBe('Authorized · oauth');
     const labels = [...view.container.querySelectorAll('.connect-detail button, .connect-detail a')]
       .map((action) => action.textContent);
-    expect(labels).toContain('Reconnect');
-    expect(labels).not.toContain('Connect');
+    expect(labels).toContain('Replace key');
+    expect(labels).not.toContain('Reconnect');
     await view.unmount();
   });
 
-  it('leaves an unconnected provider saying Connect', async () => {
+  it('leaves an unauthorized provider saying Authorize', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
     });
     const view = await render(<ConnectPicker client={wire} />);
     await settle();
     await act(async () => click(view.container.querySelector('.connect-card')!));
-    expect(view.container.querySelector('.connect-detail__connected')).toBeNull();
+    expect(view.container.querySelector('.connect-detail__authorized')).toBeNull();
     expect([...view.container.querySelectorAll('.connect-detail button')]
-      .map((action) => action.textContent)).toContain('Connect');
+      .map((action) => action.textContent)).toContain('Authorize');
+    await view.unmount();
+  });
+
+  /** A workspace holding nothing is a page with a connect grid on it. Every
+   * other section is a heading over an apology, so none of them are drawn. */
+  it('draws no section for leases or activity a new workspace does not have', async () => {
+    const view = await render(connectionsPanel(client()));
+    await settle();
+    expect([...view.container.querySelectorAll('.workspace-sect')]
+      .map((heading) => heading.textContent)).toEqual([]);
+    expect(view.container.textContent).not.toContain('Nothing is connected in this workspace yet.');
+    expect(view.container.textContent).not.toContain('No credential events for this workspace.');
+    // The connect grid is the whole panel, and it still stands.
+    expect(view.container.querySelector('.connect-picker')).not.toBeNull();
+    await view.unmount();
+  });
+
+  /** Both sections come back the moment there is something to put in them. */
+  it('draws both sections once the workspace holds a lease and an event', async () => {
+    const wire = client({
+      listLeases: vi.fn(async () => ({ leases: [liveLease('github')] })),
+      listCredentialEvents: vi.fn(async () => ({
+        events: [{
+          id: 1,
+          leaseId: 'lease-github',
+          event: 'minted' as const,
+          detail: null,
+          createdAt: Date.now(),
+        }],
+      })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    expect([...view.container.querySelectorAll('.workspace-sect')]
+      .map((heading) => heading.textContent)).toEqual(['Connections', 'Recent activity']);
+    expect(view.container.textContent).toContain('minted');
+    await view.unmount();
+  });
+
+  /** The live repro: a brand-new workspace wore a green Connected badge for
+   * every provider the account had ever authorized. Connected means this
+   * workspace holds a live lease, and nothing else means it. */
+  it('shows a grant with no lease here as an unconnected card', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
+      listConnectionGrants: vi.fn(async () => ({
+        grants: [accountGrant('linear'), accountGrant('notion')],
+      })),
+      listLeases: vi.fn(async () => ({ leases: [liveLease('notion')] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+
+    const cards = [...view.container.querySelectorAll('.connect-card')];
+    const granted = cards.find((card) => card.textContent?.includes('Linear'))!;
+    const leased = cards.find((card) => card.textContent?.includes('Notion'))!;
+    // Authorized but not connected here: exactly as bare as a card for a
+    // provider the account has never touched.
+    expect(granted.querySelector('.connect-badge--connected')).toBeNull();
+    expect(granted.querySelector('.connect-badge--authorized')).toBeNull();
+    expect(granted.classList.contains('connect-card--connected')).toBe(false);
+    expect(leased.querySelector('.connect-badge--connected')?.textContent).toBe('Connected');
+    expect(leased.classList.contains('connect-card--connected')).toBe(true);
+    await view.unmount();
+  });
+
+  /** The grant is plumbing whose only job is making this one click instant. */
+  it('connects an authorized provider here in one call and no auth form', async () => {
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: liveLease('linear') }));
+    const wire = client({
+      mintWorkspaceConnection,
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(view.container.querySelector('.connect-card')!));
+    // No token field, no OAuth trip: the account already authorized this.
+    expect(view.container.querySelector('.connect-form')).toBeNull();
+    expect(view.container.querySelector('.connect-detail__authorized')?.textContent)
+      .toBe('Authorized · oauth');
+    expect([...view.container.querySelectorAll('.connect-detail button')]
+      .map((action) => action.textContent)).toEqual(['Cancel', 'Connect']);
+
+    await act(async () => click([...view.container.querySelectorAll('.connect-detail button')]
+      .find((button) => button.textContent === 'Connect')!));
+    await settle();
+    expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
+    // The minted lease lands before the next poll, so the card is green now.
+    expect(view.container.querySelector('.connect-card--connected')).not.toBeNull();
+    expect(view.container.querySelectorAll('.workspace-credential-row').length).toBe(1);
+    await view.unmount();
+  });
+
+  /** Connected is the end of the errand, so the pane stops asking for things
+   * and says where disconnecting lives. */
+  it('sends a connected provider to the Connections list to disconnect', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(view.container.querySelector('.connect-card')!));
+    expect(view.container.querySelector('.connect-detail__connected')?.textContent)
+      .toBe('Connected in this workspace · revoke it in Connections below to disconnect.');
+    expect(view.container.querySelector('.connect-form')).toBeNull();
+    // Nothing left to ask for; the only action is putting the card away.
+    expect([...view.container.querySelectorAll('.connect-detail button')]
+      .map((action) => action.textContent)).toEqual(['Close']);
+    await view.unmount();
+  });
+
+  /** An OAuth round trip started here comes back here, with the lease minted. */
+  it('carries the workspace into the OAuth round trip', async () => {
+    const oauth = { ...linear, oauthAvailable: true, oauthConfigured: true };
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [oauth] })),
+      connectStartUrl: (provider: string, workspaceId?: string) => (
+        `/connect/${provider}/start${workspaceId === undefined ? '' : `?workspaceId=${workspaceId}`}`
+      ),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(view.container.querySelector('.connect-card')!));
+    const cta = view.container.querySelector('.connect-cta');
+    expect(cta?.textContent).toBe('Connect with Linear');
+    expect(cta?.getAttribute('href')).toBe('/connect/linear/start?workspaceId=workspace-one');
     await view.unmount();
   });
 });

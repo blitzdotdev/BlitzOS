@@ -73,16 +73,19 @@ export function ConnectionsPanel({
       </header>
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
-      <section className="settings-credential-section" aria-label="Connected providers">
+      {/* Account scope: a grant authorizes, it does not connect. Connecting
+        * gives one workspace a lease, and only a workspace can hold one. */}
+      <section className="settings-credential-section" aria-label="Authorized providers">
         <div className="settings-section-heading">
-          <div><p>Personal grants</p><h2>Connected</h2></div>
+          <div><p>Personal grants</p><h2>Authorized</h2></div>
           <span>{grants.length} total</span>
         </div>
         {loading ? (
           <p className="settings-credential-state">Loading connections…</p>
         ) : grants.length === 0 ? (
           <p className="settings-credential-state">
-            Nothing connected yet. Connect a provider below and it lands in your next shell.
+            Nothing authorized yet. Authorize a provider below and any workspace you own
+            can connect it in one click.
           </p>
         ) : (
           <div className="settings-credential-list">

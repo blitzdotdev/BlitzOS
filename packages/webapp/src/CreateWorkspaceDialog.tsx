@@ -206,19 +206,22 @@ export function CreateWorkspaceDialog({
               )}
               {selectedTemplate.connections.length > 0 && (
                 <ul className="template-connection-list">
+                  {/* A tick here is an authorized account, not a connection:
+                    * the workspace does not exist yet. Creating it is what
+                    * turns each tick into a lease. */}
                   {selectedTemplate.connections.map((connection) => {
-                    const connected = grants.includes(connection.provider);
+                    const authorized = grants.includes(connection.provider);
                     return (
                       <li key={connection.provider}>
-                        <span aria-hidden="true">{connected ? '✓' : '—'}</span>
+                        <span aria-hidden="true">{authorized ? '✓' : '—'}</span>
                         {' '}{connection.provider}
                         {connection.required ? ' · required' : ' · optional'}
-                        {!connected && (
+                        {!authorized && (
                           <button
                             className="webapp-action"
                             type="button"
                             onClick={() => setConnecting(connection.provider)}
-                          >Connect</button>
+                          >Authorize</button>
                         )}
                       </li>
                     );

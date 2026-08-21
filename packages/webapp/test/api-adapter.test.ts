@@ -93,6 +93,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     deleteConnection: vi.fn(async () => undefined),
     listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
+    mintWorkspaceConnection: vi.fn(async () => { throw new Error("unused"); }),
     revokeLease: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),

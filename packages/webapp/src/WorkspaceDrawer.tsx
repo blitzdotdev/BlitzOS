@@ -1,6 +1,8 @@
 import type { CredentialEventView, CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
 import {
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -13,7 +15,7 @@ import { caughtErrorMessage } from './error-message';
 import type { LivePort, PreviewLink } from './preview';
 import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
 import { TeenyappsPanel } from './TeenyappsPanel';
-import { ConnectPicker, CUSTODY_BADGE } from './settings/ConnectPicker';
+import { ConnectPicker, CUSTODY_BADGE, type ConnectWorkspace } from './settings/ConnectPicker';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
@@ -73,22 +75,33 @@ export function expiryCountdown(expiresAt: number, now = Date.now()): string {
   return `${Math.ceil(hours / 24)}d left`;
 }
 
-export function WorkspaceLeasesPanel({
-  client,
-  workspaceId,
-  visible,
-  readOnly,
-}: {
-  client: ControlPlaneClient;
-  workspaceId: string;
-  visible: boolean;
-  readOnly?: boolean;
-}) {
+/** What this workspace holds, read once. */
+export type WorkspaceLeaseFeed = {
+  /** One row per connection: the live lease where there is one. */
+  rows: CredentialLeaseView[];
+  /** The connections holding a live lease in this workspace, by name. */
+  live: ReadonlySet<string>;
+  loading: boolean;
+  error: string | null;
+  now: number;
+  revoking: string | null;
+  revoke: (lease: CredentialLeaseView) => Promise<void>;
+  noteLease: (lease: CredentialLeaseView) => void;
+};
+
+/** The lease poll, hoisted out of the section that lists it. The connect grid
+ * needs the same fact to tell a connection that is live here from an account
+ * grant that has not landed here yet, and two readers of one fact owe the
+ * server one request. */
+export function useWorkspaceLeases(
+  client: Pick<ControlPlaneClient, 'listLeases' | 'revokeLease'>,
+  workspaceId: string,
+  visible: boolean,
+): WorkspaceLeaseFeed {
   const [leases, setLeases] = useState<CredentialLeaseView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
-  const [confirmation, setConfirmation] = useState<CredentialLeaseView | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -126,7 +139,6 @@ export function WorkspaceLeasesPanel({
 
   const revoke = async (lease: CredentialLeaseView) => {
     if (revoking !== null) return;
-    setConfirmation(null);
     setRevoking(lease.id);
     setError(null);
     try {
@@ -141,16 +153,46 @@ export function WorkspaceLeasesPanel({
     }
   };
 
+  /** A lease minted from the grid shows up before the next poll confirms it:
+   * the server already wrote it, and supersede means the poll can only agree. */
+  const noteLease = useCallback((lease: CredentialLeaseView) => {
+    setLeases((current) => [lease, ...current]);
+  }, []);
+
+  const rows = newestPerConnection(leases, now);
+  // The grid reads membership, not identity. Keying the set on its own names
+  // keeps the prop steady through the once-a-second clock tick.
+  const liveNames = rows.filter((lease) => isLive(lease, now))
+    .map((lease) => lease.connection).sort().join('\n');
+  const live = useMemo(
+    () => new Set(liveNames === '' ? [] : liveNames.split('\n')),
+    [liveNames],
+  );
+
+  return { rows, live, loading, error, now, revoking, revoke, noteLease };
+}
+
+/** The workspace's own connections. An empty list is not a section: a heading
+ * over an apology for holding nothing is worse than the silence of a workspace
+ * that plainly has nothing connected. The host decides that; this draws what
+ * the feed holds, and a failed load still speaks. */
+export function WorkspaceLeasesPanel({
+  feed,
+  readOnly,
+}: {
+  feed: WorkspaceLeaseFeed;
+  readOnly?: boolean;
+}) {
+  const { rows, loading, error, now, revoking, revoke } = feed;
+  const [confirmation, setConfirmation] = useState<CredentialLeaseView | null>(null);
+
   return (
     <section className="workspace-drawer-panel workspace-leases" aria-label="Workspace connections">
-      {error && <p className="webapp-form-message" role="alert">{error}</p>}
-      {loading ? (
-        <p className="workspace-drawer-state">Loading connections…</p>
-      ) : leases.length === 0 ? (
-        <p className="workspace-drawer-state">Nothing is connected in this workspace yet.</p>
-      ) : (
+      {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
+      {loading && <p className="workspace-drawer-state">Loading connections…</p>}
+      {rows.length > 0 && (
         <div className="workspace-credential-rows">
-          {newestPerConnection(leases, now).map((lease) => {
+          {rows.map((lease) => {
             const state = lease.state === 'active' && lease.expiresAt <= now
               ? 'expired'
               : lease.state;
@@ -188,7 +230,10 @@ export function WorkspaceLeasesPanel({
           description={`Revoke ${confirmation.connection} access for this workspace immediately?`}
           confirmLabel="Revoke access"
           onCancel={() => setConfirmation(null)}
-          onConfirm={() => { void revoke(confirmation); }}
+          onConfirm={() => {
+            setConfirmation(null);
+            void revoke(confirmation);
+          }}
         />
       )}
     </section>
@@ -277,15 +322,19 @@ function eventActor(event: CredentialEventView): string | null {
   return acting !== null && isString(acting.userId) ? acting.userId : null;
 }
 
-export function WorkspaceEventsPanel({
-  client,
-  workspaceId,
-  visible,
-}: {
-  client: ControlPlaneClient;
-  workspaceId: string;
-  visible: boolean;
-}) {
+/** What this workspace has logged, read once. */
+export type WorkspaceEventFeed = {
+  events: CredentialEventView[];
+  error: string | null;
+};
+
+/** The credential log for this workspace. The host needs the count to decide
+ * whether there is a section at all, so the read lives out here with it. */
+export function useWorkspaceCredentialEvents(
+  client: Pick<ControlPlaneClient, 'listCredentialEvents'>,
+  workspaceId: string,
+  visible: boolean,
+): WorkspaceEventFeed {
   const [events, setEvents] = useState<CredentialEventView[]>([]);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -299,10 +348,14 @@ export function WorkspaceEventsPanel({
     );
     return () => request.abort();
   }, [client, visible, workspaceId]);
+  return { events, error };
+}
+
+export function WorkspaceEventsPanel({ events, error }: WorkspaceEventFeed) {
   return (
     <section className="workspace-drawer-panel" aria-label="Workspace credential events">
-      {error && <p className="webapp-form-message" role="alert">{error}</p>}
-      {events.length === 0 ? <p className="workspace-drawer-state">No credential events for this workspace.</p> : (
+      {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
+      {events.length > 0 && (
         <div className="workspace-credential-rows">
           {events.map((event) => (
             <article className="workspace-credential-row" key={event.id}>
@@ -340,10 +393,27 @@ export function WorkspaceConnectionsPanel({
   ) => Promise<void>;
 }) {
   const [connecting, setConnecting] = useState<string | null>(null);
+  const leases = useWorkspaceLeases(client, workspaceId, visible);
+  const { events, error: eventsError } = useWorkspaceCredentialEvents(client, workspaceId, visible);
+  const { live, noteLease } = leases;
+  const connectWorkspace = useMemo<ConnectWorkspace>(() => ({
+    id: workspaceId,
+    connections: live,
+    connect: async (connectionName: string) => {
+      const { lease } = await client.mintWorkspaceConnection(workspaceId, connectionName);
+      noteLease(lease);
+    },
+  }), [client, live, noteLease, workspaceId]);
   // Nothing wanted is the everyday state, and a heading over an apology for
   // having nothing to say is worse than silence. The pending count on the
   // connections rail icon is what tells a person there is something here.
   const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
+  // Every section keeps that rule. A workspace with nothing connected and
+  // nothing logged is a page with a connect grid on it and no apologies. A
+  // failed load still draws, because an error is information; so does the
+  // first read, because "not yet known" is not the same as "nothing".
+  const connections = leases.loading || leases.error !== null || leases.rows.length > 0;
+  const activity = eventsError !== null || events.length > 0;
   return (
     <div className="workspace-connections">
       {wanted && (
@@ -362,6 +432,9 @@ export function WorkspaceConnectionsPanel({
         <ConnectPicker
           client={client}
           requestedProvider={connecting}
+          // Connecting is a thing that happens to a workspace, so the grid gets
+          // the workspace: what it already holds, and how to give it one more.
+          workspace={connectWorkspace}
           onConnected={() => {
             const pending = pendingRequests.find(
               (request) => request.connection_name === connecting,
@@ -373,15 +446,18 @@ export function WorkspaceConnectionsPanel({
           }}
         />
       )}
-      <h3 className="workspace-sect">Connections</h3>
-      <WorkspaceLeasesPanel
-        client={client}
-        workspaceId={workspaceId}
-        visible={visible}
-        readOnly={readOnly}
-      />
-      <h3 className="workspace-sect">Recent activity</h3>
-      <WorkspaceEventsPanel client={client} workspaceId={workspaceId} visible={visible} />
+      {connections && (
+        <>
+          <h3 className="workspace-sect">Connections</h3>
+          <WorkspaceLeasesPanel feed={leases} readOnly={readOnly} />
+        </>
+      )}
+      {activity && (
+        <>
+          <h3 className="workspace-sect">Recent activity</h3>
+          <WorkspaceEventsPanel events={events} error={eventsError} />
+        </>
+      )}
     </div>
   );
 }
