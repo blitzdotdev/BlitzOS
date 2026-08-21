@@ -13,7 +13,7 @@ import { caughtErrorMessage } from './error-message';
 import type { LivePort, PreviewLink } from './preview';
 import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
 import { TeenyappsPanel } from './TeenyappsPanel';
-import { ConnectPicker } from './settings/ConnectPicker';
+import { ConnectPicker, CUSTODY_BADGE } from './settings/ConnectPicker';
 import { asJsonObject, isString } from './type-guards';
 import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 
@@ -24,6 +24,42 @@ export function portAge(firstSeenAt: number, now = Date.now()): string {
   if (minutes < 1) return 'now';
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h`;
+}
+
+/** A workspace row prints its transport with the words the connect card prints
+ * for custody: an `inject` lease is the cp column's `injected`. */
+const MODE_BADGE = {
+  inject: CUSTODY_BADGE.cp,
+  proxy: CUSTODY_BADGE.proxy,
+} satisfies Record<CredentialLeaseView['mode'], string>;
+
+function isLive(lease: CredentialLeaseView, now: number): boolean {
+  return lease.state === 'active' && lease.expiresAt > now;
+}
+
+/** One row per connection. Before mint learned to supersede, every credential
+ * sync minted another lease and retired none, so workspaces in the wild carry
+ * duplicates of the same connection. The live one is the truth; where nothing
+ * is live the newest row still shows, so revoking here never blanks the panel. */
+export function newestPerConnection(
+  leases: readonly CredentialLeaseView[],
+  now = Date.now(),
+): CredentialLeaseView[] {
+  const shown = new Map<string, CredentialLeaseView>();
+  for (const lease of leases) {
+    const held = shown.get(lease.connection);
+    if (held === undefined) {
+      shown.set(lease.connection, lease);
+      continue;
+    }
+    const live = isLive(lease, now);
+    if (live !== isLive(held, now)) {
+      if (live) shown.set(lease.connection, lease);
+      continue;
+    }
+    if (lease.issuedAt > held.issuedAt) shown.set(lease.connection, lease);
+  }
+  return [...shown.values()];
 }
 
 export function expiryCountdown(expiresAt: number, now = Date.now()): string {
@@ -72,7 +108,7 @@ export function WorkspaceLeasesPanel({
       } catch (caught) {
         if (!active || request !== current || current.signal.aborted) return;
         setLoading(false);
-        setError(caughtErrorMessage(caught, 'Credential leases failed to load.'));
+        setError(caughtErrorMessage(caught, 'Connections failed to load.'));
       } finally {
         if (request === current) request = null;
       }
@@ -99,22 +135,22 @@ export function WorkspaceLeasesPanel({
         entry.id === lease.id ? { ...entry, state: 'revoked' } : entry
       )));
     } catch (caught) {
-      setError(caughtErrorMessage(caught, 'Credential lease revoke failed.'));
+      setError(caughtErrorMessage(caught, 'Revoke failed.'));
     } finally {
       setRevoking(null);
     }
   };
 
   return (
-    <section className="workspace-drawer-panel workspace-leases" aria-label="Workspace credential leases">
+    <section className="workspace-drawer-panel workspace-leases" aria-label="Workspace connections">
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
       {loading ? (
-        <p className="workspace-drawer-state">Loading leases…</p>
+        <p className="workspace-drawer-state">Loading connections…</p>
       ) : leases.length === 0 ? (
-        <p className="workspace-drawer-state">No credential leases for this workspace.</p>
+        <p className="workspace-drawer-state">Nothing is connected in this workspace yet.</p>
       ) : (
         <div className="workspace-credential-rows">
-          {leases.map((lease) => {
+          {newestPerConnection(leases, now).map((lease) => {
             const state = lease.state === 'active' && lease.expiresAt <= now
               ? 'expired'
               : lease.state;
@@ -128,7 +164,7 @@ export function WorkspaceLeasesPanel({
               </div>
               <p>{lease.scopes.length === 0 ? 'No named scopes' : lease.scopes.join(', ')}</p>
               <div className="workspace-credential-row__meta">
-                <span>{lease.mode}</span>
+                <span>{MODE_BADGE[lease.mode]}</span>
                 <time dateTime={new Date(lease.expiresAt).toISOString()}>
                   {state === 'active' ? expiryCountdown(lease.expiresAt, now) : state}
                 </time>
@@ -148,9 +184,9 @@ export function WorkspaceLeasesPanel({
       )}
       {confirmation && (
         <ConfirmationDialog
-          title="Revoke credential lease?"
+          title="Revoke this connection?"
           description={`Revoke ${confirmation.connection} access for this workspace immediately?`}
-          confirmLabel="Revoke lease"
+          confirmLabel="Revoke access"
           onCancel={() => setConfirmation(null)}
           onConfirm={() => { void revoke(confirmation); }}
         />
@@ -160,7 +196,9 @@ export function WorkspaceLeasesPanel({
 }
 
 /** The connect inbox. A pending row is not a decision waiting on an approver —
- * it is an agent that wanted `@name` and found no grant behind it. */
+ * it is an agent that wanted `@name` and found no grant behind it. An empty
+ * inbox is a success, so it draws nothing; a failed load still speaks, because
+ * an error is information the person does not otherwise have. */
 export function WorkspaceRequestsPanel({
   requests,
   loadError,
@@ -193,9 +231,7 @@ export function WorkspaceRequestsPanel({
   return (
     <section className="workspace-drawer-panel workspace-requests" aria-label="Workspace connect inbox">
       {(error ?? loadError) && <p className="webapp-form-message" role="alert">{error ?? loadError}</p>}
-      {requests.length === 0 ? (
-        <p className="workspace-drawer-state">No agent has asked for a connection here.</p>
-      ) : (
+      {requests.length > 0 && (
         <div className="workspace-credential-rows">
           {requests.map((request) => (
             <article className="workspace-credential-row" key={request.id}>
@@ -304,16 +340,24 @@ export function WorkspaceConnectionsPanel({
   ) => Promise<void>;
 }) {
   const [connecting, setConnecting] = useState<string | null>(null);
+  // Nothing wanted is the everyday state, and a heading over an apology for
+  // having nothing to say is worse than silence. The pending count on the
+  // connections rail icon is what tells a person there is something here.
+  const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
   return (
     <div className="workspace-connections">
-      <h3 className="workspace-sect workspace-sect--pending">Wanted here</h3>
-      <WorkspaceRequestsPanel
-        requests={pendingRequests}
-        loadError={pendingRequestsError}
-        readOnly={readOnly}
-        onResolve={onResolveRequest}
-        onConnect={setConnecting}
-      />
+      {wanted && (
+        <>
+          <h3 className="workspace-sect workspace-sect--pending">Wanted here</h3>
+          <WorkspaceRequestsPanel
+            requests={pendingRequests}
+            loadError={pendingRequestsError}
+            readOnly={readOnly}
+            onResolve={onResolveRequest}
+            onConnect={setConnecting}
+          />
+        </>
+      )}
       {readOnly !== true && (
         <ConnectPicker
           client={client}
@@ -329,7 +373,7 @@ export function WorkspaceConnectionsPanel({
           }}
         />
       )}
-      <h3 className="workspace-sect">Active leases</h3>
+      <h3 className="workspace-sect">Connections</h3>
       <WorkspaceLeasesPanel
         client={client}
         workspaceId={workspaceId}

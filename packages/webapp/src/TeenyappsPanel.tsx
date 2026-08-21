@@ -15,14 +15,18 @@ function OpenInTabGlyph() {
 function TeenyappsSection({
   title,
   count,
-  empty,
+  emptyState,
   children,
 }: {
   title: string;
   count: number;
-  empty: string;
+  /** Copy to show when the section is empty. Omitting it is what makes an
+   * empty section vanish outright, heading and all: a person with nothing
+   * deployed is not in an error state and does not need telling twice. */
+  emptyState?: string;
   children?: ReactNode;
 }) {
+  if (count === 0 && emptyState === undefined) return null;
   return (
     <section className="teenyapps-section" aria-label={title}>
       <h3 className="teenyapps-heading">
@@ -30,7 +34,7 @@ function TeenyappsSection({
         {count > 0 && <span className="teenyapps-heading__count">{count}</span>}
       </h3>
       {count === 0
-        ? <p className="teenyapps-empty">{empty}</p>
+        ? <p className="teenyapps-empty">{emptyState}</p>
         : <div className="teenyapps-grid">{children}</div>}
     </section>
   );
@@ -118,16 +122,8 @@ export function TeenyappsPanel({
 
   return (
     <section className="workspace-drawer-panel teenyapps" aria-label="teenyapps">
-      <TeenyappsSection
-        title={orgName}
-        count={0}
-        empty="No teenyapps shared with this organization yet."
-      />
-      <TeenyappsSection
-        title="My teenyapps"
-        count={previewLinks.length}
-        empty="Nothing deployed yet — publish from the terminal and it lands here."
-      >
+      <TeenyappsSection title={orgName} count={0} />
+      <TeenyappsSection title="My teenyapps" count={previewLinks.length}>
         {previewLinks.map((entry) => {
           const label = previewLinkLabel(entry.url, entry.title);
           let host = entry.url;
@@ -153,10 +149,12 @@ export function TeenyappsPanel({
           );
         })}
       </TeenyappsSection>
+      {/* Local apps reads a live source, so an empty list is a fact worth
+        * printing — and it keeps the pane from going blank on a fresh box. */}
       <TeenyappsSection
         title="Local apps"
         count={livePorts.length}
-        empty="Ports this workspace is serving show up here while they run."
+        emptyState="Ports this workspace is serving show up here while they run."
       >
         {livePorts.map((entry) => (
           <button

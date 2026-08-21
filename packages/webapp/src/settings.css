@@ -927,6 +927,14 @@
   box-shadow: inset 0 0 0 1px var(--rule);
 }
 
+/* The one badge that reports a state rather than a capability, so it takes the
+ * accent and the others stay quiet next to it. */
+.connect-badge--connected {
+  color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 38%, transparent);
+}
+
 /* The chosen provider is one card, not four stacked boxes. */
 .connect-detail {
   display: grid;
@@ -957,6 +965,12 @@
   margin: 0;
   color: var(--muted);
   font: 11.5px/1.5 var(--font-ui);
+}
+
+.connect-detail__head .connect-detail__connected {
+  margin-top: 2px;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .connect-scopes {

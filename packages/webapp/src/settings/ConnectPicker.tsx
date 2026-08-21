@@ -1,4 +1,9 @@
-import type { CatalogEntryView, Custody, PutUserGrantRequest } from '@blitzos/schema';
+import type {
+  CatalogEntryView,
+  Custody,
+  PutUserGrantRequest,
+  UserGrantView,
+} from '@blitzos/schema';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import type { ControlPlaneClient } from '../api';
 
@@ -6,13 +11,20 @@ import { caughtErrorMessage } from '../error-message';
 
 const GENERIC_ID = 'generic';
 
-/** Where the key sits once a lease is minted. The words match what a lease row
- * already prints as its mode, so the badge teaches the same vocabulary. */
-const CUSTODY_BADGE = {
+/** Where the key sits once a credential is minted. The words match what a
+ * workspace connection row already prints, so the badge teaches the same
+ * vocabulary in both places. */
+export const CUSTODY_BADGE = {
   cp: 'injected',
   broker: 'brokered',
   proxy: 'proxied',
 } satisfies Record<Custody, string>;
+
+/** What a grant is called in a sentence. `pat` covers every pasted key, not
+ * just the ones a vendor calls a personal access token. */
+function grantKindLabel(grant: UserGrantView): string {
+  return grant.kind === 'oauth' ? 'oauth' : 'API key';
+}
 
 /** Information wants a glyph, not a box: an outlined mark keeps a notice from
  * reading as a disabled input. */
@@ -26,11 +38,20 @@ function InfoGlyph() {
  * host the same component without taking the whole client surface. */
 export type ConnectClient = Pick<
   ControlPlaneClient,
-  'listConnectionCatalog' | 'putConnectionGrant' | 'connectStartUrl'
+  | 'listConnectionCatalog'
+  | 'listConnectionGrants'
+  | 'putConnectionGrant'
+  | 'connectStartUrl'
 >;
 
 function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim();
+}
+
+/** Submitting over an existing grant replaces it, so the button says so. */
+function submitLabel(connected: boolean, saving: boolean): string {
+  if (connected) return saving ? 'Reconnecting…' : 'Reconnect';
+  return saving ? 'Connecting…' : 'Connect';
 }
 
 export function grantInput(
@@ -67,6 +88,8 @@ export function ConnectPicker({
   onConnected?: () => void;
 }) {
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
+  const [grants, setGrants] = useState<UserGrantView[]>([]);
+  const [grantsVersion, setGrantsVersion] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<string[]>([]);
@@ -91,6 +114,18 @@ export function ConnectPicker({
     return () => abort.abort();
   }, [client]);
 
+  // The catalog says what a person could connect; their grants say what they
+  // already did. A failure here costs the "Connected" badge and nothing else,
+  // so it never blocks connecting or steals the catalog's error line.
+  useEffect(() => {
+    const abort = new AbortController();
+    void client.listConnectionGrants(abort.signal).then(
+      (response) => setGrants(response.grants),
+      () => undefined,
+    );
+    return () => abort.abort();
+  }, [client, grantsVersion]);
+
   const choose = useCallback((entry: CatalogEntryView, connectionName?: string) => {
     setSelectedId(entry.id);
     setName(connectionName ?? entry.id);
@@ -110,6 +145,11 @@ export function ConnectPicker({
   }, [catalog, choose, requestedProvider]);
 
   const selected = catalog.find((entry) => entry.id === selectedId) ?? null;
+  /** A grant is keyed by the connection name the person chose, which is the
+   * catalog id for every entry but the generic one. */
+  const grantFor = (entry: CatalogEntryView): UserGrantView | null =>
+    grants.find((grant) => grant.provider === entry.id) ?? null;
+  const selectedGrant = selected === null ? null : grantFor(selected);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -123,6 +163,7 @@ export function ConnectPicker({
       await client.putConnectionGrant(provider, grantInput(selected, data, scopes));
       form.reset();
       setSelectedId(null);
+      setGrantsVersion((current) => current + 1);
       onConnected?.();
     } catch (caught) {
       setError(caughtErrorMessage(caught, 'Connect failed.'));
@@ -144,6 +185,7 @@ export function ConnectPicker({
         <div className="connect-grid">
           {catalog.map((entry) => {
             const active = entry.id === selectedId;
+            const connected = grantFor(entry) !== null;
             return (
               <button
                 className={active ? 'connect-card connect-card--active' : 'connect-card'}
@@ -155,6 +197,7 @@ export function ConnectPicker({
                 <span className="connect-card__title">{entry.title}</span>
                 <span className="connect-card__summary">{entry.summary}</span>
                 <span className="connect-card__badges">
+                  {connected && <span className="connect-badge connect-badge--connected">Connected</span>}
                   {entry.oauthAvailable && <span className="connect-badge">OAuth</span>}
                   {entry.personalTokenLabel !== null && <span className="connect-badge">API key</span>}
                   <span className="connect-badge connect-badge--quiet">{CUSTODY_BADGE[entry.custody]}</span>
@@ -170,6 +213,11 @@ export function ConnectPicker({
           <div className="connect-detail__head">
             <h3>{selected.title}</h3>
             <p>{selected.summary}</p>
+            {selectedGrant !== null && (
+              <p className="connect-detail__connected">
+                Connected · {grantKindLabel(selectedGrant)}
+              </p>
+            )}
           </div>
 
           {selected.scopes.length > 0 && (
@@ -206,7 +254,7 @@ export function ConnectPicker({
                 className="webapp-action webapp-action--primary connect-cta"
                 href={client.connectStartUrl(selected.id)}
               >
-                Connect with {selected.title}
+                {selectedGrant === null ? `Connect with ${selected.title}` : `Reconnect ${selected.title}`}
               </a>
             </div>
           ) : (
@@ -270,7 +318,7 @@ export function ConnectPicker({
               <div className="connect-actions connect-field--wide">
                 <button className="webapp-action" type="button" onClick={() => setSelectedId(null)}>Cancel</button>
                 <button className="webapp-action webapp-action--primary" type="submit" disabled={saving}>
-                  {saving ? 'Connecting…' : 'Connect'}
+                  {submitLabel(selectedGrant !== null, saving)}
                 </button>
               </div>
             </form>

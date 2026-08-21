@@ -10,6 +10,7 @@ const machines = [
 
 const connectClient = {
   listConnectionCatalog: async () => ({ providers: [] }),
+  listConnectionGrants: async () => ({ grants: [] }),
   putConnectionGrant: async () => undefined,
   connectStartUrl: (provider: string) => `/connect/${provider}/start`,
 };

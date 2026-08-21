@@ -1,12 +1,19 @@
-import type { CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
+import type {
+  CatalogEntryView,
+  CredentialLeaseView,
+  CredentialRequestView,
+} from '@blitzos/schema';
 import { act, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import type { WorkspaceDrawerSegment } from '../src/storage.js';
 import {
+  WorkspaceConnectionsPanel,
   WorkspaceDrawer,
   WorkspaceLeasesPanel,
 } from '../src/WorkspaceDrawer.js';
+import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
+import { ConnectPicker } from '../src/settings/ConnectPicker.js';
 import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
 
@@ -77,6 +84,27 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 function click(button: Element): void {
   button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
+
+function catalogEntry(id: string, title: string): CatalogEntryView {
+  return {
+    id,
+    title,
+    summary: `${title} for agents`,
+    docsUrl: `https://example.com/${id}`,
+    custody: 'proxy',
+    rotation: 'none',
+    oauthAvailable: false,
+    oauthConfigured: false,
+    personalTokenLabel: 'API key',
+    personalTokenHelp: null,
+    needsVendorConfig: false,
+    environmentNames: [],
+    scopes: [],
+  };
+}
+
+const linear = catalogEntry('linear', 'Linear');
+const notion = catalogEntry('notion', 'Notion');
 
 describe('v2 credential surfaces', () => {
   it('mints an email-pinned invite from the members panel and shows its link once', async () => {
@@ -185,10 +213,57 @@ describe('v2 credential surfaces', () => {
       .find((button) => button.textContent === 'Revoke')!));
     expect(revokeLease).not.toHaveBeenCalled();
     await act(async () => click([...document.body.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Revoke lease')!));
+      .find((button) => button.textContent === 'Revoke access')!));
     await settle();
     expect(revokeLease).toHaveBeenCalledWith('lease-one');
     expect(view.container.textContent).toContain('revoked');
+    // The panel names the transport the way a connect card names custody.
+    expect(view.container.textContent).toContain('injected');
+    await view.unmount();
+  });
+
+  /** Every credential sync used to mint another lease and retire none, so a
+   * workspace connected once carried a stack of active rows for it. */
+  it('shows one row per connection and revokes the live one', async () => {
+    const revokeLease = vi.fn(async () => undefined);
+    const base = {
+      workspaceId: 'workspace-one',
+      boxId: null,
+      connection: 'google-workspace',
+      userId: null,
+      scopes: [],
+      mode: 'proxy' as const,
+      state: 'active' as const,
+    };
+    const stale: CredentialLeaseView = {
+      ...base,
+      id: 'lease-old',
+      issuedAt: Date.now() - 600_000,
+      expiresAt: Date.now() + 30_000,
+    };
+    const fresh: CredentialLeaseView = {
+      ...base,
+      id: 'lease-new',
+      issuedAt: Date.now() - 1_000,
+      expiresAt: Date.now() + 600_000,
+    };
+    const wire = client({
+      revokeLease,
+      listLeases: vi.fn(async () => ({ leases: [fresh, stale] })),
+    });
+    const view = await render(
+      <WorkspaceLeasesPanel client={wire} workspaceId="workspace-one" visible />,
+    );
+    await settle();
+    expect(view.container.querySelectorAll('.workspace-credential-row').length).toBe(1);
+    expect(view.container.textContent).toContain('proxied');
+
+    await act(async () => click([...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Revoke')!));
+    await act(async () => click([...document.body.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Revoke access')!));
+    await settle();
+    expect(revokeLease).toHaveBeenCalledWith('lease-new');
     await view.unmount();
   });
 
@@ -243,7 +318,90 @@ describe('v2 credential surfaces', () => {
     await settle();
     expect(dismiss).toHaveBeenCalledWith('request-one');
     expect(view.container.querySelector('.workspace-pending-badge')).toBeNull();
-    expect(view.container.textContent).toContain('No agent has asked for a connection here.');
+    // An empty inbox is a success: the section goes away rather than
+    // apologising for having nothing to say.
+    expect(view.container.textContent).not.toContain('Wanted here');
+    expect(view.container.textContent).not.toContain('No agent has asked for a connection here.');
+    await view.unmount();
+  });
+
+  it('still speaks when the request list fails to load', async () => {
+    const view = await render(
+      <WorkspaceConnectionsPanel
+        client={client()}
+        workspaceId="workspace-one"
+        visible
+        pendingRequests={[]}
+        pendingRequestsError="Connect inbox failed to load."
+        onResolveRequest={async () => undefined}
+      />,
+    );
+    await settle();
+    expect(view.container.textContent).toContain('Wanted here');
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('Connect inbox failed to load.');
+    await view.unmount();
+  });
+
+  /** The panel hides an empty inbox, so the count on the rail icon is the only
+   * thing telling a person a request is waiting while the panel is closed. */
+  it('keeps the pending count on the rail while the panel is closed', async () => {
+    const view = await render(
+      <WorkspaceRailStrip
+        openPanels={new Set<WorkspaceDrawerSegment>()}
+        pendingRequestCount={2}
+        onTogglePanel={() => undefined}
+      />,
+    );
+    expect(view.container.querySelector('.workspace-pending-badge')?.textContent).toBe('2');
+    await view.unmount();
+  });
+
+  it('marks a connected provider on its card and offers to reconnect', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
+      listConnectionGrants: vi.fn(async () => ({
+        grants: [{
+          provider: 'linear',
+          manifestId: 'linear',
+          kind: 'oauth' as const,
+          label: null,
+          scopes: ['read'],
+          createdAt: 1,
+          updatedAt: 1,
+          accessExpiresAt: null,
+        }],
+      })),
+    });
+    const view = await render(<ConnectPicker client={wire} />);
+    await settle();
+
+    const cards = [...view.container.querySelectorAll('.connect-card')];
+    const connected = cards.find((card) => card.textContent?.includes('Linear'))!;
+    const untouched = cards.find((card) => card.textContent?.includes('Notion'))!;
+    expect(connected.querySelector('.connect-badge--connected')?.textContent).toBe('Connected');
+    expect(untouched.querySelector('.connect-badge--connected')).toBeNull();
+
+    await act(async () => click(connected));
+    expect(view.container.querySelector('.connect-detail__connected')?.textContent)
+      .toBe('Connected · oauth');
+    const labels = [...view.container.querySelectorAll('.connect-detail button, .connect-detail a')]
+      .map((action) => action.textContent);
+    expect(labels).toContain('Reconnect');
+    expect(labels).not.toContain('Connect');
+    await view.unmount();
+  });
+
+  it('leaves an unconnected provider saying Connect', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+    });
+    const view = await render(<ConnectPicker client={wire} />);
+    await settle();
+    await act(async () => click(view.container.querySelector('.connect-card')!));
+    expect(view.container.querySelector('.connect-detail__connected')).toBeNull();
+    expect([...view.container.querySelectorAll('.connect-detail button')]
+      .map((action) => action.textContent)).toContain('Connect');
     await view.unmount();
   });
 });
