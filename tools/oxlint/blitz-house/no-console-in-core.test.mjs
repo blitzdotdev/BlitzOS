@@ -25,5 +25,9 @@ test("no-console-in-core flags console members and honors exact allowed files", 
   );
 
   assert.equal(diagnostics.length, 4);
-  assert.ok(diagnostics.every(({ filename }) => filename.endsWith("/bad.ts")));
+  // oxlint reports the path as handed to it: bare "bad.ts" on some platforms,
+  // a directory-qualified ".../bad.ts" on others. Accept both spellings.
+  assert.ok(diagnostics.every(
+    ({ filename }) => filename === "bad.ts" || filename.endsWith("/bad.ts"),
+  ));
 });
