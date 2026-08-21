@@ -12,10 +12,16 @@ compatibility_date = "2026-08-11"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# Public origin of this Worker (workers.dev URL or custom domain). Required; step 4 of docs/SELF-HOST.md tells you the origin.
-APP_URL = "<https origin of this worker>"
-# Box image source: a registry reference, or this Worker's /box-image URL for R2-hosted archives. Required; modes and values in docs/BOX-IMAGE.md.
-BOX_IMAGE_REF = "<registry ref or worker box-image url>"
+# Every var below ships with a deployable value, because several of them can
+# only be filled in AFTER a first deploy: the Worker origin does not exist
+# until the Worker does. Empty means "not configured yet" and is accepted by
+# the deploy; the feature that needs it stays off. Angle-bracket text is a
+# placeholder the deploy refuses — never paste one in.
+
+# Public origin of this Worker (workers.dev URL or custom domain). Empty until step 4 of docs/SELF-HOST.md prints your origin; set it and redeploy.
+APP_URL = ""
+# Box image source: a registry reference, or this Worker's /box-image URL for R2-hosted archives. Empty until step 9; workspaces cannot become ready without it. Modes and values in docs/BOX-IMAGE.md.
+BOX_IMAGE_REF = ""
 # Image tag inside the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
 BOX_IMAGE_TAG = ""
 # SHA-256 of the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
@@ -31,17 +37,17 @@ MAX_CONCURRENT_WORKSPACES = "10"
 MICROVM_HOSTS = '[]'
 # Populated shapes — pinned URL and phone-home (dynamic) hosts:
 # MICROVM_HOSTS = '[{"name":"lab","url":"https://lab.example:8443","tokenVar":"MICROVM_LAB_TOKEN"},{"name":"home","tokenVar":"MICROVM_HOME_TOKEN","dynamic":true}]'
-# Cloudflare account that owns the workspace-tunnel zone (dash.cloudflare.com -> your zone -> Overview). Required only for browser access to cloud-VM workspaces.
-CLOUDFLARE_ACCOUNT_ID = "<cloudflare account id>"
-# Cloudflare zone that holds ws-<workspace-id> DNS records (same Overview page). Required only for browser access to cloud-VM workspaces.
-CLOUDFLARE_ZONE_ID = "<cloudflare zone id>"
+# Cloudflare account that owns the workspace-tunnel zone (dash.cloudflare.com -> your zone -> Overview). Empty until step 8; required only for browser access to cloud-VM workspaces.
+CLOUDFLARE_ACCOUNT_ID = ""
+# Cloudflare zone that holds ws-<workspace-id> DNS records (same Overview page). Empty until step 8; required only for browser access to cloud-VM workspaces.
+CLOUDFLARE_ZONE_ID = ""
 # Domain of that zone, e.g. "workspaces.example.com". Empty = no browser access to cloud-VM workspaces (they boot, but no terminal/chat/files/previews). See docs/TUNNEL.md.
 WORKSPACE_TUNNEL_ZONE = ""
 
 # Optional vars (uncomment to set):
 # Signup policy: "open" (any Google account) or "invite" (invited emails only). Default "open".
 # SIGNUP_MODE = "open"
-# Comma-separated email domains allowed to sign up; empty allows any domain. Default "".
+# Comma-separated email domains allowed to SIGN IN — the gate applies to every sign-in, existing accounts included. Empty allows any domain. Default "".
 # ALLOWED_EMAIL_DOMAINS = ""
 # Comma-separated Hetzner machine catalog as <type>@<location> entries. Default "cpx21@hil,cpx31@hil".
 # HETZNER_MACHINE_TYPES = "cpx21@hil,cpx31@hil"

@@ -1,9 +1,13 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { cleanDist } from "../scripts/clean-dist.mjs";
+// The committed template, not the gitignored wrangler.toml a local run writes.
+import wranglerExample from "../wrangler.toml.example?raw";
 import {
+  configVarProblems,
   deployControlPlane,
   d1DatabasePatch,
   localSecretValueProblems,
@@ -273,6 +277,47 @@ describe("control-plane deploy command", () => {
     ]));
     expect(calls.some(([tool]) => tool === "npm")).toBe(false);
     expect(calls.some(([tool, command]) => tool === "wrangler" && command === "deploy")).toBe(false);
+  });
+
+  it("ships a template a fresh clone can deploy in the documented order", async () => {
+    // The deploy is what prints the Worker origin, so APP_URL cannot be known
+    // before it; the same is true of the tunnel IDs (step 8) and the box image
+    // (step 9). Shipping any of them as a `<...>` placeholder made step 4
+    // refuse to run and left the documented order impossible to follow.
+    expect(placeholderVars(parseToml(wranglerExample))).toEqual([]);
+    for (const deferred of ["APP_URL", "BOX_IMAGE_REF", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_ZONE_ID"]) {
+      expect(wranglerExample, deferred).toContain(`${deferred} = ""`);
+    }
+  });
+
+  it("refuses to deploy vars whose runtime parser would 500 every request", async () => {
+    expect(configVarProblems({ vars: { SIGNUP_MODE: "invite-only" } }))
+      .toEqual([expect.stringContaining("SIGNUP_MODE must be 'open' or 'invite'")]);
+    expect(configVarProblems({ vars: { ALLOWED_EMAIL_DOMAINS: "alice@example.com" } }))
+      .toEqual([expect.stringContaining("bare domains")]);
+    expect(configVarProblems({
+      vars: { SIGNUP_MODE: "invite", ALLOWED_EMAIL_DOMAINS: " Example.COM ,corp.test," },
+    })).toEqual([]);
+    expect(configVarProblems({ vars: {} })).toEqual([]);
+
+    await expect(
+      deployControlPlane({
+        configPath: "packages/control-plane/wrangler.toml",
+        rawConfig: {
+          name: "blitz-control-plane",
+          vars: { MICROVM_HOSTS: "[]", SIGNUP_MODE: "invite-only" },
+          r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+          d1_databases: [{ binding: "DB", database_name: "blitz-control-plane" }],
+        },
+        run: async () => {
+          throw new Error("no command should run for an unparseable var");
+        },
+        async patchConfig() {
+          throw new Error("no config patch should run for an unparseable var");
+        },
+        secretValues: {},
+      }),
+    ).rejects.toThrow(/SIGNUP_MODE = "invite-only" is invalid/u);
   });
 
   it("refuses to deploy a config that still holds example placeholder values", async () => {

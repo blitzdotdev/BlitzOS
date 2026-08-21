@@ -61,6 +61,7 @@ const expected = [
   "registry.ts",
   "runtime.ts",
   "sessions.ts",
+  "signup-config.js",
   "workspace-names.ts",
   "workspace-access.ts",
   "workspace-templates.ts",
@@ -91,6 +92,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(66);
+    expect(expected).toHaveLength(67);
   });
 });

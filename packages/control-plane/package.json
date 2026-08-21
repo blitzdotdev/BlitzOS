@@ -17,6 +17,7 @@
   "files": [
     "dist",
     "core/providers/microvm-hosts.js",
+    "core/signup-config.js",
     "migrations",
     "README.md",
     "scripts/deploy-helpers.mjs",

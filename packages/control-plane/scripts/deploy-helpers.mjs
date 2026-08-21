@@ -1,4 +1,8 @@
 import { parseMicrovmHosts } from "../core/providers/microvm-hosts.js";
+import {
+  allowedEmailDomainsFromEnv,
+  signupModeFromEnv,
+} from "../core/signup-config.js";
 
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
 export const DB_BINDING = "DB";
@@ -15,8 +19,10 @@ export const REQUIRED_SECRETS = Object.freeze([
   "CRED_MASTER_KEY",
 ]);
 
-// A copied wrangler.toml.example keeps `<...>` markers until the operator
-// fills in real values; deploying those would ship a broken Worker.
+// Angle-bracket text is documentation shorthand ("<your zone id>"), never a
+// value. The template ships none — vars that can only be filled in after a
+// first deploy ship as "" — so this only catches an operator who pasted a
+// doc example into wrangler.toml.
 const PLACEHOLDER_VALUE_PATTERN = /^<[^<>]*>$/u;
 // R2 bucket names: 3-63 chars of lowercase letters, digits, and hyphens.
 const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
@@ -105,6 +111,31 @@ export function placeholderVars(rawConfig) {
   return Object.keys(vars).filter((name) =>
     PLACEHOLDER_VALUE_PATTERN.test(String(vars[name])),
   );
+}
+
+// SIGNUP_MODE and ALLOWED_EMAIL_DOMAINS are parsed per request by the Worker
+// and their parsers throw, so a typo ("invite-only" for "invite") turns every
+// request and every cron into a 500 with nothing in the config to hint at it.
+// They are plain [vars], readable here, so reject them before the deploy using
+// the very parsers the Worker will run.
+export function configVarProblems(rawConfig) {
+  const vars = isRecord(rawConfig) && isRecord(rawConfig.vars) ? rawConfig.vars : {};
+  const problems = [];
+  for (const [name, parse] of [
+    ["SIGNUP_MODE", signupModeFromEnv],
+    ["ALLOWED_EMAIL_DOMAINS", allowedEmailDomainsFromEnv],
+  ]) {
+    const value = vars[name];
+    if (value === undefined) continue;
+    try {
+      parse(String(value));
+    } catch (error) {
+      problems.push(
+        `${name} = ${JSON.stringify(String(value))} is invalid: ${error instanceof Error ? error.message : "unparseable"} — the Worker parses it on every request, so deploying this value would 500 the whole deployment`,
+      );
+    }
+  }
+  return problems;
 }
 
 // Validates the secret values that are readable at deploy time (the local
@@ -202,6 +233,10 @@ export async function deployControlPlane({
     throw new Error(
       `${configPath} still holds template placeholder values for: ${placeholders.join(", ")}\nEdit the file (start from wrangler.toml.example) and rerun the deploy.`,
     );
+  }
+  const varProblems = configVarProblems(rawConfig);
+  if (varProblems.length > 0) {
+    throw new Error(varProblems.join("\n"));
   }
   const secretProblems = localSecretValueProblems(rawConfig, secretValues);
   if (secretProblems.length > 0) {

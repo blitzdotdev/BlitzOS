@@ -54,10 +54,14 @@ cp packages/control-plane/wrangler.toml.example packages/control-plane/wrangler.
 
 Your `wrangler.toml` carries your account IDs. Do not commit it.
 
+The template as copied is already deployable: every var that can only be
+filled in *after* a deploy ships empty, and empty means "that feature is off",
+not "refuse to deploy". So you can run step 4 immediately and come back here.
+
 | Var | Required | What it is |
 |---|---|---|
-| `APP_URL` | yes | Your Worker origin, e.g. `https://blitz-control-plane.<subdomain>.workers.dev`. Request handling derives origins from the incoming request; this var only feeds the teenybase config. Set it after step 4 tells you the origin. |
-| `BOX_IMAGE_REF` | yes | Box image source. A registry reference, or a control-plane URL for R2-hosted archives. Modes and values: [BOX-IMAGE.md](BOX-IMAGE.md). |
+| `APP_URL` | after step 4 | Your Worker origin, e.g. `https://blitz-control-plane.<subdomain>.workers.dev`. Request handling derives origins from the incoming request; this var only feeds the teenybase config. Step 4 prints the origin — leave this empty until then, then set it and redeploy. |
+| `BOX_IMAGE_REF` | after step 9 | Box image source. A registry reference, or a control-plane URL for R2-hosted archives. Empty deploys fine; workspaces cannot become ready until it points at a published image. Modes and values: [BOX-IMAGE.md](BOX-IMAGE.md). |
 | `BOX_IMAGE_TAG` | mode-dependent | Empty for registry mode; the archive's image tag for R2 modes. |
 | `BOX_IMAGE_SHA256` | mode-dependent | Empty for registry mode; the archive's SHA-256 for R2 modes. |
 | `SESSION_TTL_DAYS` | no | Session cookie lifetime in days, 1–3650. Default 30. |
@@ -66,9 +70,9 @@ Your `wrangler.toml` carries your account IDs. Do not commit it.
 | `HETZNER_MACHINE_TYPES` | no | Comma-separated `type@location` entries for the Hetzner machine catalog, e.g. `cpx21@hil,cx32@fsn1`. Unset or blank keeps the default catalog (`cpx21@hil`, `cpx31@hil`). Malformed entries are skipped with a logged warning. |
 | `SIGNUP_MODE` | no | `open` (default) or `invite`. In `invite` mode a Google sign-in that would create a new user is refused unless it carries a valid invite (step 7) or the verified bootstrap secret (step 6). Existing users always sign in. |
 | `ALLOWED_EMAIL_DOMAINS` | no | Comma-separated email domains, e.g. `example.com,example.org`. When set, **every** sign-in — new or existing user, invited or bootstrap — is refused unless the account's domain is listed. Empty (default) allows any domain. |
-| `CLOUDFLARE_ACCOUNT_ID` | for tunnels | The account that owns the tunnel zone. |
-| `CLOUDFLARE_ZONE_ID` | for tunnels | The zone that will hold `ws-<workspace-id>` records. |
-| `WORKSPACE_TUNNEL_ZONE` | for tunnels | The zone's domain name. Leaving the three tunnel vars empty means cloud-VM workspaces boot but have no terminal, chat, files, or previews in the browser. See [TUNNEL.md](TUNNEL.md). |
+| `CLOUDFLARE_ACCOUNT_ID` | for tunnels (step 8) | The account that owns the tunnel zone. |
+| `CLOUDFLARE_ZONE_ID` | for tunnels (step 8) | The zone that will hold `ws-<workspace-id>` records. |
+| `WORKSPACE_TUNNEL_ZONE` | for tunnels (step 8) | The zone's domain name. Leaving the three tunnel vars empty means cloud-VM workspaces boot but have no terminal, chat, files, or previews in the browser. See [TUNNEL.md](TUNNEL.md). |
 
 The R2 binding (`BOX_IMAGES` → bucket `blitz-box-images`) and the D1 binding
 stay as they are; the deploy script creates the database and fills in
@@ -111,8 +115,9 @@ applies migrations, creates the `blitz-box-images` R2 bucket if absent,
 verifies the required secret names, builds the webapp, and deploys. If it
 reports missing secrets, set them and rerun the same command.
 
-When it finishes, note the Worker URL it prints — that is your origin for
-steps 2 (`APP_URL`) and 5.
+When it finishes, note the Worker URL it prints — that is your origin. Put it
+in `APP_URL` in step 2's table, register it with Google in step 5, then run
+the same deploy command again.
 
 ## 5. Google OAuth
 
@@ -232,6 +237,7 @@ If all of that works, the deployment is complete.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Every API request returns 500 | `CRED_MASTER_KEY` is not base64 of exactly 32 bytes, or a `MICROVM_*_TOKEN` is shorter than 32 characters or contains whitespace | Regenerate with `openssl rand -base64 32` (or `-hex 32` for the host token). No microVM hosts? Set `MICROVM_HOSTS = '[]'`. |
+| Every API request **and every cron** returns 500 right after a var edit | `SIGNUP_MODE` is not exactly `open` or `invite` (`invite-only` is the common typo), or an `ALLOWED_EMAIL_DOMAINS` entry is not a bare domain (`alice@example.com` and `gmail` are both rejected) | Fix the value in `wrangler.toml` and redeploy. The deploy command refuses both before it deploys, so a Worker in this state was deployed by hand. |
 | Machine-type list is empty in the create dialog | Bad `HETZNER_API_TOKEN`, or the catalog's types have no availability in their location | Verify the token is Read & Write on the right project; set `HETZNER_MACHINE_TYPES` to types and locations your project can get. |
 | `503 workspace has no webapp tunnel` on terminal/chat/files | Tunnel vars were unset when the workspace was created | Do step 8, then recreate the workspace. |
 | `503 workspace webApp authentication is unavailable` | `WEBAPP_TOKEN_SECRET` missing | Set it and redeploy. |

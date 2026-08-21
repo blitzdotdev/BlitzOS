@@ -86,34 +86,9 @@ export function maxConcurrentWorkspacesFromEnv(value: string | number | null | u
   return limit;
 }
 
-export function signupModeFromEnv(value: string | null | undefined): SignupMode {
-  const mode = (value ?? "").trim().toLowerCase();
-  if (mode === "" || mode === "open") return "open";
-  if (mode === "invite") return "invite";
-  throw new Error("SIGNUP_MODE must be 'open' or 'invite'");
-}
-
-const EMAIL_DOMAIN_PATTERN =
-  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u;
-
-export function allowedEmailDomainsFromEnv(
-  value: string | null | undefined,
-): readonly string[] {
-  const raw = (value ?? "").trim();
-  if (raw === "") return [];
-  const domains = raw
-    .split(",")
-    .map((entry) => entry.trim().toLowerCase())
-    .filter((entry) => entry !== "");
-  for (const domain of domains) {
-    if (!EMAIL_DOMAIN_PATTERN.test(domain)) {
-      throw new Error(
-        "ALLOWED_EMAIL_DOMAINS entries must be bare domains like example.com",
-      );
-    }
-  }
-  return domains;
-}
+// Re-exported, not reimplemented: scripts/deploy-helpers.mjs imports the same
+// module to reject a bad SIGNUP_MODE or ALLOWED_EMAIL_DOMAINS at deploy time.
+export { allowedEmailDomainsFromEnv, signupModeFromEnv } from "./signup-config.js";
 
 export interface CoreRuntime {
   db: Db;

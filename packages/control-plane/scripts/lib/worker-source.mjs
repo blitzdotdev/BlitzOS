@@ -36,6 +36,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/principals.ts",
   "core/registry.ts",
   "core/sessions.ts",
+  "core/signup-config.js",
   "core/types.ts",
   "core/volumes.ts",
   "core/webapp-state.ts",
