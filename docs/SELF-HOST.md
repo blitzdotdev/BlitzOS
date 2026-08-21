@@ -18,9 +18,9 @@ but cannot run a usable workspace.
   access at all (see [TUNNEL.md](TUNNEL.md)). Any spare domain works; users
   never see these hostnames.
 - A Google Cloud project. Google OAuth is the only login method.
-- Compute for workspaces: a Hetzner Cloud project (use a dedicated project —
-  the janitors assume they own everything in it), or your own Firecracker
-  host running the [microvm-host agent](../packages/microvm-host/README.md).
+- Compute for workspaces: a Hetzner Cloud project (it may hold unrelated
+  infrastructure — see step 10), or your own Firecracker host running the
+  [microvm-host agent](../packages/microvm-host/README.md).
 - Node.js 22.13 or newer, npm, git.
 - Docker, for building the box image (on macOS, [Colima](https://github.com/abiosoft/colima) works — see
   [BOX-IMAGE.md](BOX-IMAGE.md)).
@@ -46,15 +46,21 @@ Notes:
 
 ## 2. Configure the Worker
 
-Copy the config template and edit your copy:
+Generate your config from the template, then edit it:
 
 ```sh
-cp packages/control-plane/wrangler.toml.example packages/control-plane/wrangler.toml
+npm run config -w packages/control-plane
 ```
+
+That writes `packages/control-plane/wrangler.toml` with every key from
+`wrangler.toml.example` and none of its comments. Do not `cp` the template
+instead: step 4 writes your D1 `database_id` into `wrangler.toml`, and wrangler
+refuses to patch a config that holds comments. Keep `wrangler.toml.example`
+open beside your config — it is where each var is documented.
 
 Your `wrangler.toml` carries your account IDs. Do not commit it.
 
-The template as copied is already deployable: every var that can only be
+The generated config is already deployable: every var that can only be
 filled in *after* a deploy ships empty, and empty means "that feature is off",
 not "refuse to deploy". So you can run step 4 immediately and come back here.
 
@@ -77,6 +83,11 @@ not "refuse to deploy". So you can run step 4 immediately and come back here.
 The R2 binding (`BOX_IMAGES` → bucket `blitz-box-images`) and the D1 binding
 stay as they are; the deploy script creates the database and fills in
 `database_id` for you.
+
+If your wrangler login can see more than one Cloudflare account, uncomment the
+top-level `account_id` and set it to the account this Worker belongs to. The
+deploy scopes every wrangler command to it; without it wrangler cannot choose
+an account and stops with `More than one account available`.
 
 ## 3. Set the secrets
 
@@ -209,13 +220,19 @@ the vars at it, workspaces cannot become ready.
 
 ## 10. Provider
 
-**Hetzner.** The Read & Write token from step 3 is all the code needs. Use a
-dedicated Hetzner project: the janitors list and delete resources by label and
-must never share a project with unrelated infrastructure. The machine-type
-catalog offered in the create dialog defaults to `cpx21@hil` and `cpx31@hil`;
-set the `HETZNER_MACHINE_TYPES` var (comma-separated `type@location`) to offer
-the types and locations your project can actually get. Types with no
-availability in their location produce an empty catalog.
+**Hetzner.** The Read & Write token from step 3 is all the code needs. The
+project may be shared with unrelated infrastructure: no janitor selects
+resources by label. `runOrphanSweep` reads VM IDs out of this deployment's own
+`workspaces` table and destroys those IDs only, and the volume routes match
+every Hetzner volume against this deployment's `volume_ownership` table before
+listing or deleting it, so a server or volume this control plane did not
+create is never touched. Workspace servers do carry `blitz-purpose=workspace`
+and `blitz-workspace=<workspace-id>` labels, for your own filtering.
+
+The machine-type catalog offered in the create dialog defaults to `cpx21@hil`
+and `cpx31@hil`; set the `HETZNER_MACHINE_TYPES` var (comma-separated
+`type@location`) to offer the types and locations your project can actually
+get. Types with no availability in their location produce an empty catalog.
 
 **Firecracker (microVM).** Run the
 [microvm-host agent](../packages/microvm-host/README.md) on your own hardware,

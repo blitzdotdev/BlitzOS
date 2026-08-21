@@ -15,8 +15,10 @@ ARG TARGETARCH
 WORKDIR /src/packages/box/gateway
 COPY packages/box/gateway/go.mod ./
 COPY packages/box/gateway/*.go ./
-# The previews conformance test reads the shared cross-runtime fixtures.
-COPY packages/schema/fixtures/previews /src/packages/schema/fixtures/previews
+# The conformance tests below read the shared cross-runtime fixtures. Copy the
+# whole tree: naming corpora one by one broke the image build every time a new
+# contract added one, and the tree is 424 KiB.
+COPY packages/schema/fixtures /src/packages/schema/fixtures
 RUN go test ./... \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
 

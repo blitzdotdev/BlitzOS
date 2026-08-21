@@ -1,13 +1,19 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { cleanDist } from "../scripts/clean-dist.mjs";
+import {
+  deployableConfigToml,
+  ensureWranglerConfig,
+} from "../scripts/ensure-wrangler-config.mjs";
 // The committed template, not the gitignored wrangler.toml a local run writes.
 import wranglerExample from "../wrangler.toml.example?raw";
 import {
+  commandFailureMessage,
   configVarProblems,
+  configuredAccountId,
   deployControlPlane,
   d1DatabasePatch,
   localSecretValueProblems,
@@ -18,6 +24,10 @@ import {
   r2BucketNamesFromList,
   requiredSecretsForConfig,
 } from "../scripts/deploy-helpers.mjs";
+
+function commentLines(toml: string): string[] {
+  return toml.split("\n").filter((line) => line.trimStart().startsWith("#"));
+}
 
 describe("control-plane deploy command", () => {
   it("adds MICROVM_HOSTS tokenVar names to required secret metadata without reading values", () => {
@@ -215,6 +225,106 @@ describe("control-plane deploy command", () => {
     });
   });
 
+  it("carries captured stderr into the failure a wrangler command reports", () => {
+    // A blocker that reads only "failed with exit 1" costs an operator half an
+    // hour: wrangler said exactly what was wrong, on stderr, and it was dropped.
+    expect(commandFailureMessage(
+      "wrangler",
+      ["r2", "bucket", "list", "--config", "packages/control-plane/wrangler.toml"],
+      "exit 1",
+      "✘ [ERROR] More than one account available but unable to select one in non-interactive mode.\n",
+    )).toBe(
+      "wrangler r2 bucket list --config packages/control-plane/wrangler.toml failed with exit 1\n✘ [ERROR] More than one account available but unable to select one in non-interactive mode.",
+    );
+    for (const empty of ["", "  \n", undefined]) {
+      expect(commandFailureMessage("wrangler", ["deploy"], "signal SIGTERM", empty))
+        .toBe("wrangler deploy failed with signal SIGTERM");
+    }
+  });
+
+  it("scopes every wrangler command to the configured account", async () => {
+    // `wrangler r2 bucket list` ignores account_id in the config file, so a
+    // multi-account login died there with "More than one account available
+    // but unable to select one in non-interactive mode" — after migrations.
+    expect(configuredAccountId({ account_id: "53a144fad4e15ca51c32da9b9fe25d4a" }))
+      .toBe("53a144fad4e15ca51c32da9b9fe25d4a");
+    for (const withoutAccount of [{}, { account_id: "" }, { account_id: "   " }]) {
+      expect(configuredAccountId(withoutAccount)).toBeNull();
+    }
+
+    const envs: Array<Record<string, string>> = [];
+    const rawConfig = {
+      name: "blitz-control-plane",
+      account_id: "53a144fad4e15ca51c32da9b9fe25d4a",
+      vars: { MICROVM_HOSTS: "[]" },
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+      d1_databases: [
+        {
+          binding: "DB",
+          database_name: "blitz-control-plane",
+          database_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        },
+      ],
+    };
+    const run = async (
+      tool: string,
+      args: string[],
+      options: { capture: boolean; env: Record<string, string> },
+    ) => {
+      envs.push(options.env);
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:  blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        return {
+          stdout: JSON.stringify(
+            [
+              "HETZNER_API_TOKEN",
+              "GOOGLE_CLIENT_ID",
+              "GOOGLE_CLIENT_SECRET",
+              "WEBAPP_TOKEN_SECRET",
+              "CRED_MASTER_KEY",
+            ].map((name) => ({ name, type: "secret_text" })),
+          ),
+        };
+      }
+      return { stdout: "" };
+    };
+
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {
+        throw new Error("matching D1 config should not be rewritten");
+      },
+      secretValues: {},
+    });
+    expect(envs.length).toBeGreaterThan(0);
+    expect(envs.every((env) => env.CLOUDFLARE_ACCOUNT_ID === "53a144fad4e15ca51c32da9b9fe25d4a"))
+      .toBe(true);
+
+    envs.length = 0;
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig: { ...rawConfig, account_id: undefined },
+      run,
+      async patchConfig() {
+        throw new Error("matching D1 config should not be rewritten");
+      },
+      secretValues: {},
+    });
+    expect(envs.every((env) => !("CLOUDFLARE_ACCOUNT_ID" in env))).toBe(true);
+  });
+
   it("fails with exact setup commands when required secret metadata is missing", async () => {
     const calls: Array<[string, ...string[]]> = [];
     const run = async (
@@ -287,6 +397,38 @@ describe("control-plane deploy command", () => {
     expect(placeholderVars(parseToml(wranglerExample))).toEqual([]);
     for (const deferred of ["APP_URL", "BOX_IMAGE_REF", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_ZONE_ID"]) {
       expect(wranglerExample, deferred).toContain(`${deferred} = ""`);
+    }
+  });
+
+  it("generates a comment-free config that carries every key of the example", () => {
+    // The deploy writes the new D1 database_id back with wrangler's
+    // experimental_patchConfig, which rejects any TOML holding comments
+    // ("cannot patch .toml config if comments are present"). The example
+    // documents every var inline, so a verbatim copy failed every first
+    // deploy — after the D1 already existed. Comments are the only permitted
+    // difference between the example and the generated config.
+    const generated = deployableConfigToml(wranglerExample);
+    expect(commentLines(generated)).toEqual([]);
+    expect(commentLines(wranglerExample).length).toBeGreaterThan(0);
+    expect(parseToml(generated)).toEqual(parseToml(wranglerExample));
+  });
+
+  it("generates the config once and never overwrites a filled-in one", async () => {
+    const packageDirectory = await mkdtemp(path.join(tmpdir(), "blitz-control-plane-config-"));
+    const configPath = path.join(packageDirectory, "wrangler.toml");
+    try {
+      await writeFile(path.join(packageDirectory, "wrangler.toml.example"), wranglerExample);
+
+      expect(await ensureWranglerConfig(packageDirectory)).toBe(true);
+      const generated = await readFile(configPath, "utf8");
+      expect(commentLines(generated)).toEqual([]);
+      expect(parseToml(generated)).toEqual(parseToml(wranglerExample));
+
+      await writeFile(configPath, 'name = "operator-edited"\n');
+      expect(await ensureWranglerConfig(packageDirectory)).toBe(false);
+      expect(await readFile(configPath, "utf8")).toBe('name = "operator-edited"\n');
+    } finally {
+      await rm(packageDirectory, { recursive: true, force: true });
     }
   });
 
