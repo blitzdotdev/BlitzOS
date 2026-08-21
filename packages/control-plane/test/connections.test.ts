@@ -466,6 +466,67 @@ describe("connections: per-user grants", () => {
     expect(stored?.token_hash).toBeNull();
   });
 
+  /** Every `blitz-cred sync` minted another lease and retired nothing, so a
+   * workspace accumulated one active row per sync and the older proxy token
+   * stayed live for its whole TTL. One connection holds one live lease. */
+  it("supersedes the prior lease when the same connection mints again", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+
+    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    const first = await env.DB.prepare(
+      "SELECT id FROM credential_leases WHERE workspace_id = ?1",
+    ).bind(workspace.id).first<{ id: string }>();
+    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+
+    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
+    expect(rows.length).toBe(2);
+    expect(rows.filter(({ state }) => state === "active").length).toBe(1);
+    expect(rows.find(({ id }) => id === first?.id)?.state).toBe("revoked");
+    // A proxy lease's token is its access: superseding has to kill the value,
+    // not just the row's label.
+    const superseded = await env.DB.prepare(
+      "SELECT token_hash FROM credential_leases WHERE id = ?1",
+    ).bind(first?.id).first<{ token_hash: string | null }>();
+    expect(superseded?.token_hash).toBeNull();
+  });
+
+  /** The sync-all loop mints every connection in one pass. Superseding is
+   * scoped to the pair being minted, so linear's new lease must not retire the
+   * one acme is holding. */
+  it("supersedes only the connection being minted during a sync", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const acme = await appRequest(app, "/connections/grants/acme", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "generic",
+        token: "acme-test-only-key",
+        vendor: { envName: "ACME_API_KEY" },
+      }),
+    });
+    expect(acme.status).toBe(204);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+
+    expect((await mint(app, box.access_token, {})).status).toBe(200);
+    expect((await mint(app, box.access_token, {})).status).toBe(200);
+
+    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
+    const live = rows.filter(({ state }) => state === "active");
+    expect(live.map(({ connection }) => connection).sort()).toEqual(["acme", "linear"]);
+    expect(rows.length).toBe(4);
+  });
+
   it("revokes leases with the grant and empties the surfaces on the next sync", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);

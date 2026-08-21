@@ -288,6 +288,21 @@ export function revokeConnectionLeasesQuery(connectionId: string): Query {
   };
 }
 
+/** One workspace holds one live lease per connection. Minting again supersedes
+ * the lease before it with the same revocation the grant-replace path uses —
+ * a superseded lease is revoked, not a state of its own. */
+export function revokeWorkspaceConnectionLeasesQuery(
+  workspaceId: string,
+  connectionId: string,
+): Query {
+  return {
+    q: `UPDATE credential_leases
+        SET state = 'revoked', token_hash = NULL
+        WHERE workspace_id = ?1 AND connection_id = ?2 AND state = 'active'`,
+    v: [workspaceId, connectionId],
+  };
+}
+
 /** Revoking a grant kills every box that borrowed it, in the same transaction
  * that clears the ciphertext. */
 export function revokeGrantLeasesQuery(grantId: string): Query {

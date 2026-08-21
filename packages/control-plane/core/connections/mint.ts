@@ -13,6 +13,7 @@ import {
   listCredentialEvents,
   listLeases,
   revokeLease,
+  revokeWorkspaceConnectionLeasesQuery,
   staleSurfaceConnections,
 } from "./leases.js";
 import {
@@ -324,6 +325,15 @@ async function mintOne(
   // shipped box decodes this body with DisallowUnknownFields, so one extra key
   // fails the decode and the whole credential sync aborts.
   const { tokenHash = null, grantedScopes, ...result } = minted;
+  // The new lease supersedes the one this pair already held. Every
+  // `blitz-cred sync` used to stack another active row, so the panel showed
+  // duplicates and the older proxy token stayed live for its whole TTL.
+  // Scoped to this connection, so a sync-all never touches another one.
+  //
+  // Accepted tradeoff: a value already exported into a shell that is still
+  // open dies on the next mint. Surfaces are login-fresh by design — a new
+  // shell, a new agent run, and the proxy all read the freshest lease.
+  await rows(runtime.db, revokeWorkspaceConnectionLeasesQuery(workspace.id, connection.id));
   await createLease(runtime.db, {
     id: leaseId,
     workspaceId: workspace.id,
