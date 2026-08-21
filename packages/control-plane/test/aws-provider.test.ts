@@ -4,6 +4,7 @@ import { MicrovmPoolProvider } from "../core/compute/microvm.js";
 import { VmProviderRegistry } from "../core/compute/registry.js";
 import {
   AWS_USER_DATA_MAX_BYTES,
+  AWS_USER_DATA_RAW_MAX_BYTES,
   AwsProvider,
   awsProviderFromEnv,
   type AwsProviderConfig,
@@ -180,11 +181,12 @@ describe("AWS provider ownership", () => {
     expect(aws.ownsVmId("i-0123456789ABCDEF0")).toBe(false);
   });
 
-  it("reports EC2's 16 KiB raw user-data limit in its capabilities", () => {
+  it("advertises the gzip-backed raw user-data budget in its capabilities", () => {
     expect(AWS_USER_DATA_MAX_BYTES).toBe(16_384);
+    expect(AWS_USER_DATA_RAW_MAX_BYTES).toBe(49_152);
     expect(provider(fakeEc2(() => ok("<Response/>"))).capabilities()).toEqual({
       volumes: true,
-      maxUserDataBytes: 16_384,
+      maxUserDataBytes: 49_152,
       webAppTicketsSinceMs: 1_786_993_800_000,
       webAppViewerGuardsSinceMs: 1_787_043_600_000,
     });
@@ -244,16 +246,25 @@ describe("AWS provider createVm", () => {
     expect(call.authorization).toBe(
       "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20260818/us-east-1/ec2/aws4_request,"
         + " SignedHeaders=content-type;host;x-amz-date,"
-        + " Signature=e5569bb36c49aed14da4e3ce9395eb72b2aec486281566e14638b1d18bc791cf",
+        + " Signature=cf77bc9083343d88aa979a83563fe1b6dc0c258501bba31d98871f391019d60d",
     );
     expect(call.parameters.get("Version")).toBe("2016-11-15");
     expect(call.parameters.get("ImageId")).toBe(IMAGE_ID);
     expect(call.parameters.get("InstanceType")).toBe("m6i.large");
     expect(call.parameters.get("MinCount")).toBe("1");
     expect(call.parameters.get("MaxCount")).toBe("1");
-    expect(atob(call.parameters.get("UserData") ?? "")).toBe(
-      String.fromCharCode(...new TextEncoder().encode(userData)),
+    // The wire carries gzip (cloud-init decompresses); prove the payload
+    // round-trips to the exact script.
+    const sentBytes = Uint8Array.from(
+      atob(call.parameters.get("UserData") ?? ""),
+      (character) => character.charCodeAt(0),
     );
+    expect(sentBytes[0]).toBe(0x1f);
+    expect(sentBytes[1]).toBe(0x8b);
+    const inflated = await new Response(
+      new Blob([sentBytes]).stream().pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+    expect(inflated).toBe(userData);
     expect(call.parameters.get("BlockDeviceMapping.1.DeviceName")).toBe("/dev/sda1");
     expect(call.parameters.get("BlockDeviceMapping.1.Ebs.VolumeSize")).toBe("60");
     expect(call.parameters.get("BlockDeviceMapping.1.Ebs.VolumeType")).toBe("gp3");
@@ -327,23 +338,24 @@ describe("AWS provider createVm", () => {
       .rejects.toThrow(`AWS instance ${INSTANCE_ID} did not receive a public IPv4 address`);
   });
 
-  it("refuses user data above EC2's raw limit before it reaches the API", async () => {
+  it("refuses user data whose gzip exceeds EC2's cap, before the API", async () => {
     const fake = fakeEc2(() => runInstances("203.0.113.10"));
-    const oversized = "#".repeat(AWS_USER_DATA_MAX_BYTES + 1);
+    // Incompressible payload: gzip cannot shrink random bytes, so 20 KiB of
+    // them lands over the 16 KiB wire cap. A compressible script of the same
+    // raw size sails through — that asymmetry is the feature.
+    const randomBytes = new Uint8Array(20 * 1024);
+    crypto.getRandomValues(randomBytes);
+    let incompressible = "";
+    for (const byte of randomBytes) incompressible += String.fromCharCode(byte % 94 + 33);
 
     await expect(
-      provider(fake).createVm(createInput("aws-t3.medium@us-east-1", oversized)),
-    ).rejects.toThrow("userData is 16385 bytes; EC2 accepts at most 16384");
-    await expect(
-      provider(fake).createVm(
-        createInput("aws-t3.medium@us-east-1", "é".repeat(AWS_USER_DATA_MAX_BYTES / 2 + 1)),
-      ),
+      provider(fake).createVm(createInput("aws-t3.medium@us-east-1", incompressible)),
     ).rejects.toThrow("EC2 accepts at most 16384");
     expect(fake.calls).toHaveLength(0);
 
     await expect(
       provider(fake).createVm(
-        createInput("aws-t3.medium@us-east-1", "#".repeat(AWS_USER_DATA_MAX_BYTES)),
+        createInput("aws-t3.medium@us-east-1", "#".repeat(AWS_USER_DATA_RAW_MAX_BYTES)),
       ),
     ).resolves.toMatchObject({ id: INSTANCE_ID });
   });

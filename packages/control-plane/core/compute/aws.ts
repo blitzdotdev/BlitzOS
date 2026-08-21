@@ -25,9 +25,17 @@ const EC2_SERVICE = "ec2";
 
 /** EC2 caps instance user data at 16 KiB "in raw form, before it is
  * base64-encoded" (EC2 User Guide, "Run commands when you launch an EC2
- * instance with user data input"). Half of Hetzner's 32 KiB, and the generated
- * bootstrap already spends ~12-13 KiB of it. */
+ * instance with user data input"). The bootstrap outgrew that cap once, so
+ * this adapter gzips user data before sending it — cloud-init detects the
+ * gzip magic and decompresses transparently — and enforces the EC2 cap on
+ * the COMPRESSED payload. */
 export const AWS_USER_DATA_MAX_BYTES = 16 * 1024;
+
+/** What the adapter advertises upstream as its raw user-data budget. Shell
+ * text compresses well past 3:1, so 48 KiB raw stays comfortably inside the
+ * 16 KiB compressed wire cap; the compressed-size check below is the hard
+ * backstop if it ever does not. */
+export const AWS_USER_DATA_RAW_MAX_BYTES = 48 * 1024;
 
 /** Machine type ids are `aws-<ec2InstanceType>@<region>`, for example
  * `aws-t3.medium@us-east-1`. The `aws-` prefix cannot collide with microVM
@@ -153,6 +161,24 @@ function base64Utf8(value: string): string {
     binary += String.fromCharCode(byte);
   }
   return btoa(binary);
+}
+
+function base64Bytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function gzipUtf8(value: string): Promise<Uint8Array> {
+  const compressed = new Blob([value]).stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(compressed).arrayBuffer());
+  // Zero the gzip header's MTIME field so the payload — and the SigV4
+  // signature over it — is a pure function of the script.
+  bytes[4] = 0;
+  bytes[5] = 0;
+  bytes[6] = 0;
+  bytes[7] = 0;
+  return bytes;
 }
 
 function sanitize(message: string): string {
@@ -312,7 +338,7 @@ export class AwsProvider implements VmProvider, VolumeProvider {
   capabilities(): ProviderCapabilities {
     return {
       volumes: true,
-      maxUserDataBytes: AWS_USER_DATA_MAX_BYTES,
+      maxUserDataBytes: AWS_USER_DATA_RAW_MAX_BYTES,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
     };
@@ -447,10 +473,11 @@ export class AwsProvider implements VmProvider, VolumeProvider {
         `machine type ${input.machineTypeId} is not in the configured region ${this.config.region}`,
       );
     }
-    const userDataBytes = new TextEncoder().encode(input.userData).byteLength;
-    if (userDataBytes > AWS_USER_DATA_MAX_BYTES) {
+    const userDataGzip = await gzipUtf8(input.userData);
+    if (userDataGzip.byteLength > AWS_USER_DATA_MAX_BYTES) {
+      const rawBytes = new TextEncoder().encode(input.userData).byteLength;
       throw new Error(
-        `userData is ${userDataBytes} bytes; EC2 accepts at most ${AWS_USER_DATA_MAX_BYTES}`,
+        `userData is ${userDataGzip.byteLength} bytes gzipped (${rawBytes} raw); EC2 accepts at most ${AWS_USER_DATA_MAX_BYTES}`,
       );
     }
     const diskGb = MACHINE_TYPES
@@ -462,7 +489,9 @@ export class AwsProvider implements VmProvider, VolumeProvider {
       ["InstanceType", selected.instanceType],
       ["MinCount", "1"],
       ["MaxCount", "1"],
-      ["UserData", base64Utf8(input.userData)],
+      // Gzipped: cloud-init detects the magic bytes and decompresses, and the
+      // EC2 16 KiB cap applies to what is sent, not to the script inside.
+      ["UserData", base64Bytes(userDataGzip)],
       ["BlockDeviceMapping.1.DeviceName", ROOT_DEVICE_NAME],
       ["BlockDeviceMapping.1.Ebs.VolumeSize", String(diskGb)],
       ["BlockDeviceMapping.1.Ebs.VolumeType", "gp3"],
