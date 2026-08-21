@@ -407,6 +407,7 @@ describe("local wire copies", () => {
     expect(wire.RECIPE_HARNESSES).toEqual(schema.RECIPE_HARNESSES);
     expect(wire.AGENT_PROVIDERS).toEqual(schema.AGENT_PROVIDERS);
     expect(wire.AGENT_MODELS).toEqual(schema.AGENT_MODELS);
+    expect(wire.AGENT_EFFORTS).toEqual(schema.AGENT_EFFORTS);
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);

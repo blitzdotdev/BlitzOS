@@ -1,4 +1,5 @@
 import {
+  AGENT_EFFORTS,
   AGENT_MODELS,
   agentProviderForModel,
   RECIPE_HARNESSES,
@@ -11,15 +12,6 @@ import {
 import { useEffect, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { recipeHarnessLabel } from './RecipesHome';
-
-/** UI choice lists for the effort select, mirroring the per-provider catalogs
- * the box actor offers (`box/actor/src/agent-config.ts`). The wire accepts any
- * shell-safe token, so this list is a picker convenience, not a contract; the
- * empty choice omits the field and leaves the harness default alone. */
-const EFFORTS = {
-  claude: ['low', 'medium', 'high', 'xhigh', 'max'],
-  codex: ['low', 'medium', 'high'],
-} satisfies Record<AgentProvider, readonly string[]>;
 
 /** The provider whose model catalog and efforts apply: the harness itself for
  * the TUI harnesses, the pinned model's provider for chat (null until a chat
@@ -88,7 +80,7 @@ export function CreateRecipeScreen({
   }, [client, editRecipeId]);
 
   const provider = recipeProvider(harness, model);
-  const efforts = provider === null ? [] : EFFORTS[provider];
+  const efforts = provider === null ? [] : AGENT_EFFORTS[provider];
   const chatNeedsModel = harness === 'chat' && model === '';
   const ready = name.trim() !== ''
     && templateId !== ''
@@ -105,7 +97,7 @@ export function CreateRecipeScreen({
       : (AGENT_MODELS[next].some((candidate) => candidate === model) ? model : '');
     setModel(nextModel);
     const nextProvider = recipeProvider(next, nextModel);
-    if (nextProvider === null || !EFFORTS[nextProvider].some((candidate) => candidate === effort)) {
+    if (nextProvider === null || !AGENT_EFFORTS[nextProvider].some((candidate) => candidate === effort)) {
       setEffort('');
     }
   };
@@ -113,7 +105,7 @@ export function CreateRecipeScreen({
   const pickModel = (next: string) => {
     setModel(next);
     const nextProvider = recipeProvider(harness, next);
-    if (nextProvider === null || !EFFORTS[nextProvider].some((candidate) => candidate === effort)) {
+    if (nextProvider === null || !AGENT_EFFORTS[nextProvider].some((candidate) => candidate === effort)) {
       setEffort('');
     }
   };

@@ -17,4 +17,7 @@ CREATE INDEX recipes_template ON recipes(template_id);
 -- provenance: which routine produced this workspace (accepted 2026-08-21)
 ALTER TABLE workspaces ADD COLUMN recipe_id TEXT REFERENCES recipes(id);
 ALTER TABLE orgs ADD COLUMN usage_capture INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE orgs ADD COLUMN usage_folder_id TEXT REFERENCES folders(id);
+-- Deliberately no folders(id) reference: a deleted usage folder may leave a
+-- dangling id, and that is fine — the usage-push leg inner-joins folders, so
+-- a dangling org simply stops exporting.
+ALTER TABLE orgs ADD COLUMN usage_folder_id TEXT;

@@ -1,7 +1,10 @@
+import { HARNESSES } from "./broker.js";
+
 /** A recipe is one row: a template reference plus an invocation — harness,
  * model, effort, prompt. Launching one creates a normal workspace from the
- * template and delivers the invocation to the box (plans/RECIPES.md). */
-export const RECIPE_HARNESSES = ["claude", "codex", "chat"] as const;
+ * template and delivers the invocation to the box (plans/RECIPES.md).
+ * The harness choices are the TUI harnesses plus the headless chat run. */
+export const RECIPE_HARNESSES = [...HARNESSES, "chat"] as const;
 
 export type RecipeHarness = (typeof RECIPE_HARNESSES)[number];
 
@@ -21,8 +24,8 @@ export interface ListRecipesResponse {
   recipes: RecipeView[];
 }
 
-/** POST /recipes and PUT /recipes/:id share this full-replacement shape,
- * exactly like workspace templates. */
+/** POST /workspace-recipes and PUT /workspace-recipes/:id share this
+ * full-replacement shape, exactly like workspace templates. */
 export interface CreateRecipeRequest {
   name: string;
   templateId: string;
@@ -32,8 +35,9 @@ export interface CreateRecipeRequest {
   prompt: string;
 }
 
-/** Envelope for GET /recipes/:id, POST /recipes (201), and PUT /recipes/:id.
- * POST /recipes/:id/launch answers with CreateWorkspaceResponse instead. */
+/** Envelope for GET /workspace-recipes/:id, POST /workspace-recipes (201),
+ * and PUT /workspace-recipes/:id. POST /workspace-recipes/:id/launch answers
+ * with CreateWorkspaceResponse instead. */
 export interface RecipeResponse {
   recipe: RecipeView;
 }

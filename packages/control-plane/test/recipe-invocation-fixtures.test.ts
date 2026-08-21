@@ -32,20 +32,31 @@ function parseInvocationDescriptor(name: string, source: string): RecipeBootstra
   const value: JsonValue = JSON.parse(source);
   if (!isRecord(value)) throw new Error(`${name}: invocation.json must be an object`);
   const harness = RECIPE_HARNESSES.find((candidate) => candidate === value.harness);
-  const agentProvider = AGENT_PROVIDERS.find((candidate) => candidate === value.agentProvider);
-  if (harness === undefined || agentProvider === undefined) {
-    throw new Error(`${name}: invocation.json harness or agentProvider is invalid`);
+  if (harness === undefined) {
+    throw new Error(`${name}: invocation.json harness is invalid`);
   }
-  const bootstrap: RecipeBootstrap = { harness, agentProvider, prompt: "" };
+  const common: { model?: string; effort?: string } = {};
   if (value.model !== undefined) {
     if (!isString(value.model)) throw new Error(`${name}: model must be a string`);
-    bootstrap.model = value.model;
+    common.model = value.model;
   }
   if (value.effort !== undefined) {
     if (!isString(value.effort)) throw new Error(`${name}: effort must be a string`);
-    bootstrap.effort = value.effort;
+    common.effort = value.effort;
   }
-  return bootstrap;
+  // Only chat carries an agentProvider (it drives BLITZ_AGENT and the
+  // sender's permission value); TUI invocations must not name one.
+  if (harness === "chat") {
+    const agentProvider = AGENT_PROVIDERS.find((candidate) => candidate === value.agentProvider);
+    if (agentProvider === undefined) {
+      throw new Error(`${name}: a chat invocation.json must name a valid agentProvider`);
+    }
+    return { harness, agentProvider, prompt: "", ...common };
+  }
+  if (value.agentProvider !== undefined) {
+    throw new Error(`${name}: only chat invocations carry an agentProvider`);
+  }
+  return { harness, prompt: "", ...common };
 }
 
 function loadCases(): InvocationCase[] {
@@ -118,7 +129,7 @@ describe("recipe invocation fixture conformance", () => {
     }
   });
 
-  it("embeds the exact fixture bytes and the BLITZ_AGENT provider in the bootstrap", () => {
+  it("embeds the exact fixture bytes, and BLITZ_AGENT only for chat", () => {
     for (const { name, bootstrap, promptBytes, envBytes } of cases) {
       const script = scriptFor(bootstrap);
       expect(script, name).toContain(
@@ -131,7 +142,13 @@ describe("recipe invocation fixture conformance", () => {
       expect(script, name).toContain(
         "chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env",
       );
-      expect(script, name).toContain(`-e BLITZ_AGENT=${shellQuote(bootstrap.agentProvider)} \\`);
+      // Only chat pins the actor's adapter; a TUI recipe leaves the image
+      // default alone so the workspace chat tab keeps it.
+      if (bootstrap.harness === "chat") {
+        expect(script, name).toContain(`-e BLITZ_AGENT=${shellQuote(bootstrap.agentProvider)} \\`);
+      } else {
+        expect(script, name).not.toContain("BLITZ_AGENT");
+      }
       // The files land before the container starts; the flag rides docker run.
       expect(script.indexOf("/var/lib/blitz/recipe/prompt.txt"), name)
         .toBeLessThan(script.indexOf("docker run --detach"));
@@ -152,15 +169,32 @@ describe("recipe invocation fixture conformance", () => {
         .toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
       expect(script.indexOf("nohup docker exec"), name)
         .toBeLessThan(script.indexOf("read_host_key()"));
-      // The sender drives the exact ACP frames the webapp uses and pins yolo.
+      // Model, effort, and the provider's bypass permission are interpolated
+      // at render time — the sender reads only prompt.txt from disk.
+      expect(script, name).toContain(
+        `const MODEL = ${bootstrap.model === undefined ? "null" : JSON.stringify(bootstrap.model)};`,
+      );
+      expect(script, name).toContain(
+        `const EFFORT = ${bootstrap.effort === undefined ? "null" : JSON.stringify(bootstrap.effort)};`,
+      );
+      expect(script, name).toContain(
+        `const PERMISSION = ${JSON.stringify(
+          bootstrap.agentProvider === "claude" ? "bypassPermissions" : "never",
+        )};`,
+      );
+      expect(script, name).toContain("prompt.txt");
+      // The minimal ACP sequence, one pass, fail-loudly.
       expect(script, name).toContain("'initialize'");
       expect(script, name).toContain("'session/new'");
       expect(script, name).toContain("'session/set_config_option'");
       expect(script, name).toContain("'session/prompt'");
-      expect(script, name).toContain("'bypassPermissions'");
-      expect(script, name).toContain("'never'");
       expect(script, name).toContain("ws://127.0.0.1:7444");
       expect(script, name).toContain("x-blitz-webapp-token");
+      // Deleted machinery must stay deleted: no invocation.env re-parse, no
+      // permission-prompt auto-allow, no method-not-found responder.
+      expect(script, name).not.toContain("parseInvocation");
+      expect(script, name).not.toContain("session/request_permission");
+      expect(script, name).not.toContain("-32601");
     }
   });
 

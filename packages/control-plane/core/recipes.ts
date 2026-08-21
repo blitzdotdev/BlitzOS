@@ -142,25 +142,30 @@ function requireRecipeEditRights(principal: Principal, recipe: RecipeRow): void 
   }
 }
 
-/** The launch's bootstrap additions, derived from a validated row. Rows are
- * validated at write time, but a chat model can leave the catalog later, so
- * the launch re-derives the provider and refuses loudly instead of booting a
- * box whose BLITZ_AGENT nobody chose. */
+/** The launch's bootstrap additions, derived from a validated row. Only chat
+ * pins the adapter provider (`BLITZ_AGENT`); TUI recipes leave the image
+ * default alone. Rows are validated at write time, but a chat model can
+ * leave the catalog later, so the launch re-derives the provider and refuses
+ * loudly instead of booting a box whose BLITZ_AGENT nobody chose. */
 function recipeBootstrap(recipe: RecipeRow): RecipeBootstrap {
-  const agentProvider = recipe.harness === "chat"
-    ? (recipe.model === null ? null : agentProviderForModel(recipe.model))
-    : recipe.harness;
-  if (agentProvider === null) {
-    throw new HttpError(409, "recipe model is no longer in the agent catalog; edit the recipe");
-  }
-  const bootstrap: RecipeBootstrap = {
-    harness: recipe.harness,
-    agentProvider,
-    prompt: recipe.prompt,
-  };
+  const bootstrap: RecipeBootstrap = recipe.harness === "chat"
+    ? {
+        harness: "chat",
+        agentProvider: chatAgentProvider(recipe),
+        prompt: recipe.prompt,
+      }
+    : { harness: recipe.harness, prompt: recipe.prompt };
   if (recipe.model !== null) bootstrap.model = recipe.model;
   if (recipe.effort !== null) bootstrap.effort = recipe.effort;
   return bootstrap;
+}
+
+function chatAgentProvider(recipe: RecipeRow): AgentProvider {
+  const agentProvider = recipe.model === null ? null : agentProviderForModel(recipe.model);
+  if (agentProvider === null) {
+    throw new HttpError(409, "recipe model is no longer in the agent catalog; edit the recipe");
+  }
+  return agentProvider;
 }
 
 export function addRecipeRoutes(
@@ -177,17 +182,12 @@ export function addRecipeRoutes(
     return principal as Principal & { orgId: string };
   }
 
-  router.get("/recipes", async (context) => {
-    // The SPA's recipes page shares this path. A browser refresh navigates
-    // here with an HTML accept; serve the app shell and keep JSON for fetch
-    // callers (same pattern as GET /workspaces/:id).
+  // The API namespace is /workspace-recipes on purpose: the SPA keeps its
+  // /recipes UI paths (/recipes, /recipes/new, /recipes/:id/edit), which the
+  // Worker never claims — they fall through to the asset layer's SPA
+  // fallback, exactly like /templates.
+  router.get("/workspace-recipes", async (context) => {
     const runtime = runtimeFactory(context);
-    if (
-      runtime.assets !== undefined
-      && (context.req.header("accept") ?? "").includes("text/html")
-    ) {
-      return runtime.assets.fetch(context.req.raw);
-    }
     const principal = await memberFor(context);
     const recipes = await rows<RecipeRow>(runtime.db, {
       q: "SELECT * FROM recipes WHERE org_id = ?1 ORDER BY created_at, id",
@@ -196,7 +196,7 @@ export function addRecipeRoutes(
     return context.json<ListRecipesResponse>({ recipes: recipes.map(recipeView) });
   });
 
-  router.post("/recipes", async (context) => {
+  router.post("/workspace-recipes", async (context) => {
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
     const input = parseRecipe(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
@@ -227,37 +227,14 @@ export function addRecipeRoutes(
     }, 201);
   });
 
-  router.get("/recipes/:id", async (context) => {
-    // Browser navigations land here too — including /recipes/new, which this
-    // :id route swallows. Serve the app shell for HTML accepts; JSON callers
-    // keep the API (and "new" stays the recipe-not-found 404 it always was).
+  router.get("/workspace-recipes/:id", async (context) => {
     const runtime = runtimeFactory(context);
-    if (
-      runtime.assets !== undefined
-      && (context.req.header("accept") ?? "").includes("text/html")
-    ) {
-      return runtime.assets.fetch(context.req.raw);
-    }
     const principal = await memberFor(context);
     const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
     return context.json<RecipeResponse>({ recipe: recipeView(recipe) });
   });
 
-  router.get("/recipes/:id/edit", async (context) => {
-    // SPA-only path with no API twin: a browser refresh on the edit page gets
-    // the app shell; non-HTML callers get the same body the unrouted path
-    // produced before this route existed (the notFound JSON, byte-identical).
-    const runtime = runtimeFactory(context);
-    if (
-      runtime.assets !== undefined
-      && (context.req.header("accept") ?? "").includes("text/html")
-    ) {
-      return runtime.assets.fetch(context.req.raw);
-    }
-    throw new HttpError(404, "not found");
-  });
-
-  router.put("/recipes/:id", async (context) => {
+  router.put("/workspace-recipes/:id", async (context) => {
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
     const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
@@ -286,7 +263,7 @@ export function addRecipeRoutes(
     });
   });
 
-  router.delete("/recipes/:id", async (context) => {
+  router.delete("/workspace-recipes/:id", async (context) => {
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
     const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
@@ -301,7 +278,7 @@ export function addRecipeRoutes(
     return context.body(null, 204);
   });
 
-  router.post("/recipes/:id/launch", async (context) => {
+  router.post("/workspace-recipes/:id/launch", async (context) => {
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
     const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);

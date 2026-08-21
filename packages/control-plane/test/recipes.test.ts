@@ -46,7 +46,7 @@ async function createRecipe(
   cookie: string,
   body: object,
 ): Promise<Response> {
-  return appRequest(app, "/recipes", {
+  return appRequest(app, "/workspace-recipes", {
     ...json(body),
     headers: { Cookie: cookie, "Content-Type": "application/json" },
   });
@@ -80,14 +80,16 @@ describe("recipes", () => {
       prompt: "Aggregate usage and write evals.\n",
     });
 
-    const listed = await appRequest(app, "/recipes", { headers: { Cookie: cookie } });
+    const listed = await appRequest(app, "/workspace-recipes", { headers: { Cookie: cookie } });
     expect(listed.status).toBe(200);
     expect((await listed.json<{ recipes: RecipeView[] }>()).recipes).toEqual([recipe]);
 
-    const read = await appRequest(app, `/recipes/${recipe.id}`, { headers: { Cookie: cookie } });
+    const read = await appRequest(app, `/workspace-recipes/${recipe.id}`, {
+      headers: { Cookie: cookie },
+    });
     expect((await read.json<RecipeEnvelope>()).recipe).toEqual(recipe);
 
-    const updated = await appRequest(app, `/recipes/${recipe.id}`, {
+    const updated = await appRequest(app, `/workspace-recipes/${recipe.id}`, {
       ...json({
         name: "weekly evals",
         templateId,
@@ -104,16 +106,16 @@ describe("recipes", () => {
     expect("model" in replaced).toBe(false);
     expect("effort" in replaced).toBe(false);
 
-    expect((await appRequest(app, `/recipes/${recipe.id}`, {
+    expect((await appRequest(app, `/workspace-recipes/${recipe.id}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
     })).status).toBe(204);
-    expect((await appRequest(app, `/recipes/${recipe.id}`, {
+    expect((await appRequest(app, `/workspace-recipes/${recipe.id}`, {
       headers: { Cookie: cookie },
     })).status).toBe(404);
   });
 
-  it("serves the app shell to browser navigations and keeps JSON for fetch callers", async () => {
+  it("leaves the SPA's /recipes paths unrouted, exactly like /templates", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const templateId = await createTemplate(app, cookie);
@@ -125,38 +127,46 @@ describe("recipes", () => {
     });
     const recipe = (await created.json<RecipeEnvelope>()).recipe;
 
-    // Every SPA recipes page serves the shell on an HTML accept — including
-    // /recipes/new (swallowed by :id) and the SPA-only edit path. The branch
-    // runs before auth, like /workspaces/:id, so a logged-out refresh works.
+    // The API lives under /workspace-recipes; the SPA keeps /recipes,
+    // /recipes/new, and /recipes/:id/edit as pure UI paths. In production
+    // those fall through to the asset layer's SPA fallback (they are not in
+    // run_worker_first / API_PREFIXES); this harness has no asset layer, so
+    // the observable contract is that the router does not claim them — every
+    // one produces the same unrouted notFound body /templates does.
     const htmlAccept = "text/html,application/xhtml+xml";
+    const templatesPage = await appRequest(app, "/templates", {
+      headers: { Cookie: cookie, Accept: htmlAccept },
+    });
+    expect(templatesPage.status).toBe(404);
+    const unroutedBody = await templatesPage.text();
     const pages = ["/recipes", "/recipes/new", `/recipes/${recipe.id}`, `/recipes/${recipe.id}/edit`];
     for (const path of pages) {
-      const shell = await appRequest(app, path, {
+      const response = await appRequest(app, path, {
         headers: { Cookie: cookie, Accept: htmlAccept },
       });
-      expect(shell.status, path).toBe(200);
-      expect(shell.headers.get("content-type"), path).toContain("text/html");
-      expect(await shell.text(), path).toContain("webapp shell");
+      expect(response.status, path).toBe(404);
+      expect(await response.text(), path).toBe(unroutedBody);
     }
-    const loggedOut = await appRequest(app, "/recipes", { headers: { Accept: htmlAccept } });
-    expect(loggedOut.headers.get("content-type")).toContain("text/html");
 
-    // Without the HTML accept the API is untouched: list and read stay JSON,
-    // /recipes/new stays the :id 404, and the edit path keeps the unrouted
-    // notFound body.
-    const listed = await appRequest(app, "/recipes", { headers: { Cookie: cookie } });
+    // The JSON API answers JSON regardless of the Accept header — no shell
+    // branches survive on the API namespace.
+    const listed = await appRequest(app, "/workspace-recipes", {
+      headers: { Cookie: cookie, Accept: htmlAccept },
+    });
+    expect(listed.status).toBe(200);
     expect(listed.headers.get("content-type")).toContain("application/json");
     expect((await listed.json<{ recipes: RecipeView[] }>()).recipes).toEqual([recipe]);
-    const read = await appRequest(app, `/recipes/${recipe.id}`, { headers: { Cookie: cookie } });
+    const read = await appRequest(app, `/workspace-recipes/${recipe.id}`, {
+      headers: { Cookie: cookie, Accept: htmlAccept },
+    });
+    expect(read.headers.get("content-type")).toContain("application/json");
     expect((await read.json<RecipeEnvelope>()).recipe).toEqual(recipe);
-    const asNew = await appRequest(app, "/recipes/new", { headers: { Cookie: cookie } });
-    expect(asNew.status).toBe(404);
-    expect(await asNew.json()).toEqual({ error: "recipe not found", retryAction: null });
-    const asEdit = await appRequest(app, `/recipes/${recipe.id}/edit`, {
+    // "new" is just an unknown :id on the API namespace.
+    const asNew = await appRequest(app, "/workspace-recipes/new", {
       headers: { Cookie: cookie },
     });
-    expect(asEdit.status).toBe(404);
-    expect(await asEdit.json()).toEqual({ error: "not found", retryAction: null });
+    expect(asNew.status).toBe(404);
+    expect(await asNew.json()).toEqual({ error: "recipe not found", retryAction: null });
   });
 
   it("enforces the write-time harness, model, and effort gates", async () => {
@@ -188,7 +198,7 @@ describe("recipes", () => {
     // Another org can neither see this org's recipes nor build on its template.
     const stranger = await userSession("stranger");
     expect((await createRecipe(app, stranger, { ...base, harness: "claude" })).status).toBe(404);
-    const listed = await appRequest(app, "/recipes", { headers: { Cookie: stranger } });
+    const listed = await appRequest(app, "/workspace-recipes", { headers: { Cookie: stranger } });
     expect((await listed.json<{ recipes: RecipeView[] }>()).recipes).toEqual([]);
   });
 
@@ -209,25 +219,25 @@ describe("recipes", () => {
     const id = (await created.json<RecipeEnvelope>()).recipe.id;
     const edit = json({ name: "hijack", templateId, harness: "claude", prompt: "Go.\n" }, "PUT");
 
-    expect((await appRequest(app, `/recipes/${id}`, {
+    expect((await appRequest(app, `/workspace-recipes/${id}`, {
       ...edit,
       headers: { Cookie: bystander.cookie, "Content-Type": "application/json" },
     })).status).toBe(403);
-    expect((await appRequest(app, `/recipes/${id}`, {
+    expect((await appRequest(app, `/workspace-recipes/${id}`, {
       method: "DELETE",
       headers: { Cookie: bystander.cookie },
     })).status).toBe(403);
-    expect((await appRequest(app, `/recipes/${id}`, {
+    expect((await appRequest(app, `/workspace-recipes/${id}`, {
       ...edit,
       headers: { Cookie: author.cookie, "Content-Type": "application/json" },
     })).status).toBe(200);
-    expect((await appRequest(app, `/recipes/${id}`, {
+    expect((await appRequest(app, `/workspace-recipes/${id}`, {
       ...json({ name: "admin edit", templateId, harness: "claude", prompt: "Go.\n" }, "PUT"),
       headers: { Cookie: admin, "Content-Type": "application/json" },
     })).status).toBe(200);
   });
 
-  it("refuses to delete a template that recipes still reference", async () => {
+  it("refuses to delete a referenced template, naming the blocking recipes", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const templateId = await createTemplate(app, cookie);
@@ -239,14 +249,41 @@ describe("recipes", () => {
     });
     const id = (await created.json<RecipeEnvelope>()).recipe.id;
 
-    expect((await appRequest(app, `/workspace-templates/${templateId}`, {
+    // One blocker: singular message with the recipe's name.
+    const refusedOnce = await appRequest(app, `/workspace-templates/${templateId}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
-    })).status).toBe(409);
-    expect((await appRequest(app, `/recipes/${id}`, {
+    });
+    expect(refusedOnce.status).toBe(409);
+    expect(await refusedOnce.json()).toEqual({
+      error: "delete the 1 recipe using this template first: holder",
+      retryAction: null,
+    });
+
+    // Two blockers: the count and every name, in creation order.
+    const second = await createRecipe(app, cookie, {
+      name: "second holder",
+      templateId,
+      harness: "claude",
+      prompt: "Go.\n",
+    });
+    const secondId = (await second.json<RecipeEnvelope>()).recipe.id;
+    const refusedTwice = await appRequest(app, `/workspace-templates/${templateId}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
-    })).status).toBe(204);
+    });
+    expect(refusedTwice.status).toBe(409);
+    expect(await refusedTwice.json()).toEqual({
+      error: "delete the 2 recipes using this template first: holder, second holder",
+      retryAction: null,
+    });
+
+    for (const recipeId of [id, secondId]) {
+      expect((await appRequest(app, `/workspace-recipes/${recipeId}`, {
+        method: "DELETE",
+        headers: { Cookie: cookie },
+      })).status).toBe(204);
+    }
     expect((await appRequest(app, `/workspace-templates/${templateId}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
@@ -272,7 +309,7 @@ describe("recipes", () => {
     });
     const recipe = (await created.json<RecipeEnvelope>()).recipe;
 
-    const launched = await appRequest(app, `/recipes/${recipe.id}/launch`, {
+    const launched = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
       method: "POST",
       headers: { Cookie: cookie },
     });
@@ -325,7 +362,7 @@ describe("recipes", () => {
     expect(plainUserData).not.toContain("/var/lib/blitz/recipe");
   });
 
-  it("emits no sender for TUI harnesses and passes the vm_limit 409 through", async () => {
+  it("emits no sender and no BLITZ_AGENT for TUI harnesses and passes the vm_limit 409 through", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const templateId = await createTemplate(app, cookie);
@@ -337,25 +374,26 @@ describe("recipes", () => {
     });
     const recipe = (await created.json<RecipeEnvelope>()).recipe;
 
-    const launched = await appRequest(app, `/recipes/${recipe.id}/launch`, {
+    const launched = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
       method: "POST",
       headers: { Cookie: cookie },
     });
     expect(launched.status).toBe(201);
     const workspace = (await launched.json<WorkspaceEnvelope>()).workspace;
     const userData = providers.userData.get(workspace.id) ?? "";
-    expect(userData).toContain("-e BLITZ_AGENT='claude' \\");
+    // TUI recipes never pin the actor's adapter: the invocation files land,
+    // but the box keeps the image-default BLITZ_AGENT for its chat tab.
+    expect(userData).not.toContain("BLITZ_AGENT");
     expect(userData).toContain(
       `printf '%s' ${shellQuote(recipeInvocationEnvFile({
         harness: "claude",
-        agentProvider: "claude",
         prompt: "",
       }))} >/var/lib/blitz/recipe/invocation.env`,
     );
     expect(userData).not.toContain("RECIPE_SENDER");
 
     await env.DB.prepare("UPDATE orgs SET vm_limit = 1 WHERE id = 'personal'").run();
-    const refused = await appRequest(app, `/recipes/${recipe.id}/launch`, {
+    const refused = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
       method: "POST",
       headers: { Cookie: cookie },
     });
@@ -427,7 +465,10 @@ describe("recipes", () => {
       "--mount type=bind,src=/var/lib/blitz/home/.codex/sessions,dst=/workspace/shared/agent-usage/codex,readonly \\",
     );
 
-    // Deleting the usage folder turns capture off with it.
+    // Deleting the usage folder leaves the org columns alone — a dangling
+    // usage_folder_id is accepted (no foreign key, no cascade); the push leg
+    // inner-joins folders and simply stops exporting (pinned in
+    // usage-push.test.ts).
     expect((await appRequest(app, `/folders/${state.folderId}`, {
       method: "DELETE",
       headers: { Cookie: admin },
@@ -435,6 +476,6 @@ describe("recipes", () => {
     const after = await appRequest(app, "/orgs/self/usage-capture", {
       headers: { Cookie: admin },
     });
-    expect(await after.json()).toEqual({ enabled: false, folderId: null });
+    expect(await after.json()).toEqual({ enabled: true, folderId: state.folderId });
   });
 });

@@ -152,7 +152,7 @@ describe("agent-usage capture push", () => {
     expect(await meta?.json()).toEqual({
       workspaceId,
       recipeId: null,
-      ownerMembershipId: "personal",
+      ownerName: "Operator",
       workspaceName: expect.any(String),
     });
     expect(meta?.customMetadata?.mtime).toMatch(/^\d+$/u);
@@ -166,6 +166,15 @@ describe("agent-usage capture push", () => {
     expect(await runUsageCapturePush(runtime, freshBudget()))
       .toEqual({ workspaces: 0, files: 0 });
     expect(providers.reads).toBe(readsAfterFirst);
+
+    // The sidecar is rewritten on every pass, so display names stay fresh
+    // even when no transcript moved.
+    await env.DB.prepare("UPDATE workspaces SET name = 'renamed-run' WHERE id = ?1")
+      .bind(workspaceId).run();
+    expect(await runUsageCapturePush(runtime, freshBudget()))
+      .toEqual({ workspaces: 0, files: 0 });
+    expect(await env.BOX_IMAGES.get(`${prefix}meta.json`).then((object) => object?.json()))
+      .toMatchObject({ workspaceName: "renamed-run" });
 
     // A changed transcript is re-pushed.
     providers.files.set("codex/rollout-1.jsonl", { body: "codex-blob-more", mtime: 7_000 });
@@ -184,7 +193,7 @@ describe("agent-usage capture push", () => {
       body: JSON.stringify({ name: "usage", machineTypeId: "small", folderIds: [] }),
     });
     const templateId = (await template.json<{ template: { id: string } }>()).template.id;
-    const created = await appRequest(app, "/recipes", {
+    const created = await appRequest(app, "/workspace-recipes", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -223,6 +232,22 @@ describe("agent-usage capture push", () => {
     await env.DB.prepare("UPDATE orgs SET usage_capture = 0 WHERE id = 'personal'").run();
     expect(await runUsageCapturePush(runtime, freshBudget()))
       .toEqual({ workspaces: 0, files: 0 });
+    expect(await env.BOX_IMAGES.head(`org/personal/${folderId}/${workspaceId}/meta.json`))
+      .toBeNull();
+  });
+
+  it("stops exporting when the usage folder is deleted and the org id dangles", async () => {
+    // orgs.usage_folder_id deliberately has no foreign key and folder
+    // deletion no longer clears it; the inner join on folders is the whole
+    // guard, so a dangling id must yield a silent no-op.
+    const providers = new UsageGuestProviders();
+    const { folderId, workspaceId } = await capturingWorkspace(providers);
+    providers.files.set("claude/projects/a.jsonl", { body: "blob", mtime: 5_000 });
+    await env.DB.prepare("DELETE FROM folders WHERE id = ?1").bind(folderId).run();
+
+    expect(await runUsageCapturePush(testRuntime(providers), freshBudget()))
+      .toEqual({ workspaces: 0, files: 0 });
+    expect(providers.guestWrites).toEqual([]);
     expect(await env.BOX_IMAGES.head(`org/personal/${folderId}/${workspaceId}/meta.json`))
       .toBeNull();
   });

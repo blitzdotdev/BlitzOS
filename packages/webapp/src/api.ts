@@ -617,24 +617,24 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<void>(`/workspace-templates/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
-    listRecipes: () => request<ListRecipesResponse>("/recipes"),
-    getRecipe: (id) => request<RecipeResponse>(`/recipes/${encodeURIComponent(id)}`),
+    listRecipes: () => request<ListRecipesResponse>("/workspace-recipes"),
+    getRecipe: (id) => request<RecipeResponse>(`/workspace-recipes/${encodeURIComponent(id)}`),
     createRecipe: (input) =>
-      request<RecipeResponse>("/recipes", {
+      request<RecipeResponse>("/workspace-recipes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
     updateRecipe: (id, input) =>
-      request<RecipeResponse>(`/recipes/${encodeURIComponent(id)}`, {
+      request<RecipeResponse>(`/workspace-recipes/${encodeURIComponent(id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       }),
     deleteRecipe: (id) =>
-      request<void>(`/recipes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+      request<void>(`/workspace-recipes/${encodeURIComponent(id)}`, { method: "DELETE" }),
     launchRecipe: (id) =>
-      request<CreateWorkspaceResponse>(`/recipes/${encodeURIComponent(id)}/launch`, {
+      request<CreateWorkspaceResponse>(`/workspace-recipes/${encodeURIComponent(id)}/launch`, {
         method: "POST",
       }),
     getUsageCapture: () => request<OrgUsageCaptureResponse>("/orgs/self/usage-capture"),

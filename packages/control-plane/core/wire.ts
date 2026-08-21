@@ -199,13 +199,15 @@ export interface ListWorkspaceTemplatesResponse {
 
 /** The shared model → provider catalog.
  *
- * It mirrors the per-provider model lists the box actor accepts
+ * It mirrors the per-provider model and effort lists the box actor accepts
  * (`packages/box/actor/src/agent-config.ts`); "default" is expressed by
- * omitting the model, so it is not listed. The canonical copy lives in
+ * omitting the model or effort, so it is not listed. The providers are the
+ * TUI harness list (`HARNESSES` above) — one constant, derived, never
+ * re-spelled. The canonical copy lives in
  * `packages/schema/src/agent-catalog.ts` (core code may not import packages);
  * `test/wire-drift.test.ts` holds the two together. Extend both copies and
  * the actor catalog in the same change. */
-export const AGENT_PROVIDERS = ["claude", "codex"] as const;
+export const AGENT_PROVIDERS = HARNESSES;
 
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
@@ -214,10 +216,16 @@ export const AGENT_MODELS = {
   codex: ["gpt-5-codex", "gpt-5"],
 } satisfies Record<AgentProvider, readonly string[]>;
 
+export const AGENT_EFFORTS = {
+  claude: ["low", "medium", "high", "xhigh", "max"],
+  codex: ["low", "medium", "high"],
+} satisfies Record<AgentProvider, readonly string[]>;
+
 /** A recipe is one row: a template reference plus an invocation — harness,
  * model, effort, prompt. Launching one creates a normal workspace from the
- * template and delivers the invocation to the box (plans/RECIPES.md). */
-export const RECIPE_HARNESSES = ["claude", "codex", "chat"] as const;
+ * template and delivers the invocation to the box (plans/RECIPES.md).
+ * The harness choices are the TUI harnesses plus the headless chat run. */
+export const RECIPE_HARNESSES = [...HARNESSES, "chat"] as const;
 
 export type RecipeHarness = (typeof RECIPE_HARNESSES)[number];
 
@@ -237,8 +245,8 @@ export interface ListRecipesResponse {
   recipes: RecipeView[];
 }
 
-/** POST /recipes and PUT /recipes/:id share this full-replacement shape,
- * exactly like workspace templates. */
+/** POST /workspace-recipes and PUT /workspace-recipes/:id share this
+ * full-replacement shape, exactly like workspace templates. */
 export interface CreateRecipeRequest {
   name: string;
   templateId: string;
@@ -248,8 +256,9 @@ export interface CreateRecipeRequest {
   prompt: string;
 }
 
-/** Envelope for GET /recipes/:id, POST /recipes (201), and PUT /recipes/:id.
- * POST /recipes/:id/launch answers with CreateWorkspaceResponse instead. */
+/** Envelope for GET /workspace-recipes/:id, POST /workspace-recipes (201),
+ * and PUT /workspace-recipes/:id. POST /workspace-recipes/:id/launch answers
+ * with CreateWorkspaceResponse instead. */
 export interface RecipeResponse {
   recipe: RecipeView;
 }

@@ -10,6 +10,7 @@ import {
 import type { TenantMe } from '../src/api-adapter.js';
 import { CreateRecipeScreen } from '../src/files/CreateRecipeScreen.js';
 import { RecipesHome } from '../src/files/RecipesHome.js';
+import { TemplatesHome } from '../src/files/TemplatesHome.js';
 import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
 import { render, settle } from './dom.js';
@@ -41,7 +42,7 @@ function stub(extra?: (url: URL, init?: RequestInit) => Response | null) {
     const url = new URL(String(input));
     const handled = extra?.(url, init);
     if (handled) return handled;
-    if (url.pathname === '/recipes' && init?.method === undefined) {
+    if (url.pathname === '/workspace-recipes' && init?.method === undefined) {
       return Response.json({ recipes: [recipe] });
     }
     if (url.pathname === '/workspace-templates' && init?.method === undefined) {
@@ -86,7 +87,7 @@ describe('recipes home', () => {
   it('lists name, harness, model, and template name, and deletes with confirm', async () => {
     const deleted: string[] = [];
     const fetcher = stub((url, init) => {
-      if (url.pathname === '/recipes/r-1' && init?.method === 'DELETE') {
+      if (url.pathname === '/workspace-recipes/r-1' && init?.method === 'DELETE') {
         deleted.push(url.pathname);
         return new Response(null, { status: 204 });
       }
@@ -129,9 +130,55 @@ describe('recipes home', () => {
       view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
     });
     await settle();
-    expect(deleted).toEqual(['/recipes/r-1']);
-    expect(fetcher.mock.calls.filter(([input]) => new URL(String(input)).pathname === '/recipes'))
+    expect(deleted).toEqual(['/workspace-recipes/r-1']);
+    expect(fetcher.mock.calls.filter(([input]) =>
+      new URL(String(input)).pathname === '/workspace-recipes'))
       .toHaveLength(2);
+    await view.unmount();
+  });
+});
+
+describe('templates home', () => {
+  it('surfaces the control-plane 409 naming the blocking recipes on delete failure', async () => {
+    stub((url, init) => {
+      if (url.pathname === '/workspace-templates/template-1' && init?.method === 'DELETE') {
+        return Response.json(
+          {
+            error: 'delete the 2 recipes using this template first: weekly report, nightly audit',
+            retryAction: null,
+          },
+          { status: 409 },
+        );
+      }
+      return null;
+    });
+    const view = await render(
+      <TemplatesHome
+        client={createControlPlaneClient('https://cp.example')}
+        creating={false}
+        onNewTemplate={() => undefined}
+        onEditTemplate={() => undefined}
+        onUseTemplate={() => undefined}
+        onOpenRail={() => undefined}
+      />,
+    );
+    await settle();
+
+    const card = view.container.querySelector('.tpl-card')!;
+    expect(card.textContent).toContain('analysis starter');
+    await act(async () => {
+      card.querySelector<HTMLButtonElement>('.tpl-kebab')?.click();
+    });
+    const remove = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Delete template'))!;
+    await act(async () => { remove.click(); });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
+    });
+    await settle();
+
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('delete the 2 recipes using this template first: weekly report, nightly audit');
     await view.unmount();
   });
 });
@@ -153,7 +200,7 @@ describe('create recipe screen', () => {
 
   it('offers only the harness provider models and posts the minimal body', async () => {
     const fetcher = stub((url, init) => {
-      if (url.pathname === '/recipes' && init?.method === 'POST') {
+      if (url.pathname === '/workspace-recipes' && init?.method === 'POST') {
         // SAFETY: The screen always sends a JSON body on this route.
         const body = JSON.parse(String(init.body)) as { name: string };
         return Response.json({ recipe: { id: 'r-2', ...body } }, { status: 201 });
@@ -184,7 +231,7 @@ describe('create recipe screen', () => {
     await submit(view);
 
     const post = fetcher.mock.calls.find(([input, init]) => (
-      new URL(String(input)).pathname === '/recipes' && init?.method === 'POST'
+      new URL(String(input)).pathname === '/workspace-recipes' && init?.method === 'POST'
     ));
     // No model and no effort keys at all: absent means the harness default.
     expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
@@ -199,7 +246,7 @@ describe('create recipe screen', () => {
 
   it('requires a model for chat, scopes efforts to its provider, and posts both', async () => {
     const fetcher = stub((url, init) => {
-      if (url.pathname === '/recipes' && init?.method === 'POST') {
+      if (url.pathname === '/workspace-recipes' && init?.method === 'POST') {
         // SAFETY: The screen always sends a JSON body on this route.
         const body = JSON.parse(String(init.body)) as { name: string };
         return Response.json({ recipe: { id: 'r-2', ...body } }, { status: 201 });
@@ -242,7 +289,7 @@ describe('create recipe screen', () => {
     await submit(view);
 
     const post = fetcher.mock.calls.find(([input, init]) => (
-      new URL(String(input)).pathname === '/recipes' && init?.method === 'POST'
+      new URL(String(input)).pathname === '/workspace-recipes' && init?.method === 'POST'
     ));
     expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
       name: 'triage inbox',
@@ -277,10 +324,10 @@ describe('create recipe screen', () => {
 
   it('prefills edit mode from the recipe and saves through PUT', async () => {
     const fetcher = stub((url, init) => {
-      if (url.pathname === '/recipes/r-1' && init?.method === undefined) {
+      if (url.pathname === '/workspace-recipes/r-1' && init?.method === undefined) {
         return Response.json({ recipe });
       }
-      if (url.pathname === '/recipes/r-1' && init?.method === 'PUT') {
+      if (url.pathname === '/workspace-recipes/r-1' && init?.method === 'PUT') {
         // SAFETY: The screen always sends a JSON body on this route.
         const body = JSON.parse(String(init.body)) as { name: string };
         return Response.json({ recipe: { ...recipe, ...body } });
@@ -305,7 +352,7 @@ describe('create recipe screen', () => {
     await submit(view);
 
     const put = fetcher.mock.calls.find(([input, init]) => (
-      new URL(String(input)).pathname === '/recipes/r-1' && init?.method === 'PUT'
+      new URL(String(input)).pathname === '/workspace-recipes/r-1' && init?.method === 'PUT'
     ));
     expect(JSON.parse(String(put?.[1]?.body ?? '{}'))).toEqual({
       name: 'weekly report v2',

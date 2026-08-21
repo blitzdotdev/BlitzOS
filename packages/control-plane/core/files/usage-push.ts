@@ -30,11 +30,13 @@ const USAGE_GUEST_ROOT = "/workspace/shared/agent-usage/";
 
 /** The sidecar layout is AI-read, pinned here with the directory layout:
  * `<folder>/<workspaceId>/meta.json` beside `<workspaceId>/claude/**` and
- * `<workspaceId>/codex/**` vendor blobs (deliberately unparsed). */
+ * `<workspaceId>/codex/**` vendor blobs (deliberately unparsed). The owner is
+ * the human-readable name — the eval agent groups and reports by name, and a
+ * membership id would send it back to a database it cannot reach. */
 interface UsageMeta {
   workspaceId: string;
   recipeId: string | null;
-  ownerMembershipId: string;
+  ownerName: string;
   workspaceName: string;
 }
 
@@ -42,19 +44,18 @@ interface UsageWorkspaceRow extends GuestChannel {
   org_id: string;
   usage_folder_id: string;
   recipe_id: string | null;
-  owner_membership_id: string;
   workspace_name: string;
   owner_name: string;
 }
 
 async function usageWorkspaceRows(runtime: CoreRuntime): Promise<UsageWorkspaceRow[]> {
-  // The folders join drops orgs whose usage folder disappeared out-of-band;
-  // folder deletion also clears the org columns, so this is belt and braces.
+  // The folders join is the whole guard against a deleted usage folder:
+  // orgs.usage_folder_id deliberately has no foreign key, so a dangling id
+  // just yields no rows here and the export stops.
   return rows<UsageWorkspaceRow>(runtime.db, {
     q: `SELECT workspace.id AS workspace_id, workspace.vm_id,
                workspace.tunnel_hostname, workspace.org_id,
-               workspace.recipe_id, workspace.owner_membership_id,
-               workspace.name AS workspace_name,
+               workspace.recipe_id, workspace.name AS workspace_name,
                org.usage_folder_id, owner_user.name AS owner_name
         FROM workspaces workspace
         JOIN orgs org
@@ -70,19 +71,18 @@ async function usageWorkspaceRows(runtime: CoreRuntime): Promise<UsageWorkspaceR
   });
 }
 
-/** Written once per workspace; the HEAD probe keeps the refresh at one cheap
- * subrequest per tick. */
-async function ensureMeta(
+/** Overwritten on every push tick — names are display data that go stale, so
+ * a rename reaches the sidecar on the next pass instead of never. */
+async function writeMeta(
   runtime: CoreRuntime,
   target: UsageWorkspaceRow,
   prefix: string,
 ): Promise<void> {
   const key = `${prefix}meta.json`;
-  if (await runtime.fileObjects.head(key) !== null) return;
   const meta: UsageMeta = {
     workspaceId: target.workspace_id,
     recipeId: target.recipe_id,
-    ownerMembershipId: target.owner_membership_id,
+    ownerName: target.owner_name,
     workspaceName: target.workspace_name,
   };
   await runtime.fileObjects.put(key, JSON.stringify(meta), {
@@ -106,7 +106,7 @@ async function pushWorkspaceUsage(
   // nothing created, not even the root collection.
   if (guestFiles === null || guestFiles.size === 0) return 0;
   const prefix = `${folderObjectPrefix(target.org_id, target.usage_folder_id)}${target.workspace_id}/`;
-  await ensureMeta(runtime, target, prefix);
+  await writeMeta(runtime, target, prefix);
   const remote = await listRemoteUnder(runtime, prefix);
   let pushed = 0;
   let failedFiles = 0;

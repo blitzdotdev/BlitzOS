@@ -30,7 +30,7 @@ The folder layout, which the sidecar and the eval prompt below rely on:
 ```
 Agent usage/
   <workspace-id>/
-    meta.json          {workspaceId, recipeId, ownerMembershipId, workspaceName}
+    meta.json          {workspaceId, recipeId, ownerName, workspaceName}
     claude/…           Claude Code transcripts (opaque)
     codex/…            Codex transcripts (opaque)
 ```
@@ -89,7 +89,7 @@ You are building an eval suite from this organization's real agent usage.
 
 Corpus: /workspace/shared/Agent usage/ — one directory per workspace. Each
 <workspace-id>/ holds a meta.json sidecar ({workspaceId, recipeId,
-ownerMembershipId, workspaceName}) beside raw harness transcripts under
+ownerName, workspaceName}) beside raw harness transcripts under
 claude/ and codex/. The transcripts are opaque vendor formats: read them for
 content, never rewrite or reorganize them, and never copy secrets out of them.
 

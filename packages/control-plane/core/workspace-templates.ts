@@ -393,13 +393,18 @@ export function addWorkspaceTemplateRoutes(
     // Recipes hold a NOT NULL reference to their template; deleting it out
     // from under them would leave routines that can never launch (and D1
     // enforces the key). Refuse loudly instead of cascading a delete the
-    // caller did not ask for.
-    const recipe = await first<{ id: string }>(runtime.db, {
-      q: "SELECT id FROM recipes WHERE template_id = ?1 LIMIT 1",
+    // caller did not ask for — and name the blockers so the caller can act.
+    const referencingRecipes = await rows<{ name: string }>(runtime.db, {
+      q: "SELECT name FROM recipes WHERE template_id = ?1 ORDER BY created_at, id",
       v: [template.id],
     });
-    if (recipe !== null) {
-      throw new HttpError(409, "recipes use this template; delete or repoint them first");
+    if (referencingRecipes.length > 0) {
+      const count = referencingRecipes.length;
+      const names = referencingRecipes.map(({ name }) => name).join(", ");
+      throw new HttpError(
+        409,
+        `delete the ${String(count)} recipe${count === 1 ? "" : "s"} using this template first: ${names}`,
+      );
     }
     await rows(runtime.db, {
       q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",

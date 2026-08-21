@@ -36,7 +36,10 @@ type TuiHarness = "claude" | "codex";
 
 interface InvocationDescriptor {
   harness: TuiHarness | "chat";
-  agentProvider: string;
+  /** Chat only: the provider whose adapter the boot pins via BLITZ_AGENT.
+   * Unused guest-side — the guest consumes invocation.env, never the
+   * descriptor — but typed so the corpus shape stays honest. */
+  agentProvider?: string;
   model?: string;
   effort?: string;
 }

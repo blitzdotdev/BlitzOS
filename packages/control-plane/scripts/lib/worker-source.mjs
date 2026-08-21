@@ -8,7 +8,7 @@ const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
-  "/sessions", "/workspaces", "/workspace-templates", "/recipes", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
+  "/sessions", "/workspaces", "/workspace-templates", "/workspace-recipes", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
   "/hosts/", "/oauth/", "/boxes/", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
@@ -105,6 +105,10 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "vm_limit", type: "integer", sqlType: "integer", notNull: true, check: "vm_limit > 0" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true, check: "created_at >= 0" },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true, check: "updated_at >= created_at" },
+        { name: "usage_capture", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "usage_capture IN (0, 1)" },
+        // No folders foreignKey on purpose (migration 0021): a deleted usage
+        // folder may dangle here; the usage-push leg inner-joins folders.
+        { name: "usage_folder_id", type: "text", sqlType: "text" },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -163,6 +167,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "environment", type: "text", sqlType: "text" },
         { name: "files_ready", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "files_ready IN (0, 1)" },
         { name: "agent_rule_id", type: "text", sqlType: "text", foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" } },
+        // Forward reference: recipes is created later in this list (it needs
+        // workspace_templates first); SQLite defers FK resolution to DML.
+        { name: "recipe_id", type: "text", sqlType: "text", foreignKey: { table: "recipes", column: "id" } },
       ],
       indexes: [{ name: "owner", fields: ["owner_id", "created_at"] }, { name: "phase", fields: ["phase", "updated_at"] }],
       extensions: [DENY_ALL_RULES],
@@ -201,6 +208,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
     { name: "folder_attachments", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "attached_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "guest_path", type: "text", sqlType: "text" }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
     { name: "workspace_templates", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "machine_type_id", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }, { name: "environment", type: "text", sqlType: "text" }, { name: "agent_rule_id", type: "text", sqlType: "text", foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" } }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }], extensions: [DENY_ALL_RULES] },
     { name: "workspace_template_folders", fields: [{ name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["template_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "template_id"] }], extensions: [DENY_ALL_RULES] },
+    // Flat like agent_rules/broker_members: this file already sits on the
+    // max-lines warn list, so a new table stays terse instead of growing it.
+    { name: "recipes", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "harness", type: "text", sqlType: "text", notNull: true, check: "harness IN ('claude', 'codex', 'chat')" }, { name: "model", type: "text", sqlType: "text" }, { name: "effort", type: "text", sqlType: "text" }, { name: "prompt", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }, { name: "template", fields: "template_id" }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",
       fields: [

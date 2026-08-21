@@ -458,8 +458,7 @@ export async function enrollBox(
 export async function resetDatabase(): Promise<void> {
   // Ordered children-first because D1 enforces foreign keys: recipes sit
   // between workspaces (which stamp recipe_id) and workspace_templates
-  // (which recipes reference), and orgs.usage_folder_id must clear before
-  // folders can go.
+  // (which recipes reference).
   const tables = [
     "microvm_hosts",
     "workspace_template_folders",
@@ -491,8 +490,5 @@ export async function resetDatabase(): Promise<void> {
     "users",
     "principals",
   ];
-  await env.DB.batch([
-    env.DB.prepare("UPDATE orgs SET usage_folder_id = NULL"),
-    ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
-  ]);
+  await env.DB.batch(tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
 }

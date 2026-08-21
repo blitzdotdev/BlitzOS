@@ -338,7 +338,7 @@ export interface RecipeLaunch {
 }
 
 /** The one workspace-create path. POST /workspaces and POST
- * /recipes/:id/launch both land here, so a recipe launch rides the exact
+ * /workspace-recipes/:id/launch both land here, so a recipe launch rides the exact
  * template flows — machine-type default, environment, agent rule, folder
  * attach with the launcher as principal, and the vm_limit 409 — instead of a
  * parallel copy. Returns the created row, which may already be in phase

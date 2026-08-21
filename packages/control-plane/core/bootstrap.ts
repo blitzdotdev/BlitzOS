@@ -1,17 +1,29 @@
-import type { AgentProvider, RecipeHarness } from "./wire.js";
+import type { AgentProvider } from "./wire.js";
 
-/** A recipe launch's additions to the boot: the `BLITZ_AGENT` flag, the two
- * invocation files, and (for `chat`) the prompt sender. Built by
- * core/recipes.ts from a validated recipe row. */
-export interface RecipeBootstrap {
-  harness: RecipeHarness;
-  /** The provider whose adapter the actor runs (`BLITZ_AGENT`): the harness
-   * itself for claude/codex, the pinned model's provider for chat. */
+/** A TUI recipe launch adds only the two invocation files; `blitz-term`
+ * consumes them, and the box keeps its image-default `BLITZ_AGENT`, so the
+ * workspace chat tab is untouched by the recipe. */
+export interface TuiRecipeBootstrap {
+  harness: AgentProvider;
+  model?: string;
+  effort?: string;
+  prompt: string;
+}
+
+/** A chat recipe launch additionally pins the actor's adapter with
+ * `-e BLITZ_AGENT` (the pinned model's provider) and emits the prompt
+ * sender. */
+export interface ChatRecipeBootstrap {
+  harness: "chat";
   agentProvider: AgentProvider;
   model?: string;
   effort?: string;
   prompt: string;
 }
+
+/** A recipe launch's additions to the boot. Built by core/recipes.ts from a
+ * validated recipe row. */
+export type RecipeBootstrap = TuiRecipeBootstrap | ChatRecipeBootstrap;
 
 export interface BootstrapOptions {
   boxImageSha256: string;
@@ -36,9 +48,11 @@ export function shellQuote(value: string): string {
 /** The invocation file a recipe launch writes to
  * /var/lib/blitz/recipe/invocation.env: one shell-sourceable KEY='value' line
  * per set key, HARNESS then MODEL then EFFORT, unset keys omitted, values
- * single-quoted with shellQuote's escaping. Readers: the chat sender emitted
- * below today, `blitz-term` in the Phase 2 box image. Pinned by
- * `packages/schema/fixtures/recipe-invocation/` and its conformance suite. */
+ * single-quoted with shellQuote's escaping. Sole reader: the shared bash
+ * parser `blitz-recipe-invocation` that `blitz-term` sources (the chat sender
+ * gets model/effort interpolated at render time and reads only prompt.txt).
+ * Pinned by `packages/schema/fixtures/recipe-invocation/` and its conformance
+ * suite. */
 export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
   const lines = [`HARNESS=${shellQuote(recipe.harness)}`];
   if (recipe.model !== undefined) lines.push(`MODEL=${shellQuote(recipe.model)}`);
@@ -49,13 +63,26 @@ export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
 /** The chat-harness prompt sender. Emitted into the bootstrap as a quoted
  * heredoc and `docker exec`'d in the background as the blitz user; it retries
  * connecting to the actor with the box's own webapp token (the static-token
- * path grants owner, and 127.0.0.1 is an allowed origin), then drives the
- * exact ACP frames the webapp chat client sends. Best effort: it exits
- * nonzero on failure and can never fail the boot. Plain CommonJS with no
- * template literals so the surrounding TypeScript template stays literal;
- * `ws` is resolved from the actor's vendored node_modules because Node's
- * global WebSocket cannot send the auth header. */
-const RECIPE_SENDER_SOURCE = String.raw`'use strict';
+ * path grants owner, and 127.0.0.1 is an allowed origin), then runs the
+ * minimal ACP sequence once: initialize, session/new, the pinned config
+ * options, session/prompt — and exits without waiting for the turn. Model,
+ * effort, and the provider's bypass permission are control-plane-known, so
+ * they are interpolated at render time; the sender reads only prompt.txt from
+ * disk. Any error after the handshake is logged to the delivery log and exits
+ * nonzero — fail loudly, but never the boot (it runs detached). Plain
+ * CommonJS with no template literals so the surrounding TypeScript template
+ * stays literal; `ws` is resolved from the actor's vendored node_modules
+ * because Node's global WebSocket cannot send the auth header. */
+function recipeSenderSource(recipe: ChatRecipeBootstrap): string {
+  // JSON.stringify emits valid JS string literals; model and effort are
+  // catalog/pattern-validated tokens, so none of them can form the heredoc
+  // terminator or a template-literal escape.
+  const model = recipe.model === undefined ? "null" : JSON.stringify(recipe.model);
+  const effort = recipe.effort === undefined ? "null" : JSON.stringify(recipe.effort);
+  const permission = JSON.stringify(
+    recipe.agentProvider === "claude" ? "bypassPermissions" : "never",
+  );
+  return String.raw`'use strict';
 const fs = require('node:fs');
 const WebSocket = require('/opt/blitz/actor/node_modules/ws');
 
@@ -63,7 +90,11 @@ const RECIPE_DIR = '/var/lib/blitz/recipe';
 const TOKEN_PATH = '/var/lib/blitz/webapp-token';
 const ACTOR_URL = 'ws://127.0.0.1:7444';
 const CONNECT_DEADLINE_MS = Date.now() + 10 * 60 * 1000;
+const CONNECT_RETRY_MS = 3000;
 const REQUEST_TIMEOUT_MS = 120 * 1000;
+const MODEL = ${model};
+const EFFORT = ${effort};
+const PERMISSION = ${permission};
 
 function log(line) {
   const stamped = new Date().toISOString() + ' ' + line + '\n';
@@ -79,19 +110,6 @@ function describe(error) {
 
 function sleep(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
-}
-
-function unquote(value) {
-  return value.split("'\"'\"'").join("'");
-}
-
-function parseInvocation(text) {
-  const invocation = {};
-  for (const line of text.split('\n')) {
-    const match = /^(HARNESS|MODEL|EFFORT)='(.*)'$/.exec(line);
-    if (match !== null) invocation[match[1]] = unquote(match[2]);
-  }
-  return invocation;
 }
 
 function connectOnce(token) {
@@ -110,145 +128,104 @@ function connectOnce(token) {
   });
 }
 
-function rpcClient(socket) {
-  let nextId = 1;
-  const pending = new Map();
-  socket.on('message', function (data) {
-    let frame = null;
+async function connectUntilDeadline() {
+  while (Date.now() < CONNECT_DEADLINE_MS) {
     try {
-      frame = JSON.parse(String(data));
-    } catch (ignored) {
-      return;
+      const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
+      if (token === '') throw new Error('webapp token is empty');
+      return await connectOnce(token);
+    } catch (error) {
+      log('connect attempt failed: ' + describe(error));
     }
-    if (frame === null || typeof frame !== 'object') return;
-    if (typeof frame.method === 'string') {
-      if (frame.id === undefined) return;
-      if (frame.method === 'session/request_permission') {
-        const options = frame.params && Array.isArray(frame.params.options) ? frame.params.options : [];
-        const allow = options.find(function (option) { return option && option.kind === 'allow_always'; })
-          || options.find(function (option) { return option && option.kind === 'allow_once'; });
-        const outcome = allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
-        socket.send(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: { outcome: outcome } }));
-        return;
-      }
-      socket.send(JSON.stringify({
-        jsonrpc: '2.0',
-        id: frame.id,
-        error: { code: -32601, message: 'recipe sender does not answer ' + frame.method },
-      }));
-      return;
-    }
-    const settled = pending.get(frame.id);
-    if (settled === undefined) return;
-    pending.delete(frame.id);
-    if ('error' in frame) settled.reject(new Error(settled.method + ' failed: ' + JSON.stringify(frame.error)));
-    else settled.resolve(frame.result);
-  });
-  socket.on('close', function () {
-    for (const settled of pending.values()) {
-      settled.reject(new Error('socket closed before ' + settled.method + ' answered'));
-    }
-    pending.clear();
-  });
-  return function request(method, params, timeoutMs) {
-    return new Promise(function (resolve, reject) {
-      const id = nextId;
-      nextId += 1;
-      const timer = timeoutMs > 0
-        ? setTimeout(function () {
-            pending.delete(id);
-            reject(new Error(method + ' timed out after ' + timeoutMs + ' ms'));
-          }, timeoutMs)
-        : null;
-      pending.set(id, {
-        method: method,
-        resolve: function (value) { if (timer !== null) clearTimeout(timer); resolve(value); },
-        reject: function (error) { if (timer !== null) clearTimeout(timer); reject(error); },
-      });
-      socket.send(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
-    });
-  };
+    await sleep(Math.max(0, Math.min(CONNECT_RETRY_MS, CONNECT_DEADLINE_MS - Date.now())));
+  }
+  throw new Error('gave up connecting to the actor: deadline passed');
 }
 
-async function deliver(socket, invocation, prompt, markPrompted) {
-  const request = rpcClient(socket);
-  await request('initialize', {
-    protocolVersion: 1,
-    clientCapabilities: {},
-    clientInfo: { name: 'blitz-recipe-sender', version: '0.1.0' },
-  }, REQUEST_TIMEOUT_MS);
-  const created = await request('session/new', { cwd: '/workspace', mcpServers: [] }, REQUEST_TIMEOUT_MS);
-  const sessionId = created.sessionId;
-  let options = Array.isArray(created.configOptions) ? created.configOptions : [];
-  async function choose(configId, value) {
-    const answer = await request('session/set_config_option', {
-      sessionId: sessionId,
-      configId: configId,
-      value: value,
+let nextId = 0;
+
+function request(socket, method, params) {
+  nextId += 1;
+  const id = nextId;
+  return new Promise(function (resolve, reject) {
+    const timer = setTimeout(function () {
+      settle(new Error(method + ' timed out after ' + REQUEST_TIMEOUT_MS + ' ms'), undefined);
     }, REQUEST_TIMEOUT_MS);
-    if (Array.isArray(answer.configOptions)) options = answer.configOptions;
-  }
-  if (invocation.MODEL) await choose('model', invocation.MODEL);
-  if (invocation.EFFORT) await choose('effort', invocation.EFFORT);
-  const permission = options.find(function (option) { return option && option.id === 'permission'; });
-  const choices = permission && Array.isArray(permission.options)
-    ? permission.options.map(function (choice) { return choice.value; })
-    : [];
-  const bypass = choices.indexOf('bypassPermissions') !== -1
-    ? 'bypassPermissions'
-    : choices.indexOf('never') !== -1 ? 'never' : null;
-  if (bypass !== null) await choose('permission', bypass);
-  markPrompted();
-  log('prompt submitted to session ' + sessionId + '; waiting for the turn to finish');
-  return request('session/prompt', {
-    sessionId: sessionId,
-    prompt: [{ type: 'text', text: prompt }],
-  }, 0);
+    function settle(error, result) {
+      clearTimeout(timer);
+      socket.removeListener('message', onMessage);
+      socket.removeListener('close', onClose);
+      if (error === null) resolve(result);
+      else reject(error);
+    }
+    function onMessage(data) {
+      let frame = null;
+      try {
+        frame = JSON.parse(String(data));
+      } catch (ignored) {
+        return;
+      }
+      // Responses only: inbound requests and notifications carry a method
+      // and are left alone (permissions are pre-bypassed, so nothing the
+      // actor asks needs an answer from this client).
+      if (frame === null || typeof frame !== 'object' || typeof frame.method === 'string') return;
+      if (frame.id !== id) return;
+      if ('error' in frame) settle(new Error(method + ' failed: ' + JSON.stringify(frame.error)), undefined);
+      else settle(null, frame.result);
+    }
+    function onClose() {
+      settle(new Error('socket closed before ' + method + ' answered'), undefined);
+    }
+    socket.on('message', onMessage);
+    socket.on('close', onClose);
+    socket.send(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
+  });
 }
 
 async function main() {
   let prompt = null;
-  let invocation = null;
   try {
     prompt = fs.readFileSync(RECIPE_DIR + '/prompt.txt', 'utf8');
-    invocation = parseInvocation(fs.readFileSync(RECIPE_DIR + '/invocation.env', 'utf8'));
   } catch (error) {
-    log('recipe invocation files are unreadable: ' + describe(error));
+    log('recipe prompt is unreadable: ' + describe(error));
     process.exit(1);
   }
-  let delayMs = 3000;
-  while (Date.now() < CONNECT_DEADLINE_MS) {
-    let socket = null;
-    let prompted = false;
-    try {
-      const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
-      if (token === '') throw new Error('webapp token is empty');
-      socket = await connectOnce(token);
-      const outcome = await deliver(socket, invocation, prompt, function () { prompted = true; });
-      log('recipe turn finished: ' + JSON.stringify(outcome));
-      socket.close();
-      process.exit(0);
-    } catch (error) {
-      if (socket !== null) {
-        try { socket.close(); } catch (ignored) {}
-      }
-      log('delivery attempt failed: ' + describe(error));
-      if (prompted) {
-        log('prompt was already submitted; not retrying to avoid a duplicate turn');
-        process.exit(1);
-      }
-    }
-    await sleep(Math.max(0, Math.min(delayMs, CONNECT_DEADLINE_MS - Date.now())));
-    delayMs = Math.min(delayMs * 2, 60000);
+  const socket = await connectUntilDeadline();
+  await request(socket, 'initialize', {
+    protocolVersion: 1,
+    clientCapabilities: {},
+    clientInfo: { name: 'blitz-recipe-sender', version: '0.1.0' },
+  });
+  const created = await request(socket, 'session/new', { cwd: '/workspace', mcpServers: [] });
+  if (created === null || typeof created !== 'object' || typeof created.sessionId !== 'string') {
+    throw new Error('session/new returned no sessionId');
   }
-  log('recipe prompt delivery gave up: deadline passed');
-  process.exit(1);
+  const sessionId = created.sessionId;
+  if (MODEL !== null) {
+    await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'model', value: MODEL });
+  }
+  if (EFFORT !== null) {
+    await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'effort', value: EFFORT });
+  }
+  await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'permission', value: PERMISSION });
+  nextId += 1;
+  socket.send(JSON.stringify({
+    jsonrpc: '2.0',
+    id: nextId,
+    method: 'session/prompt',
+    params: { sessionId: sessionId, prompt: [{ type: 'text', text: prompt }] },
+  }));
+  log('prompt submitted to session ' + sessionId);
+  // Let the frame flush; the turn itself runs in the actor without us.
+  await sleep(2000);
+  process.exit(0);
 }
 
 main().catch(function (error) {
-  log('recipe sender crashed: ' + describe(error));
+  log('recipe delivery failed: ' + describe(error));
   process.exit(1);
 });`;
+}
 
 /** Emits the first-boot script a VM runs: bash, with Python inline for the
  * box-image manifest. It is a template literal rather than a file because a
@@ -373,7 +350,9 @@ printf '%s' ${shellQuote(recipeInvocationEnvFile(recipe))} >/var/lib/blitz/recip
 chown 1000:1000 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
 chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
 `;
-  const agentFlag = recipe === undefined
+  // Only chat pins the actor's adapter; TUI recipes leave the image-default
+  // BLITZ_AGENT alone so the workspace chat tab keeps it.
+  const agentFlag = recipe?.harness !== "chat"
     ? ""
     : `  -e BLITZ_AGENT=${shellQuote(recipe.agentProvider)} \\\n`;
   // The two transcript HOME dirs pre-exist owned by the blitz user so the
@@ -395,7 +374,7 @@ install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
   const promptSender = recipe?.harness !== "chat"
     ? ""
     : `cat >/var/lib/blitz/recipe/sender.cjs <<'RECIPE_SENDER'
-${RECIPE_SENDER_SOURCE}
+${recipeSenderSource(recipe)}
 RECIPE_SENDER
 chown 1000:1000 /var/lib/blitz/recipe/sender.cjs
 chmod 0600 /var/lib/blitz/recipe/sender.cjs

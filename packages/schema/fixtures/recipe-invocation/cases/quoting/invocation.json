@@ -1,6 +1,5 @@
 {
   "harness": "codex",
-  "agentProvider": "codex",
   "model": "gpt-5",
   "effort": "medium"
 }
