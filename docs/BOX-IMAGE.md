@@ -52,6 +52,31 @@ The workflow appends the immutable digests to the GitHub release notes. Then:
 Pin by digest, not by tag: the VM pulls whatever the reference resolves to at
 boot, and a digest is the only immutable reference.
 
+### Automatic releases (tag → deploy)
+
+`release.yml` finishes the release for you when two repository secrets exist:
+
+- `PROD_WRANGLER_TOML` — the full contents of your deployment's
+  `wrangler.toml`, in the comment-free generated form (the deploy cannot
+  patch a TOML that holds comments).
+- `CLOUDFLARE_API_TOKEN` — a token that can do what the local deploy does:
+  Workers Scripts Edit, D1 Edit, and Workers R2 Storage Edit on the account.
+
+With both set, every `v*` tag push builds the images and then deploys the
+control plane with `BOX_IMAGE_REF` pinned to the digest it just pushed —
+steps 2 and 3 above run in CI, and no manual release step remains. The CI
+deploy is the same `npm run deploy` an operator runs: it applies D1
+migrations and ships the worker code at the tag, so a tag is a full platform
+release, not only an image swap. Worker secrets never touch CI — the deploy
+only checks that they exist on the Worker.
+
+Without the secrets the job skips with a notice, so forks and CI-only
+checkouts are unaffected. The one manual step left is one-time: make the
+`blitz-box` GHCR package public (step 1 above). The deploy job verifies the
+digest is publicly pullable before deploying and fails otherwise — so on
+your very first release, flip the visibility when that step fails, then
+re-run the job. Nothing deploys an image workspaces cannot pull.
+
 ## Mode B: host the archive in R2
 
 Build the image (see below), then publish it with the packaging script:

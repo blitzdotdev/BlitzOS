@@ -25,5 +25,5 @@ test("no-console-in-core flags console members and honors exact allowed files", 
   );
 
   assert.equal(diagnostics.length, 4);
-  assert.ok(diagnostics.every(({ filename }) => filename.endsWith("/bad.ts")));
+  assert.ok(diagnostics.every(({ filename }) => filename === "bad.ts"));
 });

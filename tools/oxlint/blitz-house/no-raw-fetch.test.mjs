@@ -25,5 +25,5 @@ test("no-raw-fetch flags direct global fetch calls and honors exact allowed file
   );
 
   assert.equal(diagnostics.length, 4);
-  assert.ok(diagnostics.every(({ filename }) => filename.endsWith("/bad.ts")));
+  assert.ok(diagnostics.every(({ filename }) => filename === "bad.ts"));
 });
