@@ -12,6 +12,7 @@ import { createClient, type WebDAVClient } from 'webdav';
 import {
   ApiAdapter,
   ApiError,
+  type V2WorkspaceRecord,
 } from './api-adapter';
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView, FolderAttachmentView } from '@blitzos/schema';
@@ -23,8 +24,10 @@ import {
 } from './WebAppHeader';
 import { FileIcon } from './WebAppIcons';
 import { DriveHome } from './files/DriveHome';
+import { CreateRecipeScreen } from './files/CreateRecipeScreen';
 import { CreateTemplateScreen } from './files/CreateTemplateScreen';
 import { DriveRail, type DriveRailNav } from './files/DriveRail';
+import { RecipesHome } from './files/RecipesHome';
 import { TemplatesHome } from './files/TemplatesHome';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import {
@@ -48,6 +51,9 @@ import {
   drivePath,
   folderPagePath,
   parseAppRoute,
+  recipeEditPath,
+  recipeNewPath,
+  recipesPath,
   settingsPath,
   workspacePath,
   type SettingsSection,
@@ -775,11 +781,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     navigateToWorkspacePage(workspaceId);
   }, [navigateToWorkspacePage, store.workspaces]);
 
-  const createWorkspace = useCallback(async (input: CreateWorkspaceDialogInput) => {
+  // One tail for everything that mints a workspace: the create dialog and
+  // recipe launches both adopt the record and navigate to it the same way.
+  const adoptCreatedWorkspace = useCallback(async (
+    create: () => Promise<V2WorkspaceRecord>,
+  ) => {
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
-      const record = await api.createWorkspace(input);
+      const record = await create();
       rememberWorkspaceEndpoints(workspaceEndpoints.current, [record], resolver);
       dispatch({ type: 'workspace_created', record, agentDefault: 'claude' });
       if (record.canControl) {
@@ -793,7 +803,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     } finally {
       setCreateWorkspaceBusy(false);
     }
-  }, [api, navigateToWorkspacePage, resolver]);
+  }, [navigateToWorkspacePage, resolver]);
+  const createWorkspace = useCallback(
+    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => api.createWorkspace(input)),
+    [adoptCreatedWorkspace, api],
+  );
+  // The launch failure (for example the vm-limit 409) surfaces through the
+  // same notice the create dialog uses, with the control plane's message.
+  const launchRecipe = useCallback(
+    (recipeId: string) => adoptCreatedWorkspace(() => api.launchRecipe(recipeId)),
+    [adoptCreatedWorkspace, api],
+  );
 
   const setSidePaneWidth = useCallback((width: number) => {
     setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
@@ -1374,6 +1394,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onSelectSession={selectTtydSession}
       onOpenDrive={() => navigateTo(drivePath())}
       onOpenTemplates={() => navigateTo(templatesPath())}
+      onOpenRecipes={() => navigateTo(recipesPath())}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
       onSwitchOrg={(orgId) => {
@@ -1478,6 +1499,53 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
         {updateNotice}
+      </main>
+    );
+  }
+
+  if (route.page === 'recipes') {
+    return (
+      <main className="drive-shell" aria-busy={!loaded}>
+        {railFor('recipes', null)}
+        {loaded && store.viewer ? (
+          <RecipesHome
+            client={client}
+            launching={createWorkspaceBusy}
+            onNewRecipe={() => navigateTo(recipeNewPath())}
+            onEditRecipe={(recipe) => navigateTo(recipeEditPath(recipe.id))}
+            onRunRecipe={(recipe) => { void launchRecipe(recipe.id); }}
+            onOpenRail={() => setDrawerOpen(true)}
+          />
+        ) : (
+          <div className="drive-content">
+            <div className="drive-empty" role="status">Loading…</div>
+          </div>
+        )}
+        {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
+        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {updateNotice}
+      </main>
+    );
+  }
+
+  if (route.page === 'recipe-new' || route.page === 'recipe-edit') {
+    const leaveToRecipes = () => navigateTo(recipesPath());
+    return (
+      <main className="drive-shell" aria-busy={!loaded}>
+        {railFor('recipes', null)}
+        {loaded && store.viewer ? (
+          <CreateRecipeScreen
+            client={client}
+            editRecipeId={route.page === 'recipe-edit' ? route.recipeId : undefined}
+            onSaved={leaveToRecipes}
+            onCancel={leaveToRecipes}
+          />
+        ) : (
+          <div className="drive-content">
+            <div className="drive-empty" role="status">Loading…</div>
+          </div>
+        )}
+        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       </main>
     );
   }

@@ -1,4 +1,5 @@
-import { buildUserData } from "./cloud-init.js";
+import type { RecipeBootstrap } from "./bootstrap.js";
+import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
@@ -382,6 +383,237 @@ async function connectRequested(
   }
 }
 
+export interface RecipeLaunch {
+  recipeId: string;
+  bootstrap: RecipeBootstrap;
+}
+
+/** The one workspace-create path. POST /workspaces and POST
+ * /workspace-recipes/:id/launch both land here, so a recipe launch rides the exact
+ * template flows — machine-type default, environment, agent rule, folder
+ * attach with the launcher as principal, and the vm_limit 409 — instead of a
+ * parallel copy. Returns the created row, which may already be in phase
+ * 'error' when the provider call failed; request-shaped failures (quota 409,
+ * oversized user data 413, provider 503) throw exactly as the route always
+ * has. */
+export async function performWorkspaceCreate(
+  runtime: CoreRuntime,
+  principal: Principal,
+  requestOrigin: string,
+  input: CreateWorkspaceRequest,
+  recipe?: RecipeLaunch,
+): Promise<WorkspaceRow> {
+  const orgId = principal.orgId;
+  const membershipId = principal.membershipId;
+  if (orgId === null || membershipId === null) {
+    throw new HttpError(403, "active membership required");
+  }
+  const template = input.templateId === undefined
+    ? null
+    : await workspaceTemplateForCreate(runtime.db, input.templateId, orgId);
+  // The template's machine type is the default; an explicit machineTypeId
+  // in the request still wins so a template create can be customized.
+  const machineTypeId = input.machineTypeId ?? template?.machine_type_id;
+  if (machineTypeId === undefined) {
+    throw new HttpError(400, "machineTypeId is required");
+  }
+  const environment = input.environment
+    ?? workspaceEnvironmentFromJson(template?.environment ?? null);
+  // The request wins, then the template's rule, then null — which the box
+  // read resolves to the built-in doc. Resolved once, at create, so the
+  // workspace keeps the rule it started with even if the template moves on.
+  const agentRuleId = input.agentRuleId === undefined
+    ? template?.agent_rule_id ?? null
+    : await agentRuleIdForOrg(runtime.db, input.agentRuleId, orgId);
+  // Enablement, not provisioning: a template names providers, the creator
+  // supplies the identity, and the workspace ceiling records what may mint.
+  const templateConnectionList = template === null
+    ? []
+    : await templateConnections(runtime.db, template.id);
+  const requested = [...new Set([
+    ...templateConnectionList.map(({ provider }) => provider),
+    ...(input.connections ?? []),
+  ])];
+  const granted = new Set(
+    (await grantsForUser(runtime.db, principal.id)).map(({ provider }) => provider),
+  );
+  const missingRequired = templateConnectionList
+    .filter(({ provider, required }) => required && !granted.has(provider))
+    .map(({ provider }) => provider);
+  if (missingRequired.length > 0) {
+    throw new HttpError(
+      409,
+      `connect ${missingRequired.join(", ")} before creating from this template`,
+    );
+  }
+  const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
+  const providerCapabilities = vmProvider.capabilities();
+  if (input.volumeId !== undefined && !providerCapabilities.volumes) {
+    throw new HttpError(
+      400,
+      `machine type ${machineTypeId} does not support volumes`,
+    );
+  }
+  if (input.volumeId !== undefined) {
+    const owned = await first<{ volume_id: string }>(runtime.db, {
+      q: `SELECT volume_id FROM volume_ownership
+          WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1`,
+      v: [input.volumeId, orgId],
+    });
+    if (owned === null) throw new HttpError(404, "volume not found");
+  }
+  // Usage capture is an org switch, not a recipe one: every workspace of a
+  // capturing org boots with the transcript mounts so its runs join the
+  // corpus (plans/RECIPES.md, decision 4).
+  const orgCapture = await first<{ usage_capture: number }>(runtime.db, {
+    q: "SELECT usage_capture FROM orgs WHERE id = ?1 LIMIT 1",
+    v: [orgId],
+  });
+  const shaping: BootShaping = {
+    usageCapture: orgCapture?.usage_capture === 1,
+  };
+  if (recipe !== undefined) shaping.recipe = recipe.bootstrap;
+  const id = crypto.randomUUID();
+  const capability = randomToken();
+  const now = Date.now();
+  const phoneHomeUrl = `${requestOrigin}/workspaces/${id}/phone-home/${capability}`;
+
+  const inserted = await rows(runtime.db, {
+    q: `INSERT INTO workspaces
+        (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
+         phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
+         environment, agent_rule_id, recipe_id, created_at, updated_at)
+        SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14
+        WHERE (
+          SELECT COUNT(*) FROM workspaces
+          WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
+        ) < (SELECT vm_limit FROM orgs WHERE id = ?4)
+        RETURNING id`,
+    v: [
+      id,
+      input.name ?? (template === null
+        ? randomWorkspaceName()
+        : await templateWorkspaceName(runtime.db, orgId, template.name)),
+      principal.id,
+      orgId,
+      membershipId,
+      machineTypeId,
+      input.volumeId ?? null,
+      await hashSecret(capability),
+      enablementManifestJson(input.manifest, requested),
+      input.orgShareRole ?? null,
+      storedWorkspaceEnvironment(environment ?? undefined),
+      agentRuleId,
+      recipe?.recipeId ?? null,
+      now,
+    ],
+  });
+  if (inserted.length !== 1) {
+    throw new HttpError(
+      409,
+      "organization workspace quota reached; destroy an existing workspace before creating another",
+    );
+  }
+  if (template !== null) {
+    await attachTemplateFolders(runtime.db, template.id, id, principal, now);
+  }
+  await connectRequested(runtime, id, principal, requestOrigin, requested);
+
+  try {
+    // The size check runs on a tunnel-less build so a 413 always fires
+    // before any Cloudflare resource exists (the deleted row then owes
+    // nothing). The token install part we append afterwards is small
+    // and ours; a razor-edge overflow webApps as a provider error and
+    // the janitor reclaims the tunnel.
+    const baseUserData = buildUserData(
+      input.sshPublicKey,
+      phoneHomeUrl,
+      runtime.vars.boxImageRef,
+      input.userData,
+      runtime.vars.boxImageTag,
+      runtime.vars.boxImageSha256,
+      undefined,
+      shaping,
+    );
+    const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
+    if (maxUserDataBytes !== null) {
+      const encoder = new TextEncoder();
+      const callerBytes = encoder.encode(input.userData ?? "").byteLength;
+      const totalBytes = encoder.encode(baseUserData).byteLength;
+      const generatedBytes = totalBytes - callerBytes;
+      if (totalBytes > maxUserDataBytes) {
+        throw new HttpError(
+          413,
+          `userData exceeds the provider limit: caller UTF-8 bytes ${callerBytes} + generated bootstrap bytes ${generatedBytes} = ${totalBytes} > ${maxUserDataBytes}`,
+        );
+      }
+    }
+    // Providers that cannot proxy their own webApp endpoints (cloud VMs) get a
+    // per-workspace tunnel; identifiers persist onto the row before the
+    // VM exists so a crash can never orphan Cloudflare resources.
+    const workspaceTunnels = runtime.providers.workspaceTunnels;
+    const tunnel = workspaceTunnels !== undefined && vmProvider.proxyWebApp === undefined
+      ? await workspaceTunnels.provision(runtime.db, id)
+      : undefined;
+    const userData = tunnel === undefined
+      ? baseUserData
+      : buildUserData(
+          input.sshPublicKey,
+          phoneHomeUrl,
+          runtime.vars.boxImageRef,
+          input.userData,
+          runtime.vars.boxImageTag,
+          runtime.vars.boxImageSha256,
+          tunnel,
+          shaping,
+        );
+    const vm = await vmProvider.createVm({
+      workspaceId: id,
+      machineTypeId,
+      sshPublicKey: input.sshPublicKey,
+      phoneHomeUrl,
+      userData,
+    });
+    await rows(runtime.db, {
+      q: `UPDATE workspaces
+          SET vm_id = ?1, updated_at = ?2
+          WHERE id = ?3 AND phase = 'creating'`,
+      v: [vm.id, Date.now(), id],
+    });
+    if (input.volumeId !== undefined) {
+      await runtime.providers.volume.attachVolume(input.volumeId, vm.id);
+    }
+    await rows(runtime.db, {
+      q: `UPDATE workspaces
+          SET ssh_host = ?1, ssh_port = ?2, ssh_user = ?3,
+              revision = revision + 1, updated_at = ?4
+          WHERE id = ?5 AND phase = 'creating'`,
+      v: [vm.host, vm.port, vm.user, Date.now(), id],
+    });
+  } catch (error) {
+    if (
+      error instanceof HttpError &&
+      (error.status === 503 || error.status === 413)
+    ) {
+      await rows(runtime.db, {
+        q: "DELETE FROM workspaces WHERE id = ?1 AND phase = 'creating' RETURNING id",
+        v: [id],
+      });
+      throw error;
+    }
+    return markCreateError(
+      runtime.db,
+      id,
+      providerOperationError(error),
+      Date.now(),
+    );
+  }
+
+  const row = await workspaceById(runtime.db, id);
+  if (row === null) throw new Error("workspace disappeared during create");
+  return row;
+}
+
 export function addWorkspaceRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -393,202 +625,12 @@ export function addWorkspaceRoutes(
       throw new HttpError(403, "active membership required");
     }
     const input = parseCreateWorkspace(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
-    const runtime = runtimeFactory(context);
-    const template = input.templateId === undefined
-      ? null
-      : await workspaceTemplateForCreate(runtime.db, input.templateId, principal.orgId);
-    // The template's machine type is the default; an explicit machineTypeId
-    // in the request still wins so a template create can be customized.
-    const machineTypeId = input.machineTypeId ?? template?.machine_type_id;
-    if (machineTypeId === undefined) {
-      throw new HttpError(400, "machineTypeId is required");
-    }
-    const environment = input.environment
-      ?? workspaceEnvironmentFromJson(template?.environment ?? null);
-    // The request wins, then the template's rule, then null — which the box
-    // read resolves to the built-in doc. Resolved once, at create, so the
-    // workspace keeps the rule it started with even if the template moves on.
-    const agentRuleId = input.agentRuleId === undefined
-      ? template?.agent_rule_id ?? null
-      : await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
-    const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
-    const providerCapabilities = vmProvider.capabilities();
-    if (input.volumeId !== undefined && !providerCapabilities.volumes) {
-      throw new HttpError(
-        400,
-        `machine type ${machineTypeId} does not support volumes`,
-      );
-    }
-    if (input.volumeId !== undefined) {
-      const owned = await first<{ volume_id: string }>(runtime.db, {
-        q: `SELECT volume_id FROM volume_ownership
-            WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1`,
-        v: [input.volumeId, principal.orgId],
-      });
-      if (owned === null) throw new HttpError(404, "volume not found");
-    }
-    // Enablement, not provisioning: a template names providers, the creator
-    // supplies the identity, and the workspace ceiling records what may mint.
-    const templateConnectionList = template === null
-      ? []
-      : await templateConnections(runtime.db, template.id);
-    const requested = [...new Set([
-      ...templateConnectionList.map(({ provider }) => provider),
-      ...(input.connections ?? []),
-    ])];
-    const granted = new Set(
-      (await grantsForUser(runtime.db, principal.id)).map(({ provider }) => provider),
-    );
-    const missingRequired = templateConnectionList
-      .filter(({ provider, required }) => required && !granted.has(provider))
-      .map(({ provider }) => provider);
-    if (missingRequired.length > 0) {
-      throw new HttpError(
-        409,
-        `connect ${missingRequired.join(", ")} before creating from this template`,
-      );
-    }
-    const id = crypto.randomUUID();
-    const capability = randomToken();
-    const now = Date.now();
-    const phoneHomeUrl = `${new URL(context.req.url).origin}/workspaces/${id}/phone-home/${capability}`;
-
-    const inserted = await rows(runtime.db, {
-      q: `INSERT INTO workspaces
-          (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
-           phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
-           environment, agent_rule_id, created_at, updated_at)
-          SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13
-          WHERE (
-            SELECT COUNT(*) FROM workspaces
-            WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
-          ) < (SELECT vm_limit FROM orgs WHERE id = ?4)
-          RETURNING id`,
-      v: [
-        id,
-        input.name ?? (template === null
-          ? randomWorkspaceName()
-          : await templateWorkspaceName(runtime.db, principal.orgId, template.name)),
-        principal.id,
-        principal.orgId,
-        principal.membershipId,
-        machineTypeId,
-        input.volumeId ?? null,
-        await hashSecret(capability),
-        enablementManifestJson(input.manifest, requested),
-        input.orgShareRole ?? null,
-        storedWorkspaceEnvironment(environment ?? undefined),
-        agentRuleId,
-        now,
-      ],
-    });
-    if (inserted.length !== 1) {
-      throw new HttpError(
-        409,
-        "organization workspace quota reached; destroy an existing workspace before creating another",
-      );
-    }
-    if (template !== null) {
-      await attachTemplateFolders(runtime.db, template.id, id, principal, now);
-    }
-    await connectRequested(
-      runtime,
-      id,
+    const row = await performWorkspaceCreate(
+      runtimeFactory(context),
       principal,
       new URL(context.req.url).origin,
-      requested,
+      input,
     );
-
-    try {
-      // The size check runs on a tunnel-less build so a 413 always fires
-      // before any Cloudflare resource exists (the deleted row then owes
-      // nothing). The token install part we append afterwards is small
-      // and ours; a razor-edge overflow webApps as a provider error and
-      // the janitor reclaims the tunnel.
-      const baseUserData = buildUserData(
-        input.sshPublicKey,
-        phoneHomeUrl,
-        runtime.vars.boxImageRef,
-        input.userData,
-        runtime.vars.boxImageTag,
-        runtime.vars.boxImageSha256,
-      );
-      const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
-      if (maxUserDataBytes !== null) {
-        const encoder = new TextEncoder();
-        const callerBytes = encoder.encode(input.userData ?? "").byteLength;
-        const totalBytes = encoder.encode(baseUserData).byteLength;
-        const generatedBytes = totalBytes - callerBytes;
-        if (totalBytes > maxUserDataBytes) {
-          throw new HttpError(
-            413,
-            `userData exceeds the provider limit: caller UTF-8 bytes ${callerBytes} + generated bootstrap bytes ${generatedBytes} = ${totalBytes} > ${maxUserDataBytes}`,
-          );
-        }
-      }
-      // Providers that cannot proxy their own webApp endpoints (cloud VMs) get a
-      // per-workspace tunnel; identifiers persist onto the row before the
-      // VM exists so a crash can never orphan Cloudflare resources.
-      const workspaceTunnels = runtime.providers.workspaceTunnels;
-      const tunnel = workspaceTunnels !== undefined && vmProvider.proxyWebApp === undefined
-        ? await workspaceTunnels.provision(runtime.db, id)
-        : undefined;
-      const userData = tunnel === undefined
-        ? baseUserData
-        : buildUserData(
-            input.sshPublicKey,
-            phoneHomeUrl,
-            runtime.vars.boxImageRef,
-            input.userData,
-            runtime.vars.boxImageTag,
-            runtime.vars.boxImageSha256,
-            tunnel,
-          );
-      const vm = await vmProvider.createVm({
-        workspaceId: id,
-        machineTypeId,
-        sshPublicKey: input.sshPublicKey,
-        phoneHomeUrl,
-        userData,
-      });
-      await rows(runtime.db, {
-        q: `UPDATE workspaces
-            SET vm_id = ?1, updated_at = ?2
-            WHERE id = ?3 AND phase = 'creating'`,
-        v: [vm.id, Date.now(), id],
-      });
-      if (input.volumeId !== undefined) {
-        await runtime.providers.volume.attachVolume(input.volumeId, vm.id);
-      }
-      await rows(runtime.db, {
-        q: `UPDATE workspaces
-            SET ssh_host = ?1, ssh_port = ?2, ssh_user = ?3,
-                revision = revision + 1, updated_at = ?4
-            WHERE id = ?5 AND phase = 'creating'`,
-        v: [vm.host, vm.port, vm.user, Date.now(), id],
-      });
-    } catch (error) {
-      if (
-        error instanceof HttpError &&
-        (error.status === 503 || error.status === 413)
-      ) {
-        await rows(runtime.db, {
-          q: "DELETE FROM workspaces WHERE id = ?1 AND phase = 'creating' RETURNING id",
-          v: [id],
-        });
-        throw error;
-      }
-      const row = await markCreateError(
-        runtime.db,
-        id,
-        providerOperationError(error),
-        Date.now(),
-      );
-      return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
-    }
-
-    const row = await workspaceById(runtime.db, id);
-    if (row === null) throw new Error("workspace disappeared during create");
     return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
   });
 

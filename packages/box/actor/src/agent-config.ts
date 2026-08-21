@@ -24,16 +24,11 @@ interface ProviderCatalog {
   defaults: AgentConfig;
 }
 
-const EFFORTS: Choice[] = [
-  { value: "low", name: "low" },
-  { value: "medium", name: "medium" },
-  { value: "high", name: "high" },
-];
-
 const CATALOGS = {
   claude: {
     models: [
       { value: "default", name: "Default" },
+      { value: "claude-fable-5", name: "Fable 5" },
       { value: "claude-opus-5", name: "Opus 5" },
       { value: "claude-sonnet-5", name: "Sonnet 5" },
       { value: "claude-haiku-4-5-20251001", name: "Haiku 4.5" },
@@ -58,10 +53,24 @@ const CATALOGS = {
   codex: {
     models: [
       { value: "default", name: "Default" },
-      { value: "gpt-5-codex", name: "GPT-5 Codex" },
-      { value: "gpt-5", name: "GPT-5" },
+      // Codex CLI user-selectable models; excluded on purpose: codex-auto-review (single-purpose review model), gpt-reserve (routing placeholder).
+      { value: "gpt-5.6-sol", name: "GPT-5.6-Sol" },
+      { value: "gpt-5.6-luna", name: "GPT-5.6-Luna" },
+      { value: "gpt-5.6-terra", name: "GPT-5.6-Terra" },
+      { value: "gpt-5.5", name: "GPT-5.5" },
+      { value: "gpt-5.4", name: "GPT-5.4" },
+      { value: "gpt-5.4-mini", name: "GPT-5.4-Mini" },
+      { value: "gpt-5.3-codex-spark", name: "GPT-5.3-Codex-Spark" },
     ],
-    efforts: EFFORTS,
+    // The cross-model superset; per-model narrowing lives in the schema catalog, and the codex harness rejects unsupported combos at runtime.
+    efforts: [
+      { value: "low", name: "low" },
+      { value: "medium", name: "medium" },
+      { value: "high", name: "high" },
+      { value: "xhigh", name: "xhigh" },
+      { value: "max", name: "max" },
+      { value: "ultra", name: "ultra" },
+    ],
     permissions: [
       { value: "on-request", name: "ask" },
       { value: "never", name: "bypass" },

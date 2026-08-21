@@ -98,6 +98,7 @@ Built-in providers are Hetzner and Firecracker. Any other cloud is one
 - [Self-host guide](docs/SELF-HOST.md) — clone to first workspace, in order.
 - [Workspace tunnels](docs/TUNNEL.md) — browser access to cloud-VM workspaces.
 - [Box image](docs/BOX-IMAGE.md) — build, publish, and upgrade the workspace image.
+- [Automatic evals](docs/AUTOMATIC-EVALS.md) — turn captured agent usage into an eval suite with one recipe.
 - [Contributing](CONTRIBUTING.md) — the three gates, the lint ratchet, fixtures, commit style.
 - [Security](SECURITY.md) — reporting, secret blast radius, the workspace trust model.
 - Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [microvm-host](packages/microvm-host/README.md) · [webapp](packages/webapp/README.md) · [broker](packages/broker/README.md) · [schema](packages/schema/README.md)

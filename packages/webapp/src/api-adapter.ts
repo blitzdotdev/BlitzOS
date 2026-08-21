@@ -68,6 +68,7 @@ type WebAppWireClient = Pick<
   | "poll"
   | "create"
   | "destroy"
+  | "launchRecipe"
   | "listMachineTypes"
   | "listVolumes"
 >;
@@ -180,6 +181,15 @@ export class ApiAdapter {
 
   public async deleteWorkspace(id: string): Promise<void> {
     await this.call(() => this.client.destroy(id));
+  }
+
+  /** A recipe launch answers with the create-workspace envelope, so it maps
+   * through the same wire adapter and rides the same navigation flow. */
+  public async launchRecipe(recipeId: string): Promise<V2WorkspaceRecord> {
+    const response = await this.call(() => this.client.launchRecipe(recipeId));
+    const mapped = workspaceFromWire(response.workspace, this.ownerMembershipId);
+    if (mapped === null) throw new ApiError("The launched workspace is no longer available.", 409);
+    return mapped;
   }
 
   public listMachineTypes(): Promise<ListMachineTypesResponse> {

@@ -462,12 +462,14 @@ export async function enrollBox(
 }
 
 export async function resetDatabase(): Promise<void> {
+  // Ordered children-first because D1 enforces foreign keys: recipes sit
+  // between workspaces (which stamp recipe_id) and workspace_templates
+  // (which recipes reference).
   const tables = [
     "microvm_hosts",
     "provider_health",
     "workspace_template_connections",
     "workspace_template_folders",
-    "workspace_templates",
     "folder_grants",
     "folder_attachments",
     "folders",
@@ -486,6 +488,8 @@ export async function resetDatabase(): Promise<void> {
     "device_authorizations",
     "webapp_state",
     "workspaces",
+    "recipes",
+    "workspace_templates",
     "agent_rules",
     "sessions",
     "invites",

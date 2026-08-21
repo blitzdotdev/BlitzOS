@@ -41,6 +41,7 @@ const expected = [
   "environment.ts",
   "files/access.ts",
   "files/attachments.ts",
+  "files/dav.ts",
   "files/folders.ts",
   "files/keys.ts",
   "files/objects.ts",
@@ -48,6 +49,7 @@ const expected = [
   "files/routes.ts",
   "files/schedule.ts",
   "files/sync.ts",
+  "files/usage-push.ts",
   "http.ts",
   "identity/google.ts",
   "identity/grants.ts",
@@ -61,6 +63,7 @@ const expected = [
   "oauth.ts",
   "preview.ts",
   "principals.ts",
+  "recipes.ts",
   "compute/aws.ts",
   "compute/aws-sigv4.ts",
   "compute/aws-xml.ts",
@@ -108,6 +111,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(83);
+    expect(expected).toHaveLength(86);
   });
 });

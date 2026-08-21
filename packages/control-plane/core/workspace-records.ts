@@ -26,6 +26,7 @@ export interface WorkspaceRow {
   environment: string | null;
   files_ready: number;
   agent_rule_id: string | null;
+  recipe_id: string | null;
   tunnel_id: string | null;
   tunnel_hostname: string | null;
   dns_record_id: string | null;
@@ -60,7 +61,7 @@ export function workspaceView(
 ): WorkspaceView {
   const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
   const canOpen = role !== null;
-  return {
+  const view: WorkspaceView = {
     id: row.id,
     name: row.name ?? row.id,
     machineTypeId: machineTypeIdForRow(row),
@@ -92,6 +93,9 @@ export function workspaceView(
     environment: canOpen ? workspaceEnvironmentFromJson(row.environment, reportError) : null,
     agentRuleId: row.agent_rule_id,
   };
+  // Provenance, not configuration: which recipe launched this workspace.
+  if (row.recipe_id !== null) view.recipeId = row.recipe_id;
+  return view;
 }
 
 export async function workspaceById(db: Db, id: string): Promise<WorkspaceRow | null> {

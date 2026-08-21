@@ -1,4 +1,8 @@
-import { buildBootstrapScript } from "./bootstrap.js";
+import {
+  buildBootstrapScript,
+  type BootstrapOptions,
+  type RecipeBootstrap,
+} from "./bootstrap.js";
 
 function cloudConfig(sshPublicKey: string | undefined): string {
   const trimmedSshPublicKey = sshPublicKey?.trim();
@@ -62,6 +66,14 @@ mv /var/lib/blitz/tunnel-token.tmp /var/lib/blitz/tunnel-token
 `;
 }
 
+/** Boot shaping beyond the pinned base script: a recipe launch's invocation
+ * and the org's usage-capture switch. Absent (or all-absent fields) emits the
+ * exact pre-recipe bytes. */
+export interface BootShaping {
+  recipe?: RecipeBootstrap;
+  usageCapture?: boolean;
+}
+
 export function buildUserData(
   sshPublicKey: string | undefined,
   phoneHomeUrl: string,
@@ -70,6 +82,7 @@ export function buildUserData(
   boxImageTag = "",
   boxImageSha256 = "",
   tunnel?: TunnelTokens,
+  shaping?: BootShaping,
 ): string {
   const boundary = `blitz-${crypto.randomUUID()}`;
   const parts: string[] = [];
@@ -77,18 +90,19 @@ export function buildUserData(
     parts.push(mimePart(boundary, contentType(callerUserData), callerUserData));
   }
   parts.push(mimePart(boundary, "text/cloud-config", cloudConfig(sshPublicKey)));
+  const bootstrapOptions: BootstrapOptions = {
+    boxImageRef,
+    boxImageSha256,
+    boxImageTag,
+    phoneHomeUrl,
+    sshPublicKey,
+  };
+  if (shaping?.recipe !== undefined) bootstrapOptions.recipe = shaping.recipe;
+  if (shaping?.usageCapture !== undefined) {
+    bootstrapOptions.usageCapture = shaping.usageCapture;
+  }
   parts.push(
-    mimePart(
-      boundary,
-      "text/x-shellscript",
-      buildBootstrapScript({
-        boxImageRef,
-        boxImageSha256,
-        boxImageTag,
-        phoneHomeUrl,
-        sshPublicKey,
-      }),
-    ),
+    mimePart(boundary, "text/x-shellscript", buildBootstrapScript(bootstrapOptions)),
   );
   if (tunnel !== undefined) {
     parts.push(

@@ -7,6 +7,7 @@ import { ConnectionsPanel } from './settings/ConnectionsPanel';
 import { RequestsPanel } from './settings/RequestsPanel';
 import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
+import { UsagePanel } from './settings/UsagePanel';
 
 function initial(identity: TenantMe['identity']): string {
   return (identity.name || identity.email || 'B').trim().charAt(0).toUpperCase() || 'B';
@@ -151,6 +152,8 @@ export function SettingsPage({
     ...(viewer.membership.role === 'admin' ? [{ id: 'invites' as const, label: 'Invites' }] : []),
     { id: 'connections', label: 'Connections' },
     { id: 'requests', label: 'Requests' },
+    // The usage-capture routes are admin-only server-side; the tab matches.
+    ...(viewer.membership.role === 'admin' ? [{ id: 'usage' as const, label: 'Usage' }] : []),
   ];
   const navigation = sections.map((candidate) => (
     <button
@@ -184,6 +187,9 @@ export function SettingsPage({
         )}
         {section === 'requests' && (
           <RequestsPanel client={client} onConfigure={onConfigureConnection} />
+        )}
+        {section === 'usage' && viewer.membership.role === 'admin' && (
+          <UsagePanel client={client} />
         )}
       </div>
     </section>

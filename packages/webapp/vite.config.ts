@@ -17,6 +17,7 @@ const CONTROL_PLANE_ROUTE_PREFIXES = [
   "/orgs",
   "/workspaces",
   "/workspace-templates",
+  "/workspace-recipes",
   "/folders",
   "/connections",
   "/connect",

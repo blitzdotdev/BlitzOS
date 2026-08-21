@@ -85,3 +85,15 @@ export function TemplateDuoIcon({ className }: { className?: string }) {
     </svg>
   );
 }
+
+/** Duotone recipe glyph: play-in-circle with the accent wash, for the cards on
+ * the Recipes surface. */
+export function RecipeDuoIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.4" fill="var(--accent)" opacity=".3" />
+      <circle cx="12" cy="12" r="8.4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="m10.2 8.9 5 3.1-5 3.1z" fill="currentColor" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  );
+}

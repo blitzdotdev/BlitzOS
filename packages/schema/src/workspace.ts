@@ -51,6 +51,8 @@ export interface WorkspaceView {
   };
   environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
+  /** Present when a recipe launch created this workspace (provenance). */
+  recipeId?: string;
 }
 
 export interface TemplateConnectionView {

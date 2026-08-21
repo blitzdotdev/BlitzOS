@@ -60,6 +60,7 @@ const expected = [
   "core/http.ts",
   "core/files/access.ts",
   "core/files/attachments.ts",
+  "core/files/dav.ts",
   "core/files/folders.ts",
   "core/files/keys.ts",
   "core/files/objects.ts",
@@ -67,6 +68,7 @@ const expected = [
   "core/files/routes.ts",
   "core/files/schedule.ts",
   "core/files/sync.ts",
+  "core/files/usage-push.ts",
   "core/identity/google.ts",
   "core/identity/grants.ts",
   "core/identity/invites.ts",
@@ -77,6 +79,7 @@ const expected = [
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/principals.ts",
+  "core/recipes.ts",
   "core/registry.ts",
   "core/sessions.ts",
   "core/signup-config.js",
@@ -113,7 +116,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(76);
+    expect(first.files).toHaveLength(79);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

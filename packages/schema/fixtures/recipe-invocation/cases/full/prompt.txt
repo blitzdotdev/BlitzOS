@@ -1,0 +1,4 @@
+Aggregate this org's agent usage from /workspace/shared/Agent usage.
+
+Group runs by recipe using each meta.json sidecar, then write one
+eval file per recipe into the output folder.
