@@ -301,14 +301,34 @@ rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin
 # replacement listener before stopping that socket so Docker can safely claim
 # host port 22 without losing the host SSH recovery path.
 install -d -m 0755 /etc/ssh/sshd_config.d
-cat >/etc/ssh/sshd_config.d/blitz.conf <<'SSHD_CONFIG'
+# 00- so this sorts ahead of image-supplied drop-ins (60-cloudimg-settings and
+# friends): sshd takes the FIRST Port directive it sees, so include order is
+# load-bearing.
+cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
 Port 2222
 SSHD_CONFIG
 install -d -o root -g root -m 0755 /run/sshd
 /usr/sbin/sshd -t
-systemctl disable --now ssh.socket
+# A VM that sat on the public internet before this point has had sshd
+# socket-activated by scanners: that sshd inherited the :22 listening fd from
+# systemd and ignores Port directives entirely, and stopping only the socket
+# unit does not take the fd away from it. Stop both, then mask the socket so
+# nothing (an openssh postinst, a preset re-apply) can put :22 back later.
+systemctl stop ssh.service ssh.socket 2>/dev/null || true
+systemctl disable ssh.socket 2>/dev/null || true
+systemctl mask ssh.socket
 systemctl enable ssh
 systemctl restart ssh
+# Belt and braces: prove the running config actually moved before waiting on
+# the port. First-match-wins can be beaten by an earlier-sorting drop-in.
+effective_port=unknown
+if sshd_port=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}'); then
+  if [ -n "$sshd_port" ]; then effective_port="$sshd_port"; fi
+fi
+if [ "$effective_port" != "2222" ]; then
+  ls -la /etc/ssh/sshd_config.d/ || true
+  fail "host sshd effective port is $effective_port, not 2222; a config drop-in is overriding the blitz sshd config"
+fi
 
 # systemctl returns as soon as it has signalled the unit, not once the old
 # listener has released the port. The box container binds host port 22, so

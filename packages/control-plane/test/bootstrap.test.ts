@@ -65,9 +65,13 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("/var/lib/blitz/authorized_key");
     expect(userData).toContain("chmod 0644 /var/lib/blitz/authorized_key");
     expect(userData).toContain("install -d -o root -g root -m 0755 /run/sshd");
-    expect(userData).toContain("systemctl disable --now ssh.socket");
+    expect(userData).toContain("systemctl stop ssh.service ssh.socket");
+    expect(userData).toContain("systemctl mask ssh.socket");
     expect(userData).toContain("Port 2222");
     expect(userData).toContain("systemctl restart ssh");
+    // A socket-activated sshd ignores Port directives, so the script must
+    // prove the running config moved before it waits on the port.
+    expect(userData).toContain('if [ "$effective_port" != "2222" ]; then');
     expect(userData).toContain(`readonly BOX_IMAGE_REF='${BOX_IMAGE_REF}'`);
     expect(userData).toContain('retry docker pull "$BOX_IMAGE_REF"');
     expect(userData).toContain("--privileged");
@@ -90,7 +94,7 @@ describe("production VM bootstrap", () => {
       "install -d -o root -g root -m 0755 /run/sshd",
     );
     const validateHostSsh = userData.indexOf("/usr/sbin/sshd -t");
-    const moveHostSsh = userData.indexOf("systemctl disable --now ssh.socket");
+    const moveHostSsh = userData.indexOf("systemctl mask ssh.socket");
     const restartHostSsh = userData.indexOf("systemctl restart ssh");
     const runBox = userData.indexOf("docker run");
     expect(createSshRuntime).toBeGreaterThan(-1);
@@ -263,7 +267,7 @@ describe("production VM bootstrap", () => {
       reload,
     );
     const sshDropIn = userData.indexOf(
-      "cat >/etc/ssh/sshd_config.d/blitz.conf <<'SSHD_CONFIG'",
+      "cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'",
       enableShutdown,
     );
     const validateSsh = userData.indexOf("/usr/sbin/sshd -t", sshDropIn);
