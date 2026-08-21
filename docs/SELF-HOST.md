@@ -46,15 +46,21 @@ Notes:
 
 ## 2. Configure the Worker
 
-Copy the config template and edit your copy:
+Generate your config from the template, then edit it:
 
 ```sh
-cp packages/control-plane/wrangler.toml.example packages/control-plane/wrangler.toml
+npm run config -w packages/control-plane
 ```
+
+That writes `packages/control-plane/wrangler.toml` with every key from
+`wrangler.toml.example` and none of its comments. Do not `cp` the template
+instead: step 4 writes your D1 `database_id` into `wrangler.toml`, and wrangler
+refuses to patch a config that holds comments. Keep `wrangler.toml.example`
+open beside your config — it is where each var is documented.
 
 Your `wrangler.toml` carries your account IDs. Do not commit it.
 
-The template as copied is already deployable: every var that can only be
+The generated config is already deployable: every var that can only be
 filled in *after* a deploy ships empty, and empty means "that feature is off",
 not "refuse to deploy". So you can run step 4 immediately and come back here.
 

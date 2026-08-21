@@ -45,7 +45,7 @@ function run(tool, args, { capture, env }) {
 
 if (!existsSync(configAbsolute)) {
   process.stderr.write(
-    `${CONFIG_PATH} not found — copy packages/control-plane/wrangler.toml.example to wrangler.toml and fill in your values.\n`,
+    `${CONFIG_PATH} not found — generate it with \`npm run config -w packages/control-plane\` and fill in your values.\n`,
   );
   process.exit(1);
 }
@@ -57,7 +57,14 @@ deployControlPlane({
   rawConfig,
   run,
   patchConfig(patch) {
-    patchWranglerConfig(configAbsolute, patch, false);
+    try {
+      patchWranglerConfig(configAbsolute, patch, false);
+    } catch (error) {
+      // The D1 database exists by now, so name the recovery: a rerun reuses it.
+      throw new Error(
+        `writing the D1 database_id into ${CONFIG_PATH} failed: ${error instanceof Error ? error.message : "config patch failed"}\nThe database already exists and rerunning the deploy reuses it. wrangler cannot patch a config that holds comments — strip them, or regenerate the config with \`npm run config -w packages/control-plane\`, then rerun.`,
+      );
+    }
   },
 }).catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.message : "deployment failed"}\n`);

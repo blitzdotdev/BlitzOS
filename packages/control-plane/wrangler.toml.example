@@ -1,9 +1,12 @@
-# Template for the control-plane Worker config.
-# Copy it to wrangler.toml in this directory and fill in your values:
-#   cp wrangler.toml.example wrangler.toml
-# wrangler.toml is gitignored — it carries your account-specific IDs and the
-# deploy script writes your D1 database_id into it. Never commit it.
-# Full walkthrough: docs/SELF-HOST.md.
+# Reference template for the control-plane Worker config. Generate your
+# wrangler.toml from it, then fill in your values:
+#   npm run config -w packages/control-plane
+# Do not copy this file verbatim: the deploy writes your D1 database_id into
+# wrangler.toml, and wrangler refuses to patch a config that holds comments.
+# The generated file carries every key below and none of the prose, so keep
+# this file as the reference for what each var means.
+# wrangler.toml is gitignored — it carries your account-specific IDs. Never
+# commit it. Full walkthrough: docs/SELF-HOST.md.
 
 # Worker name in your Cloudflare account. Any name works; it becomes part of your workers.dev origin.
 name = "blitz-control-plane"

@@ -27,6 +27,7 @@
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
+    "config": "node scripts/ensure-wrangler-config.mjs",
     "deploy": "node scripts/deploy.mjs",
     "test:shell": "sh test/shell-syntax.sh",
     "test:python": "npm run build --silent && node --test test/bootstrap-python.test.mjs",

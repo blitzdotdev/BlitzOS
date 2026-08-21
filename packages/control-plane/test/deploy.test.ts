@@ -1,9 +1,13 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { cleanDist } from "../scripts/clean-dist.mjs";
+import {
+  deployableConfigToml,
+  ensureWranglerConfig,
+} from "../scripts/ensure-wrangler-config.mjs";
 // The committed template, not the gitignored wrangler.toml a local run writes.
 import wranglerExample from "../wrangler.toml.example?raw";
 import {
@@ -18,6 +22,10 @@ import {
   r2BucketNamesFromList,
   requiredSecretsForConfig,
 } from "../scripts/deploy-helpers.mjs";
+
+function commentLines(toml: string): string[] {
+  return toml.split("\n").filter((line) => line.trimStart().startsWith("#"));
+}
 
 describe("control-plane deploy command", () => {
   it("adds MICROVM_HOSTS tokenVar names to required secret metadata without reading values", () => {
@@ -287,6 +295,38 @@ describe("control-plane deploy command", () => {
     expect(placeholderVars(parseToml(wranglerExample))).toEqual([]);
     for (const deferred of ["APP_URL", "BOX_IMAGE_REF", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_ZONE_ID"]) {
       expect(wranglerExample, deferred).toContain(`${deferred} = ""`);
+    }
+  });
+
+  it("generates a comment-free config that carries every key of the example", () => {
+    // The deploy writes the new D1 database_id back with wrangler's
+    // experimental_patchConfig, which rejects any TOML holding comments
+    // ("cannot patch .toml config if comments are present"). The example
+    // documents every var inline, so a verbatim copy failed every first
+    // deploy — after the D1 already existed. Comments are the only permitted
+    // difference between the example and the generated config.
+    const generated = deployableConfigToml(wranglerExample);
+    expect(commentLines(generated)).toEqual([]);
+    expect(commentLines(wranglerExample).length).toBeGreaterThan(0);
+    expect(parseToml(generated)).toEqual(parseToml(wranglerExample));
+  });
+
+  it("generates the config once and never overwrites a filled-in one", async () => {
+    const packageDirectory = await mkdtemp(path.join(tmpdir(), "blitz-control-plane-config-"));
+    const configPath = path.join(packageDirectory, "wrangler.toml");
+    try {
+      await writeFile(path.join(packageDirectory, "wrangler.toml.example"), wranglerExample);
+
+      expect(await ensureWranglerConfig(packageDirectory)).toBe(true);
+      const generated = await readFile(configPath, "utf8");
+      expect(commentLines(generated)).toEqual([]);
+      expect(parseToml(generated)).toEqual(parseToml(wranglerExample));
+
+      await writeFile(configPath, 'name = "operator-edited"\n');
+      expect(await ensureWranglerConfig(packageDirectory)).toBe(false);
+      expect(await readFile(configPath, "utf8")).toBe('name = "operator-edited"\n');
+    } finally {
+      await rm(packageDirectory, { recursive: true, force: true });
     }
   });
 
