@@ -18,9 +18,9 @@ but cannot run a usable workspace.
   access at all (see [TUNNEL.md](TUNNEL.md)). Any spare domain works; users
   never see these hostnames.
 - A Google Cloud project. Google OAuth is the only login method.
-- Compute for workspaces: a Hetzner Cloud project (use a dedicated project —
-  the janitors assume they own everything in it), or your own Firecracker
-  host running the [microvm-host agent](../packages/microvm-host/README.md).
+- Compute for workspaces: a Hetzner Cloud project (it may hold unrelated
+  infrastructure — see step 10), or your own Firecracker host running the
+  [microvm-host agent](../packages/microvm-host/README.md).
 - Node.js 22.13 or newer, npm, git.
 - Docker, for building the box image (on macOS, [Colima](https://github.com/abiosoft/colima) works — see
   [BOX-IMAGE.md](BOX-IMAGE.md)).
@@ -220,13 +220,19 @@ the vars at it, workspaces cannot become ready.
 
 ## 10. Provider
 
-**Hetzner.** The Read & Write token from step 3 is all the code needs. Use a
-dedicated Hetzner project: the janitors list and delete resources by label and
-must never share a project with unrelated infrastructure. The machine-type
-catalog offered in the create dialog defaults to `cpx21@hil` and `cpx31@hil`;
-set the `HETZNER_MACHINE_TYPES` var (comma-separated `type@location`) to offer
-the types and locations your project can actually get. Types with no
-availability in their location produce an empty catalog.
+**Hetzner.** The Read & Write token from step 3 is all the code needs. The
+project may be shared with unrelated infrastructure: no janitor selects
+resources by label. `runOrphanSweep` reads VM IDs out of this deployment's own
+`workspaces` table and destroys those IDs only, and the volume routes match
+every Hetzner volume against this deployment's `volume_ownership` table before
+listing or deleting it, so a server or volume this control plane did not
+create is never touched. Workspace servers do carry `blitz-purpose=workspace`
+and `blitz-workspace=<workspace-id>` labels, for your own filtering.
+
+The machine-type catalog offered in the create dialog defaults to `cpx21@hil`
+and `cpx31@hil`; set the `HETZNER_MACHINE_TYPES` var (comma-separated
+`type@location`) to offer the types and locations your project can actually
+get. Types with no availability in their location produce an empty catalog.
 
 **Firecracker (microVM).** Run the
 [microvm-host agent](../packages/microvm-host/README.md) on your own hardware,
