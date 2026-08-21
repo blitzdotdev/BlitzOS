@@ -109,9 +109,11 @@
   letter-spacing: 0;
 }
 
+/* Same gap, border and radius as the machine grid: every pickable grid in the
+ * app is one family, whatever it is a grid of. */
 .teenyapps-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
 }
 
@@ -128,17 +130,24 @@
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--rule);
-  border-radius: var(--r-card);
-  color: inherit;
-  background: var(--sunken);
+  border-radius: 8px;
+  color: var(--muted);
+  /* Unfilled like the machine card; without this the UA button face fills it. */
+  background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
-.teenyapps-card:hover,
+/* These cards open a thing; they are never a chosen thing. So they get a hover
+ * fill and no check glyph, and the border stays the plain rule. */
+.teenyapps-card:hover {
+  background: var(--hover);
+}
+
 .teenyapps-card:focus-visible {
-  border-color: color-mix(in oklab, var(--accent) 45%, var(--rule));
-  outline: 0;
+  background: var(--hover);
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .teenyapps-card__thumb {
@@ -153,6 +162,13 @@
   font: 10.5px/1.4 var(--font-mono);
   text-align: center;
   word-break: break-all;
+}
+
+/* The thumb carries its own fill, so it has to take the hover with the rest of
+ * the card or only the meta strip would light up. */
+.teenyapps-card:hover .teenyapps-card__thumb,
+.teenyapps-card:focus-visible .teenyapps-card__thumb {
+  background: var(--hover);
 }
 
 .teenyapps-card__host {
@@ -185,19 +201,23 @@
   background: var(--ansi-green);
 }
 
+/* The machine card's facts row: ruled off from the panel above it, muted, and
+ * the same 10px inset. */
 .teenyapps-card__meta {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  padding: 7px 9px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--rule);
   font: 12px/1.4 var(--font-ui);
 }
 
 .teenyapps-card__meta b {
   min-width: 0;
   overflow: hidden;
+  color: var(--ink);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;

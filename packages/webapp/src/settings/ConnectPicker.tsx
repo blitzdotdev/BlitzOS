@@ -48,6 +48,16 @@ function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim();
 }
 
+/** Two independent facts ride the same outline, so the class list says both and
+ * the stylesheet decides which colour wins. */
+function cardClass(active: boolean, connected: boolean): string {
+  return [
+    'connect-card',
+    connected ? 'connect-card--connected' : '',
+    active ? 'connect-card--active' : '',
+  ].filter((part) => part !== '').join(' ');
+}
+
 /** Submitting over an existing grant replaces it, so the button says so. */
 function submitLabel(connected: boolean, saving: boolean): string {
   if (connected) return saving ? 'Reconnecting…' : 'Reconnect';
@@ -188,12 +198,13 @@ export function ConnectPicker({
             const connected = grantFor(entry) !== null;
             return (
               <button
-                className={active ? 'connect-card connect-card--active' : 'connect-card'}
+                className={cardClass(active, connected)}
                 type="button"
                 key={entry.id}
                 aria-pressed={active}
                 onClick={() => choose(entry)}
               >
+                {active && <span className="connect-card__check" aria-hidden="true">✓</span>}
                 <span className="connect-card__title">{entry.title}</span>
                 <span className="connect-card__summary">{entry.summary}</span>
                 <span className="connect-card__badges">

@@ -849,42 +849,71 @@
 }
 
 /* Cards, not a table: an auto-fill track count never leaves the empty trailing
- * cell a fixed five-column grid drew when the catalog held four providers. */
+ * cell a fixed five-column grid drew when the catalog held four providers. The
+ * gap, the rule border and the 8px radius are the machine grid's, so a person
+ * who picks a box and a person who picks a provider read the same shape. */
 .connect-grid {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
 }
 
 .connect-card {
+  position: relative;
   display: grid;
   min-width: 0;
   align-content: start;
-  gap: 6px;
-  padding: 11px 12px;
+  gap: 5px;
+  padding: 12px 10px;
+  overflow: hidden;
   border: 1px solid var(--rule);
-  border-radius: var(--r-card);
-  color: var(--ink);
-  background: var(--sunken);
+  border-radius: 8px;
+  color: var(--muted);
+  /* A button with no background of its own falls back to the UA button face,
+   * which is a grey slab. The machine card is unfilled, so this one says so. */
+  background: transparent;
   cursor: pointer;
   text-align: left;
 }
 
-.connect-card:hover,
-.connect-card:focus-visible {
-  border-color: color-mix(in oklab, var(--accent) 45%, var(--rule));
-  outline: 0;
+/* Hover is a fill, never a border: the outline carries state here, and a
+ * pointer passing over a card must not overwrite what the card reports. */
+.connect-card:hover {
+  background: var(--hover);
 }
 
+.connect-card:focus-visible {
+  background: var(--hover);
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A provider this account already holds a key for, whether or not it is the one
+ * open in the form. Green is the app's "this is live" colour, the same one the
+ * teenyapp live dot burns. */
+.connect-card--connected {
+  border-color: var(--ansi-green);
+}
+
+/* Selection outranks connection, so a connected card that is also open takes
+ * the accent and leaves the Connected badge to report the rest. */
 .connect-card--active {
-  border-color: color-mix(in oklab, var(--accent) 70%, var(--rule));
-  background: color-mix(in oklab, var(--accent) 10%, var(--paper));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 40%, transparent);
+  border-color: var(--accent);
+  padding-left: 28px;
+}
+
+.connect-card__check {
+  position: absolute;
+  top: 12px;
+  left: 10px;
+  color: var(--accent);
+  font: 12px var(--font-ui);
 }
 
 .connect-card__title {
   min-width: 0;
   overflow: hidden;
+  color: var(--ink);
   font: 650 13px/1.35 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -895,7 +924,7 @@
   display: -webkit-box;
   overflow: hidden;
   color: var(--muted);
-  font: 11.5px/1.5 var(--font-ui);
+  font: 11px/1.5 var(--font-ui);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -927,12 +956,13 @@
   box-shadow: inset 0 0 0 1px var(--rule);
 }
 
-/* The one badge that reports a state rather than a capability, so it takes the
- * accent and the others stay quiet next to it. */
+/* The one badge that reports a state rather than a capability. It wears the
+ * same green as the card's connected outline, which leaves the accent to mean
+ * one thing only: the card you are working in. */
 .connect-badge--connected {
-  color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 38%, transparent);
+  color: color-mix(in oklab, var(--ansi-green) 60%, var(--ink));
+  background: color-mix(in oklab, var(--ansi-green) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ansi-green) 38%, transparent);
 }
 
 /* The chosen provider is one card, not four stacked boxes. */
