@@ -42,8 +42,9 @@ blitz preview list
 blitz preview rm <url>
 ```
 
-Only `https` `*.blitz.dev` links open inline in the preview. Any other link
-opens in a new browser tab.
+An `https` link opens inline in the preview when its host is on the
+deployment's embed allowlist, which defaults to `*.blitz.dev` but is
+configurable per deployment. Any other link opens in a new browser tab.
 
 ## Installing packages
 

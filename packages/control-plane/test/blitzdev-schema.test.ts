@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { databaseSettingsSchema, generateMigrations } from "teenybase";
 import { describe, expect, it } from "vitest";
 import {
@@ -5,6 +6,10 @@ import {
   DENY_ALL_RULES,
   TEENYBASE_SOURCE,
 } from "../scripts/build-blitzdev.mjs";
+
+// Vendor-only: this suite pins the teenybase schema for the blitz.dev managed
+// deployment, which forks do not use. Skipped unless BLITZDEV_MANAGED=1.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
 const expectedTables = [
   "principals",
@@ -38,7 +43,7 @@ const expectedTables = [
   "blitz_files",
 ] as const;
 
-describe("blitz.dev managed schema", () => {
+describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("parses as TypeScript and passes teenybase's installed config validator", () => {
     expect(TEENYBASE_SOURCE).toMatch(/^import type \{ DatabaseSettings, TableRulesExtensionData \} from "teenybase";/u);
     expect(TEENYBASE_SOURCE).toContain("satisfies DatabaseSettings;");

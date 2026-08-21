@@ -75,10 +75,13 @@ export function installControlPlaneRoutes(
           );
     }
     // TODO(house-canon): Route structured core logs through the canonical logger.
+    // `detail` carries the thrown message so config faults (for example a
+    // malformed CRED_MASTER_KEY) are diagnosable from the 500 log line.
     console.error(
       JSON.stringify({
         message: "request failed",
         error: error instanceof Error ? error.name : "unknown",
+        detail: error instanceof Error ? error.message : "unknown",
         path: new URL(context.req.url).pathname,
       }),
     );

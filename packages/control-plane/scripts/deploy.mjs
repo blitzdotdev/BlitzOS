@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -40,6 +41,13 @@ function run(tool, args, { capture, env }) {
       reject(new Error(`${tool} ${args.join(" ")} failed with ${reason}`));
     });
   });
+}
+
+if (!existsSync(configAbsolute)) {
+  process.stderr.write(
+    `${CONFIG_PATH} not found — copy packages/control-plane/wrangler.toml.example to wrangler.toml and fill in your values.\n`,
+  );
+  process.exit(1);
 }
 
 const rawConfig = readRawWranglerConfig({ config: configAbsolute }).rawConfig;

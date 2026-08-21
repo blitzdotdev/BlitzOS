@@ -1,4 +1,11 @@
-import type { CreateWorkspaceRequest, MachineType, Volume, WorkspaceTemplateView } from '@blitzos/schema';
+import type {
+  CreateWorkspaceRequest,
+  ListMachineTypesResponse,
+  MachineType,
+  MachineTypeProviderFailure,
+  Volume,
+  WorkspaceTemplateView,
+} from '@blitzos/schema';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
@@ -16,7 +23,7 @@ type CreateWorkspaceDialogProps = {
   error: string | null;
   orgName: string;
   client: AgentRulesApi;
-  listMachineTypes: () => Promise<MachineType[]>;
+  listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
   listTemplates: () => Promise<WorkspaceTemplateView[]>;
   onNewTemplate: () => void;
@@ -37,6 +44,7 @@ export function CreateWorkspaceDialog({
   onSubmit,
 }: CreateWorkspaceDialogProps) {
   const [machines, setMachines] = useState<MachineType[]>([]);
+  const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -57,6 +65,7 @@ export function CreateWorkspaceDialog({
     let mounted = true;
     setLoading(true);
     setLoadError(null);
+    setMachineFailures([]);
     void Promise.allSettled([
       listMachineTypes(),
       listVolumes(),
@@ -71,8 +80,9 @@ export function CreateWorkspaceDialog({
         setLoading(false);
         return;
       }
-      setMachines(machineResult.value);
-      setSelectedMachineType((current) => current || machineResult.value[0]?.id || '');
+      setMachines(machineResult.value.machineTypes);
+      setMachineFailures(machineResult.value.failures);
+      setSelectedMachineType((current) => current || machineResult.value.machineTypes[0]?.id || '');
       setVolumes(volumeResult.status === 'fulfilled' ? volumeResult.value : []);
       setLoading(false);
     });
@@ -237,6 +247,15 @@ export function CreateWorkspaceDialog({
                 selectedMachineType={selectedMachineType}
                 onSelect={setSelectedMachineType}
               />
+            ) : machineFailures.length > 0 ? (
+              <div className="blueprint-selection__empty" role="alert">
+                <p>No machine types are available.</p>
+                <ul>
+                  {machineFailures.map((failure) => (
+                    <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
+                  ))}
+                </ul>
+              </div>
             ) : (
               <div className="blueprint-selection__empty">No machine types are available.</div>
             )}

@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { describe, expect, it, vi } from "vitest";
 import {
   managedApiRequest,
@@ -5,13 +6,17 @@ import {
   saveVersion,
 } from "../scripts/lib/managed-api.mjs";
 
+// Vendor-only: this suite exercises the blitz.dev managed platform client,
+// which forks do not deploy through. Skipped unless BLITZDEV_MANAGED=1.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
+
 const access = {
   base: "https://blitz.dev/api/v1/projects/example",
   appUrl: "https://example.app.blitz.dev",
   token: "private-agent-token",
 };
 
-describe("blitz.dev managed API response contract", () => {
+describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contract [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("constructs authenticated requests and preserves JSON and text bodies", async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response('{"success":true}', {

@@ -13,12 +13,19 @@ Linux needs Docker. On a fresh Mac, install and start the free, open-source
 
 ```sh
 brew install colima docker
-colima start
+colima start --cpu 4 --memory 8
 unset DOCKER_HOST
 ```
 
-Box images are not published yet; build one locally as described in
-[Build and smoke test](#build-and-smoke-test).
+Colima's default VM (2 CPUs, 2 GiB memory) is too small for the box's inner
+Docker daemon and agent harnesses — and for building the image; give it at
+least 4 CPUs and 8 GiB.
+
+The registry reference below works once a `v*` release has published images
+(registry mode in [docs/BOX-IMAGE.md](../../docs/BOX-IMAGE.md)); the release
+notes carry the immutable digest. With no release yet, build the image
+locally as described in [Build and smoke test](#build-and-smoke-test) and put
+`blitz-box:local` in place of the registry reference.
 
 Choose the workspace and an existing public key. Never mount a private key.
 Replace the digest placeholder with the immutable digest from the release
@@ -37,7 +44,7 @@ docker run -d \
   --mount type=bind,source="$PWD",target=/workspace \
   --mount type=bind,source="$HOME/.ssh/id_ed25519.pub",target=/run/blitz/authorized_key,readonly \
   -p 127.0.0.1:2222:22 \
-  ghcr.io/blitzdotdev/blitz-box@sha256:<IMAGE_DIGEST>
+  ghcr.io/<your-github-owner>/blitz-box@sha256:<IMAGE_DIGEST>
 ```
 
 The long `--mount` form fails when a bind-mount source is missing; short `-v`
@@ -52,7 +59,7 @@ volume. To attach a control plane, add this non-secret setting to the same run
 command:
 
 ```sh
--e BLITZ_CP_ORIGIN=https://blitzos.com
+-e BLITZ_CP_ORIGIN=<your-control-plane-origin>
 ```
 
 On first enrollment, follow the verification URI and user code shown by:
@@ -147,7 +154,7 @@ For an upgrade, pull the new digest, remove only the stopped container, and
 repeat the install command with that digest. Keep `blitz-box-state`:
 
 ```sh
-docker pull ghcr.io/blitzdotdev/blitz-box@sha256:<NEW_IMAGE_DIGEST>
+docker pull ghcr.io/<your-github-owner>/blitz-box@sha256:<NEW_IMAGE_DIGEST>
 docker rm blitz-box
 ```
 
@@ -165,5 +172,16 @@ The build context is the repository root because the image compiles
 docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:local .
 packages/box/test/smoke.sh
 ```
+
+With `IMAGE` unset, `smoke.sh` builds its own image tagged `blitz-box:smoke`
+from this tree — it is the only gate that runs the s6 service graph, so it
+never adopts a tag that might predate your edits. `IMAGE=<tag>` smoke-tests
+that image instead and skips the build.
+
+To run the local image, use the [Install](#install) `docker run` command with
+`blitz-box:local` in place of the registry reference.
+
+Publishing the image for workspace VMs — registry or R2 archive — is covered
+in [docs/BOX-IMAGE.md](../../docs/BOX-IMAGE.md).
 
 Design record: `TODO.md`.

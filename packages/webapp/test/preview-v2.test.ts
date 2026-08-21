@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES,
+  EMBEDDABLE_PREVIEW_HOST_SUFFIXES,
+  embeddablePreviewHostSuffixes,
   fetchWorkspacePreviews,
   fetchWorkspacePorts,
   isEmbeddablePreviewUrl,
@@ -111,5 +114,28 @@ describe('box preview contract', () => {
     expect(isEmbeddablePreviewUrl('https://evil.com')).toBe(false);
     expect(isEmbeddablePreviewUrl('https://notblitz.dev')).toBe(false);
     expect(isEmbeddablePreviewUrl('https://blitz.dev.evil.com')).toBe(false);
+  });
+
+  it('keeps the blitz.dev default when the suffix var is unset or blank', () => {
+    expect(embeddablePreviewHostSuffixes(undefined)).toEqual(['blitz.dev']);
+    expect(embeddablePreviewHostSuffixes('')).toEqual(['blitz.dev']);
+    expect(embeddablePreviewHostSuffixes('  , ,')).toEqual(['blitz.dev']);
+    // The module-level allowlist is the default in this test environment.
+    expect(EMBEDDABLE_PREVIEW_HOST_SUFFIXES).toEqual(DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES);
+  });
+
+  it('parses configured embed suffixes and normalizes each entry', () => {
+    expect(embeddablePreviewHostSuffixes('example.dev')).toEqual(['example.dev']);
+    expect(embeddablePreviewHostSuffixes(' Example.dev , .apps.internal ,example.dev'))
+      .toEqual(['example.dev', 'apps.internal']);
+  });
+
+  it('embeds against configured suffixes instead of the default', () => {
+    const suffixes = embeddablePreviewHostSuffixes('example.dev,apps.internal');
+    expect(isEmbeddablePreviewUrl('https://demo.example.dev', suffixes)).toBe(true);
+    expect(isEmbeddablePreviewUrl('https://apps.internal', suffixes)).toBe(true);
+    expect(isEmbeddablePreviewUrl('https://blitz.dev', suffixes)).toBe(false);
+    expect(isEmbeddablePreviewUrl('http://demo.example.dev', suffixes)).toBe(false);
+    expect(isEmbeddablePreviewUrl('https://notexample.dev', suffixes)).toBe(false);
   });
 });

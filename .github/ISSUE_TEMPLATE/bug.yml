@@ -1,0 +1,84 @@
+name: Bug report
+description: Something is broken.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - control-plane
+        - webapp
+        - box
+        - broker
+        - microvm-host
+        - schema / fixtures
+        - deploy tooling
+        - docs
+        - not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: VM provider in use
+      options:
+        - Hetzner
+        - microVM (Firecracker)
+        - both
+        - none / not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: tunnel
+    attributes:
+      label: Workspace tunnels configured?
+      description: The three CLOUDFLARE_* / WORKSPACE_TUNNEL_ZONE vars from docs/TUNNEL.md.
+      options:
+        - "yes"
+        - "no"
+        - not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: image-mode
+    attributes:
+      label: Box image mode
+      description: See docs/BOX-IMAGE.md.
+      options:
+        - registry (BOX_IMAGE_REF only)
+        - single R2 archive
+        - multipart R2 archive
+        - local build (docker run)
+        - not applicable
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or release
+      placeholder: e.g. b5e7753 or v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what broke, and the exact error text.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: >-
+        Worker logs (`wrangler tail`), browser console, or `docker logs`.
+        Redact tokens, cookies, account IDs, zone IDs, capability URLs, and
+        workspace hostnames before pasting.
+      render: text

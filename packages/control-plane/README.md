@@ -16,7 +16,8 @@ Self-hosters set `APP_URL` to their Worker origin.
 - Readiness = the VM bootstrap posts box host keys to a single-use capability
   URL only after the container is healthy. The response is saved as the box
   credential, so hosted enrollment needs no human.
-- Sessions: operator key → opaque server session.
+- Sessions: Google OAuth → HttpOnly session cookie. Signup policy is set by
+  the `SIGNUP_MODE` and `ALLOWED_EMAIL_DOMAINS` vars.
 - The broker registry: pubkeys and routing only, never a credential. Broker
   boxes pull their own member slice; no box can list the fleet.
 
@@ -36,29 +37,24 @@ npm run deploy -w packages/control-plane
 The command is prompt-free and repeatable. It checks Wrangler authentication,
 looks up the configured D1 name using JSON output, creates it if absent,
 patches the exact `DB` binding through Wrangler's structured config helper,
-applies remote migrations, checks required secret names without reading their
-values, builds the webApp, and deploys. The `blitz-box-images` R2 bucket must
-already exist; create it once with
-`npx wrangler r2 bucket create blitz-box-images` if needed.
+applies remote migrations, creates the configured R2 bucket
+(`blitz-box-images`) if absent, checks required secret names without reading
+their values, builds the webApp, and deploys.
 
 If the secret check fails, set only the reported missing secrets and rerun the
-same deploy command:
+same deploy command. What each secret is, where to get it, and what breaks
+without it is one table, in
+[step 3 of the self-host guide](../../docs/SELF-HOST.md#3-set-the-secrets).
 
-```sh
-npx wrangler secret put HETZNER_API_TOKEN --config packages/control-plane/wrangler.toml
-npx wrangler secret put OPERATOR_API_KEY --config packages/control-plane/wrangler.toml
-npx wrangler secret put GOOGLE_CLIENT_ID --config packages/control-plane/wrangler.toml
-npx wrangler secret put GOOGLE_CLIENT_SECRET --config packages/control-plane/wrangler.toml
-npx wrangler secret put WEBAPP_TOKEN_SECRET --config packages/control-plane/wrangler.toml
-```
+`CLOUDFLARE_API_TOKEN` is deliberately outside the deploy gate: it is required
+only for workspace tunnels, without which cloud-VM workspaces have no browser
+access. Scope and setup: [docs/TUNNEL.md](../../docs/TUNNEL.md).
 
-`WEBAPP_TOKEN_SECRET` derives the per-workspace guest credential and signs
-the per-request webApp tickets. Every webApp surface request 503s without
-it — it is required for tunnel and microVM deployments alike.
-
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` configure Google OAuth.
-`OPERATOR_API_KEY` is no longer an API credential: it is only the bootstrap
-secret. The first admin signs in at
+`OPERATOR_API_KEY` is optional and no longer an API credential: it is only
+the bootstrap secret, and the deploy gate does not require it. When migrating
+a pre-identity database, set it
+(`npx wrangler secret put OPERATOR_API_KEY --config packages/control-plane/wrangler.toml`)
+and have the first admin sign in at
 `/auth/google/start?bootstrap=<OPERATOR_API_KEY>` to claim the legacy
 operator-owned rows and become the platform operator.
 

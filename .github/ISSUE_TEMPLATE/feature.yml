@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a change or an addition.
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - control-plane
+        - webapp
+        - box
+        - broker
+        - microvm-host
+        - schema / fixtures
+        - deploy tooling
+        - docs
+        - new provider / integration
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        What you want to exist. For new cloud backends, note that a provider
+        is one VmProvider implementation registered in the provider registry —
+        see the control-plane README.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

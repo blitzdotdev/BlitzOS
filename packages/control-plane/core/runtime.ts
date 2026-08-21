@@ -48,6 +48,8 @@ export interface CoreRouter {
   ): CoreRouter;
 }
 
+export type SignupMode = "open" | "invite";
+
 export interface RuntimeVariables {
   boxImageRef: string;
   boxImageSha256: string;
@@ -57,6 +59,13 @@ export interface RuntimeVariables {
   googleClientId: string;
   googleClientSecret: string;
   bootstrapSecret: string;
+  /** Signup gate mode parsed from SIGNUP_MODE. Runtimes that predate the
+   * var (the managed worker source) omit it; absent means "open", which is
+   * the pre-gate behavior. */
+  signupMode?: SignupMode;
+  /** Lowercased bare domains parsed from ALLOWED_EMAIL_DOMAINS. Absent or
+   * empty means any email domain may sign in. */
+  allowedEmailDomains?: readonly string[];
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -76,6 +85,10 @@ export function maxConcurrentWorkspacesFromEnv(value: string | number | null | u
   }
   return limit;
 }
+
+// Re-exported, not reimplemented: scripts/deploy-helpers.mjs imports the same
+// module to reject a bad SIGNUP_MODE or ALLOWED_EMAIL_DOMAINS at deploy time.
+export { allowedEmailDomainsFromEnv, signupModeFromEnv } from "./signup-config.js";
 
 export interface CoreRuntime {
   db: Db;

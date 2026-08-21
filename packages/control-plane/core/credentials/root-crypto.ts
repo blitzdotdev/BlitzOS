@@ -33,11 +33,19 @@ export async function importCredentialMasterKey(value: string): Promise<CryptoKe
   );
 }
 
-export function credentialMasterKeyFor(
+export async function credentialMasterKeyFor(
   value: string,
 ): Promise<CryptoKey> {
-  importedKey ??= importCredentialMasterKey(value);
-  return importedKey;
+  try {
+    importedKey ??= importCredentialMasterKey(value);
+    return await importedKey;
+  } catch (error) {
+    // Never memoize a rejected import: every request must resurface the
+    // clear CRED_MASTER_KEY validation error instead of reusing an opaque
+    // stale rejection from the first request of the isolate.
+    importedKey = undefined;
+    throw error;
+  }
 }
 
 export async function sealRoot(

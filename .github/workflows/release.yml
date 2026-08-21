@@ -19,19 +19,32 @@ jobs:
     outputs:
       box-digest: ${{ steps.box.outputs.digest }}
       broker-digest: ${{ steps.broker.outputs.digest }}
+      image-owner: ${{ steps.namespace.outputs.owner }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR image names must be lowercase; the repository owner may not be.
+      # Computed once and published as a job output, so the release notes name
+      # the same images this job actually pushed.
+      - name: Compute lowercase image namespace
+        id: namespace
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE_OWNER=$owner" >> "$GITHUB_ENV"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+
       - name: Build and push box
         id: box
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: packages/box/Dockerfile
@@ -39,12 +52,12 @@ jobs:
           push: true
           provenance: true
           tags: |
-            ghcr.io/blitzdotdev/blitz-box:${{ github.ref_name }}
-            ghcr.io/blitzdotdev/blitz-box:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:${{ github.ref_name }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-box:latest
 
       - name: Build and push broker
         id: broker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: packages/broker/Dockerfile
@@ -52,8 +65,8 @@ jobs:
           push: true
           provenance: true
           tags: |
-            ghcr.io/blitzdotdev/blitz-broker:${{ github.ref_name }}
-            ghcr.io/blitzdotdev/blitz-broker:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:${{ github.ref_name }}
+            ghcr.io/${{ env.IMAGE_OWNER }}/blitz-broker:latest
 
   release-notes:
     name: Add image digests to GitHub Release
@@ -65,6 +78,7 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BOX_DIGEST: ${{ needs.images.outputs.box-digest }}
       BROKER_DIGEST: ${{ needs.images.outputs.broker-digest }}
+      IMAGE_OWNER: ${{ needs.images.outputs.image-owner }}
     steps:
       - name: Create or update release notes
         shell: bash
@@ -74,11 +88,17 @@ jobs:
             gh release create "$tag" --repo "$GITHUB_REPOSITORY" --generate-notes
           fi
 
-          existing_body="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          # Re-running a release must replace the digest section, not append a
+          # second one, so strip any section this step wrote before and rebuild
+          # it from the digests this run pushed.
+          # Command substitution drops trailing newlines, so the separator below
+          # is the only one and the output is byte-identical on every re-run.
+          kept="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body \
+            | awk '/^## Container image digests$/ { exit } { print }')"
           {
-            printf '%s\n' "$existing_body"
-            printf '\n## Container image digests\n\n'
-            printf -- '- `ghcr.io/blitzdotdev/blitz-box:%s` — `%s`\n' "$tag" "$BOX_DIGEST"
-            printf -- '- `ghcr.io/blitzdotdev/blitz-broker:%s` — `%s`\n' "$tag" "$BROKER_DIGEST"
+            printf '%s\n\n' "$kept"
+            printf '## Container image digests\n\n'
+            printf -- '- `ghcr.io/%s/blitz-box:%s` — `%s`\n' "$IMAGE_OWNER" "$tag" "$BOX_DIGEST"
+            printf -- '- `ghcr.io/%s/blitz-broker:%s` — `%s`\n' "$IMAGE_OWNER" "$tag" "$BROKER_DIGEST"
           } >"$RUNNER_TEMP/release-notes.md"
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$RUNNER_TEMP/release-notes.md"

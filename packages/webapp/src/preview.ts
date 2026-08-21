@@ -15,7 +15,28 @@ import {
 export { isPreviewPath, isPreviewPort };
 
 export const PORTS_POLL_INTERVAL_MS = 5_000;
-export const EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] = ['blitz.dev'];
+export const DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] = ['blitz.dev'];
+
+/**
+ * Parses the VITE_EMBEDDABLE_PREVIEW_SUFFIXES build var (comma-separated
+ * host suffixes) into the inline-embed allowlist. An unset or blank var
+ * keeps the default. Entries are trimmed, lowercased, stripped of leading
+ * dots, and deduplicated; blank entries are dropped.
+ */
+export function embeddablePreviewHostSuffixes(raw: string | undefined): readonly string[] {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES;
+  const suffixes = new Set<string>();
+  for (const segment of raw.split(',')) {
+    const entry = segment.trim().toLowerCase().replace(/^\.+/u, '');
+    if (entry !== '') suffixes.add(entry);
+  }
+  return suffixes.size === 0 ? DEFAULT_EMBEDDABLE_PREVIEW_HOST_SUFFIXES : [...suffixes];
+}
+
+const configuredEmbedSuffixes: string | undefined = import.meta.env.VITE_EMBEDDABLE_PREVIEW_SUFFIXES;
+
+export const EMBEDDABLE_PREVIEW_HOST_SUFFIXES: readonly string[] =
+  embeddablePreviewHostSuffixes(configuredEmbedSuffixes);
 
 export type PreviewLink = {
   url: string;
@@ -253,10 +274,13 @@ export async function fetchWorkspacePreviewFocus(
   }
 }
 
-export function isEmbeddablePreviewUrl(url: string): boolean {
+export function isEmbeddablePreviewUrl(
+  url: string,
+  suffixes: readonly string[] = EMBEDDABLE_PREVIEW_HOST_SUFFIXES,
+): boolean {
   try {
     const target = new URL(url);
-    return target.protocol === 'https:' && EMBEDDABLE_PREVIEW_HOST_SUFFIXES.some(
+    return target.protocol === 'https:' && suffixes.some(
       (suffix) => target.hostname === suffix || target.hostname.endsWith(`.${suffix}`),
     );
   } catch {

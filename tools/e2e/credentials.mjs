@@ -15,7 +15,9 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORK_DIR = join(repoRoot, "scratchpad", "credentials");
 const DEFAULT_LEDGER = join(DEFAULT_WORK_DIR, "workspace-ids");
-const PROTECTED_WORKSPACE_ID = "f8434c15-991a-486d-bd37-6df51c0f0647";
+// Optional guard: set PROTECTED_WORKSPACE_ID to a workspace id this run must
+// never treat as its own or destroy. Empty (the default) protects nothing.
+const PROTECTED_WORKSPACE_ID = process.env.PROTECTED_WORKSPACE_ID ?? "";
 const INJECT_SENTINEL = "blitz-e2e-inject-sentinel-7f3a";
 const RESEND_SENTINEL = "blitz-e2e-resend-sentinel-31c9";
 const INTEGRATION_NAMES = ["hetzner-inject", "hetzner", "resend-e2e"];

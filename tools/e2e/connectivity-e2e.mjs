@@ -3,14 +3,56 @@
 // files listing, preview fetch, leases API -> destroy -> tunnel+DNS removed.
 // Auth: operator key -> session cookie only (exactly what the browser does).
 import WebSocket from "ws";
-import { readFileSync, appendFileSync } from "fs";
+import { existsSync, readFileSync, appendFileSync } from "fs";
+import { dirname, join, resolve } from "path";
+import { fileURLToPath } from "url";
 
-const CP = "https://blitz-control-plane.blitzapp.workers.dev";
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const envPath = join(repoRoot, ".env");
+
+function readEnvValue(name) {
+  if (!existsSync(envPath)) return undefined;
+  for (const line of readFileSync(envPath, "utf8").split(/\r?\n/u)) {
+    if (!line.startsWith(`${name}=`)) continue;
+    const value = line.slice(name.length + 1);
+    if (
+      value.length >= 2 &&
+      ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'")))
+    ) {
+      return value.slice(1, -1);
+    }
+    return value;
+  }
+  return undefined;
+}
+
+const CP = (process.env.CP_URL ?? readEnvValue("CP_URL") ?? "").replace(/\/+$/u, "");
 const LOG = new URL("connectivity-e2e.log", import.meta.url).pathname;
-const env = readFileSync("/Users/minjunes/blitz-core/.env", "utf8");
-const OPERATOR_KEY = (env.match(/^OPERATOR_API_KEY=(.+)$/m) || [])[1].trim();
-const CF_TOKEN = (env.match(/^CLOUDFLARE_API_TOKEN=(.+)$/m) || [])[1].trim();
-const ZONE_ID = "52fcb3a8adc81b791ea918d3bde25a39"; // blitzos.app
+const OPERATOR_KEY = process.env.OPERATOR_API_KEY ?? readEnvValue("OPERATOR_API_KEY") ?? "";
+const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN ?? readEnvValue("CLOUDFLARE_API_TOKEN") ?? "";
+const ZONE_ID = process.env.CLOUDFLARE_ZONE_ID ?? readEnvValue("CLOUDFLARE_ZONE_ID") ?? "";
+const ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID ?? readEnvValue("CLOUDFLARE_ACCOUNT_ID") ?? "";
+
+// CP_URL joins the hard-required set rather than defaulting: this suite
+// creates and destroys workspaces, and a forgotten value must not silently
+// aim that at whichever deployment the default names.
+const missing = [
+  ["CP_URL", CP],
+  ["OPERATOR_API_KEY", OPERATOR_KEY],
+  ["CLOUDFLARE_API_TOKEN", CF_TOKEN],
+  ["CLOUDFLARE_ZONE_ID", ZONE_ID],
+  ["CLOUDFLARE_ACCOUNT_ID", ACCOUNT_ID],
+].filter(([, value]) => value === "").map(([name]) => name);
+if (missing.length > 0) {
+  console.error(`Missing required configuration: ${missing.join(", ")}`);
+  console.error(
+    "Usage: CP_URL=<worker origin> OPERATOR_API_KEY=... CLOUDFLARE_API_TOKEN=... " +
+      "CLOUDFLARE_ZONE_ID=<dns zone id> CLOUDFLARE_ACCOUNT_ID=<tunnel account id> node tools/e2e/connectivity-e2e.mjs",
+  );
+  console.error(`Each value may also be set in ${envPath}.`);
+  process.exit(1);
+}
 
 const log = (...a) => {
   const line = `[${new Date().toISOString()}] ${a.join(" ")}`;
@@ -193,7 +235,7 @@ const terminalOnce = () => new Promise((resolve, reject) => {
   const dnsAfter = await findDns();
   const stillThere = dnsAfter.filter((r) => dnsBefore.some((b) => b.id === r.id));
   if (stillThere.length > 0) fail(`dns records not cleaned: ${JSON.stringify(stillThere.map((r) => r.name))}`);
-  const t = await cf(`/accounts/d25a778b256fb6ef6eea554d77c40f27/cfd_tunnel?is_deleted=false&per_page=100`);
+  const t = await cf(`/accounts/${ACCOUNT_ID}/cfd_tunnel?is_deleted=false&per_page=100`);
   const orphan = (t.result || []).filter((x) => x.name.includes(id.toLowerCase().slice(0, 8)));
   if (orphan.length > 0) fail(`tunnel not cleaned: ${JSON.stringify(orphan.map((x) => x.name))}`);
   log("STEP12 cleanup verified: dns + tunnel gone");

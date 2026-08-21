@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# This is the only gate that exercises the s6 service graph, so it builds from
+# this tree by default: silently adopting an existing tag lets an edit to
+# rootfs/ or an s6 unit pass against an image that predates it. Reusing an
+# image is possible but must be said out loud: IMAGE=<tag> tests that tag
+# as-is and never builds.
 set -euo pipefail
 
 script_dir=$(realpath "$(dirname "$0")")

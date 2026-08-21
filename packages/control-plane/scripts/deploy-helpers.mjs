@@ -1,15 +1,34 @@
 import { parseMicrovmHosts } from "../core/providers/microvm-hosts.js";
+import {
+  allowedEmailDomainsFromEnv,
+  signupModeFromEnv,
+} from "../core/signup-config.js";
 
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
 export const DB_BINDING = "DB";
+export const R2_BINDING = "BOX_IMAGES";
+// Secrets every deployment needs. OPERATOR_API_KEY is intentionally absent:
+// it is a legacy operator credential — optional, only for old operator-key
+// flows — so the deploy no longer demands it. MICROVM_<NAME>_TOKEN secrets are
+// added per configured MICROVM_HOSTS entry (see requiredSecretsForConfig).
 export const REQUIRED_SECRETS = Object.freeze([
   "HETZNER_API_TOKEN",
-  "OPERATOR_API_KEY",
   "GOOGLE_CLIENT_ID",
   "GOOGLE_CLIENT_SECRET",
   "WEBAPP_TOKEN_SECRET",
   "CRED_MASTER_KEY",
 ]);
+
+// Angle-bracket text is documentation shorthand ("<your zone id>"), never a
+// value. The template ships none — vars that can only be filled in after a
+// first deploy ship as "" — so this only catches an operator who pasted a
+// doc example into wrangler.toml.
+const PLACEHOLDER_VALUE_PATTERN = /^<[^<>]*>$/u;
+// R2 bucket names: 3-63 chars of lowercase letters, digits, and hyphens.
+const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
+// The canonical base64 alphabet accepted by the Worker's atob-based decoder.
+const STANDARD_BASE64_PATTERN =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
 
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -57,6 +76,98 @@ export function d1DatabasePatch(rawConfig, binding, databaseName, databaseId) {
     throw new Error(`wrangler config must define exactly one ${binding} D1 binding`);
   }
   return { d1_databases: d1Databases };
+}
+
+export function parseR2Binding(rawConfig, binding) {
+  if (!isRecord(rawConfig) || !Array.isArray(rawConfig.r2_buckets)) {
+    throw new Error("wrangler config must define r2_buckets");
+  }
+  const matches = rawConfig.r2_buckets.filter(
+    (bucket) => isRecord(bucket) && bucket.binding === binding,
+  );
+  if (matches.length !== 1) {
+    throw new Error(`wrangler config must define exactly one ${binding} R2 binding`);
+  }
+  const bucketName = String(matches[0].bucket_name);
+  if (!R2_BUCKET_NAME_PATTERN.test(bucketName)) {
+    throw new Error(`${binding} must define a valid bucket_name`);
+  }
+  return { binding, bucketName };
+}
+
+// `wrangler r2 bucket list` has no --json flag; it prints labelled values
+// ("name:  <bucket>" lines). Wrangler is version-pinned, so parse those.
+export function r2BucketNamesFromList(output) {
+  const names = new Set();
+  for (const line of String(output).split("\n")) {
+    const match = /^name:\s*(\S+)$/u.exec(line.trim());
+    if (match?.[1] !== undefined) names.add(match[1]);
+  }
+  return names;
+}
+
+export function placeholderVars(rawConfig) {
+  const vars = isRecord(rawConfig) && isRecord(rawConfig.vars) ? rawConfig.vars : {};
+  return Object.keys(vars).filter((name) =>
+    PLACEHOLDER_VALUE_PATTERN.test(String(vars[name])),
+  );
+}
+
+// SIGNUP_MODE and ALLOWED_EMAIL_DOMAINS are parsed per request by the Worker
+// and their parsers throw, so a typo ("invite-only" for "invite") turns every
+// request and every cron into a 500 with nothing in the config to hint at it.
+// They are plain [vars], readable here, so reject them before the deploy using
+// the very parsers the Worker will run.
+export function configVarProblems(rawConfig) {
+  const vars = isRecord(rawConfig) && isRecord(rawConfig.vars) ? rawConfig.vars : {};
+  const problems = [];
+  for (const [name, parse] of [
+    ["SIGNUP_MODE", signupModeFromEnv],
+    ["ALLOWED_EMAIL_DOMAINS", allowedEmailDomainsFromEnv],
+  ]) {
+    const value = vars[name];
+    if (value === undefined) continue;
+    try {
+      parse(String(value));
+    } catch (error) {
+      problems.push(
+        `${name} = ${JSON.stringify(String(value))} is invalid: ${error instanceof Error ? error.message : "unparseable"} — the Worker parses it on every request, so deploying this value would 500 the whole deployment`,
+      );
+    }
+  }
+  return problems;
+}
+
+// Validates the secret values that are readable at deploy time (the local
+// process environment). Values already stored in Cloudflare cannot be read
+// back, so an unset local variable is skipped silently — the presence check
+// against `wrangler secret list` still applies to every required name.
+export function localSecretValueProblems(rawConfig, secretValues) {
+  const problems = [];
+  const rawHosts = isRecord(rawConfig?.vars) ? rawConfig.vars.MICROVM_HOSTS : undefined;
+  for (const host of parseMicrovmHosts(rawHosts)) {
+    const raw = secretValues[host.tokenVar];
+    if (raw === undefined) continue;
+    const token = String(raw);
+    if (token.length < 32 || /\s/u.test(token)) {
+      problems.push(
+        `${host.tokenVar} must be at least 32 characters with no whitespace — the Worker rejects weaker microVM host tokens and then fails every request`,
+      );
+    }
+  }
+  const masterKey = secretValues.CRED_MASTER_KEY;
+  if (
+    masterKey !== undefined &&
+    !(
+      STANDARD_BASE64_PATTERN.test(String(masterKey)) &&
+      Buffer.from(String(masterKey), "base64").byteLength === 32
+    )
+  ) {
+    problems.push(
+      "CRED_MASTER_KEY must be base64 of exactly 32 bytes (generate one with: openssl rand -base64 32)",
+    );
+  }
+  return problems;
 }
 
 function parseJson(stdout, description) {
@@ -110,11 +221,27 @@ export async function deployControlPlane({
   rawConfig,
   run,
   patchConfig,
+  secretValues = process.env,
 } = {}) {
   if (!isRecord(rawConfig)) throw new Error("raw Wrangler config is required");
   if (typeof run !== "function") throw new Error("deploy command runner is required");
   if (typeof patchConfig !== "function") throw new Error("Wrangler config patcher is required");
   const databaseBinding = parseD1Binding(rawConfig, DB_BINDING);
+  const bucketBinding = parseR2Binding(rawConfig, R2_BINDING);
+  const placeholders = placeholderVars(rawConfig);
+  if (placeholders.length > 0) {
+    throw new Error(
+      `${configPath} still holds template placeholder values for: ${placeholders.join(", ")}\nEdit the file (start from wrangler.toml.example) and rerun the deploy.`,
+    );
+  }
+  const varProblems = configVarProblems(rawConfig);
+  if (varProblems.length > 0) {
+    throw new Error(varProblems.join("\n"));
+  }
+  const secretProblems = localSecretValueProblems(rawConfig, secretValues);
+  if (secretProblems.length > 0) {
+    throw new Error(secretProblems.join("\n"));
+  }
   const commandEnv = {
     CI: "1",
     WRANGLER_SEND_METRICS: "false",
@@ -156,6 +283,11 @@ export async function deployControlPlane({
   }
 
   await wrangler(["d1", "migrations", "apply", DB_BINDING, "--remote"]);
+
+  const listedBuckets = await wrangler(["r2", "bucket", "list"], true);
+  if (!r2BucketNamesFromList(listedBuckets.stdout).has(bucketBinding.bucketName)) {
+    await wrangler(["r2", "bucket", "create", bucketBinding.bucketName], true);
+  }
 
   let secrets;
   try {

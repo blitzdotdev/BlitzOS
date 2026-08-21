@@ -13,6 +13,8 @@ tunnel and the DNS record.
 MicroVM workspaces do not use this path; they ride their host agent. Design
 and evidence: [plans/CONNECTIVITY.md](../plans/CONNECTIVITY.md).
 
+This page is step 8 of the [self-host guide](SELF-HOST.md).
+
 ## Requirements
 
 - The Cloudflare account that runs your control-plane Worker.
@@ -23,6 +25,10 @@ and evidence: [plans/CONNECTIVITY.md](../plans/CONNECTIVITY.md).
 - `wrangler` authenticated against the account.
 - Default account limit: 1,000 tunnels, which caps concurrent cloud-VM
   workspaces. Enterprise can raise it.
+- Two Worker secrets: `CLOUDFLARE_API_TOKEN` (created in step 2) and
+  `WEBAPP_TOKEN_SECRET` (a random 32-byte string). Step 5 sets both.
+  `WEBAPP_TOKEN_SECRET` is required for every webApp surface on every
+  provider, tunnel or not.
 
 ## Steps
 
@@ -72,8 +78,12 @@ CLOUDFLARE_ZONE_ID = "<zone id from step 3>"
 WORKSPACE_TUNNEL_ZONE = "<your-domain>"
 ```
 
-Leave all three empty to disable the feature; the control plane then behaves
-exactly as before.
+Leaving these three vars empty does not degrade gracefully for cloud VMs: a
+cloud-VM workspace still boots and reports `ready`, but every browser
+surface — terminal, chat, files, previews — routes through this tunnel and
+returns `503 workspace has no webapp tunnel` without it. Only microVM
+workspaces are unaffected; their host agent carries webApp traffic itself.
+Leave the vars empty only for a microVM-only deployment.
 
 ### 5. Set the secrets
 
@@ -81,19 +91,21 @@ exactly as before.
 npx wrangler secret put CLOUDFLARE_API_TOKEN --config packages/control-plane/wrangler.toml
 # paste the token from step 2
 
-openssl rand -base64 32
 npx wrangler secret put WEBAPP_TOKEN_SECRET --config packages/control-plane/wrangler.toml
-# paste the random string; the control plane derives per-workspace
-# webapp-auth tokens from it
 ```
 
-### 6. Migrate and deploy
+`WEBAPP_TOKEN_SECRET` is in the deploy gate's required set, so it may already
+be set. Its value and what it protects are in
+[step 3 of the self-host guide](SELF-HOST.md#3-set-the-secrets).
+
+### 6. Deploy
 
 ```sh
-npx wrangler d1 migrations apply blitz-control-plane --remote \
-  --config packages/control-plane/wrangler.toml
-npx wrangler deploy --config packages/control-plane/wrangler.toml
+npm run deploy -w packages/control-plane
 ```
+
+The deploy command applies migrations, re-checks the required secrets, builds
+the webApp, and deploys.
 
 ### 7. Verify
 

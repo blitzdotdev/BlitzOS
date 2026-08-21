@@ -36,6 +36,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/principals.ts",
   "core/registry.ts",
   "core/sessions.ts",
+  "core/signup-config.js",
   "core/types.ts",
   "core/volumes.ts",
   "core/webapp-state.ts",
@@ -66,7 +67,10 @@ export const DENY_ALL_RULES = Object.freeze({
 export const BLITZDEV_CONFIG = Object.freeze({
   appName: "Blitz Control Plane",
   appUrl: "$APP_URL",
-  jwtSecret: "$JWT_SECRET_MAIN",
+  // Empty, not "$JWT_SECRET_MAIN": every table below is DENY_ALL_RULES with no
+  // auth extension, so teenybase mounts no JWT route and never reads this. The
+  // key stays because databaseSettingsSchema requires the string.
+  jwtSecret: "",
   tables: [
     {
       name: "principals",
@@ -456,7 +460,6 @@ type ManagedBindings = {
   TEENY_PRIMARY_DB: ConstructorParameters<typeof $Database>[2];
   TEENY_PRIMARY_R2: ConstructorParameters<typeof $Database>[3];
   HETZNER_API_TOKEN: string;
-  JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
