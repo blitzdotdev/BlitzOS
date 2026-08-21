@@ -100,8 +100,10 @@ If `MICROVM_HOSTS` lists hosts, each host's `tokenVar` (for example
 `MICROVM_LAB_TOKEN`) is also required: `openssl rand -hex 32`, and the same
 value goes into the host's token file (`/etc/blitz/microvm-agent-token`).
 
-`JWT_SECRET_MAIN` is **not** needed. It appears in old notes but is never
-resolved at runtime.
+`JWT_SECRET_MAIN` is **not** needed, and no code references it any more.
+teenybase only mints or verifies its own JWTs for tables that declare an auth
+extension; this deployment declares none and authenticates with opaque session
+cookies instead, so the setting was removed rather than documented.
 
 ## 4. First deploy
 

@@ -34,7 +34,6 @@ type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
   HETZNER_API_TOKEN: string;
   HETZNER_MACHINE_TYPES?: string;
-  JWT_SECRET_MAIN: string;
   OPERATOR_API_KEY: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;

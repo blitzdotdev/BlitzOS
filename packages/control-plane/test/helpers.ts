@@ -46,7 +46,6 @@ interface TestApp {
 }
 
 type TestBindings = Env & {
-  JWT_SECRET_MAIN?: string;
   SESSION_TTL_DAYS: string;
   MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
