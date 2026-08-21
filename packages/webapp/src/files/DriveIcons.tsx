@@ -31,6 +31,14 @@ export const TemplateGlyph = glyph(
   </>,
 );
 
+/** Play-in-circle: a recipe is a saved invocation one click away from running. */
+export const RecipeGlyph = glyph(
+  <>
+    <circle cx="12" cy="12" r="8.4" />
+    <path d="m10.2 8.9 5 3.1-5 3.1z" />
+  </>,
+);
+
 export const FolderGlyph = glyph(
   <path d="M3.4 7.4a2 2 0 0 1 2-2h3.3a2 2 0 0 1 1.5.7l1.2 1.4h7.2a2 2 0 0 1 2 2v7.4a2 2 0 0 1-2 2H5.4a2 2 0 0 1-2-2z" />,
   true,

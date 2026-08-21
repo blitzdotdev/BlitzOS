@@ -39,9 +39,11 @@ npm test              # control-plane, box actor, ui, guest node:test,
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 4 files exceed the 700-line warn: `core/files/sync.ts`, `core/workspaces.ts`,
-  `webapp/src/CloudApp.tsx`, `webapp/src/terminal-touch-controller.ts`. Split on
-  touch, never big-bang.
+- 4 files exceed the 700-line warn: `core/workspaces.ts`,
+  `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
+  `webapp/src/terminal-touch-controller.ts`. Split on touch, never big-bang.
+  (`core/files/sync.ts` left the list 2026-08-21 when its transfer plumbing
+  split into `core/files/dav.ts`.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -64,6 +66,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/providers/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/actor/test/agent-rules-conformance.test.ts` (box) |
+| recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ guest readers: the bootstrap-emitted chat sender, and `blitz-term` through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation` | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/actor/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
 
 Legacy phone-home shapes are accepted ONLY inside
 `adaptLegacyPhoneHomeRequestForInFlightImages` in `core/workspaces.ts`.

@@ -177,6 +177,8 @@ export interface WorkspaceView {
   };
   environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
+  /** Present when a recipe launch created this workspace (provenance). */
+  recipeId?: string;
 }
 
 export interface WorkspaceTemplateView {
@@ -193,6 +195,71 @@ export interface WorkspaceTemplateView {
 
 export interface ListWorkspaceTemplatesResponse {
   templates: WorkspaceTemplateView[];
+}
+
+/** The shared model → provider catalog.
+ *
+ * It mirrors the per-provider model lists the box actor accepts
+ * (`packages/box/actor/src/agent-config.ts`); "default" is expressed by
+ * omitting the model, so it is not listed. The canonical copy lives in
+ * `packages/schema/src/agent-catalog.ts` (core code may not import packages);
+ * `test/wire-drift.test.ts` holds the two together. Extend both copies and
+ * the actor catalog in the same change. */
+export const AGENT_PROVIDERS = ["claude", "codex"] as const;
+
+export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
+
+export const AGENT_MODELS = {
+  claude: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+  codex: ["gpt-5-codex", "gpt-5"],
+} satisfies Record<AgentProvider, readonly string[]>;
+
+/** A recipe is one row: a template reference plus an invocation — harness,
+ * model, effort, prompt. Launching one creates a normal workspace from the
+ * template and delivers the invocation to the box (plans/RECIPES.md). */
+export const RECIPE_HARNESSES = ["claude", "codex", "chat"] as const;
+
+export type RecipeHarness = (typeof RECIPE_HARNESSES)[number];
+
+export interface RecipeView {
+  id: string;
+  name: string;
+  templateId: string;
+  harness: RecipeHarness;
+  /** A catalog model (see AGENT_MODELS); absent means the harness default.
+   * Required for `chat`, whose model also selects the adapter provider. */
+  model?: string;
+  effort?: string;
+  prompt: string;
+}
+
+export interface ListRecipesResponse {
+  recipes: RecipeView[];
+}
+
+/** POST /recipes and PUT /recipes/:id share this full-replacement shape,
+ * exactly like workspace templates. */
+export interface CreateRecipeRequest {
+  name: string;
+  templateId: string;
+  harness: RecipeHarness;
+  model?: string;
+  effort?: string;
+  prompt: string;
+}
+
+/** Envelope for GET /recipes/:id, POST /recipes (201), and PUT /recipes/:id.
+ * POST /recipes/:id/launch answers with CreateWorkspaceResponse instead. */
+export interface RecipeResponse {
+  recipe: RecipeView;
+}
+
+/** Admin switch for org-wide agent-usage capture (GET and PUT
+ * /orgs/self/usage-capture). The folder is lazy-created on first enable and
+ * survives a disable, so re-enabling keeps the corpus in one place. */
+export interface OrgUsageCaptureResponse {
+  enabled: boolean;
+  folderId: string | null;
 }
 
 export interface CreateWorkspaceTemplateRequest {

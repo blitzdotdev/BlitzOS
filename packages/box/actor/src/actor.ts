@@ -16,7 +16,7 @@ import {
   type AgentConfig,
 } from "./agent-config.js";
 import { CredentialSource } from "./credentials.js";
-import { Journal } from "./journal.js";
+import { ChatSessionStore } from "./chat-session.js";
 import { PROMPT_QUEUE_LIMIT, REPLAY_LIMIT } from "./config.js";
 import type { AdapterFactory, AgentAdapter, Provider } from "./types.js";
 import type { ConnectionIdentity } from "./auth.js";
@@ -26,7 +26,7 @@ import type {
   OutboundFrame,
   PermissionAnsweredFrame,
   SessionUpdateFrame,
-} from "./journal.js";
+} from "./chat-session.js";
 
 export interface ActorSessionSummary {
   id: string;
@@ -94,7 +94,7 @@ class SessionActor {
     public readonly cwd: string,
     private resumeId: string | null,
     private readonly adapter: AgentAdapter,
-    private readonly journal: Journal,
+    private readonly store: ChatSessionStore,
     private readonly credentials: CredentialSource,
   ) {
     this.config = defaultAgentConfig(provider);
@@ -112,16 +112,18 @@ class SessionActor {
   public attach(subscriber: Subscriber, replay: boolean): Promise<void> {
     const operation = this.delivery.then(async () => {
       if (replay) {
-        for (const event of this.journal.replay(this.id, REPLAY_LIMIT)) {
-          // SAFETY: Journal frames are written only from the two ActorService-owned outbound frame constructors; persisted rows are not revalidated here. TODO(deslop-tier-c): validate replayed journal JSON before delivery.
+        for (const event of this.store.replay(this.id, REPLAY_LIMIT)) {
+          // SAFETY: Journaled frames are written only from the two ActorService-owned outbound frame constructors; persisted rows are not revalidated here. TODO(deslop-tier-c): validate replayed journal JSON before delivery.
           const frame = JSON.parse(event.frame) as JournalFrame;
           await subscriber.deliver(frame);
         }
       }
       this.subscribers.set(subscriber.id, subscriber);
       subscriber.sessions.add(this.id);
-      this.journal.addParticipant(this.id, subscriber.identity);
-      for (const permission of this.pendingPermissions()) this.askSubscriber(permission, subscriber);
+      // Pending permissions live in memory only: one can exist only while its
+      // turn's adapter runs in this process, so there is nothing to restore
+      // from disk. Answered ones replay above as blitz/permission_answered.
+      for (const permission of this.permissions.values()) this.askSubscriber(permission, subscriber);
     });
     this.delivery = operation.catch(() => undefined);
     return operation;
@@ -136,7 +138,6 @@ class SessionActor {
     if (this.queued >= PROMPT_QUEUE_LIMIT) return Promise.reject(new Error("prompt queue is full"));
     this.queued += 1;
     const turnId = randomUUID();
-    this.journal.startTurn(turnId, this.id);
     const result = this.tail.then(() => this.runTurn(turnId, prompt, identity));
     this.tail = result.then(
       () => undefined,
@@ -201,7 +202,7 @@ class SessionActor {
         stopReason = abort.signal.aborted ? "cancelled" : output.stopReason;
         if (output.resumeId) {
           this.resumeId = output.resumeId;
-          this.journal.setResumeId(this.id, output.resumeId);
+          this.store.setResumeId(this.id, output.resumeId);
         }
       } catch {
         if (abort.signal.aborted) {
@@ -214,7 +215,6 @@ class SessionActor {
     } finally {
       this.currentAbort = undefined;
       this.abortIdentity = undefined;
-      if (!this.journal.finishTurn(turnId, stopReason)) throw new Error("turn already reached a terminal state");
     }
   }
 
@@ -237,7 +237,7 @@ class SessionActor {
           actor: attributedActor(identity),
         },
       };
-      this.journal.append(this.id, frame);
+      this.store.append(this.id, frame);
       await this.fanout(frame);
     });
     this.delivery = operation.catch(() => undefined);
@@ -285,7 +285,6 @@ class SessionActor {
       resolve,
     };
     this.permissions.set(id, permission);
-    this.journal.addPermission(id, this.id, request);
     for (const subscriber of this.subscribers.values()) this.askSubscriber(permission, subscriber);
     const cancel = (): void => this.acceptPermission(
       permission,
@@ -294,25 +293,6 @@ class SessionActor {
     );
     this.currentAbort?.signal.addEventListener("abort", cancel, { once: true });
     return permission.promise.finally(() => this.currentAbort?.signal.removeEventListener("abort", cancel));
-  }
-
-  private pendingPermissions(): PendingPermission[] {
-    for (const stored of this.journal.pendingPermissions(this.id)) {
-      if (this.permissions.has(stored.id)) continue;
-      let resolve!: (response: RequestPermissionResponse) => void;
-      const permission: PendingPermission = {
-        id: stored.id,
-        // SAFETY: The journal stores JSON produced from permission requests; persisted rows are not revalidated here. TODO(deslop-tier-c): validate stored permission JSON against RequestPermissionRequest before replay.
-        request: JSON.parse(stored.request) as RequestPermissionRequest,
-        attempted: new Set(),
-        promise: new Promise((answer) => {
-          resolve = answer;
-        }),
-        resolve,
-      };
-      this.permissions.set(stored.id, permission);
-    }
-    return [...this.permissions.values()];
   }
 
   private askSubscriber(permission: PendingPermission, subscriber: Subscriber): void {
@@ -331,8 +311,9 @@ class SessionActor {
     identity: ConnectionIdentity = { userId: "system", membershipId: "system", role: "owner" },
   ): void {
     if (!validPermissionAnswer(permission.request, response)) return;
-    if (!this.journal.answerPermission(permission.id, response, identity)) return;
-    this.permissions.delete(permission.id);
+    // First answer wins: the map delete is the idempotency gate the retired
+    // permissions table row used to provide.
+    if (!this.permissions.delete(permission.id)) return;
     const selected = response.outcome.outcome === "selected" ? response.outcome.optionId : null;
     const frame: PermissionAnsweredFrame = {
       jsonrpc: "2.0",
@@ -344,7 +325,7 @@ class SessionActor {
         actor: attributedActor(identity),
       },
     };
-    this.journal.append(this.id, frame);
+    this.store.append(this.id, frame);
     for (const subscriber of this.subscribers.values()) void subscriber.deliver(frame);
     permission.resolve(response);
   }
@@ -354,7 +335,7 @@ export class ActorService {
   private readonly sessions = new Map<string, SessionActor>();
 
   public constructor(
-    private readonly journal: Journal,
+    private readonly store: ChatSessionStore,
     private readonly credentials: CredentialSource,
     private readonly adapters: AdapterFactory,
     private readonly defaultProvider: Provider,
@@ -369,7 +350,7 @@ export class ActorService {
     requireEditor(subscriber);
     this.onSessionStart();
     const id = randomUUID();
-    this.journal.createSession({
+    this.store.createSession({
       id,
       provider: this.defaultProvider,
       cwd,
@@ -383,14 +364,14 @@ export class ActorService {
   }
 
   public async loadSession(id: string, cwd: string, subscriber: Subscriber): Promise<void> {
-    const stored = this.journal.session(id);
+    const stored = this.store.session(id);
     if (!stored || stored.cwd !== cwd) throw new Error("unknown session");
     this.onSessionStart();
     await this.restore(id).attach(subscriber, true);
   }
 
   public listSessions(): ActorSessionSummary[] {
-    return this.journal.listSessions();
+    return this.store.listSessions();
   }
 
   public configOptions(id: string): SessionConfigOption[] {
@@ -419,7 +400,7 @@ export class ActorService {
   private restore(id: string): SessionActor {
     const current = this.sessions.get(id);
     if (current) return current;
-    const stored = this.journal.session(id);
+    const stored = this.store.session(id);
     if (!stored) throw new Error("unknown session");
     const actor = new SessionActor(
       stored.id,
@@ -427,7 +408,7 @@ export class ActorService {
       stored.cwd,
       stored.resumeId,
       this.adapters(stored.provider),
-      this.journal,
+      this.store,
       this.credentials,
     );
     this.sessions.set(id, actor);

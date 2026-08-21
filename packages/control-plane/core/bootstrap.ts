@@ -1,21 +1,263 @@
+import type { AgentProvider, RecipeHarness } from "./wire.js";
+
+/** A recipe launch's additions to the boot: the `BLITZ_AGENT` flag, the two
+ * invocation files, and (for `chat`) the prompt sender. Built by
+ * core/recipes.ts from a validated recipe row. */
+export interface RecipeBootstrap {
+  harness: RecipeHarness;
+  /** The provider whose adapter the actor runs (`BLITZ_AGENT`): the harness
+   * itself for claude/codex, the pinned model's provider for chat. */
+  agentProvider: AgentProvider;
+  model?: string;
+  effort?: string;
+  prompt: string;
+}
+
 export interface BootstrapOptions {
   boxImageSha256: string;
   boxImageRef: string;
   boxImageTag: string;
   phoneHomeUrl: string;
   sshPublicKey?: string;
+  /** Present only on recipe launches; absent leaves the emitted bytes
+   * untouched for every ordinary create. */
+  recipe?: RecipeBootstrap;
+  /** Org-level agent-usage capture: pre-creates the two transcript HOME dirs
+   * and bind-mounts them read-only under /workspace/shared/agent-usage/. */
+  usageCapture?: boolean;
 }
 
-function shellQuote(value: string): string {
+/** Shell-escapes a value into one single-quoted token. Exported because the
+ * recipe-invocation fixture suite pins the emitted embeddings byte-for-byte. */
+export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
+
+/** The invocation file a recipe launch writes to
+ * /var/lib/blitz/recipe/invocation.env: one shell-sourceable KEY='value' line
+ * per set key, HARNESS then MODEL then EFFORT, unset keys omitted, values
+ * single-quoted with shellQuote's escaping. Readers: the chat sender emitted
+ * below today, `blitz-term` in the Phase 2 box image. Pinned by
+ * `packages/schema/fixtures/recipe-invocation/` and its conformance suite. */
+export function recipeInvocationEnvFile(recipe: RecipeBootstrap): string {
+  const lines = [`HARNESS=${shellQuote(recipe.harness)}`];
+  if (recipe.model !== undefined) lines.push(`MODEL=${shellQuote(recipe.model)}`);
+  if (recipe.effort !== undefined) lines.push(`EFFORT=${shellQuote(recipe.effort)}`);
+  return `${lines.join("\n")}\n`;
+}
+
+/** The chat-harness prompt sender. Emitted into the bootstrap as a quoted
+ * heredoc and `docker exec`'d in the background as the blitz user; it retries
+ * connecting to the actor with the box's own webapp token (the static-token
+ * path grants owner, and 127.0.0.1 is an allowed origin), then drives the
+ * exact ACP frames the webapp chat client sends. Best effort: it exits
+ * nonzero on failure and can never fail the boot. Plain CommonJS with no
+ * template literals so the surrounding TypeScript template stays literal;
+ * `ws` is resolved from the actor's vendored node_modules because Node's
+ * global WebSocket cannot send the auth header. */
+const RECIPE_SENDER_SOURCE = String.raw`'use strict';
+const fs = require('node:fs');
+const WebSocket = require('/opt/blitz/actor/node_modules/ws');
+
+const RECIPE_DIR = '/var/lib/blitz/recipe';
+const TOKEN_PATH = '/var/lib/blitz/webapp-token';
+const ACTOR_URL = 'ws://127.0.0.1:7444';
+const CONNECT_DEADLINE_MS = Date.now() + 10 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 120 * 1000;
+
+function log(line) {
+  const stamped = new Date().toISOString() + ' ' + line + '\n';
+  try {
+    fs.appendFileSync(RECIPE_DIR + '/delivery.log', stamped);
+  } catch (ignored) {}
+  process.stdout.write(stamped);
+}
+
+function describe(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
+function unquote(value) {
+  return value.split("'\"'\"'").join("'");
+}
+
+function parseInvocation(text) {
+  const invocation = {};
+  for (const line of text.split('\n')) {
+    const match = /^(HARNESS|MODEL|EFFORT)='(.*)'$/.exec(line);
+    if (match !== null) invocation[match[1]] = unquote(match[2]);
+  }
+  return invocation;
+}
+
+function connectOnce(token) {
+  return new Promise(function (resolve, reject) {
+    const socket = new WebSocket(ACTOR_URL, {
+      headers: { 'x-blitz-webapp-token': token },
+      origin: 'http://127.0.0.1',
+      perMessageDeflate: false,
+      handshakeTimeout: 15000,
+    });
+    socket.once('open', function () { resolve(socket); });
+    socket.once('error', reject);
+    socket.once('unexpected-response', function (request, response) {
+      reject(new Error('actor refused the handshake with status ' + response.statusCode));
+    });
+  });
+}
+
+function rpcClient(socket) {
+  let nextId = 1;
+  const pending = new Map();
+  socket.on('message', function (data) {
+    let frame = null;
+    try {
+      frame = JSON.parse(String(data));
+    } catch (ignored) {
+      return;
+    }
+    if (frame === null || typeof frame !== 'object') return;
+    if (typeof frame.method === 'string') {
+      if (frame.id === undefined) return;
+      if (frame.method === 'session/request_permission') {
+        const options = frame.params && Array.isArray(frame.params.options) ? frame.params.options : [];
+        const allow = options.find(function (option) { return option && option.kind === 'allow_always'; })
+          || options.find(function (option) { return option && option.kind === 'allow_once'; });
+        const outcome = allow ? { outcome: 'selected', optionId: allow.optionId } : { outcome: 'cancelled' };
+        socket.send(JSON.stringify({ jsonrpc: '2.0', id: frame.id, result: { outcome: outcome } }));
+        return;
+      }
+      socket.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: frame.id,
+        error: { code: -32601, message: 'recipe sender does not answer ' + frame.method },
+      }));
+      return;
+    }
+    const settled = pending.get(frame.id);
+    if (settled === undefined) return;
+    pending.delete(frame.id);
+    if ('error' in frame) settled.reject(new Error(settled.method + ' failed: ' + JSON.stringify(frame.error)));
+    else settled.resolve(frame.result);
+  });
+  socket.on('close', function () {
+    for (const settled of pending.values()) {
+      settled.reject(new Error('socket closed before ' + settled.method + ' answered'));
+    }
+    pending.clear();
+  });
+  return function request(method, params, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      const id = nextId;
+      nextId += 1;
+      const timer = timeoutMs > 0
+        ? setTimeout(function () {
+            pending.delete(id);
+            reject(new Error(method + ' timed out after ' + timeoutMs + ' ms'));
+          }, timeoutMs)
+        : null;
+      pending.set(id, {
+        method: method,
+        resolve: function (value) { if (timer !== null) clearTimeout(timer); resolve(value); },
+        reject: function (error) { if (timer !== null) clearTimeout(timer); reject(error); },
+      });
+      socket.send(JSON.stringify({ jsonrpc: '2.0', id: id, method: method, params: params }));
+    });
+  };
+}
+
+async function deliver(socket, invocation, prompt, markPrompted) {
+  const request = rpcClient(socket);
+  await request('initialize', {
+    protocolVersion: 1,
+    clientCapabilities: {},
+    clientInfo: { name: 'blitz-recipe-sender', version: '0.1.0' },
+  }, REQUEST_TIMEOUT_MS);
+  const created = await request('session/new', { cwd: '/workspace', mcpServers: [] }, REQUEST_TIMEOUT_MS);
+  const sessionId = created.sessionId;
+  let options = Array.isArray(created.configOptions) ? created.configOptions : [];
+  async function choose(configId, value) {
+    const answer = await request('session/set_config_option', {
+      sessionId: sessionId,
+      configId: configId,
+      value: value,
+    }, REQUEST_TIMEOUT_MS);
+    if (Array.isArray(answer.configOptions)) options = answer.configOptions;
+  }
+  if (invocation.MODEL) await choose('model', invocation.MODEL);
+  if (invocation.EFFORT) await choose('effort', invocation.EFFORT);
+  const permission = options.find(function (option) { return option && option.id === 'permission'; });
+  const choices = permission && Array.isArray(permission.options)
+    ? permission.options.map(function (choice) { return choice.value; })
+    : [];
+  const bypass = choices.indexOf('bypassPermissions') !== -1
+    ? 'bypassPermissions'
+    : choices.indexOf('never') !== -1 ? 'never' : null;
+  if (bypass !== null) await choose('permission', bypass);
+  markPrompted();
+  log('prompt submitted to session ' + sessionId + '; waiting for the turn to finish');
+  return request('session/prompt', {
+    sessionId: sessionId,
+    prompt: [{ type: 'text', text: prompt }],
+  }, 0);
+}
+
+async function main() {
+  let prompt = null;
+  let invocation = null;
+  try {
+    prompt = fs.readFileSync(RECIPE_DIR + '/prompt.txt', 'utf8');
+    invocation = parseInvocation(fs.readFileSync(RECIPE_DIR + '/invocation.env', 'utf8'));
+  } catch (error) {
+    log('recipe invocation files are unreadable: ' + describe(error));
+    process.exit(1);
+  }
+  let delayMs = 3000;
+  while (Date.now() < CONNECT_DEADLINE_MS) {
+    let socket = null;
+    let prompted = false;
+    try {
+      const token = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
+      if (token === '') throw new Error('webapp token is empty');
+      socket = await connectOnce(token);
+      const outcome = await deliver(socket, invocation, prompt, function () { prompted = true; });
+      log('recipe turn finished: ' + JSON.stringify(outcome));
+      socket.close();
+      process.exit(0);
+    } catch (error) {
+      if (socket !== null) {
+        try { socket.close(); } catch (ignored) {}
+      }
+      log('delivery attempt failed: ' + describe(error));
+      if (prompted) {
+        log('prompt was already submitted; not retrying to avoid a duplicate turn');
+        process.exit(1);
+      }
+    }
+    await sleep(Math.max(0, Math.min(delayMs, CONNECT_DEADLINE_MS - Date.now())));
+    delayMs = Math.min(delayMs * 2, 60000);
+  }
+  log('recipe prompt delivery gave up: deadline passed');
+  process.exit(1);
+}
+
+main().catch(function (error) {
+  log('recipe sender crashed: ' + describe(error));
+  process.exit(1);
+});`;
 
 /** Emits the first-boot script a VM runs: bash, with Python inline for the
  * box-image manifest. It is a template literal rather than a file because a
  * Worker has no filesystem to read at runtime, so the script has to be part
  * of the bundle. The emitted bytes are a contract pinned by
  * `test/bootstrap-python.test.mjs` and the phone-home fixtures — edit them
- * the way you would edit a wire format, not a script. */
+ * the way you would edit a wire format, not a script. Recipe launches add
+ * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
+ * without a recipe or usage capture emits byte-identical output. */
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");
@@ -119,6 +361,53 @@ box_image="$BOX_IMAGE_TAG"`
 fi
 docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
+
+  // Recipe and usage-capture segments; every one is "" on an ordinary create
+  // so the emitted bytes stay identical for the non-recipe path.
+  const recipe = options.recipe;
+  const invocationFiles = recipe === undefined
+    ? ""
+    : `install -d -o 1000 -g 1000 -m 0700 /var/lib/blitz/recipe
+printf '%s' ${shellQuote(recipe.prompt)} >/var/lib/blitz/recipe/prompt.txt
+printf '%s' ${shellQuote(recipeInvocationEnvFile(recipe))} >/var/lib/blitz/recipe/invocation.env
+chown 1000:1000 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
+chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
+`;
+  const agentFlag = recipe === undefined
+    ? ""
+    : `  -e BLITZ_AGENT=${shellQuote(recipe.agentProvider)} \\\n`;
+  // The two transcript HOME dirs pre-exist owned by the blitz user so the
+  // read-only mounts never make docker invent root-owned sources, and
+  // /workspace/shared/agent-usage pre-exists for the same reason on the
+  // destination side (docker would otherwise create shared/ as root and
+  // break Drive folder materialization).
+  const usageDirectories = options.usageCapture !== true
+    ? ""
+    : `install -d -o 1000 -g 1000 /var/lib/blitz/home/.claude/projects
+install -d -o 1000 -g 1000 /var/lib/blitz/home/.codex/sessions
+install -d -o 1000 -g 1000 /var/lib/blitz/workspace/shared/agent-usage
+`;
+  const usageMounts = options.usageCapture !== true
+    ? ""
+    : `  --mount type=bind,src=/var/lib/blitz/home/.claude/projects,dst=/workspace/shared/agent-usage/claude,readonly \\
+  --mount type=bind,src=/var/lib/blitz/home/.codex/sessions,dst=/workspace/shared/agent-usage/codex,readonly \\
+`;
+  const promptSender = recipe?.harness !== "chat"
+    ? ""
+    : `cat >/var/lib/blitz/recipe/sender.cjs <<'RECIPE_SENDER'
+${RECIPE_SENDER_SOURCE}
+RECIPE_SENDER
+chown 1000:1000 /var/lib/blitz/recipe/sender.cjs
+chmod 0600 /var/lib/blitz/recipe/sender.cjs
+echo "blitz bootstrap: recipe prompt sender starting in the background (best-effort)"
+nohup docker exec \\
+  --user 1000:1000 \\
+  --env HOME=/var/lib/blitz/home \\
+  --env USER=blitz \\
+  blitz-box \\
+  node /var/lib/blitz/recipe/sender.cjs >>/var/lib/blitz/recipe/sender.log 2>&1 &
+
+`;
 
   const sshPublicKeyDeclaration = sshPublicKey === undefined
     ? ""
@@ -293,17 +582,17 @@ ${imageSetup}
 install -d -m 0755 /etc/blitz
 docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults
 chmod 0644 /etc/blitz/env.defaults
-docker run --detach \
+${invocationFiles}${usageDirectories}docker run --detach \
   --name blitz-box \
   --restart unless-stopped \
   --privileged \
   --env-file /etc/blitz/env.defaults \
   -e BLITZ_UID=1000 \
   -e BLITZ_GID=1000 \
-  --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
+${agentFlag}  --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
   --mount type=bind,src=/var/lib/blitz/authorized_key,dst=/run/blitz/authorized_key,readonly \
   --mount type=bind,src=/var/lib/blitz/workspace,dst=/workspace \
-  -p 0.0.0.0:22:22 \
+${usageMounts}  -p 0.0.0.0:22:22 \
   "$box_image"
 
 health_deadline=$((SECONDS + 180))
@@ -319,7 +608,7 @@ while (( SECONDS < health_deadline )); do
 done
 [ "$box_healthy" = true ] || fail "box health timeout after 180 seconds"
 
-read_host_key() {
+${promptSender}read_host_key() {
   local key_path="/var/lib/blitz/ssh/ssh_host_$1_key.pub"
   if [ -s "$key_path" ]; then
     sed -n '1p' "$key_path"

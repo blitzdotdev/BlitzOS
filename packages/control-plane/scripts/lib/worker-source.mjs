@@ -8,7 +8,7 @@ const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
-  "/sessions", "/workspaces", "/workspace-templates", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
+  "/sessions", "/workspaces", "/workspace-templates", "/recipes", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
   "/hosts/", "/oauth/", "/boxes/", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
@@ -29,11 +29,12 @@ export const CORE_MANIFEST = Object.freeze([
   "core/credentials/types.ts", "core/credentials/root-crypto.ts", "core/credentials/manifest.ts", "core/credentials/leases.ts",
   "core/credentials/minters/static.ts", "core/credentials/minters/app-jwt/github-app.ts", "core/credentials/registry.ts", "core/credentials/requests.ts", "core/credentials/mint.ts", "core/credentials/proxy.ts",
   "core/http.ts",
-  "core/files/access.ts", "core/files/attachments.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/readiness.ts", "core/files/routes.ts", "core/files/schedule.ts", "core/files/sync.ts",
+  "core/files/access.ts", "core/files/attachments.ts", "core/files/dav.ts", "core/files/folders.ts", "core/files/keys.ts", "core/files/objects.ts", "core/files/readiness.ts", "core/files/routes.ts", "core/files/schedule.ts", "core/files/sync.ts", "core/files/usage-push.ts",
   "core/identity/google.ts", "core/identity/grants.ts", "core/identity/invites.ts", "core/identity/members.ts", "core/identity/oauth-state.ts", "core/identity/orgs.ts", "core/identity/routes.ts",
   "core/janitors.ts",
   "core/oauth.ts",
   "core/principals.ts",
+  "core/recipes.ts",
   "core/registry.ts",
   "core/sessions.ts",
   "core/signup-config.js",

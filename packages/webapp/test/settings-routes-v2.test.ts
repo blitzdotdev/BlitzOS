@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { drivePath, folderPagePath, parseAppRoute, settingsPath } from '../src/sessions-page-state.js';
+import {
+  drivePath,
+  folderPagePath,
+  parseAppRoute,
+  recipeEditPath,
+  recipeNewPath,
+  recipesPath,
+  settingsPath,
+} from '../src/sessions-page-state.js';
 
 describe('settings routes', () => {
   it('routes profile, integrations, and requests with profile as the index', () => {
@@ -22,9 +30,28 @@ describe('settings routes', () => {
       workspaceId: null,
       page: 'drive',
     });
+    expect(parseAppRoute('/settings/usage')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'usage',
+    });
     expect(settingsPath('profile')).toBe('/settings');
     expect(settingsPath('integrations')).toBe('/settings/integrations');
     expect(settingsPath('requests')).toBe('/settings/requests');
+    expect(settingsPath('usage')).toBe('/settings/usage');
+  });
+
+  it('routes the recipes pages with new winning over the id match', () => {
+    expect(parseAppRoute('/recipes')).toEqual({ workspaceId: null, page: 'recipes' });
+    expect(parseAppRoute('/recipes/new')).toEqual({ workspaceId: null, page: 'recipe-new' });
+    expect(parseAppRoute('/recipes/r-1/edit')).toEqual({
+      workspaceId: null,
+      page: 'recipe-edit',
+      recipeId: 'r-1',
+    });
+    expect(recipesPath()).toBe('/recipes');
+    expect(recipeNewPath()).toBe('/recipes/new');
+    expect(recipeEditPath('r 1')).toBe('/recipes/r%201/edit');
   });
 
   it('routes the drive home and folder pages, retiring the old shared address', () => {

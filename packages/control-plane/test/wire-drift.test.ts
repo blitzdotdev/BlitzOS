@@ -74,6 +74,43 @@ const putAgentRuleResponse: SharedShape<
   schema.PutAgentRuleResponse
 > = { rule: agentRule };
 
+const recipe: SharedShape<wire.RecipeView, schema.RecipeView> = {
+  id: "recipe",
+  name: "nightly evals",
+  templateId: "template",
+  harness: "chat",
+  model: "claude-sonnet-5",
+  effort: "xhigh",
+  prompt: "Aggregate usage and write evals.\n",
+};
+
+const recipes: SharedShape<
+  wire.ListRecipesResponse,
+  schema.ListRecipesResponse
+> = { recipes: [recipe] };
+
+const createRecipeRequest: SharedShape<
+  wire.CreateRecipeRequest,
+  schema.CreateRecipeRequest
+> = {
+  name: recipe.name,
+  templateId: recipe.templateId,
+  harness: recipe.harness,
+  model: recipe.model,
+  effort: recipe.effort,
+  prompt: recipe.prompt,
+};
+
+const recipeResponse: SharedShape<
+  wire.RecipeResponse,
+  schema.RecipeResponse
+> = { recipe };
+
+const orgUsageCapture: SharedShape<
+  wire.OrgUsageCaptureResponse,
+  schema.OrgUsageCaptureResponse
+> = { enabled: true, folderId: "folder" };
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -96,6 +133,7 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   owner: { name: "Owner", avatarUrl: null },
   environment,
   agentRuleId: agentRule.id,
+  recipeId: recipe.id,
 };
 
 const workspaceTemplate: SharedShape<
@@ -288,6 +326,11 @@ const fullFieldValues = [
   workspaceTemplates,
   createWorkspaceTemplate,
   createdWorkspaceTemplate,
+  recipe,
+  recipes,
+  createRecipeRequest,
+  recipeResponse,
+  orgUsageCapture,
   listMachineTypesResponse,
   createWorkspaceRequest,
   createWorkspaceResponse,
@@ -329,6 +372,13 @@ describe("local wire copies", () => {
     expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();
     expectTypeOf<wire.CreateWorkspaceTemplateRequest>().toEqualTypeOf<schema.CreateWorkspaceTemplateRequest>();
     expectTypeOf<wire.CreateWorkspaceTemplateResponse>().toEqualTypeOf<schema.CreateWorkspaceTemplateResponse>();
+    expectTypeOf<wire.AgentProvider>().toEqualTypeOf<schema.AgentProvider>();
+    expectTypeOf<wire.RecipeHarness>().toEqualTypeOf<schema.RecipeHarness>();
+    expectTypeOf<wire.RecipeView>().toEqualTypeOf<schema.RecipeView>();
+    expectTypeOf<wire.ListRecipesResponse>().toEqualTypeOf<schema.ListRecipesResponse>();
+    expectTypeOf<wire.CreateRecipeRequest>().toEqualTypeOf<schema.CreateRecipeRequest>();
+    expectTypeOf<wire.RecipeResponse>().toEqualTypeOf<schema.RecipeResponse>();
+    expectTypeOf<wire.OrgUsageCaptureResponse>().toEqualTypeOf<schema.OrgUsageCaptureResponse>();
     expectTypeOf<wire.ListMachineTypesResponse>().toEqualTypeOf<schema.ListMachineTypesResponse>();
     expectTypeOf<wire.CreateWorkspaceRequest>().toEqualTypeOf<schema.CreateWorkspaceRequest>();
     expectTypeOf<wire.CreateWorkspaceResponse>().toEqualTypeOf<schema.CreateWorkspaceResponse>();
@@ -354,6 +404,9 @@ describe("local wire copies", () => {
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {
     expect(wire.FEED_MAX_BYTES).toBe(schema.FEED_MAX_BYTES);
     expect(wire.HARNESSES).toEqual(schema.HARNESSES);
+    expect(wire.RECIPE_HARNESSES).toEqual(schema.RECIPE_HARNESSES);
+    expect(wire.AGENT_PROVIDERS).toEqual(schema.AGENT_PROVIDERS);
+    expect(wire.AGENT_MODELS).toEqual(schema.AGENT_MODELS);
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);

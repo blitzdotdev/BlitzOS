@@ -1,4 +1,4 @@
-export type SettingsSection = 'profile' | 'members' | 'invites' | 'integrations' | 'requests';
+export type SettingsSection = 'profile' | 'members' | 'invites' | 'integrations' | 'requests' | 'usage';
 
 export type DriveScope = 'mine' | 'shared';
 
@@ -9,12 +9,15 @@ export type AppRoute =
   | { workspaceId: null; page: 'templates' }
   | { workspaceId: null; page: 'template-new' }
   | { workspaceId: null; page: 'template-edit'; templateId: string }
+  | { workspaceId: null; page: 'recipes' }
+  | { workspaceId: null; page: 'recipe-new' }
+  | { workspaceId: null; page: 'recipe-edit'; recipeId: string }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|integrations|requests|usage))?\/?$/u);
   if (settings) {
     return {
       workspaceId: null,
@@ -36,6 +39,26 @@ export function parseAppRoute(pathname: string): AppRoute {
         workspaceId: null,
         page: 'template-edit',
         templateId: decodeURIComponent(templateEdit[1]!),
+      };
+    } catch {
+      return HOME;
+    }
+  }
+  // The control-plane recipes API shares this prefix; like /workspaces/:id,
+  // browser navigations get the SPA shell while fetch callers get JSON.
+  if (/^\/recipes\/new\/?$/u.test(pathname)) {
+    return { workspaceId: null, page: 'recipe-new' };
+  }
+  if (/^\/recipes\/?$/u.test(pathname)) {
+    return { workspaceId: null, page: 'recipes' };
+  }
+  const recipeEdit = pathname.match(/^\/recipes\/([^/]+)\/edit\/?$/u);
+  if (recipeEdit) {
+    try {
+      return {
+        workspaceId: null,
+        page: 'recipe-edit',
+        recipeId: decodeURIComponent(recipeEdit[1]!),
       };
     } catch {
       return HOME;
@@ -93,6 +116,18 @@ export function templatesPath(): string {
 
 export function templateEditPath(templateId: string): string {
   return `/templates/${encodeURIComponent(templateId)}/edit`;
+}
+
+export function recipesPath(): string {
+  return '/recipes';
+}
+
+export function recipeNewPath(): string {
+  return '/recipes/new';
+}
+
+export function recipeEditPath(recipeId: string): string {
+  return `/recipes/${encodeURIComponent(recipeId)}/edit`;
 }
 
 export function folderPagePath(folderId: string, folderPath: string[] = []): string {

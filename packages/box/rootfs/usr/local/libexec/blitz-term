@@ -78,4 +78,38 @@ if [ "$mode" = ro ]; then
   exec tmux -u attach-session -r -t "=$session"
 fi
 
+# Recipe invocation delivery (plans/RECIPES.md Phase 2): a recipe launch
+# leaves /var/lib/blitz/recipe/{invocation.env,prompt.txt} on the state
+# volume. The first rw session that CREATES the tmux session for the matching
+# harness consumes them: model/effort flags plus the prompt as one final
+# positional argument (tmux execs a multi-argument command directly, so the
+# prompt bytes never pass through a shell). Renaming invocation.env is the
+# atomic once-only claim and happens before tmux starts. `new-session -A` on
+# an existing session attaches and never re-injects (has-session decides),
+# `ro` exited above without consuming, and HARNESS=chat files belong to the
+# bootstrap chat sender, never to blitz-term.
+recipe_dir="${BLITZ_STATE_DIR:-/var/lib/blitz}/recipe"
+case "$session_type" in
+  claude|codex)
+    if [ -f "$recipe_dir/invocation.env" ] &&
+        ! tmux has-session -t "=$session" 2>/dev/null; then
+      . "$(dirname -- "$0")/blitz-recipe-invocation"
+      if recipe_invocation_load "$recipe_dir" &&
+          [ "$RECIPE_HARNESS" = "$session_type" ] &&
+          mv "$recipe_dir/invocation.env" "$recipe_dir/invocation.env.delivered" 2>/dev/null; then
+        # Losing the rename means a concurrent creator already took delivery.
+        mv "$recipe_dir/prompt.txt" "$recipe_dir/prompt.txt.delivered" 2>/dev/null || :
+        if [ "$session_type" = claude ]; then
+          if [ -n "$RECIPE_MODEL" ]; then session_cmd+=(--model "$RECIPE_MODEL"); fi
+          if [ -n "$RECIPE_EFFORT" ]; then session_cmd+=(--effort "$RECIPE_EFFORT"); fi
+        else
+          if [ -n "$RECIPE_MODEL" ]; then session_cmd+=(-m "$RECIPE_MODEL"); fi
+          if [ -n "$RECIPE_EFFORT" ]; then session_cmd+=(-c "model_reasoning_effort=$RECIPE_EFFORT"); fi
+        fi
+        session_cmd+=("$RECIPE_PROMPT")
+      fi
+    fi
+    ;;
+esac
+
 exec tmux -u new-session -A -s "$session" -c "$workspace" "${session_cmd[@]}"

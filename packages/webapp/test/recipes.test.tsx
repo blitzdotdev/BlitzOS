@@ -1,0 +1,580 @@
+import type { RecipeView, WorkspaceView } from '@blitzos/schema';
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import CloudApp from '../src/CloudApp.js';
+import {
+  ApiRequestError,
+  createControlPlaneClient,
+  type ControlPlaneClient,
+} from '../src/api.js';
+import type { TenantMe } from '../src/api-adapter.js';
+import { CreateRecipeScreen } from '../src/files/CreateRecipeScreen.js';
+import { RecipesHome } from '../src/files/RecipesHome.js';
+import { SettingsPage } from '../src/SettingsPage.js';
+import { standaloneResolver } from '../src/resolver.js';
+import { render, settle } from './dom.js';
+
+afterEach(() => vi.unstubAllGlobals());
+
+const templates = [{
+  id: 'template-1',
+  name: 'analysis starter',
+  machineTypeId: 'cx23@fsn1',
+  createdAt: 1,
+  createdBy: { name: 'Ada Park', avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
+  folders: [],
+}];
+
+const recipe: RecipeView = {
+  id: 'r-1',
+  name: 'weekly report',
+  templateId: 'template-1',
+  harness: 'claude',
+  model: 'claude-opus-5',
+  prompt: 'Write the weekly report.',
+};
+
+function stub(extra?: (url: URL, init?: RequestInit) => Response | null) {
+  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const handled = extra?.(url, init);
+    if (handled) return handled;
+    if (url.pathname === '/recipes' && init?.method === undefined) {
+      return Response.json({ recipes: [recipe] });
+    }
+    if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+      return Response.json({ templates });
+    }
+    return new Response('not found', { status: 404 });
+  });
+  vi.stubGlobal('fetch', fetcher);
+  return fetcher;
+}
+
+const setInput = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+const setSelect = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+const setTextarea = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+if (setInput === undefined || setSelect === undefined || setTextarea === undefined) {
+  throw new Error('value setters unavailable');
+}
+
+function select(view: { container: HTMLElement }, label: string): HTMLSelectElement {
+  const found = view.container.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`);
+  expect(found, label).not.toBeNull();
+  return found!;
+}
+
+async function choose(element: HTMLSelectElement, value: string) {
+  await act(async () => {
+    setSelect!.call(element, value);
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
+async function submit(view: { container: HTMLElement }) {
+  await act(async () => {
+    view.container.querySelector('form')?.dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+  });
+  await settle();
+}
+
+describe('recipes home', () => {
+  it('lists name, harness, model, and template name, and deletes with confirm', async () => {
+    const deleted: string[] = [];
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/recipes/r-1' && init?.method === 'DELETE') {
+        deleted.push(url.pathname);
+        return new Response(null, { status: 204 });
+      }
+      return null;
+    });
+    const onRunRecipe = vi.fn();
+    const view = await render(
+      <RecipesHome
+        client={createControlPlaneClient('https://cp.example')}
+        launching={false}
+        onNewRecipe={() => undefined}
+        onEditRecipe={() => undefined}
+        onRunRecipe={onRunRecipe}
+        onOpenRail={() => undefined}
+      />,
+    );
+    await settle();
+
+    const card = view.container.querySelector('.tpl-card')!;
+    expect(card.textContent).toContain('weekly report');
+    expect(card.textContent).toContain('Claude Code');
+    expect(card.textContent).toContain('claude-opus-5');
+    expect(card.textContent).toContain('analysis starter');
+
+    const run = [...card.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Run'))!;
+    await act(async () => { run.click(); });
+    expect(onRunRecipe).toHaveBeenCalledWith(recipe);
+
+    await act(async () => {
+      card.querySelector<HTMLButtonElement>('.tpl-kebab')?.click();
+    });
+    const remove = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Delete recipe'))!;
+    await act(async () => { remove.click(); });
+    expect(deleted).toEqual([]);
+    expect(view.container.querySelector('.webapp-confirmation-dialog')?.textContent)
+      .toContain('Workspaces it already launched keep running');
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
+    });
+    await settle();
+    expect(deleted).toEqual(['/recipes/r-1']);
+    expect(fetcher.mock.calls.filter(([input]) => new URL(String(input)).pathname === '/recipes'))
+      .toHaveLength(2);
+    await view.unmount();
+  });
+});
+
+describe('create recipe screen', () => {
+  async function screenWith(fetcher = stub(), editRecipeId?: string) {
+    const onSaved = vi.fn();
+    const view = await render(
+      <CreateRecipeScreen
+        client={createControlPlaneClient('https://cp.example')}
+        editRecipeId={editRecipeId}
+        onSaved={onSaved}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    return { view, onSaved, fetcher };
+  }
+
+  it('offers only the harness provider models and posts the minimal body', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/recipes' && init?.method === 'POST') {
+        // SAFETY: The screen always sends a JSON body on this route.
+        const body = JSON.parse(String(init.body)) as { name: string };
+        return Response.json({ recipe: { id: 'r-2', ...body } }, { status: 201 });
+      }
+      return null;
+    });
+    const { view, onSaved } = await screenWith(fetcher);
+
+    expect([...select(view, 'Model').options].map((option) => option.textContent)).toEqual([
+      'Harness default',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-haiku-4-5-20251001',
+    ]);
+    expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
+      'Default', 'low', 'medium', 'high', 'xhigh', 'max',
+    ]);
+
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Recipe name"]')!;
+    const prompt = view.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')!;
+    await act(async () => {
+      setInput!.call(name, 'nightly audit');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      setTextarea!.call(prompt, 'Audit the dependencies.');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await choose(select(view, 'Workspace template'), 'template-1');
+    await submit(view);
+
+    const post = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/recipes' && init?.method === 'POST'
+    ));
+    // No model and no effort keys at all: absent means the harness default.
+    expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
+      name: 'nightly audit',
+      templateId: 'template-1',
+      harness: 'claude',
+      prompt: 'Audit the dependencies.',
+    });
+    expect(onSaved).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('requires a model for chat, scopes efforts to its provider, and posts both', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/recipes' && init?.method === 'POST') {
+        // SAFETY: The screen always sends a JSON body on this route.
+        const body = JSON.parse(String(init.body)) as { name: string };
+        return Response.json({ recipe: { id: 'r-2', ...body } }, { status: 201 });
+      }
+      return null;
+    });
+    const { view, onSaved } = await screenWith(fetcher);
+
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Recipe name"]')!;
+    const prompt = view.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')!;
+    await act(async () => {
+      setInput!.call(name, 'triage inbox');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      setTextarea!.call(prompt, 'Triage the inbox folder.');
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await choose(select(view, 'Workspace template'), 'template-1');
+    await choose(select(view, 'Harness'), 'chat');
+
+    // Chat pins its provider through the model, so submitting without one is
+    // blocked and the effort list stays empty until the model decides it.
+    expect(view.container.textContent).toContain('A chat recipe must pin a model');
+    expect(view.container.querySelector<HTMLButtonElement>('.create-workspace-primary')?.disabled)
+      .toBe(true);
+    expect(select(view, 'Effort').disabled).toBe(true);
+    await submit(view);
+    expect(fetcher.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+
+    const model = select(view, 'Model');
+    expect([...model.options].map((option) => option.textContent)).toEqual([
+      'Choose a model…',
+      'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001',
+      'gpt-5-codex', 'gpt-5',
+    ]);
+    await choose(model, 'gpt-5-codex');
+    expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
+      'Default', 'low', 'medium', 'high',
+    ]);
+    await choose(select(view, 'Effort'), 'high');
+    await submit(view);
+
+    const post = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/recipes' && init?.method === 'POST'
+    ));
+    expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
+      name: 'triage inbox',
+      templateId: 'template-1',
+      harness: 'chat',
+      model: 'gpt-5-codex',
+      effort: 'high',
+      prompt: 'Triage the inbox folder.',
+    });
+    expect(onSaved).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('drops a model and effort the next harness cannot run', async () => {
+    const { view } = await screenWith();
+    await choose(select(view, 'Model'), 'claude-opus-5');
+    await choose(select(view, 'Effort'), 'xhigh');
+
+    await choose(select(view, 'Harness'), 'codex');
+    expect(select(view, 'Model').value).toBe('');
+    expect(select(view, 'Effort').value).toBe('');
+    expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
+      'Default', 'low', 'medium', 'high',
+    ]);
+
+    // Chat accepts any catalog model, so a codex pick survives the switch.
+    await choose(select(view, 'Model'), 'gpt-5');
+    await choose(select(view, 'Harness'), 'chat');
+    expect(select(view, 'Model').value).toBe('gpt-5');
+    await view.unmount();
+  });
+
+  it('prefills edit mode from the recipe and saves through PUT', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/recipes/r-1' && init?.method === undefined) {
+        return Response.json({ recipe });
+      }
+      if (url.pathname === '/recipes/r-1' && init?.method === 'PUT') {
+        // SAFETY: The screen always sends a JSON body on this route.
+        const body = JSON.parse(String(init.body)) as { name: string };
+        return Response.json({ recipe: { ...recipe, ...body } });
+      }
+      return null;
+    });
+    const { view, onSaved } = await screenWith(fetcher, 'r-1');
+
+    expect(view.container.textContent).toContain('Edit recipe');
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Recipe name"]')!;
+    expect(name.value).toBe('weekly report');
+    expect(select(view, 'Workspace template').value).toBe('template-1');
+    expect(select(view, 'Harness').value).toBe('claude');
+    expect(select(view, 'Model').value).toBe('claude-opus-5');
+    expect(view.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt"]')?.value)
+      .toBe('Write the weekly report.');
+
+    await act(async () => {
+      setInput!.call(name, 'weekly report v2');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await submit(view);
+
+    const put = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/recipes/r-1' && init?.method === 'PUT'
+    ));
+    expect(JSON.parse(String(put?.[1]?.body ?? '{}'))).toEqual({
+      name: 'weekly report v2',
+      templateId: 'template-1',
+      harness: 'claude',
+      model: 'claude-opus-5',
+      prompt: 'Write the weekly report.',
+    });
+    expect(onSaved).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+});
+
+const tenantMe: TenantMe = {
+  identity: {
+    id: 'user-1',
+    email: 'ada@example.com',
+    name: 'Ada Park',
+    avatarUrl: null,
+    platformOperator: false,
+  },
+  membership: { id: 'membership-1', role: 'admin' },
+  org: { id: 'org-1', slug: 'acme', name: 'Acme', vmLimit: 10 },
+  organizations: [{
+    membership: { id: 'membership-1', role: 'admin' },
+    org: { id: 'org-1', slug: 'acme', name: 'Acme', vmLimit: 10 },
+  }],
+};
+
+const launchedWorkspace: WorkspaceView = {
+  id: 'workspace-new',
+  name: 'weekly report',
+  machineTypeId: 'cx23@fsn1',
+  phase: 'creating',
+  retryAction: 'poll',
+  canObserve: false,
+  launchable: false,
+  revision: 1,
+  ssh: null,
+  volumeId: null,
+  error: null,
+  role: 'owner',
+  orgShareRole: null,
+  owner: { name: 'Ada Park', avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
+};
+
+function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
+  return {
+    googleLoginUrl: () => '/auth/google/start',
+    inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
+    inviteStatus: vi.fn(async () => { throw new Error('unused'); }),
+    switchOrg: vi.fn(async () => undefined),
+    listMembers: vi.fn(async () => ({ members: [] })),
+    updateMember: vi.fn(async () => { throw new Error('unused'); }),
+    listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
+    createInvite: vi.fn(async () => { throw new Error('unused'); }),
+    revokeInvite: vi.fn(async () => undefined),
+    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
+    createWorkspaceGrant: vi.fn(async () => { throw new Error('unused'); }),
+    revokeWorkspaceGrant: vi.fn(async () => undefined),
+    listFolders: vi.fn(async () => ({ folders: [] })),
+    createFolder: vi.fn(async () => { throw new Error('unused'); }),
+    deleteFolder: vi.fn(async () => undefined),
+    createFolderGrant: vi.fn(async () => { throw new Error('unused'); }),
+    revokeFolderGrant: vi.fn(async () => undefined),
+    listFolderObjects: vi.fn(async () => ({ objects: [], cursor: null, truncated: false })),
+    downloadFolderObject: vi.fn(async () => new Blob()),
+    uploadFolderObject: vi.fn(async () => undefined),
+    listWorkspaceFolders: vi.fn(async () => ({ folders: [] })),
+    attachFolder: vi.fn(async () => { throw new Error('unused'); }),
+    detachFolder: vi.fn(async () => undefined),
+    renameFolder: vi.fn(async () => undefined),
+    setFolderOrgRole: vi.fn(async () => undefined),
+    deleteFolderObject: vi.fn(async () => undefined),
+    listAgentRules: vi.fn(async () => ({ rules: [] })),
+    putAgentRule: vi.fn(async () => { throw new Error('unused'); }),
+    deleteAgentRule: vi.fn(async () => undefined),
+    listWorkspaceTemplates: vi.fn(async () => ({ templates })),
+    createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
+    updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
+    deleteWorkspaceTemplate: vi.fn(async () => undefined),
+    listRecipes: vi.fn(async () => ({ recipes: [recipe] })),
+    getRecipe: vi.fn(async () => ({ recipe })),
+    createRecipe: vi.fn(async () => { throw new Error('unused'); }),
+    updateRecipe: vi.fn(async () => { throw new Error('unused'); }),
+    deleteRecipe: vi.fn(async () => undefined),
+    launchRecipe: vi.fn(async () => ({ workspace: launchedWorkspace })),
+    getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
+    putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
+    setWorkspaceOrgRole: vi.fn(async () => undefined),
+    logout: vi.fn(async () => undefined),
+    me: vi.fn(async () => ({
+      user: { ...tenantMe.identity, platformOperator: false },
+      membership: { ...tenantMe.membership, status: 'active' as const },
+      org: tenantMe.org,
+      organizations: [{
+        membership: { ...tenantMe.membership, status: 'active' as const },
+        org: tenantMe.org,
+      }],
+    })),
+    createOrg: vi.fn(async () => { throw new Error('unused'); }),
+    getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
+    getWorkspaceWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
+    putWorkspaceWebAppState: vi.fn(async (_id, doc) => ({ doc, updatedAt: 1 })),
+    poll: vi.fn(async () => ({ workspaces: [] })),
+    create: vi.fn(async () => { throw new Error('unused'); }),
+    destroy: vi.fn(async () => { throw new Error('unused'); }),
+    listMachineTypes: vi.fn(async () => ({ machineTypes: [], failures: [] })),
+    listVolumes: vi.fn(async () => ({ volumes: [] })),
+    listIntegrations: vi.fn(async () => ({ integrations: [] })),
+    putIntegration: vi.fn(async () => undefined),
+    deleteIntegration: vi.fn(async () => undefined),
+    listLeases: vi.fn(async () => ({ leases: [] })),
+    listCredentialEvents: vi.fn(async () => ({ events: [] })),
+    revokeLease: vi.fn(async () => undefined),
+    listCredentialRequests: vi.fn(async () => ({ requests: [] })),
+    approveCredentialRequest: vi.fn(async () => undefined),
+    denyCredentialRequest: vi.fn(async () => undefined),
+    ...overrides,
+  };
+}
+
+describe('usage capture settings', () => {
+  function settingsPage(wire: ControlPlaneClient, role: 'admin' | 'member', section: 'usage' | 'profile' = 'usage') {
+    const viewer: TenantMe = {
+      ...tenantMe,
+      membership: { ...tenantMe.membership, role },
+    };
+    return (
+      <SettingsPage
+        client={wire}
+        viewer={viewer}
+        section={section}
+        onNavigate={() => undefined}
+        onConfigureIntegration={() => undefined}
+        onSignOut={async () => undefined}
+      />
+    );
+  }
+
+  it('hides the Usage tab and panel from members', async () => {
+    const wire = client();
+    const view = await render(settingsPage(wire, 'member'));
+    await settle();
+
+    expect(view.container.textContent).not.toContain('Usage');
+    expect(view.container.textContent).not.toContain('Agent usage capture');
+    expect(wire.getUsageCapture).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+
+  it('shows the state to admins and reflects the enable response', async () => {
+    const getUsageCapture = vi.fn(async () => ({ enabled: false, folderId: null }));
+    // The first enable lazy-creates the folder server-side; the panel shows
+    // whatever the response carries rather than assuming.
+    const putUsageCapture = vi.fn(async (enabled: boolean) => ({
+      enabled,
+      folderId: 'folder-usage',
+    }));
+    const wire = client({ getUsageCapture, putUsageCapture });
+    const view = await render(settingsPage(wire, 'admin'));
+    await settle();
+
+    const toggle = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent usage capture"]',
+    )!;
+    expect(toggle.checked).toBe(false);
+    expect(view.container.textContent).toContain('created the first time you turn it on');
+
+    await act(async () => {
+      toggle.click();
+    });
+    await settle();
+    expect(putUsageCapture).toHaveBeenCalledWith(true);
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Agent usage capture"]',
+    )?.checked).toBe(true);
+    expect(view.container.querySelector<HTMLAnchorElement>('a[href="/folder/folder-usage"]'))
+      .not.toBeNull();
+    await view.unmount();
+  });
+});
+
+describe('recipe run flow', () => {
+  let deviceStorageValues: Map<string, string>;
+
+  beforeEach(() => {
+    window.history.replaceState({}, '', '/recipes');
+    deviceStorageValues = new Map<string, string>();
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      value: {
+        getItem: (key: string) => deviceStorageValues.get(key) ?? null,
+        setItem: (key: string, value: string) => deviceStorageValues.set(key, value),
+        removeItem: (key: string) => deviceStorageValues.delete(key),
+        clear: () => deviceStorageValues.clear(),
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<html></html>', {
+      headers: { 'content-type': 'text/html' },
+    })));
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: () => ({
+        matches: false,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it('posts the launch and navigates to the new workspace like create does', async () => {
+    const wire = client();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.textContent).toContain('weekly report');
+    const run = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Run'))!;
+    await act(async () => { run.click(); });
+    await settle();
+
+    expect(wire.launchRecipe).toHaveBeenCalledWith('r-1');
+    // The launch reuses the create-workspace adoption: the record lands in
+    // the store and the app navigates to the workspace page.
+    expect(window.location.pathname).toBe('/workspaces/workspace-new');
+    await view.unmount();
+  });
+
+  it('surfaces the control-plane launch failure message on the recipes page', async () => {
+    const launchRecipe = vi.fn(async () => {
+      throw new ApiRequestError('Workspace limit reached (10). Delete one first.', 409, null);
+    });
+    const wire = client({ launchRecipe });
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const run = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Run'))!;
+    await act(async () => { run.click(); });
+    await settle();
+
+    expect(window.location.pathname).toBe('/recipes');
+    expect(view.container.querySelector('.webapp-notice')?.textContent)
+      .toContain('Workspace limit reached (10). Delete one first.');
+    await view.unmount();
+  });
+});

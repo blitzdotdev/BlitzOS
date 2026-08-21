@@ -274,6 +274,14 @@ export function addFolderRoutes(
       q: "DELETE FROM workspace_template_folders WHERE folder_id = ?1",
       v: [folder.id],
     });
+    // Deleting the org's usage folder turns capture off with it: the columns
+    // must clear before the row goes (D1 enforces the foreign key), and a
+    // capture flag pointing at nothing would mount transcript dirs no sweep
+    // ever drains.
+    await rows(runtime.db, {
+      q: "UPDATE orgs SET usage_capture = 0, usage_folder_id = NULL WHERE usage_folder_id = ?1",
+      v: [folder.id],
+    });
     await deleteFolderObjects(
       runtime.fileObjects,
       folderObjectPrefix(folder.org_id, folder.id),

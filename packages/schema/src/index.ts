@@ -1,4 +1,5 @@
 export * from "./acp.js";
+export * from "./agent-catalog.js";
 export * from "./agent-rules.js";
 export * from "./api.js";
 export * from "./broker.js";
@@ -8,6 +9,7 @@ export * from "./files.js";
 export * from "./json.js";
 export * from "./machine.js";
 export * from "./preview.js";
+export * from "./recipe.js";
 export * from "./volume.js";
 export * from "./webapp-surface.js";
 export * from "./workspace.js";

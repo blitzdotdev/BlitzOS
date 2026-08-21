@@ -1,0 +1,6 @@
+{
+  "harness": "chat",
+  "agentProvider": "claude",
+  "model": "claude-sonnet-5",
+  "effort": "xhigh"
+}
