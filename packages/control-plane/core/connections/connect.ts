@@ -5,7 +5,7 @@ import {
   createConnectOAuthState,
   verifyConnectOAuthStateCookie,
 } from "../oauth-state.js";
-import { cookieValue } from "../principals.js";
+import { cookieValue, findStatePrincipal } from "../principals.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { providerManifest } from "./catalog/index.js";
@@ -75,7 +75,8 @@ export function addConnectRoutes(
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
   router.get("/connect/:provider/start", async (context) => {
-    await requirePrincipal(context);
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const runtime = runtimeFactory(context);
     const id = requiredString(context.req.param("provider"), "provider", 64);
     const { manifest, clientId } = configuredProvider(id, runtime.vars.connectSecret);
@@ -83,6 +84,8 @@ export function addConnectRoutes(
     const oauth = await createConnectOAuthState(
       runtime.vars.googleClientSecret,
       manifest.id,
+      principal.id,
+      principal.membershipId,
     );
     const authorize = new URL(manifest.auth.authorizeUrl);
     const parameters = new URLSearchParams({
@@ -105,8 +108,9 @@ export function addConnectRoutes(
   });
 
   router.get("/connect/:provider/callback", async (context) => {
-    const principal = await requirePrincipal(context);
-    if (principal.orgId === null) throw new HttpError(403, "active membership required");
+    // No requirePrincipal here: the redirect from the provider is a cross-site
+    // navigation, so the SameSite=Strict session cookie is absent by design.
+    // The principal comes from the signed state created at /start instead.
     const runtime = runtimeFactory(context);
     const id = requiredString(context.req.param("provider"), "provider", 64);
     const origin = new URL(context.req.url).origin;
@@ -131,6 +135,10 @@ export function addConnectRoutes(
       runtime.vars.googleClientSecret,
     );
     if (state === null) throw new HttpError(400, "connect state is invalid or expired");
+    const principal = await findStatePrincipal(runtime.db, state.userId, state.membershipId);
+    if (principal === null || principal.orgId === null) {
+      throw new HttpError(403, "active membership required");
+    }
     const code = query.get("code");
     if (code === null) throw new HttpError(400, "connect callback is missing the code");
 

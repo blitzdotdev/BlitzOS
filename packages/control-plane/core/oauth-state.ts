@@ -215,9 +215,15 @@ export function clearGoogleOAuthStateCookie(): string {
 }
 
 /** The provider is bound into the signed state, so a callback cannot be
- * replayed against a different provider's token endpoint. */
+ * replayed against a different provider's token endpoint. The signed-in
+ * principal is bound too: the callback arrives as a cross-site navigation,
+ * which the SameSite=Strict session cookie deliberately does not accompany,
+ * so the callback authenticates from this state and re-loads the principal
+ * from the database instead of from the ambient session. */
 export interface ConnectOAuthExtra {
   provider: string;
+  userId: string;
+  membershipId: string | null;
 }
 
 export type ConnectOAuthStateV1 = OAuthStateBase & ConnectOAuthExtra;
@@ -226,19 +232,34 @@ export type CreatedConnectOAuthState = CreatedOAuthState;
 const connectFlow: OAuthStateFlow<ConnectOAuthExtra> = {
   cookieName: CONNECT_OAUTH_COOKIE,
   cookiePath: CONNECT_COOKIE_PATH,
-  bind: ({ provider }) => ({ provider }),
+  bind({ provider, userId, membershipId }) {
+    const bound: JsonObject = { provider, userId };
+    if (membershipId !== null) bound.membershipId = membershipId;
+    return bound;
+  },
   read(parsed) {
     if (!isString(parsed.provider) || parsed.provider.length === 0) return null;
-    return { provider: parsed.provider };
+    if (!isString(parsed.userId) || parsed.userId.length === 0) return null;
+    if (
+      parsed.membershipId !== undefined
+      && (!isString(parsed.membershipId) || parsed.membershipId.length === 0)
+    ) return null;
+    return {
+      provider: parsed.provider,
+      userId: parsed.userId,
+      membershipId: isString(parsed.membershipId) ? parsed.membershipId : null,
+    };
   },
 };
 
 export async function createConnectOAuthState(
   signingSecret: string,
   provider: string,
+  userId: string,
+  membershipId: string | null,
   now = Date.now(),
 ): Promise<CreatedConnectOAuthState> {
-  return createOAuthState(connectFlow, signingSecret, { provider }, now);
+  return createOAuthState(connectFlow, signingSecret, { provider, userId, membershipId }, now);
 }
 
 export async function verifyConnectOAuthStateCookie(

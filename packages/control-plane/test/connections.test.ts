@@ -81,10 +81,14 @@ async function connectLinearOAuth(
       expires_in: expiresInSeconds,
     }),
   );
+  // The callback is a cross-site navigation: the SameSite=Strict session
+  // cookie is absent in a real browser, so the request carries only the
+  // Lax state cookie. Sending the session here would mask the exact bug
+  // this flow shipped with.
   const callback = await appRequest(
     app,
     `/connect/linear/callback?code=auth-code&state=${state}`,
-    { headers: { Cookie: `${cookie}; ${stateCookie}` } },
+    { headers: { Cookie: stateCookie } },
   );
   expect(callback.status).toBe(302);
   exchange.mockRestore();
@@ -883,7 +887,7 @@ describe("connect oauth state", () => {
     state: string;
     codeVerifier: string;
   }> {
-    const created = await createConnectOAuthState(SECRET, provider, CREATED_AT);
+    const created = await createConnectOAuthState(SECRET, provider, "user-1", "membership-1", CREATED_AT);
     const pair = (created.cookie.split(";")[0] ?? "");
     expect(pair.startsWith(`${CONNECT_OAUTH_COOKIE}=`)).toBe(true);
     expect(created.cookie).toContain("Path=/connect");
@@ -900,7 +904,12 @@ describe("connect oauth state", () => {
 
     await expect(
       verifyConnectOAuthStateCookie(cookie, state, "linear", SECRET, EXPIRES_AT - 1),
-    ).resolves.toMatchObject({ provider: "linear", codeVerifier });
+    ).resolves.toMatchObject({
+      provider: "linear",
+      codeVerifier,
+      userId: "user-1",
+      membershipId: "membership-1",
+    });
 
     // Replayed against a second provider's token endpoint.
     await expect(
@@ -922,7 +931,7 @@ describe("connect oauth state", () => {
   });
 
   it("keeps the login cookie and the connect cookie apart", async () => {
-    const connect = await createConnectOAuthState(SECRET, "linear", CREATED_AT);
+    const connect = await createConnectOAuthState(SECRET, "linear", "user-1", null, CREATED_AT);
     expect(connect.cookie).toContain(`${CONNECT_OAUTH_COOKIE}=`);
     expect(connect.cookie).not.toContain("blitz_google_oauth=");
     expect(connect.cookie).not.toContain("Path=/auth/google");
