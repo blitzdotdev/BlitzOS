@@ -10,6 +10,8 @@
 
 # Worker name in your Cloudflare account. Any name works; it becomes part of your workers.dev origin.
 name = "blitz-control-plane"
+# Cloudflare account that owns this Worker. Optional when your wrangler login sees exactly one account; required when it sees several, or the deploy cannot choose one. Uncomment and fill in:
+# account_id = "<your account id>"
 main = "src/worker.ts"
 compatibility_date = "2026-08-11"
 compatibility_flags = ["nodejs_compat"]

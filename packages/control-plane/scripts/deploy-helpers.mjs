@@ -106,6 +106,17 @@ export function r2BucketNamesFromList(output) {
   return names;
 }
 
+// `wrangler r2 bucket list` is the one step of the deploy that does not read
+// account_id out of the config file, so a login that can see several accounts
+// stops there with "More than one account available but unable to select one
+// in non-interactive mode". Passing the configured account through the
+// environment variable wrangler names in that error scopes every call alike.
+export function configuredAccountId(rawConfig) {
+  if (!isRecord(rawConfig)) return null;
+  const accountId = String(rawConfig.account_id ?? "").trim();
+  return accountId === "" ? null : accountId;
+}
+
 export function placeholderVars(rawConfig) {
   const vars = isRecord(rawConfig) && isRecord(rawConfig.vars) ? rawConfig.vars : {};
   return Object.keys(vars).filter((name) =>
@@ -246,6 +257,8 @@ export async function deployControlPlane({
     CI: "1",
     WRANGLER_SEND_METRICS: "false",
   };
+  const accountId = configuredAccountId(rawConfig);
+  if (accountId !== null) commandEnv.CLOUDFLARE_ACCOUNT_ID = accountId;
   const invoke = (tool, args, capture = false) =>
     run(tool, args, { capture, env: commandEnv });
   const wrangler = (args, capture = false) =>

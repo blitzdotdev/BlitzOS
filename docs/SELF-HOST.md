@@ -84,6 +84,11 @@ The R2 binding (`BOX_IMAGES` → bucket `blitz-box-images`) and the D1 binding
 stay as they are; the deploy script creates the database and fills in
 `database_id` for you.
 
+If your wrangler login can see more than one Cloudflare account, uncomment the
+top-level `account_id` and set it to the account this Worker belongs to. The
+deploy scopes every wrangler command to it; without it wrangler cannot choose
+an account and stops with `More than one account available`.
+
 ## 3. Set the secrets
 
 The deploy script refuses to deploy until the first five secrets exist

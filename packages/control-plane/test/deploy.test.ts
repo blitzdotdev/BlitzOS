@@ -12,6 +12,7 @@ import {
 import wranglerExample from "../wrangler.toml.example?raw";
 import {
   configVarProblems,
+  configuredAccountId,
   deployControlPlane,
   d1DatabasePatch,
   localSecretValueProblems,
@@ -221,6 +222,89 @@ describe("control-plane deploy command", () => {
         { database_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
       ],
     });
+  });
+
+  it("scopes every wrangler command to the configured account", async () => {
+    // `wrangler r2 bucket list` ignores account_id in the config file, so a
+    // multi-account login died there with "More than one account available
+    // but unable to select one in non-interactive mode" — after migrations.
+    expect(configuredAccountId({ account_id: "53a144fad4e15ca51c32da9b9fe25d4a" }))
+      .toBe("53a144fad4e15ca51c32da9b9fe25d4a");
+    for (const withoutAccount of [{}, { account_id: "" }, { account_id: "   " }]) {
+      expect(configuredAccountId(withoutAccount)).toBeNull();
+    }
+
+    const envs: Array<Record<string, string>> = [];
+    const rawConfig = {
+      name: "blitz-control-plane",
+      account_id: "53a144fad4e15ca51c32da9b9fe25d4a",
+      vars: { MICROVM_HOSTS: "[]" },
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+      d1_databases: [
+        {
+          binding: "DB",
+          database_name: "blitz-control-plane",
+          database_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        },
+      ],
+    };
+    const run = async (
+      tool: string,
+      args: string[],
+      options: { capture: boolean; env: Record<string, string> },
+    ) => {
+      envs.push(options.env);
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:  blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        return {
+          stdout: JSON.stringify(
+            [
+              "HETZNER_API_TOKEN",
+              "GOOGLE_CLIENT_ID",
+              "GOOGLE_CLIENT_SECRET",
+              "WEBAPP_TOKEN_SECRET",
+              "CRED_MASTER_KEY",
+            ].map((name) => ({ name, type: "secret_text" })),
+          ),
+        };
+      }
+      return { stdout: "" };
+    };
+
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {
+        throw new Error("matching D1 config should not be rewritten");
+      },
+      secretValues: {},
+    });
+    expect(envs.length).toBeGreaterThan(0);
+    expect(envs.every((env) => env.CLOUDFLARE_ACCOUNT_ID === "53a144fad4e15ca51c32da9b9fe25d4a"))
+      .toBe(true);
+
+    envs.length = 0;
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig: { ...rawConfig, account_id: undefined },
+      run,
+      async patchConfig() {
+        throw new Error("matching D1 config should not be rewritten");
+      },
+      secretValues: {},
+    });
+    expect(envs.every((env) => !("CLOUDFLARE_ACCOUNT_ID" in env))).toBe(true);
   });
 
   it("fails with exact setup commands when required secret metadata is missing", async () => {
