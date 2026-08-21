@@ -69,7 +69,6 @@ Summary: **1 declared env, 4 non-env, 0 obsolete**.
 | `BOX_IMAGE_TAG` | Worker runtime; Wrangler var | declared env | Optional string; empty is meaningful for a local image reference |
 | `CRED_MASTER_KEY` | Worker initialization and scheduled handler | declared env | Required secret binding, no default |
 | `HETZNER_API_TOKEN` | `providersFor` | declared env | Optional secret binding; required only when Hetzner operations are used |
-| `JWT_SECRET_MAIN` | `teenybase.ts` `$JWT_SECRET_MAIN` | declared env | Required secret binding, no default |
 | `MAX_CONCURRENT_WORKSPACES` | Worker runtime; Wrangler var | declared env | `integer`, default 10, range 1–1000 |
 | `MICROVM_HOSTS` | `providersFor`; Wrangler var | declared env | `json`, default empty array; program code owns the stricter host shape |
 | `MICROVM_LAB_TOKEN` | dynamically resolved from checked-in `MICROVM_HOSTS.tokenVar` | declared env | Optional secret binding, no default; validation checks the referenced name |

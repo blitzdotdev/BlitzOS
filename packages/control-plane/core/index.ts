@@ -82,10 +82,13 @@ export type {
   CoreRuntime,
   RuntimeFactory,
   RuntimeVariables,
+  SignupMode,
 } from "./runtime.js";
 export {
+  allowedEmailDomainsFromEnv,
   maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
+  signupModeFromEnv,
 } from "./runtime.js";
 export type { BoxIdentity } from "./types.js";
 export type {

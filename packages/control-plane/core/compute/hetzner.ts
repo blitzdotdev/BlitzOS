@@ -23,14 +23,63 @@ const SHUTDOWN_TIMEOUT_MS = 45_000;
 // are lowercase ASCII letters followed by decimal digits, with no dash.
 const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
 const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
-// Curated catalog for now: two mid-size x86 types in the US-west location.
-// This constrains what the create page offers; existing workspaces on other
-// types keep working because ownership stays shape-based.
-const MACHINE_TYPE_ALLOWLIST = new Set(["cpx21@hil", "cpx31@hil"]);
+// Curated default catalog: two mid-size x86 types in the US-west location.
+// Operators override it with the HETZNER_MACHINE_TYPES Worker var. The
+// catalog constrains what the create page offers; existing workspaces on
+// other types keep working because ownership stays shape-based.
+export const DEFAULT_HETZNER_MACHINE_TYPES: readonly string[] = ["cpx21@hil", "cpx31@hil"];
+
+export interface HetznerMachineTypeCatalogWarning {
+  event: "hetzner_machine_type_catalog_entry_rejected";
+  entry: string;
+  reason: string;
+}
+
+export type HetznerCatalogWarningSink = (
+  warning: HetznerMachineTypeCatalogWarning,
+) => void;
+
+/**
+ * Parses the HETZNER_MACHINE_TYPES Worker var (comma-separated
+ * "type@location" entries) into the machine-type catalog allowlist. An unset
+ * or blank var keeps the default catalog. Malformed entries are skipped with
+ * one structured warning each; they never crash the Worker.
+ */
+export function hetznerMachineTypeAllowlistFromEnv(
+  raw: string | undefined,
+  warn: HetznerCatalogWarningSink = () => {},
+): ReadonlySet<string> {
+  if (raw === undefined || raw.trim() === "") {
+    return new Set(DEFAULT_HETZNER_MACHINE_TYPES);
+  }
+  const allowlist = new Set<string>();
+  for (const segment of raw.split(",")) {
+    const entry = segment.trim();
+    if (entry === "") continue;
+    const selected = machineId(entry);
+    const valid = selected.location !== null
+      && SERVER_TYPE_NAME_PATTERN.test(selected.type)
+      && LOCATION_NAME_PATTERN.test(selected.location);
+    if (!valid) {
+      warn({
+        event: "hetzner_machine_type_catalog_entry_rejected",
+        entry,
+        reason: 'expected "<server-type>@<location>" (for example "cpx21@hil")',
+      });
+      continue;
+    }
+    allowlist.add(entry);
+  }
+  return allowlist;
+}
 
 export interface HetznerProviderOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
+  /** Raw HETZNER_MACHINE_TYPES Worker var; unset or blank keeps the default catalog. */
+  machineTypeCatalog?: string;
+  /** Receives one structured warning per malformed catalog entry. */
+  warn?: HetznerCatalogWarningSink;
 }
 
 interface MachineSelection {
@@ -158,6 +207,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   private readonly serverTypeNames = new Map<number, string>();
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly machineTypeAllowlist: ReadonlySet<string>;
 
   constructor(
     private readonly token: string,
@@ -165,6 +215,10 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   ) {
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? sleep;
+    this.machineTypeAllowlist = hetznerMachineTypeAllowlistFromEnv(
+      options.machineTypeCatalog,
+      options.warn,
+    );
   }
 
   capabilities(): ProviderCapabilities {
@@ -302,7 +356,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
           location: locationName,
         } satisfies ProviderMachineType;
       });
-    }).filter((machineType) => MACHINE_TYPE_ALLOWLIST.has(machineType.id));
+    }).filter((machineType) => this.machineTypeAllowlist.has(machineType.id));
   }
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {

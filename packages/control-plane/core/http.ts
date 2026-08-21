@@ -16,9 +16,12 @@ export class HttpError extends Error {
   }
 }
 
-export async function readText(request: Request): Promise<string> {
+export async function readText(
+  request: Request,
+  maxBytes = MAX_BODY_BYTES,
+): Promise<string> {
   const declared = request.headers.get("content-length");
-  if (declared !== null && Number(declared) > MAX_BODY_BYTES) {
+  if (declared !== null && Number(declared) > maxBytes) {
     throw new HttpError(413, "request body is too large");
   }
   if (request.body === null) return "";
@@ -30,7 +33,7 @@ export async function readText(request: Request): Promise<string> {
     const result = await reader.read();
     if (result.done) break;
     size += result.value.byteLength;
-    if (size > MAX_BODY_BYTES) {
+    if (size > maxBytes) {
       await reader.cancel();
       throw new HttpError(413, "request body is too large");
     }
@@ -46,8 +49,11 @@ export async function readText(request: Request): Promise<string> {
   return new TextDecoder().decode(body);
 }
 
-export async function readJson(request: Request): Promise<JsonValue> {
-  const text = await readText(request);
+export async function readJson(
+  request: Request,
+  maxBytes = MAX_BODY_BYTES,
+): Promise<JsonValue> {
+  const text = await readText(request, maxBytes);
   try {
     return JSON.parse(text);
   } catch {
@@ -69,6 +75,10 @@ export function isString<Value>(value: Value): value is Value & string {
 
 export function isNumber<Value>(value: Value): value is Value & number {
   return typeof value === "number";
+}
+
+export function isBoolean<Value>(value: Value): value is Value & boolean {
+  return typeof value === "boolean";
 }
 
 export function requiredString<Value>(

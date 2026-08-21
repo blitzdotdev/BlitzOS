@@ -1,3 +1,4 @@
+import { env } from "cloudflare:test";
 import { databaseSettingsSchema, generateMigrations } from "teenybase";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,12 +7,17 @@ import {
   TEENYBASE_SOURCE,
 } from "../scripts/build-blitzdev.mjs";
 
+// Vendor-only: this suite pins the teenybase schema for the blitz.dev managed
+// deployment, which forks do not use. Skipped unless BLITZDEV_MANAGED=1.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
+
 const expectedTables = [
   "principals",
   "users",
   "orgs",
   "memberships",
   "sessions",
+  "agent_rules",
   "workspaces",
   "invites",
   "volume_ownership",
@@ -27,6 +33,7 @@ const expectedTables = [
   "box_token_families",
   "broker_boxes",
   "broker_keys",
+  "broker_members",
   "connections",
   "user_oauth_grants",
   "workspace_template_connections",
@@ -38,7 +45,7 @@ const expectedTables = [
   "blitz_files",
 ] as const;
 
-describe("blitz.dev managed schema", () => {
+describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("parses as TypeScript and passes teenybase's installed config validator", () => {
     expect(TEENYBASE_SOURCE).toMatch(/^import type \{ DatabaseSettings, TableRulesExtensionData \} from "teenybase";/u);
     expect(TEENYBASE_SOURCE).toContain("satisfies DatabaseSettings;");
@@ -46,9 +53,9 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
-  it("contains the twenty-eight domain tables plus the deny-all file support table", () => {
+  it("contains the thirty domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(29);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(31);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -90,7 +97,32 @@ describe("blitz.dev managed schema", () => {
           name: "owner_membership_id",
           foreignKey: { table: "memberships", column: "id" },
         }),
+        expect.objectContaining({ name: "environment", type: "text" }),
+        expect.objectContaining({
+          name: "files_ready",
+          type: "bool",
+          default: { l: 0 },
+          check: "files_ready IN (0, 1)",
+        }),
+        expect.objectContaining({
+          name: "agent_rule_id",
+          foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" },
+        }),
       ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "agent_rules")).toMatchObject({
+      fields: [
+        expect.objectContaining({ name: "id", primary: true }),
+        expect.objectContaining({
+          name: "org_id",
+          notNull: true,
+          foreignKey: { table: "orgs", column: "id" },
+        }),
+        expect.objectContaining({ name: "name", notNull: true }),
+        expect.objectContaining({ name: "content", notNull: true }),
+        expect.objectContaining({ name: "updated_at", type: "integer", notNull: true }),
+      ],
+      indexes: [{ name: "identity", unique: true, fields: ["org_id", "name"] }],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "users")).toMatchObject({
       fields: expect.arrayContaining([
@@ -146,6 +178,11 @@ describe("blitz.dev managed schema", () => {
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_templates")).toMatchObject({
       fields: expect.arrayContaining([
         expect.objectContaining({ name: "machine_type_id", notNull: true }),
+        expect.objectContaining({ name: "environment", type: "text" }),
+        expect.objectContaining({
+          name: "agent_rule_id",
+          foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" },
+        }),
         expect.objectContaining({
           name: "created_by_membership_id",
           foreignKey: { table: "memberships", column: "id" },
@@ -237,6 +274,7 @@ describe("blitz.dev managed schema", () => {
     expect([...sql.matchAll(/CREATE (?:UNIQUE )?INDEX\s+([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1])).toEqual([
       "idx_memberships_identity",
       "idx_sessions_expires_at",
+      "idx_agent_rules_identity",
       "idx_workspaces_owner",
       "idx_workspaces_phase",
       "idx_workspace_grants_identity",
@@ -253,6 +291,8 @@ describe("blitz.dev managed schema", () => {
       "idx_boxes_principal",
       "idx_broker_keys_box",
       "idx_broker_keys_identity",
+      "idx_broker_members_box",
+      "idx_broker_members_identity",
       "idx_connections_org_name",
       "idx_connections_org",
       "idx_user_oauth_grants_live",

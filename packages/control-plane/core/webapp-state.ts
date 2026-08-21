@@ -8,6 +8,7 @@ import {
   isString,
   readJson,
 } from "./http.js";
+import { isPreviewPath, MAX_PREVIEW_PATH_LENGTH } from "./preview.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 
@@ -41,6 +42,7 @@ interface WebAppTabV1 {
   title?: string;
   panel?: WebAppDrawerSegment;
   region?: WebAppRegion;
+  path?: string;
 }
 
 interface WebAppTabsV1 {
@@ -188,7 +190,19 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     if (value.port !== undefined) {
       const port = positiveId(value.port, `tabs.tabs[${index}].port`);
       if (port > 65_535) throw new HttpError(400, `tabs.tabs[${index}].port is invalid`);
-      return withRegion({ id, type, port }, region);
+      // A deep-linked preview keeps its route. The webApp's own parser
+      // (packages/webapp/src/storage.ts) accepts the same optional field; a
+      // server that dropped it silently reset the tab to "/" on every reload.
+      if (value.path === undefined) return withRegion({ id, type, port }, region);
+      const path = boundedString(value.path, `tabs.tabs[${index}].path`, MAX_PREVIEW_PATH_LENGTH);
+      // Rooted and traversal-free, exactly as the filePath rule above: the
+      // browser normalizes `/preview/<port>/a/../../workspace/` before the
+      // request leaves the tab, so a stored `..` walks the iframe out of the
+      // preview prefix onto another box surface.
+      if (!isPreviewPath(path)) {
+        throw new HttpError(400, `tabs.tabs[${index}].path must be a rooted path without ..`);
+      }
+      return withRegion({ id, type, port, path }, region);
     }
     const url = boundedString(value.url, `tabs.tabs[${index}].url`, 2_048);
     if (url.trim() === "") throw new HttpError(400, `tabs.tabs[${index}].url is invalid`);

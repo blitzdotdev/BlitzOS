@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# This is the only gate that exercises the s6 service graph, so it builds from
+# this tree by default: silently adopting an existing tag lets an edit to
+# rootfs/ or an s6 unit pass against an image that predates it. Reusing an
+# image is possible but must be said out loud: IMAGE=<tag> tests that tag
+# as-is and never builds.
 set -euo pipefail
 
 script_dir=$(realpath "$(dirname "$0")")
@@ -111,9 +116,27 @@ echo "PASS s6 graph and longruns"
 docker logs "$container" >"$test_dir/container.log" 2>&1
 grep -q 'enroll: skipped (no control-plane origin)' "$test_dir/container.log" || fail "enroll did not skip cleanly"
 grep -q 'register: skipped (no control-plane origin)' "$test_dir/container.log" || fail "register did not skip cleanly"
-grep -q 'watch: skipped (no broker config)' "$test_dir/container.log" || fail "watch did not skip cleanly"
+grep -q 'watch: waiting for broker config' "$test_dir/container.log" || fail "watch did not wait cleanly"
 docker exec "$container" test ! -e /var/lib/blitz/broker.json || fail "no-CP mode created broker config"
 echo "PASS no-CP skips"
+
+# Terminal delivery: the shim must WIN the PATH over the pinned binary it execs,
+# in a plain login shell as well as in the image environment. A member-installed
+# copy landing in the writable npm prefix and shadowing it is the single most
+# common way a terminal ends up signed out while chat is authenticated.
+resolved=$(docker exec "$container" /bin/sh -lc 'command -v claude')
+[ "$resolved" = '/usr/local/bin/claude' ] || fail "login-shell claude resolves to $resolved, not the shim"
+resolved=$(docker exec "$container" /bin/sh -c 'command -v claude')
+[ "$resolved" = '/usr/local/bin/claude' ] || fail "claude resolves to $resolved, not the shim"
+docker exec "$container" grep -q 'CLAUDE_CODE_OAUTH_TOKEN' /usr/local/bin/claude ||
+  fail "the claude shim does not export CLAUDE_CODE_OAUTH_TOKEN"
+docker exec "$container" test ! -e /etc/claude-code/managed-settings.json ||
+  fail "managed settings exist; a managed apiKeyHelper hangs claude when a token is also set"
+# Signed out is fine; a dead command is not. With no broker the shim must still
+# reach the real binary.
+docker exec "$container" /bin/sh -lc 'DISABLE_AUTOUPDATER=1 claude --version' >/dev/null ||
+  fail "the claude shim does not run with no broker configured"
+echo "PASS terminal delivery shim"
 
 listeners=$(docker exec "$container" ss -ltnH)
 grep -Eq '[[:space:]]0\.0\.0\.0:22[[:space:]]' <<<"$listeners" || fail "sshd is not listening on port 22"

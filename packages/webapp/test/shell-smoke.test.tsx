@@ -58,7 +58,10 @@ vi.mock("../src/TtydTerminal.js", async () => {
 vi.mock("../src/chat/ChatPanel.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatPanel: ({ initialSessionId }: { initialSessionId: string | null }) => {
+    ChatPanel: ({ initialSessionId, onSignIn }: {
+      initialSessionId: string | null;
+      onSignIn?: (provider: "claude" | "codex") => void;
+    }) => {
       const [mountId] = React.useState(() => `chat-${++webAppHarness.nextMountId}`);
       React.useEffect(() => {
         webAppHarness.mounts("chat", mountId);
@@ -69,11 +72,36 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
           data-testid="chat-session"
           data-initial-session-id={initialSessionId ?? ""}
           data-mount-id={mountId}
-        />
+        >
+          <button
+            type="button"
+            data-testid="chat-sign-in"
+            onClick={() => onSignIn?.("claude")}
+          >Sign in to Claude</button>
+        </div>
       );
     },
   };
 });
+
+type TerminalSubmitDetail = { data?: string; enters?: number; sessionKey?: string };
+
+/** Collects what the shell types at terminal tabs until the returned stop. */
+function recordTerminalSubmits(): { submits: TerminalSubmitDetail[]; stop: () => void } {
+  const submits: TerminalSubmitDetail[] = [];
+  const record = (event: Event) => {
+    // SAFETY: The shell is the only dispatcher of this event name in the test environment.
+    submits.push((event as CustomEvent<TerminalSubmitDetail>).detail);
+  };
+  window.addEventListener("blitz:terminal-submit", record);
+  return { submits, stop: () => window.removeEventListener("blitz:terminal-submit", record) };
+}
+
+function selectedSessionId(container: HTMLElement): string | undefined {
+  return container.querySelector<HTMLElement>(
+    '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"][aria-selected="true"]',
+  )?.closest<HTMLElement>(".webapp-tab-cell")?.dataset.sessionId;
+}
 
 const creating: WorkspaceView = {
   id: "workspace-one",
@@ -90,6 +118,8 @@ const creating: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
 };
 
 const running: WorkspaceView = {
@@ -112,6 +142,8 @@ const running: WorkspaceView = {
   role: "owner",
   orgShareRole: null,
   owner: { name: "Owner", avatarUrl: null },
+  environment: null,
+  agentRuleId: null,
 };
 
 const runningTwo: WorkspaceView = {
@@ -169,6 +201,9 @@ function client(): ControlPlaneClient {
     detachFolder: vi.fn(async () => undefined),
     renameFolder: vi.fn(async () => undefined),
   setFolderOrgRole: vi.fn(async () => undefined),
+  listAgentRules: vi.fn(async () => ({ rules: [] })),
+  putAgentRule: vi.fn(async () => { throw new Error("unused"); }),
+  deleteAgentRule: vi.fn(async () => undefined),
   listWorkspaceTemplates: vi.fn(async () => ({ templates: [] })),
   createWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
     updateWorkspaceTemplate: vi.fn(async () => { throw new Error('unused'); }),
@@ -725,6 +760,133 @@ describe("webapp shell smoke", () => {
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs.find(
       (tab) => tab.id === 1,
     )).toEqual({ id: 1, type: "terminal", region: "side" });
+
+    await view.unmount();
+  });
+
+  it("drives the open claude tab into its login flow from chat", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
+      { id: 2, type: "claude" },
+    ], 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    // Visit chat second, so the claude pane is already mounted behind it.
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
+    )?.click());
+    const recorder = recordTerminalSubmits();
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-sign-in"]',
+    )?.click());
+
+    expect(selectedSessionId(view.container)).toBe("2");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    });
+    recorder.stop();
+
+    // The slash command and its submit are separate writes, and both are
+    // addressed at the claude tab rather than at whatever happens to be
+    // selected when they land.
+    expect(recorder.submits).toEqual([
+      { data: "/login", enters: 0, sessionKey: "2" },
+      { data: "\r", enters: 0, sessionKey: "2" },
+    ]);
+
+    await view.unmount();
+  });
+
+  it("opens a claude tab for the login flow when none is running", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const recorder = recordTerminalSubmits();
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-sign-in"]',
+    )?.click());
+
+    expect(selectedSessionId(view.container)).toBe("2");
+    const terminal = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="2"]',
+    );
+    expect(terminal?.textContent).toBe("claude");
+    expect(terminal?.dataset.active).toBe("true");
+    expect(recorder.submits).toEqual([]);
+
+    // A tab that was not open yet has to connect and let the TUI take the pty
+    // before anything typed at it is read.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+    });
+    recorder.stop();
+    expect(recorder.submits).toEqual([
+      { data: "/login", enters: 0, sessionKey: "2" },
+      { data: "\r", enters: 0, sessionKey: "2" },
+    ]);
+
+    await view.unmount();
+  });
+
+  it("drops an abandoned sign-in instead of re-arming it on the way back", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const recorder = recordTerminalSubmits();
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-sign-in"]',
+    )?.click());
+    expect(selectedSessionId(view.container)).toBe("2");
+
+    // Leaving the tab inside the warm-up window is the reader abandoning the
+    // flow, not pausing it.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    });
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
+    )?.click());
+    expect(recorder.submits).toEqual([]);
+
+    // Coming back to that tab must not resume the request. The pane is a live
+    // agent TUI by then, and `/login` plus Enter typed into it mid-session
+    // interrupts whatever the reader was actually doing there.
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+    });
+    recorder.stop();
+    expect(recorder.submits).toEqual([]);
 
     await view.unmount();
   });

@@ -8,10 +8,14 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/enroll"
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
+
+// registerTimeout caps the whole broker enrolment, retries included.
+const registerTimeout = 45 * time.Second
 
 func main() {
 	if err := runWithInput(os.Args[1:], os.Stdin, os.Stdout); err != nil {
@@ -46,7 +50,14 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		if len(args) != 1 {
 			return errors.New("register takes no arguments")
 		}
-		return workspace.Register(context.Background(), stateDir, nil)
+		// Bounded, because this runs as a boot-time oneshot with the rest of
+		// the box's services ordered behind it. The retry budget inside
+		// Register fits comfortably; anything slower than this is an outage,
+		// and the right answer to an outage is a workspace that boots signed
+		// out rather than one that never boots.
+		ctx, cancel := context.WithTimeout(context.Background(), registerTimeout)
+		defer cancel()
+		return workspace.Register(ctx, stateDir, nil)
 	case "token":
 		if len(args) != 2 || args[1] == "" {
 			return errors.New("usage: blitz-cred token INTEGRATION")

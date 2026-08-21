@@ -1,5 +1,6 @@
 import type { MachineType } from "./machine.js";
 import type { CredentialManifest } from "./credential.js";
+import type { WorkspaceEnvironment } from "./environment.js";
 import type { Volume } from "./volume.js";
 import type { RetryAction, WorkspaceView } from "./workspace.js";
 
@@ -30,6 +31,10 @@ export interface CreateWorkspaceRequest {
   /** Providers to enable in the new workspace. The manifest stays the ceiling;
    * this is the provision list, and the ceiling wins on conflict. */
   connections?: string[];
+  environment?: WorkspaceEnvironment;
+  /** Overrides the template's rule; null (or absent) falls back to the
+   * template's rule and then the built-in doc. */
+  agentRuleId?: string | null;
 }
 
 export interface CreateWorkspaceResponse {

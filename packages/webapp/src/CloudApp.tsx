@@ -60,6 +60,7 @@ import {
   maxDrawerWidth,
   removeDismissedChatAuthProviders,
   tabRegion,
+  withPreviewTabPath,
   type StorageNamespace,
   type WorkspaceDrawerSegment,
   type WorkspaceRegion,
@@ -83,6 +84,7 @@ import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
+import { useTerminalSignIn } from './use-terminal-sign-in';
 import { ChatPanel } from './chat/ChatPanel';
 import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
@@ -97,6 +99,7 @@ import {
 } from './workspace-store';
 import { PreviewPanel } from './PreviewPanel';
 import {
+  isPreviewPath,
   isPreviewPort,
   newestPorts,
   newestPreviewLinks,
@@ -118,6 +121,7 @@ import {
   useWorkspacePolling,
 } from './use-workspace-lifecycle';
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
+import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
@@ -442,6 +446,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
     activeFilesBase,
+  );
+  // The in-box agent's `blitz preview open` raises a focus marker; open it as a
+  // tab so the user never hunts for the preview. `openPreviewPort` is defined
+  // below and only referenced when a focus arrives (after render), so its
+  // temporal position is fine. The pre-split drawer-segment nudge is gone:
+  // panels are tabs now, and forcing one open would steal the pane.
+  useWorkspacePreviewFocus(
+    route.page === 'webApp' && activeWorkspaceRunning,
+    activeWorkspaceId,
+    activeFilesBase,
+    (focus) => {
+      openPreviewPort(focus.port, focus.path);
+    },
   );
 
   // Drive attachments feed the files view (shared pin count, context-menu
@@ -1041,20 +1058,50 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     if (mobileWebApp) setFilesDrawerOpen(false);
   };
+  const signInToTerminal = useTerminalSignIn({
+    workspaceId: activeWorkspaceId,
+    tabs: activeWorkspaceTabs === null ? null : ttydSessions,
+    nextId: activeWorkspaceTabs?.nextId ?? 0,
+    accessRole: activeWorkspace?.accessRole,
+    ttydActiveId,
+    retainedSessions: retainedSessionIdsRef,
+    selectSession: selectTtydSession,
+    spawnSession: spawnTtydSession,
+  });
+  const retargetPreviewTab = (tabId: number, path: string | undefined) => {
+    setWorkspaceTabs((current) => {
+      if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
+      const tabs = withPreviewTabPath(current.value.tabs, tabId, path);
+      return tabs === current.value.tabs
+        ? current
+        : { ...current, value: { ...current.value, tabs } };
+    });
+  };
   const orderedLivePorts = useMemo(() => newestPorts(livePorts), [livePorts]);
   const orderedPreviewLinks = useMemo(
     () => newestPreviewLinks(previewLinks),
     [previewLinks],
   );
-  const openPreviewPort = (port: number) => {
+  const openPreviewPort = (port: number, path?: string) => {
     if (!isPreviewPort(port)) return false;
+    // Only a non-root, usable deep-link is recorded, so plain port opens keep
+    // the bare { id, type, port } tab shape (and its persisted round-trip).
+    const deepLink = path !== undefined && path !== '/' && isPreviewPath(path)
+      ? path
+      : undefined;
     const existing = ttydSessions.find(
       (tab) => tab.type === 'preview' && 'port' in tab && tab.port === port,
     );
     if (existing) {
+      // The agent re-runs `blitz preview open` on every server start, so a
+      // second "open /dashboard" almost always lands on a tab this port already
+      // has. Re-point that tab instead of ignoring the route.
+      retargetPreviewTab(existing.id, deepLink);
       selectTtydSession(String(existing.id));
     } else {
-      addWorkspaceTab((id) => ({ id, type: 'preview', port }));
+      addWorkspaceTab((id) => deepLink === undefined
+        ? { id, type: 'preview', port }
+        : { id, type: 'preview', port, path: deepLink });
     }
     return true;
   };
@@ -1381,6 +1428,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             busy={createWorkspaceBusy}
             error={createWorkspaceError}
             orgName={store.viewer?.org.name ?? 'your org'}
+            client={client}
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
             listTemplates={listTemplates}
@@ -1674,6 +1722,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         target={'port' in session
                           ? session.port
                           : { url: session.url, title: session.title }}
+                        path={'port' in session ? session.path : undefined}
                         filesBase={activeFilesBase}
                         running={activeWorkspaceRunning}
                       />
@@ -1717,6 +1766,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                           rememberChatSession(sessionId, chatSessionId, 'claude');
                         }}
                         onOpenPreview={openPreviewPort}
+                        onSignIn={signInToTerminal}
                         readOnly={activeWorkspace?.accessRole === 'viewer'}
                       />
                     </div>
@@ -2019,6 +2069,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           busy={createWorkspaceBusy}
           error={createWorkspaceError}
           orgName={store.viewer?.org.name ?? 'your org'}
+          client={client}
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
           listTemplates={listTemplates}

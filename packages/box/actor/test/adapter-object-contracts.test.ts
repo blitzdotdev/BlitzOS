@@ -1,27 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  claudeOptionalOptions,
-  claudeTurnOutput,
-} from "../src/adapters/claude.js";
+import { claudeTurnOutput } from "../src/adapters/claude.js";
 import { codexThreadRequestParams } from "../src/adapters/codex.js";
 import { defaultAgentConfig } from "../src/agent-config.js";
-import { PREVIEW_GUIDANCE } from "../src/preview-guidance.js";
 
+// Claude's `resume` used to have a helper and a block of its own here. It does
+// not need one: the SDK reads that option as `if (resume) push('--resume=…')`,
+// so an absent key and an undefined one are the same argv, and nothing reads
+// the object's key order. The conditional spread at the call site keeps the key
+// absent anyway, and `Options` typing — not a runtime assertion — is what keeps
+// a second token-delivery hook off the object.
+//
+// Codex is the opposite and stays: its params object IS the JSON-RPC wire.
 describe("adapter object omission contracts", () => {
-  it("preserves Claude optional-key absence and insertion order", () => {
-    const absent = claudeOptionalOptions({ resumeId: null, token: null });
-    expect(Object.keys(absent)).toEqual([]);
-    expect("resume" in absent).toBe(false);
-    expect("getOAuthToken" in absent).toBe(false);
-    expect(JSON.stringify(absent)).toBe("{}");
-
-    const present = claudeOptionalOptions({ resumeId: "session-1", token: "token-1" });
-    expect(Object.keys(present)).toEqual(["resume", "getOAuthToken"]);
-    expect("resume" in present).toBe(true);
-    expect("getOAuthToken" in present).toBe(true);
-    expect(JSON.stringify(present)).toBe('{"resume":"session-1"}');
-  });
-
   it("preserves Claude turn-output resume omission", () => {
     const absent = claudeTurnOutput("end_turn", undefined);
     expect(Object.keys(absent)).toEqual(["stopReason"]);
@@ -37,17 +27,17 @@ describe("adapter object omission contracts", () => {
   it("preserves Codex threadId omission before later request fields", () => {
     const config = defaultAgentConfig("codex");
     const absent = codexThreadRequestParams({ resumeId: null, cwd: "/workspace", config });
-    expect(Object.keys(absent)).toEqual(["cwd", "approvalPolicy", "sandbox", "developerInstructions"]);
+    expect(Object.keys(absent)).toEqual(["cwd", "approvalPolicy", "sandbox"]);
     expect("threadId" in absent).toBe(false);
     expect(JSON.stringify(absent)).toBe(
-      `{"cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":${JSON.stringify(PREVIEW_GUIDANCE)}}`,
+      `{"cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write"}`,
     );
 
     const present = codexThreadRequestParams({ resumeId: "thread-1", cwd: "/workspace", config });
-    expect(Object.keys(present)).toEqual(["threadId", "cwd", "approvalPolicy", "sandbox", "developerInstructions"]);
+    expect(Object.keys(present)).toEqual(["threadId", "cwd", "approvalPolicy", "sandbox"]);
     expect("threadId" in present).toBe(true);
     expect(JSON.stringify(present)).toBe(
-      `{"threadId":"thread-1","cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write","developerInstructions":${JSON.stringify(PREVIEW_GUIDANCE)}}`,
+      `{"threadId":"thread-1","cwd":"/workspace","approvalPolicy":"never","sandbox":"workspace-write"}`,
     );
   });
 });

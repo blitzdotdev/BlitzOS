@@ -1,7 +1,7 @@
 # oss/box — one OCI image, open. Install = docs.
 
 Box and box installer live here. Design record:
-`sessions/2026-08-11-box-redesign-acp-docker.md`.
+`plans/PORT-DESIGN.md` (the original session notes are not in this repo).
 Carve 2026-08-11. Full report: session scratchpad `codex-box-carve.txt`.
 Inventory: `packages/box` 31 files / 10,389 LOC. `packages/box-installer`
 17 files / 6,071 LOC. Finding map: 42 Lane 1+5 findings. 29 die by design.

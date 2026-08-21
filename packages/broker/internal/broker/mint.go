@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
@@ -44,6 +45,17 @@ func Mint(ctx context.Context, home string, allowed []string, requested string, 
 		}
 		if !expiry.After(time.Now()) || current == "" {
 			return errors.New("vendor CLI did not produce a valid access token")
+		}
+		// A token is what the vendor CLI put in the credential file, and this
+		// process does not get to clean it up: the mint reply is one line, so
+		// whitespace inside the token is indistinguishable from the terminator
+		// and every consumer would silently disagree about where the token ends.
+		// The shim strips it, the actor does not, and the vendor rejects an
+		// Authorization header carrying a newline. Refusing here fails the mint
+		// loudly, at the one place that can still name the harness, instead of
+		// handing out a token that half the box will corrupt.
+		if current != strings.TrimSpace(current) {
+			return errors.New("vendor CLI produced an access token carrying whitespace")
 		}
 		token = current
 		return nil

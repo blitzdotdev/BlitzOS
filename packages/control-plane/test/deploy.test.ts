@@ -1,15 +1,33 @@
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { cleanDist } from "../scripts/clean-dist.mjs";
 import {
+  deployableConfigToml,
+  ensureWranglerConfig,
+} from "../scripts/ensure-wrangler-config.mjs";
+// The committed template, not the gitignored wrangler.toml a local run writes.
+import wranglerExample from "../wrangler.toml.example?raw";
+import {
+  commandFailureMessage,
+  configVarProblems,
+  configuredAccountId,
   deployControlPlane,
   d1DatabasePatch,
+  localSecretValueProblems,
   missingSecretsMessage,
   parseD1Binding,
+  parseR2Binding,
+  placeholderVars,
+  r2BucketNamesFromList,
   requiredSecretsForConfig,
 } from "../scripts/deploy-helpers.mjs";
+
+function commentLines(toml: string): string[] {
+  return toml.split("\n").filter((line) => line.trimStart().startsWith("#"));
+}
 
 describe("control-plane deploy command", () => {
   it("adds MICROVM_HOSTS tokenVar names to required secret metadata without reading values", () => {
@@ -22,7 +40,6 @@ describe("control-plane deploy command", () => {
       },
     })).toEqual([
       "HETZNER_API_TOKEN",
-      "OPERATOR_API_KEY",
       "GOOGLE_CLIENT_ID",
       "GOOGLE_CLIENT_SECRET",
       "WEBAPP_TOKEN_SECRET",
@@ -30,6 +47,11 @@ describe("control-plane deploy command", () => {
       "MICROVM_LAB_TOKEN",
       "MICROVM_EDGE_TOKEN",
     ]);
+  });
+
+  it("treats OPERATOR_API_KEY as optional legacy, never a required secret", () => {
+    expect(requiredSecretsForConfig({ vars: { MICROVM_HOSTS: "[]" } }))
+      .not.toContain("OPERATOR_API_KEY");
   });
 
   it("validates pinned and dynamic MICROVM_HOSTS shapes before checking secrets", () => {
@@ -141,6 +163,9 @@ describe("control-plane deploy command", () => {
                 ]),
         };
       }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "Listing buckets...\nname:           unrelated-bucket\ncreation_date:  2026-01-01T00:00:00.000Z" };
+      }
       if (tool === "wrangler" && args[0] === "secret") {
         return {
           stdout: JSON.stringify([
@@ -161,6 +186,7 @@ describe("control-plane deploy command", () => {
       rawConfig: {
         name: "blitz-control-plane",
         vars: { MICROVM_HOSTS: "[]" },
+        r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
         d1_databases: [
           {
             binding: "DB",
@@ -175,6 +201,7 @@ describe("control-plane deploy command", () => {
       async patchConfig(patch: unknown) {
         configPatch = patch;
       },
+      secretValues: {},
     });
 
     expect(calls.map(({ tool, args }) => [tool, ...args])).toEqual([
@@ -183,6 +210,8 @@ describe("control-plane deploy command", () => {
       ["wrangler", "d1", "create", "blitz-control-plane", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "d1", "list", "--json", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "d1", "migrations", "apply", "DB", "--remote", "--config", "packages/control-plane/wrangler.toml"],
+      ["wrangler", "r2", "bucket", "list", "--config", "packages/control-plane/wrangler.toml"],
+      ["wrangler", "r2", "bucket", "create", "blitz-box-images", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "secret", "list", "--format", "json", "--config", "packages/control-plane/wrangler.toml"],
       ["npm", "run", "build", "-w", "@blitzos/webapp"],
       ["wrangler", "deploy", "--config", "packages/control-plane/wrangler.toml"],
@@ -194,6 +223,106 @@ describe("control-plane deploy command", () => {
         { database_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
       ],
     });
+  });
+
+  it("carries captured stderr into the failure a wrangler command reports", () => {
+    // A blocker that reads only "failed with exit 1" costs an operator half an
+    // hour: wrangler said exactly what was wrong, on stderr, and it was dropped.
+    expect(commandFailureMessage(
+      "wrangler",
+      ["r2", "bucket", "list", "--config", "packages/control-plane/wrangler.toml"],
+      "exit 1",
+      "✘ [ERROR] More than one account available but unable to select one in non-interactive mode.\n",
+    )).toBe(
+      "wrangler r2 bucket list --config packages/control-plane/wrangler.toml failed with exit 1\n✘ [ERROR] More than one account available but unable to select one in non-interactive mode.",
+    );
+    for (const empty of ["", "  \n", undefined]) {
+      expect(commandFailureMessage("wrangler", ["deploy"], "signal SIGTERM", empty))
+        .toBe("wrangler deploy failed with signal SIGTERM");
+    }
+  });
+
+  it("scopes every wrangler command to the configured account", async () => {
+    // `wrangler r2 bucket list` ignores account_id in the config file, so a
+    // multi-account login died there with "More than one account available
+    // but unable to select one in non-interactive mode" — after migrations.
+    expect(configuredAccountId({ account_id: "53a144fad4e15ca51c32da9b9fe25d4a" }))
+      .toBe("53a144fad4e15ca51c32da9b9fe25d4a");
+    for (const withoutAccount of [{}, { account_id: "" }, { account_id: "   " }]) {
+      expect(configuredAccountId(withoutAccount)).toBeNull();
+    }
+
+    const envs: Array<Record<string, string>> = [];
+    const rawConfig = {
+      name: "blitz-control-plane",
+      account_id: "53a144fad4e15ca51c32da9b9fe25d4a",
+      vars: { MICROVM_HOSTS: "[]" },
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+      d1_databases: [
+        {
+          binding: "DB",
+          database_name: "blitz-control-plane",
+          database_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        },
+      ],
+    };
+    const run = async (
+      tool: string,
+      args: string[],
+      options: { capture: boolean; env: Record<string, string> },
+    ) => {
+      envs.push(options.env);
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:  blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        return {
+          stdout: JSON.stringify(
+            [
+              "HETZNER_API_TOKEN",
+              "GOOGLE_CLIENT_ID",
+              "GOOGLE_CLIENT_SECRET",
+              "WEBAPP_TOKEN_SECRET",
+              "CRED_MASTER_KEY",
+            ].map((name) => ({ name, type: "secret_text" })),
+          ),
+        };
+      }
+      return { stdout: "" };
+    };
+
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {
+        throw new Error("matching D1 config should not be rewritten");
+      },
+      secretValues: {},
+    });
+    expect(envs.length).toBeGreaterThan(0);
+    expect(envs.every((env) => env.CLOUDFLARE_ACCOUNT_ID === "53a144fad4e15ca51c32da9b9fe25d4a"))
+      .toBe(true);
+
+    envs.length = 0;
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig: { ...rawConfig, account_id: undefined },
+      run,
+      async patchConfig() {
+        throw new Error("matching D1 config should not be rewritten");
+      },
+      secretValues: {},
+    });
+    expect(envs.every((env) => !("CLOUDFLARE_ACCOUNT_ID" in env))).toBe(true);
   });
 
   it("fails with exact setup commands when required secret metadata is missing", async () => {
@@ -215,6 +344,9 @@ describe("control-plane deploy command", () => {
           ]),
         };
       }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:  blitz-box-images" };
+      }
       if (tool === "wrangler" && args[0] === "secret") {
         return {
           stdout: JSON.stringify([
@@ -231,6 +363,7 @@ describe("control-plane deploy command", () => {
         rawConfig: {
           name: "blitz-control-plane",
           vars: { MICROVM_HOSTS: "[]" },
+          r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
           d1_databases: [
             {
               binding: "DB",
@@ -244,9 +377,9 @@ describe("control-plane deploy command", () => {
         async patchConfig() {
           throw new Error("matching D1 config should not be rewritten");
         },
+        secretValues: {},
       }),
     ).rejects.toThrow(missingSecretsMessage([
-      "OPERATOR_API_KEY",
       "GOOGLE_CLIENT_ID",
       "GOOGLE_CLIENT_SECRET",
       "WEBAPP_TOKEN_SECRET",
@@ -254,5 +387,159 @@ describe("control-plane deploy command", () => {
     ]));
     expect(calls.some(([tool]) => tool === "npm")).toBe(false);
     expect(calls.some(([tool, command]) => tool === "wrangler" && command === "deploy")).toBe(false);
+  });
+
+  it("ships a template a fresh clone can deploy in the documented order", async () => {
+    // The deploy is what prints the Worker origin, so APP_URL cannot be known
+    // before it; the same is true of the tunnel IDs (step 8) and the box image
+    // (step 9). Shipping any of them as a `<...>` placeholder made step 4
+    // refuse to run and left the documented order impossible to follow.
+    expect(placeholderVars(parseToml(wranglerExample))).toEqual([]);
+    for (const deferred of ["APP_URL", "BOX_IMAGE_REF", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_ZONE_ID"]) {
+      expect(wranglerExample, deferred).toContain(`${deferred} = ""`);
+    }
+  });
+
+  it("generates a comment-free config that carries every key of the example", () => {
+    // The deploy writes the new D1 database_id back with wrangler's
+    // experimental_patchConfig, which rejects any TOML holding comments
+    // ("cannot patch .toml config if comments are present"). The example
+    // documents every var inline, so a verbatim copy failed every first
+    // deploy — after the D1 already existed. Comments are the only permitted
+    // difference between the example and the generated config.
+    const generated = deployableConfigToml(wranglerExample);
+    expect(commentLines(generated)).toEqual([]);
+    expect(commentLines(wranglerExample).length).toBeGreaterThan(0);
+    expect(parseToml(generated)).toEqual(parseToml(wranglerExample));
+  });
+
+  it("generates the config once and never overwrites a filled-in one", async () => {
+    const packageDirectory = await mkdtemp(path.join(tmpdir(), "blitz-control-plane-config-"));
+    const configPath = path.join(packageDirectory, "wrangler.toml");
+    try {
+      await writeFile(path.join(packageDirectory, "wrangler.toml.example"), wranglerExample);
+
+      expect(await ensureWranglerConfig(packageDirectory)).toBe(true);
+      const generated = await readFile(configPath, "utf8");
+      expect(commentLines(generated)).toEqual([]);
+      expect(parseToml(generated)).toEqual(parseToml(wranglerExample));
+
+      await writeFile(configPath, 'name = "operator-edited"\n');
+      expect(await ensureWranglerConfig(packageDirectory)).toBe(false);
+      expect(await readFile(configPath, "utf8")).toBe('name = "operator-edited"\n');
+    } finally {
+      await rm(packageDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to deploy vars whose runtime parser would 500 every request", async () => {
+    expect(configVarProblems({ vars: { SIGNUP_MODE: "invite-only" } }))
+      .toEqual([expect.stringContaining("SIGNUP_MODE must be 'open' or 'invite'")]);
+    expect(configVarProblems({ vars: { ALLOWED_EMAIL_DOMAINS: "alice@example.com" } }))
+      .toEqual([expect.stringContaining("bare domains")]);
+    expect(configVarProblems({
+      vars: { SIGNUP_MODE: "invite", ALLOWED_EMAIL_DOMAINS: " Example.COM ,corp.test," },
+    })).toEqual([]);
+    expect(configVarProblems({ vars: {} })).toEqual([]);
+
+    await expect(
+      deployControlPlane({
+        configPath: "packages/control-plane/wrangler.toml",
+        rawConfig: {
+          name: "blitz-control-plane",
+          vars: { MICROVM_HOSTS: "[]", SIGNUP_MODE: "invite-only" },
+          r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+          d1_databases: [{ binding: "DB", database_name: "blitz-control-plane" }],
+        },
+        run: async () => {
+          throw new Error("no command should run for an unparseable var");
+        },
+        async patchConfig() {
+          throw new Error("no config patch should run for an unparseable var");
+        },
+        secretValues: {},
+      }),
+    ).rejects.toThrow(/SIGNUP_MODE = "invite-only" is invalid/u);
+  });
+
+  it("refuses to deploy a config that still holds example placeholder values", async () => {
+    await expect(
+      deployControlPlane({
+        configPath: "packages/control-plane/wrangler.toml",
+        rawConfig: {
+          name: "blitz-control-plane",
+          vars: {
+            APP_URL: "<https origin of this worker>",
+            MICROVM_HOSTS: "[]",
+          },
+          r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+          d1_databases: [
+            { binding: "DB", database_name: "blitz-control-plane" },
+          ],
+        },
+        run: async () => {
+          throw new Error("no command should run for a placeholder config");
+        },
+        async patchConfig() {
+          throw new Error("no config patch should run for a placeholder config");
+        },
+        secretValues: {},
+      }),
+    ).rejects.toThrow(/placeholder values for: APP_URL/u);
+    expect(placeholderVars({
+      vars: { APP_URL: "https://cp.example", WORKSPACE_TUNNEL_ZONE: "" },
+    })).toEqual([]);
+  });
+
+  it("finds the BOX_IMAGES R2 binding and reads bucket names from wrangler list output", () => {
+    expect(parseR2Binding({
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+    }, "BOX_IMAGES")).toEqual({ binding: "BOX_IMAGES", bucketName: "blitz-box-images" });
+    expect(() => parseR2Binding({}, "BOX_IMAGES")).toThrow("must define r2_buckets");
+    expect(() => parseR2Binding({ r2_buckets: [] }, "BOX_IMAGES"))
+      .toThrow("exactly one BOX_IMAGES R2 binding");
+    expect(() => parseR2Binding({
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "Bad Name" }],
+    }, "BOX_IMAGES")).toThrow("valid bucket_name");
+
+    const listOutput = [
+      "Listing buckets...",
+      "name:           blitz-box-images",
+      "creation_date:  2026-01-01T00:00:00.000Z",
+      "",
+      "name:           other-bucket",
+      "creation_date:  2026-01-02T00:00:00.000Z",
+    ].join("\n");
+    expect([...r2BucketNamesFromList(listOutput)]).toEqual([
+      "blitz-box-images",
+      "other-bucket",
+    ]);
+  });
+
+  it("validates locally readable secret values and skips unreadable ones silently", () => {
+    const rawConfig = {
+      vars: {
+        MICROVM_HOSTS: JSON.stringify([
+          { name: "lab", tokenVar: "MICROVM_LAB_TOKEN", dynamic: true },
+        ]),
+      },
+    };
+    expect(localSecretValueProblems(rawConfig, {})).toEqual([]);
+    expect(localSecretValueProblems(rawConfig, {
+      MICROVM_LAB_TOKEN: "a".repeat(32),
+      CRED_MASTER_KEY: "A".repeat(43) + "=",
+    })).toEqual([]);
+    expect(localSecretValueProblems(rawConfig, { MICROVM_LAB_TOKEN: "a".repeat(31) }))
+      .toEqual([
+        "MICROVM_LAB_TOKEN must be at least 32 characters with no whitespace — the Worker rejects weaker microVM host tokens and then fails every request",
+      ]);
+    expect(localSecretValueProblems(rawConfig, {
+      MICROVM_LAB_TOKEN: `${"a".repeat(16)} ${"a".repeat(16)}`,
+    })).toHaveLength(1);
+    for (const malformed of ["not base64!!", "AAAA", `${"A".repeat(43)}=A`]) {
+      expect(localSecretValueProblems(rawConfig, { CRED_MASTER_KEY: malformed })).toEqual([
+        "CRED_MASTER_KEY must be base64 of exactly 32 bytes (generate one with: openssl rand -base64 32)",
+      ]);
+    }
   });
 });

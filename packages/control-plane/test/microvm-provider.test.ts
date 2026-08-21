@@ -1,6 +1,6 @@
 import type { WorkspaceView } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
-import { $DatabaseRawImpl } from "teenybase/worker";
+import { rawDb } from "../src/raw-db.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../core/db.js";
 import { VmProviderRegistry } from "../core/compute/registry.js";
@@ -205,7 +205,7 @@ describe("microVM pool provider", () => {
   });
 
   it("resolves pinned hosts from the bootstrapped D1 row on every call", async () => {
-    const db = new $DatabaseRawImpl(env.DB);
+    const db = rawDb(env.DB);
     const calls: string[] = [];
     const microvm = provider(
       hosts({
@@ -244,7 +244,7 @@ describe("microVM pool provider", () => {
   });
 
   it("skips an unregistered dynamic host without degrading a pinned host", async () => {
-    const db = new $DatabaseRawImpl(env.DB);
+    const db = rawDb(env.DB);
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const microvm = provider(
       hosts(
@@ -273,7 +273,7 @@ describe("microVM pool provider", () => {
   });
 
   it("resolves a registered dynamic URL from D1 for every provider operation", async () => {
-    const db = new $DatabaseRawImpl(env.DB);
+    const db = rawDb(env.DB);
     const calls: string[] = [];
     const microvm = provider(
       hosts({ name: "home", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true }),
@@ -333,7 +333,7 @@ describe("microVM pool provider", () => {
   });
 
   it("returns a 503-style error when a dynamic host has not registered", async () => {
-    const db = new $DatabaseRawImpl(env.DB);
+    const db = rawDb(env.DB);
     const microvm = provider(
       hosts({ name: "home", tokenVar: "MICROVM_EDGE_TOKEN", dynamic: true }),
       async () => {

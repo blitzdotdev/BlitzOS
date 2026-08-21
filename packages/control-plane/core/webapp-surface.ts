@@ -11,7 +11,7 @@
  * schema types. */
 
 export const WEBAPP_AGENT_SURFACES = ["/"] as const;
-export const WEBAPP_FILES_SURFACES = ["/ports", "/previews", "/terminal/ws"] as const;
+export const WEBAPP_FILES_SURFACES = ["/ports", "/previews", "/preview-focus", "/terminal/ws"] as const;
 export const WEBAPP_FILES_SURFACE_PREFIXES = ["/workspace/", "/preview/"] as const;
 
 export function isWebAppSurfacePath(port: 7444 | 7445, path: string): boolean {

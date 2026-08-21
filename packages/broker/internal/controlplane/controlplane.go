@@ -90,6 +90,18 @@ func (c *Client) RegisterBroker(ctx context.Context, host string, port int, host
 	return nil
 }
 
+// ErrNoBrokerCapacity means the control plane has no broker box to put this
+// workspace on: none is enrolled, or every one of them is at its member_cap.
+//
+// It is a normal answer, not a fault. The broker is optional — zero enrolled
+// brokers is how the feature is turned off — so the caller's job is to leave
+// the workspace cleanly signed out, not to fail. A workspace whose services
+// refused to start is one a human cannot fix from inside; a signed-out one is.
+//
+// The control plane raises 409 on this route for exactly this reason and no
+// other, and answers `no_broker_capacity` in the body to say so.
+var ErrNoBrokerCapacity = errors.New("no_broker_capacity")
+
 func (c *Client) RegisterKeys(ctx context.Context, keys []feed.Key) (KeyRegistration, error) {
 	if len(keys) == 0 {
 		return KeyRegistration{}, errors.New("at least one key is required")
@@ -112,6 +124,9 @@ func (c *Client) RegisterKeys(ctx context.Context, keys []feed.Key) (KeyRegistra
 		return KeyRegistration{}, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusConflict {
+		return KeyRegistration{}, ErrNoBrokerCapacity
+	}
 	if response.StatusCode != http.StatusOK {
 		return KeyRegistration{}, statusError(response.StatusCode, "key registration failed")
 	}
@@ -138,6 +153,14 @@ func (c *Client) PostWorkspaceCredentials(ctx context.Context, body []byte) (*ht
 	return c.authenticated(ctx, http.MethodPost, func(string) string {
 		return "/workspaces/self/credentials"
 	}, body)
+}
+
+// GetWorkspaceEnvironment fetches this box's immutable workspace environment.
+// The caller owns and must close the returned response body.
+func (c *Client) GetWorkspaceEnvironment(ctx context.Context) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodGet, func(string) string {
+		return "/workspaces/self/environment"
+	}, nil)
 }
 
 func (c *Client) FetchFeed(ctx context.Context, etag string) ([]byte, string, bool, error) {

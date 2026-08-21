@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   WORKER_SOURCE,
@@ -8,6 +9,11 @@ import {
   managedFileId,
   uploadManagedAssets,
 } from "../scripts/build-blitzdev.mjs";
+
+// Vendor-only: this suite exercises the blitz.dev managed webapp-asset upload
+// path; self-hosters serve the webapp through wrangler [assets]. Skipped
+// unless BLITZDEV_MANAGED=1.
+const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
 const temporaryDirectories: string[] = [];
 
@@ -25,7 +31,7 @@ async function webAppFixture(): Promise<string> {
   return directory;
 }
 
-describe("managed webapp assets", () => {
+describe.skipIf(!managedToolchainEnabled)("managed webapp assets [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("builds a deterministic manifest with normalized paths and activates index last", async () => {
     const directory = await webAppFixture();
     const first = await createWebAppAssetSet(directory);

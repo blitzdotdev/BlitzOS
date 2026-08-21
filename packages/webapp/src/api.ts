@@ -1,5 +1,8 @@
 import type {
   ApiError,
+  ListAgentRulesResponse,
+  PutAgentRuleRequest,
+  PutAgentRuleResponse,
   ListCredentialLeasesResponse,
   MintWorkspaceConnectionResponse,
   ListCredentialEventsResponse,
@@ -149,6 +152,9 @@ export interface ControlPlaneClient extends FileLibraryClient {
   poll(signal?: AbortSignal): Promise<PollResponse>;
   create(input: CreateWorkspaceRequest): Promise<CreateWorkspaceResponse>;
   destroy(id: string): Promise<CreateWorkspaceResponse>;
+  listAgentRules(): Promise<ListAgentRulesResponse>;
+  putAgentRule(id: string, input: PutAgentRuleRequest): Promise<PutAgentRuleResponse>;
+  deleteAgentRule(id: string): Promise<void>;
   listWorkspaceTemplates(): Promise<ListWorkspaceTemplatesResponse>;
   createWorkspaceTemplate(
     input: CreateWorkspaceTemplateRequest,
@@ -591,6 +597,15 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<CreateWorkspaceResponse>(`/workspaces/${encodeURIComponent(id)}`, {
         method: "DELETE",
       }),
+    listAgentRules: () => request<ListAgentRulesResponse>("/agent-rules"),
+    putAgentRule: (id, input) =>
+      request<PutAgentRuleResponse>(`/agent-rules/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      }),
+    deleteAgentRule: (id) =>
+      request<void>(`/agent-rules/${encodeURIComponent(id)}`, { method: "DELETE" }),
     listWorkspaceTemplates: () =>
       request<ListWorkspaceTemplatesResponse>("/workspace-templates"),
     createWorkspaceTemplate: (input) =>

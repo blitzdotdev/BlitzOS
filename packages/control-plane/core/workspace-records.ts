@@ -1,6 +1,7 @@
 import type { Db } from "./db.js";
 import { first } from "./db.js";
 import { isMicrovmProviderId } from "./compute/microvm.js";
+import { workspaceEnvironmentFromJson } from "./environment.js";
 import type { Phase, RetryAction, WorkspaceView } from "./wire.js";
 
 export interface WorkspaceRow {
@@ -22,6 +23,9 @@ export interface WorkspaceRow {
   created_at: number;
   updated_at: number;
   manifest: string | null;
+  environment: string | null;
+  files_ready: number;
+  agent_rule_id: string | null;
   tunnel_id: string | null;
   tunnel_hostname: string | null;
   dns_record_id: string | null;
@@ -52,6 +56,7 @@ function machineTypeIdForRow(row: WorkspaceRow): string {
 export function workspaceView(
   row: WorkspaceRow,
   role: WorkspaceView["role"] = "owner",
+  reportError?: (code: string, error: Error) => void,
 ): WorkspaceView {
   const hasSsh = row.ssh_host !== null && row.ssh_port !== null && row.ssh_user !== null;
   const canOpen = role !== null;
@@ -80,6 +85,12 @@ export function workspaceView(
       name: row.owner_name ?? row.owner_id,
       avatarUrl: row.owner_avatar_url ?? null,
     },
+    // Env values and the startup script are workspace configuration, not
+    // catalogue data. GET /workspaces returns every row in the org, so this is
+    // gated on the viewer's role exactly like `ssh` above: a member with no
+    // grant and no share must not read either.
+    environment: canOpen ? workspaceEnvironmentFromJson(row.environment, reportError) : null,
+    agentRuleId: row.agent_rule_id,
   };
 }
 

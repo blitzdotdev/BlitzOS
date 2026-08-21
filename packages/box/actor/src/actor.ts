@@ -20,7 +20,13 @@ import { Journal } from "./journal.js";
 import { PROMPT_QUEUE_LIMIT, REPLAY_LIMIT } from "./config.js";
 import type { AdapterFactory, AgentAdapter, Provider } from "./types.js";
 import type { ConnectionIdentity } from "./auth.js";
-import type { JournalFrame, PermissionAnsweredFrame, SessionUpdateFrame } from "./journal.js";
+import type {
+  AuthRequiredFrame,
+  JournalFrame,
+  OutboundFrame,
+  PermissionAnsweredFrame,
+  SessionUpdateFrame,
+} from "./journal.js";
 
 export interface ActorSessionSummary {
   id: string;
@@ -52,10 +58,10 @@ export class Subscriber {
     this.disconnect();
   }
 
-  public deliver(frame: JournalFrame): Promise<void> {
+  public deliver(frame: OutboundFrame): Promise<void> {
     if (!this.context) return Promise.reject(new Error("subscriber disconnected"));
     const method: string = frame.method;
-    return this.context.notify<JournalFrame["params"]>(method, frame.params);
+    return this.context.notify<OutboundFrame["params"]>(method, frame.params);
   }
 
   public permission(request: RequestPermissionRequest): Promise<RequestPermissionResponse> {
@@ -159,9 +165,21 @@ class SessionActor {
       try {
         token = await this.credentials.token(this.provider);
       } catch {
+        // A throw means a broker is wired up and refused to mint, so the user
+        // has a harness to sign back in to. The null return is the opposite
+        // case — no broker at all — which is a legitimate signed-out-but-fine
+        // state with nothing to sign in to, so it stays silent.
+        await this.announceAuthRequired();
         await this.visibleError("Credential mint failed; the prompt was not sent.", identity);
         return { stopReason };
       }
+      if (abort.signal.aborted) {
+        stopReason = "cancelled";
+        return { stopReason };
+      }
+      // Workspace variables are optional configuration: this call degrades to
+      // the actor's own environment rather than failing the prompt.
+      const environment = await this.credentials.environment();
       if (abort.signal.aborted) {
         stopReason = "cancelled";
         return { stopReason };
@@ -175,6 +193,7 @@ class SessionActor {
           resumeId: this.resumeId,
           signal: abort.signal,
           token,
+          environment,
           config: this.config,
           emit: (update) => this.emit(update, identity),
           requestPermission: (request) => this.requestPermission(request, identity),
@@ -219,16 +238,35 @@ class SessionActor {
         },
       };
       this.journal.append(this.id, frame);
-      const subscribers = [...this.subscribers.values()];
-      const settled = await Promise.allSettled(subscribers.map((subscriber) => subscriber.deliver(frame)));
-      let index = 0;
-      for (const subscriber of subscribers) {
-        if (settled[index]?.status === "rejected") subscriber.close();
-        index += 1;
-      }
+      await this.fanout(frame);
     });
     this.delivery = operation.catch(() => undefined);
     return operation;
+  }
+
+  /** Live-only sibling of {@link emit}: the frame is never journaled, so a
+   * subscriber that attaches tomorrow is not told to sign in to a harness that
+   * has been authenticated since. It rides the same delivery chain so it stays
+   * ordered against the session updates around it. */
+  private announceAuthRequired(): Promise<void> {
+    const frame: AuthRequiredFrame = {
+      jsonrpc: "2.0",
+      method: "blitz/auth_required",
+      params: { sessionId: this.id, provider: this.provider },
+    };
+    const operation = this.delivery.then(() => this.fanout(frame));
+    this.delivery = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async fanout(frame: OutboundFrame): Promise<void> {
+    const subscribers = [...this.subscribers.values()];
+    const settled = await Promise.allSettled(subscribers.map((subscriber) => subscriber.deliver(frame)));
+    let index = 0;
+    for (const subscriber of subscribers) {
+      if (settled[index]?.status === "rejected") subscriber.close();
+      index += 1;
+    }
   }
 
   private requestPermission(
@@ -320,10 +358,16 @@ export class ActorService {
     private readonly credentials: CredentialSource,
     private readonly adapters: AdapterFactory,
     private readonly defaultProvider: Provider,
+    // Fired at session start so a running box can refresh its managed agent
+    // rules without a reboot. Best-effort and non-blocking: createRulesRefresher
+    // swallows its own failures, so this call needs no guard here. Defaults to a
+    // no-op so tests and non-box callers need not wire it.
+    private readonly onSessionStart: () => void = () => undefined,
   ) {}
 
   public async newSession(cwd: string, subscriber: Subscriber): Promise<string> {
     requireEditor(subscriber);
+    this.onSessionStart();
     const id = randomUUID();
     this.journal.createSession({
       id,
@@ -341,6 +385,7 @@ export class ActorService {
   public async loadSession(id: string, cwd: string, subscriber: Subscriber): Promise<void> {
     const stored = this.journal.session(id);
     if (!stored || stored.cwd !== cwd) throw new Error("unknown session");
+    this.onSessionStart();
     await this.restore(id).attach(subscriber, true);
   }
 

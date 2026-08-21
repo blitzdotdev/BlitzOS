@@ -1,0 +1,7 @@
+#!/bin/sh
+# Print one short-lived Codex token on stdout, and nothing else.
+#
+# This is the command codex itself runs, every refresh_interval_ms, from the
+# block `blitz-cred register` writes into ~/.codex/config.toml. Codex passes NO
+# arguments to it, so the harness has to be in the name.
+exec /usr/local/bin/blitz-cred token codex

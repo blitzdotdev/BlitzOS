@@ -1,5 +1,5 @@
 import type { Agent, TerminalAgent } from './protocol';
-import { isPreviewPort } from './preview';
+import { isPreviewPath, isPreviewPort } from './preview';
 import {
   asJsonObject,
   isBoolean,
@@ -55,6 +55,7 @@ export type WorkspaceTab = {
   id: number;
   type: 'preview';
   port: number;
+  path?: string;
   region?: WorkspaceRegion;
 } | {
   id: number;
@@ -215,11 +216,44 @@ export function defaultWorkspaceWebAppState(): WorkspaceWebAppStateV1 {
   };
 }
 
-/** The server rejects an out-of-range document whole, and a rejected write
- * takes the entire shared doc — tabs included — down with it. Local state can
- * drift out of range from a resize or a stale device, so clamp to the wire
- * limits here rather than letting one field end persistence. Mirror
- * `parseWorkspaceDoc` in the control plane. */
+/** Re-points an existing port preview tab at a new deep-link. `undefined`
+ * clears the route, which is what a plain `blitz preview open <port>` after a
+ * deep-linked one means: take the user back to the root of that server.
+ *
+ * The in-box agent re-runs `blitz preview open` on every server start, so a
+ * second "open /dashboard" almost always lands on a port that already has a
+ * tab. Selecting that tab without applying the route silently ignored the
+ * agent's request. Returns the same array when nothing changes, so a re-open of
+ * an unchanged route does not churn the persisted document. */
+export function withPreviewTabPath(
+  tabs: WorkspaceTab[],
+  tabId: number,
+  path: string | undefined,
+): WorkspaceTab[] {
+  const target = tabs.find((tab) => tab.id === tabId);
+  if (
+    target === undefined
+    || target.type !== 'preview'
+    || !('port' in target)
+    || target.path === path
+  ) return tabs;
+  const retargeted: WorkspaceTab = path === undefined
+    ? { id: target.id, type: 'preview', port: target.port }
+    : { id: target.id, type: 'preview', port: target.port, path };
+  return tabs.map((tab) => tab.id === tabId ? retargeted : tab);
+}
+
+/** Drops a deep-link the server would refuse. The `path` on a preview tab is
+ * the one tab field an outside producer sets — `blitz preview open --path`
+ * travels from the in-box agent to the focus marker to this document — so it
+ * is the one that can arrive out of range. Losing the route beats losing the
+ * document. */
+function clampedTab(tab: WorkspaceTab): WorkspaceTab {
+  if (tab.type !== 'preview' || !('port' in tab) || tab.path === undefined) return tab;
+  if (isPreviewPath(tab.path)) return tab;
+  return { id: tab.id, type: 'preview', port: tab.port };
+}
+
 /** Keeps the two panes coherent: a side pane only exists while it holds tabs,
  * a pane's active id always names one of its own tabs, and the side pane never
  * outlives an emptied main pane — the split collapses left instead. */
@@ -248,10 +282,15 @@ export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
   return next;
 }
 
+/** The server rejects an out-of-range document whole, and a rejected write
+ * takes the entire shared doc — tabs included — down with it. Local state can
+ * drift out of range from a resize or a stale device, so clamp to the wire
+ * limits here rather than letting one field end persistence. Mirror
+ * `parseWorkspaceDoc` in the control plane. */
 function clampedDoc(doc: WorkspaceWebAppStateV1): WorkspaceWebAppStateV1 {
   return {
     ...doc,
-    tabs: normalizedWorkspaceTabs({ ...doc.tabs, tabs: doc.tabs.tabs.slice(0, 100) }),
+    tabs: normalizedWorkspaceTabs({ ...doc.tabs, tabs: doc.tabs.tabs.slice(0, 100).map(clampedTab) }),
     drawer: {
       ...doc.drawer,
       width: Math.min(2000, Math.max(200, Math.round(doc.drawer.width))),
@@ -338,9 +377,16 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
   }
   if (object.type === 'preview') {
     if (isNumber(object.port) && isPreviewPort(object.port)) {
-      return object.url === undefined && object.title === undefined
+      if (object.url !== undefined || object.title !== undefined) return null;
+      // An unusable deep-link loses the route, not the tab: a `..` segment
+      // would walk the iframe out of the `/preview/<port>/` prefix, and an
+      // over-long path is a document the server refuses whole.
+      const path = isString(object.path) && isPreviewPath(object.path)
+        ? object.path
+        : undefined;
+      return path === undefined
         ? withRegion({ id, type: 'preview', port: object.port }, region)
-        : null;
+        : withRegion({ id, type: 'preview', port: object.port, path }, region);
     }
     return object.port === undefined
       && isString(object.url)

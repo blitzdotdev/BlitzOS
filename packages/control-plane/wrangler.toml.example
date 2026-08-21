@@ -1,0 +1,117 @@
+# Reference template for the control-plane Worker config. Generate your
+# wrangler.toml from it, then fill in your values:
+#   npm run config -w packages/control-plane
+# Do not copy this file verbatim: the deploy writes your D1 database_id into
+# wrangler.toml, and wrangler refuses to patch a config that holds comments.
+# The generated file carries every key below and none of the prose, so keep
+# this file as the reference for what each var means.
+# wrangler.toml is gitignored — it carries your account-specific IDs. Never
+# commit it. Full walkthrough: docs/SELF-HOST.md.
+
+# Worker name in your Cloudflare account. Any name works; it becomes part of your workers.dev origin.
+name = "blitz-control-plane"
+# Cloudflare account that owns this Worker. Optional when your wrangler login sees exactly one account; required when it sees several, or the deploy cannot choose one. Uncomment and fill in:
+# account_id = "<your account id>"
+main = "src/worker.ts"
+compatibility_date = "2026-08-11"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Every var below ships with a deployable value, because several of them can
+# only be filled in AFTER a first deploy: the Worker origin does not exist
+# until the Worker does. Empty means "not configured yet" and is accepted by
+# the deploy; the feature that needs it stays off. Angle-bracket text is a
+# placeholder the deploy refuses — never paste one in.
+
+# Public origin of this Worker (workers.dev URL or custom domain). Empty until step 4 of docs/SELF-HOST.md prints your origin; set it and redeploy.
+APP_URL = ""
+# Box image source: a registry reference, or this Worker's /box-image URL for R2-hosted archives. Empty until step 9; workspaces cannot become ready without it. Modes and values in docs/BOX-IMAGE.md.
+BOX_IMAGE_REF = ""
+# Image tag inside the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
+BOX_IMAGE_TAG = ""
+# SHA-256 of the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
+BOX_IMAGE_SHA256 = ""
+# Session cookie lifetime in days (1-3650). Optional, default 30.
+SESSION_TTL_DAYS = "30"
+# Per-principal cap on non-destroyed workspaces (1-1000). Optional, default 10.
+MAX_CONCURRENT_WORKSPACES = "10"
+# JSON array of Firecracker microVM hosts. '[]' disables the microVM provider. Shapes below.
+# WARNING: every configured host requires its MICROVM_<NAME>_TOKEN Worker secret
+# (>=32 chars, no whitespace). A missing or weak token makes EVERY request to
+# the Worker fail with 500.
+MICROVM_HOSTS = '[]'
+# Populated shapes — pinned URL and phone-home (dynamic) hosts:
+# MICROVM_HOSTS = '[{"name":"lab","url":"https://lab.example:8443","tokenVar":"MICROVM_LAB_TOKEN"},{"name":"home","tokenVar":"MICROVM_HOME_TOKEN","dynamic":true}]'
+# Cloudflare account that owns the workspace-tunnel zone (dash.cloudflare.com -> your zone -> Overview). Empty until step 8; required only for browser access to cloud-VM workspaces.
+CLOUDFLARE_ACCOUNT_ID = ""
+# Cloudflare zone that holds ws-<workspace-id> DNS records (same Overview page). Empty until step 8; required only for browser access to cloud-VM workspaces.
+CLOUDFLARE_ZONE_ID = ""
+# Domain of that zone, e.g. "workspaces.example.com". Empty = no browser access to cloud-VM workspaces (they boot, but no terminal/chat/files/previews). See docs/TUNNEL.md.
+WORKSPACE_TUNNEL_ZONE = ""
+
+# Optional vars (uncomment to set):
+# Signup policy: "open" (any Google account) or "invite" (invited emails only). Default "open".
+# SIGNUP_MODE = "open"
+# Comma-separated email domains allowed to SIGN IN — the gate applies to every sign-in, existing accounts included. Empty allows any domain. Default "".
+# ALLOWED_EMAIL_DOMAINS = ""
+# Comma-separated Hetzner machine catalog as <type>@<location> entries. Default "cpx21@hil,cpx31@hil".
+# HETZNER_MACHINE_TYPES = "cpx21@hil,cpx31@hil"
+
+# R2 bucket for box images and workspace file sync. The deploy script creates the bucket if it does not exist.
+[[r2_buckets]]
+binding = "BOX_IMAGES"
+bucket_name = "blitz-box-images"
+
+# D1 database. No database_id here on purpose: the deploy script creates the
+# database on first deploy and writes its ID into your wrangler.toml.
+[[d1_databases]]
+binding = "DB"
+database_name = "blitz-control-plane"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
+
+[assets]
+directory = "../webapp/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = [
+  "/sessions*",
+  "/auth/*",
+  "/invite/*",
+  "/invites*",
+  "/me",
+  "/members*",
+  "/orgs*",
+  "/workspaces*",
+  "/workspace-templates*",
+  "/agent-rules*",
+  "/folders*",
+  "/connections*",
+  "/connect/*",
+  "/integrations*",
+  "/leases*",
+  "/requests*",
+  "/proxy*",
+  "/volumes*",
+  "/machine-types*",
+  "/webapp-state*",
+  "/hosts*",
+  "/oauth/*",
+  "/boxes/*",
+  "/box-image*",
+  "/api/*"
+]
+
+[triggers]
+crons = ["*/5 * * * *", "0 * * * *", "0 3 * * *"]
+
+# The canonical agent-rules document is the box-image skeleton file, and the
+# Worker has no filesystem, so it travels into the bundle as a Text module
+# instead of being hand-mirrored into a TypeScript string. `wrangler deploy`
+# emits it as its own module and core/agent-rules.ts imports its default export;
+# the vitest Workers pool reads the same rule from this file.
+[[rules]]
+type = "Text"
+globs = ["**/agent-rules.md"]

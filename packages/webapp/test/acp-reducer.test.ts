@@ -29,6 +29,7 @@ describe("ACP fixture reducer", () => {
   it("replays every shared fixture file", () => {
     expect(fixtureNames).toEqual([
       "attribution.jsonl",
+      "auth-required.jsonl",
       "malformed.jsonl",
       "permission.jsonl",
       "plan.jsonl",
@@ -39,6 +40,20 @@ describe("ACP fixture reducer", () => {
       "unknown-kind.jsonl",
     ]);
     for (const name of fixtureNames) expect(() => replay(name)).not.toThrow();
+  });
+
+  it("keeps only the persisted half of an auth_required announcement", () => {
+    // The pair in this fixture is what the box really emits when a mint fails,
+    // and the two halves land in different places. The transcript is rebuilt
+    // from the journal on every attach, so it may only ever show the prose
+    // bubble; the notification is live-only and belongs to the panel, which
+    // raises a sign-in affordance no replay should resurrect.
+    const state = replay("auth-required.jsonl");
+    expect(state.messages["message-auth-required"]?.text)
+      .toBe("Credential mint failed; the prompt was not sent.");
+    expect(state.rows).toEqual([{ kind: "message", id: "message-auth-required" }]);
+    expect(replay("auth-required.jsonl", initialChatState))
+      .toEqual(reduceAcpFrame(initialChatState, frames("auth-required.jsonl")[1]));
   });
 
   it("retains event and permission-decision attribution", () => {

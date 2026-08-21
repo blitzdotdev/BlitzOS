@@ -157,6 +157,42 @@ describe("TtydTerminal retained lifecycle", () => {
     expect(socket.close).not.toHaveBeenCalled();
   });
 
+  it("types an addressed sign-in submit onto the wire and leaves other tabs alone", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+    await act(async () => root.render(
+      <TtydTerminal
+        url="wss://workspace.test/ws"
+        sessionType="claude"
+        sessionKey="7"
+        active
+      />,
+    ));
+    const socket = harness.sockets[0]!;
+    await act(async () => socket.onopen?.());
+    const handshake = socket.send.mock.calls.length;
+
+    // Addressed at a different tab: the claude session must not be typed into.
+    window.dispatchEvent(new CustomEvent(TERMINAL_SUBMIT_EVENT, {
+      detail: { data: "/login", enters: 0, sessionKey: "9" },
+    }));
+    expect(socket.send).toHaveBeenCalledTimes(handshake);
+
+    for (const data of ["/login", "\r"]) {
+      window.dispatchEvent(new CustomEvent(TERMINAL_SUBMIT_EVENT, {
+        detail: { data, enters: 0, sessionKey: "7" },
+      }));
+    }
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+
+    // enters: 0 arms no auto-Enter scanner, so the wire carries exactly the
+    // slash command and the submit that were dispatched.
+    expect(socket.send.mock.calls.slice(handshake).map(
+      ([frame]) => new TextDecoder().decode(frame as Uint8Array),
+    )).toEqual(["0/login", "0\r"]);
+  });
+
   it("reuses the WebSocket, refocuses on activation, and cancels a queued hidden resize", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);

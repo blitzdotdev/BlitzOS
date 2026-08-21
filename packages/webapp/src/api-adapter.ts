@@ -1,6 +1,6 @@
 import type {
   CreateWorkspaceRequest,
-  MachineType,
+  ListMachineTypesResponse,
   RetryAction,
   Volume,
   WorkspaceView,
@@ -182,8 +182,8 @@ export class ApiAdapter {
     await this.call(() => this.client.destroy(id));
   }
 
-  public async listMachineTypes(): Promise<MachineType[]> {
-    return (await this.call(() => this.client.listMachineTypes())).machineTypes;
+  public listMachineTypes(): Promise<ListMachineTypesResponse> {
+    return this.call(() => this.client.listMachineTypes());
   }
 
   public async listVolumes(): Promise<Volume[]> {

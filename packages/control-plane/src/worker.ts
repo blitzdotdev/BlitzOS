@@ -1,7 +1,9 @@
 import type { DatabaseSettings } from "teenybase";
 import type { $Env } from "teenybase/worker";
-import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase/worker";
+import { $Database, teenyHono } from "teenybase/worker";
+import { rawDb } from "./raw-db.js";
 import {
+  allowedEmailDomainsFromEnv,
   awsProviderFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
@@ -19,6 +21,7 @@ import {
   runSessionSweep,
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
+  signupModeFromEnv,
   workspaceTunnelsFromEnv,
   workspaceWebAppAuthFromEnv,
   VmProviderRegistry,
@@ -37,13 +40,15 @@ const HOURLY_CRON = "0 * * * *";
 type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
   HETZNER_API_TOKEN: string;
-  JWT_SECRET_MAIN: string;
+  HETZNER_MACHINE_TYPES?: string;
   OPERATOR_API_KEY: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
   MICROVM_HOSTS: string;
   SESSION_TTL_DAYS: string;
   MAX_CONCURRENT_WORKSPACES: string;
+  SIGNUP_MODE?: string;
+  ALLOWED_EMAIL_DOMAINS?: string;
   CRED_MASTER_KEY: string;
   CLOUDFLARE_API_TOKEN?: string;
   WEBAPP_TOKEN_SECRET?: string;
@@ -84,7 +89,10 @@ function connectSecretFrom(env: WorkerBindings, name: string): string | undefine
 }
 
 function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
-  const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
+  const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN, {
+    machineTypeCatalog: env.HETZNER_MACHINE_TYPES,
+    warn: (warning) => console.warn(JSON.stringify(warning)),
+  });
   const microvm = new MicrovmPoolProvider(
     env.MICROVM_HOSTS,
     (tokenVar) => dynamicBinding(env, tokenVar),
@@ -132,6 +140,8 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       connectSecret: (name) => connectSecretFrom(env, name),
+      signupMode: signupModeFromEnv(env.SIGNUP_MODE),
+      allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
@@ -166,6 +176,8 @@ function runtimeForScheduled(
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       connectSecret: (name) => connectSecretFrom(env, name),
+      signupMode: signupModeFromEnv(env.SIGNUP_MODE),
+      allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
     },
     providers,
     principalSource: createSessionPrincipalSource(),
@@ -175,6 +187,27 @@ function runtimeForScheduled(
 }
 
 let lastSyncedHostsConfig: string | undefined;
+let checkedWorkspaceTunnelsConfig = false;
+
+// Cloud-VM providers have no proxyWebApp of their own: without configured
+// workspace tunnels their workspaces boot with no browser access at all.
+// Misconfigured forks hit this constantly, so say it once per isolate.
+function warnOnceIfWorkspaceTunnelsUnconfigured(runtime: CoreRuntime): void {
+  if (checkedWorkspaceTunnelsConfig) return;
+  checkedWorkspaceTunnelsConfig = true;
+  if (runtime.providers.workspaceTunnels !== undefined) return;
+  const blindProviderIds = runtime.providers.vmRegistry
+    .all()
+    .filter((provider) => provider.proxyWebApp === undefined)
+    .map((provider) => provider.id);
+  if (blindProviderIds.length === 0) return;
+  runtime.reportError(
+    "workspace_tunnels_unconfigured",
+    new Error(
+      `workspace tunnels are not configured (set WORKSPACE_TUNNEL_ZONE, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_ZONE_ID vars and the CLOUDFLARE_API_TOKEN, WEBAPP_TOKEN_SECRET secrets); workspaces from providers without proxyWebApp have no browser access: ${blindProviderIds.join(", ")}`,
+    ),
+  );
+}
 
 const app = teenyHono<WorkerEnv>(
   async (context) => {
@@ -188,6 +221,7 @@ const app = teenyHono<WorkerEnv>(
   { cors: false, logger: true },
   async (context) => {
     const runtime = runtimeFor(context);
+    warnOnceIfWorkspaceTunnelsUnconfigured(runtime);
     // Static host URLs only move when MICROVM_HOSTS changes, so sync once
     // per isolate per config value instead of paying D1 on every request.
     // SAFETY: teenyHono routes this app with the declared WorkerBindings environment.
@@ -216,7 +250,7 @@ export default {
     env: WorkerBindings,
     executionContext: ExecutionContext,
   ): Promise<void> {
-    const db = new $DatabaseRawImpl(env.DB);
+    const db = rawDb(env.DB);
     executionContext.waitUntil(
       (async () => {
         const runtime =  runtimeForScheduled(
