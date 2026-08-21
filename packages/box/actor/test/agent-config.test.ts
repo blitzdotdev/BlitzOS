@@ -61,10 +61,10 @@ describe("agent config selectors", () => {
   });
 
   it("passes the chosen codex model, effort, and approval policy to the CLI", () => {
-    const config = { model: "gpt-5", effort: "high", permission: "never" };
+    const config = { model: "gpt-5.6-sol", effort: "high", permission: "never" };
 
     expect(codexConfigArguments(config)).toEqual([
-      "-c", 'model="gpt-5"',
+      "-c", 'model="gpt-5.6-sol"',
       "-c", 'model_reasoning_effort="high"',
     ]);
     expect(codexConfigArguments({ ...config, model: "default", effort: "" })).toEqual([]);

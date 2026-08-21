@@ -58,8 +58,14 @@ const CATALOGS = {
   codex: {
     models: [
       { value: "default", name: "Default" },
-      { value: "gpt-5-codex", name: "GPT-5 Codex" },
-      { value: "gpt-5", name: "GPT-5" },
+      // Codex CLI user-selectable models; excluded on purpose: codex-auto-review (single-purpose review model), gpt-reserve (routing placeholder).
+      { value: "gpt-5.6-sol", name: "GPT-5.6-Sol" },
+      { value: "gpt-5.6-luna", name: "GPT-5.6-Luna" },
+      { value: "gpt-5.6-terra", name: "GPT-5.6-Terra" },
+      { value: "gpt-5.5", name: "GPT-5.5" },
+      { value: "gpt-5.4", name: "GPT-5.4" },
+      { value: "gpt-5.4-mini", name: "GPT-5.4-Mini" },
+      { value: "gpt-5.3-codex-spark", name: "GPT-5.3-Codex-Spark" },
     ],
     efforts: EFFORTS,
     permissions: [

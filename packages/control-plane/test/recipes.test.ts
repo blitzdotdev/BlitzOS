@@ -179,7 +179,7 @@ describe("recipes", () => {
       [{ ...base, harness: "vim" }, 400, "unknown harness"],
       [{ ...base, harness: "chat" }, 400, "chat requires a model"],
       [{ ...base, harness: "chat", model: "claude-opus-99" }, 400, "model outside the catalog"],
-      [{ ...base, harness: "claude", model: "gpt-5" }, 400, "claude recipe with a codex model"],
+      [{ ...base, harness: "claude", model: "gpt-5.6-sol" }, 400, "claude recipe with a codex model"],
       [{ ...base, harness: "codex", model: "claude-opus-5" }, 400, "codex recipe with a claude model"],
       [{ ...base, harness: "claude", effort: "hi gh" }, 400, "effort with whitespace"],
       [{ ...base, harness: "claude", effort: "x'high" }, 400, "effort with a quote"],
@@ -192,8 +192,8 @@ describe("recipes", () => {
 
     // Valid pairings pass: harness-matching model, and codex/claude models on chat.
     expect((await createRecipe(app, cookie, { ...base, harness: "claude", model: "claude-opus-5" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5-codex", effort: "low" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5" })).status).toBe(201);
+    expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5.6-sol", effort: "low" })).status).toBe(201);
+    expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5.6-sol" })).status).toBe(201);
 
     // Another org can neither see this org's recipes nor build on its template.
     const stranger = await userSession("stranger");
@@ -303,7 +303,7 @@ describe("recipes", () => {
       name: "chat routine",
       templateId,
       harness: "chat",
-      model: "gpt-5-codex",
+      model: "gpt-5.6-sol",
       effort: "low",
       prompt: "Summarize the datasets folder.\n",
     });
@@ -343,7 +343,7 @@ describe("recipes", () => {
       `printf '%s' ${shellQuote(recipeInvocationEnvFile({
         harness: "chat",
         agentProvider: "codex",
-        model: "gpt-5-codex",
+        model: "gpt-5.6-sol",
         effort: "low",
         prompt: "",
       }))} >/var/lib/blitz/recipe/invocation.env`,

@@ -213,7 +213,16 @@ export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
 
 export const AGENT_MODELS = {
   claude: ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
-  codex: ["gpt-5-codex", "gpt-5"],
+  // Codex CLI user-selectable models; excluded on purpose: codex-auto-review (single-purpose review model), gpt-reserve (routing placeholder).
+  codex: [
+    "gpt-5.6-sol",
+    "gpt-5.6-luna",
+    "gpt-5.6-terra",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex-spark",
+  ],
 } satisfies Record<AgentProvider, readonly string[]>;
 
 export const AGENT_EFFORTS = {

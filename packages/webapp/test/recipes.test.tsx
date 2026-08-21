@@ -279,9 +279,10 @@ describe('create recipe screen', () => {
     expect([...model.options].map((option) => option.textContent)).toEqual([
       'Choose a model…',
       'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001',
-      'gpt-5-codex', 'gpt-5',
+      'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra',
+      'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark',
     ]);
-    await choose(model, 'gpt-5-codex');
+    await choose(model, 'gpt-5.6-sol');
     expect([...select(view, 'Effort').options].map((option) => option.textContent)).toEqual([
       'Default', 'low', 'medium', 'high',
     ]);
@@ -295,7 +296,7 @@ describe('create recipe screen', () => {
       name: 'triage inbox',
       templateId: 'template-1',
       harness: 'chat',
-      model: 'gpt-5-codex',
+      model: 'gpt-5.6-sol',
       effort: 'high',
       prompt: 'Triage the inbox folder.',
     });
@@ -316,9 +317,9 @@ describe('create recipe screen', () => {
     ]);
 
     // Chat accepts any catalog model, so a codex pick survives the switch.
-    await choose(select(view, 'Model'), 'gpt-5');
+    await choose(select(view, 'Model'), 'gpt-5.6-sol');
     await choose(select(view, 'Harness'), 'chat');
-    expect(select(view, 'Model').value).toBe('gpt-5');
+    expect(select(view, 'Model').value).toBe('gpt-5.6-sol');
     await view.unmount();
   });
 
