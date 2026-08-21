@@ -154,16 +154,20 @@ export function storedWorkspacePreference(
 }
 
 export function defaultWorkspaceTabs(): WorkspaceTabs {
-  // A fresh workspace opens straight into Claude; terminals spawn on demand.
-  // Files rides along in the side pane, the way the drawer used to default open.
+  // A fresh workspace opens straight into Claude; Files rides along in the
+  // side pane, the way the drawer used to default open. Tab 3 is the
+  // remote-control terminal: the bootstrap pre-creates tmux session `term-3`
+  // running `claude remote-control`, and blitz-term's `new-session -A`
+  // attaches this tab to it.
   return {
     version: 1,
     tabs: [
       { id: 1, type: 'claude' },
       { id: 2, type: 'panel', panel: 'files', region: 'side' },
+      { id: 3, type: 'terminal' },
     ],
     activeId: 1,
-    nextId: 3,
+    nextId: 4,
     sideActiveId: 2,
   };
 }

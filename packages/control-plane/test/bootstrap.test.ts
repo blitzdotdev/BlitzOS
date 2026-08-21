@@ -312,6 +312,31 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("chown 1000:1000 /var/lib/blitz/origin");
   });
 
+  it("pre-creates the remote-control terminal tab session on every create", () => {
+    const userData = registryUserData();
+    // One exact line, part of every bootstrap: tab id 3 of the webApp default
+    // tab set maps to tmux session `term-3`, and blitz-term's
+    // `new-session -A` attaches the tab to this pre-created session.
+    const execLine =
+      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n";
+
+    const at = userData.indexOf(execLine);
+    expect(at).toBeGreaterThan(-1);
+    expect(userData.indexOf(execLine, at + 1)).toBe(-1);
+    // The session needs a running container: after the health gate, before
+    // the phone-home host-key read.
+    expect(at).toBeGreaterThan(userData.indexOf('[ "$box_healthy" = true ]'));
+    expect(at).toBeLessThan(userData.indexOf("read_host_key()"));
+    // The un-shimmed binary path bypasses the OAuth-injecting
+    // /usr/local/bin/claude PATH shim, and env -u strips any
+    // template-injected credential variables: remote-control rejects
+    // CLAUDE_CODE_OAUTH_TOKEN and needs its own interactive login.
+    expect(userData).toContain(
+      "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control",
+    );
+    expect(userData).not.toContain("/usr/local/bin/claude");
+  });
+
   it("pokes registration after both enrollment files are installed with a bounded logged best-effort command", () => {
     const userData = registryUserData();
 
