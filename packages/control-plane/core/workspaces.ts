@@ -1,6 +1,6 @@
 import type { RecipeBootstrap } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
-import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
+import { enablementManifestJson, parseManifest, usableByAllows } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
@@ -437,9 +437,21 @@ export async function performWorkspaceCreate(
   const granted = new Set(
     (await grantsForUser(runtime.db, principal.id)).map(({ provider }) => provider),
   );
-  const missingRequired = templateConnectionList
-    .filter(({ provider, required }) => required && !granted.has(provider))
-    .map(({ provider }) => provider);
+  const missingRequired: string[] = [];
+  for (const { provider, required } of templateConnectionList) {
+    if (!required || granted.has(provider)) continue;
+    // An org-admin-configured connection carries its own root, so every
+    // workspace mints it with no per-user step — it satisfies `required`
+    // without the creator holding a grant. Grant-backed catalog rows have no
+    // root: those still need the creator to connect first.
+    const connection = await connectionByName(runtime.db, provider, orgId);
+    if (
+      connection !== null &&
+      connection.root_ciphertext !== null &&
+      usableByAllows(connection, principal.id)
+    ) continue;
+    missingRequired.push(provider);
+  }
   if (missingRequired.length > 0) {
     throw new HttpError(
       409,

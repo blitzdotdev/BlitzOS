@@ -1,8 +1,10 @@
 import type { CatalogEntryView, CatalogScopeView } from "../types.js";
+import { discordManifest } from "./discord.js";
 import { genericManifest } from "./generic.js";
 import { githubManifest } from "./github.js";
 import { googleWorkspaceManifest } from "./google-workspace.js";
 import { linearManifest } from "./linear.js";
+import { youtrackManifest } from "./youtrack.js";
 import type { ProviderManifest } from "./types.js";
 
 /** Add a provider by adding a module here. Everything else — conformance
@@ -11,6 +13,8 @@ export const CATALOG: readonly ProviderManifest[] = [
   githubManifest,
   googleWorkspaceManifest,
   linearManifest,
+  discordManifest,
+  youtrackManifest,
   genericManifest,
 ];
 

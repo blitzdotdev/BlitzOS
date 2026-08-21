@@ -176,6 +176,8 @@ describe("connections: per-user grants", () => {
       "github",
       "google-workspace",
       "linear",
+      "discord",
+      "youtrack",
       "generic",
     ]);
     const linear = providers.find(({ id }) => id === "linear");
@@ -2455,5 +2457,315 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       headers: { Cookie: cookie },
     });
     expect(remove.status).toBe(204);
+  });
+});
+
+/** The admin-configured template path: an org admin stores the credential
+ * once, a template names the provider, and every workspace created from the
+ * template holds working credentials with no per-user step — the property the
+ * youtrack and discord catalog entries exist to deliver, and the one the
+ * github app root already had. */
+describe("connections: admin-configured providers through templates", () => {
+  const YOUTRACK_ROOT = "perm:test-only-youtrack-permanent-token";
+  const YOUTRACK_BASE = "https://acme.youtrack.example";
+  const DISCORD_ROOT = "test-only-discord-bot-token";
+
+  beforeEach(async () => {
+    await resetDatabase();
+    testConnectSecrets.clear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function putYoutrackConnection(
+    app: Harness["app"],
+    cookie: string,
+  ): Promise<void> {
+    const response = await appRequest(app, "/connections/youtrack", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "youtrack",
+        kind: "static",
+        custody: "proxy",
+        root: YOUTRACK_ROOT,
+        config: {
+          placements: [
+            { kind: "env", name: "YOUTRACK_TOKEN" },
+            { kind: "env", name: "YOUTRACK_BASE_URL", fill: "proxy-url" },
+          ],
+          proxy: { base_url: YOUTRACK_BASE },
+        },
+      }),
+    });
+    expect(response.status).toBe(204);
+  }
+
+  async function putDiscordConnection(
+    app: Harness["app"],
+    cookie: string,
+  ): Promise<void> {
+    const response = await appRequest(app, "/connections/discord", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "discord",
+        kind: "static",
+        custody: "cp",
+        root: DISCORD_ROOT,
+        config: { placements: [{ kind: "env", name: "DISCORD_BOT_TOKEN" }] },
+      }),
+    });
+    expect(response.status).toBe(204);
+  }
+
+  async function templateNaming(
+    app: Harness["app"],
+    cookie: string,
+    connections: { provider: string; required: boolean }[],
+  ): Promise<WorkspaceTemplateView> {
+    const created = await appRequest(app, "/workspace-templates", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "ops",
+        machineTypeId: "small",
+        folderIds: [],
+        connections,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { template } = await created.json<{ template: WorkspaceTemplateView }>();
+    return template;
+  }
+
+  async function workspaceCeiling(workspaceId: string): Promise<unknown> {
+    const row = await env.DB
+      .prepare("SELECT manifest FROM workspaces WHERE id = ?1")
+      .bind(workspaceId)
+      .first<{ manifest: string | null }>();
+    return JSON.parse(row?.manifest ?? "null");
+  }
+
+  it("serves the admin-configured entries in the catalog and refuses per-user pastes", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const listed = await appRequest(app, "/connections/catalog", {
+      headers: { Cookie: cookie },
+    });
+    expect(listed.status).toBe(200);
+    const { providers } = await listed.json<ListCatalogResponse>();
+
+    const youtrack = providers.find(({ id }) => id === "youtrack");
+    expect(youtrack).toMatchObject({
+      custody: "proxy",
+      oauthAvailable: false,
+      personalTokenLabel: null,
+      needsVendorConfig: false,
+      environmentNames: ["YOUTRACK_TOKEN", "YOUTRACK_BASE_URL"],
+    });
+    const discord = providers.find(({ id }) => id === "discord");
+    expect(discord).toMatchObject({
+      custody: "cp",
+      oauthAvailable: false,
+      personalTokenLabel: null,
+      needsVendorConfig: false,
+      environmentNames: ["DISCORD_BOT_TOKEN"],
+    });
+
+    // Admin-configured means exactly that: the grants route refuses a pasted
+    // key for both, so no member can end up holding a parallel credential.
+    for (const provider of ["youtrack", "discord"]) {
+      const pasted = await appRequest(app, `/connections/grants/${provider}`, {
+        method: "PUT",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ manifestId: provider, token: "test-only-pasted" }),
+      });
+      expect(pasted.status).toBe(400);
+      await expect(pasted.json()).resolves.toMatchObject({
+        error: expect.stringContaining("issues no personal token"),
+      });
+    }
+  });
+
+  it("github: the app root satisfies a required template connection and mints the git-helper shape", async () => {
+    const { privatePem } = await githubKeyPair();
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    expect((await putGithubConnection(app, admin, privatePem)).status).toBe(204);
+    const template = await templateNaming(app, admin, [
+      { provider: "github", required: true },
+    ]);
+
+    const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input) => {
+        expect(String(input)).toBe(
+          "https://api.github.com/app/installations/987654/access_tokens",
+        );
+        return Response.json({ token: GITHUB_TOKEN, expires_at: expiresAt });
+      },
+    );
+
+    // The creator is a plain member with no grant of any kind: the admin's
+    // app root is what satisfies `required`.
+    const member = await sameOrgSession("github-template-member");
+    const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
+      templateId: template.id,
+    });
+    expect(await workspaceCeiling(workspace.id)).toEqual({
+      integrations: { github: {} },
+    });
+
+    // The create minted the lease before any box existed; the row is the
+    // connected state the panel shows.
+    const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: member.cookie },
+    });
+    const { leases: created } = await atCreate.json<{ leases: CredentialLeaseView[] }>();
+    expect(created.map(({ connection, state, boxId }) => [connection, state, boxId]))
+      .toEqual([["github", "active", null]]);
+
+    // The same mint blitz-cred git-helper performs: {integration: "github"},
+    // answered with an env placement named GH_TOKEN — the exact name the
+    // helper turns into git's username/password pair.
+    const minted = await mint(app, box.access_token, { integration: "github" });
+    expect(minted.status).toBe(200);
+    const result = await minted.json<MintResult>();
+    expect(result).toEqual({
+      integration: "github",
+      mode: "inject",
+      placements: [
+        { kind: "env", name: "GH_TOKEN", value: GITHUB_TOKEN },
+        { kind: "env", name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
+      ],
+      expiresAt: Date.parse(expiresAt),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("youtrack: the admin proxy root makes a required template create work with no per-user step", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    await putYoutrackConnection(app, admin);
+    const template = await templateNaming(app, admin, [
+      { provider: "youtrack", required: true },
+    ]);
+
+    const member = await sameOrgSession("youtrack-template-member");
+    const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
+      templateId: template.id,
+    });
+    expect(await workspaceCeiling(workspace.id)).toEqual({
+      integrations: { youtrack: {} },
+    });
+
+    const synced = await mint(app, box.access_token, {});
+    expect(synced.status).toBe(200);
+    const results = await synced.json<MintResult[]>();
+    expect(results.map(({ integration, mode }) => [integration, mode]))
+      .toEqual([["youtrack", "proxy"]]);
+    const result = results[0];
+    if (result === undefined) throw new Error("youtrack mint result is missing");
+
+    // The box holds a lease token and the proxy URL, never the permanent
+    // token: that pair is the whole delivery.
+    const leaseToken = environmentValue(result, "YOUTRACK_TOKEN");
+    const proxyUrl = environmentValue(result, "YOUTRACK_BASE_URL");
+    expect(leaseToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(leaseToken).not.toBe(YOUTRACK_ROOT);
+    const leaseId = new URL(proxyUrl ?? "").pathname.split("/").at(-1) ?? "";
+    expect(proxyUrl).toBe(`https://cp.example/proxy/${leaseId}`);
+    expect(JSON.stringify(results)).not.toContain(YOUTRACK_ROOT);
+
+    // A call through the pair reaches the admin's instance carrying the
+    // permanent token, so the workspace works with zero member setup.
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        expect(String(input)).toBe(
+          `${YOUTRACK_BASE}/api/issues?fields=idReadable`,
+        );
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe(`Bearer ${YOUTRACK_ROOT}`);
+        return Response.json([{ idReadable: "OPS-1" }]);
+      },
+    );
+    const proxied = await appRequest(
+      app,
+      `/proxy/${leaseId}/api/issues?fields=idReadable`,
+      { headers: { Authorization: `Bearer ${leaseToken ?? ""}` } },
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(proxied.status).toBe(200);
+    await expect(proxied.json()).resolves.toEqual([{ idReadable: "OPS-1" }]);
+  });
+
+  it("discord: the admin cp root reaches a template workspace as the bot token itself", async () => {
+    const { app, providers } = harness();
+    const admin = await operatorSession(app);
+    await putDiscordConnection(app, admin);
+    const template = await templateNaming(app, admin, [
+      { provider: "discord", required: false },
+    ]);
+
+    const member = await sameOrgSession("discord-template-member");
+    const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
+      templateId: template.id,
+    });
+    expect(await workspaceCeiling(workspace.id)).toEqual({
+      integrations: { discord: {} },
+    });
+    const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: member.cookie },
+    });
+    const { leases: created } = await atCreate.json<{ leases: CredentialLeaseView[] }>();
+    expect(created.map(({ connection, state, boxId }) => [connection, state, boxId]))
+      .toEqual([["discord", "active", null]]);
+
+    const minted = await mint(app, box.access_token, { integration: "discord" });
+    expect(minted.status).toBe(200);
+    const result = await minted.json<MintResult>();
+    expect(result).toMatchObject({
+      integration: "discord",
+      mode: "inject",
+      placements: [
+        { kind: "env", name: "DISCORD_BOT_TOKEN", value: DISCORD_ROOT },
+      ],
+    });
+    expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
+    // The frozen box wire: exactly the four keys the shipped broker decodes.
+    expect(Object.keys(result).sort()).toEqual([
+      "expiresAt",
+      "integration",
+      "mode",
+      "placements",
+    ]);
+
+    // Enablement is a ceiling, not a broadcast: a workspace whose explicit
+    // manifest names nothing gets nothing on a sync-all.
+    const { box: fencedBox } = await createReadyWorkspace(app, providers, admin, {});
+    const fencedSync = await mint(app, fencedBox.access_token, {});
+    expect(fencedSync.status).toBe(200);
+    await expect(fencedSync.json()).resolves.toEqual([]);
+  });
+
+  it("still blocks a required provider that no admin root and no grant backs", async () => {
+    const { app } = harness();
+    const admin = await operatorSession(app);
+    const template = await templateNaming(app, admin, [
+      { provider: "youtrack", required: true },
+    ]);
+    const member = await sameOrgSession("blocked-template-member");
+    const blocked = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: template.id }),
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: expect.stringContaining("connect youtrack"),
+    });
   });
 });
