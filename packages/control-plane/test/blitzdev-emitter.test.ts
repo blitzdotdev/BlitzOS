@@ -13,6 +13,25 @@ import { managedUploadSet } from "./managed-upload-set.js";
 // managed platform, which forks do not use. Skipped unless BLITZDEV_MANAGED=1.
 const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 
+// The self-host worker read as text, never evaluated: it is the parity target
+// for the emitted one, and a Worker-pool test has no disk to read it from.
+const rawSelfHostWorker = import.meta.glob<string>("../src/worker.ts", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+});
+
+/** Top-level keys of a worker's `providersFor` return object, in source order. */
+function providerKeys(source: string, label: string): string[] {
+  const body = /function providersFor\([^)]*\): CoreRuntime\["providers"\] \{[\s\S]*?\n {2}return \{\n([\s\S]*?)\n {2}\};/u
+    .exec(source)?.[1];
+  if (body === undefined) throw new Error(`no providersFor return object in ${label}`);
+  return body
+    .split("\n")
+    .map((line) => /^ {4}([A-Za-z_$][\w$]*)\s*[:,]/u.exec(line)?.[1])
+    .filter((name): name is string => name !== undefined);
+}
+
 const expected = [
   "teenybase.ts",
   "worker.ts",
@@ -186,6 +205,55 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(WORKER_SOURCE).toContain("fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket");
     expect(WORKER_SOURCE).toContain("async scheduled(");
     expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
+  });
+
+  // Run-3 report, B2. The emitted worker registered only vmRegistry, volume
+  // and microvm, so `/workspaces/:id/webapp/:port` could answer nothing but
+  // 503 and the browser terminal was unreachable on Target B. Hetzner has no
+  // proxyWebApp of its own, so tunnels are the only path.
+  it("registers workspace tunnels and webApp auth from the documented env names", () => {
+    expect(WORKER_SOURCE).toContain("workspaceTunnels: workspaceTunnelsFromEnv(env)");
+    expect(WORKER_SOURCE).toContain("webAppAuth: workspaceWebAppAuthFromEnv(env)");
+    // One documented set for both targets: these are the names self-host reads
+    // (core/workspace-tunnels.ts, core/webapp-tickets.ts), so an operator sets
+    // the same five whether the deployment is Target A or Target B.
+    for (const binding of [
+      "CLOUDFLARE_ACCOUNT_ID",
+      "CLOUDFLARE_ZONE_ID",
+      "WORKSPACE_TUNNEL_ZONE",
+      "CLOUDFLARE_API_TOKEN",
+      "WEBAPP_TOKEN_SECRET",
+    ]) {
+      expect(WORKER_SOURCE, binding).toContain(`  ${binding}?: string;`);
+    }
+  });
+
+  // Unconfigured must be loud. Without this the operator sees a bare 503 in a
+  // browser and nothing anywhere naming the variables that would fix it.
+  it("names the missing variables once per isolate when tunnels are unconfigured", () => {
+    expect(WORKER_SOURCE).toContain("warnOnceIfWorkspaceTunnelsUnconfigured(runtime)");
+    expect(WORKER_SOURCE).toContain('"workspace_tunnels_unconfigured"');
+    expect(WORKER_SOURCE).toContain("set WORKSPACE_TUNNEL_ZONE, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_ZONE_ID vars");
+    expect(WORKER_SOURCE).toContain("CLOUDFLARE_API_TOKEN, WEBAPP_TOKEN_SECRET secrets");
+  });
+
+  // The gate that keeps B2 from coming back under another name: Target B must
+  // populate every CoreRuntime["providers"] field Target A populates. A new
+  // provider wired into self-host alone now fails the build, instead of
+  // surfacing months later as a 503 in someone's browser.
+  it("populates every provider the self-host runtime populates", () => {
+    const selfHostSource = rawSelfHostWorker["../src/worker.ts"];
+    expect(selfHostSource, "self-host worker source").toBeTypeOf("string");
+    const selfHost = providerKeys(selfHostSource ?? "", "src/worker.ts");
+    const managed = providerKeys(WORKER_SOURCE, "WORKER_SOURCE");
+
+    // Guards the regex itself: a silent no-match would make the gate vacuous.
+    expect(selfHost).toContain("vmRegistry");
+    expect(selfHost).toContain("workspaceTunnels");
+    expect(selfHost).toContain("webAppAuth");
+    // Superset, not equality: Target B may add providers Target A has no use
+    // for. It may never drop one.
+    expect(selfHost.filter((key) => !managed.includes(key))).toEqual([]);
   });
 
   // Fake, never a real token: real ones carry a single-underscore `tp_`, which

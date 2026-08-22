@@ -484,6 +484,8 @@ import {
   runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
   runProviderCanary, runSessionSweep, runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
+  workspaceTunnelsFromEnv,
+  workspaceWebAppAuthFromEnv,
   VmProviderRegistry,
   blobResponse,
   first,
@@ -512,6 +514,16 @@ type ManagedBindings = {
   MAX_CONCURRENT_WORKSPACES: string;
   MICROVM_HOSTS: string;
   CRED_MASTER_KEY: string;
+  // Workspace tunnels and webApp auth, named exactly as self-host names them
+  // (docs/TUNNEL.md, docs/SELF-HOST.md): one documented set for both targets.
+  // The first three are project vars, the last two project secrets. Leave any
+  // of them empty and cloud-VM workspaces still boot, but they get no browser
+  // terminal, chat, files, or previews.
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_ZONE_ID?: string;
+  WORKSPACE_TUNNEL_ZONE?: string;
+  CLOUDFLARE_API_TOKEN?: string;
+  WEBAPP_TOKEN_SECRET?: string;
   AWS_ACCESS_KEY_ID?: string; AWS_SECRET_ACCESS_KEY?: string; AWS_SESSION_TOKEN?: string;
   AWS_REGION?: string; AWS_IMAGE_ID?: string; AWS_SUBNET_ID?: string; AWS_SECURITY_GROUP_IDS?: string;
 };
@@ -563,7 +575,34 @@ function providersFor(env: ManagedBindings, db: Db): CoreRuntime["providers"] {
     vmRegistry: new VmProviderRegistry(aws === undefined ? [hetzner, microvm] : [hetzner, microvm, aws]),
     volume: hetzner,
     microvm,
+    workspaceTunnels: workspaceTunnelsFromEnv(env),
+    webAppAuth: workspaceWebAppAuthFromEnv(env),
   };
+}
+
+let checkedWorkspaceTunnelsConfig = false;
+
+// Cloud-VM providers have no proxyWebApp of their own: without configured
+// workspace tunnels their workspaces boot with no browser access at all, and
+// the terminal route can only answer 503. Say which names are missing, once
+// per isolate, so the cause is in the logs instead of in a browser.
+function warnOnceIfWorkspaceTunnelsUnconfigured(runtime: CoreRuntime): void {
+  if (checkedWorkspaceTunnelsConfig) return;
+  checkedWorkspaceTunnelsConfig = true;
+  if (runtime.providers.workspaceTunnels !== undefined) return;
+  const blindProviderIds = runtime.providers.vmRegistry
+    .all()
+    .filter((provider) => provider.proxyWebApp === undefined)
+    .map((provider) => provider.id);
+  if (blindProviderIds.length === 0) return;
+  runtime.reportError(
+    "workspace_tunnels_unconfigured",
+    new Error(
+      "workspace tunnels are not configured (set WORKSPACE_TUNNEL_ZONE, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_ZONE_ID vars"
+      + " and the CLOUDFLARE_API_TOKEN, WEBAPP_TOKEN_SECRET secrets); workspaces from providers without proxyWebApp"
+      + " have no browser access: " + blindProviderIds.join(", "),
+    ),
+  );
 }
 
 const API_PREFIXES = ${JSON.stringify(API_PREFIXES, null, 2)};
@@ -647,6 +686,7 @@ const app = teenyHono<ManagedEnv>(
   { cors: false, logger: true },
   async (c) => {
     const runtime = runtimeFor(c);
+    warnOnceIfWorkspaceTunnelsUnconfigured(runtime);
     await runtime.providers.microvm?.syncStaticHosts();
     maybeScheduleLazySweep(runtime, c.req.path);
   },
