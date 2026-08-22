@@ -145,6 +145,14 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(emitted).not.toContain("blitz-core-probe-caae.app.blitz.dev");
   });
 
+  it("uploads a teenybase config that declares auth:false alongside its own users table", () => {
+    const uploadSet = createUploadSet(coreSources());
+    const teenybase = uploadSet.files.find((file) => file.path === "teenybase.ts");
+
+    expect(teenybase?.source).toContain("const config = {\n  auth: false,\n");
+    expect(teenybase?.source).toContain('name: "users"');
+  });
+
   it("wires the managed worker file bucket and scheduled folder sweep", () => {
     expect(WORKER_SOURCE).toContain("fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket");
     expect(WORKER_SOURCE).toContain("async scheduled(");
