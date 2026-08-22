@@ -30,6 +30,9 @@ export type WorkspaceRecord = {
   retryAction: RetryAction;
   createdAt: number;
   updatedAt: number;
+  /** Connection names the workspace ceiling enables; the drawer's
+   * connections panel draws a status row per name. */
+  connections?: string[];
 };
 
 export type IdentityRecord = {

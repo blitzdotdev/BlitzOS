@@ -1,0 +1,14 @@
+{
+  "input": {
+    "version": 1,
+    "provider": "github",
+    "requestedAt": 1787000000000
+  },
+  "expected": {
+    "focus": {
+      "version": 1,
+      "provider": "github",
+      "requestedAt": 1787000000000
+    }
+  }
+}

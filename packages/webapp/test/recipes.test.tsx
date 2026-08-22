@@ -434,6 +434,7 @@ const launchedWorkspace: WorkspaceView = {
   owner: { name: 'Ada Park', avatarUrl: null },
   environment: null,
   agentRuleId: null,
+  connections: [],
 };
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -532,7 +533,7 @@ describe('usage capture settings', () => {
         viewer={viewer}
         section={section}
         onNavigate={() => undefined}
-        onConfigureConnection={() => undefined}
+        onOpenWorkspace={() => undefined}
         onSignOut={async () => undefined}
       />
     );

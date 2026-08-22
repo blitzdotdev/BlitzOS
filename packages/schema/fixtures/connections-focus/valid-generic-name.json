@@ -1,0 +1,14 @@
+{
+  "input": {
+    "version": 1,
+    "provider": "acme-tracker.internal_2",
+    "requestedAt": 1787000001000
+  },
+  "expected": {
+    "focus": {
+      "version": 1,
+      "provider": "acme-tracker.internal_2",
+      "requestedAt": 1787000001000
+    }
+  }
+}

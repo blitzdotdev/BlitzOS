@@ -245,7 +245,7 @@ export function addConnectRoutes(
     // Started in a workspace: the errand was connecting it, so the grant is
     // only half of it. A ceiling that refuses leaves the grant standing and
     // says "authorized" rather than claiming a connection nobody has.
-    const connected = await connectAfterGrant(runtime, {
+    const leaseLive = await connectAfterGrant(runtime, {
       workspaceId: state.workspaceId,
       principal,
       origin,
@@ -254,7 +254,7 @@ export function addConnectRoutes(
     return context.body(null, 302, {
       Location: returnUrl(
         origin,
-        connected ? "ok" : "authorized",
+        leaseLive ? "ok" : "authorized",
         manifest.id,
         state.workspaceId,
       ),

@@ -130,6 +130,7 @@ export function workspaceFromWire(
     errorDetail: workspace.error,
     createdAt: 0,
     updatedAt: workspace.revision,
+    connections: workspace.connections,
     ingressLabel: workspace.id,
     sessionUrl: null,
     retryAction: workspace.retryAction,

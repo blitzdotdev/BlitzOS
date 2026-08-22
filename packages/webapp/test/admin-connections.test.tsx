@@ -2,12 +2,14 @@ import type {
   CatalogEntryView,
   ConnectionView,
   PutConnectionRequest,
+  PutUserGrantRequest,
 } from '@blitzos/schema';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
-import { AdminConnectionsSection } from '../src/settings/AdminConnectionsSection.js';
+import { adminConnectionInput, ProviderAdminForm } from '../src/connections/ProviderAdminForm.js';
 import { ConnectionsPanel } from '../src/settings/ConnectionsPanel.js';
+import { OrgConnectionsSection } from '../src/settings/OrgConnectionsSection.js';
 import { ConnectPicker } from '../src/settings/ConnectPicker.js';
 import { render, settle } from './dom.js';
 
@@ -120,9 +122,27 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
             tokenPrefix: 'Bearer ',
           }
         : null,
+      app: null,
     },
     environmentNames: [],
     scopes: [],
+  };
+}
+
+/** The GitHub App shape: app id + installation id + PKCS#8 key, PUT as
+ * kind app-jwt. Coexists with member OAuth on the same manifest. */
+function appEntry(id: string, title: string): CatalogEntryView {
+  const entry = adminEntry(id, title, false);
+  return {
+    ...entry,
+    oauthAvailable: true,
+    adminForm: {
+      rootLabel: 'App private key (PKCS#8 PEM)',
+      rootHelp: 'Generate it in the vendor app settings and convert to PKCS#8.',
+      placements: [{ kind: 'env', name: 'GH_TOKEN', fill: 'token' }],
+      proxy: null,
+      app: { appIdLabel: 'App ID', installationIdLabel: 'Installation ID' },
+    },
   };
 }
 
@@ -163,27 +183,41 @@ function buttonByText(container: Element, text: string): Element {
   return match;
 }
 
-describe('admin connections section', () => {
-  it('renders one manifest-driven form per admin-custody provider', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({
-        providers: [
-          adminEntry('tracker', 'Acme Tracker', true),
-          adminEntry('discord', 'Discord', false),
-          grantOnlyEntry('linear', 'Linear'),
-        ],
-      })),
-    });
-    const view = await render(<AdminConnectionsSection client={wire} />);
-    await settle();
+describe('provider admin form', () => {
+  const putBody = (entry: CatalogEntryView, fill: (container: HTMLElement) => void) => {
+    return (async () => {
+      const bodies: PutConnectionRequest[] = [];
+      const view = await render(
+        <ProviderAdminForm
+          entry={entry}
+          saving={false}
+          configured={false}
+          onCancel={() => undefined}
+          onSubmit={(input) => bodies.push(input)}
+        />,
+      );
+      fill(view.container);
+      // The component renders no <form> (its host may be one), so saving is
+      // the Save button, not a submit event.
+      expect(view.container.querySelector('form')).toBeNull();
+      await act(async () => {
+        click(buttonByText(view.container, 'Save'));
+      });
+      await view.unmount();
+      return bodies;
+    })();
+  };
 
-    const section = view.container.querySelector('[aria-label="Organization connections"]');
-    expect(section?.textContent).toContain('Acme Tracker');
-    expect(section?.textContent).toContain('Discord');
-    // Grant-backed providers belong to the picker, not to org configuration.
-    expect(section?.textContent).not.toContain('Linear');
-
-    await act(async () => click(buttonByText(view.container, 'Configure')));
+  it('renders the manifest-decided fields for proxy custody', async () => {
+    const view = await render(
+      <ProviderAdminForm
+        entry={adminEntry('tracker', 'Acme Tracker', true)}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
     const labels = [...view.container.querySelectorAll('.connect-field__label')]
       .map((label) => label.textContent);
     expect(labels).toEqual(['Instance URL', 'Service token']);
@@ -193,95 +227,42 @@ describe('admin connections section', () => {
     await view.unmount();
   });
 
-  it('submits the exact PUT body the control plane stores and flips to configured', async () => {
-    const rows: ConnectionView[] = [];
-    const bodies: [string, PutConnectionRequest][] = [];
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({
-        providers: [adminEntry('tracker', 'Acme Tracker', true)],
-      })),
-      listConnections: vi.fn(async () => ({ connections: [...rows] })),
-      putConnection: vi.fn(async (name: string, input: PutConnectionRequest) => {
-        bodies.push([name, input]);
-        rows.push({
-          name: 'tracker',
-          provider: 'tracker',
-          kind: 'static',
-          custody: 'proxy',
-          status: 'active',
-          createdBy: 'admin',
-          proxyBaseUrl: 'https://tracker.example',
-        });
-      }),
-    });
-    const view = await render(<AdminConnectionsSection client={wire} />);
-    await settle();
-    await act(async () => click(buttonByText(view.container, 'Configure')));
-
-    const baseUrl = view.container.querySelector<HTMLInputElement>('input[name="baseUrl"]');
-    const root = view.container.querySelector<HTMLInputElement>('input[name="root"]');
-    if (baseUrl === null || root === null) throw new Error('form inputs are missing');
-    await act(async () => {
+  it('submits the exact static PUT body the control plane stores', async () => {
+    const bodies = await putBody(adminEntry('tracker', 'Acme Tracker', true), (container) => {
+      const baseUrl = container.querySelector<HTMLInputElement>('input[name="baseUrl"]');
+      const root = container.querySelector<HTMLInputElement>('input[name="root"]');
+      if (baseUrl === null || root === null) throw new Error('form inputs are missing');
       typeInto(baseUrl, 'https://tracker.example');
       typeInto(root, 'perm:test-only-token');
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
     });
-    await settle();
-
     // The same shape the control-plane suite PUTs directly: manifest-decided
     // custody and placements, admin-supplied root and instance URL.
-    expect(bodies).toEqual([[
-      'tracker',
-      {
-        provider: 'tracker',
-        kind: 'static',
-        custody: 'proxy',
-        config: {
-          placements: [
-            { kind: 'env', name: 'TRACKER_TOKEN', fill: 'token' },
-            { kind: 'env', name: 'TRACKER_BASE_URL', fill: 'proxy-url' },
-          ],
-          proxy: {
-            base_url: 'https://tracker.example',
-            token_header: 'Authorization',
-            token_prefix: 'Bearer ',
-          },
+    expect(bodies).toEqual([{
+      provider: 'tracker',
+      kind: 'static',
+      custody: 'proxy',
+      config: {
+        placements: [
+          { kind: 'env', name: 'TRACKER_TOKEN', fill: 'token' },
+          { kind: 'env', name: 'TRACKER_BASE_URL', fill: 'proxy-url' },
+        ],
+        proxy: {
+          base_url: 'https://tracker.example',
+          token_header: 'Authorization',
+          token_prefix: 'Bearer ',
         },
-        root: 'perm:test-only-token',
       },
-    ]]);
-    expect(view.container.textContent).toContain('configured');
-    expect(view.container.textContent).toContain('Reconfigure');
-    await view.unmount();
+      root: 'perm:test-only-token',
+    }]);
   });
 
   it('omits the proxy block and the URL field for cp custody', async () => {
-    const bodies: PutConnectionRequest[] = [];
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({
-        providers: [adminEntry('discord', 'Discord', false)],
-      })),
-      putConnection: vi.fn(async (_name: string, input: PutConnectionRequest) => {
-        bodies.push(input);
-      }),
-    });
-    const view = await render(<AdminConnectionsSection client={wire} />);
-    await settle();
-    await act(async () => click(buttonByText(view.container, 'Configure')));
-    expect(view.container.querySelector('input[name="baseUrl"]')).toBeNull();
-
-    const root = view.container.querySelector<HTMLInputElement>('input[name="root"]');
-    if (root === null) throw new Error('root input is missing');
-    await act(async () => {
+    const bodies = await putBody(adminEntry('discord', 'Discord', false), (container) => {
+      expect(container.querySelector('input[name="baseUrl"]')).toBeNull();
+      const root = container.querySelector<HTMLInputElement>('input[name="root"]');
+      if (root === null) throw new Error('root input is missing');
       typeInto(root, 'test-only-bot-token');
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
     });
-    await settle();
-
     expect(bodies).toEqual([{
       provider: 'discord',
       kind: 'static',
@@ -291,10 +272,199 @@ describe('admin connections section', () => {
       },
       root: 'test-only-bot-token',
     }]);
+  });
+
+  it('submits the app-jwt body for the GitHub App shape', async () => {
+    const pem = '-----BEGIN PRIVATE KEY-----\ntest-only\n-----END PRIVATE KEY-----';
+    const bodies = await putBody(appEntry('github', 'GitHub'), (container) => {
+      const appId = container.querySelector<HTMLInputElement>('input[name="appId"]');
+      const installationId = container.querySelector<HTMLInputElement>('input[name="installationId"]');
+      const root = container.querySelector<HTMLTextAreaElement>('textarea[name="root"]');
+      if (appId === null || installationId === null || root === null) {
+        throw new Error('app form inputs are missing');
+      }
+      typeInto(appId, '123456');
+      typeInto(installationId, '987654');
+      // A PEM is multi-line, which is exactly why the root is a textarea.
+      const setTextAreaValue = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        'value',
+      )?.set;
+      if (setTextAreaValue === undefined) throw new Error('textarea value setter is unavailable');
+      setTextAreaValue.call(root, pem);
+      root.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    // The canonical app-jwt PUT: ids in the config, PEM as the root, no
+    // placements — the minter's defaults are the app credential's surface.
+    expect(bodies).toEqual([{
+      provider: 'github',
+      kind: 'app-jwt',
+      custody: 'cp',
+      config: { app_id: '123456', installation_id: '987654' },
+      root: pem,
+    }]);
+  });
+
+  it('parses nothing for a provider without an admin form', () => {
+    expect(adminConnectionInput(grantOnlyEntry('linear', 'Linear'), new FormData())).toBeNull();
+  });
+
+  it('saves on Enter in a field without any native submit', async () => {
+    const bodies: PutConnectionRequest[] = [];
+    const view = await render(
+      <ProviderAdminForm
+        entry={adminEntry('discord', 'Discord', false)}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={(input) => bodies.push(input)}
+      />,
+    );
+    const root = view.container.querySelector<HTMLInputElement>('input[name="root"]');
+    if (root === null) throw new Error('root input is missing');
+    typeInto(root, 'test-only-bot-token');
+    await act(async () => {
+      root.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.root).toBe('test-only-bot-token');
     await view.unmount();
   });
 
-  it('marks an already-stored connection configured before any click', async () => {
+  it('refuses to save while a required field is empty', async () => {
+    const bodies: PutConnectionRequest[] = [];
+    const view = await render(
+      <ProviderAdminForm
+        entry={adminEntry('discord', 'Discord', false)}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={(input) => bodies.push(input)}
+      />,
+    );
+    await act(async () => {
+      click(buttonByText(view.container, 'Save'));
+    });
+    expect(bodies).toEqual([]);
+    await view.unmount();
+  });
+});
+
+describe('org connections section (settings, revoke-only)', () => {
+  const storedRow: ConnectionView = {
+    name: 'discord',
+    provider: 'discord',
+    kind: 'static',
+    custody: 'cp',
+    status: 'active',
+    createdBy: 'admin',
+    proxyBaseUrl: null,
+    orgCredential: true,
+  };
+  const declaredRow: ConnectionView = {
+    name: 'youtrack',
+    provider: 'youtrack',
+    kind: 'static',
+    custody: 'proxy',
+    status: 'active',
+    createdBy: 'first-member',
+    proxyBaseUrl: 'https://acme.youtrack.example',
+    orgCredential: false,
+  };
+
+  it('lists only sealed org credentials, never member declarations', async () => {
+    const wire = client({
+      listConnections: vi.fn(async () => ({ connections: [storedRow, declaredRow] })),
+    });
+    const view = await render(<OrgConnectionsSection client={wire} />);
+    await settle();
+    const section = view.container.querySelector('[aria-label="Organization connections"]');
+    expect(section?.textContent).toContain('discord');
+    expect(section?.textContent).not.toContain('youtrack');
+    // The add path lives on the template page now; this section only names it.
+    expect(section?.textContent).toContain('template page');
+    expect(section?.querySelector('form')).toBeNull();
+    await view.unmount();
+  });
+
+  it('revokes an org credential only after confirmation', async () => {
+    const deleteConnection = vi.fn(async () => undefined);
+    const wire = client({
+      listConnections: vi.fn(async () => ({ connections: [storedRow] })),
+      deleteConnection,
+    });
+    const view = await render(<OrgConnectionsSection client={wire} />);
+    await settle();
+    await act(async () => click(buttonByText(view.container, 'Revoke')));
+    expect(deleteConnection).not.toHaveBeenCalled();
+    await act(async () => click(buttonByText(document.body, 'Revoke credential')));
+    await settle();
+    expect(deleteConnection).toHaveBeenCalledWith('discord');
+    await view.unmount();
+  });
+
+  it('draws nothing when the org stores no credential', async () => {
+    const wire = client({
+      listConnections: vi.fn(async () => ({ connections: [declaredRow] })),
+    });
+    const view = await render(<OrgConnectionsSection client={wire} />);
+    await settle();
+    expect(view.container.querySelector('[aria-label="Organization connections"]')).toBeNull();
+    await view.unmount();
+  });
+});
+
+describe('settings connections panel (revoke-only)', () => {
+  it('hosts no picker and no config form; grants keep revoke and OAuth re-auth', async () => {
+    const wire = client({
+      listConnectionGrants: vi.fn(async () => ({
+        grants: [
+          {
+            provider: 'linear',
+            manifestId: 'linear',
+            kind: 'oauth' as const,
+            label: null,
+            scopes: ['read'],
+            createdAt: 1,
+            updatedAt: 1,
+            accessExpiresAt: null,
+          },
+          {
+            provider: 'youtrack',
+            manifestId: 'youtrack',
+            kind: 'pat' as const,
+            label: null,
+            scopes: [],
+            createdAt: 1,
+            updatedAt: 1,
+            accessExpiresAt: null,
+          },
+        ],
+      })),
+    });
+    const view = await render(<ConnectionsPanel client={wire} />);
+    await settle();
+    // The connect surfaces moved out: members connect in the workspace
+    // drawer, admins configure on the template page.
+    expect(view.container.querySelector('.connect-picker')).toBeNull();
+    expect(view.container.querySelector('.connect-form')).toBeNull();
+    // Rotation stays: an OAuth grant re-runs the dance from a plain link; a
+    // pasted key has no re-auth here — it is re-pasted in a workspace.
+    const reauth = [...view.container.querySelectorAll('a')]
+      .filter((anchor) => anchor.textContent === 'Re-auth');
+    expect(reauth.map((anchor) => anchor.getAttribute('href')))
+      .toEqual(['/connect/linear/start']);
+    const revokes = [...view.container.querySelectorAll('button')]
+      .filter((button) => button.textContent === 'Revoke');
+    expect(revokes.length).toBe(2);
+    await view.unmount();
+  });
+
+  it('shows the org section for admins and never for members', async () => {
     const stored: ConnectionView = {
       name: 'discord',
       provider: 'discord',
@@ -303,25 +473,10 @@ describe('admin connections section', () => {
       status: 'active',
       createdBy: 'admin',
       proxyBaseUrl: null,
+      orgCredential: true,
     };
     const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({
-        providers: [adminEntry('discord', 'Discord', false)],
-      })),
       listConnections: vi.fn(async () => ({ connections: [stored] })),
-    });
-    const view = await render(<AdminConnectionsSection client={wire} />);
-    await settle();
-    expect(view.container.textContent).toContain('configured');
-    expect(view.container.textContent).toContain('Reconfigure');
-    await view.unmount();
-  });
-
-  it('appears in the settings panel for admins and never for members', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({
-        providers: [adminEntry('tracker', 'Acme Tracker', true)],
-      })),
     });
     const asAdmin = await render(<ConnectionsPanel client={wire} admin />);
     await settle();
@@ -333,8 +488,10 @@ describe('admin connections section', () => {
     expect(asMember.container.querySelector('[aria-label="Organization connections"]')).toBeNull();
     await asMember.unmount();
   });
+});
 
-  it('explains admin-configured providers in the picker instead of demanding OAuth', async () => {
+describe('connect picker (workspace surface)', () => {
+  it('explains admin-configured providers point at the template page', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
         providers: [
@@ -352,6 +509,7 @@ describe('admin connections section', () => {
     await act(async () => click(tracker));
     expect(view.container.querySelector('.connect-form')).toBeNull();
     expect(view.container.textContent).toContain('An organization admin configures Acme Tracker once');
+    expect(view.container.textContent).toContain('template page');
     expect(view.container.textContent).not.toContain('Connecting requires OAuth');
 
     const sso = cards.find((card) => card.textContent?.includes('Corp SSO'));
@@ -367,7 +525,7 @@ describe('admin connections section', () => {
       listConnectionCatalog: vi.fn(async () => ({
         providers: [patEntry('youtrack-pat', 'YouTrack PAT')],
       })),
-      putConnectionGrant: vi.fn(async (provider: string, input: unknown) => {
+      putConnectionGrant: vi.fn(async (provider: string, input: PutUserGrantRequest) => {
         pastes.push([provider, input]);
       }),
     });
@@ -413,13 +571,14 @@ describe('admin connections section', () => {
       status: 'active',
       createdBy: 'first-member',
       proxyBaseUrl: 'https://acme.youtrack.example',
+      orgCredential: false,
     };
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
         providers: [patEntry('youtrack-pat', 'YouTrack PAT')],
       })),
       listConnections: vi.fn(async () => ({ connections: [orgRow] })),
-      putConnectionGrant: vi.fn(async (provider: string, input: unknown) => {
+      putConnectionGrant: vi.fn(async (provider: string, input: PutUserGrantRequest) => {
         pastes.push([provider, input]);
       }),
     });

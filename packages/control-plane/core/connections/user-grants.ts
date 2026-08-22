@@ -27,7 +27,11 @@ import { openRoot, sealRoot } from "./root-crypto.js";
 import type { Custody, UserGrantView } from "./types.js";
 
 /** Connection names are the box wire's `integration` value and become a file
- * name inside the box, so they stay to the same alphabet the box accepts. */
+ * name inside the box, so they stay to the same alphabet the box accepts.
+ * This 63-character rule is the canonical one; `isProviderName` in
+ * packages/schema/src/provider-name.ts exports it for everything that can
+ * import the schema package (core keeps to relative imports, hence the
+ * mirror), and packages/schema/fixtures/connections-focus/ pins the copies. */
 const PROVIDER_NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/u;
 
 export interface GrantRow {

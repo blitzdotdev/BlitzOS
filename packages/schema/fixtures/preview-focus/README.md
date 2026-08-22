@@ -1,6 +1,7 @@
 # Preview-focus fixtures
 
-The `blitz preview open` CLI writes a single "focus" marker to
+The `blitz teenyapp open` CLI (documented verb; `blitz preview open` remains a
+silent alias) writes a single "focus" marker to
 `/var/lib/blitz/preview-focus.json`; the Go gateway reads it at
 `GET /preview-focus` and returns `{ "focus": <marker> }` or `{ "focus": null }`.
 

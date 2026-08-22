@@ -133,17 +133,17 @@ export function SettingsPage({
   client,
   viewer,
   section,
-  requestedConnectionName,
   onNavigate,
-  onConfigureConnection,
+  onOpenWorkspace,
   onSignOut,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
   section: SettingsSection;
-  requestedConnectionName?: string;
   onNavigate: (section: SettingsSection) => void;
-  onConfigureConnection: (name: string) => void;
+  /** A request row's Connect opens the workspace that wants the connection:
+   * connecting happens there, not in settings, since the flow inversion. */
+  onOpenWorkspace: (workspaceId: string) => void;
   onSignOut: () => Promise<void>;
 }) {
   const sections: Array<{ id: SettingsSection; label: string }> = [
@@ -185,12 +185,11 @@ export function SettingsPage({
         {section === 'connections' && (
           <ConnectionsPanel
             client={client}
-            requestedName={requestedConnectionName}
             admin={viewer.membership.role === 'admin'}
           />
         )}
         {section === 'requests' && (
-          <RequestsPanel client={client} onConfigure={onConfigureConnection} />
+          <RequestsPanel client={client} onOpenWorkspace={onOpenWorkspace} />
         )}
         {section === 'usage' && viewer.membership.role === 'admin' && (
           <UsagePanel client={client} />

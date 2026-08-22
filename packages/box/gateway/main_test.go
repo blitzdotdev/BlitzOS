@@ -1497,6 +1497,146 @@ func TestServePreviewFocusEmptyAbsentAndMethod(t *testing.T) {
 	}
 }
 
+// Reader side of the connections-focus cross-runtime contract. The CLI
+// producer is pinned against the same fixtures in
+// packages/box/actor/test/connections-focus-conformance.test.ts, the browser
+// consumer in packages/webapp/test/connections-focus.test.ts.
+func TestServeConnectionsFocusFixtures(t *testing.T) {
+	fixturesDirectory := filepath.Join("..", "..", "schema", "fixtures", "connections-focus")
+	entries, err := os.ReadDir(fixturesDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtureCount := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		fixtureCount++
+		t.Run(entry.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(fixturesDirectory, entry.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fixture struct {
+				Input    json.RawMessage `json:"input"`
+				Expected json.RawMessage `json:"expected"`
+			}
+			if err := json.Unmarshal(data, &fixture); err != nil {
+				t.Fatal(err)
+			}
+			statePath := filepath.Join(t.TempDir(), "connections-focus.json")
+			// A fixture whose marker is JSON null stands for an absent file.
+			if strings.TrimSpace(string(fixture.Input)) != "null" {
+				if err := os.WriteFile(statePath, fixture.Input, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			handler := &gateway{connectionsFocusPath: statePath}
+			request := httptest.NewRequest(http.MethodGet, "http://box/connections-focus", nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusOK, response.Body.String())
+			}
+			if got := response.Header().Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type = %q", got)
+			}
+			if got := response.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+			var gotValue interface{}
+			var expectedValue interface{}
+			if err := json.Unmarshal(response.Body.Bytes(), &gotValue); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(fixture.Expected, &expectedValue); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotValue, expectedValue) {
+				t.Fatalf("response = %s, want %s", response.Body.String(), fixture.Expected)
+			}
+		})
+	}
+	if fixtureCount != 10 {
+		t.Fatalf("connections-focus fixture count = %d, want 10", fixtureCount)
+	}
+}
+
+func TestParseConnectionsFocus(t *testing.T) {
+	marker := func(provider string) []byte {
+		data, err := json.Marshal(map[string]interface{}{
+			"version": 1, "provider": provider, "requestedAt": 1787000000000,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	// The charset rule at both cap edges: 63 is the control plane's grant
+	// validator cap (schema isProviderName); the fixture corpus pins the same
+	// edges for every runtime.
+	if parseConnectionsFocus(marker(strings.Repeat("a", 63))) == nil {
+		t.Fatal("parseConnectionsFocus dropped a 63-character provider")
+	}
+	if parseConnectionsFocus(marker(strings.Repeat("a", 64))) != nil {
+		t.Fatal("parseConnectionsFocus kept a 64-character provider")
+	}
+	if parseConnectionsFocus(marker("-leading-dash")) != nil {
+		t.Fatal("parseConnectionsFocus kept a provider starting with punctuation")
+	}
+	if parseConnectionsFocus(marker("has space")) != nil {
+		t.Fatal("parseConnectionsFocus kept a provider with a space")
+	}
+	if parseConnectionsFocus(marker("google-workspace")) == nil {
+		t.Fatal("parseConnectionsFocus dropped a usable provider")
+	}
+	// Unknown extra fields are forward compatibility, matching preview-focus.
+	extra := []byte(`{"version":1,"provider":"github","requestedAt":1,"note":"future"}`)
+	if parseConnectionsFocus(extra) == nil {
+		t.Fatal("parseConnectionsFocus dropped a marker with an unknown field")
+	}
+}
+
+func TestServeConnectionsFocusEmptyAbsentAndMethod(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "connections-focus.json")
+	handler := &gateway{connectionsFocusPath: statePath}
+	request := func(method string) *httptest.ResponseRecorder {
+		t.Helper()
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(method, "http://box/connections-focus", nil))
+		return response
+	}
+
+	for _, test := range []struct {
+		name  string
+		write bool
+	}{
+		{name: "absent"},
+		{name: "empty", write: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.write {
+				if err := os.WriteFile(statePath, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			response := request(http.MethodGet)
+			if response.Code != http.StatusOK || response.Body.String() != "{\"focus\":null}\n" {
+				t.Fatalf("status = %d; body = %q", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	response := request(http.MethodPost)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+	if got := response.Header().Get("Allow"); got != "GET, OPTIONS" {
+		t.Fatalf("Allow = %q", got)
+	}
+}
+
 func TestDiscoverPorts(t *testing.T) {
 	procRoot := t.TempDir()
 	mustWrite(t, filepath.Join(procRoot, "net", "tcp"), strings.Join([]string{

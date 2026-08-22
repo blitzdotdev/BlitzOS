@@ -134,13 +134,14 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   owner: { name: "Owner", avatarUrl: null },
   environment,
   agentRuleId: agentRule.id,
+  connections: ["linear"],
   recipeId: recipe.id,
 };
 
 const templateConnection: SharedShape<
   wire.TemplateConnectionView,
   schema.TemplateConnectionView
-> = { provider: "linear", required: true };
+> = { provider: "linear" };
 
 const workspaceTemplate: SharedShape<
   wire.WorkspaceTemplateView,
@@ -348,6 +349,7 @@ const catalogAdminForm: SharedShape<
     tokenHeader: "Authorization",
     tokenPrefix: "Bearer ",
   },
+  app: { appIdLabel: "App ID", installationIdLabel: "Installation ID" },
 };
 
 const catalogEntry: SharedShape<
@@ -393,6 +395,20 @@ const providerHealth: SharedShape<
   latencyMs: 120,
 };
 
+const connectionView: SharedShape<
+  connections.ConnectionView,
+  schema.ConnectionView
+> = {
+  name: "linear",
+  provider: "linear",
+  kind: "static",
+  custody: "proxy",
+  status: "active",
+  createdBy: "operator",
+  proxyBaseUrl: "https://tracker.example",
+  orgCredential: true,
+};
+
 const credentialLease: SharedShape<
   connections.Lease,
   schema.CredentialLeaseView
@@ -425,6 +441,10 @@ const providerHealthResponse: schema.ListProviderHealthResponse = {
 const credentialLeasesResponse: schema.ListCredentialLeasesResponse = {
   leases: [credentialLease],
 };
+const connectionsResponse: SharedShape<
+  connections.ListConnectionsResponse,
+  schema.ListConnectionsResponse
+> = { connections: [connectionView] };
 
 const fullFieldValues = [
   machineType,
@@ -472,12 +492,14 @@ const fullFieldValues = [
   catalogEntry,
   userGrant,
   providerHealth,
+  connectionView,
   credentialLease,
   mintResult,
   catalogResponse,
   userGrantsResponse,
   providerHealthResponse,
   credentialLeasesResponse,
+  connectionsResponse,
 ];
 
 describe("local wire copies", () => {
@@ -542,6 +564,9 @@ describe("local wire copies", () => {
     expectTypeOf<connections.CatalogEntryView>().toEqualTypeOf<schema.CatalogEntryView>();
     expectTypeOf<connections.UserGrantView>().toEqualTypeOf<schema.UserGrantView>();
     expectTypeOf<connections.ProviderHealthView>().toEqualTypeOf<schema.ProviderHealthView>();
+    expectTypeOf<connections.ConnectionView>().toEqualTypeOf<schema.ConnectionView>();
+    expectTypeOf<connections.ListConnectionsResponse>()
+      .toEqualTypeOf<schema.ListConnectionsResponse>();
   });
 
   it("keeps every duplicated constant and every field-bearing JSON shape covered", () => {

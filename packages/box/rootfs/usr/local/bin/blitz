@@ -2,28 +2,38 @@
 set -eu
 
 usage() {
-  echo 'usage: blitz preview <add <url> [--title <name>]|list|rm <url>|open <port> [--path <path>] [--title <name>]>' >&2
+  echo 'usage: blitz teenyapp <add <url> [--title <name>]|list|rm <url>|open <port> [--path <path>] [--title <name>]>' >&2
+  echo '       blitz connections open <provider>' >&2
   exit 2
 }
 
-[ "${1:-}" = preview ] || usage
+group=${1:-}
+case "$group" in
+  # `preview` predates the teenyapp rename and stays a silent alias: same
+  # verbs, same marker files, same gateway wire. Only the documented name
+  # changed.
+  teenyapp|preview) group=teenyapp ;;
+  connections) ;;
+  *) usage ;;
+esac
 shift
 action=${1:-}
 [ -n "$action" ] || usage
 shift
 
 previews_path=/var/lib/blitz/previews.json
-# The focus marker path is overridable so the producer conformance test can
-# point it at a temp file; in the box it is always the canonical location.
+# The focus marker paths are overridable so the producer conformance tests can
+# point them at temp files; in the box they are always the canonical locations.
 focus_path="${BLITZ_PREVIEW_FOCUS_PATH:-/var/lib/blitz/preview-focus.json}"
+connections_focus_path="${BLITZ_CONNECTIONS_FOCUS_PATH:-/var/lib/blitz/connections-focus.json}"
 
-exec node - "$previews_path" "$focus_path" "$action" "$@" <<'NODE'
+exec node - "$previews_path" "$focus_path" "$connections_focus_path" "$group" "$action" "$@" <<'NODE'
 const fs = require('node:fs');
 
-const [previewsPath, focusPath, action, ...args] = process.argv.slice(2);
+const [previewsPath, focusPath, connectionsFocusPath, group, action, ...args] = process.argv.slice(2);
 
 function fail(message, status = 1) {
-  console.error(`blitz preview: ${message}`);
+  console.error(`blitz ${group}: ${message}`);
   process.exit(status);
 }
 
@@ -79,6 +89,15 @@ const RESERVED_PORTS = new Set([22, 7443, 7444, 7445, 7446, 17445]);
 // path the persisted document cannot carry.
 const MAX_PATH_LENGTH = 4096;
 
+// Mirrors `isProviderName` in packages/schema/src/provider-name.ts — the one
+// provider-name rule — which this guest script cannot import, so the fixture
+// corpus packages/schema/fixtures/connections-focus/ is what pins the two
+// together (along with the Go gateway's parseConnectionsFocus and the
+// browser's). Provider names are catalog ids or member-named generic
+// connections: lowercase slugs, 63 characters at most (the control plane's
+// grant validator cap, PROVIDER_NAME in core/connections/user-grants.ts).
+const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
+
 function openPreview() {
   if (args.length === 0) fail('expected open <port> [--path <path>] [--title <name>]', 2);
   const portText = args[0];
@@ -108,7 +127,21 @@ function openPreview() {
   process.exit(0);
 }
 
+function openConnections() {
+  if (action !== 'open') fail(`unsupported command: ${action}`, 2);
+  if (args.length !== 1) fail('expected open <provider>', 2);
+  const provider = args[0];
+  if (!PROVIDER_PATTERN.test(provider)) {
+    fail('provider must be 1-63 characters of a-z, 0-9, ., _ or -, starting alphanumeric', 2);
+  }
+  atomicWrite(connectionsFocusPath, `${JSON.stringify({ version: 1, provider, requestedAt: Date.now() })}\n`);
+  process.exit(0);
+}
+
 try {
+  if (group === 'connections') {
+    openConnections();
+  }
   if (action === 'add') {
     if (args.length !== 1 && !(args.length === 3 && args[1] === '--title')) {
       fail('expected add <url> [--title <name>]', 2);

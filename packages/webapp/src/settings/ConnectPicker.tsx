@@ -141,11 +141,16 @@ export function grantInput(
 export function ConnectPicker({
   client,
   requestedProvider,
+  requestVersion = 0,
   workspace,
   onConnected,
 }: {
   client: ConnectClient;
   requestedProvider?: string | null;
+  /** Bump to re-select `requestedProvider` even when the name is unchanged —
+   * a person who cancelled the card can be sent back to it (the agent focus
+   * and the inbox Connect both re-ask this way). */
+  requestVersion?: number;
   /** Present only inside a workspace. Absent, this picker authorizes an
    * account: real, useful, and not a connection — a grant is the plumbing that
    * makes connecting instant, never the thing itself. */
@@ -220,7 +225,7 @@ export function ConnectPicker({
     const entry = known ?? catalog.find((candidate) => candidate.id === GENERIC_ID);
     if (entry === undefined) return;
     choose(entry, requestedProvider);
-  }, [catalog, choose, requestedProvider]);
+  }, [catalog, choose, requestedProvider, requestVersion]);
 
   const selected = catalog.find((entry) => entry.id === selectedId) ?? null;
   /** A grant is keyed by the connection name the person chose, which is the
@@ -430,7 +435,7 @@ export function ConnectPicker({
               <InfoGlyph />
               <span>
                 {selected.adminForm !== null
-                  ? `An organization admin configures ${selected.title} once for everyone, in Settings → Connections. Workspaces that enable it get credentials automatically — no step here.`
+                  ? `An organization admin configures ${selected.title} once for everyone, on the template page where it is attached. Workspaces that enable it get credentials automatically — no step here.`
                   : `${selected.title} issues no personal token. Connecting requires OAuth.`}
               </span>
             </p>

@@ -1,0 +1,14 @@
+{
+  "input": {
+    "version": 1,
+    "provider": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requestedAt": 1787000006000
+  },
+  "expected": {
+    "focus": {
+      "version": 1,
+      "provider": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "requestedAt": 1787000006000
+    }
+  }
+}

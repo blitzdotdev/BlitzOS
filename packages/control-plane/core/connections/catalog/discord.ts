@@ -81,6 +81,7 @@ export const discordManifest = {
     rootLabel: "Bot token",
     rootHelp: "discord.com/developers/applications → your application → Bot → Reset Token. The bot must also be invited to the servers agents should reach.",
     baseUrlLabel: null,
+    app: null,
   },
   scopes: [],
   defaultScopes: [],

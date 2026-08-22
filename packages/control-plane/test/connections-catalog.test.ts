@@ -240,9 +240,10 @@ describe("provider catalog conformance", () => {
         );
       });
 
-      /** The settings panel submits `PUT /connections/:id` with kind "static"
-       * from this view alone, so a manifest that declares an admin form must
-       * be one that PUT can actually serve. */
+      /** The admin form submits `PUT /connections/:id` from this view alone,
+       * so a manifest that declares one must be one that PUT can actually
+       * serve: kind "static" for a pasted root, kind "app-jwt" for the
+       * GitHub App shape. */
       it("declares a servable admin form or none", () => {
         const form = manifest.adminForm;
         const view = catalogView(manifest, () => undefined).adminForm;
@@ -250,16 +251,30 @@ describe("provider catalog conformance", () => {
           expect(view).toBeNull();
           return;
         }
-        expect(manifest.auth, "an admin root is pasted, not authorized").toBeNull();
-        expect(["cp", "proxy"]).toContain(manifest.custody);
         expect(form.rootLabel.length).toBeGreaterThan(0);
         expect(form.rootHelp.length, "help says where the admin creates it")
           .toBeGreaterThan(20);
-        expect(form.baseUrlLabel !== null, "base URL field exactly for proxy custody")
-          .toBe(manifest.custody === "proxy");
+        if (form.app === null) {
+          // A static root is pasted, not authorized, so it cannot share a
+          // manifest with an OAuth flow that would fight it at mint.
+          expect(manifest.auth, "a static admin root is pasted, not authorized").toBeNull();
+          expect(["cp", "proxy"]).toContain(manifest.custody);
+          expect(form.baseUrlLabel !== null, "base URL field exactly for proxy custody")
+            .toBe(manifest.custody === "proxy");
+        } else {
+          // The app-jwt shape: the org credential is the mint fallback, so it
+          // is the one admin form allowed beside member OAuth. The PUT route
+          // serves app-jwt only under cp custody, and the ids ride the
+          // config, so the form never collects an instance URL.
+          expect(manifest.custody).toBe("cp");
+          expect(form.baseUrlLabel).toBeNull();
+          expect(form.app.appIdLabel.length).toBeGreaterThan(0);
+          expect(form.app.installationIdLabel.length).toBeGreaterThan(0);
+        }
         if (view === null) throw new Error("admin form view is missing");
         expect(view.rootLabel).toBe(form.rootLabel);
         expect(view.rootHelp).toBe(form.rootHelp);
+        expect(view.app).toEqual(form.app);
         expect(view.placements).toEqual(
           manifest.surfaces.env.map(({ name, fill }) => ({ kind: "env", name, fill })),
         );

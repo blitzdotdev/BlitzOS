@@ -311,7 +311,7 @@ describe("connections: per-user grants", () => {
   it("keeps the frozen box mint wire on an inject-custody generic grant", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    const connected = await appRequest(app, "/connections/grants/acme", {
+    const granted = await appRequest(app, "/connections/grants/acme", {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -320,7 +320,7 @@ describe("connections: per-user grants", () => {
         vendor: { envName: "ACME_API_KEY" },
       }),
     });
-    expect(connected.status).toBe(204);
+    expect(granted.status).toBe(204);
     const { box } = await readyWorkspace(app, providers, cookie);
 
     const response = await mint(app, box.access_token, { integration: "acme" });
@@ -605,7 +605,6 @@ describe("connections: templates and enablement", () => {
   async function template(
     app: Harness["app"],
     cookie: string,
-    required: boolean,
   ): Promise<WorkspaceTemplateView> {
     const created = await appRequest(app, "/workspace-templates", {
       method: "POST",
@@ -614,7 +613,7 @@ describe("connections: templates and enablement", () => {
         name: "frontend",
         machineTypeId: "small",
         folderIds: [],
-        connections: [{ provider: "linear", required }],
+        connections: [{ provider: "linear" }],
       }),
     });
     expect(created.status).toBe(201);
@@ -622,35 +621,53 @@ describe("connections: templates and enablement", () => {
     return view;
   }
 
-  it("carries provider names on the template and blocks a required one", async () => {
+  /** Creation never blocks on connections: a stipulated provider with no
+   * grant behind it still creates, reads as needs-you in the panel (no live
+   * lease), and lights up when the grant lands. The old 409 gate is gone. */
+  it("carries provider names on the template and creates without the grant", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-    const view = await template(app, cookie, true);
-    expect(view.connections).toEqual([{ provider: "linear", required: true }]);
+    const view = await template(app, cookie);
+    expect(view.connections).toEqual([{ provider: "linear" }]);
 
-    const blocked = await appRequest(app, "/workspaces", {
+    const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({ templateId: view.id }),
     });
-    expect(blocked.status).toBe(409);
-    await expect(blocked.json()).resolves.toMatchObject({
-      error: expect.stringContaining("connect linear"),
-    });
-
-    expect((await connectLinear(app, cookie)).status).toBe(204);
-    const allowed = await appRequest(app, "/workspaces", {
-      method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: view.id }),
-    });
-    expect(allowed.status).toBe(201);
-    const { workspace } = await allowed.json<{ workspace: WorkspaceView }>();
+    expect(created.status).toBe(201);
+    const { workspace } = await created.json<{ workspace: WorkspaceView }>();
     const row = await env.DB.prepare("SELECT manifest FROM workspaces WHERE id = ?1")
       .bind(workspace.id).first<{ manifest: string | null }>();
     // Enablement is the ceiling primitive: the template's provider is listed,
-    // so the grant reaches this workspace and no other.
+    // so a later grant reaches this workspace and no other — and the view
+    // names it, which is what the panel's needs-you row draws from.
     expect(JSON.parse(row?.manifest ?? "null")).toEqual({ integrations: { linear: {} } });
+    expect(workspace.connections).toEqual(["linear"]);
+
+    // No grant, no lease: the workspace exists with no live lease for the provider.
+    const bare = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: none } = await bare.json<{ leases: CredentialLeaseView[] }>();
+    expect(none).toEqual([]);
+
+    // Connecting afterwards mints on the next create; the first workspace
+    // stays reachable the whole time.
+    expect((await connectLinear(app, cookie)).status).toBe(204);
+    const second = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: view.id }),
+    });
+    expect(second.status).toBe(201);
+    const { workspace: leaseLive } = await second.json<{ workspace: WorkspaceView }>();
+    const minted = await appRequest(app, `/workspaces/${leaseLive.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases } = await minted.json<{ leases: CredentialLeaseView[] }>();
+    expect(leases.map(({ connection, state }) => [connection, state]))
+      .toEqual([["linear", "active"]]);
   });
 
   it("keeps an explicit ceiling authoritative over the provision list", async () => {
@@ -674,7 +691,7 @@ describe("connections: templates and enablement", () => {
   });
 
   /** A create that names connections promises a workspace that has them, so
-   * the lease exists before any box does — the row IS the connected state, and
+   * the lease exists before any box does — the live lease row IS the state, and
    * the box's first sync supersedes it with an identical one rather than being
    * the thing that creates it. */
   it("mints the named connections at create and supersedes them on the first sync", async () => {
@@ -705,7 +722,7 @@ describe("connections: templates and enablement", () => {
   });
 
   /** A provider the creator never authorized is not an error at create; the
-   * grid simply shows it unconnected. */
+   * grid simply shows it with no live lease. */
   it("skips a named connection the creator never authorized", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
@@ -2323,6 +2340,8 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
           status: "active",
           createdBy: "operator",
           proxyBaseUrl: null,
+          // A boolean about the sealed root, never the root itself.
+          orgCredential: true,
         },
       ],
     });
@@ -2519,7 +2538,7 @@ describe("connections: admin-configured providers through templates", () => {
   async function templateNaming(
     app: Harness["app"],
     cookie: string,
-    connections: { provider: string; required: boolean }[],
+    connections: { provider: string }[],
   ): Promise<WorkspaceTemplateView> {
     const created = await appRequest(app, "/workspace-templates", {
       method: "POST",
@@ -2612,16 +2631,19 @@ describe("connections: admin-configured providers through templates", () => {
       status: "active",
       createdBy: "operator",
       proxyBaseUrl: YOUTRACK_BASE,
+      // A member-declared row carries no root: it is a declaration, not an
+      // org credential, and the admin surfaces must not read it as one.
+      orgCredential: false,
     }]);
   });
 
-  it("github: the app root satisfies a required template connection and mints the git-helper shape", async () => {
+  it("github: the app root satisfies a template connection and mints the git-helper shape", async () => {
     const { privatePem } = await githubKeyPair();
     const { app, providers } = harness();
     const admin = await operatorSession(app);
     expect((await putGithubConnection(app, admin, privatePem)).status).toBe(204);
     const template = await templateNaming(app, admin, [
-      { provider: "github", required: true },
+      { provider: "github" },
     ]);
 
     const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
@@ -2635,7 +2657,7 @@ describe("connections: admin-configured providers through templates", () => {
     );
 
     // The creator is a plain member with no grant of any kind: the admin's
-    // app root is what satisfies `required`.
+    // app root is what makes the lease go live.
     const member = await sameOrgSession("github-template-member");
     const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
       templateId: template.id,
@@ -2644,8 +2666,8 @@ describe("connections: admin-configured providers through templates", () => {
       integrations: { github: {} },
     });
 
-    // The create minted the lease before any box existed; the row is the
-    // connected state the panel shows.
+    // The create minted the lease before any box existed; the live lease row
+    // is the state the panel shows.
     const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: member.cookie },
     });
@@ -2671,11 +2693,11 @@ describe("connections: admin-configured providers through templates", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("youtrack: a member's pasted token satisfies a required template and rides the proxy as them", async () => {
+  it("youtrack: a member's pasted token satisfies the template and rides the proxy as them", async () => {
     const { app, providers } = harness();
     const admin = await operatorSession(app);
     const template = await templateNaming(app, admin, [
-      { provider: "youtrack", required: true },
+      { provider: "youtrack" },
     ]);
 
     // Pasting the token — with the instance URL, being the org's first — is
@@ -2730,18 +2752,23 @@ describe("connections: admin-configured providers through templates", () => {
     expect(proxied.status).toBe(200);
     await expect(proxied.json()).resolves.toEqual([{ idReadable: "OPS-1" }]);
 
-    // No admin-root fallback exists any more: a second member without a
-    // grant is blocked by the required template until they paste their own.
+    // No admin-root fallback exists: a second member without a grant still
+    // creates — creation never blocks — but nothing mints until they paste
+    // their own token. The panel shows youtrack as needs-you meanwhile.
     const stranger = await sameOrgSession("youtrack-strangers");
-    const blocked = await appRequest(app, "/workspaces", {
+    const bare = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: stranger.cookie, "Content-Type": "application/json" },
       body: JSON.stringify({ templateId: template.id }),
     });
-    expect(blocked.status).toBe(409);
-    await expect(blocked.json()).resolves.toMatchObject({
-      error: expect.stringContaining("connect youtrack"),
+    expect(bare.status).toBe(201);
+    const { workspace: unbacked } = await bare.json<{ workspace: WorkspaceView }>();
+    expect(unbacked.connections).toEqual(["youtrack"]);
+    const empty = await appRequest(app, `/workspaces/${unbacked.id}/leases`, {
+      headers: { Cookie: stranger.cookie },
     });
+    const { leases: nothing } = await empty.json<{ leases: CredentialLeaseView[] }>();
+    expect(nothing).toEqual([]);
   });
 
   /** The proxy-chain regression: a grant that names no URL must resolve
@@ -2793,7 +2820,7 @@ describe("connections: admin-configured providers through templates", () => {
     const admin = await operatorSession(app);
     await putDiscordConnection(app, admin);
     const template = await templateNaming(app, admin, [
-      { provider: "discord", required: false },
+      { provider: "discord" },
     ]);
 
     const member = await sameOrgSession("discord-template-member");
@@ -2837,21 +2864,28 @@ describe("connections: admin-configured providers through templates", () => {
     await expect(fencedSync.json()).resolves.toEqual([]);
   });
 
-  it("still blocks a required provider that no admin root and no grant backs", async () => {
+  it("creates an unbacked stipulated provider as needs-you, never as a 409", async () => {
     const { app } = harness();
     const admin = await operatorSession(app);
     const template = await templateNaming(app, admin, [
-      { provider: "youtrack", required: true },
+      { provider: "youtrack" },
     ]);
     const member = await sameOrgSession("blocked-template-member");
-    const blocked = await appRequest(app, "/workspaces", {
+    const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: member.cookie, "Content-Type": "application/json" },
       body: JSON.stringify({ templateId: template.id }),
     });
-    expect(blocked.status).toBe(409);
-    await expect(blocked.json()).resolves.toMatchObject({
-      error: expect.stringContaining("connect youtrack"),
+    // Creation never blocks on connections: no admin root and no grant means
+    // the provider reads as needs-you in the panel, and the first in-box mint
+    // files the connect request. The ceiling still names it.
+    expect(created.status).toBe(201);
+    const { workspace } = await created.json<{ workspace: WorkspaceView }>();
+    expect(workspace.connections).toEqual(["youtrack"]);
+    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: member.cookie },
     });
+    await expect(leases.json<{ leases: CredentialLeaseView[] }>())
+      .resolves.toEqual({ leases: [] });
   });
 });
