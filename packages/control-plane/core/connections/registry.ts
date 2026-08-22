@@ -277,6 +277,9 @@ export async function ensureCatalogConnection(
   custody: Custody,
   overrides: SurfaceOverrides | null,
   principal: Principal,
+  /** The org's instance URL for instance-hosted vendors (YouTrack): rides
+   * `config.proxy.base_url` on the declared row so later members inherit it. */
+  instanceBaseUrl: string | null = null,
   now = Date.now(),
 ): Promise<Connection> {
   const placements = (overrides === null
@@ -286,7 +289,7 @@ export async function ensureCatalogConnection(
         fill: surface.fill,
       }))
     : [{ kind: "env" as const, name: overrides.envName, fill: "token" as const }]);
-  const baseUrl = overrides?.baseUrl ?? manifest.baseUrl;
+  const baseUrl = overrides?.baseUrl ?? instanceBaseUrl ?? manifest.baseUrl;
   const config: ParsedStaticConfig & { manifest_id: string } = {
     manifest_id: manifest.id,
     placements,
@@ -328,6 +331,23 @@ export async function ensureCatalogConnection(
   const connection = await connectionByName(db, provider, orgId, false);
   if (connection === null) throw new Error("catalog connection disappeared");
   return connection;
+}
+
+/** The non-secret vendor URL a proxy-custody row points at, or null. Shown to
+ * members (the paste form prefills from it) and used to validate that a new
+ * grant will have somewhere to resolve. */
+export function connectionProxyBaseUrl(config: string): string | null {
+  try {
+    const value: unknown = JSON.parse(config);
+    if (!isRecord(value) || !isRecord(value.proxy) || !isString(value.proxy.base_url)) {
+      return null;
+    }
+    return new URL(value.proxy.base_url).protocol === "https:"
+      ? value.proxy.base_url
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Which catalog entry interprets a connection row, when one does. */
@@ -418,9 +438,9 @@ export function addConnectionRoutes(
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const connections = await rows<
-      Pick<Connection, "name" | "provider" | "kind" | "custody" | "revoked_at" | "created_by">
+      Pick<Connection, "name" | "provider" | "kind" | "custody" | "config" | "revoked_at" | "created_by">
     >(runtimeFactory(context).db, {
-      q: `SELECT scoped_name AS name, provider, kind, custody, revoked_at, created_by
+      q: `SELECT scoped_name AS name, provider, kind, custody, config, revoked_at, created_by
           FROM connections WHERE org_id = ?1 ORDER BY created_at, scoped_name`,
       v: [principal.orgId],
     });
@@ -432,6 +452,9 @@ export function addConnectionRoutes(
         custody: connection.custody,
         status: connection.revoked_at === null ? "active" : "revoked",
         createdBy: connection.created_by,
+        // The vendor URL only, never the config itself: the paste form
+        // prefills the instance URL for members from this.
+        proxyBaseUrl: connectionProxyBaseUrl(connection.config),
       })),
     });
   };

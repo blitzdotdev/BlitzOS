@@ -18,7 +18,11 @@ import {
 import type { ProviderManifest, SurfaceOverrides, TokenHeader } from "./catalog/types.js";
 import { revokeGrantLeasesQuery } from "./leases.js";
 import { scopesFromJson } from "./manifest.js";
-import { ensureCatalogConnection } from "./registry.js";
+import {
+  connectionByName,
+  connectionProxyBaseUrl,
+  ensureCatalogConnection,
+} from "./registry.js";
 import { openRoot, sealRoot } from "./root-crypto.js";
 import type { Custody, UserGrantView } from "./types.js";
 
@@ -306,18 +310,40 @@ function personalTokenHeader(manifest: ProviderManifest): TokenHeader {
   return manifest.personalToken?.header ?? manifest.tokenHeader;
 }
 
+function vendorBaseUrl(value: JsonValue): string {
+  const baseUrl = requiredString(value, "vendor.baseUrl", 4_096);
+  try {
+    if (new URL(baseUrl).protocol !== "https:") throw new Error("not https");
+  } catch {
+    throw new HttpError(400, "vendor.baseUrl must be an https URL");
+  }
+  return baseUrl;
+}
+
 function parseVendorConfig(
   value: JsonValue | undefined,
   manifest: ProviderManifest,
 ): GrantConfig {
   const header = personalTokenHeader(manifest);
   if (manifest.id !== GENERIC_MANIFEST_ID) {
-    return {
+    const config: GrantConfig = {
       envName: null,
       baseUrlEnvName: null,
       baseUrl: null,
       tokenHeader: header,
     };
+    // Instance-hosted vendors (YouTrack): the paste may name the instance.
+    // Absent is fine when the org connection row already carries it — the
+    // route validates that one of the two exists.
+    if (
+      (manifest.personalToken?.baseUrlLabel ?? null) !== null &&
+      isRecord(value) &&
+      value.baseUrl !== undefined &&
+      value.baseUrl !== null
+    ) {
+      config.baseUrl = vendorBaseUrl(value.baseUrl);
+    }
+    return config;
   }
   if (!isRecord(value)) {
     throw new HttpError(400, "vendor is required for a generic connection");
@@ -333,13 +359,7 @@ function parseVendorConfig(
     tokenHeader: header,
   };
   if (value.baseUrl !== undefined && value.baseUrl !== null) {
-    const baseUrl = requiredString(value.baseUrl, "vendor.baseUrl", 4_096);
-    try {
-      if (new URL(baseUrl).protocol !== "https:") throw new Error("not https");
-    } catch {
-      throw new HttpError(400, "vendor.baseUrl must be an https URL");
-    }
-    config.baseUrl = baseUrl;
+    config.baseUrl = vendorBaseUrl(value.baseUrl);
   }
   if (value.baseUrlEnvName !== undefined && value.baseUrlEnvName !== null) {
     const name = requiredString(value.baseUrlEnvName, "vendor.baseUrlEnvName", 256);
@@ -352,6 +372,31 @@ function parseVendorConfig(
     config.baseUrlEnvName = name;
   }
   return config;
+}
+
+/** Where the proxy will send an instance-hosted vendor's calls. The row's URL
+ * wins so the whole organization stays on one instance; the first member's
+ * pasted URL is what sets it. Neither present is a paste that could never
+ * resolve, so it fails here instead of at the first proxied call. */
+async function resolveInstanceBaseUrl(
+  db: Db,
+  orgId: string,
+  provider: string,
+  manifest: ProviderManifest,
+  config: GrantConfig,
+): Promise<string | null> {
+  if ((manifest.personalToken?.baseUrlLabel ?? null) === null) return null;
+  const existing = await connectionByName(db, provider, orgId);
+  const stored = existing === null ? null : connectionProxyBaseUrl(existing.config);
+  // A row that only carries the catalog placeholder knows nothing.
+  const rowBaseUrl = stored === manifest.baseUrl ? null : stored;
+  if (rowBaseUrl === null && config.baseUrl === null) {
+    throw new HttpError(
+      400,
+      `${manifest.title} needs its instance URL; paste it along with the token`,
+    );
+  }
+  return rowBaseUrl ?? config.baseUrl;
 }
 
 /** Custody a grant's leases take. The catalog decides; the generic entry keeps
@@ -409,6 +454,13 @@ export function addUserGrantRoutes(
     const config = parseVendorConfig(value.vendor, manifest);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const runtime = runtimeFactory(context);
+    const instanceBaseUrl = await resolveInstanceBaseUrl(
+      runtime.db,
+      principal.orgId,
+      provider,
+      manifest,
+      config,
+    );
     // Declaring the provider is part of connecting it: the connection row is
     // what leases, audit, and the workspace ceiling all key on.
     await ensureCatalogConnection(
@@ -419,6 +471,7 @@ export function addUserGrantRoutes(
       grantCustody(manifest, config),
       grantOverrides(manifest, config),
       principal,
+      instanceBaseUrl,
     );
     await storeGrant(runtime.db, runtime.credentialMasterKey, {
       userId: principal.id,

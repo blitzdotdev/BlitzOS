@@ -109,6 +109,7 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     oauthConfigured: false,
     personalTokenLabel: 'API key',
     personalTokenHelp: null,
+    personalTokenBaseUrlLabel: null,
     needsVendorConfig: false,
     adminForm: null,
     environmentNames: [],

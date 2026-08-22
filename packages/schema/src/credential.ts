@@ -41,6 +41,9 @@ export interface ConnectionView {
   custody: Custody;
   status: "active" | "revoked";
   createdBy: string;
+  /** The vendor URL a proxy-custody row points at (the org's YouTrack
+   * instance, say); null for cp custody. Never any other part of the config. */
+  proxyBaseUrl: string | null;
 }
 
 export interface ListConnectionsResponse {
@@ -138,6 +141,9 @@ export interface CatalogEntryView {
   oauthConfigured: boolean;
   personalTokenLabel: string | null;
   personalTokenHelp: string | null;
+  /** Non-null when the paste form also collects an instance URL (YouTrack).
+   * Prefilled and locked from the org connection row when one carries it. */
+  personalTokenBaseUrlLabel: string | null;
   /** The generic entry needs the person to name the variable and base URL. */
   needsVendorConfig: boolean;
   /** Non-null for providers an org admin configures once, org-wide. */
@@ -174,9 +180,11 @@ export interface PutUserGrantRequest {
   token: string;
   scopes?: string[];
   label?: string;
-  /** Required by the generic entry, ignored by catalog providers. */
+  /** The generic entry requires `envName` (and may name a base URL);
+   * instance-hosted catalog providers (YouTrack) take `baseUrl` alone. Other
+   * catalog providers ignore it. */
   vendor?: {
-    envName: string;
+    envName?: string;
     baseUrlEnvName?: string | null;
     baseUrl?: string | null;
   };

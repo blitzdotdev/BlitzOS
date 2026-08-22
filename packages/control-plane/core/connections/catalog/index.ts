@@ -85,6 +85,7 @@ export function catalogView(
     oauthConfigured: configured,
     personalTokenLabel: manifest.personalToken?.label ?? null,
     personalTokenHelp: manifest.personalToken?.help ?? null,
+    personalTokenBaseUrlLabel: manifest.personalToken?.baseUrlLabel ?? null,
     // Identity, not shape: every other call site asks the same question by id,
     // and "has no authorize endpoint" would answer yes for the next pasted-key
     // provider that knows its own vendor perfectly well.

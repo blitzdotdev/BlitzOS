@@ -1,5 +1,6 @@
 import type {
   CatalogEntryView,
+  ConnectionView,
   Custody,
   PutUserGrantRequest,
   UserGrantView,
@@ -40,6 +41,7 @@ export type ConnectClient = Pick<
   ControlPlaneClient,
   | 'listConnectionCatalog'
   | 'listConnectionGrants'
+  | 'listConnections'
   | 'putConnectionGrant'
   | 'connectStartUrl'
 >;
@@ -124,6 +126,12 @@ export function grantInput(
     input.vendor = { envName: field(data, 'envName') };
     if (baseUrl) input.vendor.baseUrl = baseUrl;
     if (baseUrl && baseUrlEnvName) input.vendor.baseUrlEnvName = baseUrlEnvName;
+  } else if (entry.personalTokenBaseUrlLabel !== null) {
+    // Instance-hosted vendor: the typed URL rides the grant. A locked,
+    // prefilled field renders without a name, so nothing is sent and the
+    // grant inherits the org row's URL instead.
+    const baseUrl = field(data, 'baseUrl');
+    if (baseUrl) input.vendor = { baseUrl };
   }
   return input;
 }
@@ -146,6 +154,7 @@ export function ConnectPicker({
 }) {
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   const [grants, setGrants] = useState<UserGrantView[]>([]);
+  const [orgConnections, setOrgConnections] = useState<ConnectionView[]>([]);
   const [grantsVersion, setGrantsVersion] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -183,6 +192,18 @@ export function ConnectPicker({
     return () => abort.abort();
   }, [client, grantsVersion]);
 
+  // The org's declared rows carry the instance URL for instance-hosted
+  // vendors, so a member's paste form can prefill it instead of asking.
+  // Same failure posture as grants: losing this costs only the prefill.
+  useEffect(() => {
+    const abort = new AbortController();
+    void client.listConnections(abort.signal).then(
+      (response) => setOrgConnections(response.connections),
+      () => undefined,
+    );
+    return () => abort.abort();
+  }, [client, grantsVersion]);
+
   const choose = useCallback((entry: CatalogEntryView, connectionName?: string) => {
     setSelectedId(entry.id);
     setName(connectionName ?? entry.id);
@@ -212,6 +233,13 @@ export function ConnectPicker({
   const isConnected = (entry: CatalogEntryView): boolean =>
     workspace !== undefined && workspace.connections.has(entry.id);
   const selectedConnected = selected !== null && isConnected(selected);
+  /** The org row's instance URL for the selected instance-hosted vendor: when
+   * present, the paste form shows it locked instead of asking the member. */
+  const lockedBaseUrl = selected === null || selected.personalTokenBaseUrlLabel === null
+    ? null
+    : orgConnections.find(
+        (connection) => connection.name === selected.id && connection.status === 'active',
+      )?.proxyBaseUrl ?? null;
   const stage = connectStage(
     workspace !== undefined,
     selectedConnected,
@@ -441,6 +469,18 @@ export function ConnectPicker({
                     <input name="baseUrlEnvName" placeholder="SERVICE_BASE_URL" />
                   </label>
                 </>
+              )}
+              {selected.personalTokenBaseUrlLabel !== null && (
+                <label className="connect-field">
+                  <span className="connect-field__label">{selected.personalTokenBaseUrlLabel}</span>
+                  {lockedBaseUrl === null ? (
+                    <input name="baseUrl" type="url" required placeholder="https://" />
+                  ) : (
+                    // Someone in the org already named the instance; the form
+                    // shows it and the grant inherits it (no name, not sent).
+                    <input value={lockedBaseUrl} readOnly />
+                  )}
+                </label>
               )}
               <label className="connect-field connect-field--wide">
                 <span className="connect-field__label">{selected.personalTokenLabel}</span>

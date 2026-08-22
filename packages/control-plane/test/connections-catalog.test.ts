@@ -219,6 +219,11 @@ describe("provider catalog conformance", () => {
               `${manifest.personalToken?.header.prefix ?? ""}token`,
             );
           }).not.toThrow();
+          if (manifest.personalToken.baseUrlLabel !== null) {
+            // The pasted instance URL is consumed by the proxy resolver;
+            // inject custody would collect a URL nothing ever reads.
+            expect(manifest.custody).toBe("proxy");
+          }
         }
       });
 

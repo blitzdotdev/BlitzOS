@@ -364,6 +364,7 @@ const catalogEntry: SharedShape<
   oauthConfigured: false,
   personalTokenLabel: "Personal API key",
   personalTokenHelp: "Create it in Linear's own settings.",
+  personalTokenBaseUrlLabel: null,
   needsVendorConfig: false,
   adminForm: catalogAdminForm,
   environmentNames: ["LINEAR_API_KEY"],

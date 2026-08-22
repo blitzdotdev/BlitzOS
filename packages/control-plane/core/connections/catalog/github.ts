@@ -78,6 +78,7 @@ export const githubManifest = {
     label: "Fine-grained personal access token",
     help: "github.com → Settings → Developer settings → Personal access tokens → Fine-grained. Scope it to the repositories the agent needs. Some organizations require an owner to approve each token.",
     header: { name: "Authorization", prefix: "Bearer " },
+    baseUrlLabel: null,
   },
   // The admin path here is the app-jwt kind (app id, installation id, PKCS#8
   // key), which the static-root form cannot express; it stays API-configured.

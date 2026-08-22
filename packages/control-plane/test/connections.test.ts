@@ -2322,6 +2322,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
           custody: "cp",
           status: "active",
           createdBy: "operator",
+          proxyBaseUrl: null,
         },
       ],
     });
@@ -2460,13 +2461,14 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
   });
 });
 
-/** The admin-configured template path: an org admin stores the credential
- * once, a template names the provider, and every workspace created from the
- * template holds working credentials with no per-user step — the property the
- * youtrack and discord catalog entries exist to deliver, and the one the
- * github app root already had. */
+/** The template path for the two new providers. Discord is admin-configured:
+ * one bot token stored by an admin reaches every workspace with no per-user
+ * step, like the github app root. YouTrack is per-member PAT (product ruling:
+ * "youtrack is just PAT"): each member pastes their own permanent token,
+ * proxied so it never lands on a box disk, with the instance URL inherited
+ * from the org connection row once anyone has named it. */
 describe("connections: admin-configured providers through templates", () => {
-  const YOUTRACK_ROOT = "perm:test-only-youtrack-permanent-token";
+  const YOUTRACK_PAT = "perm:test-only-youtrack-permanent-token";
   const YOUTRACK_BASE = "https://acme.youtrack.example";
   const DISCORD_ROOT = "test-only-discord-bot-token";
 
@@ -2479,28 +2481,21 @@ describe("connections: admin-configured providers through templates", () => {
     vi.restoreAllMocks();
   });
 
-  async function putYoutrackConnection(
+  async function pasteYoutrack(
     app: Harness["app"],
     cookie: string,
-  ): Promise<void> {
-    const response = await appRequest(app, "/connections/youtrack", {
+    token: string,
+    baseUrl?: string,
+  ): Promise<Response> {
+    return appRequest(app, "/connections/grants/youtrack", {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        provider: "youtrack",
-        kind: "static",
-        custody: "proxy",
-        root: YOUTRACK_ROOT,
-        config: {
-          placements: [
-            { kind: "env", name: "YOUTRACK_TOKEN" },
-            { kind: "env", name: "YOUTRACK_BASE_URL", fill: "proxy-url" },
-          ],
-          proxy: { base_url: YOUTRACK_BASE },
-        },
+        manifestId: "youtrack",
+        token,
+        ...(baseUrl === undefined ? {} : { vendor: { baseUrl } }),
       }),
     });
-    expect(response.status).toBe(204);
   }
 
   async function putDiscordConnection(
@@ -2549,7 +2544,7 @@ describe("connections: admin-configured providers through templates", () => {
     return JSON.parse(row?.manifest ?? "null");
   }
 
-  it("serves the admin-configured entries in the catalog and refuses per-user pastes", async () => {
+  it("serves youtrack as a per-member paste and discord as admin-configured", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const listed = await appRequest(app, "/connections/catalog", {
@@ -2562,29 +2557,19 @@ describe("connections: admin-configured providers through templates", () => {
     expect(youtrack).toMatchObject({
       custody: "proxy",
       oauthAvailable: false,
-      personalTokenLabel: null,
+      personalTokenLabel: "Permanent token",
+      // The paste form's extra field: instance-hosted vendors name their URL.
+      personalTokenBaseUrlLabel: "Instance URL",
       needsVendorConfig: false,
       environmentNames: ["YOUTRACK_TOKEN", "YOUTRACK_BASE_URL"],
-      // Everything the admin panel needs to render the form and submit the
-      // PUT this suite performs below, and no secret anywhere near it.
-      adminForm: {
-        rootLabel: "Permanent token",
-        placements: [
-          { kind: "env", name: "YOUTRACK_TOKEN", fill: "token" },
-          { kind: "env", name: "YOUTRACK_BASE_URL", fill: "proxy-url" },
-        ],
-        proxy: {
-          baseUrlLabel: "Instance URL",
-          tokenHeader: "Authorization",
-          tokenPrefix: "Bearer ",
-        },
-      },
+      adminForm: null,
     });
     const discord = providers.find(({ id }) => id === "discord");
     expect(discord).toMatchObject({
       custody: "cp",
       oauthAvailable: false,
       personalTokenLabel: null,
+      personalTokenBaseUrlLabel: null,
       needsVendorConfig: false,
       environmentNames: ["DISCORD_BOT_TOKEN"],
       adminForm: {
@@ -2594,19 +2579,40 @@ describe("connections: admin-configured providers through templates", () => {
       },
     });
 
-    // Admin-configured means exactly that: the grants route refuses a pasted
-    // key for both, so no member can end up holding a parallel credential.
-    for (const provider of ["youtrack", "discord"]) {
-      const pasted = await appRequest(app, `/connections/grants/${provider}`, {
-        method: "PUT",
-        headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ manifestId: provider, token: "test-only-pasted" }),
-      });
-      expect(pasted.status).toBe(400);
-      await expect(pasted.json()).resolves.toMatchObject({
-        error: expect.stringContaining("issues no personal token"),
-      });
-    }
+    // Discord stays admin-only: the grants route refuses a pasted key, so no
+    // member can end up holding a parallel bot credential.
+    const pasted = await appRequest(app, "/connections/grants/discord", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ manifestId: "discord", token: "test-only-pasted" }),
+    });
+    expect(pasted.status).toBe(400);
+    await expect(pasted.json()).resolves.toMatchObject({
+      error: expect.stringContaining("issues no personal token"),
+    });
+
+    // A youtrack paste is accepted — but only once it can resolve somewhere:
+    // with no org row yet, the instance URL must ride along.
+    const urlless = await pasteYoutrack(app, cookie, YOUTRACK_PAT);
+    expect(urlless.status).toBe(400);
+    await expect(urlless.json()).resolves.toMatchObject({
+      error: expect.stringContaining("instance URL"),
+    });
+    expect((await pasteYoutrack(app, cookie, YOUTRACK_PAT, YOUTRACK_BASE)).status).toBe(204);
+
+    // The declared row now shows the org's instance URL — the value later
+    // members' paste forms prefill and lock — and nothing else of the config.
+    const rows = await appRequest(app, "/connections", { headers: { Cookie: cookie } });
+    const { connections } = await rows.json<{ connections: ConnectionView[] }>();
+    expect(connections).toEqual([{
+      name: "youtrack",
+      provider: "youtrack",
+      kind: "static",
+      custody: "proxy",
+      status: "active",
+      createdBy: "operator",
+      proxyBaseUrl: YOUTRACK_BASE,
+    }]);
   });
 
   it("github: the app root satisfies a required template connection and mints the git-helper shape", async () => {
@@ -2665,15 +2671,18 @@ describe("connections: admin-configured providers through templates", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("youtrack: the admin proxy root makes a required template create work with no per-user step", async () => {
+  it("youtrack: a member's pasted token satisfies a required template and rides the proxy as them", async () => {
     const { app, providers } = harness();
     const admin = await operatorSession(app);
-    await putYoutrackConnection(app, admin);
     const template = await templateNaming(app, admin, [
       { provider: "youtrack", required: true },
     ]);
 
-    const member = await sameOrgSession("youtrack-template-member");
+    // Pasting the token — with the instance URL, being the org's first — is
+    // the one member step; it also declares the org connection row.
+    const member = await sameOrgSession("youtrack-pat-member");
+    expect((await pasteYoutrack(app, member.cookie, YOUTRACK_PAT, YOUTRACK_BASE)).status)
+      .toBe(204);
     const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
       templateId: template.id,
     });
@@ -2694,20 +2703,21 @@ describe("connections: admin-configured providers through templates", () => {
     const leaseToken = environmentValue(result, "YOUTRACK_TOKEN");
     const proxyUrl = environmentValue(result, "YOUTRACK_BASE_URL");
     expect(leaseToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
-    expect(leaseToken).not.toBe(YOUTRACK_ROOT);
+    expect(leaseToken).not.toBe(YOUTRACK_PAT);
     const leaseId = new URL(proxyUrl ?? "").pathname.split("/").at(-1) ?? "";
     expect(proxyUrl).toBe(`https://cp.example/proxy/${leaseId}`);
-    expect(JSON.stringify(results)).not.toContain(YOUTRACK_ROOT);
+    expect(JSON.stringify(results)).not.toContain(YOUTRACK_PAT);
 
-    // A call through the pair reaches the admin's instance carrying the
-    // permanent token, so the workspace works with zero member setup.
+    // A call through the pair reaches the instance carrying the MEMBER's own
+    // token: every YouTrack action attributes to the person, not to an org
+    // service account.
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input, init) => {
         expect(String(input)).toBe(
           `${YOUTRACK_BASE}/api/issues?fields=idReadable`,
         );
         const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe(`Bearer ${YOUTRACK_ROOT}`);
+        expect(headers.get("authorization")).toBe(`Bearer ${YOUTRACK_PAT}`);
         return Response.json([{ idReadable: "OPS-1" }]);
       },
     );
@@ -2719,6 +2729,63 @@ describe("connections: admin-configured providers through templates", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(proxied.status).toBe(200);
     await expect(proxied.json()).resolves.toEqual([{ idReadable: "OPS-1" }]);
+
+    // No admin-root fallback exists any more: a second member without a
+    // grant is blocked by the required template until they paste their own.
+    const stranger = await sameOrgSession("youtrack-strangers");
+    const blocked = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: stranger.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: template.id }),
+    });
+    expect(blocked.status).toBe(409);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: expect.stringContaining("connect youtrack"),
+    });
+  });
+
+  /** The proxy-chain regression: a grant that names no URL must resolve
+   * through the org row's instance URL, never the catalog placeholder. */
+  it("youtrack: a later member inherits the org row's instance URL through the proxy", async () => {
+    const { app, providers } = harness();
+    const first = await operatorSession(app);
+    expect((await pasteYoutrack(app, first, "perm:first-members-token", YOUTRACK_BASE)).status)
+      .toBe(204);
+
+    // The second member pastes only their token: the row already knows the
+    // instance, so the URL is not asked for again.
+    const second = await sameOrgSession("youtrack-second-member");
+    const SECOND_PAT = "perm:second-members-token";
+    expect((await pasteYoutrack(app, second.cookie, SECOND_PAT)).status).toBe(204);
+
+    const { box } = await readyWorkspace(app, providers, second.cookie, {
+      connections: ["youtrack"],
+    });
+    const synced = await mint(app, box.access_token, { integration: "youtrack" });
+    expect(synced.status).toBe(200);
+    const result = await synced.json<MintResult>();
+    const leaseToken = environmentValue(result, "YOUTRACK_TOKEN");
+    const proxyUrl = environmentValue(result, "YOUTRACK_BASE_URL");
+    const leaseId = new URL(proxyUrl ?? "").pathname.split("/").at(-1) ?? "";
+
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        // The row's URL, not https://youtrack.invalid — and the second
+        // member's own token, not the first member's.
+        expect(String(input)).toBe(`${YOUTRACK_BASE}/api/users/me?fields=id,login`);
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe(`Bearer ${SECOND_PAT}`);
+        return Response.json({ id: "1-2", login: "second" });
+      },
+    );
+    const proxied = await appRequest(
+      app,
+      `/proxy/${leaseId}/api/users/me?fields=id,login`,
+      { headers: { Authorization: `Bearer ${leaseToken ?? ""}` } },
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(proxied.status).toBe(200);
+    await expect(proxied.json()).resolves.toEqual({ id: "1-2", login: "second" });
   });
 
   it("discord: the admin cp root reaches a template workspace as the bot token itself", async () => {

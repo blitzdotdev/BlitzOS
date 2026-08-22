@@ -53,6 +53,10 @@ export interface ProviderPersonalToken {
   help: string;
   /** Personal keys can want a different header shape than OAuth tokens. */
   header: TokenHeader;
+  /** Non-null for instance-hosted vendors (YouTrack): the paste form also
+   * collects the instance URL. It rides the grant as `vendor.baseUrl`, or is
+   * inherited from the org connection row when one already carries it. */
+  baseUrlLabel: string | null;
 }
 
 export type PlacementFill = "token" | "proxy-url";

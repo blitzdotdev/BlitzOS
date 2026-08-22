@@ -118,6 +118,9 @@ export interface CatalogEntryView {
   oauthConfigured: boolean;
   personalTokenLabel: string | null;
   personalTokenHelp: string | null;
+  /** Non-null when the paste form also collects an instance URL (YouTrack).
+   * Prefilled and locked from the org connection row when one carries it. */
+  personalTokenBaseUrlLabel: string | null;
   /** The generic entry needs the person to name the variable and base URL. */
   needsVendorConfig: boolean;
   /** Non-null for providers an org admin configures once, org-wide. */

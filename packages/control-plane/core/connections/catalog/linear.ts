@@ -89,6 +89,7 @@ export const linearManifest = {
     // The header quirk this manifest field exists for: personal API keys take
     // a raw Authorization value, with no Bearer prefix.
     header: { name: "Authorization", prefix: "" },
+    baseUrlLabel: null,
   },
   adminForm: null,
   scopes: [

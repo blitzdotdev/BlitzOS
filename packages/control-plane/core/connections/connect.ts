@@ -218,6 +218,7 @@ export function addConnectRoutes(
       grantCustody(manifest, config),
       grantOverrides(manifest, config),
       principal,
+      null,
       now,
     );
     await storeGrant(

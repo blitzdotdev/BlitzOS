@@ -102,14 +102,15 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
     oauthConfigured: false,
     personalTokenLabel: null,
     personalTokenHelp: null,
+    personalTokenBaseUrlLabel: null,
     needsVendorConfig: false,
     adminForm: {
-      rootLabel: proxy ? 'Permanent token' : 'Bot token',
+      rootLabel: proxy ? 'Service token' : 'Bot token',
       rootHelp: 'Create it in the vendor console under a service account.',
       placements: proxy
         ? [
-            { kind: 'env', name: 'YOUTRACK_TOKEN', fill: 'token' },
-            { kind: 'env', name: 'YOUTRACK_BASE_URL', fill: 'proxy-url' },
+            { kind: 'env', name: 'TRACKER_TOKEN', fill: 'token' },
+            { kind: 'env', name: 'TRACKER_BASE_URL', fill: 'proxy-url' },
           ]
         : [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }],
       proxy: proxy
@@ -127,6 +128,17 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
 
 function grantOnlyEntry(id: string, title: string): CatalogEntryView {
   return { ...adminEntry(id, title, false), adminForm: null, personalTokenLabel: 'API key' };
+}
+
+/** The youtrack shape after the "just PAT" ruling: a per-member paste whose
+ * form also collects the instance URL, no admin form at all. */
+function patEntry(id: string, title: string): CatalogEntryView {
+  return {
+    ...adminEntry(id, title, true),
+    adminForm: null,
+    personalTokenLabel: 'Permanent token',
+    personalTokenBaseUrlLabel: 'Instance URL',
+  };
 }
 
 const setInputValue = Object.getOwnPropertyDescriptor(
@@ -156,7 +168,7 @@ describe('admin connections section', () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
         providers: [
-          adminEntry('youtrack', 'YouTrack', true),
+          adminEntry('tracker', 'Acme Tracker', true),
           adminEntry('discord', 'Discord', false),
           grantOnlyEntry('linear', 'Linear'),
         ],
@@ -166,7 +178,7 @@ describe('admin connections section', () => {
     await settle();
 
     const section = view.container.querySelector('[aria-label="Organization connections"]');
-    expect(section?.textContent).toContain('YouTrack');
+    expect(section?.textContent).toContain('Acme Tracker');
     expect(section?.textContent).toContain('Discord');
     // Grant-backed providers belong to the picker, not to org configuration.
     expect(section?.textContent).not.toContain('Linear');
@@ -174,7 +186,7 @@ describe('admin connections section', () => {
     await act(async () => click(buttonByText(view.container, 'Configure')));
     const labels = [...view.container.querySelectorAll('.connect-field__label')]
       .map((label) => label.textContent);
-    expect(labels).toEqual(['Instance URL', 'Permanent token']);
+    expect(labels).toEqual(['Instance URL', 'Service token']);
     expect(view.container.querySelector('input[name="baseUrl"]')?.getAttribute('type')).toBe('url');
     expect(view.container.querySelector('input[name="root"]')?.getAttribute('type')).toBe('password');
     expect(view.container.textContent).toContain('Create it in the vendor console');
@@ -186,18 +198,19 @@ describe('admin connections section', () => {
     const bodies: [string, PutConnectionRequest][] = [];
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
-        providers: [adminEntry('youtrack', 'YouTrack', true)],
+        providers: [adminEntry('tracker', 'Acme Tracker', true)],
       })),
       listConnections: vi.fn(async () => ({ connections: [...rows] })),
       putConnection: vi.fn(async (name: string, input: PutConnectionRequest) => {
         bodies.push([name, input]);
         rows.push({
-          name: 'youtrack',
-          provider: 'youtrack',
+          name: 'tracker',
+          provider: 'tracker',
           kind: 'static',
           custody: 'proxy',
           status: 'active',
           createdBy: 'admin',
+          proxyBaseUrl: 'https://tracker.example',
         });
       }),
     });
@@ -209,7 +222,7 @@ describe('admin connections section', () => {
     const root = view.container.querySelector<HTMLInputElement>('input[name="root"]');
     if (baseUrl === null || root === null) throw new Error('form inputs are missing');
     await act(async () => {
-      typeInto(baseUrl, 'https://acme.youtrack.example');
+      typeInto(baseUrl, 'https://tracker.example');
       typeInto(root, 'perm:test-only-token');
       view.container.querySelector('form')?.dispatchEvent(
         new Event('submit', { bubbles: true, cancelable: true }),
@@ -220,18 +233,18 @@ describe('admin connections section', () => {
     // The same shape the control-plane suite PUTs directly: manifest-decided
     // custody and placements, admin-supplied root and instance URL.
     expect(bodies).toEqual([[
-      'youtrack',
+      'tracker',
       {
-        provider: 'youtrack',
+        provider: 'tracker',
         kind: 'static',
         custody: 'proxy',
         config: {
           placements: [
-            { kind: 'env', name: 'YOUTRACK_TOKEN', fill: 'token' },
-            { kind: 'env', name: 'YOUTRACK_BASE_URL', fill: 'proxy-url' },
+            { kind: 'env', name: 'TRACKER_TOKEN', fill: 'token' },
+            { kind: 'env', name: 'TRACKER_BASE_URL', fill: 'proxy-url' },
           ],
           proxy: {
-            base_url: 'https://acme.youtrack.example',
+            base_url: 'https://tracker.example',
             token_header: 'Authorization',
             token_prefix: 'Bearer ',
           },
@@ -289,6 +302,7 @@ describe('admin connections section', () => {
       custody: 'cp',
       status: 'active',
       createdBy: 'admin',
+      proxyBaseUrl: null,
     };
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
@@ -306,7 +320,7 @@ describe('admin connections section', () => {
   it('appears in the settings panel for admins and never for members', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
-        providers: [adminEntry('youtrack', 'YouTrack', true)],
+        providers: [adminEntry('tracker', 'Acme Tracker', true)],
       })),
     });
     const asAdmin = await render(<ConnectionsPanel client={wire} admin />);
@@ -324,7 +338,7 @@ describe('admin connections section', () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
         providers: [
-          adminEntry('youtrack', 'YouTrack', true),
+          adminEntry('tracker', 'Acme Tracker', true),
           { ...grantOnlyEntry('corp-sso', 'Corp SSO'), personalTokenLabel: null, oauthAvailable: true },
         ],
       })),
@@ -333,17 +347,112 @@ describe('admin connections section', () => {
     await settle();
     const cards = [...view.container.querySelectorAll('.connect-card')];
 
-    const youtrack = cards.find((card) => card.textContent?.includes('YouTrack'));
-    if (youtrack === undefined) throw new Error('YouTrack card is missing');
-    await act(async () => click(youtrack));
+    const tracker = cards.find((card) => card.textContent?.includes('Acme Tracker'));
+    if (tracker === undefined) throw new Error('Acme Tracker card is missing');
+    await act(async () => click(tracker));
     expect(view.container.querySelector('.connect-form')).toBeNull();
-    expect(view.container.textContent).toContain('An organization admin configures YouTrack once');
+    expect(view.container.textContent).toContain('An organization admin configures Acme Tracker once');
     expect(view.container.textContent).not.toContain('Connecting requires OAuth');
 
     const sso = cards.find((card) => card.textContent?.includes('Corp SSO'));
     if (sso === undefined) throw new Error('Corp SSO card is missing');
     await act(async () => click(sso));
     expect(view.container.textContent).toContain('Connecting requires OAuth');
+    await view.unmount();
+  });
+
+  it('collects the instance URL on a first paste and sends it on the grant', async () => {
+    const pastes: [string, unknown][] = [];
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({
+        providers: [patEntry('youtrack-pat', 'YouTrack PAT')],
+      })),
+      putConnectionGrant: vi.fn(async (provider: string, input: unknown) => {
+        pastes.push([provider, input]);
+      }),
+    });
+    const view = await render(<ConnectPicker client={wire} />);
+    await settle();
+    const card = view.container.querySelector('.connect-card');
+    if (card === null) throw new Error('provider card is missing');
+    await act(async () => click(card));
+
+    const baseUrl = view.container.querySelector<HTMLInputElement>('input[name="baseUrl"]');
+    const token = view.container.querySelector<HTMLInputElement>('input[name="token"]');
+    if (baseUrl === null || token === null) throw new Error('paste inputs are missing');
+    expect(baseUrl.getAttribute('type')).toBe('url');
+    expect(baseUrl.required).toBe(true);
+    await act(async () => {
+      typeInto(baseUrl, 'https://acme.youtrack.example');
+      typeInto(token, 'perm:test-only-token');
+      view.container.querySelector('.connect-form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    expect(pastes).toEqual([[
+      'youtrack-pat',
+      {
+        manifestId: 'youtrack-pat',
+        token: 'perm:test-only-token',
+        scopes: [],
+        vendor: { baseUrl: 'https://acme.youtrack.example' },
+      },
+    ]]);
+    await view.unmount();
+  });
+
+  it('locks the instance URL to the org row and leaves it off the paste', async () => {
+    const pastes: [string, unknown][] = [];
+    const orgRow: ConnectionView = {
+      name: 'youtrack-pat',
+      provider: 'youtrack-pat',
+      kind: 'static',
+      custody: 'proxy',
+      status: 'active',
+      createdBy: 'first-member',
+      proxyBaseUrl: 'https://acme.youtrack.example',
+    };
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({
+        providers: [patEntry('youtrack-pat', 'YouTrack PAT')],
+      })),
+      listConnections: vi.fn(async () => ({ connections: [orgRow] })),
+      putConnectionGrant: vi.fn(async (provider: string, input: unknown) => {
+        pastes.push([provider, input]);
+      }),
+    });
+    const view = await render(<ConnectPicker client={wire} />);
+    await settle();
+    const card = view.container.querySelector('.connect-card');
+    if (card === null) throw new Error('provider card is missing');
+    await act(async () => click(card));
+
+    // The instance is already known org-wide: shown, not asked for, and the
+    // grant inherits it because the locked field is never submitted.
+    expect(view.container.querySelector('input[name="baseUrl"]')).toBeNull();
+    const locked = [...view.container.querySelectorAll<HTMLInputElement>('.connect-field input')]
+      .find((input) => input.value === 'https://acme.youtrack.example');
+    expect(locked?.readOnly).toBe(true);
+    const token = view.container.querySelector<HTMLInputElement>('input[name="token"]');
+    if (token === null) throw new Error('token input is missing');
+    await act(async () => {
+      typeInto(token, 'perm:second-member-token');
+      view.container.querySelector('.connect-form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    expect(pastes).toEqual([[
+      'youtrack-pat',
+      {
+        manifestId: 'youtrack-pat',
+        token: 'perm:second-member-token',
+        scopes: [],
+      },
+    ]]);
     await view.unmount();
   });
 });
