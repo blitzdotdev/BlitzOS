@@ -16,6 +16,51 @@ export class HttpError extends Error {
   }
 }
 
+/** The part of Hono's `HTTPException` that decides a response. teenybase's own
+ * framework errors extend it — `ProcessError`, `HTTPError` — so a thrown
+ * "Not found" already carries the 404 it deserves. */
+interface StatusBearingError {
+  readonly status: number;
+  getResponse(): Response;
+}
+
+/** A status and message the thrower already chose, safe to return as-is. */
+export interface FrameworkHttpError {
+  readonly status: number;
+  readonly message: string;
+}
+
+/** Matched structurally rather than with `instanceof HTTPException`: the
+ * emitted managed copies of `core/` may import nothing but relative
+ * specifiers, so the class itself is out of reach there. Both marks are
+ * required, so an ordinary `Error` that happens to carry a `status` field
+ * stays an unknown throw. */
+function isStatusBearingError(error: Error): error is Error & StatusBearingError {
+  if (!("status" in error) || !("getResponse" in error)) return false;
+  return (
+    typeof error.getResponse === "function" &&
+    isNumber(error.status) &&
+    Number.isInteger(error.status) &&
+    error.status >= 400 &&
+    error.status <= 599
+  );
+}
+
+/**
+ * The HTTP meaning a framework error carries, or null when the throw has none
+ * and must stay an opaque 500. A framework error is a deliberate signal: its
+ * status and message are authored, not incidental, so both are returned.
+ */
+export function frameworkHttpError(error: Error): FrameworkHttpError | null {
+  if (!isStatusBearingError(error)) return null;
+  return {
+    status: error.status,
+    // `new HTTPException(404)` carries no message at all; an empty `error`
+    // field reads as a broken response rather than a missing row.
+    message: error.message.length > 0 ? error.message : "request failed",
+  };
+}
+
 export async function readText(
   request: Request,
   maxBytes = MAX_BODY_BYTES,
