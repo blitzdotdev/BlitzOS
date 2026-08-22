@@ -1,23 +1,17 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
-  CORE_MANIFEST,
   UPLOAD_MANIFEST,
   WORKER_SOURCE,
-  createUploadSet,
   importSpecifiers,
+  isRelative,
   redactSecrets,
 } from "../scripts/build-blitzdev.mjs";
+import { managedUploadSet } from "./managed-upload-set.js";
 
 // Vendor-only: this suite pins the worker source emitted for the blitz.dev
 // managed platform, which forks do not use. Skipped unless BLITZDEV_MANAGED=1.
 const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
-
-const rawCore = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"], {
-  eager: true,
-  import: "default",
-  query: "?raw",
-});
 
 const expected = [
   "teenybase.ts",
@@ -43,6 +37,8 @@ const expected = [
   "core/connections/catalog/github.ts",
   "core/connections/catalog/google-workspace.ts",
   "core/connections/catalog/linear.ts",
+  "core/connections/catalog/discord.ts",
+  "core/connections/catalog/youtrack.ts",
   "core/connections/catalog/generic.ts",
   "core/connections/catalog/index.ts",
   "core/connections/user-grants.ts",
@@ -85,10 +81,15 @@ const expected = [
   "core/signup-config.js",
   "core/types.ts",
   "core/volumes.ts",
+  "core/preview.ts",
   "core/webapp-state.ts",
+  "core/webapp-surface.ts",
+  "core/webapp-tickets.ts",
   "core/workspace-access.ts",
+  "core/workspace-names.ts",
   "core/workspace-records.ts",
   "core/workspace-templates.ts",
+  "core/workspace-tunnels.ts",
   "core/workspaces.ts",
   "core/compute/registry.ts",
   "core/compute/types.ts",
@@ -99,29 +100,26 @@ const expected = [
   "core/compute/microvm-agent.ts",
   "core/compute/microvm-host-registry.ts",
   "core/compute/microvm.ts",
+  "core/compute/aws.ts",
+  "core/compute/aws-sigv4.ts",
+  "core/compute/aws-xml.ts",
+  "core/compute/cloudflare-tunnels.ts",
+  "core/agent-rules-doc.ts",
 ] as const;
-
-function coreSources(): Map<string, string> {
-  return new Map(CORE_MANIFEST.map((uploadPath) => {
-    const source = rawCore[`../${uploadPath}`];
-    if (source === undefined) throw new Error(`missing test source ${uploadPath}`);
-    return [uploadPath, source];
-  }));
-}
 
 describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
   it("emits the exact deterministic manifest within platform limits", () => {
-    const first = createUploadSet(coreSources());
-    const second = createUploadSet(coreSources());
+    const first = managedUploadSet();
+    const second = managedUploadSet();
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(79);
+    expect(first.files).toHaveLength(91);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
   it("allows no unmanaged import in the upload set", () => {
-    const uploadSet = createUploadSet(coreSources());
+    const uploadSet = managedUploadSet();
     for (const file of uploadSet.files) {
       const imports = importSpecifiers(file.source);
       if (file.path.startsWith("core/")) {
@@ -135,8 +133,39 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     ]);
   });
 
+  // Ask 7, emitter half. The platform Loader does not resolve an explicit
+  // `./x.js` onto the `x.ts` it was uploaded: it externalizes the import,
+  // still reports bundle.ok, and the deployed Worker throws on every route
+  // (run-2 report, B3 — reproduced there in two files). Repo sources stay
+  // NodeNext-correct; only the uploaded copies are normalized.
+  it("uploads no .js-suffixed relative specifier", () => {
+    const uploadSet = managedUploadSet();
+    const suffixed = uploadSet.files.flatMap((file) =>
+      importSpecifiers(file.source)
+        .filter(({ specifier }) => isRelative(specifier) && /\.(?:js|mjs|cjs)$/u.test(specifier))
+        .map(({ specifier }) => `${file.path}: ${specifier}`));
+
+    expect(suffixed).toEqual([]);
+  });
+
+  // The repo source imports the box-image rules skeleton as a Text module.
+  // The managed contract has no text-import mechanism, so the emitter inlines
+  // the bytes and repoints the importer at the generated module.
+  it("inlines the agent-rules markdown the managed platform cannot import", () => {
+    const uploadSet = managedUploadSet();
+    const doc = uploadSet.files.find((file) => file.path === "core/agent-rules-doc.ts");
+    const importer = uploadSet.files.find((file) => file.path === "core/agent-rules.ts");
+
+    expect(doc?.source).toContain("# Blitz box");
+    expect(importer?.source).toContain('from "./agent-rules-doc"');
+    // The prose in that file still discusses the .md; no import may reach it.
+    const specifiers = importSpecifiers(importer?.source ?? "").map(({ specifier }) => specifier);
+    expect(specifiers.filter((specifier) => specifier.endsWith(".md"))).toEqual([]);
+    expect(specifiers).toContain("./agent-rules-doc");
+  });
+
   it("emits an environment-resolved app URL without deployment URLs", () => {
-    const uploadSet = createUploadSet(coreSources());
+    const uploadSet = managedUploadSet();
     const emitted = uploadSet.files.map((file) => file.source).join("\n");
     const teenybase = uploadSet.files.find((file) => file.path === "teenybase.ts");
 
@@ -146,7 +175,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
   });
 
   it("uploads a teenybase config that declares auth:false alongside its own users table", () => {
-    const uploadSet = createUploadSet(coreSources());
+    const uploadSet = managedUploadSet();
     const teenybase = uploadSet.files.find((file) => file.path === "teenybase.ts");
 
     expect(teenybase?.source).toContain("const config = {\n  auth: false,\n");
@@ -159,11 +188,15 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
   });
 
+  // Fake, never a real token: real ones carry a single-underscore `tp_`, which
+  // the old `tp__` pattern walked straight past (run-2 report, B9).
   it("redacts agent credentials from diagnostics", () => {
-    const credential = ["tp", "private-agent-token"].join("__");
-    const input = `Authorization: Bearer ${credential} https://blitz.dev/agent/${credential}/agents.md`;
-    const output = redactSecrets(input);
-    expect(output).not.toContain(credential);
-    expect(output).toContain("[REDACTED]");
+    for (const prefix of ["tp_", "tp__"]) {
+      const credential = `${prefix}notarealtoken0000000000`;
+      const input = `Authorization: Bearer ${credential} https://blitz.dev/agent/${credential}/agents.md`;
+      const output = redactSecrets(input);
+      expect(output, prefix).not.toContain(credential);
+      expect(output, prefix).toContain("[REDACTED]");
+    }
   });
 });

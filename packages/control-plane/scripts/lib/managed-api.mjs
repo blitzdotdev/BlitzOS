@@ -5,13 +5,25 @@ import { managedFileId } from "./asset-pack.mjs";
 import { UPLOAD_ORDER } from "./worker-source.mjs";
 import { normalizeSource, sha256 } from "./source-utils.mjs";
 
+// Platform agent tokens carry a single-underscore `tp_` prefix. The pattern
+// here used to require `tp__`, so every real token walked straight through it
+// (run-2 report, B9) and had to be scrubbed by hand. `tp_` also covers the
+// doubled form, so nothing that matched before stops matching.
 export function redactSecrets(value) {
   return String(value)
-    .replace(/\btp__[A-Za-z0-9_-]+\b/gu, "[REDACTED]")
+    .replace(/\btp_[A-Za-z0-9_-]+/gu, "[REDACTED]")
     .replace(/(authorization\s*:\s*bearer\s+)[^\s,"'}]+/giu, "$1[REDACTED]")
     .replace(/(x-project-password\s*:\s*)[^\s,"'}]+/giu, "$1[REDACTED]")
     .replace(/(\/agent\/)[^/\s]+(\/agents\.md)/gu, "$1[REDACTED]$2")
     .replace(/(["'](?:token|agent_link|password)["']\s*:\s*["'])[^"']+/giu, "$1[REDACTED]");
+}
+
+// Redaction used to guard only thrown messages, so anything the deploy printed
+// on its way through — most of all the platform's own migration preview, which
+// is free text this repo does not author — reached the terminal raw. Every
+// stdout write in the managed path goes through here instead.
+export function writeRedacted(text, stream = process.stdout) {
+  stream.write(redactSecrets(text));
 }
 
 export async function projectAccess(probeFile) {
@@ -29,7 +41,7 @@ export async function projectAccess(probeFile) {
   };
 }
 
-export async function managedApiRequest(access, route, init = {}, fetcher = fetch) {
+export async function managedApiRequest(access, route, init = {}, fetcher = fetch, { allowMissing = false } = {}) {
   const response = await fetcher(`${access.base}${route}`, {
     ...init,
     headers: {
@@ -44,6 +56,7 @@ export async function managedApiRequest(access, route, init = {}, fetcher = fetc
   } catch {
     // Text endpoints (including migration previews) are valid responses.
   }
+  if (allowMissing && response.status === 404) return { response, body: null };
   if (!response.ok) throw new Error(`API ${response.status}: ${redactSecrets(typeof body === "string" ? body : JSON.stringify(body))}`);
   return { response, body };
 }
@@ -163,7 +176,22 @@ export function saveVersion(response, body) {
   return resultVersion ?? header;
 }
 
+// The platform serves no @migration.sql at all when the applied schema already
+// matches the uploaded one, so a redeploy of an unchanged schema is reported as
+// a missing file rather than as an empty diff.
+const MISSING_MIGRATION = /\bfile_not_found\b/u;
+
+export function isMissingMigrationBody(body) {
+  return body === null || MISSING_MIGRATION.test(JSON.stringify(body ?? null));
+}
+
+/**
+ * The pending migration SQL, or "" when the schema is already current.
+ * An absent migration is a no-op, not a failure: treating it as an error made
+ * every re-run of an up-to-date project exit 1 (run-2 report, B10).
+ */
 export function migrationText(body) {
+  if (isMissingMigrationBody(body)) return "";
   if (typeof body === "string") return body;
   const candidates = [body?.result?.content, body?.result?.text, body?.result?.sql, body?.content, body?.text, body?.sql];
   const value = candidates.find((candidate) => typeof candidate === "string");
@@ -171,14 +199,22 @@ export function migrationText(body) {
   return value;
 }
 
-export async function uploadManagedSet(uploadSet, probeFile, { commit = false } = {}) {
-  const access = await projectAccess(probeFile);
+export async function fetchMigrationText(access, fetcher = fetch) {
+  const migration = await managedApiRequest(access, "/files?path=%40migration.sql", {}, fetcher, { allowMissing: true });
+  return migrationText(migration.body);
+}
+
+export async function uploadManagedSet(uploadSet, probeFile, { commit = false, fetcher = fetch, out = process.stdout } = {}) {
+  return pushManagedSet(uploadSet, await projectAccess(probeFile), { commit, fetcher, out });
+}
+
+export async function pushManagedSet(uploadSet, access, { commit = false, fetcher = fetch, out = process.stdout } = {}) {
   await managedApiRequest(access, "/vars/APP_URL", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: access.appUrl }),
-  });
-  const listed = await managedApiRequest(access, "/files");
+  }, fetcher);
+  const listed = await managedApiRequest(access, "/files", {}, fetcher);
   let version = saveVersion(listed.response, listed.body);
   if (version === undefined) throw new Error("file listing omitted x-save-version");
   const byPath = new Map(uploadSet.files.map((file) => [file.path, file]));
@@ -193,7 +229,7 @@ export async function uploadManagedSet(uploadSet, probeFile, { commit = false } 
       method: "PUT",
       headers: { "Content-Type": "text/plain; charset=utf-8", "If-Match": version },
       body: file.source,
-    });
+    }, fetcher);
     if (typeof saved.body !== "object" || saved.body === null || saved.body.success !== true) {
       throw new Error(`save failed for ${file.path}: ${redactSecrets(JSON.stringify(saved.body))}`);
     }
@@ -205,21 +241,23 @@ export async function uploadManagedSet(uploadSet, probeFile, { commit = false } 
     if (nextVersion === undefined) throw new Error(`save response omitted version for ${file.path}`);
     version = nextVersion;
     saves.push({ path: file.path, configOk: true, bundleOk: true, durationMs: Math.round(performance.now() - saveStarted) });
-    process.stdout.write(`saved\t${file.path}\tconfig.ok\tbundle.ok\t${saves.at(-1).durationMs}ms\n`);
+    writeRedacted(`saved\t${file.path}\tconfig.ok\tbundle.ok\t${saves.at(-1).durationMs}ms\n`, out);
   }
 
-  const migrationResponse = await managedApiRequest(access, "/files?path=%40migration.sql");
-  const migration = normalizeSource(migrationText(migrationResponse.body));
-  process.stdout.write(`migration-schema-sha256\t${byPath.get("teenybase.ts").sha256}\n`);
-  process.stdout.write(`migration-sql-sha256\t${sha256(migration)}\n`);
-  process.stdout.write(migration);
+  // An empty migration still commits: a re-run whose schema is unchanged may
+  // carry changed worker sources, and the commit is what deploys them.
+  const pending = await fetchMigrationText(access, fetcher);
+  const migration = pending === "" ? "" : normalizeSource(pending);
+  writeRedacted(`migration-schema-sha256\t${byPath.get("teenybase.ts").sha256}\n`, out);
+  writeRedacted(`migration-sql-sha256\t${sha256(migration)}\n`, out);
+  writeRedacted(migration === "" ? "migration\tempty\tschema-already-current\n" : migration, out);
 
   if (commit) {
     const committed = await managedApiRequest(access, "/commit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: `blitz-core managed release ${uploadSet.releaseHash}` }),
-    });
+    }, fetcher);
     if (typeof committed.body !== "object" || committed.body === null || committed.body.success !== true) {
       throw new Error(`commit failed: ${redactSecrets(JSON.stringify(committed.body))}`);
     }

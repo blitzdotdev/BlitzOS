@@ -27,6 +27,7 @@
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
+    "blitzdev:build": "node scripts/build-blitzdev.mjs",
     "config": "node scripts/ensure-wrangler-config.mjs",
     "deploy": "node scripts/deploy.mjs",
     "provider:check": "vitest run test/connections-catalog.test.ts -t",
@@ -37,6 +38,8 @@
     "types": "node scripts/ensure-wrangler-config.mjs && wrangler types --include-runtime=false",
     "pretypecheck": "npm run types",
     "pretest": "npm run types",
+    "pretest:blitzdev": "npm run types",
+    "test:blitzdev": "vitest run test/blitzdev-closure.test.ts test/blitzdev-emitter.test.ts test/blitzdev-schema.test.ts test/managed-api.test.ts test/assets.test.ts test/box-image-files.test.ts test/route-prefixes.test.ts",
     "test": "vitest run && npm run test:python && npm run test:scripts"
   },
   "dependencies": {
