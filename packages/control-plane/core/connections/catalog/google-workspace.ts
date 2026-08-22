@@ -85,6 +85,7 @@ export const googleWorkspaceManifest = {
   },
   // Google issues no user-createable API key for Workspace APIs.
   personalToken: null,
+  adminForm: null,
   scopes: [
     {
       id: "https://www.googleapis.com/auth/drive.file",

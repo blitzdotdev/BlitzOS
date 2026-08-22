@@ -53,6 +53,10 @@ export interface ProviderPersonalToken {
   help: string;
   /** Personal keys can want a different header shape than OAuth tokens. */
   header: TokenHeader;
+  /** Non-null for instance-hosted vendors (YouTrack): the paste form also
+   * collects the instance URL. It rides the grant as `vendor.baseUrl`, or is
+   * inherited from the org connection row when one already carries it. */
+  baseUrlLabel: string | null;
 }
 
 export type PlacementFill = "token" | "proxy-url";
@@ -85,6 +89,22 @@ export interface SkillRenderInput {
 export interface ProviderSurfaces {
   env: readonly ProviderEnvSurface[];
   skill: ProviderSkillSurface;
+}
+
+/** Declares the org-admin path: an admin stores one static root through
+ * `PUT /connections/:id` and every workspace of the organization mints from
+ * it, with no per-member step. The settings panel renders its whole form from
+ * this block — one secret input for the root, plus the instance URL when
+ * custody is proxy. Everything else the PUT needs (kind, custody, placements,
+ * the proxy header) is already on the manifest. */
+export interface ProviderAdminForm {
+  /** What the secret input is called, e.g. "Permanent token". */
+  rootLabel: string;
+  /** Where the admin creates the credential, shown under the input. */
+  rootHelp: string;
+  /** Label for the instance-URL input, which becomes `config.proxy.base_url`.
+   * Non-null exactly when custody is "proxy" (the conformance suite pins it). */
+  baseUrlLabel: string | null;
 }
 
 export interface ProbeInput {
@@ -151,6 +171,8 @@ interface ProviderManifestBase {
   /** Vendor API root; proxy custody rewrites box calls onto it. */
   baseUrl: string;
   personalToken: ProviderPersonalToken | null;
+  /** Non-null for providers an org admin configures once, org-wide. */
+  adminForm: ProviderAdminForm | null;
   scopes: readonly ProviderScope[];
   defaultScopes: readonly string[];
   surfaces: ProviderSurfaces;

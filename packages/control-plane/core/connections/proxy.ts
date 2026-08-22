@@ -3,7 +3,6 @@ import type { Db } from "../db.js";
 import { first } from "../db.js";
 import { isRecord, isString } from "../http.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { providerManifest } from "./catalog/index.js";
 import type { TokenHeader } from "./catalog/types.js";
 import { openRoot } from "./root-crypto.js";
 import { grantSecretLabel } from "./user-grants.js";
@@ -39,7 +38,6 @@ interface ProxyLeaseRow {
   grant_access_ciphertext: string | null;
   grant_access_expires_at: number | null;
   grant_refresh_ciphertext: string | null;
-  grant_manifest_id: string | null;
 }
 
 interface ProxyConfig {
@@ -88,8 +86,7 @@ async function proxyLease(
                grant_row.config AS grant_config,
                grant_row.access_ciphertext AS grant_access_ciphertext,
                grant_row.access_expires_at AS grant_access_expires_at,
-               grant_row.refresh_ciphertext AS grant_refresh_ciphertext,
-               grant_row.manifest_id AS grant_manifest_id
+               grant_row.refresh_ciphertext AS grant_refresh_ciphertext
         FROM credential_leases lease
         JOIN connections connection ON connection.id = lease.connection_id
         LEFT JOIN user_oauth_grants grant_row
@@ -182,9 +179,6 @@ async function upstreamSecret(
     };
   }
   const grantHeader = parseGrantHeader(lease.grant_config);
-  const manifest = lease.grant_manifest_id === null
-    ? null
-    : providerManifest(lease.grant_manifest_id);
   const ciphertext = lease.grant_kind === "pat"
     ? lease.grant_refresh_ciphertext
     : lease.grant_access_ciphertext;
@@ -202,7 +196,13 @@ async function upstreamSecret(
       ciphertext,
     ),
     config: {
-      baseUrl: parseGrantBaseUrl(lease.grant_config) ?? manifest?.baseUrl ?? config.baseUrl,
+      // A grant that carries its own URL wins — the person typed it. After
+      // that, the connection row's proxy base URL, never the manifest's:
+      // instance-hosted vendors (YouTrack) declare only a placeholder in the
+      // catalog, and the row is where the organization's real instance lives.
+      // Fixed-URL catalog rows carry the manifest URL verbatim, so for them
+      // this resolves to the same place it always did.
+      baseUrl: parseGrantBaseUrl(lease.grant_config) ?? config.baseUrl,
       tokenHeader: grantHeader.name,
       tokenPrefix: grantHeader.prefix,
     },

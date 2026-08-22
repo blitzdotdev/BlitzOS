@@ -219,6 +219,11 @@ describe("provider catalog conformance", () => {
               `${manifest.personalToken?.header.prefix ?? ""}token`,
             );
           }).not.toThrow();
+          if (manifest.personalToken.baseUrlLabel !== null) {
+            // The pasted instance URL is consumed by the proxy resolver;
+            // inject custody would collect a URL nothing ever reads.
+            expect(manifest.custody).toBe("proxy");
+          }
         }
       });
 
@@ -233,6 +238,37 @@ describe("provider catalog conformance", () => {
         expect(skillPath(manifest, "instance")).toBe(
           `${BOX_HOME}/${manifest.surfaces.skill.path.replace("<provider>", "instance")}`,
         );
+      });
+
+      /** The settings panel submits `PUT /connections/:id` with kind "static"
+       * from this view alone, so a manifest that declares an admin form must
+       * be one that PUT can actually serve. */
+      it("declares a servable admin form or none", () => {
+        const form = manifest.adminForm;
+        const view = catalogView(manifest, () => undefined).adminForm;
+        if (form === null) {
+          expect(view).toBeNull();
+          return;
+        }
+        expect(manifest.auth, "an admin root is pasted, not authorized").toBeNull();
+        expect(["cp", "proxy"]).toContain(manifest.custody);
+        expect(form.rootLabel.length).toBeGreaterThan(0);
+        expect(form.rootHelp.length, "help says where the admin creates it")
+          .toBeGreaterThan(20);
+        expect(form.baseUrlLabel !== null, "base URL field exactly for proxy custody")
+          .toBe(manifest.custody === "proxy");
+        if (view === null) throw new Error("admin form view is missing");
+        expect(view.rootLabel).toBe(form.rootLabel);
+        expect(view.rootHelp).toBe(form.rootHelp);
+        expect(view.placements).toEqual(
+          manifest.surfaces.env.map(({ name, fill }) => ({ kind: "env", name, fill })),
+        );
+        expect(view.proxy === null).toBe(manifest.custody !== "proxy");
+        if (view.proxy !== null) {
+          expect(view.proxy.baseUrlLabel).toBe(form.baseUrlLabel);
+          expect(view.proxy.tokenHeader).toBe(manifest.tokenHeader.name);
+          expect(view.proxy.tokenPrefix).toBe(manifest.tokenHeader.prefix);
+        }
       });
 
       it("renders a skill that tells an agent how to authenticate", () => {

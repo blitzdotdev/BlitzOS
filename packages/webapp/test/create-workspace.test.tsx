@@ -31,6 +31,7 @@ const machines = [
 const connectClient = {
   listConnectionCatalog: async () => ({ providers: [] }),
   listConnectionGrants: async () => ({ grants: [] }),
+  listConnections: async () => ({ connections: [] }),
   putConnectionGrant: async () => undefined,
   connectStartUrl: (provider: string) => `/connect/${provider}/start`,
 };

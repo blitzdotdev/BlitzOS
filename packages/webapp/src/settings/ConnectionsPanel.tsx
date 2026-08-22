@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
+import { AdminConnectionsSection } from './AdminConnectionsSection';
 import { ConnectPicker } from './ConnectPicker';
 
 function healthLabel(health: ProviderHealthView | undefined): string | null {
@@ -17,9 +18,12 @@ function healthLabel(health: ProviderHealthView | undefined): string | null {
 export function ConnectionsPanel({
   client,
   requestedName,
+  admin = false,
 }: {
   client: ControlPlaneClient;
   requestedName?: string;
+  /** Shows the org-wide section; the PUT route enforces the same gate. */
+  admin?: boolean;
 }) {
   const [grants, setGrants] = useState<UserGrantView[]>([]);
   const [health, setHealth] = useState<ProviderHealthView[]>([]);
@@ -132,6 +136,8 @@ export function ConnectionsPanel({
           void reload();
         }}
       />
+
+      {admin && <AdminConnectionsSection client={client} />}
 
       {revokeTarget && (
         <ConfirmationDialog

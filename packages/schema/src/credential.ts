@@ -41,6 +41,9 @@ export interface ConnectionView {
   custody: Custody;
   status: "active" | "revoked";
   createdBy: string;
+  /** The vendor URL a proxy-custody row points at (the org's YouTrack
+   * instance, say); null for cp custody. Never any other part of the config. */
+  proxyBaseUrl: string | null;
 }
 
 export interface ListConnectionsResponse {
@@ -105,6 +108,26 @@ export interface CatalogScopeView {
   default: boolean;
 }
 
+/** An env entry for `config.placements` on `PUT /connections/:id`, sent by
+ * the admin form verbatim. Distinct from `Placement`: this is a template with
+ * a fill, not a filled value. */
+export interface CatalogAdminPlacement {
+  kind: "env";
+  name: string;
+  fill: "token" | "proxy-url";
+}
+
+/** How the settings panel configures an admin-custody provider: labels for
+ * the form plus exactly what the PUT body needs. Carries no secret. */
+export interface CatalogAdminFormView {
+  rootLabel: string;
+  rootHelp: string;
+  placements: CatalogAdminPlacement[];
+  /** Present exactly when custody is "proxy": the collected URL becomes
+   * `config.proxy.base_url` and the header pair rides along unchanged. */
+  proxy: { baseUrlLabel: string; tokenHeader: string; tokenPrefix: string } | null;
+}
+
 /** What the connect picker renders. Carries no secret and no binding value —
  * `oauthConfigured` is the presence answer, not the credential. */
 export interface CatalogEntryView {
@@ -118,8 +141,13 @@ export interface CatalogEntryView {
   oauthConfigured: boolean;
   personalTokenLabel: string | null;
   personalTokenHelp: string | null;
+  /** Non-null when the paste form also collects an instance URL (YouTrack).
+   * Prefilled and locked from the org connection row when one carries it. */
+  personalTokenBaseUrlLabel: string | null;
   /** The generic entry needs the person to name the variable and base URL. */
   needsVendorConfig: boolean;
+  /** Non-null for providers an org admin configures once, org-wide. */
+  adminForm: CatalogAdminFormView | null;
   environmentNames: string[];
   scopes: CatalogScopeView[];
 }
@@ -152,9 +180,11 @@ export interface PutUserGrantRequest {
   token: string;
   scopes?: string[];
   label?: string;
-  /** Required by the generic entry, ignored by catalog providers. */
+  /** The generic entry requires `envName` (and may name a base URL);
+   * instance-hosted catalog providers (YouTrack) take `baseUrl` alone. Other
+   * catalog providers ignore it. */
   vendor?: {
-    envName: string;
+    envName?: string;
     baseUrlEnvName?: string | null;
     baseUrl?: string | null;
   };
