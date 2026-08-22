@@ -39,7 +39,7 @@
     "pretypecheck": "npm run types",
     "pretest": "npm run types",
     "pretest:blitzdev": "npm run types",
-    "test:blitzdev": "vitest run test/blitzdev-closure.test.ts test/blitzdev-emitter.test.ts test/blitzdev-schema.test.ts test/managed-api.test.ts test/assets.test.ts test/box-image-files.test.ts test/route-prefixes.test.ts",
+    "test:blitzdev": "vitest run test/blitzdev-closure.test.ts test/blitzdev-emitter.test.ts test/blitzdev-schema.test.ts test/managed-api.test.ts test/assets.test.ts test/box-image-files.test.ts test/route-prefixes.test.ts test/error-envelope.test.ts",
     "test": "vitest run && npm run test:python && npm run test:scripts"
   },
   "dependencies": {

@@ -256,6 +256,27 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(selfHost.filter((key) => !managed.includes(key))).toEqual([]);
   });
 
+  // Run-4 report, B2. Both targets build on teenyHono, which installs
+  // teenybase's error handler, and both then call installControlPlaneRoutes,
+  // which installs core/app.ts's. Hono keeps exactly one error handler and the
+  // last registration wins, so core/app.ts's is the only error handling either
+  // target has — and test/error-envelope.test.ts pins what it does. A worker
+  // that registered its own would take a different path from the other one
+  // without anything saying so, which is how run 4's opaque 500 hid a 404.
+  it("leaves error handling to the one shared handler on both targets", () => {
+    const selfHostSource = rawSelfHostWorker["../src/worker.ts"];
+    expect(selfHostSource, "self-host worker source").toBeTypeOf("string");
+    for (const [label, source] of [
+      ["src/worker.ts", selfHostSource ?? ""],
+      ["WORKER_SOURCE", WORKER_SOURCE],
+    ] as const) {
+      expect(source, label).toContain("teenyHono<");
+      expect(source, label).toContain("installControlPlaneRoutes(app");
+      expect(/\bapp\.onError\(/u.test(source), `${label} registers its own onError`).toBe(false);
+      expect(/\bapp\.notFound\(/u.test(source), `${label} registers its own notFound`).toBe(false);
+    }
+  });
+
   // Fake, never a real token: real ones carry a single-underscore `tp_`, which
   // the old `tp__` pattern walked straight past (run-2 report, B9).
   it("redacts agent credentials from diagnostics", () => {
