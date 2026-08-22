@@ -1,6 +1,14 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertClosedUploadSet,
+  hasRuntimeExtension,
+  importSpecifiers,
+  isRelative,
+  loaderSpecifier,
+  rewriteSpecifiers,
+} from "./module-graph.mjs";
 import { normalizeSource, sha256 } from "./source-utils.mjs";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "../..");
@@ -27,7 +35,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/crypto.ts",
   "core/environment.ts",
   "core/connections/types.ts", "core/connections/root-crypto.ts", "core/connections/manifest.ts", "core/connections/leases.ts",
-  "core/connections/catalog/types.ts", "core/connections/catalog/surfaces.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/generic.ts", "core/connections/catalog/index.ts",
+  "core/connections/catalog/types.ts", "core/connections/catalog/surfaces.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/discord.ts", "core/connections/catalog/youtrack.ts", "core/connections/catalog/generic.ts", "core/connections/catalog/index.ts",
   "core/connections/user-grants.ts", "core/connections/minters/static.ts", "core/connections/minters/app-jwt/github-app.ts", "core/connections/minters/oauth.ts", "core/connections/minters/grant.ts",
   "core/connections/registry.ts", "core/connections/requests.ts", "core/connections/health.ts", "core/connections/canary.ts", "core/connections/connect.ts", "core/connections/mint.ts", "core/connections/proxy.ts",
   "core/http.ts",
@@ -43,19 +51,38 @@ export const CORE_MANIFEST = Object.freeze([
   "core/signup-config.js",
   "core/types.ts",
   "core/volumes.ts",
-  "core/webapp-state.ts",
-  "core/workspace-access.ts", "core/workspace-records.ts", "core/workspace-templates.ts",
+  "core/preview.ts",
+  "core/webapp-state.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
+  "core/workspace-access.ts", "core/workspace-names.ts", "core/workspace-records.ts", "core/workspace-templates.ts", "core/workspace-tunnels.ts",
   "core/workspaces.ts",
   "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
+  "core/compute/aws.ts", "core/compute/aws-sigv4.ts", "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",
 ]);
+
+// core/agent-rules.ts imports the box-image rules skeleton as a Text module
+// (the `[[rules]]` block in wrangler.toml). The managed contract is source
+// files only — there is no text-import mechanism — so the emitter inlines
+// those bytes into a generated module and repoints the importer at it, the
+// same way core/bootstrap.ts already inlines its bash and Python payloads.
+// The .md stays the single source of truth; nothing is copied into the repo.
+export const TEXT_ASSETS = Object.freeze([
+  Object.freeze({
+    specifier: "../../box/rootfs/opt/blitz/skel/agent-rules.md",
+    sourcePath: "../box/rootfs/opt/blitz/skel/agent-rules.md",
+    uploadPath: "core/agent-rules-doc.ts",
+  }),
+]);
+export const GENERATED_MANIFEST = Object.freeze(TEXT_ASSETS.map((asset) => asset.uploadPath));
 export const UPLOAD_MANIFEST = Object.freeze([
   "teenybase.ts",
   "worker.ts",
   ...CORE_MANIFEST,
+  ...GENERATED_MANIFEST,
 ]);
 export const UPLOAD_ORDER = Object.freeze([
   ...CORE_MANIFEST,
+  ...GENERATED_MANIFEST,
   "teenybase.ts",
   "worker.ts",
 ]);
@@ -651,23 +678,6 @@ const worker = Object.assign(app, {
 export default worker;
 `);
 
-export function importSpecifiers(source) {
-  const imports = [];
-  const staticPattern = /\b(?:import|export)\s+(type\s+)?(?:[^"'`;]*?\s+from\s*)?["']([^"']+)["']/gu;
-  const dynamicPattern = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu;
-  for (const match of source.matchAll(staticPattern)) {
-    imports.push({ specifier: match[2], typeOnly: match[1] !== undefined });
-  }
-  for (const match of source.matchAll(dynamicPattern)) {
-    imports.push({ specifier: match[1], typeOnly: false });
-  }
-  return imports;
-}
-
-function isRelative(specifier) {
-  return specifier.startsWith("./") || specifier.startsWith("../");
-}
-
 export function validateUploadSet(entries) {
   const paths = entries.map((entry) => entry.path);
   const duplicates = paths.filter((entryPath, index) => paths.indexOf(entryPath) !== index);
@@ -689,17 +699,52 @@ export function validateUploadSet(entries) {
       const forbidden = imports.filter(({ specifier, typeOnly }) => specifier !== "teenybase" || !typeOnly);
       if (forbidden.length > 0) throw new Error("teenybase.ts may only type-import teenybase");
     }
+    // The platform Loader does not map an explicit `./x.js` onto the `x.ts`
+    // it was handed; it externalizes the import and the Worker throws at
+    // runtime with bundle.ok still true. Nothing loader-unsafe leaves here.
+    const suffixed = imports.filter(({ specifier }) => isRelative(specifier) && hasRuntimeExtension(specifier));
+    if (suffixed.length > 0) throw new Error(`${entry.path} keeps a loader-unsafe specifier ${suffixed[0].specifier}`);
   }
+  assertClosedUploadSet(entries);
 }
 
-export function createUploadSet(coreSources) {
+/** The specifier an emitted file uses to reach a generated text-asset module. */
+function assetSpecifier(importerPath, uploadPath) {
+  const relative = path.posix.relative(path.posix.dirname(importerPath), uploadPath).replace(/\.ts$/u, "");
+  return relative.startsWith(".") ? relative : `./${relative}`;
+}
+
+function textAssetModule(asset, text) {
+  return `// Generated by scripts/build-blitzdev.mjs from ${asset.sourcePath}.\n`
+    + "// The box-image skeleton is the source of truth; never edit this copy.\n"
+    + `const doc: string = ${JSON.stringify(text)};\n\nexport default doc;\n`;
+}
+
+/**
+ * Repoints text-asset imports at their generated module and drops NodeNext
+ * runtime extensions. Repo sources stay NodeNext-correct; only the uploaded
+ * copies are normalized.
+ */
+function emitSource(uploadPath, source) {
+  return normalizeSource(rewriteSpecifiers(source, (specifier) => {
+    const asset = TEXT_ASSETS.find((candidate) => candidate.specifier === specifier);
+    return asset === undefined ? loaderSpecifier(specifier) : assetSpecifier(uploadPath, asset.uploadPath);
+  }));
+}
+
+export function createUploadSet(coreSources, textAssets) {
   const entries = [
-    { path: "teenybase.ts", source: TEENYBASE_SOURCE },
-    { path: "worker.ts", source: WORKER_SOURCE },
+    { path: "teenybase.ts", source: emitSource("teenybase.ts", TEENYBASE_SOURCE) },
+    { path: "worker.ts", source: emitSource("worker.ts", WORKER_SOURCE) },
     ...CORE_MANIFEST.map((uploadPath) => {
       const source = coreSources.get(uploadPath);
       if (source === undefined) throw new Error(`missing source for ${uploadPath}`);
-      return { path: uploadPath, source: normalizeSource(source) };
+      return { path: uploadPath, source: emitSource(uploadPath, source) };
+    }),
+    ...TEXT_ASSETS.map((asset) => {
+      const text = textAssets?.get(asset.uploadPath);
+      if (text === undefined) throw new Error(`missing text asset ${asset.uploadPath} (${asset.sourcePath})`);
+      return { path: asset.uploadPath, source: normalizeSource(textAssetModule(asset, text)) };
     }),
   ];
   validateUploadSet(entries);
@@ -720,8 +765,16 @@ export async function readCoreSources(packageDir = PACKAGE_DIR) {
   return new Map(entries);
 }
 
+export async function readTextAssets(packageDir = PACKAGE_DIR) {
+  const entries = await Promise.all(TEXT_ASSETS.map(async (asset) => [
+    asset.uploadPath,
+    await readFile(path.join(packageDir, asset.sourcePath), "utf8"),
+  ]));
+  return new Map(entries);
+}
+
 export async function emitUploadSet({ packageDir = PACKAGE_DIR, distDir = DEFAULT_DIST_DIR } = {}) {
-  const uploadSet = createUploadSet(await readCoreSources(packageDir));
+  const uploadSet = createUploadSet(await readCoreSources(packageDir), await readTextAssets(packageDir));
   await rm(distDir, { recursive: true, force: true });
   for (const file of uploadSet.files) {
     const destination = path.join(distDir, file.path);

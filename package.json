@@ -32,6 +32,8 @@
   ],
   "scripts": {
     "build": "npm run build -w @blitzos/webapp && npm run typecheck",
+    "blitzdev:build": "npm run blitzdev:build -w @blitzos/control-plane",
+    "test:blitzdev": "npm run test:blitzdev -w @blitzos/control-plane",
     "lint": "oxlint .",
     "lint:gate": "node scripts/lint-gate.mjs",
     "provider:check": "npm run provider:check --workspace @blitzos/control-plane --",

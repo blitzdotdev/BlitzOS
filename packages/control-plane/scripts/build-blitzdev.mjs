@@ -9,14 +9,15 @@ import {
 } from "./lib/asset-pack.mjs";
 import {
   projectAccess,
-  redactSecrets,
   uploadManagedAssets,
   uploadManagedSet,
+  writeRedacted,
 } from "./lib/managed-api.mjs";
 import { emitUploadSet } from "./lib/worker-source.mjs";
 
 export * from "./lib/asset-pack.mjs";
 export * from "./lib/managed-api.mjs";
+export * from "./lib/module-graph.mjs";
 export * from "./lib/source-utils.mjs";
 export * from "./lib/worker-source.mjs";
 
@@ -27,9 +28,9 @@ const DEFAULT_UI_DIST_DIR = path.resolve(PACKAGE_DIR, "../webapp/dist");
 
 function printManifest(uploadSet) {
   for (const file of uploadSet.files) {
-    process.stdout.write(`${file.path}\t${file.bytes}\t${file.sha256}\n`);
+    writeRedacted(`${file.path}\t${file.bytes}\t${file.sha256}\n`);
   }
-  process.stdout.write(`release\t${uploadSet.files.length}\t${uploadSet.releaseHash}\n`);
+  writeRedacted(`release\t${uploadSet.files.length}\t${uploadSet.releaseHash}\n`);
 }
 
 function parseCli(argv) {
@@ -96,20 +97,20 @@ export async function main(argv = process.argv.slice(2)) {
     if (options.uploadWebApp) {
       const webApp = await createWebAppAssetSet(options.uiDistDir);
       const result = await uploadManagedAssets(webApp, access, projectPassword);
-      process.stdout.write(`webapp-assets\t${webApp.files.length}\t${webApp.releaseId}\t${JSON.stringify(result)}\n`);
+      writeRedacted(`webapp-assets\t${webApp.files.length}\t${webApp.releaseId}\t${JSON.stringify(result)}\n`);
     }
     if (options.attemptBoxImage) {
-      process.stdout.write("box-image-attempt\texplicit\texternal-fallback-retained\n");
+      writeRedacted("box-image-attempt\texplicit\texternal-fallback-retained\n");
       const boxImage = await createBoxImageAssetSet(options.boxImageManifest);
       const result = await uploadManagedAssets(boxImage, access, projectPassword);
-      process.stdout.write(`box-image-assets\t${boxImage.files.length}\t${boxImage.releaseId}\t${JSON.stringify(result)}\n`);
+      writeRedacted(`box-image-assets\t${boxImage.files.length}\t${boxImage.releaseId}\t${JSON.stringify(result)}\n`);
     }
   }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((error) => {
-    process.stderr.write(`${redactSecrets(error instanceof Error ? error.message : error)}\n`);
+    writeRedacted(`${error instanceof Error ? error.message : error}\n`, process.stderr);
     process.exitCode = 1;
   });
 }
