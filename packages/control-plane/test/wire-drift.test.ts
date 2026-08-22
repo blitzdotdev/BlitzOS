@@ -143,6 +143,16 @@ const templateConnection: SharedShape<
   schema.TemplateConnectionView
 > = { provider: "linear" };
 
+const githubRepository: SharedShape<
+  wire.GithubRepositoryView,
+  schema.GithubRepositoryView
+> = { fullName: "blitzdotdev/blitz-core", private: true };
+
+const githubRepositories: SharedShape<
+  wire.ListGithubRepositoriesResponse,
+  schema.ListGithubRepositoriesResponse
+> = { repositories: [githubRepository] };
+
 const workspaceTemplate: SharedShape<
   wire.WorkspaceTemplateView,
   schema.WorkspaceTemplateView
@@ -154,8 +164,10 @@ const workspaceTemplate: SharedShape<
   createdBy: { name: "Owner", avatarUrl: null },
   environment,
   agentRuleId: agentRule.id,
+  isOrgDefault: true,
   folders: [{ id: "folder", name: "Shared", role: "editor" }],
   connections: [templateConnection],
+  repos: ["blitzdotdev/blitz-core"],
 };
 
 const workspaceTemplates: SharedShape<
@@ -173,6 +185,8 @@ const createWorkspaceTemplate: SharedShape<
   connections: [templateConnection],
   environment,
   agentRuleId: agentRule.id,
+  repos: ["blitzdotdev/blitz-core"],
+  isOrgDefault: true,
 };
 
 const createdWorkspaceTemplate: SharedShape<
@@ -459,6 +473,8 @@ const fullFieldValues = [
   putAgentRuleResponse,
   workspace,
   templateConnection,
+  githubRepository,
+  githubRepositories,
   workspaceTemplate,
   workspaceTemplates,
   createWorkspaceTemplate,
@@ -519,6 +535,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PutAgentRuleResponse>().toEqualTypeOf<schema.PutAgentRuleResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
+    expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();
+    expectTypeOf<wire.ListGithubRepositoriesResponse>().toEqualTypeOf<schema.ListGithubRepositoriesResponse>();
     expectTypeOf<wire.WorkspaceTemplateView>().toEqualTypeOf<schema.WorkspaceTemplateView>();
     expectTypeOf<wire.ListWorkspaceTemplatesResponse>().toEqualTypeOf<schema.ListWorkspaceTemplatesResponse>();
     expectTypeOf<wire.CreateWorkspaceTemplateRequest>().toEqualTypeOf<schema.CreateWorkspaceTemplateRequest>();

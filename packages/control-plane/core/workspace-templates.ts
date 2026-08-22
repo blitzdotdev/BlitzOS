@@ -18,6 +18,12 @@ import {
 } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import {
+  parseTemplateRepos,
+  replaceTemplateRepos,
+  templateRepoRows,
+  type TemplateRepoRow,
+} from "./template-repos.js";
 import type { TemplateConnectionView, WorkspaceEnvironment, WorkspaceTemplateView } from "./wire.js";
 
 export interface WorkspaceTemplateRow {
@@ -52,8 +58,10 @@ interface CreateTemplateInput {
   machineTypeId: string;
   folderIds: string[];
   connections: TemplateConnectionView[];
+  repos: string[];
   environment?: WorkspaceEnvironment;
   agentRuleId?: string | null;
+  isOrgDefault?: boolean;
 }
 
 interface TemplateConnectionRow {
@@ -102,7 +110,19 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
     machineTypeId,
     folderIds,
     connections: parseTemplateConnections(value.connections),
+    repos: parseTemplateRepos(value.repos),
   };
+  // Cloning needs a GitHub credential inside the box, so naming any repo
+  // force-attaches the github connection. Server-side and idempotent: the
+  // workspace ceiling then stipulates github, and the workspace connections
+  // panel surfaces it to members — creation itself never blocks on it.
+  if (result.repos.length > 0) {
+    const byProvider = new Map(result.connections.map(
+      (connection) => [connection.provider, connection],
+    ));
+    byProvider.set("github", { provider: "github" });
+    result.connections = [...byProvider.values()];
+  }
   if (value.environment !== undefined) {
     result.environment = parseWorkspaceEnvironment(value.environment);
   }
@@ -111,6 +131,12 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
       throw new HttpError(400, "agentRuleId must be a string or null");
     }
     result.agentRuleId = value.agentRuleId;
+  }
+  if (value.isOrgDefault !== undefined) {
+    if (value.isOrgDefault !== true && value.isOrgDefault !== false) {
+      throw new HttpError(400, "isOrgDefault must be a boolean");
+    }
+    result.isOrgDefault = value.isOrgDefault;
   }
   return result;
 }
@@ -158,6 +184,54 @@ export async function templateConnections(
   return (await templateConnectionRows(db, [templateId])).map((row) => ({
     provider: row.provider,
   }));
+}
+
+async function orgDefaultTemplateId(db: Db, orgId: string): Promise<string | null> {
+  const org = await first<{ default_template_id: string | null }>(db, {
+    q: "SELECT default_template_id FROM orgs WHERE id = ?1 LIMIT 1",
+    v: [orgId],
+  });
+  return org?.default_template_id ?? null;
+}
+
+/** Applies the request's isOrgDefault to the org's single default-template
+ * pointer. Absent means no change — the pointer is org state, and a template
+ * edit that never mentions it must not move it. Setting a new default
+ * implicitly clears the old one (single pointer, no sweep); false clears it
+ * iff it currently points here. The admin gate for setting runs before any
+ * write, in requireOrgDefaultPermission. */
+async function applyOrgDefault(
+  db: Db,
+  orgId: string,
+  templateId: string,
+  isOrgDefault: boolean | undefined,
+): Promise<void> {
+  if (isOrgDefault === undefined) return;
+  if (isOrgDefault) {
+    await rows(db, {
+      q: "UPDATE orgs SET default_template_id = ?2 WHERE id = ?1",
+      v: [orgId, templateId],
+    });
+    return;
+  }
+  await rows(db, {
+    q: `UPDATE orgs SET default_template_id = NULL
+        WHERE id = ?1 AND default_template_id = ?2`,
+    v: [orgId, templateId],
+  });
+}
+
+/** Ticking the default is org state, so it is admin-gated (house pattern
+ * from recipes' usage-capture switch). Clearing rides the same permission as
+ * the edit itself — deleting the template clears the pointer too. Checked
+ * before the first write so a refused request changes nothing. */
+function requireOrgDefaultPermission(
+  input: CreateTemplateInput,
+  principal: Principal,
+): void {
+  if (input.isOrgDefault === true && principal.role !== "admin") {
+    throw new HttpError(403, "organization admin required");
+  }
 }
 
 export async function workspaceTemplateForCreate(
@@ -245,6 +319,8 @@ function templateView(
   principal: Principal,
   folders: TemplateFolderRow[],
   connections: TemplateConnectionRow[],
+  repos: TemplateRepoRow[],
+  defaultTemplateId: string | null,
 ): WorkspaceTemplateView {
   return {
     id: row.id,
@@ -254,6 +330,7 @@ function templateView(
     createdBy: { name: row.creator_name, avatarUrl: row.creator_avatar_url },
     environment: workspaceEnvironmentFromJson(row.environment),
     agentRuleId: row.agent_rule_id,
+    isOrgDefault: defaultTemplateId === row.id,
     folders: folders.map((folder) => ({
       id: folder.folder_id,
       name: folder.name,
@@ -262,6 +339,7 @@ function templateView(
     connections: connections.map((connection) => ({
       provider: connection.provider,
     })),
+    repos: repos.map(({ repo }) => repo),
   };
 }
 
@@ -305,12 +383,22 @@ export function addWorkspaceTemplateRoutes(
       existing.push(connection);
       connectionsByTemplate.set(connection.template_id, existing);
     }
+    const repos = await templateRepoRows(runtime.db, templates.map(({ id }) => id));
+    const reposByTemplate = new Map<string, TemplateRepoRow[]>();
+    for (const repo of repos) {
+      const existing = reposByTemplate.get(repo.template_id) ?? [];
+      existing.push(repo);
+      reposByTemplate.set(repo.template_id, existing);
+    }
+    const defaultTemplateId = await orgDefaultTemplateId(runtime.db, principal.orgId);
     return context.json({
       templates: templates.map((row) => templateView(
         row,
         principal,
         byTemplate.get(row.id) ?? [],
         connectionsByTemplate.get(row.id) ?? [],
+        reposByTemplate.get(row.id) ?? [],
+        defaultTemplateId,
       )),
     });
   });
@@ -323,6 +411,7 @@ export function addWorkspaceTemplateRoutes(
       throw new HttpError(403, "active membership required");
     }
     const input = parseCreateTemplate(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
+    requireOrgDefaultPermission(input, principal);
     // Fails loudly on machine types no provider claims, same as create.
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     for (const folderId of input.folderIds) {
@@ -355,6 +444,8 @@ export function addWorkspaceTemplateRoutes(
       });
     }
     await replaceTemplateConnections(runtime.db, id, input.connections, now);
+    await replaceTemplateRepos(runtime.db, id, input.repos);
+    await applyOrgDefault(runtime.db, principal.orgId, id, input.isOrgDefault);
     const creator = await first<{ name: string; avatar_url: string | null }>(runtime.db, {
       q: "SELECT name, avatar_url FROM users WHERE id = ?1 LIMIT 1",
       v: [principal.id],
@@ -376,6 +467,8 @@ export function addWorkspaceTemplateRoutes(
       principal,
       await templateFolderRows(runtime.db, [id], principal.membershipId),
       await templateConnectionRows(runtime.db, [id]),
+      await templateRepoRows(runtime.db, [id]),
+      await orgDefaultTemplateId(runtime.db, principal.orgId),
     );
     return context.json({ template }, 201);
   });
@@ -409,6 +502,7 @@ export function addWorkspaceTemplateRoutes(
     // edit anyone asked for. A request that does send it — including an explicit
     // null to clear it — gets what it asked for rather than a silent drop.
     const input = parseCreateTemplate(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
+    requireOrgDefaultPermission(input, principal);
     runtime.providers.vmRegistry.forMachineType(input.machineTypeId);
     const existingFolderIds = new Set(
       (await templateFolderRows(runtime.db, [template.id], principal.membershipId))
@@ -454,6 +548,8 @@ export function addWorkspaceTemplateRoutes(
       });
     }
     await replaceTemplateConnections(runtime.db, template.id, input.connections, now);
+    await replaceTemplateRepos(runtime.db, template.id, input.repos);
+    await applyOrgDefault(runtime.db, principal.orgId, template.id, input.isOrgDefault);
     const updated = await first<TemplateListRow>(runtime.db, {
       q: `SELECT t.*, creator_user.name AS creator_name,
                  creator_user.avatar_url AS creator_avatar_url
@@ -470,6 +566,8 @@ export function addWorkspaceTemplateRoutes(
         principal,
         await templateFolderRows(runtime.db, [template.id], principal.membershipId),
         await templateConnectionRows(runtime.db, [template.id]),
+        await templateRepoRows(runtime.db, [template.id]),
+        await orgDefaultTemplateId(runtime.db, principal.orgId),
       ),
     });
   });
@@ -505,6 +603,18 @@ export function addWorkspaceTemplateRoutes(
         `delete the ${String(count)} recipe${count === 1 ? "" : "s"} using this template first: ${names}`,
       );
     }
+    // Auto-clear the org-default pointer, not 409: deleting the template
+    // plainly means "no longer the default". The 409 above stays reserved for
+    // dependent entities that would break, like recipes.
+    await rows(runtime.db, {
+      q: `UPDATE orgs SET default_template_id = NULL
+          WHERE id = ?1 AND default_template_id = ?2`,
+      v: [principal.orgId, template.id],
+    });
+    await rows(runtime.db, {
+      q: "DELETE FROM workspace_template_repos WHERE template_id = ?1",
+      v: [template.id],
+    });
     await rows(runtime.db, {
       q: "DELETE FROM workspace_template_folders WHERE template_id = ?1",
       v: [template.id],

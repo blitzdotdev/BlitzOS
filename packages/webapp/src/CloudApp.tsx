@@ -367,8 +367,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
   const listVolumes = useCallback(() => api.listVolumes(), [api]);
+  // Every template load also refreshes which template is the org default, so
+  // the create dialog can preselect it (its own load runs through here).
+  const [orgDefaultTemplateId, setOrgDefaultTemplateId] = useState<string | null>(null);
   const listTemplates = useCallback(
-    () => client.listWorkspaceTemplates().then(({ templates }) => templates),
+    () => client.listWorkspaceTemplates().then(({ templates }) => {
+      setOrgDefaultTemplateId(
+        templates.find(({ isOrgDefault }) => isOrgDefault)?.id ?? null,
+      );
+      return templates;
+    }),
     [client],
   );
   const refreshWorkspaceRecords = useCallback(async () => {
@@ -1469,6 +1477,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
             listTemplates={listTemplates}
+            initialTemplateId={orgDefaultTemplateId}
             onNewTemplate={() => navigateTo(templateNewPath())}
             onCancel={() => {
               if (!createWorkspaceBusy) setShowCreateWorkspace(false);
@@ -1575,6 +1584,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             orgName={store.viewer.org.name}
             admin={store.viewer.membership.role === 'admin'}
             editTemplateId={route.page === 'template-edit' ? route.templateId : undefined}
+            isAdmin={store.viewer.membership.role === 'admin'}
             onCreated={leaveToTemplates}
             onCancel={leaveToTemplates}
           />
@@ -2159,6 +2169,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
           listTemplates={listTemplates}
+          initialTemplateId={orgDefaultTemplateId}
           onNewTemplate={() => navigateTo(templateNewPath())}
           onCancel={() => {
             if (!createWorkspaceBusy) {

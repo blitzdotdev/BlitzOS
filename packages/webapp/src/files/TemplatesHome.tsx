@@ -79,6 +79,7 @@ export function TemplatesHome({
                 <div className="tpl-card-head">
                   <TemplateDuoIcon />
                   <span className="tpl-card-name">{template.name}</span>
+                  {template.isOrgDefault && <em className="tpl-default-badge">Org default</em>}
                   <span className="drive-new-wrap">
                     <button
                       className="tpl-kebab"

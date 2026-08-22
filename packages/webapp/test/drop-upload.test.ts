@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectDropped, DropLimitError, MAX_DROP_BYTES, MAX_DROP_FILES, payloadFromPickedFiles, type DropItemSource } from '../src/files/drop-upload.js';
+import { collectDropped, DropLimitError, MAX_DROP_BYTES, MAX_DROP_FILES, MAX_FILE_BYTES, payloadFromPickedFiles, type DropItemSource } from '../src/files/drop-upload.js';
 
 interface FakeEntry {
   isFile: boolean;
@@ -95,6 +95,29 @@ describe('drop payload traversal', () => {
     const children = Array.from({ length: MAX_DROP_FILES + 1 }, (_, i) => fileEntry(`f${i}.txt`));
     await expect(collectDropped([item(dirEntry('huge', children, 100))], []))
       .rejects.toBeInstanceOf(DropLimitError);
+  });
+
+  it('refuses any single file over 256 MiB and names it', async () => {
+    // Fake the size so the test never allocates the payload.
+    const oversized = new File(['x'], 'dataset.bin');
+    Object.defineProperty(oversized, 'size', { value: MAX_FILE_BYTES + 1 });
+    await expect(collectDropped([], [oversized])).rejects.toThrow(
+      'dataset.bin is over 256 MiB — sync it through a workspace instead',
+    );
+
+    // At the ceiling exactly it passes; the same cap guards folder files too.
+    const allowed = new File(['x'], 'ok.bin');
+    Object.defineProperty(allowed, 'size', { value: MAX_FILE_BYTES });
+    const payload = await collectDropped([], [allowed]);
+    expect(payload.files.map(({ relativePath }) => relativePath)).toEqual(['ok.bin']);
+
+    const nested = dirEntry('data', [{
+      isFile: true,
+      isDirectory: false,
+      name: 'huge.bin',
+      file: (resolve) => resolve(oversized),
+    }]);
+    await expect(collectDropped([item(nested)], [])).rejects.toBeInstanceOf(DropLimitError);
   });
 });
 

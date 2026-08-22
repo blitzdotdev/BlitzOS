@@ -258,6 +258,204 @@ describe("workspace templates", () => {
     })).status).toBe(404);
   });
 
+  it("keeps the org-default pointer a single admin-gated swap that deletes clear", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const member = await sameOrgSession("colleague");
+    const orgDefault = async (): Promise<string | null> =>
+      (await env.DB.prepare("SELECT default_template_id FROM orgs WHERE id = 'personal'")
+        .first<{ default_template_id: string | null }>())?.default_template_id ?? null;
+
+    // Ticking the default is org state: members are refused before any write.
+    expect((await appRequest(app, "/workspace-templates", {
+      ...json({ name: "member try", machineTypeId: "small", folderIds: [], isOrgDefault: true }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_templates")
+      .first<number>("count")).toBe(0);
+
+    const created = await appRequest(app, "/workspace-templates", {
+      ...json({ name: "starter", machineTypeId: "small", folderIds: [], isOrgDefault: true }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const first = (await created.json<{ template: WorkspaceTemplateView }>()).template;
+    expect(first.isOrgDefault).toBe(true);
+    expect(await orgDefault()).toBe(first.id);
+
+    // A second default swaps the single pointer; no sweep, no second default.
+    const second = (await (await appRequest(app, "/workspace-templates", {
+      ...json({ name: "newer", machineTypeId: "small", folderIds: [], isOrgDefault: true }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).json<{ template: WorkspaceTemplateView }>()).template;
+    expect(second.isOrgDefault).toBe(true);
+    const listed = (await (await appRequest(app, "/workspace-templates", {
+      headers: { Cookie: member.cookie },
+    })).json<{ templates: WorkspaceTemplateView[] }>()).templates;
+    expect(new Map(listed.map(({ id, isOrgDefault }) => [id, isOrgDefault]))).toEqual(new Map([
+      [first.id, false],
+      [second.id, true],
+    ]));
+
+    // Omitting the field on PUT leaves the org pointer alone — it is org
+    // state, and a template edit that never mentions it must not move it.
+    expect((await appRequest(app, `/workspace-templates/${second.id}`, {
+      ...json({ name: "newer v2", machineTypeId: "small", folderIds: [] }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
+    expect(await orgDefault()).toBe(second.id);
+
+    // A member PUT that tries to tick is refused even on their own template.
+    const memberOwned = (await (await appRequest(app, "/workspace-templates", {
+      ...json({ name: "member draft", machineTypeId: "small", folderIds: [] }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    })).json<{ template: WorkspaceTemplateView }>()).template;
+    expect((await appRequest(app, `/workspace-templates/${memberOwned.id}`, {
+      ...json({ name: "member draft", machineTypeId: "small", folderIds: [], isOrgDefault: true }),
+      method: "PUT",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+    expect(await orgDefault()).toBe(second.id);
+
+    // False clears only when the pointer is at this template.
+    expect((await appRequest(app, `/workspace-templates/${first.id}`, {
+      ...json({ name: "starter", machineTypeId: "small", folderIds: [], isOrgDefault: false }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
+    expect(await orgDefault()).toBe(second.id);
+    expect((await appRequest(app, `/workspace-templates/${second.id}`, {
+      ...json({ name: "newer v2", machineTypeId: "small", folderIds: [], isOrgDefault: false }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
+    expect(await orgDefault()).toBeNull();
+
+    // Deleting the default auto-clears the pointer rather than dangling it.
+    expect((await appRequest(app, `/workspace-templates/${second.id}`, {
+      ...json({ name: "newer v2", machineTypeId: "small", folderIds: [], isOrgDefault: true }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
+    expect(await orgDefault()).toBe(second.id);
+    expect((await appRequest(app, `/workspace-templates/${second.id}`, {
+      method: "DELETE",
+      headers: { Cookie: owner },
+    })).status).toBe(204);
+    expect(await orgDefault()).toBeNull();
+  });
+
+  it("validates template repos and force-attaches the github connection", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const post = (body: object, cookie = owner) => appRequest(app, "/workspace-templates", {
+      ...json(body),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+
+    for (const bad of ["no-slash", "owner/name/extra", "owner/", "/name", "owner/na me"]) {
+      const refused = await post({
+        name: "bad repos", machineTypeId: "small", folderIds: [], repos: [bad],
+      });
+      expect(refused.status, bad).toBe(400);
+    }
+    expect((await post({
+      name: "too many",
+      machineTypeId: "small",
+      folderIds: [],
+      repos: Array.from({ length: 17 }, (_, i) => `owner/repo-${String(i)}`),
+    })).status).toBe(400);
+    const collision = await post({
+      name: "collision", machineTypeId: "small", folderIds: [], repos: ["acme/app", "blitz/app"],
+    });
+    expect(collision.status).toBe(400);
+    await expect(collision.json()).resolves.toMatchObject({
+      error: expect.stringContaining("clone into the same directory"),
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_templates")
+      .first<number>("count")).toBe(0);
+
+    // Duplicates collapse; the view answers sorted; github rides along.
+    const created = await post({
+      name: "repo starter",
+      machineTypeId: "small",
+      folderIds: [],
+      repos: ["blitzdotdev/blitz-core", "acme/tools", "blitzdotdev/blitz-core"],
+      connections: [{ provider: "linear" }],
+    });
+    expect(created.status).toBe(201);
+    const template = (await created.json<{ template: WorkspaceTemplateView }>()).template;
+    expect(template.repos).toEqual(["acme/tools", "blitzdotdev/blitz-core"]);
+    expect(template.connections).toContainEqual({ provider: "github" });
+    expect(template.connections).toContainEqual({ provider: "linear" });
+
+    // Creation never blocks on connections: no github grant exists, yet the
+    // create succeeds and the ceiling stipulates github for the workspace
+    // connections panel to surface.
+    const instantiated = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(instantiated.status).toBe(201);
+    const { workspace } = await instantiated.json<{ workspace: WorkspaceView }>();
+    expect(workspace.connections).toContain("github");
+
+    // PUT is a full replace: dropping the repos drops the rows.
+    expect((await appRequest(app, `/workspace-templates/${template.id}`, {
+      ...json({ name: "repo starter", machineTypeId: "small", folderIds: [], repos: [] }),
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).status).toBe(200);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_template_repos")
+      .first<number>("count")).toBe(0);
+  });
+
+  it("boots a create from a repos template with the detached clone loop", async () => {
+    const { app, providers } = harness();
+    const owner = await operatorSession(app);
+    // A minimal github grant so the create-time ceiling mints a live lease;
+    // creation would succeed without it — the clone loop is what this pins.
+    await env.DB.prepare(
+      `INSERT INTO user_oauth_grants
+       (id, user_id, provider, manifest_id, kind, scopes, created_at, updated_at)
+       VALUES ('grant-github', 'operator', 'github', 'github', 'pat', '[]', 1, 1)`,
+    ).run();
+
+    const template = (await (await appRequest(app, "/workspace-templates", {
+      ...json({
+        name: "repo starter",
+        machineTypeId: "small",
+        folderIds: [],
+        repos: ["blitzdotdev/blitz-core", "acme/tools"],
+      }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).json<{ template: WorkspaceTemplateView }>()).template;
+
+    const created = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    const userData = providers.userData.get(workspace.id) ?? "";
+    expect(userData).toContain(
+      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
+    );
+    expect(userData).toContain(
+      "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || cloned=false",
+    );
+
+    // An ordinary create on the same instance carries none of it.
+    const plain = await appRequest(app, "/workspaces", {
+      ...json({ machineTypeId: "small" }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(plain.status).toBe(201);
+    const plainWorkspace = (await plain.json<{ workspace: WorkspaceView }>()).workspace;
+    expect(providers.userData.get(plainWorkspace.id) ?? "").not.toContain("git clone");
+  });
+
   it("resolves org-wide sharing for workspaces and folders and clears it on demand", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);

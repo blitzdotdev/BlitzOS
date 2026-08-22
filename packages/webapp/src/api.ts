@@ -10,6 +10,7 @@ import type {
   ListCredentialRequestsResponse,
   ListCatalogResponse,
   ListConnectionsResponse,
+  ListGithubRepositoriesResponse,
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   PutUserGrantRequest,
@@ -186,6 +187,9 @@ export interface ControlPlaneClient extends FileLibraryClient {
   deleteConnection(name: string): Promise<void>;
   listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
   listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
+  /** Repos the org's GitHub App installation reaches, for the template repo
+   * picker. 409 until an admin configures the github connection. */
+  listGithubRepositories(signal?: AbortSignal): Promise<ListGithubRepositoriesResponse>;
   putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
   deleteConnectionGrant(provider: string): Promise<void>;
   listProviderHealth(signal?: AbortSignal): Promise<ListProviderHealthResponse>;
@@ -689,6 +693,8 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<ListCatalogResponse>("/connections/catalog", { signal }),
     listConnectionGrants: (signal) =>
       request<ListUserGrantsResponse>("/connections/grants", { signal }),
+    listGithubRepositories: (signal) =>
+      request<ListGithubRepositoriesResponse>("/connections/github/repositories", { signal }),
     putConnectionGrant: (provider, input) =>
       request<void>(`/connections/grants/${encodeURIComponent(provider)}`, {
         method: "PUT",

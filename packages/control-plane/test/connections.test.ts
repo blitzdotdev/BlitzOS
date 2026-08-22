@@ -2,6 +2,7 @@ import type {
   ConnectionView,
   CredentialLeaseView,
   ListCatalogResponse,
+  ListGithubRepositoriesResponse,
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   MintResult,
@@ -1648,6 +1649,113 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         .prepare("SELECT COUNT(*) AS count FROM credential_leases")
         .first<number>("count"),
     ).toBe(0);
+  });
+
+  it("answers 409 connect github for the repo listing until an app root is configured", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+
+    const response = await appRequest(app, "/connections/github/repositories", {
+      headers: { Cookie: cookie },
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "connect github",
+      retryAction: null,
+    });
+  });
+
+  it("pages the installation repo listing with small pages and aggregates names only", async () => {
+    const { privatePem } = await githubKeyPair();
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
+    const member = await sameOrgSession("browser");
+
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith("/access_tokens")) {
+        expect(init?.method).toBe("POST");
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toMatch(/^Bearer /u);
+        // The listing token carries the same restrictions the mint path
+        // sends, so the picker shows exactly what a clone token can reach.
+        expect(JSON.parse(String(init?.body))).toEqual({
+          repositories: ["requested-repo"],
+          permissions: { contents: "write" },
+        });
+        return Response.json({
+          token: GITHUB_TOKEN,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        });
+      }
+      const parsed = new URL(url);
+      expect(parsed.pathname).toBe("/installation/repositories");
+      expect(parsed.searchParams.get("per_page")).toBe("8");
+      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${GITHUB_TOKEN}`);
+      const page = Number(parsed.searchParams.get("page"));
+      const count = page === 1 ? 8 : 3;
+      return Response.json({
+        total_count: 11,
+        repositories: Array.from({ length: count }, (_, index) => ({
+          id: index,
+          full_name: `acme/repo-${String(page)}-${String(index)}`,
+          private: index % 2 === 0,
+          description: "unrelated fields must not leak through",
+        })),
+      });
+    });
+
+    // Reading the list is an active-member act, not an admin one.
+    const response = await appRequest(app, "/connections/github/repositories", {
+      headers: { Cookie: member.cookie },
+    });
+
+    expect(response.status).toBe(200);
+    const { repositories } = await response.json<ListGithubRepositoriesResponse>();
+    expect(repositories).toHaveLength(11);
+    expect(repositories[0]).toEqual({ fullName: "acme/repo-1-0", private: true });
+    expect(repositories.at(-1)).toEqual({ fullName: "acme/repo-2-2", private: true });
+    // One token mint, then exactly two pages: the short second page ends it.
+    expect(requests).toHaveLength(3);
+    expect(JSON.stringify(repositories)).not.toContain("unrelated fields");
+  });
+
+  it("caps the repo listing at 200 entries instead of paging forever", async () => {
+    const { privatePem } = await githubKeyPair();
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
+
+    let pageRequests = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/access_tokens")) {
+        return Response.json({
+          token: GITHUB_TOKEN,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+        });
+      }
+      pageRequests += 1;
+      return Response.json({
+        total_count: 10_000,
+        repositories: Array.from({ length: 8 }, (_, index) => ({
+          full_name: `acme/repo-${String(pageRequests)}-${String(index)}`,
+          private: false,
+        })),
+      });
+    });
+
+    const response = await appRequest(app, "/connections/github/repositories", {
+      headers: { Cookie: cookie },
+    });
+
+    expect(response.status).toBe(200);
+    const { repositories } = await response.json<ListGithubRepositoriesResponse>();
+    expect(repositories).toHaveLength(200);
+    expect(pageRequests).toBe(25);
   });
 
   it("stores a static connection and fills inject placement templates at mint", async () => {

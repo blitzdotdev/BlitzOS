@@ -190,6 +190,18 @@ export interface TemplateConnectionView {
   provider: string;
 }
 
+export interface GithubRepositoryView {
+  fullName: string;
+  private: boolean;
+}
+
+/** GET /connections/github/repositories: what the org's GitHub App
+ * installation can reach, for the template repo picker. Paged out of GitHub
+ * under the bounded-response cap and truncated at 200 entries. */
+export interface ListGithubRepositoriesResponse {
+  repositories: GithubRepositoryView[];
+}
+
 export interface WorkspaceTemplateView {
   id: string;
   name: string;
@@ -198,11 +210,17 @@ export interface WorkspaceTemplateView {
   createdBy: { name: string; avatarUrl: string | null };
   environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
+  /** True on the org's default template — the one the create dialog
+   * preselects for every member. At most one per org. */
+  isOrgDefault: boolean;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: FolderRole | null }[];
   /** Provider names only. Each name draws a status row in the workspace
    * connections panel; creation never blocks on connections. */
   connections: TemplateConnectionView[];
+  /** GitHub repos ("owner/name") cloned into /workspace/<name> when a
+   * workspace is created from this template. */
+  repos: string[];
 }
 
 export interface ListWorkspaceTemplatesResponse {
@@ -325,6 +343,13 @@ export interface CreateWorkspaceTemplateRequest {
   /** An org agent rule to hand every workspace made from this template; null
    * (or absent) leaves it on the built-in doc. */
   agentRuleId?: string | null;
+  /** Repos ("owner/name") to clone at create. Naming any force-attaches the
+   * github connection. */
+  repos?: string[];
+  /** True marks this template as the org default (admin only). False clears
+   * the mark iff it currently points at this template. Absent leaves the org
+   * pointer alone — it is org state, not template state. */
+  isOrgDefault?: boolean;
 }
 
 export interface CreateWorkspaceTemplateResponse {

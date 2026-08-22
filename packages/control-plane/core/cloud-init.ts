@@ -66,12 +66,14 @@ mv /var/lib/blitz/tunnel-token.tmp /var/lib/blitz/tunnel-token
 `;
 }
 
-/** Boot shaping beyond the pinned base script: a recipe launch's invocation
- * and the org's usage-capture switch. Absent (or all-absent fields) emits the
- * exact pre-recipe bytes. */
+/** Boot shaping beyond the pinned base script: a recipe launch's invocation,
+ * the org's usage-capture switch, and the template's repo list. Absent (or
+ * all-absent fields) emits the exact pre-recipe bytes. */
 export interface BootShaping {
   recipe?: RecipeBootstrap;
   usageCapture?: boolean;
+  /** Template repos ("owner/name") for the bootstrap's detached clone loop. */
+  repos?: string[];
 }
 
 export function buildUserData(
@@ -101,6 +103,7 @@ export function buildUserData(
   if (shaping?.usageCapture !== undefined) {
     bootstrapOptions.usageCapture = shaping.usageCapture;
   }
+  if (shaping?.repos !== undefined) bootstrapOptions.repos = shaping.repos;
   parts.push(
     mimePart(boundary, "text/x-shellscript", buildBootstrapScript(bootstrapOptions)),
   );

@@ -87,6 +87,9 @@ function stub(extra?: (url: URL, init?: RequestInit) => Response | null) {
     if (url.pathname === '/folders/folder-mine' && init?.method === 'PATCH') {
       return new Response(null, { status: 204 });
     }
+    if (url.pathname === '/connections/github/repositories') {
+      return Response.json({ error: 'connect github', retryAction: null }, { status: 409 });
+    }
     if (url.pathname === '/workspace-templates' && init?.method === 'POST') {
       return Response.json({ template: {
         id: 'template-1',
@@ -114,7 +117,8 @@ function row(view: { container: HTMLElement }, label: string): HTMLElement {
 
 function attachButton(view: { container: HTMLElement }): HTMLButtonElement {
   const found = [...view.container.querySelectorAll('button')]
-    .find((candidate) => candidate.closest('.tplf-foot') !== null);
+    .find((candidate) => candidate.closest('.tplf-foot') !== null
+      && candidate.textContent !== 'Upload files');
   expect(found).toBeDefined();
   return found as HTMLButtonElement;
 }
@@ -163,7 +167,7 @@ describe('create template screen', () => {
     await act(async () => {
       attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('2 folders attached');
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('2 attachments');
 
     const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
@@ -192,6 +196,7 @@ describe('create template screen', () => {
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-ada'],
       connections: [],
+      repos: [],
     });
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();
@@ -206,10 +211,13 @@ describe('create template screen', () => {
           machineTypeId: 'cx23@fsn1',
           createdAt: 2,
           createdBy: { name: 'Min Song', avatarUrl: null },
+          isOrgDefault: false,
           folders: [
             { id: 'folder-mine', name: 'datasets', role: 'owner' },
             { id: 'folder-gone', name: 'lost-notes', role: null },
           ],
+          connections: [],
+          repos: [],
         }] });
       }
       if (url.pathname === '/workspace-templates/template-1' && init?.method === 'PUT') {
@@ -266,6 +274,7 @@ describe('create template screen', () => {
       machineTypeId: 'cx23@fsn1',
       folderIds: ['folder-mine', 'folder-gone'],
       connections: [],
+      repos: [],
     });
     expect(onCreated).toHaveBeenCalledOnce();
     await view.unmount();
@@ -282,8 +291,10 @@ describe('create template screen', () => {
           createdAt: 2,
           createdBy: { name: 'Min Song', avatarUrl: null },
           environment: stored,
+          isOrgDefault: false,
           connections: [],
           folders: [{ id: 'folder-mine', name: 'datasets', role: 'owner' }],
+          repos: [],
         }] });
       }
       if (url.pathname === '/workspace-templates/template-1' && init?.method === 'PUT') {
@@ -376,6 +387,7 @@ describe('create template screen', () => {
       machineTypeId: 'cx23@fsn1',
       folderIds: [],
       connections: [],
+      repos: [],
       environment: {
         env: { PROJECT_MODE: 'analysis' },
         startupScript: './setup.sh\n',
@@ -430,6 +442,7 @@ describe('create template screen', () => {
       machineTypeId: 'cx23@fsn1',
       folderIds: [],
       connections: [],
+      repos: [],
       agentRuleId: 'rule-1',
     });
     await view.unmount();
@@ -603,6 +616,345 @@ describe('create template screen', () => {
       back.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('All folders');
+    await view.unmount();
+  });
+
+  it('shows the org-default checkbox only to admins and posts the tick', async () => {
+    // Members never see the control, and their POST carries no isOrgDefault
+    // key at all — the exact-body pins in the tests above already prove the
+    // absence for the default (non-admin) render.
+    const memberView = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        onCreated={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    expect(memberView.container.querySelector(
+      'input[aria-label="Default template for acme"]',
+    )).toBeNull();
+    await memberView.unmount();
+
+    const fetcher = stub();
+    const onCreated = vi.fn();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        isAdmin
+        onCreated={onCreated}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    const checkbox = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Default template for acme"]',
+    )!;
+    expect(checkbox).not.toBeNull();
+    expect(checkbox.checked).toBe(false);
+    await act(async () => { checkbox.click(); });
+
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(name, 'starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    const post = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
+    ));
+    expect(JSON.parse(String(post?.[1]?.body ?? '{}'))).toEqual({
+      name: 'starter',
+      machineTypeId: 'cx23@fsn1',
+      folderIds: [],
+      connections: [],
+      repos: [],
+      isOrgDefault: true,
+    });
+    expect(onCreated).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('loads the org-default tick from the template on edit', async () => {
+    stub((url, init) => {
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [{
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          isOrgDefault: true,
+          folders: [],
+          connections: [],
+          repos: [],
+        }] });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        editTemplateId="template-1"
+        isAdmin
+        onCreated={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Default template for acme"]',
+    )?.checked).toBe(true);
+    await view.unmount();
+  });
+
+  it('hints at the github connection until it is configured, then offers repos', async () => {
+    // The stub's default 409 is the unconfigured state; screenWith renders a
+    // member, so the hint routes them to their admin, not to a form.
+    const unconfigured = await screenWith();
+    expect(unconfigured.view.container.textContent)
+      .toContain('Ask an organization admin to configure the GitHub App');
+    expect(unconfigured.view.container.querySelector(
+      'input[aria-label="Filter repositories"]',
+    )).toBeNull();
+    await unconfigured.view.unmount();
+
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ repositories: [
+          { fullName: 'acme/app', private: false },
+          { fullName: 'acme/tools', private: true },
+          { fullName: 'other/sdk', private: false },
+        ] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    expect(view.container.textContent)
+      .not.toContain('Ask an organization admin to configure the GitHub App');
+
+    // The filter narrows without losing the selection UI.
+    const filter = view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Filter repositories"]',
+    )!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(filter, 'acme');
+      filter.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const labels = [...view.container.querySelectorAll('.tplf-repo')];
+    expect(labels.map((label) => label.textContent)).toEqual(['acme/app', 'acme/toolsprivate']);
+
+    const appToggle = labels[0]?.querySelector<HTMLInputElement>('input')!;
+    await act(async () => { appToggle.click(); });
+    expect(view.container.textContent).toContain('1 repository selected');
+
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    await act(async () => {
+      setInputValue.call(name, 'repo starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    const post = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
+    ));
+    expect(JSON.parse(String(post?.[1]?.body ?? '{}')).repos).toEqual(['acme/app']);
+    await view.unmount();
+  });
+
+  it('warns at the 16-repo cap and disables further picks', async () => {
+    const selected = Array.from({ length: 16 }, (_, i) => `acme/repo-${i}`);
+    stub((url, init) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ repositories: [
+          ...selected.map((fullName) => ({ fullName, private: false })),
+          { fullName: 'acme/one-more', private: false },
+        ] });
+      }
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [{
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          isOrgDefault: false,
+          folders: [],
+          connections: [{ provider: 'github' }],
+          repos: selected,
+        }] });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        editTemplateId="template-1"
+        onCreated={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain('Up to 16 repositories per template');
+    const oneMore = [...view.container.querySelectorAll('.tplf-repo')]
+      .find((label) => label.textContent?.includes('acme/one-more'))
+      ?.querySelector<HTMLInputElement>('input');
+    expect(oneMore?.disabled).toBe(true);
+    // Selected ones stay removable.
+    const first = [...view.container.querySelectorAll('.tplf-repo')]
+      .find((label) => label.textContent?.includes('acme/repo-0'))
+      ?.querySelector<HTMLInputElement>('input');
+    expect(first?.disabled).toBe(false);
+    await view.unmount();
+  });
+
+  it('wraps dropped loose files into an auto-created files folder', async () => {
+    const filesFolder = {
+      id: 'folder-files',
+      name: 'starter-files',
+      role: 'owner',
+      orgRole: null,
+      owner: { name: 'Min Song', avatarUrl: null },
+      attachedWorkspaceIds: [],
+      createdAt: 4,
+      updatedAt: 4,
+      grants: [],
+    };
+    const folderPosts: string[] = [];
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/folders' && init?.method === 'POST') {
+        folderPosts.push(String(JSON.parse(String(init.body)).name));
+        return Response.json({ folder: filesFolder }, { status: 201 });
+      }
+      if (url.pathname === '/folders' && init?.method === undefined && folderPosts.length > 0) {
+        return Response.json({ folders: [...folders, filesFolder] });
+      }
+      if (init?.method === 'PUT' && url.pathname.startsWith('/folders/folder-files/objects/')) {
+        return new Response(null, { status: 200 });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+
+    // The template name at drop time names the folder.
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(name, 'starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const pane = view.container.querySelector('.tplf-main')!;
+    const fileEntry = (fileName: string) => ({
+      isFile: true,
+      isDirectory: false,
+      name: fileName,
+      file: (accept: (file: File) => void) => accept(new File(['x'], fileName)),
+    });
+    const drop = (entries: unknown[]) => {
+      const event = new Event('drop', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: {
+          types: ['Files'],
+          items: entries.map((entry) => ({ webkitGetAsEntry: () => entry })),
+          files: [],
+        },
+      });
+      pane.dispatchEvent(event);
+    };
+    await act(async () => { drop([fileEntry('notes.txt')]); });
+    await settle();
+
+    // Loose files are uploads now, not a rejection. The folder name gets the
+    // same slug treatment every webapp-created Drive folder gets.
+    expect(view.container.textContent).not.toContain('Drop folders, not loose files');
+    expect(folderPosts).toEqual(['starter-files']);
+    expect(view.container.querySelector('.tplf-side')?.textContent).toContain('starter-files');
+    expect(view.container.querySelector('.tplf-side')?.textContent).toContain('1 file');
+
+    // A second drop reuses the folder instead of minting another.
+    await act(async () => { drop([fileEntry('more.txt')]); });
+    await settle();
+    expect(folderPosts).toEqual(['starter-files']);
+    expect(view.container.querySelector('.tplf-side')?.textContent).toContain('2 files');
+
+    const putKeys = fetcher.mock.calls
+      .filter(([, init]) => init?.method === 'PUT')
+      .map(([input]) => new URL(String(input)).pathname);
+    expect(putKeys).toEqual([
+      '/folders/folder-files/objects/notes.txt',
+      '/folders/folder-files/objects/more.txt',
+    ]);
+    await view.unmount();
+  });
+
+  it('uploads files picked through the Upload files button', async () => {
+    const filesFolder = {
+      id: 'folder-files',
+      name: 'new-template-files',
+      role: 'owner',
+      orgRole: null,
+      owner: { name: 'Min Song', avatarUrl: null },
+      attachedWorkspaceIds: [],
+      createdAt: 4,
+      updatedAt: 4,
+      grants: [],
+    };
+    const folderPosts: string[] = [];
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/folders' && init?.method === 'POST') {
+        folderPosts.push(String(JSON.parse(String(init.body)).name));
+        return Response.json({ folder: filesFolder }, { status: 201 });
+      }
+      if (url.pathname === '/folders' && init?.method === undefined && folderPosts.length > 0) {
+        return Response.json({ folders: [...folders, filesFolder] });
+      }
+      if (init?.method === 'PUT' && url.pathname.startsWith('/folders/folder-files/objects/')) {
+        return new Response(null, { status: 200 });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    // The section reads as attachments, not folders-only.
+    expect(view.container.textContent).toContain('Attachments');
+
+    const picker = view.container.querySelector<HTMLInputElement>('input[aria-label="Upload files"]')!;
+    expect(picker).not.toBeNull();
+    const pickedFile = new File(['x'], 'report.pdf');
+    // A plain file input carries an empty webkitRelativePath in browsers;
+    // jsdom leaves it undefined, so pin the browser shape.
+    Object.defineProperty(pickedFile, 'webkitRelativePath', { value: '' });
+    Object.defineProperty(picker, 'files', { value: [pickedFile] });
+    await act(async () => {
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await settle();
+
+    // No template name yet, so the fallback folder name applies.
+    expect(folderPosts).toEqual(['new-template-files']);
+    const putKeys = fetcher.mock.calls
+      .filter(([, init]) => init?.method === 'PUT')
+      .map(([input]) => new URL(String(input)).pathname);
+    expect(putKeys).toEqual(['/folders/folder-files/objects/report.pdf']);
     await view.unmount();
   });
 
@@ -933,7 +1285,10 @@ describe('template screen org-credential config', () => {
     );
     await settle();
     await tick(view, 'GitHub');
-    expect(view.container.textContent).not.toContain('Ask an organization admin');
+    // Scoped to the section: the repo picker below legitimately routes
+    // members to an admin for the org App credential.
+    expect(view.container.querySelector('.tplf-connections')?.textContent)
+      .not.toContain('Ask an organization admin');
     expect(view.container.textContent).toContain('Members connect GitHub themselves');
     await view.unmount();
   });
@@ -954,7 +1309,73 @@ describe('template screen org-credential config', () => {
     // YouTrack is per-member PAT: the template names it, the member pastes
     // inside the workspace. No org form, no ask-your-admin note.
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    expect(view.container.textContent).not.toContain('Ask an organization admin');
+    expect(view.container.querySelector('.tplf-connections')?.textContent)
+      .not.toContain('Ask an organization admin');
+    await view.unmount();
+  });
+
+  it('lights up the repo picker when the admin saves the credential inline', async () => {
+    // One closure flag stands in for the org credential's existence: the
+    // repositories listing 409s and the connections list is empty until the
+    // PUT lands, exactly the server's sequencing.
+    let stored = false;
+    connectionsStub((url, init) => {
+      if (url.pathname === '/connections/github' && init?.method === 'PUT') {
+        stored = true;
+        return new Response(null, { status: 204 });
+      }
+      if (url.pathname === '/connections' && init?.method === undefined && stored) {
+        return Response.json({ connections: [{
+          name: 'github',
+          provider: 'github',
+          kind: 'static',
+          custody: 'cp',
+          status: 'active',
+          createdBy: 'admin',
+          proxyBaseUrl: null,
+          orgCredential: true,
+        }] });
+      }
+      if (url.pathname === '/connections/github/repositories' && stored) {
+        return Response.json({ repositories: [{ fullName: 'acme/app', private: false }] });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        admin
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    expect(view.container.textContent).toContain('Configure the GitHub App first');
+    expect(view.container.querySelector('input[aria-label="Filter repositories"]')).toBeNull();
+
+    await tick(view, 'GitHub');
+    await act(async () => {
+      [...view.container.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Configure org credential (optional)')!.click();
+    });
+    const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(root, 'test-only-app-secret');
+      root.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      [...view.container.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Save')!.click();
+    });
+    await settle();
+
+    // No reload: the saved credential refreshed the listing in place.
+    expect(view.container.querySelector('input[aria-label="Filter repositories"]')).not.toBeNull();
+    expect(view.container.textContent).toContain('acme/app');
+    expect(view.container.textContent).not.toContain('Configure the GitHub App first');
     await view.unmount();
   });
 });
