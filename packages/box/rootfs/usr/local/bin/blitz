@@ -89,12 +89,14 @@ const RESERVED_PORTS = new Set([22, 7443, 7444, 7445, 7446, 17445]);
 // path the persisted document cannot carry.
 const MAX_PATH_LENGTH = 4096;
 
-// Mirrors the Go gateway's parseConnectionsFocus and the browser's
-// parseConnectionsFocus; all three are pinned to
-// packages/schema/fixtures/connections-focus/. Provider names are catalog ids
-// or member-named generic connections: lowercase slugs, 64 characters at most
-// (the cap templates and create requests already enforce).
-const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+// Mirrors `isProviderName` in packages/schema/src/provider-name.ts — the one
+// provider-name rule — which this guest script cannot import, so the fixture
+// corpus packages/schema/fixtures/connections-focus/ is what pins the two
+// together (along with the Go gateway's parseConnectionsFocus and the
+// browser's). Provider names are catalog ids or member-named generic
+// connections: lowercase slugs, 63 characters at most (the control plane's
+// grant validator cap, PROVIDER_NAME in core/connections/user-grants.ts).
+const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
 function openPreview() {
   if (args.length === 0) fail('expected open <port> [--path <path>] [--title <name>]', 2);
@@ -130,7 +132,7 @@ function openConnections() {
   if (args.length !== 1) fail('expected open <provider>', 2);
   const provider = args[0];
   if (!PROVIDER_PATTERN.test(provider)) {
-    fail('provider must be 1-64 characters of a-z, 0-9, ., _ or -, starting alphanumeric', 2);
+    fail('provider must be 1-63 characters of a-z, 0-9, ., _ or -, starting alphanumeric', 2);
   }
   atomicWrite(connectionsFocusPath, `${JSON.stringify({ version: 1, provider, requestedAt: Date.now() })}\n`);
   process.exit(0);

@@ -197,10 +197,11 @@ describe('provider admin form', () => {
         />,
       );
       fill(view.container);
+      // The component renders no <form> (its host may be one), so saving is
+      // the Save button, not a submit event.
+      expect(view.container.querySelector('form')).toBeNull();
       await act(async () => {
-        view.container.querySelector('form')?.dispatchEvent(
-          new Event('submit', { bubbles: true, cancelable: true }),
-        );
+        click(buttonByText(view.container, 'Save'));
       });
       await view.unmount();
       return bodies;
@@ -306,6 +307,50 @@ describe('provider admin form', () => {
 
   it('parses nothing for a provider without an admin form', () => {
     expect(adminConnectionInput(grantOnlyEntry('linear', 'Linear'), new FormData())).toBeNull();
+  });
+
+  it('saves on Enter in a field without any native submit', async () => {
+    const bodies: PutConnectionRequest[] = [];
+    const view = await render(
+      <ProviderAdminForm
+        entry={adminEntry('discord', 'Discord', false)}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={(input) => bodies.push(input)}
+      />,
+    );
+    const root = view.container.querySelector<HTMLInputElement>('input[name="root"]');
+    if (root === null) throw new Error('root input is missing');
+    typeInto(root, 'test-only-bot-token');
+    await act(async () => {
+      root.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.root).toBe('test-only-bot-token');
+    await view.unmount();
+  });
+
+  it('refuses to save while a required field is empty', async () => {
+    const bodies: PutConnectionRequest[] = [];
+    const view = await render(
+      <ProviderAdminForm
+        entry={adminEntry('discord', 'Discord', false)}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={(input) => bodies.push(input)}
+      />,
+    );
+    await act(async () => {
+      click(buttonByText(view.container, 'Save'));
+    });
+    expect(bodies).toEqual([]);
+    await view.unmount();
   });
 });
 

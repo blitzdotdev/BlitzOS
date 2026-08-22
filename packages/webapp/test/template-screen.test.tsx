@@ -703,13 +703,21 @@ describe('template screen org-credential config', () => {
     personalTokenLabel: 'Permanent token',
     personalTokenBaseUrlLabel: 'Instance URL',
   };
+  // Both cases are legitimate for github: member OAuth exists, and an admin
+  // may still store the optional org credential.
+  const githubEntry = {
+    ...discordEntry,
+    id: 'github',
+    title: 'GitHub',
+    oauthAvailable: true,
+  };
 
   function connectionsStub(extra?: (url: URL, init?: RequestInit) => Response | null) {
     return stub((url, init) => {
       const handled = extra?.(url, init);
       if (handled) return handled;
       if (url.pathname === '/connections/catalog') {
-        return Response.json({ providers: [discordEntry, youtrackEntry] });
+        return Response.json({ providers: [discordEntry, youtrackEntry, githubEntry] });
       }
       if (url.pathname === '/connections' && init?.method === undefined) {
         return Response.json({ connections: [] });
@@ -749,21 +757,33 @@ describe('template screen org-credential config', () => {
     );
     await settle();
 
+    // A real template name first: if the credential save leaked into the host
+    // form's submit, the template below would actually be created.
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(name, 'starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
     await tick(view, 'Discord');
     // The form is right there, no extra click: attaching an admin provider
     // without its credential is the state this surface exists to prevent.
     const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]');
     expect(root).not.toBeNull();
-    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    // The admin surface is not a nested <form>: the screen's create form is
+    // the only form element on the page.
+    expect(view.container.querySelectorAll('form')).toHaveLength(1);
     await act(async () => {
       setInputValue.call(root!, 'test-only-bot-token');
       root!.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    const save = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Save');
+    expect(save).toBeDefined();
     await act(async () => {
-      root!.closest('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
+      save!.click();
     });
     await settle();
     expect(puts).toEqual([[
@@ -776,6 +796,12 @@ describe('template screen org-credential config', () => {
         root: 'test-only-bot-token',
       },
     ]]);
+    // Saving the credential is its own errand: nothing submitted the template
+    // around it.
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(fetcher.mock.calls.filter(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
+    ))).toEqual([]);
     await view.unmount();
   });
 
@@ -825,14 +851,90 @@ describe('template screen org-credential config', () => {
     await tick(view, 'Discord');
     expect(view.container.textContent).toContain('org credential');
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    // Replacing is deliberate: the form opens only on the explicit ask.
+    // Replacing swaps the one org-wide credential under every template and
+    // workspace, so the form opens only after an explicit confirmation.
     const replace = [...view.container.querySelectorAll('button')]
       .find((button) => button.textContent === 'Replace credential');
     expect(replace).toBeDefined();
     await act(async () => {
       replace!.click();
     });
+    const confirmation = view.container.querySelector('.webapp-confirmation-dialog');
+    expect(confirmation?.textContent).toContain('Replace the Discord credential for the whole organization?');
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+
+    // Escape backs out without opening the form.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(view.container.querySelector('.webapp-confirmation-dialog')).toBeNull();
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+
+    await act(async () => {
+      [...view.container.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Replace credential')!.click();
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
+    });
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('never forces the admin form on a provider members can authorize themselves', async () => {
+    connectionsStub();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        admin
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    await tick(view, 'GitHub');
+    // Attaching bare is legitimate: members authorize GitHub themselves, so
+    // the org credential is an offer behind a button, not a gate.
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+    expect(view.container.textContent)
+      .toContain('each member authorizes GitHub themselves');
+    const configure = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Configure org credential (optional)');
+    expect(configure).toBeDefined();
+    await act(async () => {
+      configure!.click();
+    });
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).not.toBeNull();
+
+    // Cancelling closes the form but keeps the provider attached: bare is a
+    // valid state for a member-path provider.
+    const cancel = [...view.container.querySelectorAll('.tplf-connections button')]
+      .find((button) => button.textContent === 'Cancel');
+    await act(async () => {
+      (cancel as HTMLButtonElement).click();
+    });
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+    const github = [...view.container.querySelectorAll<HTMLElement>('.tplf-connection')]
+      .find((candidate) => candidate.textContent?.includes('GitHub'));
+    expect(github?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(true);
+    await view.unmount();
+  });
+
+  it('tells members a member-path provider is theirs to connect, not an admin errand', async () => {
+    connectionsStub();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    await tick(view, 'GitHub');
+    expect(view.container.textContent).not.toContain('Ask an organization admin');
+    expect(view.container.textContent).toContain('Members connect GitHub themselves');
     await view.unmount();
   });
 

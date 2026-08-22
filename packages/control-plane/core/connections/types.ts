@@ -78,6 +78,27 @@ export interface Lease {
   state: "active" | "revoked" | "expired";
 }
 
+/** One org connection row as `GET /connections` lists it. */
+export interface ConnectionView {
+  name: string;
+  provider: string;
+  kind: MintKind;
+  custody: Custody;
+  status: "active" | "revoked";
+  createdBy: string;
+  /** The vendor URL a proxy-custody row points at (the org's YouTrack
+   * instance, say); null for cp custody. Never any other part of the config. */
+  proxyBaseUrl: string | null;
+  /** True when the row seals an org credential (an admin-stored root). A row
+   * declared by a member connect carries no root and reads false, so
+   * "configured" surfaces never mistake a declaration for a credential. */
+  orgCredential: boolean;
+}
+
+export interface ListConnectionsResponse {
+  connections: ConnectionView[];
+}
+
 export interface CatalogScopeView {
   id: string;
   title: string;

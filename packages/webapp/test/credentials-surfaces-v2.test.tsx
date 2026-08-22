@@ -614,7 +614,7 @@ describe('template-stipulated rows and agent focus', () => {
     await view.unmount();
   });
 
-  it('marks a stipulated provider connected once its lease is live', async () => {
+  it('badges a stipulated provider "connected" once its lease is live', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
       listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),

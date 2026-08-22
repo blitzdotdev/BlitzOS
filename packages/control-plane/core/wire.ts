@@ -188,7 +188,6 @@ export interface WorkspaceView {
 
 export interface TemplateConnectionView {
   provider: string;
-  required: boolean;
 }
 
 export interface WorkspaceTemplateView {
@@ -201,8 +200,8 @@ export interface WorkspaceTemplateView {
   agentRuleId: string | null;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: FolderRole | null }[];
-  /** Provider names only. `required` reads as needs-you panel status in the
-   * workspace; creation never blocks on it. */
+  /** Provider names only. Each name draws a status row in the workspace
+   * connections panel; creation never blocks on connections. */
   connections: TemplateConnectionView[];
 }
 

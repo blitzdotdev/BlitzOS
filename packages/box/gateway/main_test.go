@@ -1558,8 +1558,8 @@ func TestServeConnectionsFocusFixtures(t *testing.T) {
 			}
 		})
 	}
-	if fixtureCount != 8 {
-		t.Fatalf("connections-focus fixture count = %d, want 8", fixtureCount)
+	if fixtureCount != 10 {
+		t.Fatalf("connections-focus fixture count = %d, want 10", fixtureCount)
 	}
 }
 
@@ -1573,12 +1573,14 @@ func TestParseConnectionsFocus(t *testing.T) {
 		}
 		return data
 	}
-	// The charset rule, at both edges the fixtures cannot enumerate.
-	if parseConnectionsFocus(marker(strings.Repeat("a", 64))) == nil {
-		t.Fatal("parseConnectionsFocus dropped a 64-character provider")
+	// The charset rule at both cap edges: 63 is the control plane's grant
+	// validator cap (schema isProviderName); the fixture corpus pins the same
+	// edges for every runtime.
+	if parseConnectionsFocus(marker(strings.Repeat("a", 63))) == nil {
+		t.Fatal("parseConnectionsFocus dropped a 63-character provider")
 	}
-	if parseConnectionsFocus(marker(strings.Repeat("a", 65))) != nil {
-		t.Fatal("parseConnectionsFocus kept a 65-character provider")
+	if parseConnectionsFocus(marker(strings.Repeat("a", 64))) != nil {
+		t.Fatal("parseConnectionsFocus kept a 64-character provider")
 	}
 	if parseConnectionsFocus(marker("-leading-dash")) != nil {
 		t.Fatal("parseConnectionsFocus kept a provider starting with punctuation")

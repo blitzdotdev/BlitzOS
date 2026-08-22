@@ -562,11 +562,14 @@ type connectionsFocus struct {
 	RequestedAt int64  `json:"requestedAt"`
 }
 
-// connectionsFocusProvider mirrors the `blitz connections open` producer's
-// charset: a catalog id or a member-named generic connection, 1-64 characters,
-// lowercase alphanumeric plus . _ -, starting alphanumeric. All three
-// runtimes are pinned to packages/schema/fixtures/connections-focus/.
-var connectionsFocusProvider = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+// connectionsFocusProvider mirrors `isProviderName` in
+// packages/schema/src/provider-name.ts, the one provider-name rule: a catalog
+// id or a member-named generic connection, 1-63 characters (the control
+// plane's grant validator cap), lowercase alphanumeric plus . _ -, starting
+// alphanumeric. Go cannot import the TypeScript helper, so the fixture corpus
+// packages/schema/fixtures/connections-focus/ is what pins the two together
+// (and the CLI producer and the browser consumer with them).
+var connectionsFocusProvider = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 // parseConnectionsFocus validates the marker `blitz connections open` writes.
 // Anything that is not a version-1 object with a usable provider name and a

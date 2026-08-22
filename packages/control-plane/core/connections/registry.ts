@@ -1,4 +1,11 @@
-import type { Connection, Custody, Minter, MintKind } from "./types.js";
+import type {
+  Connection,
+  ConnectionView,
+  Custody,
+  ListConnectionsResponse,
+  Minter,
+  MintKind,
+} from "./types.js";
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import {
@@ -446,8 +453,8 @@ export function addConnectionRoutes(
           FROM connections WHERE org_id = ?1 ORDER BY created_at, scoped_name`,
       v: [principal.orgId],
     });
-    return context.json({
-      connections: connections.map((connection) => ({
+    const response: ListConnectionsResponse = {
+      connections: connections.map((connection): ConnectionView => ({
         name: connection.name,
         provider: connection.provider,
         kind: connection.kind,
@@ -462,7 +469,8 @@ export function addConnectionRoutes(
         // admin-stored credential.
         orgCredential: connection.org_credential === 1,
       })),
-    });
+    };
+    return context.json(response);
   };
 
   const putConnection = async (context: CoreContext) => {

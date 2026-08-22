@@ -222,7 +222,6 @@ export function CreateWorkspaceDialog({
                   {selectedTemplate.connections.map((connection) => (
                     <li key={connection.provider}>
                       {connection.provider}
-                      {connection.required ? ' · required' : ' · optional'}
                       {' · connect from the workspace connections panel'}
                     </li>
                   ))}

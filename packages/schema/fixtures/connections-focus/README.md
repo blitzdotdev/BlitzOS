@@ -10,10 +10,13 @@ sending a person to authorize a provider whose tools just went dark.
 Each fixture pairs the marker file content (`input`) with the canonical
 gateway response (`expected`). `input: null` represents an absent marker
 file. The gateway rejects a marker that is not version 1, whose provider is
-not 1-64 characters matching `[a-z0-9][a-z0-9._-]*` (catalog ids and
-member-named generic connections; 64 is the cap templates and create requests
-already enforce on connection names), or whose `requestedAt` is not a safe
-non-negative integer; a rejected marker yields `{ "focus": null }`.
+not 1-63 characters matching `[a-z0-9][a-z0-9._-]*` (catalog ids and
+member-named generic connections; 63 is the control plane's grant validator
+cap — `PROVIDER_NAME` in core/connections/user-grants.ts, exported for
+importers as `isProviderName` in packages/schema/src/provider-name.ts), or
+whose `requestedAt` is not a safe non-negative integer; a rejected marker
+yields `{ "focus": null }`. The corpus holds both cap edges: 63 characters
+valid (`valid-provider-63.json`), 64 invalid (`long-provider-64.json`).
 
 The marker is written by the in-box agent's own uid, so the CLI's validation
 is convenience rather than a boundary and every reader repeats it. The

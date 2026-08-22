@@ -289,7 +289,7 @@ describe("create workspace dialog", () => {
         { id: "folder-a", name: "datasets", role: "viewer" as const },
         { id: "folder-b", name: "private", role: null },
       ],
-      connections: [{ provider: "linear", required: false }],
+      connections: [{ provider: "linear" }],
     };
     const view = await render(
       <CreateWorkspaceDialog

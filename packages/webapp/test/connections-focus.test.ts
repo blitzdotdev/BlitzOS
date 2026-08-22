@@ -22,10 +22,12 @@ describe('connections-focus browser consumer contract', () => {
       'absent.json',
       'bad-provider-uppercase.json',
       'empty-provider.json',
+      'long-provider-64.json',
       'long-provider.json',
       'negative-requested-at.json',
       'valid-generic-name.json',
       'valid-github.json',
+      'valid-provider-63.json',
       'wrong-version.json',
     ]);
   });
@@ -46,8 +48,9 @@ describe('connections-focus browser consumer contract', () => {
     const marker = (provider: string) => ({
       focus: { version: 1, provider, requestedAt: 1 },
     });
-    expect(parseConnectionsFocus(marker('a'.repeat(64)))?.provider).toBe('a'.repeat(64));
-    expect(parseConnectionsFocus(marker('a'.repeat(65)))).toBeNull();
+    // 63 is the grant validator's cap, exported as `isProviderName`.
+    expect(parseConnectionsFocus(marker('a'.repeat(63)))?.provider).toBe('a'.repeat(63));
+    expect(parseConnectionsFocus(marker('a'.repeat(64)))).toBeNull();
     expect(parseConnectionsFocus(marker('-leading'))).toBeNull();
     expect(parseConnectionsFocus(marker('has space'))).toBeNull();
     expect(parseConnectionsFocus(marker('google-workspace'))?.provider).toBe('google-workspace');

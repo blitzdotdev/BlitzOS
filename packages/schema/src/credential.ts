@@ -74,8 +74,8 @@ export interface ListCredentialLeasesResponse {
   leases: CredentialLeaseView[];
 }
 
-/** What connecting a provider from the webApp hands back: the lease that now
- * makes the workspace connected. */
+/** What connecting a provider from the webApp hands back: the lease that is
+ * now live in the workspace. */
 export interface MintWorkspaceConnectionResponse {
   lease: CredentialLeaseView;
 }

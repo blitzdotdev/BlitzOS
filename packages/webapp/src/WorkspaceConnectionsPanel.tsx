@@ -161,7 +161,7 @@ export function useWorkspaceLeases(
 
 /** The workspace's own connections. An empty list is not a section: a heading
  * over an apology for holding nothing is worse than the silence of a workspace
- * that plainly has nothing connected. The host decides that; this draws what
+ * that plainly holds no live lease. The host decides that; this draws what
  * the feed holds, and a failed load still speaks. */
 export function WorkspaceLeasesPanel({
   feed,
@@ -232,10 +232,10 @@ export function WorkspaceLeasesPanel({
  * panel re-selects even when the same provider is asked for twice. */
 export type ConnectionsPanelFocus = { provider: string; at: number };
 
-/** The template's stipulated providers as status rows: connected, or needs
- * you. Drawn from the workspace ceiling, not the lease list, so a provider
- * nobody connected yet still has a row to click. Same row furniture as the
- * lease list below it. */
+/** The template's stipulated providers as status rows: each reads off
+ * whether its lease is live. Drawn from the workspace ceiling, not the lease
+ * list, so a provider with no live lease yet still has a row to click. Same
+ * row furniture as the lease list below it. */
 export function WorkspaceStipulatedPanel({
   stipulated,
   live,
@@ -256,7 +256,7 @@ export function WorkspaceStipulatedPanel({
     >
       <div className="workspace-credential-rows">
         {stipulated.map((provider) => {
-          const connected = live.has(provider);
+          const leaseLive = live.has(provider);
           const focused = focusProvider === provider;
           return (
             <article
@@ -266,13 +266,13 @@ export function WorkspaceStipulatedPanel({
               <div className="workspace-credential-row__title">
                 <strong>{provider}</strong>
                 <span
-                  className={`workspace-state-badge workspace-state-badge--${connected ? 'active' : 'pending'}`}
-                >{connected ? 'connected' : 'needs you'}</span>
+                  className={`workspace-state-badge workspace-state-badge--${leaseLive ? 'active' : 'pending'}`}
+                >{leaseLive ? 'connected' : 'needs you'}</span>
               </div>
-              <p>{connected
+              <p>{leaseLive
                 ? 'Live in this workspace.'
                 : 'This workspace names it. Its tools stay dark until you connect.'}</p>
-              {readOnly !== true && !connected && (
+              {readOnly !== true && !leaseLive && (
                 <button
                   className="webapp-action webapp-action--primary workspace-credential-row__action"
                   type="button"
@@ -437,7 +437,8 @@ export function WorkspaceConnectionsPanel({
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
   /** Connection names the workspace ceiling enables (template-stipulated plus
-   * named-at-create); each gets a connected / needs-you status row. */
+   * named-at-create); each gets a status row that reads off whether its lease
+   * is live. */
   stipulatedConnections?: readonly string[];
   /** The latest `blitz connections open` focus: selects that provider in the
    * connect grid and highlights its stipulated row. */
@@ -475,7 +476,7 @@ export function WorkspaceConnectionsPanel({
   // having nothing to say is worse than silence. The pending count on the
   // connections rail icon is what tells a person there is something here.
   const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
-  // Every section keeps that rule. A workspace with nothing connected and
+  // Every section keeps that rule. A workspace with no live lease and
   // nothing logged is a page with a connect grid on it and no apologies. A
   // failed load still draws, because an error is information; so does the
   // first read, because "not yet known" is not the same as "nothing".

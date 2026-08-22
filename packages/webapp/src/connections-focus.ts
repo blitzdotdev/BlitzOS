@@ -1,3 +1,4 @@
+import { isProviderName } from '@blitzos/schema';
 import { gatewayEndpointUrl, PORTS_POLL_INTERVAL_MS } from './preview';
 import { asJsonObject, isNumber, isString, type JsonValue } from './type-guards';
 
@@ -13,19 +14,13 @@ export type ConnectionsFocus = {
   requestedAt: number;
 };
 
-/** Provider names are catalog ids or member-named generic connections:
- * lowercase slugs, 64 characters at most — the cap templates and create
- * requests already enforce. Mirrors the CLI producer and the Go gateway's
- * parseConnectionsFocus; all three are pinned to
- * packages/schema/fixtures/connections-focus/. */
-const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
-
 /** Parses the `GET /connections-focus` response body. Anything that is not a
- * version-1 object with a usable provider name and a safe non-negative
- * `requestedAt` — an old box's 404 body, `{ focus: null }`, or a malformed
- * marker — collapses to null. Mirrors the Go gateway's parseConnectionsFocus
- * so the browser never selects a provider name no catalog or connection row
- * could carry. */
+ * version-1 object with a usable provider name (`isProviderName`, the schema
+ * package's one provider-name rule) and a safe non-negative `requestedAt` —
+ * an old box's 404 body, `{ focus: null }`, or a malformed marker —
+ * collapses to null. Mirrors the Go gateway's parseConnectionsFocus so the
+ * browser never selects a provider name no catalog or connection row could
+ * carry. */
 export function parseConnectionsFocus(value: JsonValue): ConnectionsFocus | null {
   const object = asJsonObject(value);
   if (object === null) return null;
@@ -34,7 +29,7 @@ export function parseConnectionsFocus(value: JsonValue): ConnectionsFocus | null
     focus === null
     || focus.version !== 1
     || !isString(focus.provider)
-    || !PROVIDER_PATTERN.test(focus.provider)
+    || !isProviderName(focus.provider)
     || !isNumber(focus.requestedAt)
     || !Number.isSafeInteger(focus.requestedAt)
     || focus.requestedAt < 0

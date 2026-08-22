@@ -59,7 +59,6 @@ interface CreateTemplateInput {
 interface TemplateConnectionRow {
   template_id: string;
   provider: string;
-  required: number;
 }
 
 const MAX_TEMPLATE_FOLDERS = 16;
@@ -74,10 +73,7 @@ function parseTemplateConnections(value: JsonValue | undefined): TemplateConnect
       throw new HttpError(400, `connections[${String(index)}] must be an object`);
     }
     const provider = requiredString(entry.provider, `connections[${String(index)}].provider`, 64);
-    if (entry.required !== undefined && entry.required !== true && entry.required !== false) {
-      throw new HttpError(400, `connections[${String(index)}].required must be a boolean`);
-    }
-    byProvider.set(provider, { provider, required: entry.required === true });
+    byProvider.set(provider, { provider });
   }
   if (byProvider.size > MAX_TEMPLATE_CONNECTIONS) {
     throw new HttpError(
@@ -125,7 +121,7 @@ async function templateConnectionRows(
 ): Promise<TemplateConnectionRow[]> {
   if (templateIds.length === 0) return [];
   return rows<TemplateConnectionRow>(db, {
-    q: `SELECT template_id, provider, required
+    q: `SELECT template_id, provider
         FROM workspace_template_connections
         WHERE template_id IN (${templateIds.map((_id, index) => `?${String(index + 1)}`).join(",")})
         ORDER BY created_at, provider`,
@@ -148,9 +144,9 @@ async function replaceTemplateConnections(
   for (const connection of connections) {
     await rows(db, {
       q: `INSERT INTO workspace_template_connections
-          (template_id, provider, required, created_at)
-          VALUES (?1, ?2, ?3, ?4)`,
-      v: [templateId, connection.provider, connection.required ? 1 : 0, now],
+          (template_id, provider, created_at)
+          VALUES (?1, ?2, ?3)`,
+      v: [templateId, connection.provider, now],
     });
   }
 }
@@ -161,7 +157,6 @@ export async function templateConnections(
 ): Promise<TemplateConnectionView[]> {
   return (await templateConnectionRows(db, [templateId])).map((row) => ({
     provider: row.provider,
-    required: row.required === 1,
   }));
 }
 
@@ -266,7 +261,6 @@ function templateView(
     })),
     connections: connections.map((connection) => ({
       provider: connection.provider,
-      required: connection.required === 1,
     })),
   };
 }

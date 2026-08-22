@@ -69,10 +69,12 @@ describe("blitz connections open producer contract", () => {
       "absent.json",
       "bad-provider-uppercase.json",
       "empty-provider.json",
+      "long-provider-64.json",
       "long-provider.json",
       "negative-requested-at.json",
       "valid-generic-name.json",
       "valid-github.json",
+      "valid-provider-63.json",
       "wrong-version.json",
     ]);
   });
@@ -96,13 +98,15 @@ describe("blitz connections open producer contract", () => {
     }
   });
 
-  it("accepts providers at the 64-character cap and refuses 65", () => {
-    const atCap = "a".repeat(64);
+  it("accepts providers at the 63-character cap and refuses 64", () => {
+    // 63 is the grant validator's cap (schema `isProviderName`); the fixture
+    // corpus pins both edges, this drives the real CLI over them.
+    const atCap = "a".repeat(63);
     const kept = runOpen([atCap]);
     expect(kept.status, kept.stderr).toBe(0);
     expect(readMarker(kept.focusPath).provider).toBe(atCap);
 
-    const refused = runOpen(["a".repeat(65)]);
+    const refused = runOpen(["a".repeat(64)]);
     expect(refused.status).toBe(2);
     expect(existsSync(refused.focusPath)).toBe(false);
   });

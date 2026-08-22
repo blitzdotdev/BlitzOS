@@ -93,8 +93,9 @@ export function workspaceView(
     // grant and no share must not read either.
     environment: canOpen ? workspaceEnvironmentFromJson(row.environment, reportError) : null,
     agentRuleId: row.agent_rule_id,
-    // The stipulated set, not the connected set: the connections panel draws
-    // one status row per name and reads connectedness off the lease list.
+    // The stipulated set, not the live-lease set: the connections panel draws
+    // one status row per name and reads whether the lease is live off the
+    // lease list.
     connections: canOpen ? manifestConnectionNames(row.manifest) : [],
   };
   // Provenance, not configuration: which recipe launched this workspace.

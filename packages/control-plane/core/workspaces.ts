@@ -346,12 +346,12 @@ async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
  * mints their leases from the creator's grants before the box exists.
  *
  * Minting at create was removed once as useless, back when only a box sync
- * could make a credential real. Under the model where the lease row IS the
- * connected state it is the opposite of useless, and supersede keeps it clean:
+ * could make a credential real. Under the model where the live lease row IS
+ * the state it is the opposite of useless, and supersede keeps it clean:
  * the box's first sync replaces each row with an identical one.
  *
  * Silent per connection. A provider the creator never authorized, or one the
- * workspace ceiling refuses, simply reads as unconnected in the grid. */
+ * workspace ceiling refuses, simply shows no live lease in the grid. */
 async function connectRequested(
   runtime: ReturnType<RuntimeFactory>,
   workspaceId: string,
@@ -429,11 +429,12 @@ export async function performWorkspaceCreate(
   const templateConnectionList = template === null
     ? []
     : await templateConnections(runtime.db, template.id);
-  // Creation never blocks on connections. A required provider the creator has
-  // not connected still creates: the name lands in the ceiling below, the
-  // connections panel shows it as "needs you", and the first mint attempt
-  // files a connect request. The old 409 gate here made "required" a
-  // create-time wall; required-ness is panel status now.
+  // Creation never blocks on connections. A stipulated provider with no
+  // grant behind it still creates: the name lands in the ceiling below, the
+  // connections panel shows it as "needs you" until its lease goes live, and
+  // the first mint attempt files a connect request. The old 409 gate here
+  // made template connections a create-time wall; the `required` flag that
+  // drove it is deleted.
   const requested = [...new Set([
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
