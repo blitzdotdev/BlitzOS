@@ -424,11 +424,20 @@ function tsValue(value, depth = 0) {
   return JSON.stringify(value);
 }
 
+// Root-level `auth: false` relinquishes teenybase's framework auth table: this
+// schema ships blitz-core's own `users` table, and the platform's auth-less
+// validation requires the flag (teenybase PR #13 added `auth?: boolean` to
+// DatabaseSettings). It is emitted into this template string instead of being
+// carried on BLITZDEV_CONFIG because the pinned local teenybase 0.0.14 predates
+// the field: its `DatabaseSettings` has no `auth`, and `databaseSettingsSchema`
+// is a plain `z.object` that strips unknown keys, so BLITZDEV_CONFIG would stop
+// round-tripping through the installed validator. Types do not apply inside the
+// template; the platform typechecks the emitted file against its own teenybase.
 export const TEENYBASE_SOURCE = normalizeSource(`import type { DatabaseSettings, TableRulesExtensionData } from "teenybase";
 
 const denyAllRules: TableRulesExtensionData = ${tsValue({ ...DENY_ALL_RULES })};
 
-const config = ${tsValue(BLITZDEV_CONFIG)} satisfies DatabaseSettings;
+const config = ${tsValue({ auth: false, ...BLITZDEV_CONFIG })} satisfies DatabaseSettings;
 
 export default config;
 `);

@@ -54,6 +54,16 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(BLITZDEV_CONFIG.appUrl).toBe("$APP_URL");
   });
 
+  it("emits a root-level auth:false because this schema ships its own users table", () => {
+    expect(TEENYBASE_SOURCE).toContain("const config = {\n  auth: false,\n");
+    expect(expectedTables).toContain("users");
+    // The pinned teenybase 0.0.14 predates the root-level `auth` flag, so it is
+    // emitted into the source string only and BLITZDEV_CONFIG still round-trips
+    // through the installed validator (a z.object that strips unknown keys).
+    expect(BLITZDEV_CONFIG).not.toHaveProperty("auth");
+    expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
+  });
+
   it("contains the thirty-one domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
     expect(BLITZDEV_CONFIG.tables).toHaveLength(32);
