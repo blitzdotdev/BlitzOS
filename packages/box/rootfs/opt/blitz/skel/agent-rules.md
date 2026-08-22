@@ -14,7 +14,7 @@ blitz teenyapp open <port>
 
 This makes the platform **open the app for the user**. It works for any local
 app, not only teenyapps. Do it as soon as the server is listening. Never tell
-a first-time user to go hunt for a preview tab — open it for them.
+a first-time user to go hunt for a teenyapp tab — open it for them.
 (`blitz preview open` is an alias for the same command.)
 
 - `--path <path>` deep-links to a route, e.g. `blitz teenyapp open 3000 --path /dashboard`.
@@ -26,7 +26,7 @@ a first-time user to go hunt for a preview tab — open it for them.
   **17445**; the box uses those.
 - Bind to an IPv4 loopback or wildcard address (**`127.0.0.1`** or **`0.0.0.0`**).
   Do **not** bind IPv6-only (`::1`) — it will not be reached.
-- Within a few seconds the port appears in the workspace teenyapps sidebar. It
+- Within a few seconds the port appears in a workspace teenyapp tab. It
   is served to the browser at `/workspaces/<workspace-id>/webapp/7445/preview/<port>/`.
 - Do **not** try to fetch that URL yourself from inside the box. The browser
   holds an auth token that the box does not, so the request will fail from here.
