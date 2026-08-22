@@ -94,8 +94,8 @@ export interface CatalogAdminPlacement {
   fill: "token" | "proxy-url";
 }
 
-/** How the settings panel configures an admin-custody provider: labels for
- * the form plus exactly what the PUT body needs. Carries no secret. */
+/** How the admin form configures an org-custody provider: labels for the
+ * form plus exactly what the PUT body needs. Carries no secret. */
 export interface CatalogAdminFormView {
   rootLabel: string;
   rootHelp: string;
@@ -103,6 +103,11 @@ export interface CatalogAdminFormView {
   /** Present exactly when custody is "proxy": the collected URL becomes
    * `config.proxy.base_url` and the header pair rides along unchanged. */
   proxy: { baseUrlLabel: string; tokenHeader: string; tokenPrefix: string } | null;
+  /** The GitHub App shape: non-null when the form collects an app id and an
+   * installation id beside the PKCS#8 private key, and the PUT goes out as
+   * kind "app-jwt" instead of a static root. Coexists with member OAuth —
+   * grants win at mint, the app credential is the org fallback. */
+  app: { appIdLabel: string; installationIdLabel: string } | null;
 }
 
 /** What the connect picker renders. Carries no secret and no binding value —

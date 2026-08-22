@@ -116,7 +116,8 @@ import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
-import { WorkspaceDrawer, WorkspacePanelContent } from './WorkspaceDrawer';
+import {
+  type ConnectionsPanelFocus, WorkspaceDrawer, WorkspacePanelContent } from './WorkspaceDrawer';
 import {
   rememberWorkspaceEndpoints,
   type WorkspaceEndpoints,
@@ -127,6 +128,7 @@ import {
   useWorkspacePolling,
 } from './use-workspace-lifecycle';
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
+import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
@@ -272,6 +274,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [shareToDrivePath, setShareToDrivePath] = useState<string | null>(null);
   const [pendingRequests, setPendingRequests] = useState<CredentialRequestView[]>([]);
   const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
+  // The latest `blitz connections open` focus for the active workspace; a
+  // fresh object per event so the panel re-selects on a repeat ask.
+  const [connectionsFocus, setConnectionsFocus] = useState<ConnectionsPanelFocus | null>(null);
   // Which column the keyboard, statusline and rail follow. Not persisted: the
   // panes are, but the focus between them is a per-view detail.
   const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
@@ -364,10 +369,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const listVolumes = useCallback(() => api.listVolumes(), [api]);
   const listTemplates = useCallback(
     () => client.listWorkspaceTemplates().then(({ templates }) => templates),
-    [client],
-  );
-  const listGrants = useCallback(
-    () => client.listConnectionGrants().then(({ grants }) => grants),
     [client],
   );
   const refreshWorkspaceRecords = useCallback(async () => {
@@ -466,6 +467,28 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       openPreviewPort(focus.port, focus.path);
     },
   );
+
+  // The in-box agent's `blitz connections open <provider>` raises the other
+  // focus: open the connections panel and point at the provider, so the
+  // person lands exactly where the agent sent them to authorize. Same
+  // temporal-position note as above for the setters referenced below.
+  useWorkspaceConnectionsFocus(
+    route.page === 'webApp' && activeWorkspaceRunning,
+    activeWorkspaceId,
+    activeFilesBase,
+    (focus) => {
+      setConnectionsFocus({ provider: focus.provider, at: focus.requestedAt });
+      if (mobileWebApp) setFilesDrawerOpen(true);
+      updateWorkspaceTabs((tabs) => showPanelTab(tabs, 'connections'));
+      if (!mobileWebApp) setFocusedRegion('side');
+    },
+  );
+
+  // A focus belongs to the workspace whose box raised it; a switch drops it
+  // rather than highlighting the same provider name somewhere else.
+  useEffect(() => {
+    setConnectionsFocus(null);
+  }, [activeWorkspaceId]);
 
   // Drive attachments feed the files view (shared pin count, context-menu
   // "Open in Drive"); refetched on workspace switch and after a share.
@@ -710,15 +733,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setRoute(parseAppRoute(path));
   }, []);
 
-  const navigateToSettings = useCallback((
-    section: SettingsSection,
-    requestedConnectionName?: string,
-  ) => {
-    const path = settingsPath(section);
-    const target = requestedConnectionName
-      ? `${path}?add=${encodeURIComponent(requestedConnectionName)}`
-      : path;
-    window.history.pushState({}, '', target);
+  const navigateToSettings = useCallback((section: SettingsSection) => {
+    window.history.pushState({}, '', settingsPath(section));
     setRoute({ workspaceId: null, page: 'settings', settingsSection: section });
   }, []);
 
@@ -1453,8 +1469,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             listMachineTypes={listMachineTypes}
             listVolumes={listVolumes}
             listTemplates={listTemplates}
-            listGrants={listGrants}
-            connectClient={client}
             onNewTemplate={() => navigateTo(templateNewPath())}
             onCancel={() => {
               if (!createWorkspaceBusy) setShowCreateWorkspace(false);
@@ -1559,6 +1573,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           <CreateTemplateScreen
             client={client}
             orgName={store.viewer.org.name}
+            admin={store.viewer.membership.role === 'admin'}
             editTemplateId={route.page === 'template-edit' ? route.templateId : undefined}
             onCreated={leaveToTemplates}
             onCancel={leaveToTemplates}
@@ -1585,9 +1600,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             client={client}
             viewer={store.viewer}
             section={route.settingsSection}
-            requestedConnectionName={new URLSearchParams(window.location.search).get('add') ?? undefined}
             onNavigate={navigateToSettings}
-            onConfigureConnection={(name) => navigateToSettings('connections', name)}
+            onOpenWorkspace={navigateToWorkspacePage}
             onSignOut={signOut}
           />
         ) : (
@@ -1766,6 +1780,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         files={filesSidebar}
                         pendingRequests={activePendingRequests}
                         pendingRequestsError={pendingRequestsError}
+                        stipulatedConnections={activeWorkspace?.connections ?? []}
+                        connectionsFocus={connectionsFocus}
                         readOnly={activeWorkspace?.accessRole === 'viewer'}
                         onResolveRequest={resolveWorkspaceRequest}
                         livePorts={orderedLivePorts}
@@ -2079,6 +2095,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           orgName={store.viewer?.org.name ?? 'Organization'}
           pendingRequests={activePendingRequests}
           pendingRequestsError={pendingRequestsError}
+          stipulatedConnections={activeWorkspace.connections}
+          connectionsFocus={connectionsFocus}
           readOnly={activeWorkspace.accessRole === 'viewer'}
           onWidthChange={setSidePaneWidth}
           onSegmentChange={(panel: WorkspaceDrawerSegment) => {
@@ -2141,8 +2159,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
           listTemplates={listTemplates}
-          listGrants={listGrants}
-          connectClient={client}
           onNewTemplate={() => navigateTo(templateNewPath())}
           onCancel={() => {
             if (!createWorkspaceBusy) {

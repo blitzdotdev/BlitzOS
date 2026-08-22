@@ -85,6 +85,15 @@ function parsedStoredManifest(value: string): CredentialManifest | null {
   }
 }
 
+/** Connection names a stored ceiling enables; [] for null or unreadable.
+ * This is the workspace's stipulated set — what the template named plus what
+ * the create request added — independent of whether anything minted yet. */
+export function manifestConnectionNames(storedManifest: string | null): string[] {
+  if (storedManifest === null) return [];
+  const manifest = parsedStoredManifest(storedManifest);
+  return manifest === null ? [] : Object.keys(manifest.integrations);
+}
+
 export function manifestAllows(
   storedManifest: string | null,
   connectionName: string,

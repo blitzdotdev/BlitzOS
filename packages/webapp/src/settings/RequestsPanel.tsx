@@ -9,10 +9,13 @@ export type StatefulCredentialRequest = CredentialRequestView & {
 
 export function RequestsPanel({
   client,
-  onConfigure,
+  onOpenWorkspace,
 }: {
   client: ControlPlaneClient;
-  onConfigure: (connectionName: string) => void;
+  /** Connecting happens inside the workspace that filed the request — its
+   * connections panel carries the same inbox entry with a Connect that
+   * resolves it. This inbox is the org-wide view; the action is a door. */
+  onOpenWorkspace: (workspaceId: string) => void;
 }) {
   const [requests, setRequests] = useState<StatefulCredentialRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,8 +109,8 @@ export function RequestsPanel({
                   <button
                     className="webapp-action webapp-action--primary"
                     type="button"
-                    onClick={() => onConfigure(request.connection_name)}
-                  >Connect</button>
+                    onClick={() => onOpenWorkspace(request.workspace_id)}
+                  >Open workspace</button>
                 </div>
               )}
             </article>

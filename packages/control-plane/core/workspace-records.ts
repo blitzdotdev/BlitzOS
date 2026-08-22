@@ -1,6 +1,7 @@
 import type { Db } from "./db.js";
 import { first } from "./db.js";
 import { isMicrovmProviderId } from "./compute/microvm.js";
+import { manifestConnectionNames } from "./connections/manifest.js";
 import { workspaceEnvironmentFromJson } from "./environment.js";
 import type { Phase, RetryAction, WorkspaceView } from "./wire.js";
 
@@ -92,6 +93,9 @@ export function workspaceView(
     // grant and no share must not read either.
     environment: canOpen ? workspaceEnvironmentFromJson(row.environment, reportError) : null,
     agentRuleId: row.agent_rule_id,
+    // The stipulated set, not the connected set: the connections panel draws
+    // one status row per name and reads connectedness off the lease list.
+    connections: canOpen ? manifestConnectionNames(row.manifest) : [],
   };
   // Provenance, not configuration: which recipe launched this workspace.
   if (row.recipe_id !== null) view.recipeId = row.recipe_id;

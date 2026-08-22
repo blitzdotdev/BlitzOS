@@ -1036,6 +1036,12 @@
   border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
+/* The row `blitz connections open` pointed the person at. */
+.workspace-credential-row--focus {
+  background: color-mix(in oklab, var(--accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
 .workspace-credential-row__title,
 .workspace-credential-row__meta,
 .workspace-credential-row__actions {

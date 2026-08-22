@@ -31,7 +31,8 @@ export function providerManifest(id: string): ProviderManifest | null {
 /** The admin form, compiled so the panel can submit `PUT /connections/:id`
  * without knowing anything about manifests: the placements come from the env
  * surfaces, and proxy custody carries the base-URL field plus the header the
- * proxy re-signs with. */
+ * proxy re-signs with. An `app` block flips the PUT to kind app-jwt, whose
+ * config carries the ids instead of placements. */
 function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null {
   const form = manifest.adminForm;
   if (form === null) return null;
@@ -50,6 +51,7 @@ function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null 
           tokenPrefix: manifest.tokenHeader.prefix,
         }
       : null,
+    app: form.app,
   };
 }
 

@@ -80,9 +80,18 @@ export const githubManifest = {
     header: { name: "Authorization", prefix: "Bearer " },
     baseUrlLabel: null,
   },
-  // The admin path here is the app-jwt kind (app id, installation id, PKCS#8
-  // key), which the static-root form cannot express; it stays API-configured.
-  adminForm: null,
+  // The org path: a GitHub App credential PUT as kind app-jwt (app id,
+  // installation id, PKCS#8 key). It satisfies a template's github with no
+  // member step; a member's own OAuth grant still wins at mint.
+  adminForm: {
+    rootLabel: "App private key (PKCS#8 PEM)",
+    rootHelp: "github.com → Settings → Developer settings → GitHub Apps → your app → Private keys → Generate a private key. Convert the downloaded PKCS#1 file with: openssl pkcs8 -topk8 -nocrypt. Install the app on the repositories agents should reach.",
+    baseUrlLabel: null,
+    app: {
+      appIdLabel: "App ID",
+      installationIdLabel: "Installation ID",
+    },
+  },
   // GitHub App user tokens carry no OAuth scope string: reach comes from the
   // App's installation permissions. These entries name what the person is
   // consenting to hand an agent, and double as the mint ceiling.

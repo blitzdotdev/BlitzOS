@@ -1,6 +1,6 @@
 import type { RecipeBootstrap } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
-import { enablementManifestJson, parseManifest, usableByAllows } from "./connections/manifest.js";
+import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
@@ -37,7 +37,6 @@ import {
   templateWorkspaceName,
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
-import { grantsForUser } from "./connections/user-grants.js";
 import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
 import type {
   CoreContext,
@@ -430,34 +429,15 @@ export async function performWorkspaceCreate(
   const templateConnectionList = template === null
     ? []
     : await templateConnections(runtime.db, template.id);
+  // Creation never blocks on connections. A required provider the creator has
+  // not connected still creates: the name lands in the ceiling below, the
+  // connections panel shows it as "needs you", and the first mint attempt
+  // files a connect request. The old 409 gate here made "required" a
+  // create-time wall; required-ness is panel status now.
   const requested = [...new Set([
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
   ])];
-  const granted = new Set(
-    (await grantsForUser(runtime.db, principal.id)).map(({ provider }) => provider),
-  );
-  const missingRequired: string[] = [];
-  for (const { provider, required } of templateConnectionList) {
-    if (!required || granted.has(provider)) continue;
-    // An org-admin-configured connection carries its own root, so every
-    // workspace mints it with no per-user step — it satisfies `required`
-    // without the creator holding a grant. Grant-backed catalog rows have no
-    // root: those still need the creator to connect first.
-    const connection = await connectionByName(runtime.db, provider, orgId);
-    if (
-      connection !== null &&
-      connection.root_ciphertext !== null &&
-      usableByAllows(connection, principal.id)
-    ) continue;
-    missingRequired.push(provider);
-  }
-  if (missingRequired.length > 0) {
-    throw new HttpError(
-      409,
-      `connect ${missingRequired.join(", ")} before creating from this template`,
-    );
-  }
   const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
   const providerCapabilities = vmProvider.capabilities();
   if (input.volumeId !== undefined && !providerCapabilities.volumes) {

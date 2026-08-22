@@ -580,3 +580,100 @@ describe('v2 credential surfaces', () => {
     await view.unmount();
   });
 });
+
+describe('template-stipulated rows and agent focus', () => {
+  it('draws a needs-you row per stipulated provider and funnels Connect into the picker', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
+    });
+    const view = await render(
+      <WorkspaceConnectionsPanel
+        client={wire}
+        workspaceId="workspace-one"
+        visible
+        pendingRequests={[]}
+        stipulatedConnections={['linear']}
+        onResolveRequest={async () => undefined}
+      />,
+    );
+    await settle();
+    expect(view.container.textContent).toContain('From the template');
+    const row = view.container.querySelector(
+      '[aria-label="Template connections"] .workspace-credential-row',
+    );
+    expect(row?.textContent).toContain('linear');
+    expect(row?.textContent).toContain('needs you');
+    expect(row?.textContent).toContain('tools stay dark');
+
+    // Connect on the row selects the provider's card in the picker below —
+    // the OAuth button or paste form there is the actual connect machinery.
+    await act(async () => click([...(row?.querySelectorAll('button') ?? [])]
+      .find((button) => button.textContent === 'Connect')!));
+    const active = view.container.querySelector('.connect-card--active');
+    expect(active?.textContent).toContain('Linear');
+    await view.unmount();
+  });
+
+  it('marks a stipulated provider connected once its lease is live', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
+    });
+    const view = await render(
+      <WorkspaceConnectionsPanel
+        client={wire}
+        workspaceId="workspace-one"
+        visible
+        pendingRequests={[]}
+        stipulatedConnections={['linear']}
+        onResolveRequest={async () => undefined}
+      />,
+    );
+    await settle();
+    const row = view.container.querySelector(
+      '[aria-label="Template connections"] .workspace-credential-row',
+    );
+    expect(row?.textContent).toContain('connected');
+    expect([...(row?.querySelectorAll('button') ?? [])]
+      .find((button) => button.textContent === 'Connect')).toBeUndefined();
+    await view.unmount();
+  });
+
+  it('selects the focused provider, highlights its row, and re-fires on a fresh focus', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+    });
+    function Harness({ at }: { at: number }) {
+      return (
+        <WorkspaceConnectionsPanel
+          client={wire}
+          workspaceId="workspace-one"
+          visible
+          pendingRequests={[]}
+          stipulatedConnections={['linear']}
+          connectionsFocus={{ provider: 'linear', at }}
+          onResolveRequest={async () => undefined}
+        />
+      );
+    }
+    const view = await render(<Harness at={1} />);
+    await settle();
+    // The agent's `blitz connections open linear` landed: the row is
+    // highlighted and the picker card is already selected.
+    expect(view.container.querySelector('.workspace-credential-row--focus')?.textContent)
+      .toContain('linear');
+    expect(view.container.querySelector('.connect-card--active')?.textContent)
+      .toContain('Linear');
+
+    // Closing the card and asking again re-selects: each focus is a fresh
+    // object, so the same provider can be pointed at twice.
+    await act(async () => click([...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Cancel')!));
+    expect(view.container.querySelector('.connect-card--active')).toBeNull();
+    await act(async () => view.root.render(<Harness at={2} />));
+    await settle();
+    expect(view.container.querySelector('.connect-card--active')?.textContent)
+      .toContain('Linear');
+    await view.unmount();
+  });
+});

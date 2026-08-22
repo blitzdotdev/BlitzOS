@@ -51,6 +51,11 @@ export interface WorkspaceView {
   };
   environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
+  /** Connection names the workspace's ceiling enables — its template's
+   * stipulated providers plus any named at create. The workspace connections
+   * panel draws one status row per name; gated on the viewer's role like
+   * `environment`. */
+  connections: string[];
   /** Present when a recipe launch created this workspace (provenance). */
   recipeId?: string;
 }
@@ -70,7 +75,8 @@ export interface WorkspaceTemplateView {
   agentRuleId: string | null;
   /** Role is the viewer's access; null flags a folder they cannot reach yet. */
   folders: { id: string; name: string; role: "owner" | "admin" | "editor" | "viewer" | null }[];
-  /** Provider names only. `required` blocks create until the creator connects. */
+  /** Provider names only. `required` reads as needs-you panel status in the
+   * workspace; creation never blocks on it. */
   connections: TemplateConnectionView[];
 }
 

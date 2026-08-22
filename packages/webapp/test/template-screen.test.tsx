@@ -670,3 +670,189 @@ describe('create template screen', () => {
     await view.unmount();
   });
 });
+
+describe('template screen org-credential config', () => {
+  const discordEntry = {
+    id: 'discord',
+    title: 'Discord',
+    summary: 'Bot messaging',
+    docsUrl: 'https://example.com/discord',
+    custody: 'cp',
+    rotation: 'none',
+    oauthAvailable: false,
+    oauthConfigured: false,
+    personalTokenLabel: null,
+    personalTokenHelp: null,
+    personalTokenBaseUrlLabel: null,
+    needsVendorConfig: false,
+    adminForm: {
+      rootLabel: 'Bot token',
+      rootHelp: 'Create it in the vendor console under a service account.',
+      placements: [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }],
+      proxy: null,
+      app: null,
+    },
+    environmentNames: ['DISCORD_BOT_TOKEN'],
+    scopes: [],
+  };
+  const youtrackEntry = {
+    ...discordEntry,
+    id: 'youtrack',
+    title: 'YouTrack',
+    adminForm: null,
+    personalTokenLabel: 'Permanent token',
+    personalTokenBaseUrlLabel: 'Instance URL',
+  };
+
+  function connectionsStub(extra?: (url: URL, init?: RequestInit) => Response | null) {
+    return stub((url, init) => {
+      const handled = extra?.(url, init);
+      if (handled) return handled;
+      if (url.pathname === '/connections/catalog') {
+        return Response.json({ providers: [discordEntry, youtrackEntry] });
+      }
+      if (url.pathname === '/connections' && init?.method === undefined) {
+        return Response.json({ connections: [] });
+      }
+      return null;
+    });
+  }
+
+  async function tick(view: { container: HTMLElement }, title: string) {
+    const label = [...view.container.querySelectorAll<HTMLElement>('.tplf-connection')]
+      .find((candidate) => candidate.textContent?.includes(title));
+    expect(label, title).toBeDefined();
+    const box = label!.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    await act(async () => {
+      box.click();
+    });
+  }
+
+  it('opens the inline config form when an admin attaches an unconfigured provider', async () => {
+    const puts: [string, unknown][] = [];
+    const fetcher = connectionsStub((url, init) => {
+      if (url.pathname === '/connections/discord' && init?.method === 'PUT') {
+        puts.push([url.pathname, JSON.parse(String(init.body ?? 'null'))]);
+        return new Response(null, { status: 204 });
+      }
+      return null;
+    });
+    const onCreated = vi.fn();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        admin
+        onCreated={onCreated}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    await tick(view, 'Discord');
+    // The form is right there, no extra click: attaching an admin provider
+    // without its credential is the state this surface exists to prevent.
+    const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]');
+    expect(root).not.toBeNull();
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(root!, 'test-only-bot-token');
+      root!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      root!.closest('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+    expect(puts).toEqual([[
+      '/connections/discord',
+      {
+        provider: 'discord',
+        kind: 'static',
+        custody: 'cp',
+        config: { placements: [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }] },
+        root: 'test-only-bot-token',
+      },
+    ]]);
+    await view.unmount();
+  });
+
+  it('tells members to ask their admin, and never renders them the form', async () => {
+    connectionsStub();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    await tick(view, 'Discord');
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+    expect(view.container.textContent).toContain('Ask an organization admin to configure Discord');
+    await view.unmount();
+  });
+
+  it('shows the org-credential chip instead of a form once one is stored', async () => {
+    connectionsStub((url, init) => {
+      if (url.pathname === '/connections' && init?.method === undefined) {
+        return Response.json({ connections: [{
+          name: 'discord',
+          provider: 'discord',
+          kind: 'static',
+          custody: 'cp',
+          status: 'active',
+          createdBy: 'admin',
+          proxyBaseUrl: null,
+          orgCredential: true,
+        }] });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        admin
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    await tick(view, 'Discord');
+    expect(view.container.textContent).toContain('org credential');
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+    // Replacing is deliberate: the form opens only on the explicit ask.
+    const replace = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent === 'Replace credential');
+    expect(replace).toBeDefined();
+    await act(async () => {
+      replace!.click();
+    });
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('keeps per-member providers as plain checkboxes with no admin form', async () => {
+    connectionsStub();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        admin
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    await tick(view, 'YouTrack');
+    // YouTrack is per-member PAT: the template names it, the member pastes
+    // inside the workspace. No org form, no ask-your-admin note.
+    expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
+    expect(view.container.textContent).not.toContain('Ask an organization admin');
+    await view.unmount();
+  });
+});

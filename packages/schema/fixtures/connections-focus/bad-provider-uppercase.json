@@ -1,0 +1,10 @@
+{
+  "input": {
+    "version": 1,
+    "provider": "GitHub",
+    "requestedAt": 1787000004000
+  },
+  "expected": {
+    "focus": null
+  }
+}

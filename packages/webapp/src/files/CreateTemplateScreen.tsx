@@ -1,5 +1,6 @@
 import type {
   CatalogEntryView,
+  ConnectionView,
   CreateWorkspaceTemplateRequest,
   MachineType,
   TemplateConnectionView,
@@ -8,6 +9,7 @@ import type {
 } from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
+import { TemplateConnectionsSection } from './TemplateConnectionsSection';
 import type { FolderObjectView, FolderView } from '../file-library-api';
 import { AgentRulesPicker } from '../AgentRulesPicker';
 import { OutlinedLoadingRows } from '../LoadingSkeleton';
@@ -50,12 +52,16 @@ interface BrowseState {
 export function CreateTemplateScreen({
   client,
   orgName,
+  admin = false,
   editTemplateId,
   onCreated,
   onCancel,
 }: {
   client: ControlPlaneClient;
   orgName: string;
+  /** Shows the org-credential config forms; the PUT route enforces the same
+   * gate server-side. Members see who to ask instead. */
+  admin?: boolean;
   /** When set, the screen edits this template instead of creating one. */
   editTemplateId?: string;
   onCreated: (template: WorkspaceTemplateView) => void;
@@ -72,8 +78,11 @@ export function CreateTemplateScreen({
   const [shareWithOrg, setShareWithOrg] = useState(true);
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   // A template references providers by name. It never carries a grant, so an
-  // instantiating member always supplies their own identity.
+  // instantiating member always supplies their own identity — except the
+  // admin-configured providers below, whose one org credential is stored
+  // right here when the provider gets attached.
   const [templateConnections, setTemplateConnections] = useState<Map<string, TemplateConnectionView>>(new Map());
+  const [orgConnections, setOrgConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState<string | null>(null);
   const [dropActive, setDropActive] = useState(false);
@@ -95,9 +104,15 @@ export function CreateTemplateScreen({
       client.listMachineTypes(),
       client.listFolders(),
       client.listConnectionCatalog(),
-    ]).then(([machineResult, folderResult, catalogResult]) => {
+      client.listConnections(),
+    ]).then(([machineResult, folderResult, catalogResult, connectionsResult]) => {
       if (!mounted) return;
       if (catalogResult.status === 'fulfilled') setCatalog(catalogResult.value.providers);
+      // Losing this read costs only the configured chips and the config
+      // forms' replace state; the picker itself keeps working.
+      if (connectionsResult.status === 'fulfilled') {
+        setOrgConnections(connectionsResult.value.connections);
+      }
       if (machineResult.status === 'fulfilled') {
         setMachines(machineResult.value.machineTypes);
         setMachineTypeId((current) => current || machineResult.value.machineTypes[0]?.id || '');
@@ -167,6 +182,7 @@ export function CreateTemplateScreen({
       return next;
     });
   };
+
 
   const uploadDroppedFolders = async (
     dropped: { name: string; files: { file: File; relativePath: string }[] }[],
@@ -511,43 +527,15 @@ export function CreateTemplateScreen({
                 </button>
               </div>
             </div>
-            <div className="tplf-connections">
-              <h2>Connections</h2>
-              <p>
-                Named here, connected by whoever creates a workspace from this
-                template. Required ones block create until they connect.
-              </p>
-              {catalog.map((entry) => {
-                const chosen = templateConnections.get(entry.id) ?? null;
-                return (
-                  <label className="tplf-connection" key={entry.id}>
-                    <input
-                      type="checkbox"
-                      checked={chosen !== null}
-                      onChange={(event) => setTemplateConnections((current) => {
-                        const next = new Map(current);
-                        if (event.currentTarget.checked) next.set(entry.id, { provider: entry.id, required: false });
-                        else next.delete(entry.id);
-                        return next;
-                      })}
-                    />
-                    <span>{entry.title}</span>
-                    {chosen !== null && (
-                      <button
-                        className="webapp-action"
-                        type="button"
-                        aria-pressed={chosen.required}
-                        onClick={() => setTemplateConnections((current) => {
-                          const next = new Map(current);
-                          next.set(entry.id, { provider: entry.id, required: !chosen.required });
-                          return next;
-                        })}
-                      >{chosen.required ? 'Required' : 'Optional'}</button>
-                    )}
-                  </label>
-                );
-              })}
-            </div>
+            <TemplateConnectionsSection
+              client={client}
+              admin={admin}
+              catalog={catalog}
+              orgConnections={orgConnections}
+              onOrgConnections={setOrgConnections}
+              value={templateConnections}
+              onChange={setTemplateConnections}
+            />
             <label className="tplf-share">
               <input
                 type="checkbox"

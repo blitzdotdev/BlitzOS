@@ -1,5 +1,7 @@
 import { isWebAppSurfacePath } from "@blitzos/schema";
 import { describe, expect, it } from "vitest";
+import { connectionsFocusEndpointUrl } from "../src/connections-focus.js";
+import { previewFocusEndpointUrl } from "../src/preview.js";
 import { standaloneResolver } from "../src/resolver.js";
 import { terminalWebSocketUrl } from "../src/workspace-endpoints.js";
 
@@ -9,6 +11,7 @@ import { terminalWebSocketUrl } from "../src/workspace-endpoints.js";
  * it so the two cannot drift apart silently. */
 describe("webApp box surface", () => {
   const origin = "https://cp.example";
+  const emptyConnections: string[] = [];
   const workspace = {
     id: "workspace-one",
     name: "workspace-one",
@@ -26,6 +29,7 @@ describe("webApp box surface", () => {
     owner: { name: "Owner", avatarUrl: null },
     environment: null,
     agentRuleId: null,
+    connections: emptyConnections,
   } as const;
 
   function boxPath(url: string): { port: 7444 | 7445; path: string } {
@@ -47,6 +51,8 @@ describe("webApp box surface", () => {
       `${endpoints.filesBase}notes/report.md`,
       terminalWebSocketUrl(endpoints.terminalUrl),
       resolver.previewUrl(workspace, 3000),
+      previewFocusEndpointUrl(endpoints.filesBase),
+      connectionsFocusEndpointUrl(endpoints.filesBase),
     ];
     for (const url of urls) {
       const { port, path } = boxPath(url);

@@ -134,6 +134,7 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   owner: { name: "Owner", avatarUrl: null },
   environment,
   agentRuleId: agentRule.id,
+  connections: ["linear"],
   recipeId: recipe.id,
 };
 
@@ -348,6 +349,7 @@ const catalogAdminForm: SharedShape<
     tokenHeader: "Authorization",
     tokenPrefix: "Bearer ",
   },
+  app: { appIdLabel: "App ID", installationIdLabel: "Installation ID" },
 };
 
 const catalogEntry: SharedShape<

@@ -439,8 +439,10 @@ export function addConnectionRoutes(
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const connections = await rows<
       Pick<Connection, "name" | "provider" | "kind" | "custody" | "config" | "revoked_at" | "created_by">
+      & { org_credential: number }
     >(runtimeFactory(context).db, {
-      q: `SELECT scoped_name AS name, provider, kind, custody, config, revoked_at, created_by
+      q: `SELECT scoped_name AS name, provider, kind, custody, config, revoked_at, created_by,
+                 (root_ciphertext IS NOT NULL) AS org_credential
           FROM connections WHERE org_id = ?1 ORDER BY created_at, scoped_name`,
       v: [principal.orgId],
     });
@@ -455,6 +457,10 @@ export function addConnectionRoutes(
         // The vendor URL only, never the config itself: the paste form
         // prefills the instance URL for members from this.
         proxyBaseUrl: connectionProxyBaseUrl(connection.config),
+        // A boolean about the sealed root, never the root: the surfaces that
+        // say "configured" must not mistake a member-declared row for an
+        // admin-stored credential.
+        orgCredential: connection.org_credential === 1,
       })),
     });
   };

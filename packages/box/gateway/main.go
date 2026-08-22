@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,6 +42,7 @@ const (
 	tunnelTokenPath        = "/var/lib/blitz/tunnel-token"
 	previewsPath           = "/var/lib/blitz/previews.json"
 	previewFocusPath       = "/var/lib/blitz/preview-focus.json"
+	connectionsFocusPath   = "/var/lib/blitz/connections-focus.json"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
@@ -105,6 +107,7 @@ type gateway struct {
 	tunnelTokenPath        string
 	previewsPath           string
 	previewFocusPath       string
+	connectionsFocusPath   string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
@@ -179,6 +182,7 @@ func main() {
 		tunnelTokenPath:        tunnelTokenPath,
 		previewsPath:           previewsPath,
 		previewFocusPath:       previewFocusPath,
+		connectionsFocusPath:   connectionsFocusPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -253,6 +257,11 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	if request.URL.Path == "/preview-focus" {
 		removeWebAppTokenHeader(request.Header)
 		g.servePreviewFocus(response, request)
+		return
+	}
+	if request.URL.Path == "/connections-focus" {
+		removeWebAppTokenHeader(request.Header)
+		g.serveConnectionsFocus(response, request)
 		return
 	}
 	if request.URL.Path == "/terminal/ws" {
@@ -544,6 +553,78 @@ func (g *gateway) servePreviewFocus(response http.ResponseWriter, request *http.
 		Focus *previewFocus `json:"focus"`
 	}{Focus: focus}); err != nil {
 		log.Printf("preview focus response failed: %v", err)
+	}
+}
+
+type connectionsFocus struct {
+	Version     int    `json:"version"`
+	Provider    string `json:"provider"`
+	RequestedAt int64  `json:"requestedAt"`
+}
+
+// connectionsFocusProvider mirrors the `blitz connections open` producer's
+// charset: a catalog id or a member-named generic connection, 1-64 characters,
+// lowercase alphanumeric plus . _ -, starting alphanumeric. All three
+// runtimes are pinned to packages/schema/fixtures/connections-focus/.
+var connectionsFocusProvider = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+// parseConnectionsFocus validates the marker `blitz connections open` writes.
+// Anything that is not a version-1 object with a usable provider name and a
+// safe non-negative requestedAt is treated as no focus at all (nil), the same
+// way the browser falls back to null. The marker is written by the in-box
+// agent's own uid, so the CLI's checks are convenience, not a boundary: this
+// reader repeats every one of them. Unknown extra fields are tolerated for
+// forward compatibility, matching parsePreviewFocus.
+func parseConnectionsFocus(data []byte) *connectionsFocus {
+	var fields struct {
+		Version     *int    `json:"version"`
+		Provider    *string `json:"provider"`
+		RequestedAt *int64  `json:"requestedAt"`
+	}
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil
+	}
+	if fields.Version == nil || *fields.Version != 1 {
+		return nil
+	}
+	if fields.Provider == nil || !connectionsFocusProvider.MatchString(*fields.Provider) {
+		return nil
+	}
+	if fields.RequestedAt == nil || *fields.RequestedAt < 0 || *fields.RequestedAt > 9007199254740991 {
+		return nil
+	}
+	return &connectionsFocus{
+		Version:     *fields.Version,
+		Provider:    *fields.Provider,
+		RequestedAt: *fields.RequestedAt,
+	}
+}
+
+func (g *gateway) serveConnectionsFocus(response http.ResponseWriter, request *http.Request) {
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var focus *connectionsFocus
+	data, err := os.ReadFile(g.connectionsFocusPath)
+	if err == nil && len(bytes.TrimSpace(data)) > 0 {
+		focus = parseConnectionsFocus(data)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("connections focus read failed: %v", err)
+	}
+
+	response.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(response).Encode(struct {
+		Focus *connectionsFocus `json:"focus"`
+	}{Focus: focus}); err != nil {
+		log.Printf("connections focus response failed: %v", err)
 	}
 }
 

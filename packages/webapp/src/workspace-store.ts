@@ -23,6 +23,8 @@ export type CloudWorkspaceModel = {
   retryAction: RetryAction;
   createdAt: number;
   updatedAt: number;
+  /** Stipulated connection names off the workspace ceiling. */
+  connections: string[];
   agentDefault: Agent;
 };
 
@@ -70,6 +72,7 @@ function createWorkspaceModel(
     retryAction: record.retryAction,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    connections: record.connections ?? [],
     agentDefault: preference?.agentDefault ?? 'claude',
   };
 }
@@ -113,6 +116,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
           retryAction: record.retryAction,
           createdAt: record.createdAt,
           updatedAt: Math.max(existing.updatedAt, record.updatedAt),
+          connections: record.connections ?? existing.connections,
         };
       });
       const order = new Map(action.preferences.order.map((id, index) => [id, index]));
@@ -156,6 +160,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
             retryAction: record.retryAction,
             createdAt: record.createdAt,
             updatedAt: Math.max(workspace.updatedAt, record.updatedAt),
+            connections: record.connections ?? workspace.connections,
           }];
         }),
       };

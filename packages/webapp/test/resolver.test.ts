@@ -17,6 +17,7 @@ const workspace: WorkspaceView = {
   error: null,
   role: "owner",
   orgShareRole: null,
+  connections: [],
   owner: { name: "Owner", avatarUrl: null },
   environment: null,
   agentRuleId: null,

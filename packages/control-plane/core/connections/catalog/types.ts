@@ -105,6 +105,12 @@ export interface ProviderAdminForm {
   /** Label for the instance-URL input, which becomes `config.proxy.base_url`.
    * Non-null exactly when custody is "proxy" (the conformance suite pins it). */
   baseUrlLabel: string | null;
+  /** The GitHub App shape: non-null when the admin credential is an app-jwt
+   * root (app id + installation id + PKCS#8 key), not a static token. The
+   * only admin form allowed to coexist with member OAuth — grants win at
+   * mint, the app credential is the org fallback (the conformance suite pins
+   * both rules). */
+  app: { appIdLabel: string; installationIdLabel: string } | null;
 }
 
 export interface ProbeInput {

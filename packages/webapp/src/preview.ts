@@ -184,28 +184,27 @@ function gatewayPath(filesBase: URL): string {
     : '/';
 }
 
-export function portsEndpointUrl(filesBase: string): string {
+/** The URL of a sibling gateway endpoint, derived from the files base the
+ * resolver already hands out. Shared with the connections-focus consumer so
+ * every gateway poller builds its address the same way. */
+export function gatewayEndpointUrl(filesBase: string, endpoint: string): string {
   const target = httpUrl(filesBase);
-  target.pathname = `${gatewayPath(target)}ports`;
+  target.pathname = `${gatewayPath(target)}${endpoint}`;
   target.search = '';
   target.hash = '';
   return target.toString();
+}
+
+export function portsEndpointUrl(filesBase: string): string {
+  return gatewayEndpointUrl(filesBase, 'ports');
 }
 
 export function previewsEndpointUrl(filesBase: string): string {
-  const target = httpUrl(filesBase);
-  target.pathname = `${gatewayPath(target)}previews`;
-  target.search = '';
-  target.hash = '';
-  return target.toString();
+  return gatewayEndpointUrl(filesBase, 'previews');
 }
 
 export function previewFocusEndpointUrl(filesBase: string): string {
-  const target = httpUrl(filesBase);
-  target.pathname = `${gatewayPath(target)}preview-focus`;
-  target.search = '';
-  target.hash = '';
-  return target.toString();
+  return gatewayEndpointUrl(filesBase, 'preview-focus');
 }
 
 export async function fetchWorkspacePorts(

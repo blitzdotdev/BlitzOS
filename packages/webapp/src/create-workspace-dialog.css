@@ -702,6 +702,21 @@
   font: 12px/1.5 var(--font-ui);
 }
 
+.tplf-connection-block {
+  display: grid;
+  gap: 6px;
+}
+
+.tplf-connection-block .connect-form {
+  margin-left: 22px;
+}
+
+.tplf-connection-note {
+  margin: 0 0 0 22px;
+  color: var(--muted);
+  font: 11px/1.6 var(--font-ui);
+}
+
 /* --------------------------------------------- template folder browser */
 .tplf {
   display: grid;

@@ -62,10 +62,10 @@ interface OpenResult {
   focusPath: string;
 }
 
-function runOpen(args: string[]): OpenResult {
+function runOpen(args: string[], verb = "teenyapp"): OpenResult {
   const directory = mkdtempSync(join(tmpdir(), "preview-focus-"));
   const focusPath = join(directory, "preview-focus.json");
-  const result = spawnSync("sh", [blitzPath, "preview", "open", ...args], {
+  const result = spawnSync("sh", [blitzPath, verb, "open", ...args], {
     encoding: "utf8",
     env: { ...process.env, BLITZ_PREVIEW_FOCUS_PATH: focusPath },
   });
@@ -160,6 +160,23 @@ describe("blitz preview open producer contract", () => {
     expect(marker.port).toBe(4321);
     expect(marker.path).toBe("/");
     expect(marker.title).toBe("port 4321");
+  });
+
+  /** `blitz teenyapp` is the documented verb; `blitz preview` stays a silent
+   * alias for existing agent muscle memory. Same code, same marker file, same
+   * gateway wire — the rename is CLI surface only. */
+  it("writes the identical marker under the documented verb and the alias", () => {
+    for (const verb of ["teenyapp", "preview"]) {
+      const { status, stderr, focusPath } = runOpen(["4444", "--title", "Docs"], verb);
+      expect(status, `${verb}: ${stderr}`).toBe(0);
+      const marker = readMarker(focusPath);
+      expect(withoutRequestedAt(marker)).toEqual({
+        version: 1,
+        port: 4444,
+        path: "/",
+        title: "Docs",
+      });
+    }
   });
 
   it("rejects invalid invocations with exit 2 and writes no marker", () => {

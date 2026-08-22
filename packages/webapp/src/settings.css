@@ -1140,6 +1140,24 @@
   outline: 0;
 }
 
+/* A PKCS#8 PEM is multi-line, so the app-credential root rides a textarea
+ * dressed exactly like the inputs beside it. */
+.connect-field textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 11px/1.5 var(--font-mono, monospace);
+  resize: vertical;
+}
+
+.connect-field textarea:focus {
+  border-color: var(--accent);
+  outline: 0;
+}
+
 .connect-field input[readonly] {
   color: var(--muted);
   background: color-mix(in oklab, var(--ink) 5%, var(--paper));

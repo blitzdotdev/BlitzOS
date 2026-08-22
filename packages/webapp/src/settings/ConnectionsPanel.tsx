@@ -3,8 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
-import { AdminConnectionsSection } from './AdminConnectionsSection';
-import { ConnectPicker } from './ConnectPicker';
+import { OrgConnectionsSection } from './OrgConnectionsSection';
 
 function healthLabel(health: ProviderHealthView | undefined): string | null {
   if (health === undefined || health.checkedAt === null) return null;
@@ -13,16 +12,17 @@ function healthLabel(health: ProviderHealthView | undefined): string | null {
   return `${health.state === 'healthy' ? 'checked' : 'failing'} ${age}`;
 }
 
-/** Your grants across every provider. There are no org grants, so this page
- * shows exactly one person's connections and nobody else's. */
+/** Settings → Connections after the flow inversion: revoke and rotate only.
+ * Nothing is added here any more — members connect inside a workspace
+ * (the drawer's connections panel), admins configure org credentials on the
+ * template page. What remains is one person's grants with revoke, an OAuth
+ * re-run for rotation, and the org credential list for admins. */
 export function ConnectionsPanel({
   client,
-  requestedName,
   admin = false,
 }: {
   client: ControlPlaneClient;
-  requestedName?: string;
-  /** Shows the org-wide section; the PUT route enforces the same gate. */
+  /** Shows the org-wide section; the DELETE route enforces the same gate. */
   admin?: boolean;
 }) {
   const [grants, setGrants] = useState<UserGrantView[]>([]);
@@ -31,7 +31,6 @@ export function ConnectionsPanel({
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<UserGrantView | null>(null);
-  const [reconnect, setReconnect] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -78,7 +77,8 @@ export function ConnectionsPanel({
       {error && <p className="webapp-form-message" role="alert">{error}</p>}
 
       {/* Account scope: a grant authorizes, it does not connect. Connecting
-        * gives one workspace a lease, and only a workspace can hold one. */}
+        * happens inside a workspace, in its connections panel — the one place
+        * a lease can be minted. This page only takes things away. */}
       <section className="settings-credential-section" aria-label="Authorized providers">
         <div className="settings-section-heading">
           <div><p>Personal grants</p><h2>Authorized</h2></div>
@@ -88,8 +88,8 @@ export function ConnectionsPanel({
           <p className="settings-credential-state">Loading connections…</p>
         ) : grants.length === 0 ? (
           <p className="settings-credential-state">
-            Nothing authorized yet. Authorize a provider below and any workspace you own
-            can connect it in one click.
+            Nothing authorized yet. Connect a provider from a workspace's
+            connections panel; the grant it creates shows up here.
           </p>
         ) : (
           <div className="settings-credential-list">
@@ -109,11 +109,15 @@ export function ConnectionsPanel({
                     {state !== null && <small>{state}</small>}
                   </div>
                   <div className="settings-row-actions">
-                    <button
-                      className="webapp-action"
-                      type="button"
-                      onClick={() => setReconnect(grant.provider)}
-                    >Re-auth</button>
+                    {grant.kind === 'oauth' && (
+                      // Rotation for an OAuth grant is re-running the dance;
+                      // no form needed, so the one add-shaped action left is a
+                      // plain link into the provider round trip.
+                      <a
+                        className="webapp-action"
+                        href={client.connectStartUrl(grant.provider)}
+                      >Re-auth</a>
+                    )}
                     <button
                       className="webapp-action webapp-action--danger"
                       type="button"
@@ -128,21 +132,12 @@ export function ConnectionsPanel({
         )}
       </section>
 
-      <ConnectPicker
-        client={client}
-        requestedProvider={reconnect ?? requestedName ?? null}
-        onConnected={() => {
-          setReconnect(null);
-          void reload();
-        }}
-      />
-
-      {admin && <AdminConnectionsSection client={client} />}
+      {admin && <OrgConnectionsSection client={client} />}
 
       {revokeTarget && (
         <ConfirmationDialog
           title="Revoke this connection?"
-          description={`Revoke ${revokeTarget.provider}? Every workspace holding a lease from it loses access immediately.`}
+          description={`Revoke ${revokeTarget.provider}? Every workspace holding a lease from it loses access immediately. Pasted keys must be pasted again to reconnect.`}
           confirmLabel="Revoke connection"
           onCancel={() => setRevokeTarget(null)}
           onConfirm={() => { void revoke(revokeTarget); }}

@@ -22,6 +22,7 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     error: phase === "error" ? "provider failed" : null,
     role: "owner",
     orgShareRole: null,
+    connections: [],
   owner: { name: "Owner", avatarUrl: null },
   environment: null,
   agentRuleId: null,

@@ -120,6 +120,7 @@ const creating: WorkspaceView = {
   owner: { name: "Owner", avatarUrl: null },
   environment: null,
   agentRuleId: null,
+  connections: [],
 };
 
 const running: WorkspaceView = {
@@ -144,6 +145,7 @@ const running: WorkspaceView = {
   owner: { name: "Owner", avatarUrl: null },
   environment: null,
   agentRuleId: null,
+  connections: [],
 };
 
 const runningTwo: WorkspaceView = {
