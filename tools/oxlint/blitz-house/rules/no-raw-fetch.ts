@@ -1,33 +1,7 @@
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree, SourceCode } from "@oxlint/plugins";
-
 import { allowedFilesSchema, currentFileIsAllowed } from "./allowed-files.ts";
-import { isUnshadowedGlobal } from "./global-reference.ts";
-
-const GLOBAL_FETCH_OWNERS = new Set(["globalThis", "self", "window"]);
-
-function isDirectFetchCall(
-  sourceCode: SourceCode,
-  node: ESTree.CallExpression,
-): boolean {
-  const callee = node.callee;
-  if (callee.type === "Identifier") {
-    return isUnshadowedGlobal(sourceCode, callee, "fetch");
-  }
-  if (callee.type !== "MemberExpression" || callee.object.type !== "Identifier") {
-    return false;
-  }
-  if (
-    !GLOBAL_FETCH_OWNERS.has(callee.object.name) ||
-    !isUnshadowedGlobal(sourceCode, callee.object, callee.object.name)
-  ) {
-    return false;
-  }
-  return callee.computed
-    ? callee.property.type === "Literal" && callee.property.value === "fetch"
-    : callee.property.type === "Identifier" && callee.property.name === "fetch";
-}
+import { isGlobalValue } from "./global-reference.ts";
 
 /** Require core network requests to pass through the repository's fetch boundary. */
 export const noRawFetchRule = defineRule({
@@ -47,7 +21,7 @@ export const noRawFetchRule = defineRule({
     if (currentFileIsAllowed(context)) return {};
     return {
       CallExpression(node) {
-        if (isDirectFetchCall(context.sourceCode, node)) {
+        if (isGlobalValue(context.sourceCode, node.callee, "fetch")) {
           context.report({ node, messageId: "rawFetch" });
         }
       },

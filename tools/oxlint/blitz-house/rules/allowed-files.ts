@@ -17,12 +17,11 @@ export const allowedFilesSchema = [
 ] as const;
 
 export function currentFileIsAllowed(context: Context): boolean {
-  const option = context.options[0];
-  if (typeof option !== "object" || option === null || Array.isArray(option)) {
-    return false;
-  }
-  const allowFiles = option.allowFiles;
-  if (!Array.isArray(allowFiles)) return false;
+  // SAFETY: before any linting runs, oxlint merges the rules' defaultOptions
+  // ([{ allowFiles: [] }]) into the config options and AJV-validates the
+  // result against allowedFilesSchema, aborting the whole run on mismatch —
+  // so options[0] is always an object whose allowFiles is a string array.
+  const { allowFiles } = context.options[0] as { allowFiles: string[] };
   const filename = relative(context.cwd, context.physicalFilename).replaceAll(
     "\\",
     "/",

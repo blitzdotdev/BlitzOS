@@ -1,39 +1,7 @@
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree, SourceCode } from "@oxlint/plugins";
-
 import { allowedFilesSchema, currentFileIsAllowed } from "./allowed-files.ts";
-import { isUnshadowedGlobal } from "./global-reference.ts";
-
-const GLOBAL_CONSOLE_OWNERS = new Set(["globalThis", "self", "window"]);
-
-function isGlobalConsole(
-  sourceCode: SourceCode,
-  node: ESTree.Expression,
-): boolean {
-  if (node.type === "Identifier") {
-    return isUnshadowedGlobal(sourceCode, node, "console");
-  }
-  if (node.type !== "MemberExpression" || node.object.type !== "Identifier") {
-    return false;
-  }
-  if (
-    !GLOBAL_CONSOLE_OWNERS.has(node.object.name) ||
-    !isUnshadowedGlobal(sourceCode, node.object, node.object.name)
-  ) {
-    return false;
-  }
-  return node.computed
-    ? node.property.type === "Literal" && node.property.value === "console"
-    : node.property.type === "Identifier" && node.property.name === "console";
-}
-
-function isConsoleMember(
-  sourceCode: SourceCode,
-  node: ESTree.MemberExpression,
-): boolean {
-  return isGlobalConsole(sourceCode, node.object);
-}
+import { isGlobalValue } from "./global-reference.ts";
 
 /** Keep core logging at explicit structured-logging chokepoints. */
 export const noConsoleInCoreRule = defineRule({
@@ -53,7 +21,7 @@ export const noConsoleInCoreRule = defineRule({
     if (currentFileIsAllowed(context)) return {};
     return {
       MemberExpression(node) {
-        if (isConsoleMember(context.sourceCode, node)) {
+        if (isGlobalValue(context.sourceCode, node.object, "console")) {
           context.report({ node, messageId: "consoleInCore" });
         }
       },
