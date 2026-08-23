@@ -1,6 +1,7 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
+  API_PREFIXES,
   UPLOAD_MANIFEST,
   WORKER_SOURCE,
   importSpecifiers,
@@ -153,6 +154,11 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
       "virtual:teenybase",
       "./core/index",
     ]);
+  });
+
+  it("routes recipe fire-token requests with a direct pathname predicate", () => {
+    expect(API_PREFIXES.every((prefix) => !prefix.includes("*"))).toBe(true);
+    expect(WORKER_SOURCE).toContain("/^\\/recipes\\/[^/]+\\/fire-token$/u.test(pathname)");
   });
 
   // Ask 7, emitter half. The platform Loader does not resolve an explicit

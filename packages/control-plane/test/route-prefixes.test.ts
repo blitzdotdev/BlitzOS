@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { parse } from "smol-toml";
 import { describe, expect, it } from "vitest";
-import { API_PREFIXES } from "../scripts/build-blitzdev.mjs";
+import { API_PREFIXES, WORKER_SOURCE } from "../scripts/build-blitzdev.mjs";
 // The committed template, never the gitignored wrangler.toml: a local copy
 // is per-deployment and may have drifted, which would make this gate report
 // on a file no other clone has.
@@ -75,6 +75,8 @@ describe("core route asset precedence", () => {
 
   it.skipIf(!managedToolchainEnabled)("runs every core route segment through the managed Worker [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
     const managedWorkerSegments = new Set(API_PREFIXES.map(firstSegment));
+    expect(WORKER_SOURCE).toContain("/^\\/recipes\\/[^/]+\\/fire-token$/u.test(pathname)");
+    managedWorkerSegments.add(firstSegment("/recipes/:id/fire-token"));
     expect(
       requiredCoreSegments().filter((segment) => !managedWorkerSegments.has(segment)),
       "managed-worker API_PREFIXES is missing core route segments",
