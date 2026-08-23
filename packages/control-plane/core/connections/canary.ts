@@ -97,9 +97,19 @@ async function probeProvider(
     return { outcome: { healthy: false, detail: "no usable token" }, latencyMs: null };
   }
   const config = grantConfig(grant);
+  // An instance-hosted vendor has no catalog URL, and the canary grant is the
+  // only place its instance could come from. Probing a placeholder would send
+  // the canary's real token to a host nobody owns, so this refuses instead.
+  const baseUrl = config.baseUrl ?? manifest.baseUrl;
+  if (baseUrl === null) {
+    return {
+      outcome: { healthy: false, detail: "canary grant names no instance URL" },
+      latencyMs: null,
+    };
+  }
   const request = manifest.probe.request({
     token,
-    baseUrl: config.baseUrl ?? manifest.baseUrl,
+    baseUrl,
     header: grant.kind === "pat" ? config.tokenHeader : manifest.tokenHeader,
   });
   const headers = new Headers();

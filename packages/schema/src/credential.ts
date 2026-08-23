@@ -1,6 +1,9 @@
 export type MintKind = "app-jwt" | "oauth" | "static";
 
-export type Custody = "cp" | "broker" | "proxy";
+/** Where the real credential sits while a workspace uses it: `cp` injects
+ * it into the box, `proxy` keeps it in the control plane and hands the box a
+ * lease token instead. */
+export type Custody = "cp" | "proxy";
 
 export type Placement =
   | { kind: "env"; name: string; value: string }
@@ -120,9 +123,6 @@ export interface CatalogAdminFormView {
   rootLabel: string;
   rootHelp: string;
   placements: CatalogAdminPlacement[];
-  /** Present exactly when custody is "proxy": the collected URL becomes
-   * `config.proxy.base_url` and the header pair rides along unchanged. */
-  proxy: { baseUrlLabel: string; tokenHeader: string; tokenPrefix: string } | null;
   /** The GitHub App shape: non-null when the form collects an app id and an
    * installation id beside the PEM private key, and the PUT goes out as
    * kind "app-jwt" instead of a static root. Coexists with member OAuth —
@@ -136,9 +136,7 @@ export interface CatalogEntryView {
   id: string;
   title: string;
   summary: string;
-  docsUrl: string;
   custody: Custody;
-  rotation: "strict" | "graceful" | "none";
   oauthAvailable: boolean;
   oauthConfigured: boolean;
   personalTokenLabel: string | null;
@@ -146,11 +144,8 @@ export interface CatalogEntryView {
   /** Non-null when the paste form also collects an instance URL (YouTrack).
    * Prefilled and locked from the org connection row when one carries it. */
   personalTokenBaseUrlLabel: string | null;
-  /** The generic entry needs the person to name the variable and base URL. */
-  needsVendorConfig: boolean;
   /** Non-null for providers an org admin configures once, org-wide. */
   adminForm: CatalogAdminFormView | null;
-  environmentNames: string[];
 }
 
 export interface ListCatalogResponse {
@@ -180,12 +175,9 @@ export interface PutUserGrantRequest {
   /** Personal access token or API key. Never returned by any route. */
   token: string;
   label?: string;
-  /** The generic entry requires `envName` (and may name a base URL);
-   * instance-hosted catalog providers (YouTrack) take `baseUrl` alone. Other
-   * catalog providers ignore it. */
+  /** Instance-hosted providers (YouTrack) name the instance the token belongs
+   * to. Every other catalog provider ignores it. */
   vendor?: {
-    envName?: string;
-    baseUrlEnvName?: string | null;
     baseUrl?: string | null;
   };
 }

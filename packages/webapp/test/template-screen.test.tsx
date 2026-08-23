@@ -1028,23 +1028,18 @@ describe('template screen org-credential config', () => {
     id: 'discord',
     title: 'Discord',
     summary: 'Bot messaging',
-    docsUrl: 'https://example.com/discord',
     custody: 'cp',
-    rotation: 'none',
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: null,
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
-    needsVendorConfig: false,
     adminForm: {
       rootLabel: 'Bot token',
       rootHelp: 'Create it in the vendor console under a service account.',
       placements: [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }],
-      proxy: null,
       app: null,
     },
-    environmentNames: ['DISCORD_BOT_TOKEN'],
     scopes: [],
   };
   const youtrackEntry = {

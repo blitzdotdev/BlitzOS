@@ -3,7 +3,6 @@ import type {
   CatalogEntryView,
 } from "../types.js";
 import { discordManifest } from "./discord.js";
-import { genericManifest } from "./generic.js";
 import { githubManifest } from "./github.js";
 import { googleWorkspaceManifest } from "./google-workspace.js";
 import { linearManifest } from "./linear.js";
@@ -18,20 +17,44 @@ export const CATALOG: readonly ProviderManifest[] = [
   linearManifest,
   discordManifest,
   youtrackManifest,
-  genericManifest,
 ];
-
-export const GENERIC_MANIFEST_ID = genericManifest.id;
 
 export function providerManifest(id: string): ProviderManifest | null {
   return CATALOG.find((manifest) => manifest.id === id) ?? null;
 }
 
+/** The redirect URI this instance registers with a provider. It is derived, not
+ * declared: every provider has always used the same shape, and a manifest field
+ * holding a constant invites the one typo the OAuth round trip cannot survive. */
+export function providerRedirectPath(manifest: ProviderManifest): string {
+  return `/connect/${manifest.id}/callback`;
+}
+
+/** Raised when a caller needs a vendor root that the manifest does not have.
+ * Instance-hosted vendors declare `baseUrl: null`, and the organization's own
+ * URL rides the connection row instead. Falling back to a placeholder host
+ * would point a live credential at a machine nobody owns, so this throws. */
+export class MissingBaseUrlError extends Error {
+  constructor(manifest: ProviderManifest, purpose: string) {
+    super(`${manifest.id} declares no base URL; ${purpose} needs the instance URL from its connection row`);
+    this.name = "MissingBaseUrlError";
+  }
+}
+
+/** The vendor root a manifest declares, or a loud failure. */
+export function manifestBaseUrl(
+  manifest: ProviderManifest,
+  purpose: string,
+): string {
+  const baseUrl = manifest.baseUrl;
+  if (baseUrl === null) throw new MissingBaseUrlError(manifest, purpose);
+  return baseUrl;
+}
+
 /** The admin form, compiled so the panel can submit `PUT /connections/:id`
  * without knowing anything about manifests: the placements come from the env
- * deliveries, and proxy custody carries the base-URL field plus the header the
- * proxy re-signs with. An `app` block flips the PUT to kind app-jwt, whose
- * config carries the ids instead of placements. */
+ * deliveries. An `app` block flips the PUT to kind app-jwt, whose config
+ * carries the ids instead of placements. */
 function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null {
   const form = manifest.adminForm;
   if (form === null) return null;
@@ -43,13 +66,6 @@ function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null 
       name,
       fill,
     })),
-    proxy: manifest.custody === "proxy" && form.baseUrlLabel !== null
-      ? {
-          baseUrlLabel: form.baseUrlLabel,
-          tokenHeader: manifest.tokenHeader.name,
-          tokenPrefix: manifest.tokenHeader.prefix,
-        }
-      : null,
     app: form.app,
   };
 }
@@ -70,20 +86,13 @@ export function catalogView(
     id: manifest.id,
     title: manifest.title,
     summary: manifest.summary,
-    docsUrl: manifest.docsUrl,
     custody: manifest.custody,
-    rotation: manifest.rotation,
     oauthAvailable: auth !== null,
     oauthConfigured: configured,
     personalTokenLabel: manifest.personalToken?.label ?? null,
     personalTokenHelp: manifest.personalToken?.help ?? null,
     personalTokenBaseUrlLabel: manifest.personalToken?.baseUrlLabel ?? null,
-    // Identity, not shape: every other call site asks the same question by id,
-    // and "has no authorize endpoint" would answer yes for the next pasted-key
-    // provider that knows its own vendor perfectly well.
-    needsVendorConfig: manifest.id === GENERIC_MANIFEST_ID,
     adminForm: adminFormView(manifest),
-    environmentNames: manifest.delivery.env.map((delivery) => delivery.name),
   };
 }
 

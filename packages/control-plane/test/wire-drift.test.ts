@@ -348,11 +348,6 @@ const catalogAdminForm: SharedShape<
     { kind: "env", name: "VENDOR_TOKEN", fill: "token" },
     { kind: "env", name: "VENDOR_BASE_URL", fill: "proxy-url" },
   ],
-  proxy: {
-    baseUrlLabel: "Instance URL",
-    tokenHeader: "Authorization",
-    tokenPrefix: "Bearer ",
-  },
   app: { appIdLabel: "App ID", installationIdLabel: "Installation ID" },
 };
 
@@ -363,17 +358,13 @@ const catalogEntry: SharedShape<
   id: "linear",
   title: "Linear",
   summary: "Issues, projects, and comments through one GraphQL endpoint.",
-  docsUrl: "https://linear.app/developers",
   custody: "proxy",
-  rotation: "graceful",
   oauthAvailable: true,
   oauthConfigured: false,
   personalTokenLabel: "Personal API key",
   personalTokenHelp: "Create it in Linear's own settings.",
   personalTokenBaseUrlLabel: null,
-  needsVendorConfig: false,
   adminForm: catalogAdminForm,
-  environmentNames: ["LINEAR_API_KEY", "LINEAR_TOKEN"],
 };
 
 const userGrant: SharedShape<connections.UserGrantView, schema.UserGrantView> = {

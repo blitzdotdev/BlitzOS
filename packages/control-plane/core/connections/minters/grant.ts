@@ -3,7 +3,6 @@ import { HttpError } from "../../http.js";
 import { compileDelivery } from "../catalog/workspace-delivery.js";
 import type { ProviderManifest } from "../catalog/types.js";
 import type { GrantConfig, GrantRow } from "../user-grants.js";
-import { grantCustody, grantOverrides } from "../user-grants.js";
 import type { Connection, MinterResult, MintRequest } from "../types.js";
 
 /** A pasted key has no expiry of its own, so its lease keeps the cadence the
@@ -42,8 +41,7 @@ function leaseExpiry(input: GrantMintInput): number {
 export async function mintFromGrant(
   input: GrantMintInput,
 ): Promise<MinterResult> {
-  const custody = grantCustody(input.manifest, input.config);
-  const overrides = grantOverrides(input.manifest, input.config);
+  const custody = input.manifest.custody;
   const expiresAt = leaseExpiry(input);
   if (expiresAt <= input.request.now) {
     throw new HttpError(409, "connection grant needs re-authorization");
@@ -64,15 +62,11 @@ export async function mintFromGrant(
         // Inbound shape only: the proxy re-signs with the grant's own header
         // before the call leaves the control plane.
         tokenHeader: input.manifest.tokenHeader,
-        overrides,
       }),
       expiresAt,
       grantedScopes: input.scopes,
       tokenHash: await hashSecret(token),
     };
-  }
-  if (custody !== "cp") {
-    throw new HttpError(409, "grant mint requires cp or proxy custody");
   }
   return {
     // FROZEN box wire key: the shipped broker requires "integration".
@@ -86,7 +80,6 @@ export async function mintFromGrant(
       token: input.secret,
       proxyUrl: `${input.request.origin}/proxy/${input.request.leaseId}`,
       tokenHeader: input.config.tokenHeader,
-      overrides,
     }),
     expiresAt,
     grantedScopes: input.scopes,

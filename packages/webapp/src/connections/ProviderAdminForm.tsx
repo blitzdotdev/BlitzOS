@@ -11,12 +11,11 @@ function field(data: FormData, name: string): string {
 }
 
 /** The whole PUT body derives from the catalog view: the manifest already
- * decided custody, the placements, and the proxy header. The static form only
- * ever contributes the two values no manifest can know — the root and, for
- * proxy custody, the instance URL. The app variant (GitHub App) contributes
- * the app id and installation id beside the PEM private key, and goes out as
- * kind app-jwt with no placements: the minter's own defaults are the canonical
- * env surface for an app credential. */
+ * decided custody and the placements. The static form contributes the one
+ * value no manifest can know — the root. The app variant (GitHub App)
+ * contributes the app id and installation id beside the PEM private key, and
+ * goes out as kind app-jwt with no placements: the minter's own defaults are
+ * the canonical env surface for an app credential. */
 export function adminConnectionInput(
   entry: CatalogEntryView,
   data: FormData,
@@ -38,13 +37,6 @@ export function adminConnectionInput(
   const config: PutConnectionRequest['config'] = {
     placements: form.placements.map(({ kind, name, fill }) => ({ kind, name, fill })),
   };
-  if (form.proxy !== null) {
-    config.proxy = {
-      base_url: field(data, 'baseUrl'),
-      token_header: form.proxy.tokenHeader,
-      token_prefix: form.proxy.tokenPrefix,
-    };
-  }
   return {
     provider: entry.id,
     kind: 'static',
@@ -188,12 +180,6 @@ export function ProviderAdminForm({
             <input name="installationId" required inputMode="numeric" pattern="[0-9]+" />
           </label>
         </>
-      )}
-      {form.proxy !== null && (
-        <label className="connect-field connect-field--wide">
-          <span className="connect-field__label">{form.proxy.baseUrlLabel}</span>
-          <input name="baseUrl" type="url" required placeholder="https://" />
-        </label>
       )}
       {form.app !== null ? (
         // The key arrives as a downloaded .pem, so the primary input is a

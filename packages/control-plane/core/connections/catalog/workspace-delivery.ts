@@ -1,10 +1,6 @@
 import type { Placement } from "../types.js";
-import type {
-  DeliveryInput,
-  DeliveryOverrides,
-  ProviderEnvDelivery,
-  ProviderManifest,
-} from "./types.js";
+import { manifestBaseUrl } from "./index.js";
+import type { DeliveryInput, ProviderManifest } from "./types.js";
 
 /** The shipped box image sets HOME here (packages/box/Dockerfile). File
  * placements are written verbatim — the box does no `~` expansion — so the
@@ -13,23 +9,12 @@ export const BOX_HOME = "/var/lib/blitz/home";
 
 const SKILL_MODE = 0o600;
 
-function envDeliveries(
-  manifest: ProviderManifest,
-  overrides: DeliveryOverrides | null,
-): ProviderEnvDelivery[] {
-  if (overrides === null) return [...manifest.delivery.env];
-  const deliveries: ProviderEnvDelivery[] = [
-    { name: overrides.envName, fill: "token" },
-  ];
-  if (overrides.baseUrlEnvName !== null) {
-    deliveries.push({ name: overrides.baseUrlEnvName, fill: "proxy-url" });
-  }
-  return deliveries;
-}
-
+/** Inject custody puts the vendor root itself in the box, so a manifest with
+ * no fixed root cannot be delivered that way — the skill would print a URL
+ * nobody owns. Proxy custody never asks: the lease URL is the root. */
 function baseUrlFor(input: DeliveryInput, manifest: ProviderManifest): string {
   if (input.mode === "proxy") return input.proxyUrl;
-  return input.overrides?.baseUrl ?? manifest.baseUrl;
+  return manifestBaseUrl(manifest, "inject-custody delivery");
 }
 
 export function skillPath(manifest: ProviderManifest, connection: string): string {
@@ -47,7 +32,7 @@ export function compileDelivery(
 ): Placement[] {
   const placements: Placement[] = [];
   const baseUrl = baseUrlFor(input, manifest);
-  const deliveries = envDeliveries(manifest, input.overrides);
+  const deliveries = manifest.delivery.env;
   for (const delivery of deliveries) {
     placements.push({
       kind: "env",

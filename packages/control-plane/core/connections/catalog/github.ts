@@ -82,11 +82,11 @@ export const githubManifest = {
   id: "github",
   title: "GitHub",
   summary: "Repos, pull requests, and issues as you, through a GitHub App user token.",
-  docsUrl: "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app",
   custody: "cp",
-  // Refresh tokens are strictly single-use: every refresh re-issues both
-  // tokens and kills the old pair, so refreshes serialize per grant.
-  rotation: "strict",
+  // GitHub refresh tokens are single-use: a refresh re-issues both tokens and
+  // kills the old pair. Nothing here serializes refreshes — one shared refresh
+  // path runs them, and the compare-and-set in `rotateGrantTokens` guards the
+  // database write alone. A loser re-reads the row and uses the winner's token.
   tokenHeader: { name: "Authorization", prefix: "Bearer " },
   baseUrl: "https://api.github.com",
   auth: {
@@ -98,7 +98,6 @@ export const githubManifest = {
     authorizeParams: [],
     scopeDelimiter: " ",
     accessTtlMs: 8 * HOUR_MS,
-    redirectPath: "/connect/github/callback",
   },
   personalToken: {
     label: "Fine-grained personal access token",
@@ -112,7 +111,6 @@ export const githubManifest = {
   adminForm: {
     rootLabel: "App private key (.pem)",
     rootHelp: "github.com → Settings → Developer settings → GitHub Apps → your app → Private keys → Generate a private key. Drop the downloaded .pem file here — it works as-is. Install the app on the repositories agents should reach.",
-    baseUrlLabel: null,
     app: {
       appIdLabel: "App ID",
       installationIdLabel: "Installation ID",
@@ -149,66 +147,4 @@ export const githubManifest = {
     }),
     expect: { status: 200, jsonFields: ["login"] },
   },
-  probeFixtures: [
-    {
-      name: "authenticated user",
-      status: 200,
-      response: '{"login":"blitz-canary","id":4242,"type":"User"}',
-      healthy: true,
-    },
-    {
-      name: "expired user token",
-      status: 401,
-      response: '{"message":"Bad credentials","status":"401"}',
-      healthy: false,
-    },
-  ],
-  fixtures: [
-    {
-      name: "authorization code exchange",
-      grantType: "authorization_code",
-      request: [
-        { name: "grant_type", value: "authorization_code" },
-        { name: "code", value: "recorded-authorization-code" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-        { name: "redirect_uri", value: "https://cp.example/connect/github/callback" },
-        { name: "code_verifier", value: "recorded-code-verifier" },
-      ],
-      response: '{"access_token":"ghu_recorded_first","expires_in":28800,"refresh_token":"ghr_recorded_first","refresh_token_expires_in":15811200,"scope":"","token_type":"bearer"}',
-      expect: {
-        accessToken: "ghu_recorded_first",
-        refreshToken: "ghr_recorded_first",
-        expiresInMs: 28_800_000,
-      },
-    },
-    {
-      name: "single-use refresh rotation",
-      grantType: "refresh_token",
-      request: [
-        { name: "grant_type", value: "refresh_token" },
-        { name: "refresh_token", value: "ghr_recorded_first" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-      ],
-      response: '{"access_token":"ghu_recorded_second","expires_in":28800,"refresh_token":"ghr_recorded_second","refresh_token_expires_in":15811200,"scope":"","token_type":"bearer"}',
-      expect: {
-        accessToken: "ghu_recorded_second",
-        refreshToken: "ghr_recorded_second",
-        expiresInMs: 28_800_000,
-      },
-    },
-    {
-      name: "replayed single-use refresh",
-      grantType: "refresh_token",
-      request: [
-        { name: "grant_type", value: "refresh_token" },
-        { name: "refresh_token", value: "ghr_recorded_first" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-      ],
-      response: '{"error":"bad_refresh_token","error_description":"The refresh token passed is incorrect or expired."}',
-      expect: null,
-    },
-  ],
 } satisfies OAuthProviderManifest;

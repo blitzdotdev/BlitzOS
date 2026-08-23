@@ -182,7 +182,6 @@ describe("connections: per-user grants", () => {
       "linear",
       "discord",
       "youtrack",
-      "generic",
     ]);
     const linear = providers.find(({ id }) => id === "linear");
     expect(linear?.oauthConfigured).toBe(true);
@@ -317,22 +316,23 @@ describe("connections: per-user grants", () => {
     expect(JSON.parse(lease?.scopes ?? "null")).toEqual(["read", "write"]);
   });
 
-  it("keeps the frozen box mint wire on an inject-custody generic grant", async () => {
+  it("keeps the frozen box mint wire on an inject-custody grant", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    const granted = await appRequest(app, "/connections/grants/acme", {
+    // github is the cp-custody pasted key: the credential itself lands in the
+    // box, so the mint body is the inject shape.
+    const granted = await appRequest(app, "/connections/grants/github", {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        manifestId: "generic",
-        token: "acme-test-only-key",
-        vendor: { envName: "ACME_API_KEY" },
+        manifestId: "github",
+        token: "github_pat_test-only-key",
       }),
     });
     expect(granted.status).toBe(204);
     const { box } = await readyWorkspace(app, providers, cookie);
 
-    const response = await mint(app, box.access_token, { integration: "acme" });
+    const response = await mint(app, box.access_token, { integration: "github" });
     expect(response.status).toBe(200);
     const raw: unknown = JSON.parse(await response.text());
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -508,21 +508,20 @@ describe("connections: per-user grants", () => {
 
   /** The sync-all loop mints every connection in one pass. Superseding is
    * scoped to the pair being minted, so linear's new lease must not retire the
-   * one acme is holding. */
+   * one github is holding. */
   it("supersedes only the connection being minted during a sync", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const acme = await appRequest(app, "/connections/grants/acme", {
+    const github = await appRequest(app, "/connections/grants/github", {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
-        manifestId: "generic",
-        token: "acme-test-only-key",
-        vendor: { envName: "ACME_API_KEY" },
+        manifestId: "github",
+        token: "github_pat_test-only-key",
       }),
     });
-    expect(acme.status).toBe(204);
+    expect(github.status).toBe(204);
     const { workspace, box } = await readyWorkspace(app, providers, cookie);
 
     expect((await mint(app, box.access_token, {})).status).toBe(200);
@@ -533,7 +532,7 @@ describe("connections: per-user grants", () => {
     });
     const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
     const live = rows.filter(({ state }) => state === "active");
-    expect(live.map(({ connection }) => connection).sort()).toEqual(["acme", "linear"]);
+    expect(live.map(({ connection }) => connection).sort()).toEqual(["github", "linear"]);
     expect(rows.length).toBe(4);
   });
 
@@ -2854,8 +2853,6 @@ describe("connections: admin-configured providers through templates", () => {
       personalTokenLabel: "Permanent token",
       // The paste form's extra field: instance-hosted vendors name their URL.
       personalTokenBaseUrlLabel: "Instance URL",
-      needsVendorConfig: false,
-      environmentNames: ["YOUTRACK_TOKEN", "YOUTRACK_BASE_URL"],
       adminForm: null,
     });
     const discord = providers.find(({ id }) => id === "discord");
@@ -2864,18 +2861,15 @@ describe("connections: admin-configured providers through templates", () => {
       oauthAvailable: false,
       personalTokenLabel: null,
       personalTokenBaseUrlLabel: null,
-      needsVendorConfig: false,
-      // The <PROVIDER>_TOKEN alias rides beside the vendor's own name: an
-      // agent guessing a variable guesses that shape first, and guessing
-      // wrong reads as "not connected".
-      environmentNames: ["DISCORD_BOT_TOKEN", "DISCORD_TOKEN"],
       adminForm: {
         rootLabel: "Bot token",
+        // The <PROVIDER>_TOKEN alias rides beside the vendor's own name: an
+        // agent guessing a variable guesses that shape first, and guessing
+        // wrong reads as "not connected".
         placements: [
           { kind: "env", name: "DISCORD_BOT_TOKEN", fill: "token" },
           { kind: "env", name: "DISCORD_TOKEN", fill: "token" },
         ],
-        proxy: null,
       },
     });
 

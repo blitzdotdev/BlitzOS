@@ -29,8 +29,8 @@ export type ProviderRowsClient = Pick<
 
 /** One provider, everything this workspace knows about it. */
 type ProviderRow = {
-  /** The connection name: the catalog id for every entry but a generic
-   * connection an agent asked for by name. */
+  /** The connection name: a catalog id, or a name an agent asked for that the
+   * catalog does not know. */
   name: string;
   title: string;
   entry: CatalogEntryView | null;
@@ -80,14 +80,20 @@ function provenance(grant: UserGrantView): string {
  * blast radii, and the old panel offered only the first while describing the
  * second. Naming both, in one place, is the fix. */
 function DisconnectChooser({
-  name,
+  row,
   onWorkspace,
   onCancel,
 }: {
-  name: string;
+  row: ProviderRow;
   onWorkspace: () => void;
   onCancel: () => void;
 }) {
+  const name = row.name;
+  // Inject custody hands the box the credential itself, not a lease token.
+  // Revoking the lease unsets our copy; it cannot reach into the vendor and
+  // make a Discord bot token stop working. Saying so is the difference between
+  // a promise we keep and one the vendor would have to keep for us.
+  const injected = row.lease?.mode === 'inject';
   return (
     <ModalOverlay onDismiss={onCancel}>
       <section
@@ -103,6 +109,13 @@ function DisconnectChooser({
             account keeps the authorization, so other workspaces keep working and
             you can reconnect this one in a click.
           </p>
+          {injected && (
+            <p>
+              This workspace holds the {row.title} credential itself, not a
+              lease token. Revoking the lease removes our copy; the credential
+              stays installed and valid until you rotate it at {row.title}.
+            </p>
+          )}
         </div>
         <footer className="webapp-confirmation-actions">
           <button className="webapp-action" type="button" onClick={onCancel}>cancel</button>
@@ -164,7 +177,6 @@ export function WorkspaceProviderRows({
   const [grantsVersion, setGrantsVersion] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [replacing, setReplacing] = useState<string | null>(null);
-  const [name, setName] = useState('');
   const [formVersion, setFormVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -208,7 +220,6 @@ export function WorkspaceProviderRows({
   const open = useCallback((row: ProviderRow, mode: 'connect' | 'replace') => {
     setExpanded(row.name);
     setReplacing(mode === 'replace' ? row.name : null);
-    setName(row.name);
     setFormVersion((current) => current + 1);
     setGrantsVersion((current) => current + 1);
     setError(null);
@@ -228,7 +239,6 @@ export function WorkspaceProviderRows({
     if (focusProvider === null) return;
     setExpanded(focusProvider);
     setReplacing(null);
-    setName(focusProvider);
     setFormVersion((current) => current + 1);
     setGrantsVersion((current) => current + 1);
   }, [focusProvider, focusVersion]);
@@ -255,7 +265,9 @@ export function WorkspaceProviderRows({
     if (saving || entry === null) return;
     const form = event.currentTarget;
     const data = new FormData(form);
-    const provider = String(data.get('name') ?? '').trim() || row.name;
+    // A grant is always filed under the catalog id; the control plane refuses
+    // any other name, and the form's name field is read-only for that reason.
+    const provider = row.name;
     setSaving(true);
     setError(null);
     try {
@@ -373,8 +385,7 @@ export function WorkspaceProviderRows({
                   ) : showForm ? (
                     <ProviderConnectSurface
                       entry={row.entry}
-                      connectionName={name}
-                      onConnectionNameChange={setName}
+                      connectionName={row.name}
                       lockedBaseUrl={lockedInstanceBaseUrl(row.entry, orgConnections)}
                       oauthHref={oauthHref}
                       oauthLabel={`Connect with ${row.title}`}
@@ -396,9 +407,16 @@ export function WorkspaceProviderRows({
           );
         })}
       </div>
+      {readOnly !== true && (
+        <p className="connect-help">
+          A key for anything not listed here is yours to place: write it to a
+          file or <code>.env</code> in the workspace and tell the agent where
+          it is.
+        </p>
+      )}
       {disconnecting !== null && (
         <DisconnectChooser
-          name={disconnecting.name}
+          row={disconnecting}
           onCancel={() => setDisconnecting(null)}
           onWorkspace={() => {
             const lease = disconnecting.lease;

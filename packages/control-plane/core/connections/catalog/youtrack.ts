@@ -73,17 +73,13 @@ export const youtrackManifest = {
   id: "youtrack",
   title: "YouTrack",
   summary: "Issues, comments, and work items on your organization's YouTrack instance.",
-  docsUrl: "https://www.jetbrains.com/help/youtrack/devportal/api-authentication.html",
   custody: "proxy",
-  // A permanent token neither expires nor rotates; the member revokes it in
-  // YouTrack's own UI and re-pastes to replace it here.
-  rotation: "none",
   tokenHeader: { name: "Authorization", prefix: "Bearer " },
-  // Placeholder, like the generic entry's: every YouTrack instance has its
-  // own URL. The real one lives on the grant (`vendor.baseUrl`) or on the org
-  // connection row's `config.proxy.base_url`, and the proxy resolves in that
-  // order.
-  baseUrl: "https://youtrack.invalid",
+  // No fixed root: every YouTrack instance has its own URL. The real one lives
+  // on the grant (`vendor.baseUrl`) or on the org connection row's
+  // `config.proxy.base_url`, and the proxy resolves in that order. A reader
+  // that reaches this null refuses rather than inventing a host.
+  baseUrl: null,
   auth: null,
   personalToken: {
     label: "Permanent token",
@@ -115,19 +111,4 @@ export const youtrackManifest = {
     }),
     expect: { status: 200, jsonFields: ["login"] },
   },
-  probeFixtures: [
-    {
-      name: "token's own user",
-      status: 200,
-      response: '{"id":"1-1","login":"blitz-canary","name":"Blitz Canary","$type":"Me"}',
-      healthy: true,
-    },
-    {
-      name: "revoked permanent token",
-      status: 401,
-      response: '{"error":"Unauthorized","error_description":"Cannot find user by authentication data"}',
-      healthy: false,
-    },
-  ],
-  fixtures: [],
 } satisfies StaticProviderManifest;

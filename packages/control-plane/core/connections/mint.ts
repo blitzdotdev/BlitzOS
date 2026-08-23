@@ -3,7 +3,7 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { first, rows } from "../db.js";
 import { HttpError, isRecord, isString, readJson, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
-import { providerManifest } from "./catalog/index.js";
+import { providerManifest, providerRedirectPath } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { tombstoneDelivery } from "./catalog/workspace-delivery.js";
 import { addConnectRoutes } from "./connect.js";
@@ -200,7 +200,7 @@ async function grantSecretForMint(
       key: runtime.credentialMasterKey,
       clientId,
       clientSecret,
-      redirectUri: `${origin}${auth.redirectPath}`,
+      redirectUri: `${origin}${providerRedirectPath(manifest)}`,
     },
     { ...manifest, auth },
     grant,
@@ -422,8 +422,9 @@ export async function workspaceForMint(
   });
 }
 
-/** Static org-root minting predates per-user grants. It stays for rows that
- * already carry a root; new product surface never creates one. */
+/** Static org-root minting predates per-user grants. It serves every row that
+ * carries a sealed root, which the admin form on the template page still
+ * creates: `PUT /connections/:name` is the org-credential path. */
 async function legacyRootMint(
   runtime: ReturnType<RuntimeFactory>,
   connection: Connection,

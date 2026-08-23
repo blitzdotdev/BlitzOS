@@ -64,11 +64,10 @@ export const linearManifest = {
   id: "linear",
   title: "Linear",
   summary: "Issues, projects, and comments through Linear's single GraphQL endpoint.",
-  docsUrl: "https://developers.linear.app/docs/oauth/authentication",
   custody: "proxy",
-  // Rotating refresh with a 30-minute replay grace: a lost race survives, so
-  // refreshes need no cross-request lock, only a compare-and-set.
-  rotation: "graceful",
+  // Linear rotates the refresh token on every exchange. One shared refresh
+  // path runs the exchange, and the compare-and-set in `rotateGrantTokens`
+  // guards the database write alone; nothing here serializes the calls.
   tokenHeader: { name: "Authorization", prefix: "Bearer " },
   baseUrl: "https://api.linear.app",
   auth: {
@@ -82,7 +81,6 @@ export const linearManifest = {
     authorizeParams: [{ name: "actor", value: "user" }],
     scopeDelimiter: ",",
     accessTtlMs: 24 * HOUR_MS,
-    redirectPath: "/connect/linear/callback",
   },
   personalToken: {
     label: "Personal API key",
@@ -124,66 +122,4 @@ export const linearManifest = {
     }),
     expect: { status: 200, jsonFields: ["data.viewer.id"] },
   },
-  probeFixtures: [
-    {
-      name: "viewer",
-      status: 200,
-      response: '{"data":{"viewer":{"id":"6e5c1f7a-0000-4000-8000-000000000000","name":"Blitz Canary"}}}',
-      healthy: true,
-    },
-    {
-      name: "authenticated 200 carrying an error array",
-      status: 200,
-      response: '{"errors":[{"message":"Authentication required, not authenticated"}]}',
-      healthy: false,
-    },
-  ],
-  fixtures: [
-    {
-      name: "authorization code exchange",
-      grantType: "authorization_code",
-      request: [
-        { name: "grant_type", value: "authorization_code" },
-        { name: "code", value: "recorded-authorization-code" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-        { name: "redirect_uri", value: "https://cp.example/connect/linear/callback" },
-        { name: "code_verifier", value: "recorded-code-verifier" },
-      ],
-      response: '{"access_token":"lin_oauth_recorded_first","token_type":"Bearer","expires_in":86400,"refresh_token":"lin_refresh_recorded_first","scope":"read,write"}',
-      expect: {
-        accessToken: "lin_oauth_recorded_first",
-        refreshToken: "lin_refresh_recorded_first",
-        expiresInMs: 86_400_000,
-      },
-    },
-    {
-      name: "rotating refresh inside the grace window",
-      grantType: "refresh_token",
-      request: [
-        { name: "grant_type", value: "refresh_token" },
-        { name: "refresh_token", value: "lin_refresh_recorded_first" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-      ],
-      response: '{"access_token":"lin_oauth_recorded_second","token_type":"Bearer","expires_in":86400,"refresh_token":"lin_refresh_recorded_second","scope":"read,write"}',
-      expect: {
-        accessToken: "lin_oauth_recorded_second",
-        refreshToken: "lin_refresh_recorded_second",
-        expiresInMs: 86_400_000,
-      },
-    },
-    {
-      name: "refresh past the grace window",
-      grantType: "refresh_token",
-      request: [
-        { name: "grant_type", value: "refresh_token" },
-        { name: "refresh_token", value: "lin_refresh_recorded_first" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-      ],
-      response: '{"error":"invalid_grant","error_description":"Refresh token is invalid or expired"}',
-      expect: null,
-    },
-  ],
 } satisfies OAuthProviderManifest;
