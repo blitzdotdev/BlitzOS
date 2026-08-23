@@ -66,6 +66,7 @@ const expected = [
   "oauth.ts",
   "preview.ts",
   "principals.ts",
+  "recipe-triggers.ts",
   "recipes.ts",
   "compute/aws.ts",
   "compute/aws-sigv4.ts",
@@ -115,6 +116,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(90);
+    expect(expected).toHaveLength(91);
   });
 });

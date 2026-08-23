@@ -9,6 +9,7 @@ import { addOAuthRoutes } from "./oauth.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addRecipeRoutes } from "./recipes.js";
+import { addRecipeTriggerRoutes } from "./recipe-triggers.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
@@ -62,6 +63,7 @@ export function installControlPlaneRoutes(
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addRecipeRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addRecipeTriggerRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Box-authenticated, so it is registered ahead of the session-authenticated
   // /workspaces/:id routes it shares a prefix with.
   addWorkspaceEnvironmentRoutes(router, runtimeFactory);

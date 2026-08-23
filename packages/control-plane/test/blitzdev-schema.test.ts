@@ -28,6 +28,7 @@ const expectedTables = [
   "workspace_templates",
   "workspace_template_folders",
   "recipes",
+  "recipe_runs",
   "webapp_state",
   "device_authorizations",
   "boxes",
@@ -64,9 +65,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-one domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-two domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(32);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(33);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -168,6 +169,10 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
           name: "created_by_membership_id",
           foreignKey: { table: "memberships", column: "id" },
         }),
+        expect.objectContaining({
+          name: "fire_token_hash",
+          check: "fire_token_hash IS NULL OR length(fire_token_hash) = 64",
+        }),
         expect.objectContaining({ name: "created_at", type: "integer", notNull: true }),
         expect.objectContaining({ name: "updated_at", type: "integer", notNull: true }),
       ],
@@ -175,6 +180,27 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         { name: "org", fields: ["org_id", "created_at"] },
         { name: "template", fields: "template_id" },
       ],
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "recipe_runs")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "id", primary: true }),
+        expect.objectContaining({
+          name: "recipe_id",
+          foreignKey: { table: "recipes", column: "id", onDelete: "CASCADE" },
+        }),
+        expect.objectContaining({
+          name: "owner_membership_id",
+          foreignKey: { table: "memberships", column: "id" },
+        }),
+        expect.objectContaining({ name: "delivery_blob", type: "text" }),
+        expect.objectContaining({ name: "dedup_key", type: "text" }),
+      ]),
+      indexes: [{
+        name: "recipe_dedup",
+        unique: true,
+        fields: ["recipe_id", "dedup_key"],
+        where: { q: "dedup_key IS NOT NULL" },
+      }],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "agent_rules")).toMatchObject({
       fields: [
@@ -354,6 +380,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_workspace_template_folders_folder",
       "idx_recipes_org",
       "idx_recipes_template",
+      "idx_recipe_runs_recipe_dedup",
       "idx_webapp_state_identity",
       "idx_boxes_broker",
       "idx_boxes_principal",

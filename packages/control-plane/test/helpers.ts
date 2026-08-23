@@ -468,6 +468,7 @@ export async function resetDatabase(): Promise<void> {
   const tables = [
     "microvm_hosts",
     "provider_health",
+    "recipe_runs",
     "workspace_template_repos",
     "workspace_template_connections",
     "workspace_template_folders",

@@ -16,7 +16,7 @@ const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
-  "/sessions", "/workspaces", "/workspace-templates", "/workspace-recipes", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
+  "/sessions", "/workspaces", "/workspace-templates", "/workspace-recipes", "/recipes/*/fire-token", "/hooks/", "/trigger-events/", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
   "/hosts/", "/oauth/", "/boxes/", "/connections", "/connect/", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
@@ -45,7 +45,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/principals.ts",
-  "core/recipes.ts",
+  "core/recipes.ts", "core/recipe-triggers.ts",
   "core/registry.ts",
   "core/sessions.ts",
   "core/signup-config.js",
@@ -241,7 +241,8 @@ export const BLITZDEV_CONFIG = Object.freeze({
     { name: "workspace_template_folders", fields: [{ name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["template_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "template_id"] }], extensions: [DENY_ALL_RULES] },
     // Flat like agent_rules/broker_members: this file already sits on the
     // max-lines warn list, so a new table stays terse instead of growing it.
-    { name: "recipes", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "harness", type: "text", sqlType: "text", notNull: true, check: "harness IN ('claude', 'codex', 'chat')" }, { name: "model", type: "text", sqlType: "text" }, { name: "effort", type: "text", sqlType: "text" }, { name: "prompt", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }, { name: "template", fields: "template_id" }], extensions: [DENY_ALL_RULES] },
+    { name: "recipes", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "template_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspace_templates", column: "id" } }, { name: "harness", type: "text", sqlType: "text", notNull: true, check: "harness IN ('claude', 'codex', 'chat')" }, { name: "model", type: "text", sqlType: "text" }, { name: "effort", type: "text", sqlType: "text" }, { name: "prompt", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "fire_token_hash", type: "text", sqlType: "text", check: "fire_token_hash IS NULL OR length(fire_token_hash) = 64" }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }, { name: "template", fields: "template_id" }], extensions: [DENY_ALL_RULES] },
+    { name: "recipe_runs", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "recipe_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "recipes", column: "id", onDelete: "CASCADE" } }, { name: "workspace_id", type: "text", sqlType: "text", foreignKey: { table: "workspaces", column: "id" } }, { name: "owner_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "status", type: "text", sqlType: "text", notNull: true, check: "status IN ('pending', 'running', 'succeeded', 'failed')" }, { name: "error", type: "text", sqlType: "text" }, { name: "delivery_blob", type: "text", sqlType: "text" }, { name: "dedup_key", type: "text", sqlType: "text" }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "recipe_dedup", unique: true, fields: ["recipe_id", "dedup_key"], where: { q: "dedup_key IS NOT NULL" } }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",
       fields: [
@@ -632,7 +633,15 @@ function managedBlobStore(db: $Database, kind: "box-image" | "webapp"): BlobStor
 }
 
 function isApiPath(pathname: string): boolean {
-  return API_PREFIXES.some((prefix) => pathname === (prefix.endsWith("/") ? prefix.slice(0, -1) : prefix) || pathname.startsWith(prefix));
+  return API_PREFIXES.some((prefix) => {
+    const wildcard = prefix.indexOf("*");
+    if (wildcard !== -1) {
+      return pathname.startsWith(prefix.slice(0, wildcard))
+        && pathname.endsWith(prefix.slice(wildcard + 1));
+    }
+    return pathname === (prefix.endsWith("/") ? prefix.slice(0, -1) : prefix)
+      || pathname.startsWith(prefix);
+  });
 }
 
 async function webAppResponse(context: WebAppContext, logicalPath: string): Promise<Response> {
