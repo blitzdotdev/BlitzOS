@@ -11,7 +11,7 @@ import {
   type JsonValue,
 } from "./http.js";
 import type { Principal } from "./principals.js";
-import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import {
   AGENT_MODELS,
   AGENT_PROVIDERS,
@@ -26,7 +26,7 @@ import {
   type RecipeResponse,
   type RecipeView,
 } from "./wire.js";
-import { workspaceView } from "./workspace-records.js";
+import { workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { workspaceTemplateForCreate } from "./workspace-templates.js";
 import { performWorkspaceCreate } from "./workspaces.js";
 
@@ -40,6 +40,7 @@ export interface RecipeRow {
   effort: string | null;
   prompt: string;
   created_by_membership_id: string;
+  fire_token_hash: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -133,7 +134,7 @@ function recipeView(row: RecipeRow): RecipeView {
   return view;
 }
 
-async function recipeForOrg(db: Db, id: string, orgId: string): Promise<RecipeRow> {
+export async function recipeForOrg(db: Db, id: string, orgId: string): Promise<RecipeRow> {
   const recipe = await first<RecipeRow>(db, {
     q: "SELECT * FROM recipes WHERE id = ?1 LIMIT 1",
     v: [id],
@@ -145,7 +146,7 @@ async function recipeForOrg(db: Db, id: string, orgId: string): Promise<RecipeRo
 }
 
 /** Edit rights match templates: the org admin or the creator. */
-function requireRecipeEditRights(principal: Principal, recipe: RecipeRow): void {
+export function requireRecipeEditRights(principal: Principal, recipe: RecipeRow): void {
   if (
     principal.role !== "admin"
     && recipe.created_by_membership_id !== principal.membershipId
@@ -178,6 +179,31 @@ function chatAgentProvider(recipe: RecipeRow): AgentProvider {
     throw new HttpError(409, "recipe model is no longer in the agent catalog; edit the recipe");
   }
   return agentProvider;
+}
+
+/** The shared recipe-launch path. Trigger launches may replace only the
+ * bootstrap prompt; manual launches omit the override and retain the exact
+ * bytes produced before trigger support existed. */
+export async function performRecipeLaunch(
+  runtime: CoreRuntime,
+  principal: Principal,
+  origin: string,
+  recipe: RecipeRow,
+  prompt?: string,
+): Promise<WorkspaceRow> {
+  const template = await workspaceTemplateForCreate(
+    runtime.db,
+    recipe.template_id,
+    recipe.org_id,
+  );
+  const launchRecipe = prompt === undefined ? recipe : { ...recipe, prompt };
+  return performWorkspaceCreate(
+    runtime,
+    principal,
+    origin,
+    { templateId: template.id },
+    { recipeId: recipe.id, bootstrap: recipeBootstrap(launchRecipe) },
+  );
 }
 
 export function addRecipeRoutes(
@@ -294,21 +320,15 @@ export function addRecipeRoutes(
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
     const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
-    const template = await workspaceTemplateForCreate(
-      runtime.db,
-      recipe.template_id,
-      principal.orgId,
-    );
     // The existing create path does everything else: template machine-type
     // default, environment and agent-rule inheritance, folder attach with the
     // launcher as principal (unreadable folders are skipped, not leaked), and
     // the vm_limit 409, which passes straight through to the caller.
-    const row = await performWorkspaceCreate(
+    const row = await performRecipeLaunch(
       runtime,
       principal,
       new URL(context.req.url).origin,
-      { templateId: template.id },
-      { recipeId: recipe.id, bootstrap: recipeBootstrap(recipe) },
+      recipe,
     );
     return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
   });

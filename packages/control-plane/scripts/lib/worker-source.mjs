@@ -16,7 +16,7 @@ const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
 export const API_PREFIXES = Object.freeze([
-  "/sessions", "/workspaces", "/workspace-templates", "/workspace-recipes", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
+  "/sessions", "/workspaces", "/workspace-templates", "/workspace-recipes", "/recipes/*/fire-token", "/hooks/", "/trigger-events/", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
   "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
   "/hosts/", "/oauth/", "/boxes/", "/connections", "/connect/", "/integrations", "/leases/", "/requests",
   "/proxy/", "/box-image", "/api/",
@@ -45,7 +45,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/principals.ts",
-  "core/recipes.ts",
+  "core/recipes.ts", "core/recipe-triggers.ts",
   "core/registry.ts",
   "core/sessions.ts",
   "core/signup-config.js",
@@ -632,7 +632,15 @@ function managedBlobStore(db: $Database, kind: "box-image" | "webapp"): BlobStor
 }
 
 function isApiPath(pathname: string): boolean {
-  return API_PREFIXES.some((prefix) => pathname === (prefix.endsWith("/") ? prefix.slice(0, -1) : prefix) || pathname.startsWith(prefix));
+  return API_PREFIXES.some((prefix) => {
+    const wildcard = prefix.indexOf("*");
+    if (wildcard !== -1) {
+      return pathname.startsWith(prefix.slice(0, wildcard))
+        && pathname.endsWith(prefix.slice(wildcard + 1));
+    }
+    return pathname === (prefix.endsWith("/") ? prefix.slice(0, -1) : prefix)
+      || pathname.startsWith(prefix);
+  });
 }
 
 async function webAppResponse(context: WebAppContext, logicalPath: string): Promise<Response> {

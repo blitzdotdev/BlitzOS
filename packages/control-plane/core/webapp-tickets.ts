@@ -3,6 +3,7 @@ import type { WorkspaceRole } from "./wire.js";
 
 export const WEBAPP_TOKEN_HEADER = "X-Blitz-WebApp-Token";
 export const WEBAPP_TICKET_TTL_SECONDS = 60;
+export const TRIGGER_EVENT_TTL_SECONDS = 24 * 60 * 60;
 
 /** 2026-08-17 19:10 UTC: the first moment a new Hetzner box booted the
  * ticket-verifying gateway (image 20260817a). A VM keeps the image it booted
@@ -83,6 +84,39 @@ function parseClaims(value: JsonValue): WebAppTicketClaims | null {
     role: value.role,
     exp: value.exp,
   };
+}
+
+export class TriggerEventAuth {
+  public constructor(private readonly rootSecret: string) {
+    if (rootSecret === "") throw new Error("trigger event signing secret is required");
+  }
+
+  /** Signs one trigger delivery reference without exposing the root secret.
+   * The expiry stays outside the payload so the link remains ordinary query
+   * parameters, while the MAC binds both it and the run id. */
+  public async triggerEventSignature(runId: string, expiresAtSeconds: number): Promise<string> {
+    const signature = await crypto.subtle.sign(
+      "HMAC",
+      await hmacKey(this.rootSecret),
+      encoder.encode(`trigger-event.v1.${runId}.${String(expiresAtSeconds)}`),
+    );
+    return base64Url(new Uint8Array(signature));
+  }
+
+  public async verifyTriggerEventSignature(
+    runId: string,
+    expiresAtSeconds: number,
+    signature: string,
+  ): Promise<boolean> {
+    const signatureBytes = decodeBase64Url(signature);
+    if (signatureBytes === null) return false;
+    return crypto.subtle.verify(
+      "HMAC",
+      await hmacKey(this.rootSecret),
+      signatureBytes,
+      encoder.encode(`trigger-event.v1.${runId}.${String(expiresAtSeconds)}`),
+    );
+  }
 }
 
 export class WorkspaceWebAppAuth {

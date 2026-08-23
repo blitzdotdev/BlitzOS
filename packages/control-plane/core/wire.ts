@@ -326,6 +326,12 @@ export interface RecipeResponse {
   recipe: RecipeView;
 }
 
+/** The capability token returned once when a recipe fire URL is minted or
+ * regenerated. Only its SHA-256 hash persists in the control plane. */
+export interface RecipeFireTokenResponse {
+  token: string;
+}
+
 /** Admin switch for org-wide agent-usage capture (GET and PUT
  * /orgs/self/usage-capture). The folder is lazy-created on first enable and
  * survives a disable, so re-enabling keeps the corpus in one place. */

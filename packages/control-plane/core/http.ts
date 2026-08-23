@@ -65,11 +65,20 @@ export async function readText(
   request: Request,
   maxBytes = MAX_BODY_BYTES,
 ): Promise<string> {
+  return new TextDecoder().decode(await readBytes(request, maxBytes));
+}
+
+/** Reads an opaque request body without decoding it, while enforcing the
+ * ceiling against both declared and streamed bytes. */
+export async function readBytes(
+  request: Request,
+  maxBytes = MAX_BODY_BYTES,
+): Promise<Uint8Array> {
   const declared = request.headers.get("content-length");
   if (declared !== null && Number(declared) > maxBytes) {
     throw new HttpError(413, "request body is too large");
   }
-  if (request.body === null) return "";
+  if (request.body === null) return new Uint8Array();
 
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -91,7 +100,7 @@ export async function readText(
     body.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(body);
+  return body;
 }
 
 export async function readJson(
