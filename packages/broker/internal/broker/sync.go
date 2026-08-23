@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
@@ -41,7 +40,7 @@ func feedHeartbeatDue(lastStated, now time.Time) bool {
 	return lastStated.IsZero() || !now.Before(lastStated.Add(feedHeartbeatInterval))
 }
 
-func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
+func Sync(ctx context.Context, stateDir string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("sync must run as root")
 	}
@@ -58,7 +57,7 @@ func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
 		origin, originErr := store.LoadOrigin(stateDir)
 		_, credentialErr := store.LoadCredential(stateDir)
 		if originErr == nil && credentialErr == nil {
-			client, err := controlplane.New(origin, stateDir, httpClient)
+			client, err := controlplane.New(origin, stateDir)
 			if err == nil {
 				body, nextETag, unchanged, fetchErr := client.FetchFeed(ctx, etag)
 				switch {

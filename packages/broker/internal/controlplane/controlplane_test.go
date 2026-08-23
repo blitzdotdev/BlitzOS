@@ -45,8 +45,14 @@ func TestDeviceFlowPendingThenSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
+	// The production caller (internal/enroll.Run) hands Enroll a validated
+	// origin; go through the same gate here.
+	origin, err := ValidateOrigin(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var output strings.Builder
-	credential, err := (DeviceFlow{HTTP: server.Client(), Sleep: func(context.Context, time.Duration) error { return nil }}).Enroll(context.Background(), server.URL, "blitz-cred", &output)
+	credential, err := (DeviceFlow{HTTP: server.Client(), Sleep: func(context.Context, time.Duration) error { return nil }}).Enroll(context.Background(), origin, "blitz-cred", &output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +100,7 @@ func TestFeedETagAnd401RefreshRetry(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client, err := New(server.URL, stateDir, server.Client())
+	client, err := New(server.URL, stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +140,7 @@ func TestOversizedFeedIsRejected(t *testing.T) {
 		io.WriteString(writer, strings.Repeat("x", feed.MaxBytes+1))
 	}))
 	defer server.Close()
-	client, err := New(server.URL, stateDir, server.Client())
+	client, err := New(server.URL, stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +160,7 @@ func TestHTTPErrorDoesNotEchoResponseBody(t *testing.T) {
 		io.WriteString(writer, `{"access_token":"body-secret"}`)
 	}))
 	defer server.Close()
-	client, err := New(server.URL, stateDir, server.Client())
+	client, err := New(server.URL, stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}

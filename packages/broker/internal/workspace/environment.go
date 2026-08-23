@@ -91,12 +91,12 @@ func decodeWorkspaceEnvironment(data []byte) (WorkspaceEnvironment, error) {
 	}, nil
 }
 
-func fetchWorkspaceEnvironment(ctx context.Context, stateDir string, httpClient *http.Client) (WorkspaceEnvironment, error) {
+func fetchWorkspaceEnvironment(ctx context.Context, stateDir string) (WorkspaceEnvironment, error) {
 	origin, err := store.LoadOrigin(stateDir)
 	if err != nil {
 		return WorkspaceEnvironment{}, err
 	}
-	client, err := controlplane.New(origin, stateDir, httpClient)
+	client, err := controlplane.New(origin, stateDir)
 	if err != nil {
 		return WorkspaceEnvironment{}, err
 	}
@@ -215,54 +215,47 @@ func commandEnvironment(configured map[string]string) []string {
 	return result
 }
 
-var closedStartup = func() <-chan struct{} {
-	done := make(chan struct{})
-	close(done)
-	return done
-}()
-
 // startStartupOnce claims the once-only marker and then starts the workspace's
 // startup script in its own goroutine. User code must never sit on the caller's
 // path: the deposit loop that calls this also ships vendor credentials, and a
 // script that legitimately never exits (a dev server, `tail -f`) would wedge it
 // forever.
 //
-// The script gets its own deadline on top of ctx. Anything it backgrounds on
-// purpose is reparented and keeps running past it, so the deadline costs a
+// The script gets startupScriptTimeout on top of ctx. Anything it backgrounds
+// on purpose is reparented and keeps running past it, so the deadline costs a
 // deliberate server nothing; what it buys is that a script that simply never
 // returns stops, and says so in its log, instead of holding a process for the
 // life of the box.
 //
-// The returned channel closes when the script exits, and is already closed when
-// nothing ran. Only tests wait on it.
+// It returns once the script has STARTED; the exit is observable only through
+// the marker, the log and the script's own effects.
 func startStartupOnce(
 	ctx context.Context,
 	stateDir, workspaceDir string,
 	environment WorkspaceEnvironment,
-	timeout time.Duration,
-) (<-chan struct{}, error) {
+) error {
 	directory := filepath.Join(stateDir, workspaceEnvironmentDirectory)
 	markerPath := filepath.Join(directory, startupDoneFile)
 	marker, err := os.OpenFile(markerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if errors.Is(err, os.ErrExist) {
-		return closedStartup, nil
+		return nil
 	}
 	if err != nil {
-		return closedStartup, err
+		return err
 	}
 	if err := marker.Close(); err != nil {
 		_ = os.Remove(markerPath)
-		return closedStartup, err
+		return err
 	}
 	log, err := os.OpenFile(filepath.Join(directory, startupLogFile), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		_ = os.Remove(markerPath)
-		return closedStartup, err
+		return err
 	}
 	if environment.StartupScript == nil {
-		return closedStartup, log.Close()
+		return log.Close()
 	}
-	runContext, cancel := context.WithTimeout(ctx, timeout)
+	runContext, cancel := context.WithTimeout(ctx, startupScriptTimeout)
 	command := exec.CommandContext(runContext, "bash", "-c", *environment.StartupScript)
 	command.Dir = workspaceDir
 	command.Env = commandEnvironment(environment.Env)
@@ -271,11 +264,9 @@ func startStartupOnce(
 	if err := command.Start(); err != nil {
 		cancel()
 		_ = log.Close()
-		return closedStartup, fmt.Errorf("workspace startup script failed to start: %w", err)
+		return fmt.Errorf("workspace startup script failed to start: %w", err)
 	}
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
 		defer log.Close()
 		defer cancel()
 		err := command.Wait()
@@ -283,36 +274,31 @@ func startStartupOnce(
 			return
 		}
 		if errors.Is(runContext.Err(), context.DeadlineExceeded) {
-			fmt.Fprintf(log, "\nblitz: workspace startup script stopped after %s\n", timeout)
+			fmt.Fprintf(log, "\nblitz: workspace startup script stopped after %s\n", startupScriptTimeout)
 			return
 		}
 		fmt.Fprintf(log, "\nblitz: workspace startup script failed: %v\n", err)
 	}()
-	return done, nil
+	return nil
 }
 
 // environmentTick fetches and stores this box's environment, and once the
 // workspace files have landed, starts the startup script exactly once. It
-// returns true when there is nothing left to converge. The channel closes when
-// the startup script exits; callers on the credential path must not wait on it.
-func environmentTick(
-	ctx context.Context,
-	stateDir, workspaceDir string,
-	httpClient *http.Client,
-) (bool, <-chan struct{}, error) {
-	environment, err := fetchWorkspaceEnvironment(ctx, stateDir, httpClient)
+// returns true when there is nothing left to converge. The script it may start
+// runs detached; nothing on the credential path waits for it.
+func environmentTick(ctx context.Context, stateDir, workspaceDir string) (bool, error) {
+	environment, err := fetchWorkspaceEnvironment(ctx, stateDir)
 	if err != nil {
-		return false, closedStartup, err
+		return false, err
 	}
 	if err := storeWorkspaceEnvironment(stateDir, environment); err != nil {
-		return false, closedStartup, err
+		return false, err
 	}
 	if !environment.FilesReady {
-		return false, closedStartup, nil
+		return false, nil
 	}
-	done, err := startStartupOnce(ctx, stateDir, workspaceDir, environment, startupScriptTimeout)
-	if err != nil {
-		return false, done, err
+	if err := startStartupOnce(ctx, stateDir, workspaceDir, environment); err != nil {
+		return false, err
 	}
-	return true, done, nil
+	return true, nil
 }

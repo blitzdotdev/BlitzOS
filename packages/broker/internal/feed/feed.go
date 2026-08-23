@@ -9,6 +9,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 )
 
 const MaxBytes = 1_048_576
@@ -108,7 +110,12 @@ func ValidUnixName(name string) bool {
 }
 
 func ValidHarness(name string) bool {
-	return name == "claude" || name == "codex"
+	for _, definition := range vendor.Definitions {
+		if name == definition.Name {
+			return true
+		}
+	}
+	return false
 }
 
 func validHarnesses(harnesses []string) bool {

@@ -10,8 +10,14 @@ const {spawn} = require('child_process');
 
 const stateDir = '/var/lib/blitz';
 const errorPath = path.join(stateDir, 'bootstrap-error.log');
-const registerTimeoutMs = 30000;
-const registerKillGraceMs = 5000;
+// The image's own register oneshot wrapper. It is the ONE bounded way to run
+// `blitz-cred register` on a box: it drops to the blitz account, points HOME
+// and BLITZ_STATE_DIR at the state volume, and carries a `timeout 60` backstop
+// over blitz-cred's own 45 s deadline — and it never exits nonzero on an
+// enrolment failure, because a workspace that boots signed out beats one that
+// never boots. This script adds no second timeout-and-kill stack on top: a
+// kill from out here lands mid-write on the only copy of the box credential.
+const registerWrapper = '/usr/local/libexec/blitz-register';
 
 function decode(name) {
   const raw = process.env[name] || '';
@@ -180,77 +186,35 @@ function parsePhoneHomeResponse(value) {
 }
 
 async function pokeRegister() {
-  process.stdout.write(`microvm-enroll: register start timeout_ms=${registerTimeoutMs}\n`);
+  process.stdout.write('microvm-enroll: register start\n');
   await new Promise((resolve) => {
     let settled = false;
-    let timer;
-    let killGraceTimer;
-    let timedOut = false;
-    let timeoutKillSent = false;
-    let timeoutKillError = '';
-    let spawnError;
     const finish = (message, failed) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
-      if (killGraceTimer) clearTimeout(killGraceTimer);
       (failed ? process.stderr : process.stdout).write(`microvm-enroll: ${message}\n`);
       resolve();
     };
     let child;
     try {
-      child = spawn('blitz-cred', ['register'], {
-        stdio: ['ignore', 'inherit', 'inherit'],
-        uid: 1000,
-        gid: 1000,
-        detached: true,
-        env: {
-          ...process.env,
-          BLITZ_STATE_DIR: stateDir,
-          HOME: '/var/lib/blitz/home',
-          USER: 'blitz',
-        },
-      });
+      // Root on purpose: the wrapper does its own s6-setuidgid drop to the
+      // blitz account, exactly as it does under the s6 register oneshot.
+      // Inherited stdio lands the wrapper's output in microvm-enroll.log.
+      child = spawn(registerWrapper, [], {stdio: ['ignore', 'inherit', 'inherit']});
     } catch (error) {
       finish(`register failed: ${safeError(error)}`, true);
       return;
     }
     child.once('error', (error) => {
-      spawnError = error;
+      finish(`register failed: ${safeError(error)}`, true);
     });
     child.once('close', (code, signal) => {
-      if (timedOut) {
-        const killError = timeoutKillError ? ` kill_error=${timeoutKillError}` : '';
-        finish(`register timeout after ${registerTimeoutMs}ms kill_sent=${timeoutKillSent}${killError}`, true);
-        return;
-      }
-      if (spawnError) {
-        finish(`register failed: ${safeError(spawnError)}`, true);
-        return;
-      }
       if (code === 0) {
         finish('register complete', false);
         return;
       }
       finish(`register failed: exit_code=${code === null ? 'none' : code} signal=${signal || 'none'}`, true);
     });
-    timer = setTimeout(() => {
-      timedOut = true;
-      if (typeof child.pid === 'number') {
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-          timeoutKillSent = true;
-        } catch (error) {
-          timeoutKillError = safeError(error);
-        }
-      } else {
-        timeoutKillError = 'child PID unavailable';
-      }
-      killGraceTimer = setTimeout(() => {
-        const killError = timeoutKillError ? ` kill_error=${timeoutKillError}` : '';
-        finish(`register timeout after ${registerTimeoutMs}ms kill_sent=${timeoutKillSent} close_grace_expired_after=${registerKillGraceMs}ms${killError}`, true);
-      }, registerKillGraceMs);
-    }, registerTimeoutMs);
   });
 }
 

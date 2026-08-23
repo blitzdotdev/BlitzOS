@@ -26,8 +26,6 @@ import (
 // accidentally hand the vendor a shorter deadline.
 const TriggerTimeout = 60 * time.Second
 
-type Runner func(context.Context, string, []string, string) error
-
 type Definition struct {
 	Name           string
 	Command        string
@@ -49,15 +47,19 @@ type Definition struct {
 	ReadRefreshExpiry func([]byte) (time.Time, error)
 }
 
+// Definitions is the ONE list of supported harnesses. Everything that needs
+// the set — Lookup, the feed's member-harness gate, blitz-cred's token
+// dispatch, the workspace credential watcher — derives from it, so a new
+// harness lands everywhere by being added here and nowhere else.
+var Definitions = []Definition{Claude, Codex}
+
 func Lookup(name string) (Definition, error) {
-	switch name {
-	case Claude.Name:
-		return Claude, nil
-	case Codex.Name:
-		return Codex, nil
-	default:
-		return Definition{}, fmt.Errorf("unsupported harness %q", name)
+	for _, definition := range Definitions {
+		if definition.Name == name {
+			return definition, nil
+		}
 	}
+	return Definition{}, fmt.Errorf("unsupported harness %q", name)
 }
 
 // Run executes one vendor CLI invocation. Notes on what is deliberate:

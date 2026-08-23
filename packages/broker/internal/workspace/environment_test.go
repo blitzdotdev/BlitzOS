@@ -3,7 +3,6 @@ package workspace
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,7 +89,7 @@ func TestEnvironmentTickStoresConfigAndRunsStartupOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ready, _, err := environmentTick(context.Background(), stateDir, workspaceDir, server.Client())
+	ready, err := environmentTick(context.Background(), stateDir, workspaceDir)
 	if err != nil || ready {
 		t.Fatalf("first tick ready=%v err=%v", ready, err)
 	}
@@ -109,33 +108,26 @@ func TestEnvironmentTickStoresConfigAndRunsStartupOnce(t *testing.T) {
 		t.Fatal("startup marker exists before files are ready")
 	}
 
-	ready, started, err := environmentTick(context.Background(), stateDir, workspaceDir, server.Client())
+	ready, err = environmentTick(context.Background(), stateDir, workspaceDir)
 	if err != nil || !ready {
 		t.Fatalf("second tick ready=%v err=%v", ready, err)
 	}
-	<-started
-	ready, _, err = environmentTick(context.Background(), stateDir, workspaceDir, server.Client())
+	// The script runs detached; its exit is observable only through its
+	// effects, so poll for them the way the box's own readers would.
+	waitForFileContent(t, filepath.Join(workspaceDir, "runs.txt"), "run")
+	waitForFileContent(t, filepath.Join(envDir, startupLogFile), "it's $HOME\nnext\n")
+	ready, err = environmentTick(context.Background(), stateDir, workspaceDir)
 	if err != nil || !ready {
 		t.Fatalf("third tick ready=%v err=%v", ready, err)
 	}
+	// The once-only marker was claimed on the second tick, so the third must
+	// not have started the script again.
 	runs, err := os.ReadFile(filepath.Join(workspaceDir, "runs.txt"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(runs) != "run" {
 		t.Fatalf("startup runs = %q", runs)
-	}
-	log, err := os.Open(filepath.Join(envDir, startupLogFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
-	logged, err := io.ReadAll(log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(logged) != "it's $HOME\nnext\n" {
-		t.Fatalf("startup log = %q", logged)
 	}
 	for _, name := range []string{workspaceEnvironmentState, startupDoneFile, startupLogFile} {
 		info, err := os.Stat(filepath.Join(envDir, name))
@@ -147,6 +139,24 @@ func TestEnvironmentTickStoresConfigAndRunsStartupOnce(t *testing.T) {
 		}
 	}
 	assertFileMode(t, filepath.Join(credsEnvDir, workspaceEnvironmentEntry), 0o600)
+}
+
+// waitForFileContent polls until path holds exactly want. The startup script
+// runs detached from every caller, so its effects are the only way to observe
+// it — the same way the box's own readers see it.
+func waitForFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		got, err := os.ReadFile(path)
+		if err == nil && string(got) == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s = %q, %v; want %q", path, got, err, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // A startup script that never exits is a legitimate thing to ask for (a dev
@@ -162,15 +172,15 @@ func TestStartupScriptNeverBlocksTheWatchLoop(t *testing.T) {
 	defer cancel()
 	script := "printf started > started.txt\nwhile true; do sleep 1; done\n"
 	deposits := make(chan struct{}, 4)
-	watcher := NewWatcher(t.TempDir(), func(context.Context, string, []byte) error {
-		return nil
-	})
+	// An empty home: the watcher finds no credentials, so its ticks are pure
+	// loop turns — exactly what must keep happening while the script runs.
+	watcher := NewWatcher(t.TempDir(), t.TempDir())
 	ticks := make(chan struct{})
 	go func() {
 		defer close(ticks)
-		if _, err := startStartupOnce(ctx, stateDir, workspaceDir, WorkspaceEnvironment{
+		if err := startStartupOnce(ctx, stateDir, workspaceDir, WorkspaceEnvironment{
 			Env: map[string]string{}, StartupScript: &script,
-		}, startupScriptTimeout); err != nil {
+		}); err != nil {
 			t.Error(err)
 		}
 		// The watch loop keeps depositing while the script above still runs.
@@ -188,17 +198,7 @@ func TestStartupScriptNeverBlocksTheWatchLoop(t *testing.T) {
 		t.Fatalf("deposit ticks = %d", len(deposits))
 	}
 	// The script is still running; it only had to start, not finish.
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		started, err := os.ReadFile(filepath.Join(workspaceDir, "started.txt"))
-		if err == nil && string(started) == "started" {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("startup script did not run: %q %v", started, err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	waitForFileContent(t, filepath.Join(workspaceDir, "started.txt"), "started")
 }
 
 // A credential sync rebuilds creds/env.d from scratch. The workspace entry has
@@ -241,36 +241,44 @@ func TestCredentialSyncKeepsWorkspaceEnvironmentAndWinsCollisions(t *testing.T) 
 	}
 }
 
+// TestStartupScriptStopsAtItsDeadline drives the kill-and-say-so path. The
+// production deadline is startupScriptTimeout (10 minutes) — far too long for
+// a test to sit out — so the test supplies the deadline through the caller's
+// context, which reaches the script through exactly the same
+// context.WithTimeout + CommandContext chain and takes the same
+// DeadlineExceeded branch.
 func TestStartupScriptStopsAtItsDeadline(t *testing.T) {
 	stateDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(stateDir, workspaceEnvironmentDirectory), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// A script that backgrounds work and then never returns. The parent context
-	// stays live for the whole test: only the deadline may end this.
+	// A script that backgrounds work and then never returns. Only the deadline
+	// may end this.
 	script := "(sleep 120 &) \nwhile true; do sleep 1; done\n"
 	started := time.Now()
-	done, err := startStartupOnce(context.Background(), stateDir, workspaceDir, WorkspaceEnvironment{
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := startStartupOnce(ctx, stateDir, workspaceDir, WorkspaceEnvironment{
 		Env: map[string]string{}, StartupScript: &script,
-	}, 200*time.Millisecond)
-	if err != nil {
+	}); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("a non-exiting startup script outlived its deadline")
+	// The author has to be able to see why their script stopped. The exit is
+	// observable only through the log, so poll for the line.
+	logPath := filepath.Join(stateDir, workspaceEnvironmentDirectory, startupLogFile)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		logged, err := os.ReadFile(logPath)
+		if err == nil && strings.Contains(string(logged), "stopped after") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("a non-exiting startup script outlived its deadline: log=%q err=%v", logged, err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if elapsed := time.Since(started); elapsed > 30*time.Second {
 		t.Fatalf("startup script ran for %s", elapsed)
-	}
-	logged, err := os.ReadFile(filepath.Join(stateDir, workspaceEnvironmentDirectory, startupLogFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The author has to be able to see why their script stopped.
-	if !strings.Contains(string(logged), "stopped after 200ms") {
-		t.Fatalf("startup log = %q", logged)
 	}
 }

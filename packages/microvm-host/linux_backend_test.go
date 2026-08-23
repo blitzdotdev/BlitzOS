@@ -6,46 +6,57 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
-type runnerCall struct {
-	name string
-	args []string
+// installFakeIptables writes a real executable at cfg.SudoWrapper — the exact
+// path the backend execs — that emulates iptables -C/-A/-D statefulness in a
+// rules directory and appends every argv line to a calls file. The backend
+// then runs its true exec path end to end; nothing in it is substituted.
+func installFakeIptables(t *testing.T, cfg Config) (callsFile, rulesDir string) {
+	t.Helper()
+	callsFile = filepath.Join(t.TempDir(), "calls")
+	rulesDir = t.TempDir()
+	script := "#!/bin/sh\nset -eu\n" +
+		"printf '%s\\n' \"$*\" >> " + strconv.Quote(callsFile) + "\n" +
+		"[ \"$1\" = iptables ] && [ \"$2\" = -t ] || exit 2\n" +
+		"table=$3\nop=$4\nshift 4\n" +
+		"key=$(printf '%s %s' \"$table\" \"$*\" | cksum | tr -dc 0-9)\n" +
+		"case $op in\n" +
+		"-C) [ -e \"" + rulesDir + "/$key\" ] || exit 1 ;;\n" +
+		"-A) [ ! -e \"" + rulesDir + "/$key\" ] || exit 1\n    : > \"" + rulesDir + "/$key\" ;;\n" +
+		"-D) rm \"" + rulesDir + "/$key\" ;;\n" +
+		"*) exit 2 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(cfg.SudoWrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return callsFile, rulesDir
 }
 
-type iptablesRunner struct {
-	calls []runnerCall
-	rules map[string]bool
+func recordedCalls(t *testing.T, callsFile string) []string {
+	t.Helper()
+	data, err := os.ReadFile(callsFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }
 
-func (r *iptablesRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
-	r.calls = append(r.calls, runnerCall{name: name, args: append([]string(nil), args...)})
-	if len(args) < 5 || args[0] != "iptables" || args[1] != "-t" {
-		return nil, errors.New("unexpected command")
+func installedRuleCount(t *testing.T, rulesDir string) int {
+	t.Helper()
+	entries, err := os.ReadDir(rulesDir)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	key := strings.Join(append([]string{args[2]}, args[4:]...), "\x00")
-	switch args[3] {
-	case "-C":
-		if !r.rules[key] {
-			return nil, errors.New("rule does not exist")
-		}
-	case "-A":
-		if r.rules[key] {
-			return nil, errors.New("duplicate rule")
-		}
-		r.rules[key] = true
-	case "-D":
-		if !r.rules[key] {
-			return nil, errors.New("rule does not exist")
-		}
-		delete(r.rules, key)
-	default:
-		return nil, errors.New("unexpected iptables operation")
-	}
-	return nil, nil
+	return len(entries)
 }
 
 func expectedRulesForSlotOne() []iptablesRule {
@@ -71,59 +82,120 @@ func TestLinuxBackendRulesAreCompleteAndTagged(t *testing.T) {
 
 func TestLinuxBackendRuleLifecycleIsIdempotent(t *testing.T) {
 	cfg := testConfig(t.TempDir())
-	runner := &iptablesRunner{rules: make(map[string]bool)}
+	callsFile, rulesDir := installFakeIptables(t, cfg)
 	b := NewLinuxBackend(cfg)
-	b.runner = runner
 	vm := &VM{Slot: 1}
 	rules := expectedRulesForSlotOne()
+	resetCalls := func() {
+		if err := os.Remove(callsFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
 
 	if err := b.addRules(context.Background(), vm); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.rules) != len(rules) {
-		t.Fatalf("first add installed %d rules; want %d", len(runner.rules), len(rules))
+	if got := installedRuleCount(t, rulesDir); got != len(rules) {
+		t.Fatalf("first add installed %d rules; want %d", got, len(rules))
 	}
-	assertRuleCalls(t, runner.calls, cfg.SudoWrapper, rules, "-C", "-A")
+	assertRuleCalls(t, recordedCalls(t, callsFile), rules, "-C", "-A")
 
-	runner.calls = nil
+	resetCalls()
 	if err := b.addRules(context.Background(), vm); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.rules) != len(rules) {
-		t.Fatalf("second add left %d rules; want %d", len(runner.rules), len(rules))
+	if got := installedRuleCount(t, rulesDir); got != len(rules) {
+		t.Fatalf("second add left %d rules; want %d", got, len(rules))
 	}
-	assertRuleCalls(t, runner.calls, cfg.SudoWrapper, rules, "-C")
+	assertRuleCalls(t, recordedCalls(t, callsFile), rules, "-C")
 
-	runner.calls = nil
+	resetCalls()
 	if err := b.removeRules(context.Background(), vm); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.rules) != 0 {
-		t.Fatalf("first remove left %d rules; want 0", len(runner.rules))
+	if got := installedRuleCount(t, rulesDir); got != 0 {
+		t.Fatalf("first remove left %d rules; want 0", got)
 	}
-	assertRuleCalls(t, runner.calls, cfg.SudoWrapper, rules, "-C", "-D")
+	assertRuleCalls(t, recordedCalls(t, callsFile), rules, "-C", "-D")
 
-	runner.calls = nil
+	resetCalls()
 	if err := b.removeRules(context.Background(), vm); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.rules) != 0 {
-		t.Fatalf("second remove left %d rules; want 0", len(runner.rules))
+	if got := installedRuleCount(t, rulesDir); got != 0 {
+		t.Fatalf("second remove left %d rules; want 0", got)
 	}
-	assertRuleCalls(t, runner.calls, cfg.SudoWrapper, rules, "-C")
+	assertRuleCalls(t, recordedCalls(t, callsFile), rules, "-C")
 }
 
-func assertRuleCalls(t *testing.T, got []runnerCall, wrapper string, rules []iptablesRule, operations ...string) {
+func assertRuleCalls(t *testing.T, got []string, rules []iptablesRule, operations ...string) {
 	t.Helper()
-	want := make([]runnerCall, 0, len(rules)*len(operations))
+	want := make([]string, 0, len(rules)*len(operations))
 	for _, rule := range rules {
 		for _, operation := range operations {
 			args := append([]string{"iptables", "-t", rule.table, operation}, rule.args...)
-			want = append(want, runnerCall{name: wrapper, args: args})
+			want = append(want, strings.Join(args, " "))
 		}
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("runner calls = %#v; want %#v", got, want)
+		t.Fatalf("iptables calls = %#v; want %#v", got, want)
+	}
+}
+
+// TestConcurrentManagerLifecycleOverTheRealBackendIsSerialized is the race
+// proof behind LinuxBackend carrying no mutex of its own: Manager.mu is the
+// single serializer for every lifecycle call into the backend. It drives
+// Create/Delete/Reconcile/List/Capacity from several goroutines against the
+// REAL LinuxBackend — boots fail fast on the missing mkfs/sudo binaries, which
+// still walks the Boot-prefix, Stop, Cleanup and CleanupOrphans paths — so a
+// hole in the manager's serialization shows up under -race as a torn vms map
+// or VM field. Run with `go test -race`.
+func TestConcurrentManagerLifecycleOverTheRealBackendIsSerialized(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testConfig(dir)
+	// A failing mkfs.ext4 first on PATH: identical fast Boot failures on every
+	// platform, instead of depending on which host binaries happen to exist.
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "mkfs.ext4"), []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	store := NewStateStore(cfg.StateDir)
+	now := time.Now().UTC()
+	for slot := 1; slot <= 2; slot++ {
+		dead := &VM{VMID: "vm-" + strconv.Itoa(slot) + "-dead", Slot: slot, CPU: 1, MemMB: 256,
+			Status: StatusRunning, CreatedAt: now}
+		if err := store.Save(dead); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager, err := NewManager(cfg, store, NewLinuxBackend(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wait sync.WaitGroup
+	for worker := 0; worker < 4; worker++ {
+		wait.Add(1)
+		go func(worker int) {
+			defer wait.Done()
+			for round := 0; round < 3; round++ {
+				name := "ws-" + strconv.Itoa(worker) + "-" + strconv.Itoa(round)
+				if created, err := manager.Create(context.Background(), validRequest(name, 1, 128)); err == nil {
+					_ = manager.Delete(context.Background(), created.VMID)
+				}
+				// Reconcile's errors are expected here (no /proc net state, no
+				// sudo wrapper); the serialization, not the plumbing, is on trial.
+				_ = manager.Reconcile(context.Background())
+				_ = manager.List()
+				_ = manager.Capacity()
+			}
+		}(worker)
+	}
+	wait.Wait()
+
+	if vms := manager.List(); len(vms) != 0 {
+		t.Fatalf("VMs survived failed boots and reconciles: %#v", vms)
 	}
 }
 
@@ -193,6 +265,13 @@ func TestMicroVMInitWritesRegularResolvConfBeforeEnrollment(t *testing.T) {
 	}
 }
 
+// TestMicroVMEnrollmentPokesRegisterAfterAtomicWrites pins the register poke
+// contract: after the phone-home reply and the control-plane origin are on
+// disk, enrollment awaits the image's own bounded register wrapper
+// (/usr/local/libexec/blitz-register) — the SAME oneshot every other box runs
+// — rather than rebuilding a private spawn/timeout/kill stack around
+// blitz-cred. The wrapper owns the account drop, the state-dir environment and
+// the timeout backstop; blitz-cred register carries its own 45 s deadline.
 func TestMicroVMEnrollmentPokesRegisterAfterAtomicWrites(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("guest", "blitz-microvm-enroll.js"))
 	if err != nil {
@@ -210,47 +289,34 @@ func TestMicroVMEnrollmentPokesRegisterAfterAtomicWrites(t *testing.T) {
 		t.Fatalf("register poke must be awaited after both writes and before completion: credential=%d origin=%d register=%d complete=%d", credential, origin, register, complete)
 	}
 	for _, required := range []string{
-		"const registerTimeoutMs = 30000",
-		"const registerKillGraceMs = 5000",
-		"...process.env",
-		"BLITZ_STATE_DIR: stateDir",
-		"HOME: '/var/lib/blitz/home'",
-		"USER: 'blitz'",
-		"blitz-cred",
-		"register",
-		"timer = setTimeout(",
-		"killGraceTimer = setTimeout(",
-		"process.kill(-child.pid, 'SIGKILL')",
+		"'/usr/local/libexec/blitz-register'",
+		"spawn(registerWrapper, [], {stdio: ['ignore', 'inherit', 'inherit']})",
 		"child.once('error'",
 		"child.once('close'",
-		"stdio: ['ignore', 'inherit', 'inherit']",
-		"uid: 1000",
-		"gid: 1000",
-		"detached: true",
 		"if (settled) return",
 		"settled = true",
-		"register timeout",
 		"register failed",
 		"register complete",
 	} {
 		if !strings.Contains(script, required) {
-			t.Fatalf("guest enrollment is missing bounded/logged register behavior %q", required)
+			t.Fatalf("guest enrollment is missing register-poke behavior %q", required)
 		}
 	}
 	for _, forbidden := range []string{
+		// The wrapper is the one bounded runner; a rebuilt private stack around
+		// blitz-cred is exactly what this test exists to keep out.
+		"spawn('blitz-cred'",
+		"registerTimeoutMs",
+		"process.kill(-",
+		"detached: true",
+		"uid: 1000",
 		"spawn('/usr/bin/env'",
 		"child.kill('SIGKILL')",
 		"child.unref()",
 	} {
 		if strings.Contains(script, forbidden) {
-			t.Fatalf("guest enrollment contains unsafe register behavior %q", forbidden)
+			t.Fatalf("guest enrollment contains register behavior the wrapper owns: %q", forbidden)
 		}
-	}
-	timeout := strings.Index(script, "timer = setTimeout(")
-	groupKill := strings.Index(script, "process.kill(-child.pid, 'SIGKILL')")
-	killGrace := strings.Index(script, "killGraceTimer = setTimeout(")
-	if timeout < 0 || groupKill <= timeout || killGrace <= groupKill {
-		t.Fatalf("register timeout must kill the process group before starting bounded close grace: timeout=%d kill=%d grace=%d", timeout, groupKill, killGrace)
 	}
 	initContents, err := os.ReadFile(filepath.Join("guest", "microvm-init"))
 	if err != nil {

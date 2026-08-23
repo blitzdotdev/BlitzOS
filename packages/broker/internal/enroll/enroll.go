@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net/http"
 	"os"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/controlplane"
 	"github.com/blitzdotdev/blitz-core/broker/internal/store"
 )
 
-func Run(ctx context.Context, stateDir, origin, clientID string, output io.Writer, httpClient *http.Client) (store.Credential, error) {
+func Run(ctx context.Context, stateDir, origin, clientID string, output io.Writer) (store.Credential, error) {
 	validated, err := controlplane.ValidateOrigin(origin)
 	if err != nil {
 		return store.Credential{}, err
@@ -26,7 +25,7 @@ func Run(ctx context.Context, stateDir, origin, clientID string, output io.Write
 	if !errors.Is(err, os.ErrNotExist) {
 		return store.Credential{}, err
 	}
-	credential, err = (controlplane.DeviceFlow{HTTP: httpClient}).Enroll(ctx, validated, clientID, output)
+	credential, err = (controlplane.DeviceFlow{}).Enroll(ctx, validated, clientID, output)
 	if err != nil {
 		return store.Credential{}, err
 	}

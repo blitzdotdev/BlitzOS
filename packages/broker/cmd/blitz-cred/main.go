@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/enroll"
+	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
 
@@ -44,7 +45,7 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 || *origin == "" {
 			return errors.New("usage: blitz-cred enroll --origin URL")
 		}
-		_, err := enroll.Run(context.Background(), stateDir, *origin, "blitz-cred", output, nil)
+		_, err := enroll.Run(context.Background(), stateDir, *origin, "blitz-cred", output)
 		return err
 	case "register":
 		if len(args) != 1 {
@@ -57,12 +58,12 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		// out rather than one that never boots.
 		ctx, cancel := context.WithTimeout(context.Background(), registerTimeout)
 		defer cancel()
-		return workspace.Register(ctx, stateDir, nil)
+		return workspace.Register(ctx, stateDir)
 	case "token":
 		if len(args) != 2 || args[1] == "" {
 			return errors.New("usage: blitz-cred token INTEGRATION")
 		}
-		if args[1] == "claude" || args[1] == "codex" {
+		if _, err := vendor.Lookup(args[1]); err == nil {
 			token, err := workspace.Token(context.Background(), stateDir, args[1])
 			if err != nil {
 				return err
@@ -70,7 +71,7 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 			_, err = output.Write(token)
 			return err
 		}
-		result, err := workspace.MintIntegration(context.Background(), stateDir, args[1], nil)
+		result, err := workspace.MintIntegration(context.Background(), stateDir, args[1])
 		if requestID := workspace.AccessRequestID(err); requestID != "" {
 			if errors.Is(err, workspace.ErrCredentialDenied) {
 				return fmt.Errorf("blitz: access to %s requested (%s), awaiting approval", args[1], requestID)
@@ -94,12 +95,12 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		if len(args) != 1 {
 			return errors.New("sync takes no arguments")
 		}
-		return workspace.Sync(context.Background(), stateDir, nil)
+		return workspace.Sync(context.Background(), stateDir)
 	case "git-helper":
 		if len(args) != 2 {
 			return errors.New("usage: blitz-cred git-helper get|store|erase")
 		}
-		err := workspace.GitHelper(context.Background(), stateDir, args[1], input, output, nil)
+		err := workspace.GitHelper(context.Background(), stateDir, args[1], input, output)
 		if requestID := workspace.AccessRequestID(err); requestID != "" {
 			if errors.Is(err, workspace.ErrCredentialDenied) {
 				return fmt.Errorf("blitz: access to github requested (%s), awaiting approval", requestID)

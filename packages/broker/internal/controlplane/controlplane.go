@@ -53,18 +53,16 @@ func ValidateOrigin(raw string) (string, error) {
 	return strings.TrimSuffix(parsed.String(), "/"), nil
 }
 
-func New(origin, stateDir string, httpClient *http.Client) (*Client, error) {
+func New(origin, stateDir string) (*Client, error) {
 	validated, err := ValidateOrigin(origin)
 	if err != nil {
 		return nil, err
 	}
-	if httpClient == nil {
-		httpClient = &http.Client{
-			Timeout: 30 * time.Second,
-			CheckRedirect: func(*http.Request, []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	return &Client{origin: validated, stateDir: stateDir, http: httpClient}, nil
 }

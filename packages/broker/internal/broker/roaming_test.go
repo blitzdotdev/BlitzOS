@@ -86,19 +86,19 @@ func TestMintKilledMidRefreshLeavesTheStoredCredentialIntact(t *testing.T) {
 	if err := os.WriteFile(path, expired, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	started := filepath.Join(t.TempDir(), "started")
+	// `exec` so the sleeping process IS the child exec kills, and detached
+	// stdio so nothing outlives the kill holding the exec pipes open.
+	fakeVendorCLI(t, "claude", ": > "+strconv.Quote(started)+"\nexec sleep 30 </dev/null >/dev/null 2>&1\n")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	slept := make(chan struct{})
-	_, err := Mint(ctx, home, []string{"claude"}, "claude", vendor.Claude,
-		func(runContext context.Context, _ string, _ []string, _ string) error {
-			close(slept)
-			<-runContext.Done()
-			return runContext.Err()
-		})
-	<-slept
+	_, err := Mint(ctx, home, vendor.Claude)
 	if err == nil {
 		t.Fatal("Mint returned a token after its vendor run was killed")
+	}
+	if _, statErr := os.Stat(started); statErr != nil {
+		t.Fatalf("the vendor CLI never ran: %v", statErr)
 	}
 
 	got, readErr := os.ReadFile(path)
@@ -130,17 +130,18 @@ func TestMintRefusesAnAccessTokenCarryingWhitespace(t *testing.T) {
 	if err := os.WriteFile(path, []byte(dirty), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ran := filepath.Join(t.TempDir(), "ran")
+	fakeVendorCLI(t, "claude", ": > "+strconv.Quote(ran)+"\n")
 
-	token, err := Mint(context.Background(), home, []string{"claude"}, "claude", vendor.Claude,
-		func(context.Context, string, []string, string) error {
-			t.Error("a live credential was sent to the vendor CLI for a refresh")
-			return nil
-		})
+	token, err := Mint(context.Background(), home, vendor.Claude)
 	if err == nil {
 		t.Fatalf("Mint returned a token carrying whitespace: %q", token)
 	}
 	if token != "" {
 		t.Errorf("Mint refused the token and returned it anyway: %q", token)
+	}
+	if _, statErr := os.Stat(ran); statErr == nil {
+		t.Error("a live credential was sent to the vendor CLI for a refresh")
 	}
 }
 
@@ -185,16 +186,13 @@ func TestDepositRefusesACredentialWhoseRefreshTokenIsAlreadyDead(t *testing.T) {
 	}
 
 	dead := `{"claudeAiOauth":{"accessToken":"new","refreshToken":"spent","expiresAt":4102444800000,"refreshTokenExpiresAt":1}}`
-	ran := false
-	err := Deposit(context.Background(), home, vendor.Claude, strings.NewReader(dead),
-		func(context.Context, string, []string, string) error {
-			ran = true
-			return nil
-		})
+	ran := filepath.Join(t.TempDir(), "ran")
+	fakeVendorCLI(t, "claude", ": > "+strconv.Quote(ran)+"\n")
+	err := Deposit(context.Background(), home, vendor.Claude, strings.NewReader(dead))
 	if err == nil {
 		t.Fatal("Deposit stored a credential whose refresh token had already expired")
 	}
-	if ran {
+	if _, statErr := os.Stat(ran); statErr == nil {
 		t.Error("the vendor CLI was run for a credential that was refused on its face")
 	}
 	got, readErr := os.ReadFile(path)
@@ -226,8 +224,8 @@ func TestDepositReplacesAcrossAccountsAndWritesNothingElse(t *testing.T) {
 	}
 
 	replacement := `{"claudeAiOauth":{"accessToken":"other-account","refreshToken":"other","expiresAt":4102444800000}}`
-	if err := Deposit(context.Background(), home, vendor.Claude, strings.NewReader(replacement),
-		func(context.Context, string, []string, string) error { return nil }); err != nil {
+	fakeVendorCLI(t, "claude", "exit 0\n")
+	if err := Deposit(context.Background(), home, vendor.Claude, strings.NewReader(replacement)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -352,7 +350,7 @@ func TestVendorRunsWithTheAutoUpdaterDisabled(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DISABLE_AUTOUPDATER", "0")
 
-	if _, err := Mint(context.Background(), home, []string{"claude"}, "claude", vendor.Claude, nil); err != nil {
+	if _, err := Mint(context.Background(), home, vendor.Claude); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(seen)

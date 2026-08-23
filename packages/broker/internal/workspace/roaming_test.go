@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/store"
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
@@ -42,7 +41,7 @@ func TestRegisterTreatsNoBrokerCapacityAsACleanSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Register(context.Background(), stateDir, server.Client()); err != nil {
+	if err := Register(context.Background(), stateDir); err != nil {
 		t.Fatalf("Register failed on a capacity refusal instead of skipping: %v", err)
 	}
 
@@ -75,13 +74,14 @@ func TestRegisterTreatsNoBrokerCapacityAsACleanSkip(t *testing.T) {
 // registers at the moment its own network is coming up, and nothing retries
 // afterwards, so one attempt turns a lost half-second into a box with no
 // broker for its entire life.
+//
+// It waits out the real registerRetryDelay twice (~1 s): the delay is a
+// production constant, and a second of wall clock is cheaper than a knob that
+// exists only for this test.
 func TestRegisterRetriesATransientFailure(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
 	seedBox(t, stateDir)
-	previous := registerRetryDelay
-	registerRetryDelay = time.Millisecond
-	defer func() { registerRetryDelay = previous }()
 
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -97,7 +97,7 @@ func TestRegisterRetriesATransientFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Register(context.Background(), stateDir, server.Client()); err != nil {
+	if err := Register(context.Background(), stateDir); err != nil {
 		t.Fatal(err)
 	}
 	if calls != registerAttempts {
@@ -279,14 +279,15 @@ func TestTokenRefusesAReplyThatHoldsOnlyATerminator(t *testing.T) {
 	}
 }
 
-// seedBrokerWiring writes the state a mint needs to reach the ssh binary: a
-// broker to dial and a key to dial it with.
+// seedBrokerWiring writes the state a mint or deposit needs to reach the ssh
+// binary: a broker to dial and keys to dial it with.
 func seedBrokerWiring(t *testing.T) string {
 	t.Helper()
 	stateDir := t.TempDir()
 	writeFile(t, filepath.Join(stateDir, BrokerFile), `{"host":"broker.example","port":22,"member":"m-0123456789ab"}`)
 	writeFile(t, filepath.Join(stateDir, KnownHostsFile), "broker.example ssh-ed25519 AAAA\n")
 	writeFile(t, filepath.Join(stateDir, MintKeyFile), "private")
+	writeFile(t, filepath.Join(stateDir, DepositKeyFile), "private")
 	return stateDir
 }
 
@@ -314,6 +315,27 @@ func liveModelProviderLines(config string) []string {
 	return live
 }
 
+// fakeDepositSSH wires a watcher's state directory at a fake broker: broker
+// config and deposit key on disk, and an `ssh` script first on PATH that
+// counts each deposit into countFile, runs extra first, and answers the exact
+// "ok\n" ACK the deposit wire expects. The watcher then runs the REAL deposit
+// path — LoadBroker, key selection, ssh argv, ACK parsing — end to end.
+func fakeDepositSSH(t *testing.T, countFile, extra string) string {
+	t.Helper()
+	stateDir := seedBrokerWiring(t)
+	fakeSSH(t, "printf x >> "+strconv.Quote(countFile)+"\n"+extra+"printf 'ok\\n'\n")
+	return stateDir
+}
+
+func depositCount(t *testing.T, countFile string) int {
+	t.Helper()
+	data, err := os.ReadFile(countFile)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	return len(data)
+}
+
 // TestWatcherDeletesTheWorkspaceCopyOnAck is "single copy by construction". The
 // broker is the only thing that refreshes a credential and the only place a
 // second workspace can get one; a workspace that kept its copy would be an
@@ -322,12 +344,10 @@ func TestWatcherDeletesTheWorkspaceCopyOnAck(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
 	writeFile(t, path, "a-login")
+	countFile := filepath.Join(t.TempDir(), "deposits")
+	stateDir := fakeDepositSSH(t, countFile, "")
 
-	var deposits int
-	watcher := NewWatcher(home, func(context.Context, string, []byte) error {
-		deposits++
-		return nil
-	})
+	watcher := NewWatcher(home, stateDir)
 	if err := watcher.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -341,8 +361,8 @@ func TestWatcherDeletesTheWorkspaceCopyOnAck(t *testing.T) {
 	if err := watcher.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if deposits != 2 {
-		t.Fatalf("deposits = %d, want 2", deposits)
+	if got := depositCount(t, countFile); got != 2 {
+		t.Fatalf("deposits = %d, want 2", got)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("the second copy was not removed")
@@ -357,11 +377,12 @@ func TestWatcherKeepsACopyTheBrokerNeverReceived(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
 	writeFile(t, path, "old-login")
+	countFile := filepath.Join(t.TempDir(), "deposits")
+	// The fake broker session lands a fresher login while the deposit is in
+	// flight — the mid-deposit race, staged by the ssh child itself.
+	stateDir := fakeDepositSSH(t, countFile, "printf 'fresher-login' > "+strconv.Quote(path)+"\n")
 
-	watcher := NewWatcher(home, func(context.Context, string, []byte) error {
-		writeFile(t, path, "fresher-login")
-		return nil
-	})
+	watcher := NewWatcher(home, stateDir)
 	if err := watcher.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -381,24 +402,22 @@ func TestWatcherReportsACopyItCouldNotRemove(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
 	writeFile(t, path, "a-login")
+	countFile := filepath.Join(t.TempDir(), "deposits")
+	stateDir := fakeDepositSSH(t, countFile, "")
 	if err := os.Chmod(filepath.Dir(path), 0o500); err != nil {
 		t.Fatal(err)
 	}
 	defer os.Chmod(filepath.Dir(path), 0o700)
 
-	var deposits int
-	watcher := NewWatcher(home, func(context.Context, string, []byte) error {
-		deposits++
-		return nil
-	})
+	watcher := NewWatcher(home, stateDir)
 	if err := watcher.Tick(context.Background()); err == nil {
 		t.Fatal("an unremovable workspace copy was reported as success")
 	}
 	if err := watcher.Tick(context.Background()); err != nil {
 		t.Fatalf("the second tick re-reported a copy it had already deposited: %v", err)
 	}
-	if deposits != 1 {
-		t.Fatalf("deposits = %d, want 1 — the watcher hammered the broker", deposits)
+	if got := depositCount(t, countFile); got != 1 {
+		t.Fatalf("deposits = %d, want 1 — the watcher hammered the broker", got)
 	}
 }
 

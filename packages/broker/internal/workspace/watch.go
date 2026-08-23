@@ -13,16 +13,14 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 )
 
-type Depositor func(context.Context, string, []byte) error
-
 type Watcher struct {
 	Home      string
-	Deposit   Depositor
+	StateDir  string
 	deposited map[string][sha256.Size]byte
 }
 
-func NewWatcher(home string, deposit Depositor) *Watcher {
-	return &Watcher{Home: home, Deposit: deposit, deposited: make(map[string][sha256.Size]byte)}
+func NewWatcher(home, stateDir string) *Watcher {
+	return &Watcher{Home: home, StateDir: stateDir, deposited: make(map[string][sha256.Size]byte)}
 }
 
 // Tick deposits any credential that changed since the last pass and then
@@ -43,7 +41,7 @@ func (watcher *Watcher) Tick(ctx context.Context) error {
 	// The credential paths come off the vendor Definition table, not a config
 	// file: the broker's mint, the broker's deposit and this watcher then read
 	// one field, and the list cannot go missing or drift out from under them.
-	for _, definition := range []vendor.Definition{vendor.Claude, vendor.Codex} {
+	for _, definition := range vendor.Definitions {
 		path := filepath.Join(watcher.Home, filepath.FromSlash(definition.CredentialPath))
 		blob, err := readWatchedFile(path)
 		if errors.Is(err, os.ErrNotExist) {
@@ -57,7 +55,7 @@ func (watcher *Watcher) Tick(ctx context.Context) error {
 		if previous, ok := watcher.deposited[definition.Name]; ok && previous == digest {
 			continue
 		}
-		if err := watcher.Deposit(ctx, definition.Name, blob); err != nil {
+		if err := Deposit(ctx, watcher.StateDir, definition.Name, blob); err != nil {
 			failures = append(failures, err)
 			continue
 		}
@@ -104,15 +102,13 @@ func removeIfUnchanged(path string, digest [sha256.Size]byte) (bool, error) {
 }
 
 func Watch(ctx context.Context, stateDir, home string) error {
-	watcher := NewWatcher(home, func(callContext context.Context, harness string, blob []byte) error {
-		return Deposit(callContext, stateDir, harness, blob)
-	})
+	watcher := NewWatcher(home, stateDir)
 	environmentReady := false
 	for {
 		if !environmentReady {
 			// The startup script it may launch runs detached, so this call
 			// never holds up the credential deposits below.
-			ready, _, _ := environmentTick(ctx, stateDir, "/workspace", nil)
+			ready, _ := environmentTick(ctx, stateDir, "/workspace")
 			environmentReady = ready
 		}
 		_ = watcher.Tick(ctx)

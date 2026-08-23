@@ -12,13 +12,12 @@ import (
 
 const refreshWindow = 5 * time.Minute
 
-func Mint(ctx context.Context, home string, allowed []string, requested string, definition vendor.Definition, runner vendor.Runner) (string, error) {
-	if !contains(allowed, requested) || requested != definition.Name {
-		return "", errors.New("requested harness is not allowed")
-	}
-	if runner == nil {
-		runner = vendor.Run
-	}
+// Mint serves the member's access token for one harness, refreshing it through
+// the vendor CLI when it is near expiry. Which harnesses the member may mint
+// is decided by the forced command that calls this (cmd/blitz-broker), the
+// only production entry point: it resolves the definition from the allowlist
+// baked into authorized_keys before any credential is touched.
+func Mint(ctx context.Context, home string, definition vendor.Definition) (string, error) {
 	var token string
 	err := withMemberLock(ctx, home, func() error {
 		path := filepath.Join(home, filepath.FromSlash(definition.CredentialPath))
@@ -31,7 +30,7 @@ func Mint(ctx context.Context, home string, allowed []string, requested string, 
 			return err
 		}
 		if !expiry.After(time.Now().Add(refreshWindow)) {
-			if err := runner(ctx, definition.Command, definition.RefreshArgs, home); err != nil {
+			if err := vendor.Run(ctx, definition.Command, definition.RefreshArgs, home); err != nil {
 				return err
 			}
 			data, err = readCredential(path)
@@ -61,13 +60,4 @@ func Mint(ctx context.Context, home string, allowed []string, requested string, 
 		return nil
 	})
 	return token, err
-}
-
-func contains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }

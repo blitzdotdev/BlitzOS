@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/feed"
@@ -26,19 +27,22 @@ func TestWatcherRedepositsLoginThatChangesDuringDeposit(t *testing.T) {
 	if err := os.WriteFile(path, []byte("old-login"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var deposits [][]byte
-	watcher := NewWatcher(home, func(_ context.Context, harness string, blob []byte) error {
-		if harness != "claude" {
-			t.Fatalf("harness = %q", harness)
-		}
-		deposits = append(deposits, append([]byte(nil), blob...))
-		if len(deposits) == 1 {
-			if err := os.WriteFile(path, []byte("fresher-login"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		return nil
-	})
+	stateDir := seedBrokerWiring(t)
+	// The fake broker records each deposited blob off its stdin — the deposit
+	// wire — asserts the forced command names the right harness, lands a
+	// fresher login mid-first-deposit, and ACKs.
+	record := t.TempDir()
+	fakeSSH(t, `for last in "$@"; do :; done
+[ "$last" = claude ] || { printf 'wrong harness %s\n' "$last" >&2; exit 9; }
+n=$(cat `+strconv.Quote(filepath.Join(record, "count"))+` 2>/dev/null || printf 0)
+n=$((n+1))
+printf %s "$n" > `+strconv.Quote(filepath.Join(record, "count"))+`
+cat > "`+record+`/deposit.$n"
+if [ "$n" = 1 ]; then printf 'fresher-login' > `+strconv.Quote(path)+`; fi
+printf 'ok\n'
+`)
+
+	watcher := NewWatcher(home, stateDir)
 	if err := watcher.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -48,8 +52,20 @@ func TestWatcherRedepositsLoginThatChangesDuringDeposit(t *testing.T) {
 	if err := watcher.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(deposits) != 2 || string(deposits[0]) != "old-login" || string(deposits[1]) != "fresher-login" {
-		t.Fatalf("deposits = %q", deposits)
+	count, err := os.ReadFile(filepath.Join(record, "count"))
+	if err != nil || string(count) != "2" {
+		t.Fatalf("deposit count = %q, %v; want 2", count, err)
+	}
+	first, err := os.ReadFile(filepath.Join(record, "deposit.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(filepath.Join(record, "deposit.2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != "old-login" || string(second) != "fresher-login" {
+		t.Fatalf("deposits = %q, %q", first, second)
 	}
 }
 
@@ -102,14 +118,14 @@ func TestRegisterCreatesIdempotentKeysAndPinnedBrokerFiles(t *testing.T) {
 	if err := store.SaveOrigin(stateDir, server.URL); err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(context.Background(), stateDir, server.Client()); err != nil {
+	if err := Register(context.Background(), stateDir); err != nil {
 		t.Fatal(err)
 	}
 	mintBefore, err := os.ReadFile(filepath.Join(stateDir, MintKeyFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Register(context.Background(), stateDir, server.Client()); err != nil {
+	if err := Register(context.Background(), stateDir); err != nil {
 		t.Fatal(err)
 	}
 	mintAfter, err := os.ReadFile(filepath.Join(stateDir, MintKeyFile))
@@ -242,19 +258,6 @@ func TestEmptySyncUsesZeroExpiry(t *testing.T) {
 	}
 }
 
-func TestSyncStateFreshnessUsesSixtySecondMargin(t *testing.T) {
-	state := SyncState{ExpiresAt: 1_000_000}
-	if !state.Fresh(939_999) {
-		t.Fatal("state more than 60 seconds from expiry is stale")
-	}
-	if state.Fresh(940_000) {
-		t.Fatal("state exactly 60 seconds from expiry is fresh")
-	}
-	if (SyncState{ExpiresAt: 0}).Fresh(0) {
-		t.Fatal("zero expiry is fresh")
-	}
-}
-
 func TestSyncMintsAllOnce(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := store.SaveCredential(stateDir, store.Credential{BoxID: "box", AccessToken: "access", RefreshToken: "refresh"}); err != nil {
@@ -280,7 +283,7 @@ func TestSyncMintsAllOnce(t *testing.T) {
 	if err := store.SaveOrigin(stateDir, server.URL); err != nil {
 		t.Fatal(err)
 	}
-	if err := Sync(context.Background(), stateDir, server.Client()); err != nil {
+	if err := Sync(context.Background(), stateDir); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {

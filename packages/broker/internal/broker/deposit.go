@@ -28,16 +28,13 @@ import (
 // for: a full disk or a bad mode turned a deposit that had already succeeded
 // into a failure, the watcher kept its copy, and it re-deposited every second
 // — a real vendor round trip per tick, forever.
-func Deposit(ctx context.Context, home string, definition vendor.Definition, input io.Reader, runner vendor.Runner) error {
+func Deposit(ctx context.Context, home string, definition vendor.Definition, input io.Reader) error {
 	blob, err := io.ReadAll(io.LimitReader(input, FeedMaxBytes+1))
 	if err != nil {
 		return errors.New("could not read deposited credential")
 	}
 	if len(blob) > FeedMaxBytes {
 		return errors.New("deposited credential exceeds 1 MiB")
-	}
-	if runner == nil {
-		runner = vendor.Run
 	}
 	return withMemberLock(ctx, home, func() error {
 		stage, err := os.MkdirTemp(home, ".deposit-*")
@@ -72,7 +69,7 @@ func Deposit(ctx context.Context, home string, definition vendor.Definition, inp
 		// HOME points at the staging tree, so the vendor CLI rotates the
 		// STAGED copy and never reaches the stored one. A failure here returns
 		// before any write to the stored path.
-		if err := runner(ctx, definition.Command, definition.VerifyArgs, stage); err != nil {
+		if err := vendor.Run(ctx, definition.Command, definition.VerifyArgs, stage); err != nil {
 			return fmt.Errorf("verification failed; stored credential unchanged: %w", err)
 		}
 		verified, err := readCredential(stagedPath)

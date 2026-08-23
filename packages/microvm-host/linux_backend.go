@@ -15,18 +15,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
 
-type commandRunner interface {
-	Run(context.Context, string, ...string) ([]byte, error)
-}
-
-type realRunner struct{}
-
-func (realRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -35,14 +28,16 @@ func (realRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return output, nil
 }
 
+// LinuxBackend holds no mutable state — cfg is read-only after construction.
+// Serialization of the filesystem and process work it does is owned by
+// Manager.mu: every call into a backend happens under it (Reconcile, Create,
+// Delete), except Versions, which only reads cfg.
 type LinuxBackend struct {
-	cfg    Config
-	runner commandRunner
-	mu     sync.Mutex
+	cfg Config
 }
 
 func NewLinuxBackend(cfg Config) *LinuxBackend {
-	return &LinuxBackend{cfg: cfg, runner: realRunner{}}
+	return &LinuxBackend{cfg: cfg}
 }
 
 func (b *LinuxBackend) runtimeRoot() string      { return filepath.Join(b.cfg.StateDir, "runtime") }
@@ -52,8 +47,6 @@ func (b *LinuxBackend) socketPath(vm *VM) string {
 }
 
 func (b *LinuxBackend) Boot(ctx context.Context, vm *VM, req CreateRequest) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	runtimeDir := b.runtimeDir(vm)
 	imageRoot := filepath.Join(runtimeDir, "image-root")
 	if err := os.MkdirAll(filepath.Join(imageRoot, "seed"), 0700); err != nil {
@@ -74,20 +67,20 @@ func (b *LinuxBackend) Boot(ctx context.Context, vm *VM, req CreateRequest) (int
 	if err := f.Close(); err != nil {
 		return 0, err
 	}
-	if _, err := b.runner.Run(ctx, "mkfs.ext4", "-q", "-F", "-E", "lazy_itable_init=1,lazy_journal_init=1", "-d", imageRoot, upper); err != nil {
+	if _, err := runCommand(ctx, "mkfs.ext4", "-q", "-F", "-E", "lazy_itable_init=1,lazy_journal_init=1", "-d", imageRoot, upper); err != nil {
 		return 0, err
 	}
 	hostIP, _, tap, _, err := NetworkFor(b.cfg, vm.Slot)
 	if err != nil {
 		return 0, err
 	}
-	if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, "ip", "tuntap", "add", "dev", tap, "mode", "tap", "user", currentUsername()); err != nil {
+	if _, err := runCommand(ctx, b.cfg.SudoWrapper, "ip", "tuntap", "add", "dev", tap, "mode", "tap", "user", currentUsername()); err != nil {
 		return 0, err
 	}
-	if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, "ip", "addr", "add", hostIP+"/30", "dev", tap); err != nil {
+	if _, err := runCommand(ctx, b.cfg.SudoWrapper, "ip", "addr", "add", hostIP+"/30", "dev", tap); err != nil {
 		return 0, err
 	}
-	if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, "ip", "link", "set", "dev", tap, "up"); err != nil {
+	if _, err := runCommand(ctx, b.cfg.SudoWrapper, "ip", "link", "set", "dev", tap, "up"); err != nil {
 		return 0, err
 	}
 	if err := b.addRules(ctx, vm); err != nil {
@@ -178,7 +171,7 @@ func (b *LinuxBackend) Inspect(ctx context.Context, vm *VM) (bool, bool) {
 	}
 	for _, rule := range b.rules(vm) {
 		args := append([]string{"iptables", "-t", rule.table, "-C"}, rule.args...)
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, args...); err != nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, args...); err != nil {
 			return true, false
 		}
 	}
@@ -186,8 +179,6 @@ func (b *LinuxBackend) Inspect(ctx context.Context, vm *VM) (bool, bool) {
 }
 
 func (b *LinuxBackend) Stop(ctx context.Context, vm *VM) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	pid := b.effectivePID(vm)
 	if pid <= 0 || !processExists(pid) {
 		return nil
@@ -216,35 +207,32 @@ func (b *LinuxBackend) Stop(ctx context.Context, vm *VM) error {
 }
 
 func (b *LinuxBackend) Cleanup(ctx context.Context, vm *VM) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	var errs []error
 	if err := b.removeRules(ctx, vm); err != nil {
 		errs = append(errs, err)
 	}
 	_, _, tap, _, _ := NetworkFor(b.cfg, vm.Slot)
 	if _, err := os.Stat(filepath.Join("/sys/class/net", tap)); err == nil {
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, "ip", "link", "delete", "dev", tap); err != nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, "ip", "link", "delete", "dev", tap); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	runtimeDir := b.runtimeDir(vm)
-	if !pathWithin(runtimeDir, b.runtimeRoot()) {
-		errs = append(errs, fmt.Errorf("unsafe runtime path %s", runtimeDir))
-	} else if err := os.RemoveAll(runtimeDir); err != nil {
+	// SAFETY: runtimeDir is runtimeRoot()/<vm.VMID>, and every VM this method
+	// ever sees carries a vmIDPattern-validated ID: StateStore.Load and Save
+	// both enforce `^[a-zA-Z0-9-]+$` and newVMID only produces that shape, so
+	// the join cannot name anything outside the runtime root.
+	if err := os.RemoveAll(b.runtimeDir(vm)); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
 
 func (b *LinuxBackend) CleanupOrphans(ctx context.Context, active map[int]string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	var errs []error
 	if raw, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward"); err != nil {
 		errs = append(errs, err)
 	} else if strings.TrimSpace(string(raw)) != "1" {
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"); err != nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -292,10 +280,11 @@ func (b *LinuxBackend) CleanupOrphans(ctx context.Context, active map[int]string
 				_ = terminatePID(pid)
 			}
 		}
-		if pathWithin(dir, root) {
-			if err := os.RemoveAll(dir); err != nil {
-				errs = append(errs, err)
-			}
+		// SAFETY: dir is root/<entry.Name()> where entry came from ReadDir on
+		// root itself — a real directory entry, never "." or "..", never
+		// containing a separator — so the join cannot escape the runtime root.
+		if err := os.RemoveAll(dir); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	for slot := 1; slot <= b.cfg.SlotCount; slot++ {
@@ -308,7 +297,7 @@ func (b *LinuxBackend) CleanupOrphans(ctx context.Context, active map[int]string
 		}
 		_, _, tap, _, _ := NetworkFor(b.cfg, slot)
 		if _, err := os.Stat(filepath.Join("/sys/class/net", tap)); err == nil {
-			if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, "ip", "link", "delete", "dev", tap); err != nil {
+			if _, err := runCommand(ctx, b.cfg.SudoWrapper, "ip", "link", "delete", "dev", tap); err != nil {
 				errs = append(errs, err)
 			}
 		}
@@ -341,11 +330,11 @@ func (b *LinuxBackend) rules(vm *VM) []iptablesRule {
 func (b *LinuxBackend) addRules(ctx context.Context, vm *VM) error {
 	for _, rule := range b.rules(vm) {
 		check := append([]string{"iptables", "-t", rule.table, "-C"}, rule.args...)
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, check...); err == nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, check...); err == nil {
 			continue
 		}
 		add := append([]string{"iptables", "-t", rule.table, "-A"}, rule.args...)
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, add...); err != nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, add...); err != nil {
 			return err
 		}
 	}
@@ -356,11 +345,11 @@ func (b *LinuxBackend) removeRules(ctx context.Context, vm *VM) error {
 	var errs []error
 	for _, rule := range b.rules(vm) {
 		check := append([]string{"iptables", "-t", rule.table, "-C"}, rule.args...)
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, check...); err != nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, check...); err != nil {
 			continue
 		}
 		remove := append([]string{"iptables", "-t", rule.table, "-D"}, rule.args...)
-		if _, err := b.runner.Run(ctx, b.cfg.SudoWrapper, remove...); err != nil {
+		if _, err := runCommand(ctx, b.cfg.SudoWrapper, remove...); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -455,11 +444,6 @@ func terminatePID(pid int) error {
 		return syscall.Kill(pid, syscall.SIGKILL)
 	}
 	return nil
-}
-
-func pathWithin(path, root string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func currentUsername() string {

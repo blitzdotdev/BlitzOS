@@ -14,6 +14,18 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/vendor"
 )
 
+// fakeVendorCLI installs a script under the vendor CLI's name first on PATH.
+// vendor.Run resolves the command by name, so this is the real seam: the test
+// drives the exact exec path production takes, fake binary included.
+func fakeVendorCLI(t *testing.T, name, body string) {
+	t.Helper()
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nset -eu\n"+body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestDepositVerifyFailureLeavesCredentialUntouched(t *testing.T) {
 	home := t.TempDir()
 	definition := vendor.Claude
@@ -25,10 +37,9 @@ func TestDepositVerifyFailureLeavesCredentialUntouched(t *testing.T) {
 	if err := os.WriteFile(path, old, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	fakeVendorCLI(t, "claude", "exit 1\n")
 
-	err := Deposit(context.Background(), home, definition, strings.NewReader(`{"claudeAiOauth":{"accessToken":"new"}}`), func(context.Context, string, []string, string) error {
-		return errors.New("verification failed")
-	})
+	err := Deposit(context.Background(), home, definition, strings.NewReader(`{"claudeAiOauth":{"accessToken":"new"}}`))
 	if err == nil {
 		t.Fatal("Deposit succeeded after vendor verification failed")
 	}
@@ -69,20 +80,6 @@ func TestDecodeFeedRejectsPoisonedEntriesWithoutDroppingValidEntry(t *testing.T)
 func TestDecodeFeedRequiresVersion(t *testing.T) {
 	if _, err := DecodeFeed(strings.NewReader(`{"members":[]}`)); err == nil {
 		t.Fatal("DecodeFeed accepted a feed without its required version")
-	}
-}
-
-func TestMintRefusesHarnessOutsideMemberList(t *testing.T) {
-	called := false
-	_, err := Mint(context.Background(), t.TempDir(), []string{"claude"}, "codex", vendor.Codex, func(context.Context, string, []string, string) error {
-		called = true
-		return nil
-	})
-	if err == nil {
-		t.Fatal("Mint accepted a harness outside the member allowlist")
-	}
-	if called {
-		t.Fatal("vendor CLI ran before the harness gate")
 	}
 }
 
@@ -129,10 +126,11 @@ func TestAuthorizedKeysUsesRootOwnedPathAndModes(t *testing.T) {
 }
 
 func TestDepositCapsInput(t *testing.T) {
+	// The cap must refuse the blob before anything else runs; the fake CLI is
+	// here only so a regression cannot fall through to a real vendor binary.
+	fakeVendorCLI(t, "claude", "exit 1\n")
 	blob := io.LimitReader(strings.NewReader(strings.Repeat("x", FeedMaxBytes+1)), FeedMaxBytes+1)
-	err := Deposit(context.Background(), t.TempDir(), vendor.Claude, blob, func(context.Context, string, []string, string) error {
-		return nil
-	})
+	err := Deposit(context.Background(), t.TempDir(), vendor.Claude, blob)
 	if err == nil {
 		t.Fatal("Deposit accepted a blob over 1 MiB")
 	}
@@ -169,7 +167,7 @@ func TestConcurrentMintsRunOneVendorRefresh(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			token, err := Mint(context.Background(), home, []string{"claude"}, "claude", vendor.Claude, nil)
+			token, err := Mint(context.Background(), home, vendor.Claude)
 			if err == nil && token != "fresh" {
 				err = errors.New("mint returned the wrong token")
 			}

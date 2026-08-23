@@ -26,7 +26,6 @@ const (
 	environmentDirectory = "env.d"
 	syncStateFile        = "sync-state.json"
 	syncLockFile         = ".lock"
-	freshnessMarginMS    = int64(60_000)
 	// The workspace's own variables share creds/env.d so the box has exactly
 	// one environment pipeline. The name sorts ahead of every integration file
 	// (blitz-creds.sh sources the glob in order), so a minted credential always
@@ -72,16 +71,16 @@ type MintResult struct {
 	ExpiresAt   int64
 }
 
+// SyncState is what applySync records for the box's shell to read. The
+// freshness decision itself lives in the consumer,
+// packages/box/rootfs/etc/profile.d/blitz-creds.sh, which parses expires_at
+// and applies its own 60 s margin; nothing on the Go side re-implements it.
 type SyncState struct {
 	SyncedAt  int64 `json:"synced_at"`
 	ExpiresAt int64 `json:"expires_at"`
 }
 
-func (state SyncState) Fresh(nowMS int64) bool {
-	return nowMS < state.ExpiresAt-freshnessMarginMS
-}
-
-func MintIntegration(ctx context.Context, stateDir, integration string, httpClient *http.Client) (MintResult, error) {
+func MintIntegration(ctx context.Context, stateDir, integration string) (MintResult, error) {
 	if !validIntegrationName(integration) {
 		return MintResult{}, errors.New("invalid integration name")
 	}
@@ -91,7 +90,7 @@ func MintIntegration(ctx context.Context, stateDir, integration string, httpClie
 	if err != nil {
 		return MintResult{}, err
 	}
-	data, err := mintRequest(ctx, stateDir, body, httpClient)
+	data, err := mintRequest(ctx, stateDir, body)
 	if err != nil {
 		return MintResult{}, err
 	}
@@ -128,9 +127,9 @@ func withCredentialsLock(stateDir string, run func(credsDir string) error) error
 	return run(credsDir)
 }
 
-func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
+func Sync(ctx context.Context, stateDir string) error {
 	return withCredentialsLock(stateDir, func(string) error {
-		data, err := mintRequest(ctx, stateDir, []byte("{}"), httpClient)
+		data, err := mintRequest(ctx, stateDir, []byte("{}"))
 		if err != nil {
 			return err
 		}
@@ -142,14 +141,14 @@ func Sync(ctx context.Context, stateDir string, httpClient *http.Client) error {
 	})
 }
 
-func GitHelper(ctx context.Context, stateDir, action string, input io.Reader, output io.Writer, httpClient *http.Client) error {
+func GitHelper(ctx context.Context, stateDir, action string, input io.Reader, output io.Writer) error {
 	if err := readCredentialInput(input); err != nil {
 		return err
 	}
 	if action != "get" {
 		return nil
 	}
-	result, err := MintIntegration(ctx, stateDir, "github", httpClient)
+	result, err := MintIntegration(ctx, stateDir, "github")
 	if errors.Is(err, ErrIntegrationNotConfigured) {
 		if AccessRequestID(err) != "" {
 			return err
@@ -191,12 +190,12 @@ func readCredentialInput(input io.Reader) error {
 	return nil
 }
 
-func mintRequest(ctx context.Context, stateDir string, body []byte, httpClient *http.Client) ([]byte, error) {
+func mintRequest(ctx context.Context, stateDir string, body []byte) ([]byte, error) {
 	origin, err := store.LoadOrigin(stateDir)
 	if err != nil {
 		return nil, err
 	}
-	client, err := controlplane.New(origin, stateDir, httpClient)
+	client, err := controlplane.New(origin, stateDir)
 	if err != nil {
 		return nil, err
 	}

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,7 +45,7 @@ const registerAttempts = 3
 // runs on the boot path with other services waiting behind it, and the failure
 // it covers is a few hundred milliseconds of network, not an outage. An outage
 // is what the no-broker path below is for.
-var registerRetryDelay = 500 * time.Millisecond
+const registerRetryDelay = 500 * time.Millisecond
 
 // Register enrols this workspace with the credential broker and points the
 // harnesses at it.
@@ -60,12 +59,12 @@ var registerRetryDelay = 500 * time.Millisecond
 // broker, or every broker full, means the feature is off for this box, and the
 // right outcome is a workspace that runs signed out with no stale wiring left
 // behind. See ErrNoBrokerCapacity.
-func Register(ctx context.Context, stateDir string, httpClient *http.Client) error {
+func Register(ctx context.Context, stateDir string) error {
 	origin, err := store.LoadOrigin(stateDir)
 	if err != nil {
 		return err
 	}
-	client, err := controlplane.New(origin, stateDir, httpClient)
+	client, err := controlplane.New(origin, stateDir)
 	if err != nil {
 		return err
 	}

@@ -58,7 +58,7 @@ func run(args []string, output io.Writer, input io.Reader) error {
 		if len(args) != 1 {
 			return errors.New("sync takes no arguments")
 		}
-		return broker.Sync(context.Background(), stateDir, nil)
+		return broker.Sync(context.Background(), stateDir)
 	case "mint":
 		return runMint(args[1:], output)
 	case "deposit":
@@ -84,7 +84,7 @@ func runEnroll(args []string, stateDir string, output io.Writer) error {
 	if *host == "" || strings.ContainsAny(*host, " \t\r\n") || *port < 1 || *port > 65535 {
 		return errors.New("invalid advertised broker address")
 	}
-	if _, err := enroll.Run(context.Background(), stateDir, *origin, "blitz-broker", output, nil); err != nil {
+	if _, err := enroll.Run(context.Background(), stateDir, *origin, "blitz-broker", output); err != nil {
 		return err
 	}
 	hostKeyData, err := os.ReadFile(filepath.Join(stateDir, "ssh", "ssh_host_ed25519_key.pub"))
@@ -99,7 +99,7 @@ func runEnroll(args []string, stateDir string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	client, err := controlplane.New(storedOrigin, stateDir, nil)
+	client, err := controlplane.New(storedOrigin, stateDir)
 	if err != nil {
 		return err
 	}
@@ -107,13 +107,13 @@ func runEnroll(args []string, stateDir string, output io.Writer) error {
 }
 
 func runMint(args []string, output io.Writer) error {
-	_, allowed, definition, home, err := forcedCommand(args)
+	definition, home, err := forcedCommand(args)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	token, err := broker.Mint(ctx, home, allowed, definition.Name, definition, nil)
+	token, err := broker.Mint(ctx, home, definition)
 	if err != nil {
 		return err
 	}
@@ -128,45 +128,49 @@ func runMint(args []string, output io.Writer) error {
 }
 
 func runDeposit(args []string, output io.Writer, input io.Reader) error {
-	_, _, definition, home, err := forcedCommand(args)
+	definition, home, err := forcedCommand(args)
 	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	if err := broker.Deposit(ctx, home, definition, input, nil); err != nil {
+	if err := broker.Deposit(ctx, home, definition, input); err != nil {
 		return err
 	}
 	_, err = io.WriteString(output, "ok\n")
 	return err
 }
 
-func forcedCommand(args []string) (string, []string, vendor.Definition, string, error) {
+// forcedCommand is the single gate on which harness a member may touch: the
+// member name and allowlist come off the authorized_keys forced-command line
+// this binary rendered, the requested harness off SSH_ORIGINAL_COMMAND, and
+// nothing below this function checks them again.
+func forcedCommand(args []string) (vendor.Definition, string, error) {
 	if len(args) != 2 || os.Getenv("SSH_CONNECTION") == "" {
-		return "", nil, vendor.Definition{}, "", errors.New("command is restricted to forced-command SSH")
+		return vendor.Definition{}, "", errors.New("command is restricted to forced-command SSH")
 	}
 	member := args[0]
 	if !feed.ValidUnixName(member) {
-		return "", nil, vendor.Definition{}, "", errors.New("invalid forced-command member")
+		return vendor.Definition{}, "", errors.New("invalid forced-command member")
 	}
 	allowed, err := parseAllowlist(args[1])
 	if err != nil {
-		return "", nil, vendor.Definition{}, "", err
+		return vendor.Definition{}, "", err
 	}
 	requested := os.Getenv("SSH_ORIGINAL_COMMAND")
 	definition, err := vendor.Lookup(requested)
 	if err != nil || !contains(allowed, requested) {
-		return "", nil, vendor.Definition{}, "", errors.New("requested harness is not allowed")
+		return vendor.Definition{}, "", errors.New("requested harness is not allowed")
 	}
 	current, err := user.Current()
 	if err != nil || current.Username != member {
-		return "", nil, vendor.Definition{}, "", errors.New("forced-command Unix user mismatch")
+		return vendor.Definition{}, "", errors.New("forced-command Unix user mismatch")
 	}
 	account, err := user.Lookup(member)
 	if err != nil {
-		return "", nil, vendor.Definition{}, "", errors.New("forced-command member does not exist")
+		return vendor.Definition{}, "", errors.New("forced-command member does not exist")
 	}
-	return member, allowed, definition, account.HomeDir, nil
+	return definition, account.HomeDir, nil
 }
 
 func parseAllowlist(raw string) ([]string, error) {

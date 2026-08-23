@@ -29,11 +29,11 @@ type deviceAuthorization struct {
 	Interval                int    `json:"interval"`
 }
 
-func (flow DeviceFlow) Enroll(ctx context.Context, rawOrigin, clientID string, output io.Writer) (store.Credential, error) {
-	origin, err := ValidateOrigin(rawOrigin)
-	if err != nil {
-		return store.Credential{}, err
-	}
+// Enroll runs the device-authorization flow against origin, which the caller
+// must have passed through ValidateOrigin already — the one production caller
+// (internal/enroll.Run) validates before it stores the origin, and hands the
+// validated form here.
+func (flow DeviceFlow) Enroll(ctx context.Context, origin, clientID string, output io.Writer) (store.Credential, error) {
 	if clientID == "" {
 		return store.Credential{}, errors.New("client_id is required")
 	}
