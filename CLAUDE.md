@@ -28,10 +28,10 @@ npm test              # control-plane, box actor, ui, guest node:test,
   fall. When you remove findings, lower the baseline in the same change.
   Never raise the baseline to make a change pass.
 
-## Known debt (as of 2026-08-18)
+## Known debt (as of 2026-08-23)
 
-- 108 anti-slop findings remain, all Tier C: external-boundary code that
-  needs real parsers (52 no-unknown-parameters, 27 no-runtime-typeof in
+- 105 anti-slop findings remain, all Tier C: external-boundary code that
+  needs real parsers (51 no-unknown-parameters, 25 no-runtime-typeof in
   plain JS, 23 no-unsafe-dictionary-type, 6 no-unknown-returns). Fixing one
   requires characterization tests FIRST — these fixes can change accepted
   inputs. Plan and history: GitHub issue #1.
@@ -39,11 +39,14 @@ npm test              # control-plane, box actor, ui, guest node:test,
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 4 files exceed the 700-line warn: `core/workspaces.ts`,
-  `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
-  `webapp/src/terminal-touch-controller.ts`. Split on touch, never big-bang.
-  (`core/files/sync.ts` left the list 2026-08-21 when its transfer plumbing
-  split into `core/files/dav.ts`.)
+- 6 files exceed the 700-line warn: `core/bootstrap.ts`,
+  `core/workspaces.ts`, `control-plane/scripts/lib/worker-source.mjs`,
+  `webapp/src/CloudApp.tsx`, `webapp/src/api.ts`,
+  `webapp/src/terminal-touch-controller.ts`. Split on touch, never
+  big-bang. (`core/files/sync.ts` left the list 2026-08-21 via the
+  `core/files/dav.ts` split; `core/bootstrap.ts` and `webapp/src/api.ts`
+  crossed the line before the 2026-08-23 sweep and are noted here so the
+  list matches what `lint:gate` prints.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -102,8 +105,8 @@ Do not add aliases anywhere else.
    and both conformance tests present and passing. A new cross-runtime
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
-7. Reference counts for comparison (2026-08-19): anti-slop 108
-   (52/27/23/6), blitz-house 0, max-lines warnings 4. These are the numbers
+7. Reference counts for comparison (2026-08-23): anti-slop 105
+   (51/25/23/6), blitz-house 0, max-lines warnings 6. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 
