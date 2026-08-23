@@ -3,7 +3,6 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hashSecret, sha256Hex } from "../core/crypto.js";
 import { RECIPE_PROMPT_MAX_BYTES } from "../core/recipes.js";
-import { TRIGGER_EVENT_MAX_BYTES } from "../core/recipe-triggers.js";
 import { TriggerEventAuth } from "../core/webapp-tickets.js";
 import {
   appRequest,
@@ -209,12 +208,27 @@ describe("recipe triggers", () => {
     ].sort());
   });
 
-  it("caps opaque deliveries at 256 KiB before creating a run", async () => {
+  it("accepts opaque deliveries at the 256 KiB cap", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const recipe = await createRecipe(app, cookie, await createTemplate(app, cookie));
     const token = await mintFireToken(app, cookie, recipe.id);
-    const oversized = new Uint8Array(TRIGGER_EVENT_MAX_BYTES + 1);
+    const atCap = new Uint8Array(256 * 1024);
+
+    const response = await fire(app, recipe.id, token, atCap, {
+      "Content-Type": "application/octet-stream",
+    });
+    expect(response.status).toBe(202);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS total FROM recipe_runs")
+      .first<{ total: number }>())?.total).toBe(1);
+  });
+
+  it("rejects opaque deliveries one byte over 256 KiB before creating a run", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const recipe = await createRecipe(app, cookie, await createTemplate(app, cookie));
+    const token = await mintFireToken(app, cookie, recipe.id);
+    const oversized = new Uint8Array(256 * 1024 + 1);
 
     const response = await fire(app, recipe.id, token, oversized, {
       "Content-Type": "application/octet-stream",

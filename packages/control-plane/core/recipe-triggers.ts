@@ -16,7 +16,7 @@ import {
   TRIGGER_EVENT_TTL_SECONDS,
 } from "./webapp-tickets.js";
 
-export const TRIGGER_EVENT_MAX_BYTES = 256 * 1024;
+const TRIGGER_EVENT_MAX_BYTES = 256 * 1024;
 const TRIGGER_EVENT_PREFIX = "trigger-events/";
 const DEFAULT_CONTENT_TYPE = "application/octet-stream";
 
@@ -123,23 +123,6 @@ async function launchTriggeredRecipe(
   }
 }
 
-function scheduleTriggeredRecipeLaunch(
-  runtime: CoreRuntime,
-  recipe: RecipeRow,
-  runId: string,
-  origin: string,
-  prompt: string,
-): void {
-  const launch = launchTriggeredRecipe(runtime, recipe, runId, origin, prompt);
-  try {
-    runtime.waitUntil(launch);
-  } catch (caught) {
-    const error = caught instanceof Error ? caught : new Error("recipe trigger scheduling failed");
-    runtime.reportError("recipe_trigger_schedule_failed", error);
-    void launch;
-  }
-}
-
 async function recipeForFire(runtime: CoreRuntime, recipeId: string, token: string): Promise<RecipeRow> {
   const recipe = await first<RecipeRow>(runtime.db, {
     q: "SELECT * FROM recipes WHERE id = ?1 LIMIT 1",
@@ -224,7 +207,7 @@ export function addRecipeTriggerRoutes(
       return context.json({ deduped: false, runId }, 202);
     }
 
-    scheduleTriggeredRecipeLaunch(runtime, recipe, runId, origin, prompt);
+    runtime.waitUntil(launchTriggeredRecipe(runtime, recipe, runId, origin, prompt));
     return context.json({ deduped: false, runId }, 202);
   });
 

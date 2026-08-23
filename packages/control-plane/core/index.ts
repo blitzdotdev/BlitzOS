@@ -28,10 +28,6 @@ export {
 } from "./janitors.js";
 export { createSessionPrincipalSource } from "./principals.js";
 export type { Principal, PrincipalSource } from "./principals.js";
-export {
-  promptWithTriggerEvent,
-  TRIGGER_EVENT_MAX_BYTES,
-} from "./recipe-triggers.js";
 export { HetznerProvider } from "./compute/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./compute/hetzner.js";
 export {
@@ -48,8 +44,6 @@ export { VmProviderRegistry } from "./compute/registry.js";
 export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
 export {
   requireWorkspaceWebAppAuth,
-  TriggerEventAuth,
-  TRIGGER_EVENT_TTL_SECONDS,
   WEBAPP_TICKET_TTL_SECONDS,
   WorkspaceWebAppAuth,
   workspaceWebAppAuthFromEnv,

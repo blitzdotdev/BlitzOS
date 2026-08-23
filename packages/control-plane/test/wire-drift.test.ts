@@ -107,6 +107,11 @@ const recipeResponse: SharedShape<
   schema.RecipeResponse
 > = { recipe };
 
+const recipeFireTokenResponse: SharedShape<
+  wire.RecipeFireTokenResponse,
+  schema.RecipeFireTokenResponse
+> = { token: "fire-token" };
+
 const orgUsageCapture: SharedShape<
   wire.OrgUsageCaptureResponse,
   schema.OrgUsageCaptureResponse
@@ -472,6 +477,7 @@ const fullFieldValues = [
   recipes,
   createRecipeRequest,
   recipeResponse,
+  recipeFireTokenResponse,
   orgUsageCapture,
   listMachineTypesResponse,
   createWorkspaceRequest,
@@ -535,6 +541,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.ListRecipesResponse>().toEqualTypeOf<schema.ListRecipesResponse>();
     expectTypeOf<wire.CreateRecipeRequest>().toEqualTypeOf<schema.CreateRecipeRequest>();
     expectTypeOf<wire.RecipeResponse>().toEqualTypeOf<schema.RecipeResponse>();
+    expectTypeOf<wire.RecipeFireTokenResponse>().toEqualTypeOf<schema.RecipeFireTokenResponse>();
     expectTypeOf<wire.OrgUsageCaptureResponse>().toEqualTypeOf<schema.OrgUsageCaptureResponse>();
     expectTypeOf<wire.ListMachineTypesResponse>().toEqualTypeOf<schema.ListMachineTypesResponse>();
     expectTypeOf<wire.CreateWorkspaceRequest>().toEqualTypeOf<schema.CreateWorkspaceRequest>();

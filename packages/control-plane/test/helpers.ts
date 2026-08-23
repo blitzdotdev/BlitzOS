@@ -222,7 +222,7 @@ export function appWithVmProviders(
         headers: { "Content-Type": "text/html" },
       }),
     },
-    waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+    waitUntil: () => undefined,
     reportError: () => undefined,
   });
   installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
