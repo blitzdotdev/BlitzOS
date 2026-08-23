@@ -1,4 +1,3 @@
-import { nodeFetch } from "./skill-code.js";
 import type { OAuthProviderManifest, SkillRenderInput } from "./types.js";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -30,19 +29,15 @@ ${input.mode === "proxy"
 
 \`\`\`sh
 # Drive — only files this app created or the user picked
-${nodeFetch(input, { path: "/drive/v3/files?pageSize=10&fields=files(id,name)" })}
+curl -sS -H '${header}' "${base}/drive/v3/files?pageSize=10&fields=files(id,name)"
 
 # Calendar — next events
-${nodeFetch(input, {
-    path: "/calendar/v3/calendars/primary/events?maxResults=10&singleEvents=true&orderBy=startTime",
-  })}
+curl -sS -H '${header}' "${base}/calendar/v3/calendars/primary/events?maxResults=10&singleEvents=true&orderBy=startTime"
 
 # Gmail — send only, never read
-${nodeFetch(input, {
-    path: "/gmail/v1/users/me/messages/send",
-    method: "POST",
-    body: `{raw: "<base64url RFC 2822 message>"}`,
-  })}
+curl -sS -X POST -H '${header}' "${base}/gmail/v1/users/me/messages/send" \\
+  -H 'Content-Type: application/json' \\
+  -d '{"raw":"<base64url RFC 2822 message>"}'
 \`\`\`
 
 ## Reach and limits
@@ -120,7 +115,7 @@ export const googleWorkspaceManifest = {
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/gmail.send",
   ],
-  surfaces: {
+  delivery: {
     env: [
       { name: "GOOGLE_OAUTH_TOKEN", fill: "token" },
       // The <PROVIDER>_TOKEN alias every other provider answers to. An agent

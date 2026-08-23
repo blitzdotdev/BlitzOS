@@ -1,4 +1,3 @@
-import { nodeFetch } from "./skill-code.js";
 import type { SkillRenderInput, StaticProviderManifest } from "./types.js";
 
 function skill(input: SkillRenderInput): string {
@@ -22,7 +21,7 @@ ${input.mode === "proxy"
 ## Canonical call
 
 \`\`\`sh
-${nodeFetch(input, { path: "/" })}
+curl -sS -H '${header}' "${base}/"
 \`\`\`
 
 ## Notes
@@ -59,7 +58,7 @@ export const genericManifest = {
   adminForm: null,
   scopes: [],
   defaultScopes: [],
-  surfaces: {
+  delivery: {
     // Placeholders: a generic grant always supplies its own overrides, and
     // these are what the picker shows before the person types anything.
     env: [

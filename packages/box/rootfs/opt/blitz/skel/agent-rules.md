@@ -100,6 +100,5 @@ environment.
 
 - There is no `sudo`. Anything that needs root (including `apt`) will not work.
 - `npm i -g <pkg>` works; global installs go under `/opt/blitz/npm`.
-- **Node 22 is the scripting runtime here.** There is no `python3`, no `curl`,
-  and no `gh`. Use `node -e '...'` and its built-in `fetch` for HTTP, and the
-  REST API rather than a vendor CLI.
+- `curl`, `gh`, `git`, `node`, and `python3` are installed. `pip` is not:
+  bootstrap it yourself if you need it (`python3 -m ensurepip`, say).

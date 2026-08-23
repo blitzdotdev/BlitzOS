@@ -1,6 +1,6 @@
 import { hashSecret, randomToken } from "../../crypto.js";
 import { HttpError } from "../../http.js";
-import { compileSurfaces } from "../catalog/surfaces.js";
+import { compileDelivery } from "../catalog/workspace-delivery.js";
 import type { ProviderManifest } from "../catalog/types.js";
 import type { GrantConfig, GrantRow } from "../user-grants.js";
 import { grantCustody, grantOverrides } from "../user-grants.js";
@@ -54,7 +54,7 @@ export async function mintFromGrant(
       // FROZEN box wire key: the shipped broker requires "integration".
       integration: input.connection.name,
       mode: "proxy",
-      placements: compileSurfaces(input.manifest, {
+      placements: compileDelivery(input.manifest, {
         connection: input.connection.name,
         scopes: input.scopes,
         mode: "proxy",
@@ -78,7 +78,7 @@ export async function mintFromGrant(
     // FROZEN box wire key: the shipped broker requires "integration".
     integration: input.connection.name,
     mode: "inject",
-    placements: compileSurfaces(input.manifest, {
+    placements: compileDelivery(input.manifest, {
       connection: input.connection.name,
       scopes: input.scopes,
       mode: "inject",

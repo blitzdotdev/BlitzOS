@@ -133,9 +133,8 @@ function accountGrant(provider: string): UserGrantView {
   };
 }
 
-/** A lease the box has already fetched. A box-minted lease carries a box id;
- * the one the webApp mints when a person connects does not, and that is how
- * the panel tells "connected" from "still delivering". */
+/** A live lease the box has already fetched: it carries the box id the box's
+ * own mint wrote. */
 function liveLease(connection: string): CredentialLeaseView {
   return {
     id: `lease-${connection}`,
@@ -151,7 +150,9 @@ function liveLease(connection: string): CredentialLeaseView {
   };
 }
 
-/** Minted by the webApp, not yet picked up by the box. */
+/** Minted by the webApp, so it carries no box id yet. The panel reads it as
+ * connected all the same: whether the box has fetched it is our plumbing, and
+ * naming it cost the member a word they could do nothing with. */
 function undeliveredLease(connection: string): CredentialLeaseView {
   return { ...liveLease(connection), boxId: null };
 }
@@ -425,21 +426,36 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  it('reads a delivered lease, an undelivered one, and a missing key differently', async () => {
+  /** Two states, and no third. A live lease is Connected whether or not the
+   * box has fetched it yet; everything else is a row with a Connect button. */
+  it('reads every live lease as Connected and everything else as Connect', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
-      listLeases: vi.fn(async () => ({
-        leases: [liveLease('linear'), undeliveredLease('notion')],
-      })),
+      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-    expect(rowFor(view.container, 'Linear').textContent).toContain('connected');
-    // The lease exists but the box has not fetched it, so nothing inside the
-    // workspace can use it yet. That is a state, not a success.
+    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
     const notionRow = rowFor(view.container, 'Notion');
-    expect(notionRow.textContent).toContain('delivering');
-    expect(notionRow.textContent).toContain('picking it up');
+    expect(notionRow.querySelector('.workspace-state-badge')).toBeNull();
+    expect(buttonIn(notionRow, 'Connect')).not.toBeNull();
+    // The four shades of not-connected the panel used to print are gone.
+    for (const gone of ['delivering', 'not here yet', 'needs a key', 'needs you']) {
+      expect(view.container.textContent).not.toContain(gone);
+    }
+    await view.unmount();
+  });
+
+  /** A lease the webApp minted carries no box id. It is still live, so it is
+   * still Connected: the delivery hop is ours to run, not the member's. */
+  it('reads a lease the box has not fetched yet as Connected', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [notion] })),
+      listLeases: vi.fn(async () => ({ leases: [undeliveredLease('notion')] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    expect(rowFor(view.container, 'Notion').textContent).toContain('Connected');
     await view.unmount();
   });
 
@@ -457,7 +473,7 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  it('says a key is needed, expands inline, and pastes it without leaving the row', async () => {
+  it('expands inline on Connect and pastes a key without leaving the row', async () => {
     const putConnectionGrant = vi.fn(async () => undefined);
     const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
     const wire = client({
@@ -468,7 +484,7 @@ describe('workspace provider rows', () => {
     const view = await render(connectionsPanel(wire));
     await settle();
     const row = rowFor(view.container, 'Linear');
-    expect(row.textContent).toContain('needs a key');
+    expect(row.textContent).not.toContain('Connected');
     expect(row.querySelector('.connect-form')).toBeNull();
 
     await act(async () => click(buttonIn(row, 'Connect')));
@@ -506,13 +522,43 @@ describe('workspace provider rows', () => {
     const view = await render(connectionsPanel(wire));
     await settle();
     const row = rowFor(view.container, 'Linear');
-    expect(row.textContent).toContain('not here yet');
+    expect(row.textContent).not.toContain('Connected');
     await act(async () => click(buttonIn(row, 'Connect')));
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(view.container.querySelector('.connect-form')).toBeNull();
-    // The minted lease lands before the next poll, and it is undelivered.
-    expect(rowFor(view.container, 'Linear').textContent).toContain('delivering');
+    // The mint is silent: the chip flips, and no label reports the hop.
+    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
+    await view.unmount();
+  });
+
+  /** An admin's org credential backs the provider for every member, so Connect
+   * mints for them too. The row must not ask for a key nobody has to paste. */
+  it('connects on an org credential with no grant and no form', async () => {
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
+    const wire = client({
+      mintWorkspaceConnection,
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnections: vi.fn(async () => ({
+        connections: [{
+          name: 'linear',
+          provider: 'linear',
+          kind: 'static' as const,
+          custody: 'proxy' as const,
+          status: 'active' as const,
+          createdBy: 'admin-one',
+          proxyBaseUrl: null,
+          orgCredential: true,
+        }],
+      })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    await settle();
+    expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
+    expect(view.container.querySelector('.connect-form')).toBeNull();
+    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
     await view.unmount();
   });
 
@@ -683,7 +729,7 @@ describe('workspace provider rows', () => {
       />,
     );
     await settle();
-    expect(rowFor(view.container, 'Linear').textContent).toContain('connected');
+    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
     expect(view.container.querySelector('.workspace-credential-row__actions')).toBeNull();
     await view.unmount();
   });

@@ -5,7 +5,7 @@ import { HttpError, isRecord, isString, readJson, requiredString } from "../http
 import { authenticateBox } from "../oauth.js";
 import { providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
-import { tombstoneSurfaces } from "./catalog/surfaces.js";
+import { tombstoneDelivery } from "./catalog/workspace-delivery.js";
 import { addConnectRoutes } from "./connect.js";
 import { addGithubRepositoryRoutes } from "./github-repos.js";
 import { addConnectionHealthRoutes } from "./health.js";
@@ -468,7 +468,7 @@ async function surfaceTombstones(
       // FROZEN box wire key: the shipped broker requires "integration".
       integration: stale.connection_name,
       mode: "inject",
-      placements: tombstoneSurfaces(
+      placements: tombstoneDelivery(
         manifest,
         stale.connection_name,
         declared.environmentNames,

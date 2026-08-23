@@ -39,46 +39,29 @@ type ProviderRow = {
   grant: UserGrantView | null;
 };
 
-/** The status chip, and it says one thing at a time.
+/** A row has two states, and no third. The workspace holds a live lease, or it
+ * does not.
  *
- * `delivering` is the honest middle state the old panel had no word for: the
- * lease exists (the webApp minted it the moment the person connected) but the
- * box has not fetched it yet, so nothing inside the workspace can use it. A
- * box-minted lease carries a box id; the webApp's does not, and the box's
- * next sync supersedes it. That difference is the whole signal. */
-type RowStatus = 'connected' | 'delivering' | 'elsewhere' | 'needs-key' | 'needs-you';
-
-const STATUS_LABEL = {
-  connected: 'connected',
-  delivering: 'delivering…',
-  elsewhere: 'not here yet',
-  'needs-key': 'needs a key',
-  'needs-you': 'needs you',
-} satisfies Record<RowStatus, string>;
-
-const STATUS_TONE = {
-  connected: 'active',
-  delivering: 'pending',
-  elsewhere: 'pending',
-  'needs-key': 'pending',
-  'needs-you': 'pending',
-} satisfies Record<RowStatus, string>;
-
-const STATUS_DETAIL = {
-  connected: 'Live in this workspace.',
-  delivering: 'The workspace is picking it up. Agents see it within a few seconds.',
-  elsewhere: 'Your account authorized it. This workspace does not hold it yet.',
-  'needs-key': 'Paste a key to switch its tools on here.',
-  'needs-you': 'Authorize it to switch its tools on here.',
-} satisfies Record<RowStatus, string>;
-
-function rowStatus(row: ProviderRow, now: number): RowStatus {
-  const live = row.lease !== null
+ * The panel used to name four shades of not-connected — delivering…, not here
+ * yet, needs a key, needs you. Each was true, and together they asked a member
+ * to learn our credential model before they could press one button. */
+function isConnected(row: ProviderRow, now: number): boolean {
+  return row.lease !== null
     && row.lease.state === 'active'
     && row.lease.expiresAt > now;
-  if (live) return row.lease?.boxId === null ? 'delivering' : 'connected';
-  if (row.grant !== null) return 'elsewhere';
-  return row.entry?.personalTokenLabel != null ? 'needs-key' : 'needs-you';
+}
+
+/** A credential already stands behind this provider, so Connect is a mint and
+ * not a form: either this member authorized it on their own account, or an
+ * admin stored one org credential for everybody. */
+function isBacked(
+  row: ProviderRow,
+  orgConnections: readonly ConnectionView[],
+): boolean {
+  if (row.grant !== null) return true;
+  return orgConnections.some((connection) => connection.name === row.name
+    && connection.status === 'active'
+    && connection.orgCredential);
 }
 
 /** "authorized by you · Aug 21". The workspace mints from its owner's grants
@@ -300,10 +283,10 @@ export function WorkspaceProviderRows({
       {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="workspace-credential-rows">
         {rows.map((row) => {
-          const status = rowStatus(row, now);
+          const connected = isConnected(row, now);
+          const backed = isBacked(row, orgConnections);
           const isOpen = expanded === row.name;
-          const showForm = replacing === row.name
-            || (row.grant === null && row.entry !== null);
+          const showForm = replacing === row.name || (!backed && row.entry !== null);
           const oauthHref = row.entry?.oauthConfigured === true
             ? client.connectStartUrl(row.name, workspaceId)
             : null;
@@ -326,11 +309,12 @@ export function WorkspaceProviderRows({
                 {row.stipulated && (
                   <span className="workspace-state-badge">from template</span>
                 )}
-                <span className={`workspace-state-badge workspace-state-badge--${STATUS_TONE[status]}`}>
-                  {STATUS_LABEL[status]}
-                </span>
+                {connected && (
+                  <span className="workspace-state-badge workspace-state-badge--active">
+                    Connected
+                  </span>
+                )}
               </div>
-              <p>{STATUS_DETAIL[status]}</p>
               {(row.grant !== null || row.lease !== null) && (
                 <div className="workspace-credential-row__meta">
                   {row.grant !== null && <span>{provenance(row.grant)}</span>}
@@ -341,7 +325,7 @@ export function WorkspaceProviderRows({
               )}
               {readOnly !== true && (
                 <div className="workspace-credential-row__actions">
-                  {status === 'connected' || status === 'delivering' ? (
+                  {connected ? (
                     <>
                       {row.entry?.personalTokenLabel != null ? (
                         <button
@@ -360,18 +344,22 @@ export function WorkspaceProviderRows({
                       >{revoking === row.lease?.id ? 'Disconnecting…' : 'Disconnect'}</button>
                     </>
                   ) : (
+                    // One word, whatever stands behind the provider. With a
+                    // credential already there this mints silently and the
+                    // chip flips; without one the row opens its connect
+                    // surface. The member never has to tell the two apart.
                     <button
                       className="webapp-action webapp-action--primary"
                       type="button"
                       disabled={saving}
                       onClick={() => {
-                        if (row.grant !== null) {
+                        if (backed) {
                           void connectNow(row);
                           return;
                         }
                         open(row, 'connect');
                       }}
-                    >{saving ? 'Connecting…' : 'Connect'}</button>
+                    >Connect</button>
                   )}
                 </div>
               )}
@@ -390,7 +378,7 @@ export function WorkspaceProviderRows({
                       lockedBaseUrl={lockedInstanceBaseUrl(row.entry, orgConnections)}
                       oauthHref={oauthHref}
                       oauthLabel={`Connect with ${row.title}`}
-                      submitLabel={saving ? 'Connecting…' : 'Connect'}
+                      submitLabel="Connect"
                       saving={saving}
                       formKey={`${row.name}:${String(formVersion)}`}
                       onSubmit={(event) => { void submit(row, event); }}
@@ -398,8 +386,8 @@ export function WorkspaceProviderRows({
                     />
                   ) : (
                     <p className="connect-help">
-                      Your account already authorized {row.title}. Connecting takes
-                      one click and no form.
+                      {row.title} already has a credential behind it. Connecting
+                      takes one click and no form.
                     </p>
                   )}
                 </div>

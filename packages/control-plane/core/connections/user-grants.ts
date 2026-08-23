@@ -15,7 +15,7 @@ import {
   GENERIC_MANIFEST_ID,
   providerManifest,
 } from "./catalog/index.js";
-import type { ProviderManifest, SurfaceOverrides, TokenHeader } from "./catalog/types.js";
+import type { ProviderManifest, DeliveryOverrides, TokenHeader } from "./catalog/types.js";
 import { revokeGrantLeasesQuery } from "./leases.js";
 import { scopesFromJson } from "./manifest.js";
 import {
@@ -96,11 +96,11 @@ export function grantConfig(row: GrantRow): GrantConfig {
 }
 
 /** Only the generic entry produces overrides; catalog providers describe their
- * own surfaces and must not be reshaped by a stored config. */
+ * own delivery and must not be reshaped by a stored config. */
 export function grantOverrides(
   manifest: ProviderManifest,
   config: GrantConfig,
-): SurfaceOverrides | null {
+): DeliveryOverrides | null {
   if (manifest.id !== GENERIC_MANIFEST_ID || config.envName === null) return null;
   return {
     envName: config.envName,

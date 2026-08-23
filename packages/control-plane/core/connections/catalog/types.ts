@@ -61,14 +61,14 @@ export interface ProviderPersonalToken {
 
 export type PlacementFill = "token" | "proxy-url";
 
-export interface ProviderEnvSurface {
+export interface ProviderEnvDelivery {
   name: string;
   fill: PlacementFill;
 }
 
 /** Rendered into the lease as a `file` placement. A skill named `<provider>`
  * is what makes "use @<provider>" resolve in any harness that reads skills. */
-export interface ProviderSkillSurface {
+export interface ProviderSkillDelivery {
   /** Relative to the box HOME; the compiler makes it absolute. */
   path: string;
   render(input: SkillRenderInput): string;
@@ -95,9 +95,12 @@ export interface SkillRenderInput {
   tokenHeader: TokenHeader;
 }
 
-export interface ProviderSurfaces {
-  env: readonly ProviderEnvSurface[];
-  skill: ProviderSkillSurface;
+/** What a live connection lands inside the workspace: one environment name
+ * per entry, plus the provider's skill file. `compileDelivery` turns this
+ * block into the placements `blitz-cred` writes verbatim. */
+export interface ProviderDelivery {
+  env: readonly ProviderEnvDelivery[];
+  skill: ProviderSkillDelivery;
 }
 
 /** Declares the org-admin path: an admin stores one static root through
@@ -188,9 +191,12 @@ interface ProviderManifestBase {
   personalToken: ProviderPersonalToken | null;
   /** Non-null for providers an org admin configures once, org-wide. */
   adminForm: ProviderAdminForm | null;
+  /** The provider's own scope vocabulary, and only the entries something can
+   * still reach: the authorize URL selects from it, and a pasted key records
+   * it. Empty where the provider has no such vocabulary. */
   scopes: readonly ProviderScope[];
   defaultScopes: readonly string[];
-  surfaces: ProviderSurfaces;
+  delivery: ProviderDelivery;
   probe: ProviderProbe;
   probeFixtures: readonly [ProbeFixture, ...ProbeFixture[]];
 }
@@ -210,13 +216,13 @@ export type ProviderManifest = OAuthProviderManifest | StaticProviderManifest;
 
 /** Per-grant configuration for manifests that cannot know the vendor up front
  * (the generic entry). Catalog providers ignore it. */
-export interface SurfaceOverrides {
+export interface DeliveryOverrides {
   envName: string;
   baseUrlEnvName: string | null;
   baseUrl: string | null;
 }
 
-export interface SurfaceInput {
+export interface DeliveryInput {
   connection: string;
   scopes: readonly string[];
   mode: "inject" | "proxy";
@@ -226,7 +232,7 @@ export interface SurfaceInput {
   proxyUrl: string;
   /** Header the box-side caller must send with `token`. */
   tokenHeader: TokenHeader;
-  overrides: SurfaceOverrides | null;
+  overrides: DeliveryOverrides | null;
 }
 
-export type CompiledSurfaces = Placement[];
+export type CompiledDelivery = Placement[];

@@ -1,4 +1,3 @@
-import { nodeFetch } from "./skill-code.js";
 import type { SkillRenderInput, StaticProviderManifest } from "./types.js";
 
 function skill(input: SkillRenderInput): string {
@@ -26,17 +25,15 @@ ${input.mode === "proxy"
 
 \`\`\`sh
 # Which bot am I
-${nodeFetch(input, { path: "/users/@me" })}
+curl -sS -H '${header}' "${base}/users/@me"
 
 # Guilds the bot is installed in
-${nodeFetch(input, { path: "/users/@me/guilds" })}
+curl -sS -H '${header}' "${base}/users/@me/guilds"
 
 # Send a message to a channel
-${nodeFetch(input, {
-    path: "/channels/{channel.id}/messages",
-    method: "POST",
-    body: `{content: "..."}`,
-  })}
+curl -sS -X POST -H '${header}' -H 'Content-Type: application/json' \\
+  "${base}/channels/{channel.id}/messages" \\
+  -d '{"content":"..."}'
 \`\`\`
 
 ## Reach and limits
@@ -61,7 +58,7 @@ the Discord developer portal — say so instead of retrying.
  * stores the token once:
  *
  *   PUT /connections/discord  kind=static custody=cp root=<bot token>
- *     config.placements = the env surface below
+ *     config.placements = the env delivery below
  *
  * Custody is `cp` (inject), not proxy, because bot libraries authenticate the
  * gateway websocket with the raw token; a proxy-custody lease token would
@@ -88,7 +85,7 @@ export const discordManifest = {
   },
   scopes: [],
   defaultScopes: [],
-  surfaces: {
+  delivery: {
     env: [
       { name: "DISCORD_BOT_TOKEN", fill: "token" },
       // The <PROVIDER>_TOKEN alias. Libraries differ on which name they read.

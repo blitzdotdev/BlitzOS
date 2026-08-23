@@ -1,64 +1,66 @@
 import type { Placement } from "../types.js";
 import type {
-  ProviderEnvSurface,
+  DeliveryInput,
+  DeliveryOverrides,
+  ProviderEnvDelivery,
   ProviderManifest,
-  SurfaceInput,
-  SurfaceOverrides,
 } from "./types.js";
 
 /** The shipped box image sets HOME here (packages/box/Dockerfile). File
  * placements are written verbatim — the box does no `~` expansion — so the
- * catalog's home-relative surface paths are resolved against this constant. */
+ * catalog's home-relative delivery paths are resolved against this constant. */
 export const BOX_HOME = "/var/lib/blitz/home";
 
 const SKILL_MODE = 0o600;
 
-function envSurfaces(
+function envDeliveries(
   manifest: ProviderManifest,
-  overrides: SurfaceOverrides | null,
-): ProviderEnvSurface[] {
-  if (overrides === null) return [...manifest.surfaces.env];
-  const surfaces: ProviderEnvSurface[] = [
+  overrides: DeliveryOverrides | null,
+): ProviderEnvDelivery[] {
+  if (overrides === null) return [...manifest.delivery.env];
+  const deliveries: ProviderEnvDelivery[] = [
     { name: overrides.envName, fill: "token" },
   ];
   if (overrides.baseUrlEnvName !== null) {
-    surfaces.push({ name: overrides.baseUrlEnvName, fill: "proxy-url" });
+    deliveries.push({ name: overrides.baseUrlEnvName, fill: "proxy-url" });
   }
-  return surfaces;
+  return deliveries;
 }
 
-function baseUrlFor(input: SurfaceInput, manifest: ProviderManifest): string {
+function baseUrlFor(input: DeliveryInput, manifest: ProviderManifest): string {
   if (input.mode === "proxy") return input.proxyUrl;
   return input.overrides?.baseUrl ?? manifest.baseUrl;
 }
 
 export function skillPath(manifest: ProviderManifest, connection: string): string {
-  return `${BOX_HOME}/${manifest.surfaces.skill.path.replace("<provider>", connection)}`;
+  return `${BOX_HOME}/${manifest.delivery.skill.path.replace("<provider>", connection)}`;
 }
 
-/** Everything a lease delivers beyond the raw credential, compiled into the
- * frozen `placements` array. No top-level mint-response key is ever added:
- * the shipped box decodes with DisallowUnknownFields. */
-export function compileSurfaces(
+/** Everything a lease delivers into the workspace beyond the raw credential,
+ * compiled into the frozen `placements` array. `blitz-cred` writes these
+ * verbatim — an environment name per entry, plus the provider skill file. No
+ * top-level mint-response key is ever added: the shipped box decodes with
+ * DisallowUnknownFields. */
+export function compileDelivery(
   manifest: ProviderManifest,
-  input: SurfaceInput,
+  input: DeliveryInput,
 ): Placement[] {
   const placements: Placement[] = [];
   const baseUrl = baseUrlFor(input, manifest);
-  const surfaces = envSurfaces(manifest, input.overrides);
-  for (const surface of surfaces) {
+  const deliveries = envDeliveries(manifest, input.overrides);
+  for (const delivery of deliveries) {
     placements.push({
       kind: "env",
-      name: surface.name,
-      value: surface.fill === "proxy-url" ? baseUrl : input.token,
+      name: delivery.name,
+      value: delivery.fill === "proxy-url" ? baseUrl : input.token,
     });
   }
-  const tokenEnv = surfaces.find((surface) => surface.fill === "token");
-  const baseUrlEnv = surfaces.find((surface) => surface.fill === "proxy-url");
+  const tokenEnv = deliveries.find((delivery) => delivery.fill === "token");
+  const baseUrlEnv = deliveries.find((delivery) => delivery.fill === "proxy-url");
   placements.push({
     kind: "file",
     path: skillPath(manifest, input.connection),
-    value: manifest.surfaces.skill.render({
+    value: manifest.delivery.skill.render({
       connection: input.connection,
       scopes: input.scopes,
       mode: input.mode,
@@ -74,10 +76,10 @@ export function compileSurfaces(
 }
 
 /** Revocation symmetry, Phase A: the running box image has no `remove-file`
- * placement, so a dead connection's surfaces are overwritten empty and its
+ * placement, so a dead connection's delivery is overwritten empty and its
  * environment names are unset. A stale skill for a dead connection would
  * gaslight the agent into retrying a credential that no longer exists. */
-export function tombstoneSurfaces(
+export function tombstoneDelivery(
   manifest: ProviderManifest,
   connection: string,
   environmentNames: readonly string[],

@@ -24,7 +24,7 @@ import {
   createConnectOAuthState,
   verifyConnectOAuthStateCookie,
 } from "../core/oauth-state.js";
-import { BOX_HOME } from "../core/connections/catalog/surfaces.js";
+import { BOX_HOME } from "../core/connections/catalog/workspace-delivery.js";
 import {
   importGithubAppPrivateKey,
   normalizeGithubAppPrivateKey,
@@ -210,7 +210,9 @@ describe("connections: per-user grants", () => {
       // Every scope the provider's catalog knows about. A pasted key carries
       // whatever reach its owner gave it and nothing here can narrow that, so
       // the grant records the vocabulary rather than pretending to a choice.
-      scopes: ["read", "write", "issues:create", "comments:create", "admin"],
+      // The vocabulary is only what a caller can still name: the three
+      // narrower Linear scopes went with the checkbox UI that selected them.
+      scopes: ["read", "write"],
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
       accessExpiresAt: null,

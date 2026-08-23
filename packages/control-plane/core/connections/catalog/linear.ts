@@ -1,4 +1,3 @@
-import { nodeFetch } from "./skill-code.js";
 import type { OAuthProviderManifest, SkillRenderInput } from "./types.js";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -30,25 +29,16 @@ Linear has exactly one endpoint. There is no REST API.
 
 \`\`\`sh
 # Who am I
-${nodeFetch(input, {
-    path: "/graphql",
-    method: "POST",
-    body: `{query: "{ viewer { id name email } }"}`,
-  })}
+curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
+  -d '{"query":"{ viewer { id name email } }"}'
 
 # My open issues
-${nodeFetch(input, {
-    path: "/graphql",
-    method: "POST",
-    body: `{query: "{ issues(filter:{assignee:{isMe:{eq:true}}}, first:20){ nodes { identifier title state { name } } } }"}`,
-  })}
+curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
+  -d '{"query":"{ issues(filter:{assignee:{isMe:{eq:true}}}, first:20){ nodes { identifier title state { name } } } }"}'
 
 # Create an issue
-${nodeFetch(input, {
-    path: "/graphql",
-    method: "POST",
-    body: `{query: "mutation($t:String!,$team:String!){ issueCreate(input:{title:$t,teamId:$team}){ issue { identifier url } } }", variables: {t: "...", team: "..."}}`,
-  })}
+curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
+  -d '{"query":"mutation($t:String!,$team:String!){ issueCreate(input:{title:$t,teamId:$team}){ issue { identifier url } } }","variables":{"t":"...","team":"..."}}'
 \`\`\`
 
 ## Reach and limits
@@ -103,15 +93,17 @@ export const linearManifest = {
     baseUrlLabel: null,
   },
   adminForm: null,
+  // Exactly the entries `defaultScopes` names, and no more. Linear enforces
+  // this list server-side because it rides the authorize URL, which is the one
+  // place a provider scope still reaches. The narrower entries this list used
+  // to carry (issues:create, comments:create, admin) were selectable only from
+  // a scope-checkbox UI that no longer exists.
   scopes: [
     { id: "read", title: "Read", detail: "Read issues, projects, comments, and team structure." },
     { id: "write", title: "Write", detail: "Create and edit issues, projects, and comments." },
-    { id: "issues:create", title: "Create issues only", detail: "Narrower than write: file issues without editing existing ones." },
-    { id: "comments:create", title: "Comment only", detail: "Narrower than write: comment without editing issues." },
-    { id: "admin", title: "Admin", detail: "Workspace administration, including webhook management. Grant only when change observation is needed." },
   ],
   defaultScopes: ["read", "write"],
-  surfaces: {
+  delivery: {
     env: [
       { name: "LINEAR_API_KEY", fill: "token" },
       // The <PROVIDER>_TOKEN alias, for the same reason github carries three.

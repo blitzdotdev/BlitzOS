@@ -1,4 +1,3 @@
-import { nodeFetch } from "./skill-code.js";
 import type { OAuthProviderManifest, SkillRenderInput } from "./types.js";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -30,7 +29,7 @@ function skill(input: SkillRenderInput): string {
   usually means the App was never installed there, not that the repo is gone.`;
   return `---
 name: ${input.connection}
-description: Read and write GitHub through the REST API, acting as the workspace owner.
+description: Read and write GitHub through the REST API and the gh CLI, acting as the workspace owner.
 ---
 
 # ${input.connection}
@@ -42,25 +41,22 @@ connected it, badged with the app that issued the token.
 
 ${auth}
 
-\`git\` reads \`$${input.tokenEnv}\` through this box's credential helper, so
-\`git clone\` and \`git push\` over HTTPS work with no extra setup. The \`gh\`
-CLI is **not installed here** — use the REST API directly.
+\`gh\` reads \`$${input.tokenEnv}\` natively, and \`git\` reads it through this
+box's credential helper, so \`gh pr create\`, \`git clone\`, and \`git push\`
+over HTTPS all work with no extra setup.
 
 ## Canonical calls
 
 \`\`\`sh
 # Who the token acts as
-${nodeFetch(input, { path: "/user" })}
+gh api user
 
 # Repositories the token can reach
-${nodeFetch(input, { path: "/user/repos?per_page=20" })}
+curl -sS -H '${header}' "${input.baseUrl}/user/repos?per_page=20"
 
 # Open a pull request
-${nodeFetch(input, {
-    path: "/repos/{owner}/{repo}/pulls",
-    method: "POST",
-    body: `{title: "...", head: "...", base: "main"}`,
-  })}
+gh api repos/{owner}/{repo}/pulls --method POST \\
+  --field title=... --field head=... --field base=main
 \`\`\`
 
 ## Reach and limits
@@ -122,19 +118,17 @@ export const githubManifest = {
       installationIdLabel: "Installation ID",
     },
   },
-  // GitHub App user tokens carry no OAuth scope string: reach comes from the
-  // App's installation permissions. These entries name what the person is
-  // consenting to hand an agent, and double as the mint ceiling.
-  scopes: [
-    { id: "metadata:read", title: "Repository metadata", detail: "See which repositories the agent may touch." },
-    { id: "contents:read", title: "Read code", detail: "Clone and read file contents on the installed repositories." },
-    { id: "contents:write", title: "Write code", detail: "Push commits and branches." },
-    { id: "pull_requests:write", title: "Pull requests", detail: "Open, comment on, and update pull requests." },
-    { id: "issues:write", title: "Issues", detail: "Open and comment on issues." },
-    { id: "workflows:write", title: "Actions workflows", detail: "Change workflow files, which can change what CI runs." },
-  ],
+  // Empty on purpose. GitHub App user tokens carry no OAuth scope string:
+  // reach comes from the App's installation permissions, GitHub ignores the
+  // `scope` parameter on authorize, and the org-app mint narrows from the
+  // connection row's config rather than from here. This list once held six
+  // display entries for a scope-checkbox UI; that UI is gone, so nothing could
+  // select them and a pasted token recorded a vocabulary it never carried.
+  scopes: [],
+  // Kept because a live consumer reads it: the OAuth callback records these on
+  // the grant, and the skill prints them as what this connection asked for.
   defaultScopes: ["metadata:read", "contents:read", "contents:write", "pull_requests:write"],
-  surfaces: {
+  delivery: {
     env: [
       { name: "GH_TOKEN", fill: "token" },
       { name: "GITHUB_TOKEN", fill: "token" },

@@ -11,7 +11,7 @@ import { youtrackManifest } from "./youtrack.js";
 import type { ProviderManifest } from "./types.js";
 
 /** Add a provider by adding a module here. Everything else — conformance
- * tests, the picker, the canary, the surfaces — reads the manifest. */
+ * tests, the picker, the canary, the delivery — reads the manifest. */
 export const CATALOG: readonly ProviderManifest[] = [
   githubManifest,
   googleWorkspaceManifest,
@@ -29,7 +29,7 @@ export function providerManifest(id: string): ProviderManifest | null {
 
 /** The admin form, compiled so the panel can submit `PUT /connections/:id`
  * without knowing anything about manifests: the placements come from the env
- * surfaces, and proxy custody carries the base-URL field plus the header the
+ * deliveries, and proxy custody carries the base-URL field plus the header the
  * proxy re-signs with. An `app` block flips the PUT to kind app-jwt, whose
  * config carries the ids instead of placements. */
 function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null {
@@ -38,7 +38,7 @@ function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null 
   return {
     rootLabel: form.rootLabel,
     rootHelp: form.rootHelp,
-    placements: manifest.surfaces.env.map(({ name, fill }) => ({
+    placements: manifest.delivery.env.map(({ name, fill }) => ({
       kind: "env" as const,
       name,
       fill,
@@ -83,7 +83,7 @@ export function catalogView(
     // provider that knows its own vendor perfectly well.
     needsVendorConfig: manifest.id === GENERIC_MANIFEST_ID,
     adminForm: adminFormView(manifest),
-    environmentNames: manifest.surfaces.env.map((surface) => surface.name),
+    environmentNames: manifest.delivery.env.map((delivery) => delivery.name),
   };
 }
 

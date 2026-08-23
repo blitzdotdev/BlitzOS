@@ -35,7 +35,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/crypto.ts",
   "core/environment.ts",
   "core/connections/types.ts", "core/connections/root-crypto.ts", "core/connections/manifest.ts", "core/connections/leases.ts",
-  "core/connections/catalog/types.ts", "core/connections/catalog/surfaces.ts", "core/connections/catalog/skill-code.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/discord.ts", "core/connections/catalog/youtrack.ts", "core/connections/catalog/generic.ts", "core/connections/catalog/index.ts",
+  "core/connections/catalog/types.ts", "core/connections/catalog/workspace-delivery.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/discord.ts", "core/connections/catalog/youtrack.ts", "core/connections/catalog/generic.ts", "core/connections/catalog/index.ts",
   "core/connections/user-grants.ts", "core/connections/minters/static.ts", "core/connections/minters/app-jwt/github-app.ts", "core/connections/minters/oauth.ts", "core/connections/minters/grant.ts",
   "core/connections/registry.ts", "core/connections/requests.ts", "core/connections/health.ts", "core/connections/canary.ts", "core/connections/connect.ts", "core/connections/mint.ts", "core/connections/proxy.ts", "core/connections/github-repos.ts",
   "core/http.ts",
