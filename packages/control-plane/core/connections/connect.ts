@@ -10,11 +10,11 @@ import {
 import { cookieValue, findStatePrincipal } from "../principals.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { providerManifest } from "./catalog/index.js";
+import { providerManifest, providerRedirectPath } from "./catalog/index.js";
 import type { OAuthProviderManifest, ProviderManifest } from "./catalog/types.js";
 import { exchangeTokens } from "./minters/oauth.js";
 import { ensureCatalogConnection } from "./registry.js";
-import { grantCustody, grantOverrides, storeGrant } from "./user-grants.js";
+import { storeGrant } from "./user-grants.js";
 import type { GrantConfig } from "./user-grants.js";
 
 /** Where the browser lands after a round trip, success or failure. The panel
@@ -109,8 +109,6 @@ async function controllableWorkspace(
 
 function catalogGrantConfig(manifest: ProviderManifest): GrantConfig {
   return {
-    envName: null,
-    baseUrlEnvName: null,
     baseUrl: null,
     tokenHeader: manifest.tokenHeader,
   };
@@ -146,7 +144,7 @@ export function addConnectRoutes(
     const authorize = new URL(manifest.auth.authorizeUrl);
     const parameters = new URLSearchParams({
       client_id: clientId,
-      redirect_uri: `${origin}${manifest.auth.redirectPath}`,
+      redirect_uri: `${origin}${providerRedirectPath(manifest)}`,
       response_type: "code",
       scope: manifest.defaultScopes.join(manifest.auth.scopeDelimiter),
       state: oauth.state,
@@ -203,7 +201,7 @@ export function addConnectRoutes(
       manifest,
       clientId,
       clientSecret,
-      redirectUri: `${origin}${manifest.auth.redirectPath}`,
+      redirectUri: `${origin}${providerRedirectPath(manifest)}`,
       grantType: "authorization_code",
       code,
       codeVerifier: state.codeVerifier,
@@ -215,8 +213,6 @@ export function addConnectRoutes(
       principal.orgId,
       manifest.id,
       manifest,
-      grantCustody(manifest, config),
-      grantOverrides(manifest, config),
       principal,
       null,
       now,

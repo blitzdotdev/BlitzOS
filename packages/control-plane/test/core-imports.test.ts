@@ -14,7 +14,6 @@ const expected = [
   "box-images.ts",
   "cloud-init.ts",
   "connections/catalog/discord.ts",
-  "connections/catalog/generic.ts",
   "connections/catalog/github.ts",
   "connections/catalog/google-workspace.ts",
   "connections/catalog/index.ts",
@@ -115,6 +114,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(90);
+    expect(expected).toHaveLength(89);
   });
 });

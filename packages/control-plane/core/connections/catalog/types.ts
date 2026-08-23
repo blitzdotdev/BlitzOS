@@ -1,13 +1,5 @@
 import type { Custody, Placement } from "../types.js";
 
-/** How a provider treats the refresh token it hands back.
- *  - `strict`   single-use: every refresh invalidates the previous token, so
- *               refreshes must serialize per grant (GitHub).
- *  - `graceful` rotating with a replay window, so a lost race is survivable
- *               (Linear, 30 minutes).
- *  - `none`     one refresh token mints access tokens forever (Google). */
-export type RotationMode = "strict" | "graceful" | "none";
-
 /** Bearer material is not always a Bearer: Linear personal API keys go in a
  * raw `Authorization: <key>` header, so the prefix belongs to the provider. */
 export interface TokenHeader {
@@ -38,13 +30,14 @@ export interface ProviderAuth {
   pkce: boolean;
   /** Sent verbatim on the authorize redirect (Google offline consent, Linear actor). */
   authorizeParams: readonly ProviderParam[];
-  /** Documented access-token lifetime, used when an exchange omits expires_in. */
+  /** Fallback lifetime for an exchange that omits `expires_in`. No recorded
+   * exchange has ever omitted it, so no fixture exercises this number: it is
+   * the documented lifetime, kept so a provider that starts omitting the field
+   * writes a plausible expiry instead of `NaN`. */
   accessTtlMs: number;
   /** How the provider joins requested scopes. Linear wants commas, the rest
    * want spaces, and getting it wrong reads as "invalid scope". */
   scopeDelimiter: " " | ",";
-  /** Redirect URI path registered with the provider, for the ops runbook. */
-  redirectPath: string;
 }
 
 /** The day-one path: a key the person creates in the provider's own UI. */
@@ -114,9 +107,6 @@ export interface ProviderAdminForm {
   rootLabel: string;
   /** Where the admin creates the credential, shown under the input. */
   rootHelp: string;
-  /** Label for the instance-URL input, which becomes `config.proxy.base_url`.
-   * Non-null exactly when custody is "proxy" (the conformance suite pins it). */
-  baseUrlLabel: string | null;
   /** The GitHub App shape: non-null when the admin credential is an app-jwt
    * root (app id + installation id + private key), not a static token. The
    * only admin form allowed to coexist with member OAuth — grants win at
@@ -151,43 +141,18 @@ export interface ProviderProbe {
   expect: ProbeExpectation;
 }
 
-export interface ProbeFixture {
-  name: string;
-  status: number;
-  response: string;
-  healthy: boolean;
-}
-
-export interface ExchangeExpectation {
-  accessToken: string;
-  refreshToken: string | null;
-  expiresInMs: number;
-}
-
-/** A recorded provider answer. The generic exchange is only ever proven
- * against these, never against a live provider, so they are mandatory. */
-export interface ExchangeFixture {
-  name: string;
-  grantType: "authorization_code" | "refresh_token";
-  /** Form fields the exchange must send, asserted field by field. */
-  request: readonly ProviderParam[];
-  response: string;
-  /** `null` records a rejection the exchange must surface as an error —
-   * a replayed single-use refresh is a fixture, not a hypothetical. */
-  expect: ExchangeExpectation | null;
-}
-
 interface ProviderManifestBase {
   id: string;
   title: string;
   summary: string;
-  docsUrl: string;
   custody: Custody;
-  rotation: RotationMode;
   /** Header shape for OAuth-issued tokens. */
   tokenHeader: TokenHeader;
-  /** Vendor API root; proxy custody rewrites box calls onto it. */
-  baseUrl: string;
+  /** Vendor API root, or null for an instance-hosted vendor whose URL only the
+   * organization knows (YouTrack). Null is not a default to fall back through:
+   * every reader must refuse it by name, because a placeholder host is a real
+   * credential sent to a machine nobody owns. */
+  baseUrl: string | null;
   personalToken: ProviderPersonalToken | null;
   /** Non-null for providers an org admin configures once, org-wide. */
   adminForm: ProviderAdminForm | null;
@@ -198,29 +163,18 @@ interface ProviderManifestBase {
   defaultScopes: readonly string[];
   delivery: ProviderDelivery;
   probe: ProviderProbe;
-  probeFixtures: readonly [ProbeFixture, ...ProbeFixture[]];
 }
 
 export interface OAuthProviderManifest extends ProviderManifestBase {
   auth: ProviderAuth;
-  fixtures: readonly [ExchangeFixture, ...ExchangeFixture[]];
 }
 
 /** No authorize endpoint: the credential is pasted, not redirected for. */
 export interface StaticProviderManifest extends ProviderManifestBase {
   auth: null;
-  fixtures: readonly [];
 }
 
 export type ProviderManifest = OAuthProviderManifest | StaticProviderManifest;
-
-/** Per-grant configuration for manifests that cannot know the vendor up front
- * (the generic entry). Catalog providers ignore it. */
-export interface DeliveryOverrides {
-  envName: string;
-  baseUrlEnvName: string | null;
-  baseUrl: string | null;
-}
 
 export interface DeliveryInput {
   connection: string;
@@ -232,7 +186,6 @@ export interface DeliveryInput {
   proxyUrl: string;
   /** Header the box-side caller must send with `token`. */
   tokenHeader: TokenHeader;
-  overrides: DeliveryOverrides | null;
 }
 
 export type CompiledDelivery = Placement[];

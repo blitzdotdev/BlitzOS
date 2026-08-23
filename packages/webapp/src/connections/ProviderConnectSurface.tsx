@@ -27,13 +27,7 @@ export function grantInput(
   };
   const label = field(data, 'label');
   if (label) input.label = label;
-  if (entry.needsVendorConfig) {
-    const baseUrl = field(data, 'baseUrl');
-    const baseUrlEnvName = field(data, 'baseUrlEnvName');
-    input.vendor = { envName: field(data, 'envName') };
-    if (baseUrl) input.vendor.baseUrl = baseUrl;
-    if (baseUrl && baseUrlEnvName) input.vendor.baseUrlEnvName = baseUrlEnvName;
-  } else if (entry.personalTokenBaseUrlLabel !== null) {
+  if (entry.personalTokenBaseUrlLabel !== null) {
     // Instance-hosted vendor: the typed URL rides the grant. A locked,
     // prefilled field renders without a name, so nothing is sent and the
     // grant inherits the org row's URL instead.
@@ -68,7 +62,6 @@ export function lockedInstanceBaseUrl(
 export function ProviderConnectSurface({
   entry,
   connectionName,
-  onConnectionNameChange,
   lockedBaseUrl,
   oauthHref,
   oauthLabel,
@@ -79,10 +72,9 @@ export function ProviderConnectSurface({
   onCancel,
 }: {
   entry: CatalogEntryView;
-  /** The name the grant is stored under. Equals the catalog id for every
-   * entry but the generic one, which the person names themselves. */
+  /** The name the grant is stored under. It is always the catalog id: the
+   * control plane refuses a grant filed under any other name. */
   connectionName: string;
-  onConnectionNameChange: (name: string) => void;
   lockedBaseUrl: string | null;
   /** Where the provider's OAuth round trip starts, or null when this
    * instance has no client registered for it. */
@@ -126,34 +118,12 @@ export function ProviderConnectSurface({
         <form className="connect-form" key={formKey} onSubmit={onSubmit}>
           <label className="connect-field">
             <span className="connect-field__label">Connection name</span>
-            <input
-              name="name"
-              required
-              value={connectionName}
-              readOnly={!entry.needsVendorConfig}
-              onChange={(event) => onConnectionNameChange(event.currentTarget.value)}
-            />
+            <input name="name" required value={connectionName} readOnly />
           </label>
           <label className="connect-field">
             <span className="connect-field__label">Label (optional)</span>
             <input name="label" placeholder="work account" />
           </label>
-          {entry.needsVendorConfig && (
-            <>
-              <label className="connect-field">
-                <span className="connect-field__label">Environment variable</span>
-                <input name="envName" required placeholder="SERVICE_API_KEY" />
-              </label>
-              <label className="connect-field">
-                <span className="connect-field__label">Vendor base URL (optional)</span>
-                <input name="baseUrl" type="url" placeholder="https://api.example.com" />
-              </label>
-              <label className="connect-field">
-                <span className="connect-field__label">Base URL variable (optional)</span>
-                <input name="baseUrlEnvName" placeholder="SERVICE_BASE_URL" />
-              </label>
-            </>
-          )}
           {entry.personalTokenBaseUrlLabel !== null && (
             <label className="connect-field">
               <span className="connect-field__label">{entry.personalTokenBaseUrlLabel}</span>

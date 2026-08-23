@@ -156,14 +156,13 @@ async function storedAccess(
 }
 
 /** Exchanges the owner's refresh token for an access token, storing the
- * rotation under compare-and-set.
+ * result under compare-and-set.
  *
- * Rotation modes decide what a lost CAS means. `strict` providers issue
- * single-use refresh tokens, so two concurrent refreshes cannot both win —
- * the loser must not overwrite the winner's material, and re-reading the row
- * gives it the token the winner just stored. `graceful` providers keep the
- * old token replayable for a grace window, so a lost race is survivable the
- * same way. `none` never rotates, so a lost CAS costs one wasted call. */
+ * One path serves every provider: nothing serializes the exchanges, and the
+ * compare-and-set guards the database write alone. Two concurrent refreshes
+ * both call the provider; the loser re-reads the row and uses whatever the
+ * winner stored. That is safe wherever the provider is, because the loser's
+ * own material is the part that may already be dead. */
 export async function refreshedAccessToken(
   context: RefreshContext,
   manifest: OAuthProviderManifest,
@@ -194,8 +193,8 @@ export async function refreshedAccessToken(
     now,
   );
   if (stored) return { accessToken: exchanged.accessToken, accessExpiresAt };
-  // Another request rotated first. Its material is the live one; ours may
-  // already be invalidated at the provider under strict rotation.
+  // Another request wrote first. Its material is the live one; ours may
+  // already be invalidated at a provider that issues single-use refreshes.
   const current = await grantFor(context.db, grant.user_id, grant.provider);
   if (current === null || !fresh(current, now)) return null;
   return storedAccess(context.key, current);

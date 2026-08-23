@@ -1,6 +1,7 @@
 import type {
   CatalogEntryView,
   ConnectionView,
+  CredentialLeaseView,
   PutConnectionRequest,
   PutUserGrantRequest,
 } from '@blitzos/schema';
@@ -8,9 +9,9 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import { adminConnectionInput, ProviderAdminForm } from '../src/connections/ProviderAdminForm.js';
+import { WorkspaceProviderRows } from '../src/connections/WorkspaceProviderRows.js';
 import { ConnectionsPanel } from '../src/settings/ConnectionsPanel.js';
 import { OrgConnectionsSection } from '../src/settings/OrgConnectionsSection.js';
-import { ConnectPicker } from '../src/settings/ConnectPicker.js';
 import { render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -98,15 +99,12 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
     id,
     title,
     summary: `${title} for the whole organization`,
-    docsUrl: `https://example.com/${id}`,
     custody: proxy ? 'proxy' : 'cp',
-    rotation: 'none',
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: null,
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
-    needsVendorConfig: false,
     adminForm: {
       rootLabel: proxy ? 'Service token' : 'Bot token',
       rootHelp: 'Create it in the vendor console under a service account.',
@@ -116,16 +114,8 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
             { kind: 'env', name: 'TRACKER_BASE_URL', fill: 'proxy-url' },
           ]
         : [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }],
-      proxy: proxy
-        ? {
-            baseUrlLabel: 'Instance URL',
-            tokenHeader: 'Authorization',
-            tokenPrefix: 'Bearer ',
-          }
-        : null,
       app: null,
     },
-    environmentNames: [],
   };
 }
 
@@ -140,7 +130,6 @@ function appEntry(id: string, title: string): CatalogEntryView {
       rootLabel: 'App private key (.pem)',
       rootHelp: 'Generate a private key in the vendor app settings and drop the downloaded file here.',
       placements: [{ kind: 'env', name: 'GH_TOKEN', fill: 'token' }],
-      proxy: null,
       app: { appIdLabel: 'App ID', installationIdLabel: 'Installation ID' },
     },
   };
@@ -248,10 +237,13 @@ describe('provider admin form', () => {
     })();
   };
 
-  it('renders the manifest-decided fields for proxy custody', async () => {
+  /** The static form is one field: the root. It used to grow an instance-URL
+   * field for proxy custody, which no manifest ever asked for — the admin path
+   * and proxy custody have never met on the same provider. */
+  it('renders the manifest-decided fields for a static root', async () => {
     const view = await render(
       <ProviderAdminForm
-        entry={adminEntry('tracker', 'Acme Tracker', true)}
+        entry={adminEntry('discord', 'Discord', false)}
         saving={false}
         configured={false}
         onCancel={() => undefined}
@@ -260,43 +252,16 @@ describe('provider admin form', () => {
     );
     const labels = [...view.container.querySelectorAll('.connect-field__label')]
       .map((label) => label.textContent);
-    expect(labels).toEqual(['Instance URL', 'Service token']);
-    expect(view.container.querySelector('input[name="baseUrl"]')?.getAttribute('type')).toBe('url');
+    expect(labels).toEqual(['Bot token']);
+    expect(view.container.querySelector('input[name="baseUrl"]')).toBeNull();
     expect(view.container.querySelector('input[name="root"]')?.getAttribute('type')).toBe('password');
     expect(view.container.textContent).toContain('Create it in the vendor console');
     await view.unmount();
   });
 
+  /** The same shape the control-plane suite PUTs directly: manifest-decided
+   * custody and placements, admin-supplied root, and no proxy block anywhere. */
   it('submits the exact static PUT body the control plane stores', async () => {
-    const bodies = await putBody(adminEntry('tracker', 'Acme Tracker', true), (container) => {
-      const baseUrl = container.querySelector<HTMLInputElement>('input[name="baseUrl"]');
-      const root = container.querySelector<HTMLInputElement>('input[name="root"]');
-      if (baseUrl === null || root === null) throw new Error('form inputs are missing');
-      typeInto(baseUrl, 'https://tracker.example');
-      typeInto(root, 'perm:test-only-token');
-    });
-    // The same shape the control-plane suite PUTs directly: manifest-decided
-    // custody and placements, admin-supplied root and instance URL.
-    expect(bodies).toEqual([{
-      provider: 'tracker',
-      kind: 'static',
-      custody: 'proxy',
-      config: {
-        placements: [
-          { kind: 'env', name: 'TRACKER_TOKEN', fill: 'token' },
-          { kind: 'env', name: 'TRACKER_BASE_URL', fill: 'proxy-url' },
-        ],
-        proxy: {
-          base_url: 'https://tracker.example',
-          token_header: 'Authorization',
-          token_prefix: 'Bearer ',
-        },
-      },
-      root: 'perm:test-only-token',
-    }]);
-  });
-
-  it('omits the proxy block and the URL field for cp custody', async () => {
     const bodies = await putBody(adminEntry('discord', 'Discord', false), (container) => {
       expect(container.querySelector('input[name="baseUrl"]')).toBeNull();
       const root = container.querySelector<HTMLInputElement>('input[name="root"]');
@@ -658,7 +623,48 @@ describe('settings connections panel (revoke-only)', () => {
   });
 });
 
-describe('connect picker (workspace surface)', () => {
+/** The provider connect surface as production hosts it: expanded inside a
+ * workspace provider row. It used to be reachable from the settings connect
+ * picker too; that picker is gone, and these are its behaviours that survived
+ * — the admin-configured note, and the instance-URL collection YouTrack needs. */
+describe('provider connect surface (workspace rows)', () => {
+  const rowProps = {
+    workspaceId: 'workspace-one',
+    stipulated: [] as string[],
+    leases: [] as CredentialLeaseView[],
+    now: 1_000,
+    focusProvider: null,
+    focusVersion: 0,
+    revoking: null,
+    onRevokeLease: async () => undefined,
+    onLeaseMinted: () => undefined,
+    onConnected: () => undefined,
+  };
+
+  function mintedLease(connection: string): CredentialLeaseView {
+    return {
+      id: `lease-${connection}`,
+      workspaceId: 'workspace-one',
+      boxId: null,
+      connection,
+      userId: 'member-one',
+      scopes: [],
+      mode: 'proxy',
+      issuedAt: 1,
+      expiresAt: 2_000,
+      state: 'active',
+    };
+  }
+
+  function expand(container: ParentNode, title: string): Element {
+    const row = [...container.querySelectorAll('.workspace-provider-row')]
+      .find((candidate) => candidate.querySelector('strong')?.textContent === title);
+    if (row === undefined) throw new Error(`no provider row for ${title}`);
+    const toggle = row.querySelector('.workspace-provider-row__toggle');
+    if (toggle === null) throw new Error(`no toggle for ${title}`);
+    return toggle;
+  }
+
   it('explains admin-configured providers point at the template page', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({
@@ -668,21 +674,16 @@ describe('connect picker (workspace surface)', () => {
         ],
       })),
     });
-    const view = await render(<ConnectPicker client={wire} />);
+    const view = await render(<WorkspaceProviderRows client={wire} {...rowProps} />);
     await settle();
-    const cards = [...view.container.querySelectorAll('.connect-card')];
 
-    const tracker = cards.find((card) => card.textContent?.includes('Acme Tracker'));
-    if (tracker === undefined) throw new Error('Acme Tracker card is missing');
-    await act(async () => click(tracker));
+    await act(async () => click(expand(view.container, 'Acme Tracker')));
     expect(view.container.querySelector('.connect-form')).toBeNull();
     expect(view.container.textContent).toContain('An organization admin configures Acme Tracker once');
     expect(view.container.textContent).toContain('template page');
     expect(view.container.textContent).not.toContain('Connecting requires OAuth');
 
-    const sso = cards.find((card) => card.textContent?.includes('Corp SSO'));
-    if (sso === undefined) throw new Error('Corp SSO card is missing');
-    await act(async () => click(sso));
+    await act(async () => click(expand(view.container, 'Corp SSO')));
     expect(view.container.textContent).toContain('Connecting requires OAuth');
     await view.unmount();
   });
@@ -696,12 +697,13 @@ describe('connect picker (workspace surface)', () => {
       putConnectionGrant: vi.fn(async (provider: string, input: PutUserGrantRequest) => {
         pastes.push([provider, input]);
       }),
+      mintWorkspaceConnection: vi.fn(async (_id: string, connection: string) => ({
+        lease: mintedLease(connection),
+      })),
     });
-    const view = await render(<ConnectPicker client={wire} />);
+    const view = await render(<WorkspaceProviderRows client={wire} {...rowProps} />);
     await settle();
-    const card = view.container.querySelector('.connect-card');
-    if (card === null) throw new Error('provider card is missing');
-    await act(async () => click(card));
+    await act(async () => click(expand(view.container, 'YouTrack PAT')));
 
     const baseUrl = view.container.querySelector<HTMLInputElement>('input[name="baseUrl"]');
     const token = view.container.querySelector<HTMLInputElement>('input[name="token"]');
@@ -748,12 +750,13 @@ describe('connect picker (workspace surface)', () => {
       putConnectionGrant: vi.fn(async (provider: string, input: PutUserGrantRequest) => {
         pastes.push([provider, input]);
       }),
+      mintWorkspaceConnection: vi.fn(async (_id: string, connection: string) => ({
+        lease: mintedLease(connection),
+      })),
     });
-    const view = await render(<ConnectPicker client={wire} />);
+    const view = await render(<WorkspaceProviderRows client={wire} {...rowProps} />);
     await settle();
-    const card = view.container.querySelector('.connect-card');
-    if (card === null) throw new Error('provider card is missing');
-    await act(async () => click(card));
+    await act(async () => click(expand(view.container, 'YouTrack PAT')));
 
     // The instance is already known org-wide: shown, not asked for, and the
     // grant inherits it because the locked field is never submitted.

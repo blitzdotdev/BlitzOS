@@ -18,7 +18,8 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import type { ProviderManifest, DeliveryOverrides } from "./catalog/types.js";
+import { manifestBaseUrl } from "./catalog/index.js";
+import type { ProviderManifest } from "./catalog/types.js";
 import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
 import {
@@ -84,7 +85,7 @@ function isMintKind(value: unknown): value is MintKind {
 }
 
 function isCustody(value: unknown): value is Custody {
-  return value === "cp" || value === "broker" || value === "proxy";
+  return value === "cp" || value === "proxy";
 }
 
 function stringArray(value: unknown, field: string): string[] {
@@ -290,30 +291,29 @@ export async function ensureCatalogConnection(
   orgId: string,
   provider: string,
   manifest: ProviderManifest,
-  custody: Custody,
-  overrides: DeliveryOverrides | null,
   principal: Principal,
   /** The org's instance URL for instance-hosted vendors (YouTrack): rides
    * `config.proxy.base_url` on the declared row so later members inherit it. */
   instanceBaseUrl: string | null = null,
   now = Date.now(),
 ): Promise<Connection> {
-  const placements = (overrides === null
-    ? manifest.delivery.env.map((delivery) => ({
-        kind: "env" as const,
-        name: delivery.name,
-        fill: delivery.fill,
-      }))
-    : [{ kind: "env" as const, name: overrides.envName, fill: "token" as const }]);
-  const baseUrl = overrides?.baseUrl ?? instanceBaseUrl ?? manifest.baseUrl;
+  const custody = manifest.custody;
+  const placements = manifest.delivery.env.map((delivery) => ({
+    kind: "env" as const,
+    name: delivery.name,
+    fill: delivery.fill,
+  }));
   const config: ParsedStaticConfig & { manifest_id: string } = {
     manifest_id: manifest.id,
     placements,
     default_scopes: [...manifest.defaultScopes],
   };
   if (custody === "proxy") {
+    // The row is where the proxy reads its destination, so a row written with
+    // no destination would 502 every call. An instance-hosted vendor supplies
+    // the URL from the paste; everyone else declares one on the manifest.
     config.proxy = {
-      base_url: baseUrl,
+      base_url: instanceBaseUrl ?? manifestBaseUrl(manifest, "proxy custody"),
       token_header: manifest.tokenHeader.name,
       token_prefix: manifest.tokenHeader.prefix,
     };
@@ -440,7 +440,9 @@ function validateServedConnection(
   if (resolveMinter(candidate) === null) {
     throw new HttpError(400, `credential kind ${kind} is not available`);
   }
-  if (kind === "static" && (custody === "proxy" || custody === "cp")) return;
+  // A static root can sit behind the proxy or be injected; an app-jwt root
+  // mints short-lived tokens the box holds itself, so it is cp only.
+  if (kind === "static") return;
   if (kind === "app-jwt" && custody === "cp") return;
   throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
 }
@@ -496,7 +498,7 @@ export function addConnectionRoutes(
     }
     const custodyValue = value.custody ?? (value.kind === "static" ? "proxy" : "cp");
     if (!isCustody(custodyValue)) {
-      throw new HttpError(400, "custody must be cp, broker, or proxy");
+      throw new HttpError(400, "custody must be cp or proxy");
     }
     validateServedConnection(provider, value.kind, custodyValue);
     const config = configJson(value.kind, custodyValue, value.config);

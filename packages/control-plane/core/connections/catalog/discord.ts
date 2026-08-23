@@ -67,10 +67,7 @@ export const discordManifest = {
   id: "discord",
   title: "Discord",
   summary: "Send and read messages as your organization's Discord bot.",
-  docsUrl: "https://discord.com/developers/docs/reference#authentication",
   custody: "cp",
-  // Bot tokens live until an admin resets them in the developer portal.
-  rotation: "none",
   // The header quirk this manifest field exists for: bots authenticate with
   // `Bot <token>`, and `Bearer` is rejected.
   tokenHeader: { name: "Authorization", prefix: "Bot " },
@@ -80,7 +77,6 @@ export const discordManifest = {
   adminForm: {
     rootLabel: "Bot token",
     rootHelp: "discord.com/developers/applications → your application → Bot → Reset Token. The bot must also be invited to the servers agents should reach.",
-    baseUrlLabel: null,
     app: null,
   },
   scopes: [],
@@ -104,19 +100,4 @@ export const discordManifest = {
     }),
     expect: { status: 200, jsonFields: ["id"] },
   },
-  probeFixtures: [
-    {
-      name: "the bot's own user",
-      status: 200,
-      response: '{"id":"1029384756000000000","username":"blitz-canary","bot":true}',
-      healthy: true,
-    },
-    {
-      name: "reset bot token",
-      status: 401,
-      response: '{"message":"401: Unauthorized","code":0}',
-      healthy: false,
-    },
-  ],
-  fixtures: [],
 } satisfies StaticProviderManifest;

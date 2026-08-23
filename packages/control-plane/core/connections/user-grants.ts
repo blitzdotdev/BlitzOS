@@ -10,12 +10,8 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import {
-  catalogViews,
-  GENERIC_MANIFEST_ID,
-  providerManifest,
-} from "./catalog/index.js";
-import type { ProviderManifest, DeliveryOverrides, TokenHeader } from "./catalog/types.js";
+import { catalogViews, providerManifest } from "./catalog/index.js";
+import type { ProviderManifest, TokenHeader } from "./catalog/types.js";
 import { revokeGrantLeasesQuery } from "./leases.js";
 import { scopesFromJson } from "./manifest.js";
 import {
@@ -24,7 +20,7 @@ import {
   ensureCatalogConnection,
 } from "./registry.js";
 import { openRoot, sealRoot } from "./root-crypto.js";
-import type { Custody, UserGrantView } from "./types.js";
+import type { UserGrantView } from "./types.js";
 
 /** Connection names are the box wire's `integration` value and become a file
  * name inside the box, so they stay to the same alphabet the box accepts.
@@ -52,11 +48,10 @@ export interface GrantRow {
   revoked_at: number | null;
 }
 
-/** Non-secret per-grant configuration. Catalog providers fill it from their
- * manifest; the generic entry is entirely described by it. */
+/** Non-secret per-grant configuration, filled from the catalog manifest plus
+ * the one thing no manifest can know: the instance URL an instance-hosted
+ * vendor lives at. */
 export interface GrantConfig {
-  envName: string | null;
-  baseUrlEnvName: string | null;
   baseUrl: string | null;
   tokenHeader: TokenHeader;
 }
@@ -71,8 +66,6 @@ export function grantSecretLabel(userId: string, provider: string): string {
 
 export function grantConfig(row: GrantRow): GrantConfig {
   const fallback: GrantConfig = {
-    envName: null,
-    baseUrlEnvName: null,
     baseUrl: null,
     tokenHeader: { name: "Authorization", prefix: "Bearer " },
   };
@@ -85,27 +78,11 @@ export function grantConfig(row: GrantRow): GrantConfig {
   if (!isRecord(parsed)) return fallback;
   const header = isRecord(parsed.tokenHeader) ? parsed.tokenHeader : null;
   return {
-    envName: isString(parsed.envName) ? parsed.envName : null,
-    baseUrlEnvName: isString(parsed.baseUrlEnvName) ? parsed.baseUrlEnvName : null,
     baseUrl: isString(parsed.baseUrl) ? parsed.baseUrl : null,
     tokenHeader:
       header !== null && isString(header.name) && isString(header.prefix)
         ? { name: header.name, prefix: header.prefix }
         : fallback.tokenHeader,
-  };
-}
-
-/** Only the generic entry produces overrides; catalog providers describe their
- * own delivery and must not be reshaped by a stored config. */
-export function grantOverrides(
-  manifest: ProviderManifest,
-  config: GrantConfig,
-): DeliveryOverrides | null {
-  if (manifest.id !== GENERIC_MANIFEST_ID || config.envName === null) return null;
-  return {
-    envName: config.envName,
-    baseUrlEnvName: config.baseUrlEnvName,
-    baseUrl: config.baseUrl,
   };
 }
 
@@ -250,9 +227,10 @@ export async function revokeGrant(
   return true;
 }
 
-/** Compare-and-set on the rotation counter. Strict single-use rotation means a
- * second concurrent refresh must lose rather than burn the new token, so the
- * caller treats `false` as "another request already rotated". */
+/** Compare-and-set on the `rotation` counter, which counts writes and nothing
+ * else. A second concurrent refresh must lose rather than overwrite the
+ * winner's material, so the caller treats `false` as "another request already
+ * wrote". Nothing here stops the two provider calls from both going out. */
 export async function rotateGrantTokens(
   db: Db,
   key: CryptoKey,
@@ -286,7 +264,7 @@ export async function rotateGrantTokens(
  * reach the person created it with and nothing here can narrow that, so the
  * grant records the vocabulary rather than pretending to a choice: the token's
  * own ceiling is the ceiling. Providers with no scope vocabulary (youtrack,
- * discord, generic) record nothing, which is the truthful answer for them. */
+ * discord) record nothing, which is the truthful answer for them. */
 function fullManifestScopes(manifest: ProviderManifest): string[] {
   return manifest.scopes.map((scope) => scope.id);
 }
@@ -315,52 +293,20 @@ function parseVendorConfig(
   value: JsonValue | undefined,
   manifest: ProviderManifest,
 ): GrantConfig {
-  const header = personalTokenHeader(manifest);
-  if (manifest.id !== GENERIC_MANIFEST_ID) {
-    const config: GrantConfig = {
-      envName: null,
-      baseUrlEnvName: null,
-      baseUrl: null,
-      tokenHeader: header,
-    };
-    // Instance-hosted vendors (YouTrack): the paste may name the instance.
-    // Absent is fine when the org connection row already carries it — the
-    // route validates that one of the two exists.
-    if (
-      (manifest.personalToken?.baseUrlLabel ?? null) !== null &&
-      isRecord(value) &&
-      value.baseUrl !== undefined &&
-      value.baseUrl !== null
-    ) {
-      config.baseUrl = vendorBaseUrl(value.baseUrl);
-    }
-    return config;
-  }
-  if (!isRecord(value)) {
-    throw new HttpError(400, "vendor is required for a generic connection");
-  }
-  const envName = requiredString(value.envName, "vendor.envName", 256);
-  if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(envName)) {
-    throw new HttpError(400, "vendor.envName must be a shell environment name");
-  }
   const config: GrantConfig = {
-    envName,
-    baseUrlEnvName: null,
     baseUrl: null,
-    tokenHeader: header,
+    tokenHeader: personalTokenHeader(manifest),
   };
-  if (value.baseUrl !== undefined && value.baseUrl !== null) {
+  // Instance-hosted vendors (YouTrack): the paste may name the instance.
+  // Absent is fine when the org connection row already carries it — the
+  // route validates that one of the two exists.
+  if (
+    (manifest.personalToken?.baseUrlLabel ?? null) !== null &&
+    isRecord(value) &&
+    value.baseUrl !== undefined &&
+    value.baseUrl !== null
+  ) {
     config.baseUrl = vendorBaseUrl(value.baseUrl);
-  }
-  if (value.baseUrlEnvName !== undefined && value.baseUrlEnvName !== null) {
-    const name = requiredString(value.baseUrlEnvName, "vendor.baseUrlEnvName", 256);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(name)) {
-      throw new HttpError(400, "vendor.baseUrlEnvName must be a shell environment name");
-    }
-    if (config.baseUrl === null) {
-      throw new HttpError(400, "vendor.baseUrlEnvName requires vendor.baseUrl");
-    }
-    config.baseUrlEnvName = name;
   }
   return config;
 }
@@ -378,9 +324,7 @@ async function resolveInstanceBaseUrl(
 ): Promise<string | null> {
   if ((manifest.personalToken?.baseUrlLabel ?? null) === null) return null;
   const existing = await connectionByName(db, provider, orgId);
-  const stored = existing === null ? null : connectionProxyBaseUrl(existing.config);
-  // A row that only carries the catalog placeholder knows nothing.
-  const rowBaseUrl = stored === manifest.baseUrl ? null : stored;
+  const rowBaseUrl = existing === null ? null : connectionProxyBaseUrl(existing.config);
   if (rowBaseUrl === null && config.baseUrl === null) {
     throw new HttpError(
       400,
@@ -388,16 +332,6 @@ async function resolveInstanceBaseUrl(
     );
   }
   return rowBaseUrl ?? config.baseUrl;
-}
-
-/** Custody a grant's leases take. The catalog decides; the generic entry keeps
- * today's rule that a base URL is what makes proxy custody possible. */
-export function grantCustody(
-  manifest: ProviderManifest,
-  config: GrantConfig,
-): Custody {
-  if (manifest.id !== GENERIC_MANIFEST_ID) return manifest.custody;
-  return config.baseUrl === null ? "cp" : "proxy";
 }
 
 export function addUserGrantRoutes(
@@ -437,7 +371,7 @@ export function addUserGrantRoutes(
         `${manifest.title} issues no personal token; connect it with OAuth instead`,
       );
     }
-    if (manifest.id !== GENERIC_MANIFEST_ID && provider !== manifest.id) {
+    if (provider !== manifest.id) {
       throw new HttpError(400, `a ${manifest.id} grant must be named ${manifest.id}`);
     }
     const token = requiredString(value.token, "token", 8_192).trim();
@@ -459,8 +393,6 @@ export function addUserGrantRoutes(
       principal.orgId,
       provider,
       manifest,
-      grantCustody(manifest, config),
-      grantOverrides(manifest, config),
       principal,
       instanceBaseUrl,
     );

@@ -13,7 +13,6 @@ import {
   WorkspaceDrawer,
 } from '../src/WorkspaceDrawer.js';
 import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
-import { ConnectPicker } from '../src/settings/ConnectPicker.js';
 import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
 
@@ -103,17 +102,13 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     id,
     title,
     summary: `${title} for agents`,
-    docsUrl: `https://example.com/${id}`,
     custody: 'proxy',
-    rotation: 'none',
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: 'API key',
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
-    needsVendorConfig: false,
     adminForm: null,
-    environmentNames: [],
   };
 }
 
@@ -350,48 +345,6 @@ describe('v2 credential surfaces', () => {
     await view.unmount();
   });
 
-  /** Settings is account scope: nothing is connected there, because there is no
-   * workspace to hold a lease. A grant is an authorization, and says so. */
-  it('marks an authorized provider on the settings page and offers to replace it', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
-      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
-    });
-    const view = await render(<ConnectPicker client={wire} />);
-    await settle();
-
-    const cards = [...view.container.querySelectorAll('.connect-card')];
-    const authorized = cards.find((card) => card.textContent?.includes('Linear'))!;
-    const untouched = cards.find((card) => card.textContent?.includes('Notion'))!;
-    expect(authorized.querySelector('.connect-badge--authorized')?.textContent).toBe('Authorized');
-    expect(untouched.querySelector('.connect-badge--authorized')).toBeNull();
-    // The word "Connected" belongs to a workspace holding a lease, and this
-    // page has no workspace.
-    expect(view.container.querySelector('.connect-badge--connected')).toBeNull();
-    expect(view.container.textContent).not.toContain('Connected');
-
-    await act(async () => click(authorized));
-    expect(view.container.querySelector('.connect-detail__authorized')?.textContent)
-      .toBe('Authorized · oauth');
-    const labels = [...view.container.querySelectorAll('.connect-detail button, .connect-detail a')]
-      .map((action) => action.textContent);
-    expect(labels).toContain('Replace key');
-    expect(labels).not.toContain('Reconnect');
-    await view.unmount();
-  });
-
-  it('leaves an unauthorized provider saying Authorize', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-    });
-    const view = await render(<ConnectPicker client={wire} />);
-    await settle();
-    await act(async () => click(view.container.querySelector('.connect-card')!));
-    expect(view.container.querySelector('.connect-detail__authorized')).toBeNull();
-    expect([...view.container.querySelectorAll('.connect-detail button')]
-      .map((action) => action.textContent)).toContain('Authorize');
-    await view.unmount();
-  });
 
 });
 

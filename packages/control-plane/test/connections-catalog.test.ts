@@ -3,10 +3,11 @@ import { evaluateProbe } from "../core/connections/canary.js";
 import {
   CATALOG,
   catalogView,
-  GENERIC_MANIFEST_ID,
+  manifestBaseUrl,
+  MissingBaseUrlError,
   providerManifest,
+  providerRedirectPath,
 } from "../core/connections/catalog/index.js";
-import { genericManifest } from "../core/connections/catalog/generic.js";
 import {
   BOX_HOME,
   compileDelivery,
@@ -14,12 +15,12 @@ import {
   tombstoneDelivery,
 } from "../core/connections/catalog/workspace-delivery.js";
 import type {
-  ExchangeFixture,
   OAuthProviderManifest,
   ProviderManifest,
-  StaticProviderManifest,
   DeliveryInput,
 } from "../core/connections/catalog/types.js";
+import type { ExchangeFixture } from "./connections-fixtures/index.js";
+import { EXCHANGE_FIXTURES, PROBE_FIXTURES } from "./connections-fixtures/index.js";
 import {
   exchangeForm,
   parseExchangeResponse,
@@ -30,6 +31,13 @@ import type { MintResult, Placement } from "../core/connections/types.js";
  * documented name and what it is for — and a connect binding missing from it
  * is a provider an operator cannot switch on because nothing named it. */
 const ENV_DEFAULTS = import.meta.glob<string>("../../../env.defaults", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+});
+
+/** Every catalog module as the worker bundler sees it: raw source. */
+const CATALOG_SOURCES = import.meta.glob<string>("../core/connections/catalog/*.ts", {
   eager: true,
   import: "default",
   query: "?raw",
@@ -59,7 +67,6 @@ function deliveryInput(
     token: "test-only-lease-token",
     proxyUrl: "https://cp.example/proxy/lease-one",
     tokenHeader: manifest.tokenHeader,
-    overrides: null,
     ...overrides,
   };
 }
@@ -156,31 +163,54 @@ function replayExchange(
 }
 
 describe("provider catalog conformance", () => {
-  it("keeps one entry per id and a generic entry for custom connections", () => {
+  it("keeps one entry per id", () => {
     const ids = CATALOG.map(({ id }) => id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toContain("generic");
     for (const id of ids) expect(providerManifest(id)?.id).toBe(id);
     expect(providerManifest("no-such-provider")).toBeNull();
+    // The catalog answers to the names in it and to nothing else. `generic`
+    // was the one entry that took any name a person typed; ad-hoc secrets are
+    // a workspace file now, not a connection.
+    expect(providerManifest("generic")).toBeNull();
   });
 
-  /** Only the generic entry makes the person name a variable and a base URL,
-   * and that is a fact about which catalog entry it is. Inferring it from a
-   * missing authorize endpoint would put the vendor form in front of the next
-   * pasted-key provider that knows its own vendor perfectly well. */
-  it("asks for vendor config by catalog identity, not by a missing authorize URL", () => {
+  /** The recorded answers live in test data, not on the manifests, so the
+   * shipped worker no longer carries them. This pin is what keeps that move
+   * from quietly costing coverage: a provider added without fixtures fails
+   * here instead of shipping unproven. */
+  it("records fixtures for every catalog entry, in test data only", () => {
     for (const manifest of CATALOG) {
-      expect(
-        catalogView(manifest, () => undefined).needsVendorConfig,
-        `${manifest.id} needsVendorConfig`,
-      ).toBe(manifest.id === GENERIC_MANIFEST_ID);
+      expect(PROBE_FIXTURES[manifest.id], `${manifest.id} probe fixtures`)
+        .toBeDefined();
+      const exchanges = EXCHANGE_FIXTURES[manifest.id];
+      if (manifest.auth === null) {
+        expect(exchanges, `${manifest.id} records no exchange`).toBeUndefined();
+      } else {
+        expect(exchanges?.length ?? 0, `${manifest.id} recorded exchanges`)
+          .toBeGreaterThan(0);
+      }
     }
-    const pastedKeyVendor = {
-      ...genericManifest,
-      id: "acme",
-    } satisfies StaticProviderManifest;
-    expect(pastedKeyVendor.auth).toBeNull();
-    expect(catalogView(pastedKeyVendor, () => undefined).needsVendorConfig).toBe(false);
+    const catalogIds = new Set(CATALOG.map(({ id }) => id));
+    for (const id of [...Object.keys(PROBE_FIXTURES), ...Object.keys(EXCHANGE_FIXTURES)]) {
+      expect(catalogIds, `${id} fixtures name a live catalog entry`).toContain(id);
+    }
+  });
+
+  /** The shipped worker bundles every file under `core/`. A recorded vendor
+   * body that finds its way back onto a manifest would deploy to production,
+   * which is the bug this whole move exists to close. */
+  it("keeps recorded vendor bodies out of the shipped catalog", () => {
+    const recorded = [
+      ...Object.values(PROBE_FIXTURES).flat().map(({ response }) => response),
+      ...Object.values(EXCHANGE_FIXTURES).flat().map(({ response }) => response),
+    ];
+    expect(recorded.length, "fixtures were loaded").toBeGreaterThan(0);
+    for (const [file, source] of Object.entries(CATALOG_SOURCES)) {
+      for (const body of recorded) {
+        expect(source, `${file} ships a recorded vendor body`).not.toContain(body);
+      }
+      expect(source, `${file} declares fixtures`).not.toContain("probeFixtures");
+    }
   });
 
   it("documents every connect client binding in env.defaults", () => {
@@ -223,10 +253,18 @@ describe("provider catalog conformance", () => {
         expect(manifest.id).toMatch(/^[a-z0-9][a-z0-9-]*$/u);
         expect(manifest.title.length).toBeGreaterThan(0);
         expect(manifest.summary.length).toBeGreaterThan(0);
-        expect(new URL(manifest.docsUrl).protocol).toBe("https:");
-        expect(new URL(manifest.baseUrl).protocol).toBe("https:");
-        expect(["cp", "broker", "proxy"]).toContain(manifest.custody);
-        expect(["strict", "graceful", "none"]).toContain(manifest.rotation);
+        // A vendor root is either a real https URL or an honest null. Null is
+        // the instance-hosted case, and `manifestBaseUrl` is the only way to
+        // read it — it throws rather than hand back a placeholder host.
+        if (manifest.baseUrl === null) {
+          expect(manifest.personalToken?.baseUrlLabel ?? null, `${manifest.id} collects an instance URL`)
+            .not.toBeNull();
+          expect(() => manifestBaseUrl(manifest, "test")).toThrow(MissingBaseUrlError);
+        } else {
+          expect(new URL(manifest.baseUrl).protocol).toBe("https:");
+          expect(manifestBaseUrl(manifest, "test")).toBe(manifest.baseUrl);
+        }
+        expect(["cp", "proxy"]).toContain(manifest.custody);
         // A header shape that cannot be set would fail only at proxy time.
         expect(() => {
           new Headers().set(
@@ -253,11 +291,8 @@ describe("provider catalog conformance", () => {
           expect(new URL(auth.tokenUrl).protocol).toBe("https:");
           expect(auth.clientIdVar).toMatch(ENVIRONMENT_NAME);
           expect(auth.clientSecretVar).toMatch(ENVIRONMENT_NAME);
-          expect(auth.redirectPath).toBe(`/connect/${manifest.id}/callback`);
+          expect(providerRedirectPath(manifest)).toBe(`/connect/${manifest.id}/callback`);
           expect(auth.accessTtlMs).toBeGreaterThan(0);
-          expect(manifest.fixtures.length, "recorded exchanges are mandatory").toBeGreaterThan(0);
-        } else {
-          expect(manifest.fixtures).toEqual([]);
         }
         if (manifest.personalToken !== null) {
           expect(() => {
@@ -305,19 +340,18 @@ describe("provider catalog conformance", () => {
           // A static root is pasted, not authorized, so it cannot share a
           // manifest with an OAuth flow that would fight it at mint.
           expect(manifest.auth, "a static admin root is pasted, not authorized").toBeNull();
-          expect(["cp", "proxy"]).toContain(manifest.custody);
-          expect(form.baseUrlLabel !== null, "base URL field exactly for proxy custody")
-            .toBe(manifest.custody === "proxy");
         } else {
           // The app-jwt shape: the org credential is the mint fallback, so it
           // is the one admin form allowed beside member OAuth. The PUT route
-          // serves app-jwt only under cp custody, and the ids ride the
-          // config, so the form never collects an instance URL.
+          // serves app-jwt only under cp custody.
           expect(manifest.custody).toBe("cp");
-          expect(form.baseUrlLabel).toBeNull();
           expect(form.app.appIdLabel.length).toBeGreaterThan(0);
           expect(form.app.installationIdLabel.length).toBeGreaterThan(0);
         }
+        // The admin form has never reached a proxy-custody provider, and the
+        // form no longer carries a field for one. A manifest that wants both
+        // needs the instance-URL input built, not a dead branch waiting.
+        expect(manifest.custody, "admin forms are cp custody only").toBe("cp");
         if (view === null) throw new Error("admin form view is missing");
         expect(view.rootLabel).toBe(form.rootLabel);
         expect(view.rootHelp).toBe(form.rootHelp);
@@ -325,12 +359,6 @@ describe("provider catalog conformance", () => {
         expect(view.placements).toEqual(
           manifest.delivery.env.map(({ name, fill }) => ({ kind: "env", name, fill })),
         );
-        expect(view.proxy === null).toBe(manifest.custody !== "proxy");
-        if (view.proxy !== null) {
-          expect(view.proxy.baseUrlLabel).toBe(form.baseUrlLabel);
-          expect(view.proxy.tokenHeader).toBe(manifest.tokenHeader.name);
-          expect(view.proxy.tokenPrefix).toBe(manifest.tokenHeader.prefix);
-        }
       });
 
       it("renders a skill that tells an agent how to authenticate", () => {
@@ -384,35 +412,23 @@ describe("provider catalog conformance", () => {
         expect(emptied?.kind === "file" && emptied.value).toBe("");
       });
 
-      it("honours per-grant overrides only for the generic entry", () => {
-        const overrides = {
-          envName: "ACME_KEY",
-          baseUrlEnvName: "ACME_BASE_URL",
-          baseUrl: "https://api.acme.example",
-        };
-        const placements = compileDelivery(
-          manifest,
-          deliveryInput(manifest, { overrides, mode: "inject" }),
-        );
-        const names = placements
-          .filter((placement) => placement.kind === "env")
-          .map((placement) => (placement.kind === "env" ? placement.name : ""));
-        expect(names).toEqual(["ACME_KEY", "ACME_BASE_URL"]);
-        assertPlacementsRideTheFrozenWire(placements, `${manifest.id} override`);
-      });
-
       it("replays every recorded exchange", () => {
-        if (manifest.auth === null) {
-          expect(manifest.fixtures).toEqual([]);
+        const auth = manifest.auth;
+        if (auth === null) {
+          expect(EXCHANGE_FIXTURES[manifest.id]).toBeUndefined();
           return;
         }
-        for (const fixture of manifest.fixtures) replayExchange(manifest, fixture);
+        const fixtures = EXCHANGE_FIXTURES[manifest.id] ?? [];
+        expect(fixtures.length, "recorded exchanges are mandatory").toBeGreaterThan(0);
+        for (const fixture of fixtures) replayExchange({ ...manifest, auth }, fixture);
       });
 
       it("replays every recorded probe answer", () => {
+        // An instance-hosted vendor has no catalog root, so the probe is
+        // exercised against the URL a grant would carry.
         const request = manifest.probe.request({
           token: "test-only-probe-token",
-          baseUrl: manifest.baseUrl,
+          baseUrl: manifest.baseUrl ?? "https://youtrack.acme.example",
           header: manifest.tokenHeader,
         });
         expect(["GET", "POST"]).toContain(request.method);
@@ -423,7 +439,9 @@ describe("provider catalog conformance", () => {
         expect(authorization?.value).toContain("test-only-probe-token");
         if (request.method === "GET") expect(request.body).toBeNull();
 
-        for (const fixture of manifest.probeFixtures) {
+        const fixtures = PROBE_FIXTURES[manifest.id] ?? [];
+        expect(fixtures.length, "recorded probe answers are mandatory").toBeGreaterThan(0);
+        for (const fixture of fixtures) {
           const outcome = evaluateProbe(manifest, fixture.status, fixture.response);
           expect(outcome.healthy, `${manifest.id}/${fixture.name}`).toBe(fixture.healthy);
           // A recorded failure must never echo the provider's own body.
