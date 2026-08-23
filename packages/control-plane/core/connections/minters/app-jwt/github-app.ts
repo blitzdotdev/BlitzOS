@@ -27,10 +27,13 @@ interface GithubTokenRequestBody {
   permissions?: Record<string, string>;
 }
 
+const PKCS8_PEM =
+  /^-----BEGIN PRIVATE KEY-----\s+([A-Za-z0-9+/=\s]+)-----END PRIVATE KEY-----$/u;
+const PKCS1_PEM =
+  /^-----BEGIN RSA PRIVATE KEY-----\s+([A-Za-z0-9+/=\s]+)-----END RSA PRIVATE KEY-----$/u;
+
 function decodePrivateKeyPem(value: string): Uint8Array {
-  const match = /^-----BEGIN PRIVATE KEY-----\s+([A-Za-z0-9+/=\s]+)-----END PRIVATE KEY-----$/u.exec(
-    value.trim(),
-  );
+  const match = PKCS8_PEM.exec(value.trim());
   if (match?.[1] === undefined) throw new Error("private key is not PKCS#8 PEM");
   let decoded: string;
   try {
@@ -39,6 +42,84 @@ function decodePrivateKeyPem(value: string): Uint8Array {
     throw new Error("private key is not PKCS#8 PEM");
   }
   return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+}
+
+/** Minimal DER length octets: one byte below 0x80, else a length-of-length
+ * byte followed by the big-endian length. */
+function derLength(length: number): Uint8Array {
+  if (length < 0x80) return Uint8Array.of(length);
+  const bytes: number[] = [];
+  for (let rest = length; rest > 0; rest = Math.trunc(rest / 256)) {
+    bytes.unshift(rest % 256);
+  }
+  return Uint8Array.of(0x80 | bytes.length, ...bytes);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(
+    parts.reduce((sum, part) => sum + part.byteLength, 0),
+  );
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.byteLength;
+  }
+  return result;
+}
+
+/** The PEM the importer gets. GitHub downloads App keys as PKCS#1
+ * (`BEGIN RSA PRIVATE KEY`), WebCrypto imports only PKCS#8, so a PKCS#1
+ * armor is re-wrapped here and everything else passes through for
+ * `importGithubAppPrivateKey` to judge. Encrypted keys throw the one
+ * caller-facing distinction: no wrap can fix a passphrase.
+ *
+ * SAFETY of the hand-rolled DER: PKCS#8 PrivateKeyInfo (RFC 5208) for an
+ * unencrypted RSA key is exactly
+ *   SEQUENCE {
+ *     INTEGER 0,                            -- version, bytes 02 01 00
+ *     SEQUENCE { OID rsaEncryption, NULL }, -- the fixed 15 bytes below
+ *     OCTET STRING <PKCS#1 RSAPrivateKey>   -- the decoded body, verbatim
+ *   }
+ * Only the two outer lengths depend on the input and `derLength` emits
+ * minimal DER lengths, so the wrap is deterministic. Whether the blob really
+ * is an RSAPrivateKey stays importKey's decision, made right after. The
+ * conformance test wraps a generated key, byte-compares against WebCrypto's
+ * own PKCS#8 export, and signs with the imported result. */
+export function normalizeGithubAppPrivateKey(value: string): string {
+  const trimmed = value.trim();
+  if (
+    trimmed.includes("BEGIN ENCRYPTED PRIVATE KEY") ||
+    trimmed.includes("Proc-Type: 4,ENCRYPTED")
+  ) {
+    throw new HttpError(
+      400,
+      "the private key is encrypted; upload the unencrypted .pem file GitHub generated",
+    );
+  }
+  const match = PKCS1_PEM.exec(trimmed);
+  if (match?.[1] === undefined) return value;
+  const decoded = atob(match[1].replace(/\s/gu, ""));
+  const pkcs1 = Uint8Array.from(decoded, (character) => character.charCodeAt(0));
+  const rsaEncryption = Uint8Array.of(
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01,
+    0x01, 0x05, 0x00,
+  );
+  const body = concatBytes(
+    Uint8Array.of(0x02, 0x01, 0x00),
+    rsaEncryption,
+    Uint8Array.of(0x04),
+    derLength(pkcs1.byteLength),
+    pkcs1,
+  );
+  const wrapped = concatBytes(
+    Uint8Array.of(0x30),
+    derLength(body.byteLength),
+    body,
+  );
+  let binary = "";
+  for (const byte of wrapped) binary += String.fromCharCode(byte);
+  const encoded = btoa(binary).match(/.{1,64}/gu)?.join("\n") ?? "";
+  return `-----BEGIN PRIVATE KEY-----\n${encoded}\n-----END PRIVATE KEY-----`;
 }
 
 export async function importGithubAppPrivateKey(value: string): Promise<CryptoKey> {

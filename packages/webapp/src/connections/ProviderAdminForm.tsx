@@ -3,8 +3,8 @@ import type {
   ConnectionView,
   PutConnectionRequest,
 } from '@blitzos/schema';
-import type { KeyboardEvent } from 'react';
-import { useRef } from 'react';
+import type { DragEvent, KeyboardEvent } from 'react';
+import { useRef, useState } from 'react';
 
 function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim();
@@ -14,8 +14,8 @@ function field(data: FormData, name: string): string {
  * decided custody, the placements, and the proxy header. The static form only
  * ever contributes the two values no manifest can know — the root and, for
  * proxy custody, the instance URL. The app variant (GitHub App) contributes
- * the app id and installation id beside the PKCS#8 key, and goes out as kind
- * app-jwt with no placements: the minter's own defaults are the canonical
+ * the app id and installation id beside the PEM private key, and goes out as
+ * kind app-jwt with no placements: the minter's own defaults are the canonical
  * env surface for an app credential. */
 export function adminConnectionInput(
   entry: CatalogEntryView,
@@ -69,6 +69,30 @@ export function orgCredentialFor(
   );
 }
 
+/** GitHub downloads App keys at 2–4 KiB; refuse anything that cannot be one
+ * before reading it. */
+const MAX_KEY_FILE_BYTES = 16 * 1024;
+
+/** Why a chosen file cannot be the app key, or null when it can. Encrypted
+ * keys get their own answer — GitHub never generates those, so the fix is a
+ * different file, not a conversion. */
+function keyFileProblem(content: string): string | null {
+  if (
+    content.includes('BEGIN ENCRYPTED PRIVATE KEY') ||
+    content.includes('Proc-Type: 4,ENCRYPTED')
+  ) {
+    return 'This key is encrypted. Encrypted keys are not supported — upload the .pem file exactly as GitHub generated it.';
+  }
+  if (!/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/u.test(content)) {
+    return 'This file is not a private key: it has no "BEGIN … PRIVATE KEY" header.';
+  }
+  return null;
+}
+
+function dragHasFiles(event: DragEvent<HTMLDivElement>): boolean {
+  return event.dataTransfer.types.includes('Files');
+}
+
 /** The one org-credential config form, manifest-driven and mounted wherever a
  * provider gets attached — the template create/edit screen today. The host
  * owns the PUT call and its error line; this renders exactly the fields the
@@ -95,8 +119,27 @@ export function ProviderAdminForm({
   onSubmit: (input: PutConnectionRequest) => void;
 }) {
   const fieldsRef = useRef<HTMLDivElement | null>(null);
+  const filePickerRef = useRef<HTMLInputElement | null>(null);
+  const dragDepth = useRef(0);
+  /** The dropped or browsed key, held client-side until Save submits it as
+   * the root — the PUT body never changes shape. */
+  const [keyFile, setKeyFile] = useState<{ name: string; content: string } | null>(null);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [pasteKey, setPasteKey] = useState(false);
+  const [dropActive, setDropActive] = useState(false);
   const form = entry.adminForm;
   if (form === null) return null;
+  const acceptKeyFile = async (file: File) => {
+    if (file.size > MAX_KEY_FILE_BYTES) {
+      setKeyFile(null);
+      setKeyError('This file is too large to be an app key — GitHub keys are a few KB.');
+      return;
+    }
+    const content = await file.text();
+    const problem = keyFileProblem(content);
+    setKeyFile(problem === null ? { name: file.name, content } : null);
+    setKeyError(problem);
+  };
   const save = () => {
     if (saving) return;
     const container = fieldsRef.current;
@@ -115,6 +158,15 @@ export function ProviderAdminForm({
     }
     const data = new FormData();
     for (const control of controls) data.set(control.name, control.value);
+    if (form.app !== null && !pasteKey) {
+      // The drop zone is no form control: the loaded file stands in for the
+      // root field and gets the same required treatment here.
+      if (keyFile === null) {
+        setKeyError('Add the private key: drop the .pem file here or browse for it.');
+        return;
+      }
+      data.set('root', keyFile.content);
+    }
     const input = adminConnectionInput(entry, data);
     if (input !== null) onSubmit(input);
   };
@@ -143,23 +195,111 @@ export function ProviderAdminForm({
           <input name="baseUrl" type="url" required placeholder="https://" />
         </label>
       )}
-      <label className="connect-field connect-field--wide">
-        <span className="connect-field__label">{form.rootLabel}</span>
-        {form.app !== null ? (
-          // A PKCS#8 PEM is multi-line; a password input would flatten it.
-          <textarea
-            name="root"
-            required
-            rows={6}
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            placeholder="-----BEGIN PRIVATE KEY-----"
-          />
-        ) : (
+      {form.app !== null ? (
+        // The key arrives as a downloaded .pem, so the primary input is a
+        // drop zone; a not-a-label div, because the Clear/Browse buttons
+        // inside would fight a label's click forwarding.
+        <div className="connect-field connect-field--wide">
+          <span className="connect-field__label">{form.rootLabel}</span>
+          {pasteKey ? (
+            // The paste fallback: a PEM is multi-line, so it rides a
+            // textarea; a password input would flatten it.
+            <textarea
+              name="root"
+              required
+              rows={6}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              placeholder="-----BEGIN RSA PRIVATE KEY-----"
+            />
+          ) : (
+            <div
+              className={`connect-drop${dropActive ? ' connect-drop--active' : ''}`}
+              onDragEnter={(event) => {
+                if (!dragHasFiles(event)) return;
+                event.preventDefault();
+                dragDepth.current += 1;
+                setDropActive(true);
+              }}
+              onDragOver={(event) => {
+                if (!dragHasFiles(event)) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+              }}
+              onDragLeave={() => {
+                if (dragDepth.current === 0) return;
+                dragDepth.current -= 1;
+                if (dragDepth.current === 0) setDropActive(false);
+              }}
+              onDrop={(event) => {
+                if (!dragHasFiles(event)) return;
+                event.preventDefault();
+                dragDepth.current = 0;
+                setDropActive(false);
+                const file = event.dataTransfer.files[0];
+                if (file !== undefined) void acceptKeyFile(file);
+              }}
+            >
+              {keyFile === null ? (
+                <>
+                  <span className="connect-drop__prompt">Drop the .pem file here, or</span>
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    onClick={() => filePickerRef.current?.click()}
+                  >Browse…</button>
+                </>
+              ) : (
+                <>
+                  <span className="connect-drop__loaded">
+                    <strong>{keyFile.name}</strong> — key loaded
+                  </span>
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    onClick={() => {
+                      setKeyFile(null);
+                      setKeyError(null);
+                    }}
+                  >Clear</button>
+                </>
+              )}
+              <input
+                ref={filePickerRef}
+                type="file"
+                accept=".pem"
+                hidden
+                aria-label={form.rootLabel}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = '';
+                  if (file !== undefined) void acceptKeyFile(file);
+                }}
+              />
+            </div>
+          )}
+          {keyError !== null && (
+            <p className="webapp-form-message" role="alert">{keyError}</p>
+          )}
+          <button
+            className="connect-drop__toggle"
+            type="button"
+            onClick={() => {
+              // Switching input paths starts the key over: one source of
+              // truth, never a stale file behind a fresh paste.
+              setPasteKey(!pasteKey);
+              setKeyFile(null);
+              setKeyError(null);
+            }}
+          >{pasteKey ? 'Upload the key file instead' : 'Paste the key text instead'}</button>
+        </div>
+      ) : (
+        <label className="connect-field connect-field--wide">
+          <span className="connect-field__label">{form.rootLabel}</span>
           <input name="root" type="password" required autoComplete="new-password" />
-        )}
-      </label>
+        </label>
+      )}
       <p className="connect-help connect-field--wide">{form.rootHelp}</p>
       <div className="connect-actions connect-field--wide">
         <button className="webapp-action" type="button" onClick={onCancel}>Cancel</button>

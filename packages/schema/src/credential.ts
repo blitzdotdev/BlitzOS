@@ -131,7 +131,7 @@ export interface CatalogAdminFormView {
    * `config.proxy.base_url` and the header pair rides along unchanged. */
   proxy: { baseUrlLabel: string; tokenHeader: string; tokenPrefix: string } | null;
   /** The GitHub App shape: non-null when the form collects an app id and an
-   * installation id beside the PKCS#8 private key, and the PUT goes out as
+   * installation id beside the PEM private key, and the PUT goes out as
    * kind "app-jwt" instead of a static root. Coexists with member OAuth —
    * grants win at mint, the app credential is the org fallback. */
   app: { appIdLabel: string; installationIdLabel: string } | null;
