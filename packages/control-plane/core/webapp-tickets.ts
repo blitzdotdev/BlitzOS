@@ -45,7 +45,8 @@ function decodeBase64Url(value: string): Uint8Array | null {
   const padded = value.replaceAll("-", "+").replaceAll("_", "/")
     + "=".repeat((4 - value.length % 4) % 4);
   try {
-    return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+    const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+    return base64Url(bytes) === value ? bytes : null;
   } catch {
     return null;
   }

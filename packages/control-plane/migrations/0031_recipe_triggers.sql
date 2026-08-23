@@ -3,7 +3,7 @@
 -- lands; CREATE is a no-op once the reserved migrations precede it.
 CREATE TABLE IF NOT EXISTS recipe_runs (
   id TEXT PRIMARY KEY,
-  recipe_id TEXT NOT NULL REFERENCES recipes(id),
+  recipe_id TEXT NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
   workspace_id TEXT REFERENCES workspaces(id),
   owner_membership_id TEXT NOT NULL REFERENCES memberships(id),
   status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
