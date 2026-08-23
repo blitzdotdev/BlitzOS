@@ -81,11 +81,11 @@ export const githubManifest = {
     baseUrlLabel: null,
   },
   // The org path: a GitHub App credential PUT as kind app-jwt (app id,
-  // installation id, PKCS#8 key). It satisfies a template's github with no
+  // installation id, private key). It satisfies a template's github with no
   // member step; a member's own OAuth grant still wins at mint.
   adminForm: {
-    rootLabel: "App private key (PKCS#8 PEM)",
-    rootHelp: "github.com → Settings → Developer settings → GitHub Apps → your app → Private keys → Generate a private key. Convert the downloaded PKCS#1 file with: openssl pkcs8 -topk8 -nocrypt. Install the app on the repositories agents should reach.",
+    rootLabel: "App private key (.pem)",
+    rootHelp: "github.com → Settings → Developer settings → GitHub Apps → your app → Private keys → Generate a private key. Drop the downloaded .pem file here — it works as-is. Install the app on the repositories agents should reach.",
     baseUrlLabel: null,
     app: {
       appIdLabel: "App ID",

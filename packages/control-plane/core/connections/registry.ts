@@ -24,6 +24,7 @@ import { sealRoot } from "./root-crypto.js";
 import {
   githubAppMinter,
   importGithubAppPrivateKey,
+  normalizeGithubAppPrivateKey,
 } from "./minters/app-jwt/github-app.js";
 import { staticMinter } from "./minters/static.js";
 
@@ -254,14 +255,22 @@ function configJson(kind: MintKind, custody: Custody, value: unknown): string {
     : staticConfigJson(value, custody);
 }
 
-async function validateRoot(kind: MintKind, root: string): Promise<void> {
-  if (kind !== "app-jwt") return;
+/** The exact root string to seal. For app-jwt it rewrites GitHub's PKCS#1
+ * download into PKCS#8 and proves the result imports, so a sealed app root
+ * is always a key the minter can sign with. Encrypted keys carry their own
+ * 400 out of the normalizer; everything else that fails to import is one
+ * generic 400. */
+async function validateRoot(kind: MintKind, root: string): Promise<string> {
+  if (kind !== "app-jwt") return root;
   try {
-    await importGithubAppPrivateKey(root);
-  } catch {
+    const normalized = normalizeGithubAppPrivateKey(root);
+    await importGithubAppPrivateKey(normalized);
+    return normalized;
+  } catch (caught) {
+    if (caught instanceof HttpError) throw caught;
     throw new HttpError(
       400,
-      "private key must be a PKCS#8 PEM; convert PKCS#1 with: openssl pkcs8 -topk8 -nocrypt",
+      "private key must be an RSA private key PEM (the .pem file GitHub generates)",
     );
   }
 }
@@ -491,8 +500,7 @@ export function addConnectionRoutes(
     }
     validateServedConnection(provider, value.kind, custodyValue);
     const config = configJson(value.kind, custodyValue, value.config);
-    const root = requiredString(value.root, "root");
-    await validateRoot(value.kind, root);
+    const root = await validateRoot(value.kind, requiredString(value.root, "root"));
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);
     const existing = await connectionByName(runtime.db, name, principal.orgId, false);

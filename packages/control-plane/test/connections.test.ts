@@ -26,6 +26,10 @@ import {
 } from "../core/oauth-state.js";
 import { BOX_HOME } from "../core/connections/catalog/surfaces.js";
 import {
+  importGithubAppPrivateKey,
+  normalizeGithubAppPrivateKey,
+} from "../core/connections/minters/app-jwt/github-app.js";
+import {
   appRequest,
   harness,
   operatorSession,
@@ -1290,6 +1294,14 @@ function decodeBase64Url(value: string): Uint8Array {
   return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
 }
 
+/** The DER inside a PEM, whatever its armor label. */
+function pemDer(value: string): Uint8Array {
+  const body = value
+    .replace(/-----(?:BEGIN|END) [A-Z ]*PRIVATE KEY-----/gu, "")
+    .replace(/\s/gu, "");
+  return Uint8Array.from(atob(body), (character) => character.charCodeAt(0));
+}
+
 async function githubKeyPair(): Promise<{
   privatePem: string;
   pkcs1Pem: string;
@@ -1598,19 +1610,107 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     ]);
   });
 
-  it("rejects a PKCS#1-labeled GitHub App root with the conversion command", async () => {
-    const { pkcs1Pem } = await githubKeyPair();
+  it("accepts GitHub's PKCS#1 download and seals a key the minter signs with", async () => {
+    const { pkcs1Pem, publicKey } = await githubKeyPair();
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await putGithubConnection(app, cookie, pkcs1Pem)).status).toBe(204);
+    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+      github: {},
+    });
+    const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
+    let authorization = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return Response.json({ token: GITHUB_TOKEN, expires_at: expiresAt });
+    });
+
+    const response = await mintFor(app, workspace.id, box.access_token, {
+      integration: "github",
+    });
+
+    expect(response.status).toBe(200);
+    // The signature proves the wrap: the mint imported the sealed root as
+    // PKCS#8 and signed with the same key GitHub handed out as PKCS#1.
+    const [header, payload, signature] = authorization
+      .replace(/^Bearer\s+/u, "")
+      .split(".");
+    if (header === undefined || payload === undefined || signature === undefined) {
+      throw new Error("github app JWT was malformed");
+    }
+    expect(
+      await crypto.subtle.verify(
+        "RSASSA-PKCS1-v1_5",
+        publicKey,
+        decodeBase64Url(signature),
+        new TextEncoder().encode(`${header}.${payload}`),
+      ),
+    ).toBe(true);
+  });
+
+  it("re-armors PKCS#1 into the exact PKCS#8 bytes WebCrypto exported", async () => {
+    const { privatePem, pkcs1Pem, publicKey } = await githubKeyPair();
+
+    const normalized = normalizeGithubAppPrivateKey(pkcs1Pem);
+
+    expect(normalized.startsWith("-----BEGIN PRIVATE KEY-----")).toBe(true);
+    expect(pemDer(normalized)).toEqual(pemDer(privatePem));
+    // A PKCS#8 root passes through untouched: sealed bytes never churn.
+    expect(normalizeGithubAppPrivateKey(privatePem)).toBe(privatePem);
+    // And the wrapped key signs through the real importer.
+    const data = new TextEncoder().encode("wrap-round-trip");
+    const signature = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      await importGithubAppPrivateKey(normalized),
+      data,
+    );
+    expect(
+      await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, data),
+    ).toBe(true);
+  });
+
+  it("rejects encrypted keys and garbage without storing a row", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-
-    const response = await putGithubConnection(app, cookie, pkcs1Pem);
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({
-      error:
-        "private key must be a PKCS#8 PEM; convert PKCS#1 with: openssl pkcs8 -topk8 -nocrypt",
+    const invalid = {
+      error: "private key must be an RSA private key PEM (the .pem file GitHub generates)",
       retryAction: null,
-    });
+    };
+    const encrypted = {
+      error: "the private key is encrypted; upload the unencrypted .pem file GitHub generated",
+      retryAction: null,
+    };
+
+    const garbage = await putGithubConnection(app, cookie, "not-a-key");
+    expect(garbage.status).toBe(400);
+    expect(await garbage.json()).toEqual(invalid);
+
+    // PKCS#1 armor around bytes that are no RSA key: the wrap succeeds
+    // structurally and the importer is the one that says no.
+    const armoredGarbage = await putGithubConnection(
+      app,
+      cookie,
+      "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----",
+    );
+    expect(armoredGarbage.status).toBe(400);
+    expect(await armoredGarbage.json()).toEqual(invalid);
+
+    const encryptedPkcs8 = await putGithubConnection(
+      app,
+      cookie,
+      "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----",
+    );
+    expect(encryptedPkcs8.status).toBe(400);
+    expect(await encryptedPkcs8.json()).toEqual(encrypted);
+
+    const encryptedPkcs1 = await putGithubConnection(
+      app,
+      cookie,
+      "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00\n\nAAAA\n-----END RSA PRIVATE KEY-----",
+    );
+    expect(encryptedPkcs1.status).toBe(400);
+    expect(await encryptedPkcs1.json()).toEqual(encrypted);
+
     expect(
       await env.DB
         .prepare("SELECT COUNT(*) AS count FROM connections")

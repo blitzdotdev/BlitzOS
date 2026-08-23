@@ -130,16 +130,16 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
   };
 }
 
-/** The GitHub App shape: app id + installation id + PKCS#8 key, PUT as
- * kind app-jwt. Coexists with member OAuth on the same manifest. */
+/** The GitHub App shape: app id + installation id + private-key file, PUT
+ * as kind app-jwt. Coexists with member OAuth on the same manifest. */
 function appEntry(id: string, title: string): CatalogEntryView {
   const entry = adminEntry(id, title, false);
   return {
     ...entry,
     oauthAvailable: true,
     adminForm: {
-      rootLabel: 'App private key (PKCS#8 PEM)',
-      rootHelp: 'Generate it in the vendor app settings and convert to PKCS#8.',
+      rootLabel: 'App private key (.pem)',
+      rootHelp: 'Generate a private key in the vendor app settings and drop the downloaded file here.',
       placements: [{ kind: 'env', name: 'GH_TOKEN', fill: 'token' }],
       proxy: null,
       app: { appIdLabel: 'App ID', installationIdLabel: 'Installation ID' },
@@ -173,6 +173,43 @@ function typeInto(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
+const setTextAreaValue = Object.getOwnPropertyDescriptor(
+  HTMLTextAreaElement.prototype,
+  'value',
+)?.set;
+
+function typeIntoTextArea(textarea: HTMLTextAreaElement, value: string): void {
+  if (setTextAreaValue === undefined) throw new Error('textarea value setter is unavailable');
+  setTextAreaValue.call(textarea, value);
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Drops a file on the key drop zone the way a browser would: a bubbling
+ * drop event whose dataTransfer carries the file list. */
+function dropKeyFile(zone: Element, file: File): void {
+  const event = new Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { files: [file], items: [], types: ['Files'] },
+  });
+  zone.dispatchEvent(event);
+}
+
+function keyDropZone(container: HTMLElement): Element {
+  const zone = container.querySelector('.connect-drop');
+  if (zone === null) throw new Error('key drop zone is missing');
+  return zone;
+}
+
+function fillAppIds(container: HTMLElement): void {
+  const appId = container.querySelector<HTMLInputElement>('input[name="appId"]');
+  const installationId = container.querySelector<HTMLInputElement>('input[name="installationId"]');
+  if (appId === null || installationId === null) {
+    throw new Error('app form inputs are missing');
+  }
+  typeInto(appId, '123456');
+  typeInto(installationId, '987654');
+}
+
 function click(button: Element): void {
   button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
@@ -185,7 +222,10 @@ function buttonByText(container: Element, text: string): Element {
 }
 
 describe('provider admin form', () => {
-  const putBody = (entry: CatalogEntryView, fill: (container: HTMLElement) => void) => {
+  const putBody = (
+    entry: CatalogEntryView,
+    fill: (container: HTMLElement) => void | Promise<void>,
+  ) => {
     return (async () => {
       const bodies: PutConnectionRequest[] = [];
       const view = await render(
@@ -197,7 +237,7 @@ describe('provider admin form', () => {
           onSubmit={(input) => bodies.push(input)}
         />,
       );
-      fill(view.container);
+      await fill(view.container);
       // The component renders no <form> (its host may be one), so saving is
       // the Save button, not a submit event.
       expect(view.container.querySelector('form')).toBeNull();
@@ -275,28 +315,25 @@ describe('provider admin form', () => {
     }]);
   });
 
-  it('submits the app-jwt body for the GitHub App shape', async () => {
-    const pem = '-----BEGIN PRIVATE KEY-----\ntest-only\n-----END PRIVATE KEY-----';
-    const bodies = await putBody(appEntry('github', 'GitHub'), (container) => {
-      const appId = container.querySelector<HTMLInputElement>('input[name="appId"]');
-      const installationId = container.querySelector<HTMLInputElement>('input[name="installationId"]');
-      const root = container.querySelector<HTMLTextAreaElement>('textarea[name="root"]');
-      if (appId === null || installationId === null || root === null) {
-        throw new Error('app form inputs are missing');
-      }
-      typeInto(appId, '123456');
-      typeInto(installationId, '987654');
-      // A PEM is multi-line, which is exactly why the root is a textarea.
-      const setTextAreaValue = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        'value',
-      )?.set;
-      if (setTextAreaValue === undefined) throw new Error('textarea value setter is unavailable');
-      setTextAreaValue.call(root, pem);
-      root.dispatchEvent(new Event('input', { bubbles: true }));
+  it('submits the app-jwt body for the GitHub App shape from a dropped key file', async () => {
+    const pem = '-----BEGIN RSA PRIVATE KEY-----\ntest-only\n-----END RSA PRIVATE KEY-----';
+    const bodies = await putBody(appEntry('github', 'GitHub'), async (container) => {
+      fillAppIds(container);
+      // The primary path is the drop zone: no textarea is mounted for it.
+      expect(container.querySelector('textarea[name="root"]')).toBeNull();
+      await act(async () => {
+        dropKeyFile(
+          keyDropZone(container),
+          new File([pem], 'my-app.2026-08-23.private-key.pem'),
+        );
+      });
+      await settle();
+      expect(container.textContent).toContain('my-app.2026-08-23.private-key.pem');
+      expect(container.textContent).toContain('key loaded');
     });
-    // The canonical app-jwt PUT: ids in the config, PEM as the root, no
-    // placements — the minter's defaults are the app credential's surface.
+    // The canonical app-jwt PUT: ids in the config, the file's PEM as the
+    // root, no placements — the minter's defaults are the app credential's
+    // surface. Exactly the shape the old paste path sent.
     expect(bodies).toEqual([{
       provider: 'github',
       kind: 'app-jwt',
@@ -304,6 +341,137 @@ describe('provider admin form', () => {
       config: { app_id: '123456', installation_id: '987654' },
       root: pem,
     }]);
+  });
+
+  it('loads a browsed file through the hidden picker', async () => {
+    const pem = '-----BEGIN PRIVATE KEY-----\ntest-only\n-----END PRIVATE KEY-----';
+    const bodies = await putBody(appEntry('github', 'GitHub'), async (container) => {
+      fillAppIds(container);
+      const picker = container.querySelector<HTMLInputElement>('input[type="file"]');
+      if (picker === null) throw new Error('file picker is missing');
+      expect(picker.getAttribute('accept')).toBe('.pem');
+      // A picker's FileList cannot be assigned for real, so the test stubs
+      // it and fires change exactly as the browser would after a pick.
+      Object.defineProperty(picker, 'files', {
+        configurable: true,
+        value: [new File([pem], 'browsed.pem')],
+      });
+      await act(async () => {
+        picker.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      await settle();
+      expect(container.textContent).toContain('browsed.pem');
+      expect(container.textContent).toContain('key loaded');
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.root).toBe(pem);
+  });
+
+  it('refuses encrypted key files with a message, not a submit', async () => {
+    const view = await render(
+      <ProviderAdminForm
+        entry={appEntry('github', 'GitHub')}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={() => { throw new Error('an encrypted key must never submit'); }}
+      />,
+    );
+    await act(async () => {
+      dropKeyFile(keyDropZone(view.container), new File(
+        ['-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----'],
+        'encrypted.pem',
+      ));
+    });
+    await settle();
+    expect(view.container.textContent).toContain('Encrypted keys are not supported');
+    expect(view.container.textContent).not.toContain('key loaded');
+
+    // The legacy dialect: PKCS#1 armor around a Proc-Type header.
+    await act(async () => {
+      dropKeyFile(keyDropZone(view.container), new File(
+        ['-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nAAAA\n-----END RSA PRIVATE KEY-----'],
+        'legacy-encrypted.pem',
+      ));
+    });
+    await settle();
+    expect(view.container.textContent).toContain('Encrypted keys are not supported');
+    expect(view.container.textContent).not.toContain('key loaded');
+    await view.unmount();
+  });
+
+  it('refuses files that are not a PEM key and files too big to be one', async () => {
+    const view = await render(
+      <ProviderAdminForm
+        entry={appEntry('github', 'GitHub')}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await act(async () => {
+      dropKeyFile(keyDropZone(view.container), new File(['just notes'], 'notes.txt'));
+    });
+    await settle();
+    expect(view.container.textContent).toContain('not a private key');
+
+    await act(async () => {
+      dropKeyFile(keyDropZone(view.container), new File(
+        ['a'.repeat(17 * 1024)],
+        'huge.pem',
+      ));
+    });
+    await settle();
+    expect(view.container.textContent).toContain('too large');
+    expect(view.container.textContent).not.toContain('key loaded');
+    await view.unmount();
+  });
+
+  it('keeps the paste path behind a toggle and submits the pasted key', async () => {
+    const pem = '-----BEGIN RSA PRIVATE KEY-----\npasted-test-only\n-----END RSA PRIVATE KEY-----';
+    const bodies = await putBody(appEntry('github', 'GitHub'), async (container) => {
+      fillAppIds(container);
+      await act(async () => {
+        click(buttonByText(container, 'Paste the key text instead'));
+      });
+      const root = container.querySelector<HTMLTextAreaElement>('textarea[name="root"]');
+      if (root === null) throw new Error('paste textarea is missing');
+      typeIntoTextArea(root, pem);
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.root).toBe(pem);
+  });
+
+  it('clears a loaded key and refuses to save without one', async () => {
+    const pem = '-----BEGIN RSA PRIVATE KEY-----\ntest-only\n-----END RSA PRIVATE KEY-----';
+    const bodies: PutConnectionRequest[] = [];
+    const view = await render(
+      <ProviderAdminForm
+        entry={appEntry('github', 'GitHub')}
+        saving={false}
+        configured={false}
+        onCancel={() => undefined}
+        onSubmit={(input) => bodies.push(input)}
+      />,
+    );
+    fillAppIds(view.container);
+    await act(async () => {
+      dropKeyFile(keyDropZone(view.container), new File([pem], 'app.pem'));
+    });
+    await settle();
+    expect(view.container.textContent).toContain('key loaded');
+    await act(async () => {
+      click(buttonByText(view.container, 'Clear'));
+    });
+    expect(view.container.textContent).not.toContain('key loaded');
+    expect(view.container.textContent).toContain('Drop the .pem file here');
+    await act(async () => {
+      click(buttonByText(view.container, 'Save'));
+    });
+    expect(bodies).toEqual([]);
+    expect(view.container.textContent).toContain('Add the private key');
+    await view.unmount();
   });
 
   it('parses nothing for a provider without an admin form', () => {

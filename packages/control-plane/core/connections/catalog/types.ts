@@ -106,7 +106,7 @@ export interface ProviderAdminForm {
    * Non-null exactly when custody is "proxy" (the conformance suite pins it). */
   baseUrlLabel: string | null;
   /** The GitHub App shape: non-null when the admin credential is an app-jwt
-   * root (app id + installation id + PKCS#8 key), not a static token. The
+   * root (app id + installation id + private key), not a static token. The
    * only admin form allowed to coexist with member OAuth — grants win at
    * mint, the app credential is the org fallback (the conformance suite pins
    * both rules). */
