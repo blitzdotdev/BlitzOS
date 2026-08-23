@@ -1,9 +1,5 @@
 import type { MachineType } from '@blitzos/schema';
 
-export function machineTypeLabel(typeId: string): string {
-  return typeId;
-}
-
 function machineGroup(machine: MachineType): string {
   const location = machine.location || machine.id.split('@').at(-1) || 'unknown';
   if (machine.providerId === 'microvm') return 'Local lab';

@@ -47,41 +47,46 @@ describe('box preview contract', () => {
       'https://cp.example/workspaces/one/webapp/7445/preview/3000/docs?mode=dark',
     );
 
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      ports: [
+    try {
+      const fetcher = vi.fn(async () => new Response(JSON.stringify({
+        ports: [
+          { port: 3000, process: 'node' },
+          { port: 8080, process: 'cloudflared' },
+        ],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      vi.stubGlobal('fetch', fetcher);
+      await expect(fetchWorkspacePorts('https://box.example/workspace/')).resolves.toEqual([
         { port: 3000, process: 'node' },
-        { port: 8080, process: 'cloudflared' },
-      ],
-    }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    await expect(fetchWorkspacePorts('https://box.example/workspace/', fetcher)).resolves.toEqual([
-      { port: 3000, process: 'node' },
-    ]);
-    expect(fetcher).toHaveBeenCalledWith('https://box.example/ports', {
-      credentials: 'include',
-      signal: undefined,
-    });
+      ]);
+      expect(fetcher).toHaveBeenCalledWith('https://box.example/ports', {
+        credentials: 'include',
+        signal: undefined,
+      });
 
-    const previewFetcher = vi.fn(async () => new Response(JSON.stringify({
-      previews: [{
+      const previewFetcher = vi.fn(async () => new Response(JSON.stringify({
+        previews: [{
+          url: 'https://demo.blitz.dev',
+          title: 'Demo',
+          source: 'agent',
+          createdAt: 1786900000000,
+        }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      vi.stubGlobal('fetch', previewFetcher);
+      await expect(fetchWorkspacePreviews(
+        'https://box.example/workspace/',
+      )).resolves.toEqual([{
         url: 'https://demo.blitz.dev',
         title: 'Demo',
         source: 'agent',
         createdAt: 1786900000000,
-      }],
-    }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    await expect(fetchWorkspacePreviews(
-      'https://box.example/workspace/',
-      previewFetcher,
-    )).resolves.toEqual([{
-      url: 'https://demo.blitz.dev',
-      title: 'Demo',
-      source: 'agent',
-      createdAt: 1786900000000,
-    }]);
-    expect(previewFetcher).toHaveBeenCalledWith('https://box.example/previews', {
-      credentials: 'include',
-      signal: undefined,
-    });
+      }]);
+      expect(previewFetcher).toHaveBeenCalledWith('https://box.example/previews', {
+        credentials: 'include',
+        signal: undefined,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('parses the shared public-preview fixtures', () => {

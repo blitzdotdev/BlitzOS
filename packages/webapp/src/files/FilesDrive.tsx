@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
-import type { TenantMe } from '../api-adapter';
+import type { TenantMe } from '../protocol';
 import type { WorkspaceView } from '@blitzos/schema';
 import type { FolderObjectView, FolderView } from '../file-library-api';
 import { drivePath, folderPagePath, type DriveScope } from '../sessions-page-state';

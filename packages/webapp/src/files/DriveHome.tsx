@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ControlPlaneClient } from '../api';
-import type { TenantMe } from '../api-adapter';
+import type { TenantMe } from '../protocol';
 import { FilesDrive, type DrivePageRoute } from './FilesDrive';
 import { SearchGlyph } from './DriveIcons';
 

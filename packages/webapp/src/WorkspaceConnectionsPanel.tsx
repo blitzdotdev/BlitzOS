@@ -8,13 +8,6 @@ import { asJsonObject, isString } from './type-guards';
 
 export const CREDENTIAL_POLL_INTERVAL_MS = 5_000;
 
-export function portAge(firstSeenAt: number, now = Date.now()): string {
-  const minutes = Math.floor((now - firstSeenAt) / 60_000);
-  if (minutes < 1) return 'now';
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h`;
-}
-
 /** A workspace row prints its transport with the words the connect card prints
  * for custody: an `inject` lease is the cp column's `injected`. */
 const MODE_BADGE = {

@@ -337,7 +337,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -351,7 +351,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -377,7 +377,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -412,7 +412,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -445,7 +445,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -481,7 +481,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -511,10 +511,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver(
-          { acp: 7444, files: 7445 },
-          "https://cp.example.test",
-        )}
+        resolver={standaloneResolver("https://cp.example.test")}
       />,
     );
     await settle();
@@ -545,7 +542,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -569,7 +566,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -607,7 +604,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -662,7 +659,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -691,7 +688,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -731,7 +728,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -787,7 +784,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -827,7 +824,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -868,7 +865,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -916,7 +913,7 @@ describe("webapp shell smoke", () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();

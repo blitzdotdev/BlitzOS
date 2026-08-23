@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { TenantMe } from './api-adapter';
+import type { TenantMe } from './protocol';
 import type { ControlPlaneClient } from './api';
 import { appliedTheme, chooseTheme, type ThemeChoice } from './theme';
 import type { SettingsSection } from './sessions-page-state';

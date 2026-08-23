@@ -9,13 +9,12 @@ import {
   type ReactNode,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
-import {
-  ApiAdapter,
-  ApiError,
-  type V2WorkspaceRecord,
-} from './api-adapter';
 import type { ControlPlaneClient } from './api';
-import type { CredentialRequestView, FolderAttachmentView } from '@blitzos/schema';
+import type {
+  CreateWorkspaceResponse,
+  CredentialRequestView,
+  FolderAttachmentView,
+} from '@blitzos/schema';
 import {
   WebAppHeader,
   SPAWN_SESSION_LABELS,
@@ -35,12 +34,11 @@ import {
   type CreateWorkspaceDialogInput,
 } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
-import { caughtErrorMessage } from './error-message';
+import { caughtErrorMessage, isUnauthorized } from './error-message';
 import {
   WebAppLoadingPane,
   WebAppLoadingShell,
 } from './LoadingSkeleton';
-import { machineTypeLabel } from './MachineCatalogGrid';
 import { SettingsHeader, SettingsPage } from './SettingsPage';
 import { ShareWorkspaceDialog } from './ShareWorkspaceDialog';
 import {
@@ -64,7 +62,6 @@ import {
 import {
   defaultWorkspaceFiles,
   maxDrawerWidth,
-  removeDismissedChatAuthProviders,
   tabRegion,
   withPreviewTabPath,
   type StorageNamespace,
@@ -115,13 +112,14 @@ import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
-import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
+import {
+  FILES_DAV_ROOT,
+  type BoxEndpoints,
+  type EndpointResolver,
+} from './resolver';
 import {
   type ConnectionsPanelFocus, WorkspaceDrawer, WorkspacePanelContent } from './WorkspaceDrawer';
-import {
-  rememberWorkspaceEndpoints,
-  type WorkspaceEndpoints,
-} from './workspace-endpoints';
+import { rememberWorkspaceEndpoints } from './workspace-endpoints';
 import { useWorkspacePersistence } from './use-workspace-persistence';
 import {
   useWorkspaceBootstrap,
@@ -129,7 +127,6 @@ import {
 } from './use-workspace-lifecycle';
 import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
-import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
@@ -285,7 +282,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const shellRef = useRef<HTMLElement>(null);
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
-  const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
+  const workspaceEndpoints = useRef(new Map<string, BoxEndpoints>());
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
   // opening every saved terminal, WebGL surface, and chat SDK connection.
@@ -346,27 +343,33 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     };
   }, [drawerOpen, mobileWebApp]);
 
+  // The one sink for control-plane 401s: the bootstrap, the workspace poll,
+  // and the state-persistence chokepoints all land here. One-shot calls
+  // surface their own failure message; the recurring poll flips to login
+  // within one tick of the session dying.
   const handleUnauthorized = useCallback(() => {
     setSignedOut(true);
     setLoaded(true);
   }, []);
-  const api = useMemo(
-    () => new ApiAdapter(client, handleUnauthorized),
-    [client, handleUnauthorized],
-  );
   const handlePersistenceError = useCallback((cause: Error) => {
-    if (cause instanceof ApiError && cause.status === 401) return;
+    if (isUnauthorized(cause)) {
+      handleUnauthorized();
+      return;
+    }
     setError(caughtErrorMessage(cause, 'Could not save webApp state.'));
-  }, []);
+  }, [handleUnauthorized]);
   const signOut = useCallback(async () => {
     try {
-      await api.logout();
+      await client.logout();
     } finally {
       setSignedOut(true);
     }
-  }, [api]);
-  const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
-  const listVolumes = useCallback(() => api.listVolumes(), [api]);
+  }, [client]);
+  const listMachineTypes = useCallback(() => client.listMachineTypes(), [client]);
+  const listVolumes = useCallback(
+    () => client.listVolumes().then(({ volumes }) => volumes),
+    [client],
+  );
   // Every template load also refreshes which template is the org default, so
   // the create dialog can preselect it (its own load runs through here).
   const [orgDefaultTemplateId, setOrgDefaultTemplateId] = useState<string | null>(null);
@@ -381,15 +384,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
-      const records = await api.listWorkspaces();
-      rememberWorkspaceEndpoints(workspaceEndpoints.current, records, resolver, true);
-      dispatch({ type: 'workspace_records_refreshed', records });
+      const { workspaces } = await client.poll();
+      rememberWorkspaceEndpoints(workspaceEndpoints.current, workspaces, resolver, true);
+      dispatch({ type: 'workspace_records_refreshed', records: workspaces });
     } catch (refreshError) {
-      if (!(refreshError instanceof ApiError && refreshError.status === 401)) {
-        console.warn('Unable to refresh workspace status', refreshError);
-      }
+      if (isUnauthorized(refreshError)) handleUnauthorized();
+      else console.warn('Unable to refresh workspace status', refreshError);
     }
-  }, [api, resolver]);
+  }, [client, handleUnauthorized, resolver]);
 
   const activeWorkspace = useMemo(
     () => store.workspaces.find(({ id, canControl }) => id === activeWorkspaceId && canControl),
@@ -409,7 +411,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     workspaceFiles,
     setWorkspaceFiles,
   } = useWorkspacePersistence(
-    api,
+    client,
     storageNamespace !== null,
     activeWorkspaceId,
     persistenceMetadata,
@@ -457,17 +459,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     : activeWorkspaceTabs !== null
       && filesTab !== null
       && regionActiveId(activeWorkspaceTabs, tabRegion(filesTab)) === filesTab.id;
-  const { livePorts, previewLinks } = useWorkspacePreviewSources(
-    route.page === 'webApp' && activeWorkspaceRunning,
-    activeWorkspaceId,
-    activeFilesBase,
-  );
   // The in-box agent's `blitz preview open` raises a focus marker; open it as a
   // tab so the user never hunts for the preview. `openPreviewPort` is defined
   // below and only referenced when a focus arrives (after render), so its
   // temporal position is fine. The pre-split drawer-segment nudge is gone:
   // panels are tabs now, and forcing one open would steal the pane.
-  useWorkspacePreviewFocus(
+  const { livePorts, previewLinks } = useWorkspacePreviewSources(
     route.page === 'webApp' && activeWorkspaceRunning,
     activeWorkspaceId,
     activeFilesBase,
@@ -551,13 +548,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!activeFilesBase) return null;
     return createClient(activeFilesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
   }, [activeFilesBase]);
-  const getFilesClient = useCallback((): WebDAVClient | null => {
-    const workspaceId = activeWorkspaceIdRef.current;
-    const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
-    const filesBase = workspaceEndpoints.current.get(workspaceId)?.filesBase;
-    if (workspace?.lifecycleStatus !== 'running' || !filesBase) return null;
-    return createClient(filesBase, { withCredentials: true, remoteBasePath: FILES_DAV_ROOT });
-  }, []);
   const [dropActive, setDropActive] = useState(false);
   const [dropBusy, setDropBusy] = useState(false);
   // Drop a screenshot on a tab and its path lands in the TUI. Upload reuses the
@@ -588,9 +578,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [filesClient]);
   useWorkspaceBootstrap({
-    api,
+    client,
     bootstrapVersion,
     signedOut,
+    onUnauthorized: handleUnauthorized,
     resolver,
     workspaceEndpoints,
     activeWorkspaceIdRef,
@@ -704,12 +695,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, []);
 
   const transitioningWorkspaceCount = store.workspaces.filter(
-    ({ lifecycleStatus }) => (
-      lifecycleStatus === 'creating'
-      || lifecycleStatus === 'provisioning'
-      || lifecycleStatus === 'parking'
-      || lifecycleStatus === 'resuming'
-    ),
+    ({ lifecycleStatus }) => lifecycleStatus === 'creating',
   ).length;
 
   useWorkspacePolling({
@@ -722,14 +708,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   useEffect(() => {
     if (!loaded || !storageNamespace) return;
     const timer = window.setTimeout(() => {
-      void api.putGlobalWebAppState({
+      void client.putGlobalWebAppState({
         version: 1,
         activeWorkspaceId,
         order: store.workspaces.map(({ id }) => id),
       }).catch(handlePersistenceError);
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [activeWorkspaceId, api, handlePersistenceError, loaded, storageNamespace, store.workspaces]);
+  }, [activeWorkspaceId, client, handlePersistenceError, loaded, storageNamespace, store.workspaces]);
 
   const navigateToWorkspacePage = useCallback((workspaceId: string) => {
     window.history.pushState({}, '', workspacePath(workspaceId));
@@ -777,11 +763,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         setRoute({ workspaceId: null, page: 'drive' });
       }
     }
-    void api.deleteWorkspace(workspaceId)
+    void client.destroy(workspaceId)
       .then(() => {
-        if (storageNamespace) {
-          removeDismissedChatAuthProviders(storageNamespace, workspaceId);
-        }
         workspaceEndpoints.current.delete(workspaceId);
       })
       .catch((cause: unknown) => {
@@ -792,7 +775,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         });
         setError(`Could not delete “${workspace.title}”: ${caughtErrorMessage(cause, 'The control plane request failed.')}`);
       });
-  }, [api, navigateToWorkspacePage, storageNamespace]);
+  }, [client, navigateToWorkspacePage]);
 
   const selectWorkspace = useCallback((workspaceId: string) => {
     if (!store.workspaces.some(({ id, canControl }) => id === workspaceId && canControl)) return;
@@ -806,20 +789,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [navigateToWorkspacePage, store.workspaces]);
 
   // One tail for everything that mints a workspace: the create dialog and
-  // recipe launches both adopt the record and navigate to it the same way.
+  // recipe launches both answer with the create-workspace envelope, adopt the
+  // record, and navigate to it the same way.
   const adoptCreatedWorkspace = useCallback(async (
-    create: () => Promise<V2WorkspaceRecord>,
+    create: () => Promise<CreateWorkspaceResponse>,
   ) => {
     setCreateWorkspaceBusy(true);
     setCreateWorkspaceError(null);
     try {
-      const record = await create();
-      rememberWorkspaceEndpoints(workspaceEndpoints.current, [record], resolver);
-      dispatch({ type: 'workspace_created', record, agentDefault: 'claude' });
-      if (record.canControl) {
-        activeWorkspaceIdRef.current = record.id;
-        setActiveWorkspaceId(record.id);
-        navigateToWorkspacePage(record.id);
+      const { workspace } = await create();
+      rememberWorkspaceEndpoints(workspaceEndpoints.current, [workspace], resolver);
+      dispatch({ type: 'workspace_created', record: workspace, agentDefault: 'claude' });
+      if (workspace.role !== null) {
+        activeWorkspaceIdRef.current = workspace.id;
+        setActiveWorkspaceId(workspace.id);
+        navigateToWorkspacePage(workspace.id);
       }
       setShowCreateWorkspace(false);
     } catch (createFailure) {
@@ -829,14 +813,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [navigateToWorkspacePage, resolver]);
   const createWorkspace = useCallback(
-    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => api.createWorkspace(input)),
-    [adoptCreatedWorkspace, api],
+    (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => client.create(input)),
+    [adoptCreatedWorkspace, client],
   );
   // The launch failure (for example the vm-limit 409) surfaces through the
   // same notice the create dialog uses, with the control plane's message.
   const launchRecipe = useCallback(
-    (recipeId: string) => adoptCreatedWorkspace(() => api.launchRecipe(recipeId)),
-    [adoptCreatedWorkspace, api],
+    (recipeId: string) => adoptCreatedWorkspace(() => client.launchRecipe(recipeId)),
+    [adoptCreatedWorkspace, client],
   );
 
   const setSidePaneWidth = useCallback((width: number) => {
@@ -1257,24 +1241,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const webAppBooting = route.page === 'webApp' && (
     !loaded || (hasControllableWorkspace && !activeWorkspace)
   );
-  const workspaceProvisioning = activeWorkspace?.lifecycleStatus === 'creating'
-    || activeWorkspace?.lifecycleStatus === 'provisioning';
-  const workspaceWaking = activeWorkspace?.lifecycleStatus === 'parked'
-    || activeWorkspace?.lifecycleStatus === 'resuming';
-  const workspaceWakingStage = workspaceWaking
-    ? activeWorkspace?.lifecycleStatus === 'parked'
-      ? 'waking · requesting compute'
-      : 'waking · reattaching drive'
-    : undefined;
-  const workspaceErrored = activeWorkspace !== undefined && (
-    activeWorkspace.lifecycleStatus === 'error'
-    || (activeWorkspace.lifecycleStatus === 'parked' && activeWorkspace.errorDetail !== null)
-  );
+  const workspaceCreating = activeWorkspace?.lifecycleStatus === 'creating';
+  const workspaceErrored = activeWorkspace?.lifecycleStatus === 'error';
   // Terminals and chat need a live box; files, previews and panels draw their
-  // own unavailable states and stay mounted while the box wakes.
+  // own unavailable states and stay mounted while the box comes up.
   const sessionsRenderable = !workspaceErrored
     && activeSessionUrl !== null
-    && !workspaceProvisioning
+    && !workspaceCreating
     && tabsLoaded;
   const retainedSessions = retainedSessionIdsRef.current;
   // One renderer for every surface, all siblings in the pane grid. A tab that
@@ -1293,22 +1266,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         && retainedSessions.ids.has(sessionId)
       );
   });
-  const loadingStage = activeWorkspace === undefined
-    ? 'starting · workspace terminal'
-    : workspaceProvisioning
-      ? activeWorkspace.lifecycleStatus === 'creating'
-        ? `allocating · ${activeWorkspace.machineType
-          ? machineTypeLabel(activeWorkspace.machineType)
-          : 'workspace VM'}`
-        : `starting · ${activeWorkspace.machineType
-          ? machineTypeLabel(activeWorkspace.machineType)
-          : 'workspace VM'}`
-      : workspaceWakingStage ?? 'starting · workspace terminal';
-  const loadingLabel = workspaceProvisioning
-    ? activeWorkspace?.lifecycleStatus === 'creating'
-      ? 'Creating workspace'
-      : 'Provisioning workspace'
-    : workspaceWaking ? 'Waking workspace' : 'Loading workspace';
+  const loadingStage = activeWorkspace !== undefined && workspaceCreating
+    ? `allocating · ${activeWorkspace.machineType}`
+    : 'starting · workspace terminal';
+  const loadingLabel = workspaceCreating ? 'Creating workspace' : 'Loading workspace';
   /** What a column shows when its active tab cannot draw itself yet. Files,
    * previews and panels always draw themselves, so they never see this. */
   const paneFallback = (region: WorkspaceRegion): ReactNode => {
@@ -1342,7 +1303,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         </div>
       );
     }
-    if (activeSessionUrl === null || workspaceProvisioning) {
+    if (activeSessionUrl === null || workspaceCreating) {
       return <WebAppLoadingPane ariaLabel={loadingLabel} stage={loadingStage} />;
     }
     if (!tabsLoaded) {
@@ -1357,13 +1318,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       key={activeWorkspace.id}
       client={filesClient}
       expanded={activeFiles.expanded}
-      getClient={getFilesClient}
       mobile={mobileWebApp}
       open={filesOpen}
       ready={activeWorkspaceRunning}
       refreshVersion={filesRefreshVersion}
       visible={filesSegmentVisible}
-      wakingStage={workspaceWakingStage}
       width={activeFiles.width}
       sharedFolders={workspaceAttachments.workspaceId === activeWorkspace.id
         ? workspaceAttachments.folders
@@ -1433,14 +1392,14 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
 
   if (signedOut) {
-    return <LoginForm loginUrl={api.googleLoginUrl()} />;
+    return <LoginForm loginUrl={client.googleLoginUrl()} />;
   }
 
   if (identityOnly !== null) {
     return (
       <CreateOrgPage
         onCreate={async (name) => {
-          await api.createOrg(name);
+          await client.createOrg(name);
           setIdentityOnly(null);
           setLoaded(false);
           setBootstrapVersion((version) => version + 1);
@@ -1685,9 +1644,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             workspaceName={workspace.title}
             orgName={store.viewer?.org.name ?? 'your org'}
             orgShareRole={workspace.orgShareRole}
-            owner={workspace.owner ?? (workspace.accessRole === 'owner' && store.viewer
-              ? { name: store.viewer.identity.name || store.viewer.identity.email, avatarUrl: store.viewer.identity.avatarUrl ?? null }
-              : null)}
+            owner={workspace.owner}
             viewerIsOwner={workspace.accessRole === 'owner'}
             onClose={() => setShareWorkspaceId(null)}
           />
@@ -1701,7 +1658,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 <strong>View access is almost here.</strong>
                 <span>
                   Read-only terminals arrive with the next platform update. Until
-                  then, ask {activeWorkspace.owner?.name ?? 'the owner'} for
+                  then, ask {activeWorkspace.owner.name || 'the owner'} for
                   editor access to use this workspace.
                 </span>
               </div>
@@ -1727,7 +1684,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                     tabs={paneTabModels(region)}
                     activeSessionId={paneActiveId(region) ?? ''}
                     sessionBusy={false}
-                    terminalDisabled={workspaceWaking || !tabsLoaded}
+                    terminalDisabled={!tabsLoaded}
                     mobile={mobileWebApp}
                     paneStrips={false}
                     drawerOpen={drawerOpen}
@@ -1835,7 +1792,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         active={active}
                         client={filesClient}
                         filePath={session.filePath}
-                        unavailableStage={workspaceWakingStage}
                         onDirtyChange={(dirty) => updateFileDirty(sessionId, dirty)}
                         onSaved={() => setFilesRefreshVersion((version) => version + 1)}
                         onTreeRefresh={() => setFilesRefreshVersion((version) => version + 1)}
@@ -2098,9 +2054,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         <WorkspaceDrawer
           client={client}
           workspaceId={activeWorkspace.id}
-          mobile
           open={filesOpen}
-          width={activeFiles.width}
           segment={drawerSegment}
           orgName={store.viewer?.org.name ?? 'Organization'}
           pendingRequests={activePendingRequests}
@@ -2108,7 +2062,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           stipulatedConnections={activeWorkspace.connections}
           connectionsFocus={connectionsFocus}
           readOnly={activeWorkspace.accessRole === 'viewer'}
-          onWidthChange={setSidePaneWidth}
           onSegmentChange={(panel: WorkspaceDrawerSegment) => {
             updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
           }}

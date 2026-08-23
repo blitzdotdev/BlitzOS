@@ -1030,7 +1030,6 @@ describe('template screen org-credential config', () => {
     summary: 'Bot messaging',
     docsUrl: 'https://example.com/discord',
     custody: 'cp',
-    rotation: 'none',
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: null,

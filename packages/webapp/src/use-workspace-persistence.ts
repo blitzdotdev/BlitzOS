@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ApiAdapter } from './api-adapter.js';
+import type { ControlPlaneClient } from './api.js';
 import {
   defaultWorkspaceFiles,
   defaultWorkspaceTabs,
@@ -26,7 +26,7 @@ interface WorkspacePersistenceMetadata {
 }
 
 export function useWorkspacePersistence(
-  api: ApiAdapter,
+  client: Pick<ControlPlaneClient, 'getWorkspaceWebAppState' | 'putWorkspaceWebAppState'>,
   enabled: boolean,
   activeWorkspaceId: string,
   metadata: WorkspacePersistenceMetadata | null,
@@ -67,7 +67,7 @@ export function useWorkspacePersistence(
       value: defaultWorkspaceTabs(),
       loaded: false,
     });
-    void api.getWorkspaceWebAppState(activeWorkspaceId)
+    void client.getWorkspaceWebAppState(activeWorkspaceId)
       .then((response) => {
         if (!active) return;
         const state = response.doc ?? defaultWorkspaceWebAppState();
@@ -94,7 +94,7 @@ export function useWorkspacePersistence(
     return () => {
       active = false;
     };
-  }, [activeWorkspaceId, api, enabled, onError]);
+  }, [activeWorkspaceId, client, enabled, onError]);
 
   useEffect(() => {
     if (
@@ -120,7 +120,7 @@ export function useWorkspacePersistence(
     }
     const timer = window.setTimeout(() => {
       syncedDoc.current = { workspaceId: activeWorkspaceId, json };
-      void api.putWorkspaceWebAppState(activeWorkspaceId, doc).catch((cause: Error) => {
+      void client.putWorkspaceWebAppState(activeWorkspaceId, doc).catch((cause: Error) => {
         // The attempt stays recorded so a rejected doc is not re-sent on every
         // poll tick; the next real edit produces different JSON and retries.
         onError(cause);
@@ -129,7 +129,7 @@ export function useWorkspacePersistence(
     return () => window.clearTimeout(timer);
   }, [
     activeWorkspaceId,
-    api,
+    client,
     enabled,
     metadata,
     onError,

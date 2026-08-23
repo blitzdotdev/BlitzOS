@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import type { WorkspaceView } from '@blitzos/schema';
 import type { FolderView } from '../file-library-api';
+import { ModalOverlay } from '../ModalOverlay';
 import { BoxGlyph, CheckGlyph } from './DriveIcons';
 
 export function AttachFolderDialog({
@@ -38,7 +39,7 @@ export function AttachFolderDialog({
   };
 
   return (
-    <div className="drive-scrim" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <ModalOverlay className="drive-scrim" onDismiss={onClose}>
       <section className="drive-dialog" role="dialog" aria-modal="true" aria-label={`Attach ${folder.name}`}>
         <h2>Attach <em>“{folder.name}”</em></h2>
         <div className="drive-dialog-body">
@@ -107,6 +108,6 @@ export function AttachFolderDialog({
           </button>
         </div>
       </section>
-    </div>
+    </ModalOverlay>
   );
 }

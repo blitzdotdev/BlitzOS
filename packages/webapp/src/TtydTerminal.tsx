@@ -265,9 +265,8 @@ export function TtydTerminal({
       attributes: true,
       attributeFilter: ['data-theme'],
     });
-    // jsdom has no matchMedia; live scheme tracking is browser-only.
-    const schemeQuery = window.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
-    schemeQuery?.addEventListener('change', applyTheme);
+    const schemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    schemeQuery.addEventListener('change', applyTheme);
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(host);
@@ -401,7 +400,7 @@ export function TtydTerminal({
       if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (resizeTimer !== null) window.clearTimeout(resizeTimer);
       themeObserver.disconnect();
-      schemeQuery?.removeEventListener('change', applyTheme);
+      schemeQuery.removeEventListener('change', applyTheme);
       observer.disconnect();
       input.dispose();
       socket?.close();

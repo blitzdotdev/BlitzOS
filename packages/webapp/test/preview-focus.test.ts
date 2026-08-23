@@ -121,52 +121,57 @@ describe('preview-focus browser consumer contract', () => {
       'https://cp.example/workspaces/one/webapp/7445/preview-focus',
     );
 
-    const okFetcher = vi.fn(async () => new Response(JSON.stringify({
-      focus: { version: 1, port: 5173, path: '/dashboard', title: 'Docs', requestedAt: 1787000001000 },
-    }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    await expect(fetchWorkspacePreviewFocus(base, okFetcher)).resolves.toEqual({
-      ok: true,
-      focus: {
-        version: 1,
-        port: 5173,
-        path: '/dashboard',
-        title: 'Docs',
-        requestedAt: 1787000001000,
-      },
-    });
-    expect(okFetcher).toHaveBeenCalledWith('https://box.example/preview-focus', {
-      credentials: 'include',
-      signal: undefined,
-    });
+    try {
+      const okFetcher = vi.fn(async () => new Response(JSON.stringify({
+        focus: { version: 1, port: 5173, path: '/dashboard', title: 'Docs', requestedAt: 1787000001000 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      vi.stubGlobal('fetch', okFetcher);
+      await expect(fetchWorkspacePreviewFocus(base)).resolves.toEqual({
+        ok: true,
+        focus: {
+          version: 1,
+          port: 5173,
+          path: '/dashboard',
+          title: 'Docs',
+          requestedAt: 1787000001000,
+        },
+      });
+      expect(okFetcher).toHaveBeenCalledWith('https://box.example/preview-focus', {
+        credentials: 'include',
+        signal: undefined,
+      });
 
-    // A read that never reached the box is reported as a failure, not as
-    // "the box has no focus": the caller must not adopt it as a baseline.
-    // Old boxes 404 the route.
-    const notFound = vi.fn(async () => new Response('not found', { status: 404 }));
-    await expect(fetchWorkspacePreviewFocus(base, notFound)).resolves.toEqual({ ok: false });
+      // A read that never reached the box is reported as a failure, not as
+      // "the box has no focus": the caller must not adopt it as a baseline.
+      // Old boxes 404 the route.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('not found', { status: 404 })));
+      await expect(fetchWorkspacePreviewFocus(base)).resolves.toEqual({ ok: false });
 
-    // Empty 200 body — unparseable, so also a failed read.
-    const empty = vi.fn(async () => new Response('', { status: 200 }));
-    await expect(fetchWorkspacePreviewFocus(base, empty)).resolves.toEqual({ ok: false });
+      // Empty 200 body — unparseable, so also a failed read.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
+      await expect(fetchWorkspacePreviewFocus(base)).resolves.toEqual({ ok: false });
 
-    // Network errors are swallowed, still as a failed read.
-    const throws = vi.fn(async () => { throw new Error('offline'); });
-    await expect(fetchWorkspacePreviewFocus(base, throws)).resolves.toEqual({ ok: false });
+      // Network errors are swallowed, still as a failed read.
+      vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+      await expect(fetchWorkspacePreviewFocus(base)).resolves.toEqual({ ok: false });
 
-    // A successful read with nothing focused is a real answer.
-    const nullFocus = vi.fn(async () => new Response(JSON.stringify({ focus: null }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
-    await expect(fetchWorkspacePreviewFocus(base, nullFocus))
-      .resolves.toEqual({ ok: true, focus: null });
+      // A successful read with nothing focused is a real answer.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ focus: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })));
+      await expect(fetchWorkspacePreviewFocus(base))
+        .resolves.toEqual({ ok: true, focus: null });
 
-    // So is a successful read the client's own guards reject: a reserved port
-    // on a 200 means the box has nothing this browser may open.
-    const reserved = vi.fn(async () => new Response(JSON.stringify({
-      focus: { version: 1, port: 7445, path: '/', title: 'gateway', requestedAt: 1787000002000 },
-    }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    await expect(fetchWorkspacePreviewFocus(base, reserved))
-      .resolves.toEqual({ ok: true, focus: null });
+      // So is a successful read the client's own guards reject: a reserved port
+      // on a 200 means the box has nothing this browser may open.
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        focus: { version: 1, port: 7445, path: '/', title: 'gateway', requestedAt: 1787000002000 },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })));
+      await expect(fetchWorkspacePreviewFocus(base))
+        .resolves.toEqual({ ok: true, focus: null });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

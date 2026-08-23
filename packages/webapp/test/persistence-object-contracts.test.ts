@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   decodeWorkspaceWebAppStateResponse,
   defaultWorkspaceFiles,
-  storedWorkspacePreference,
+  defaultWorkspaceTabs,
   withPreviewTabPath,
   workspaceWebAppState,
   type WorkspaceTab,
@@ -25,16 +25,27 @@ describe("UI protocol and persistence object contracts", () => {
     expect(JSON.stringify(tenant)).toBe('{"AuthToken":"","columns":120,"rows":40}');
   });
 
-  it("preserves stored workspace-title omission before agentDefault", () => {
-    const defaultTitle = storedWorkspacePreference("box-1", "box-1", "claude");
-    expect(Object.keys(defaultTitle)).toEqual(["agentDefault"]);
+  it("omits the title key from the outgoing document unless it differs from the server name", () => {
+    const defaultTitle = workspaceWebAppState(
+      "box-1",
+      "box-1",
+      "claude",
+      defaultWorkspaceTabs(),
+      defaultWorkspaceFiles(),
+    );
+    expect(Object.keys(defaultTitle)).toEqual(["version", "agentDefault", "tabs", "drawer"]);
     expect("title" in defaultTitle).toBe(false);
-    expect(JSON.stringify(defaultTitle)).toBe('{"agentDefault":"claude"}');
 
-    const customTitle = storedWorkspacePreference("Docs", "box-1", "codex");
-    expect(Object.keys(customTitle)).toEqual(["title", "agentDefault"]);
-    expect("title" in customTitle).toBe(true);
-    expect(JSON.stringify(customTitle)).toBe('{"title":"Docs","agentDefault":"codex"}');
+    const customTitle = workspaceWebAppState(
+      "Docs",
+      "box-1",
+      "codex",
+      defaultWorkspaceTabs(),
+      defaultWorkspaceFiles(),
+    );
+    expect(Object.keys(customTitle)).toEqual(["version", "agentDefault", "tabs", "drawer", "title"]);
+    expect(customTitle.title).toBe("Docs");
+    expect(customTitle.agentDefault).toBe("codex");
   });
 
   it("preserves restored chat optional-key absence, order, and serialization", () => {

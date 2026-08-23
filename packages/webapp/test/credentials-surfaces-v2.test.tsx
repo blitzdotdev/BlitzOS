@@ -14,7 +14,7 @@ import {
 } from '../src/WorkspaceDrawer.js';
 import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
 import { ConnectPicker } from '../src/settings/ConnectPicker.js';
-import { MembersPanel } from '../src/settings/MembersPanel.js';
+import { InvitesPanel } from '../src/settings/InvitesPanel.js';
 import { render, settle } from './dom.js';
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -105,7 +105,6 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     summary: `${title} for agents`,
     docsUrl: `https://example.com/${id}`,
     custody: 'proxy',
-    rotation: 'none',
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: 'API key',
@@ -163,7 +162,7 @@ function connectionsPanel(wire: ControlPlaneClient) {
 }
 
 describe('v2 credential surfaces', () => {
-  it('mints an email-pinned invite from the members panel and shows its link once', async () => {
+  it('mints an email-pinned invite from the invites panel and shows its link once', async () => {
     const createInvite = vi.fn(async () => ({
       invite: {
         id: 'invite-one',
@@ -177,7 +176,7 @@ describe('v2 credential surfaces', () => {
       code: 'one-time-code',
       ttlDays: 7,
     }));
-    const view = await render(<MembersPanel client={client({ createInvite })} admin />);
+    const view = await render(<InvitesPanel client={client({ createInvite })} />);
     await settle();
     const input = view.container.querySelector<HTMLInputElement>('input[type="email"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(
@@ -195,7 +194,7 @@ describe('v2 credential surfaces', () => {
     await settle();
 
     expect(createInvite).toHaveBeenCalledWith({ email: 'person@example.com', role: 'member' });
-    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Member invite link"]')?.value)
+    expect(view.container.querySelector<HTMLInputElement>('[aria-label="Invite link"]')?.value)
       .toBe(`${window.location.origin}/invite/one-time-code`);
     await view.unmount();
   });
@@ -209,9 +208,7 @@ describe('v2 credential surfaces', () => {
           client={wire}
           workspaceId="workspace-one"
           orgName="Example"
-          mobile={false}
           open
-          width={264}
           segment={segment}
           pendingRequests={[]}
           livePorts={[]}
@@ -221,7 +218,6 @@ describe('v2 credential surfaces', () => {
           onOpenPreview={() => undefined}
           onOpenPreviewLink={() => undefined}
           files={<div>File tree</div>}
-          onWidthChange={() => undefined}
           onSegmentChange={setSegment}
           onResolveRequest={async () => undefined}
         />
@@ -336,9 +332,7 @@ describe('v2 credential surfaces', () => {
           client={client()}
           workspaceId="workspace-one"
           orgName="Example"
-          mobile={false}
           open
-          width={264}
           segment="connections"
           pendingRequests={requests}
           livePorts={[]}
@@ -348,7 +342,6 @@ describe('v2 credential surfaces', () => {
           onOpenPreview={() => undefined}
           onOpenPreviewLink={() => undefined}
           files={<div>File tree</div>}
-          onWidthChange={() => undefined}
           onSegmentChange={() => undefined}
           onResolveRequest={async (entry, action) => {
             if (action === 'deny') await dismiss(entry.id);

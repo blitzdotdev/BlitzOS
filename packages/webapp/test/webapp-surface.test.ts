@@ -43,7 +43,7 @@ describe("webApp box surface", () => {
   }
 
   it("only builds URLs the control plane will forward", () => {
-    const resolver = standaloneResolver({ acp: 7444, files: 7445 }, origin);
+    const resolver = standaloneResolver(origin);
     const endpoints = resolver.resolve(workspace);
     const urls = [
       endpoints.acpUrl,

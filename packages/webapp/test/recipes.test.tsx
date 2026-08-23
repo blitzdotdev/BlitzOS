@@ -7,7 +7,7 @@ import {
   createControlPlaneClient,
   type ControlPlaneClient,
 } from '../src/api.js';
-import type { TenantMe } from '../src/api-adapter.js';
+import type { TenantMe } from '../src/protocol.js';
 import { CreateRecipeScreen } from '../src/files/CreateRecipeScreen.js';
 import { RecipesHome } from '../src/files/RecipesHome.js';
 import { TemplatesHome } from '../src/files/TemplatesHome.js';
@@ -656,7 +656,7 @@ describe('recipe run flow', () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();
@@ -683,7 +683,7 @@ describe('recipe run flow', () => {
     const view = await render(
       <CloudApp
         client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        resolver={standaloneResolver()}
       />,
     );
     await settle();

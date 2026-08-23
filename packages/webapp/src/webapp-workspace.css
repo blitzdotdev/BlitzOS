@@ -89,18 +89,6 @@
   max-width: 168px;
 }
 
-.webapp-tab-rename {
-  width: 140px;
-  min-width: 48px;
-  padding: 1px 4px;
-  border: 1px solid var(--accent);
-  border-radius: 2px;
-  outline: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font: inherit;
-}
-
 .webapp-tab-dirty {
   flex: none;
   color: var(--accent);

@@ -100,7 +100,6 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
     summary: `${title} for the whole organization`,
     docsUrl: `https://example.com/${id}`,
     custody: proxy ? 'proxy' : 'cp',
-    rotation: 'none',
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: null,

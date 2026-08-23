@@ -32,7 +32,6 @@ import { maxDrawerWidth } from './storage';
 type FilesSidebarProps = {
   client: WebDAVClient | null;
   expanded: string[];
-  getClient: () => WebDAVClient | null;
   mobile: boolean;
   open: boolean;
   ready: boolean;
@@ -68,7 +67,6 @@ function transientDavStatus(status: number | undefined): boolean {
 export function FilesSidebar({
   client,
   expanded,
-  getClient,
   mobile,
   open,
   ready,
@@ -143,17 +141,11 @@ export function FilesSidebar({
     return () => observer.disconnect();
   }, []);
 
-  const currentClient = useCallback(
-    () => client ?? getClient(),
-    [client, getClient],
-  );
-
   const loadDirectory = useCallback(async (
     path: string,
     rootFailureState: 'loading' | 'error' = 'error',
   ): Promise<DirectoryLoadResult> => {
-    const requestClient = currentClient();
-    if (!requestClient) return 'unavailable';
+    if (client === null) return 'unavailable';
     const token = Symbol(path);
     requestTokens.current.set(path, token);
     setLoadingPaths((current) => new Set(current).add(path));
@@ -166,7 +158,7 @@ export function FilesSidebar({
       ));
     }
     try {
-      const result = await requestClient.getDirectoryContents(path || '/');
+      const result = await client.getDirectoryContents(path || '/');
       if (requestTokens.current.get(path) !== token) return 'superseded';
       const children = listedNodes(path, result);
       if (path) {
@@ -207,18 +199,17 @@ export function FilesSidebar({
         });
       }
     }
-  }, [currentClient, onUnauthorized]);
+  }, [client, onUnauthorized]);
 
   // Reloads root plus expanded directories without loading placeholders, so
   // files created outside the sidebar (terminal, agents, editor) show up.
   const silentRefresh = useCallback(async () => {
-    const requestClient = currentClient();
-    if (!requestClient) return;
+    if (client === null) return;
     const listings = new Map<string, FileStat[]>();
     let unauthorized = false;
     await Promise.all(['', ...expandedRef.current].map(async (path) => {
       try {
-        listings.set(path, await requestClient.getDirectoryContents(path || '/'));
+        listings.set(path, await client.getDirectoryContents(path || '/'));
       } catch (listError) {
         if (davErrorStatus(listError) === 401) unauthorized = true;
       }
@@ -230,10 +221,10 @@ export function FilesSidebar({
     if (!listings.has('')) return;
     setData((current) => mergedTree(current, listings));
     setRootState('ready');
-  }, [currentClient, onUnauthorized]);
+  }, [client, onUnauthorized]);
 
   const openContextMenu = useCallback((event: ReactMouseEvent, directory: string) => {
-    if (!currentClient()) return;
+    if (client === null) return;
     event.preventDefault();
     event.stopPropagation();
     setCreateName('');
@@ -243,7 +234,7 @@ export function FilesSidebar({
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - 164)),
       directory,
     });
-  }, [currentClient]);
+  }, [client]);
 
   const chooseCreateKind = (createKind: 'file' | 'folder') => {
     setCreateName('');
@@ -253,8 +244,7 @@ export function FilesSidebar({
 
   const createEntry = async (event: FormEvent) => {
     event.preventDefault();
-    const requestClient = currentClient();
-    if (!requestClient || !contextMenu?.createKind || creating) return;
+    if (client === null || !contextMenu?.createKind || creating) return;
     const name = createName.trim();
     if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0')) {
       setCreateError('Enter a name without “/”.');
@@ -265,8 +255,8 @@ export function FilesSidebar({
     setCreateError(null);
     try {
       if (contextMenu.createKind === 'folder') {
-        await requestClient.createDirectory(path);
-      } else if (!await requestClient.putFileContents(path, '', { overwrite: false })) {
+        await client.createDirectory(path);
+      } else if (!await client.putFileContents(path, '', { overwrite: false })) {
         setCreateError('A file or folder with that name already exists.');
         return;
       }

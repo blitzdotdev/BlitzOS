@@ -16,12 +16,16 @@ const openOverlays: string[] = [];
 export function ModalOverlay({
   onDismiss,
   dismissible = true,
+  className = 'webapp-modal-screen',
   children,
 }: {
   onDismiss: () => void;
   /** False while a request is in flight, so a stray Escape or backdrop click
    * cannot close a dialog whose save is still running. */
   dismissible?: boolean;
+  /** The backdrop's visual class — Drive dialogs keep their `drive-scrim`
+   * stacking and wash while sharing the shell's behavior. */
+  className?: string;
   children: ReactNode;
 }) {
   const id = useId();
@@ -49,7 +53,7 @@ export function ModalOverlay({
 
   return (
     <div
-      className="webapp-modal-screen"
+      className={className}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && dismissible) onDismiss();

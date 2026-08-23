@@ -20,9 +20,6 @@ export function asJsonObject<Value>(value: Value): JsonObject | null {
   return value as JsonObject;
 }
 
-export function isDefined<Value>(value: Value): value is Exclude<Value, undefined> {
-  return typeof value !== 'undefined';
-}
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 
 export interface JsonObject {

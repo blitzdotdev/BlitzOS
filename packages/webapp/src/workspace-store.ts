@@ -1,27 +1,24 @@
-import type { TenantMe } from './api-adapter';
-import type { RetryAction } from '@blitzos/schema';
-import type {
-  Agent,
-  RestWorkspaceStatus,
-  WorkspaceRecord,
-} from './protocol';
+import type { RetryAction, WorkspaceView } from '@blitzos/schema';
+import type { Agent, TenantMe } from './protocol';
 import type { UiPreferences } from './storage';
+
+/** The only statuses the wire can produce for a visible workspace: phases
+ * `destroying` and `destroyed` are filtered before the store, `ready` reads
+ * as running, and the rest pass through. */
+export type WorkspaceLifecycleStatus = 'creating' | 'running' | 'error';
 
 export type CloudWorkspaceModel = {
   id: string;
-  ownerMembershipId: string;
   canControl: boolean;
-  shared: boolean;
-  owner: WorkspaceRecord['owner'] | null;
-  accessRole: WorkspaceRecord['accessRole'];
+  owner: WorkspaceView['owner'];
+  accessRole: WorkspaceView['role'];
   orgShareRole: 'editor' | 'viewer' | null;
   serverName: string;
   title: string;
-  machineType: string | null;
-  lifecycleStatus: RestWorkspaceStatus;
+  machineType: string;
+  lifecycleStatus: WorkspaceLifecycleStatus;
   errorDetail: string | null;
   retryAction: RetryAction;
-  createdAt: number;
   updatedAt: number;
   /** Stipulated connection names off the workspace ceiling. */
   connections: string[];
@@ -34,59 +31,69 @@ export type WorkspaceStoreState = {
 };
 
 export type WorkspaceAction =
-  | { type: 'workspaces_loaded'; records: WorkspaceRecord[]; viewer: TenantMe; preferences: UiPreferences }
-  | { type: 'workspace_created'; record: WorkspaceRecord; agentDefault: Agent }
-  | { type: 'workspace_records_refreshed'; records: WorkspaceRecord[] }
-  | { type: 'workspace_record_updated'; record: WorkspaceRecord }
-  | { type: 'workspace_resume_failed'; workspaceId: string; errorDetail: string }
+  | { type: 'workspaces_loaded'; records: WorkspaceView[]; viewer: TenantMe; preferences: UiPreferences }
+  | { type: 'workspace_created'; record: WorkspaceView; agentDefault: Agent }
+  | { type: 'workspace_records_refreshed'; records: WorkspaceView[] }
   | { type: 'workspace_deleted'; workspaceId: string }
-  | { type: 'workspace_delete_rolled_back'; workspace: CloudWorkspaceModel; index: number }
-  | { type: 'workspace_renamed'; workspaceId: string; title: string }
-  | { type: 'agent_default_changed'; workspaceId: string; agent: Agent }
-  | { type: 'workspace_reordered'; sourceId: string; targetId: string };
+  | { type: 'workspace_delete_rolled_back'; workspace: CloudWorkspaceModel; index: number };
 
 export const initialWorkspaceStore: WorkspaceStoreState = { workspaces: [], viewer: null };
 
-function isVisibleWorkspace(record: WorkspaceRecord): boolean {
-  return record.status !== 'destroying' && record.status !== 'destroyed';
+export function isVisibleWorkspace(record: WorkspaceView): boolean {
+  return record.phase !== 'destroying' && record.phase !== 'destroyed';
+}
+
+function lifecycleStatusOf(record: WorkspaceView): WorkspaceLifecycleStatus {
+  if (record.phase === 'creating') return 'creating';
+  if (record.phase === 'error') return 'error';
+  return 'running';
 }
 
 function createWorkspaceModel(
-  record: WorkspaceRecord,
+  record: WorkspaceView,
   preferences: UiPreferences,
 ): CloudWorkspaceModel {
   const preference = preferences.workspaces[record.id];
+  const canControl = record.role !== null;
   return {
     id: record.id,
-    ownerMembershipId: record.ownerMembershipId,
-    canControl: record.canControl,
-    shared: record.shared === true,
-    owner: record.owner ?? null,
-    accessRole: record.accessRole ?? null,
-    orgShareRole: record.orgShareRole ?? null,
+    canControl,
+    owner: record.owner,
+    accessRole: record.role,
+    orgShareRole: record.orgShareRole,
     serverName: record.name,
-    title: record.canControl ? preference?.title || record.name : record.name,
-    machineType: record.machineType ?? null,
-    lifecycleStatus: record.status,
-    errorDetail: record.errorDetail ?? null,
+    title: canControl ? preference?.title || record.name : record.name,
+    machineType: record.machineTypeId,
+    lifecycleStatus: lifecycleStatusOf(record),
+    errorDetail: record.error,
     retryAction: record.retryAction,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    connections: record.connections ?? [],
+    updatedAt: record.revision,
+    connections: record.connections,
     agentDefault: preference?.agentDefault ?? 'claude',
   };
 }
 
-function mapWorkspace(
-  state: WorkspaceStoreState,
-  workspaceId: string,
-  update: (workspace: CloudWorkspaceModel) => CloudWorkspaceModel,
-): WorkspaceStoreState {
+/** Everything a poll refresh may overwrite on a model it already holds; the
+ * locally-owned title and agentDefault stay put. */
+function refreshedFields(
+  existing: CloudWorkspaceModel,
+  record: WorkspaceView,
+): CloudWorkspaceModel {
+  const canControl = record.role !== null;
   return {
-    ...state,
-    workspaces: state.workspaces.map((workspace) => (
-      workspace.id === workspaceId && workspace.canControl ? update(workspace) : workspace
-    )),
+    ...existing,
+    canControl,
+    owner: record.owner,
+    accessRole: record.role,
+    orgShareRole: record.orgShareRole,
+    serverName: record.name,
+    title: canControl ? existing.title : record.name,
+    machineType: record.machineTypeId,
+    lifecycleStatus: lifecycleStatusOf(record),
+    errorDetail: record.error,
+    retryAction: record.retryAction,
+    updatedAt: Math.max(existing.updatedAt, record.revision),
+    connections: record.connections,
   };
 }
 
@@ -97,32 +104,14 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
       const visibleRecords = action.records.filter(isVisibleWorkspace);
       const models = visibleRecords.map((record) => {
         const existing = oldById.get(record.id);
-        if (!existing || existing.canControl !== record.canControl) {
+        if (!existing || existing.canControl !== (record.role !== null)) {
           return createWorkspaceModel(record, action.preferences);
         }
-        return {
-          ...existing,
-          ownerMembershipId: record.ownerMembershipId,
-          canControl: record.canControl,
-          shared: record.shared === true,
-          owner: record.owner ?? existing.owner,
-          accessRole: record.accessRole ?? null,
-    orgShareRole: record.orgShareRole ?? null,
-          serverName: record.name,
-          title: record.canControl ? existing.title : record.name,
-          machineType: record.machineType ?? null,
-          lifecycleStatus: record.status,
-          errorDetail: record.errorDetail ?? null,
-          retryAction: record.retryAction,
-          createdAt: record.createdAt,
-          updatedAt: Math.max(existing.updatedAt, record.updatedAt),
-          connections: record.connections ?? existing.connections,
-        };
+        return refreshedFields(existing, record);
       });
       const order = new Map(action.preferences.order.map((id, index) => [id, index]));
       models.sort((left, right) => (
         (order.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(right.id) ?? Number.MAX_SAFE_INTEGER)
-        || right.createdAt - left.createdAt
       ));
       return { workspaces: models, viewer: action.viewer };
     }
@@ -144,41 +133,10 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         workspaces: state.workspaces.flatMap((workspace) => {
           const record = recordsById.get(workspace.id);
           if (!record || !isVisibleWorkspace(record)) return [];
-          return [{
-            ...workspace,
-            ownerMembershipId: record.ownerMembershipId,
-            canControl: record.canControl,
-            shared: record.shared === true,
-            owner: record.owner ?? workspace.owner,
-            accessRole: record.accessRole ?? null,
-    orgShareRole: record.orgShareRole ?? null,
-            serverName: record.name,
-            title: record.canControl ? workspace.title : record.name,
-            machineType: record.machineType ?? null,
-            lifecycleStatus: record.status,
-            errorDetail: record.errorDetail ?? null,
-            retryAction: record.retryAction,
-            createdAt: record.createdAt,
-            updatedAt: Math.max(workspace.updatedAt, record.updatedAt),
-            connections: record.connections ?? workspace.connections,
-          }];
+          return [refreshedFields(workspace, record)];
         }),
       };
     }
-    case 'workspace_record_updated':
-      return mapWorkspace(state, action.record.id, (workspace) => ({
-        ...workspace,
-        machineType: action.record.machineType ?? workspace.machineType,
-        lifecycleStatus: action.record.status,
-        errorDetail: action.record.errorDetail ?? null,
-        retryAction: action.record.retryAction,
-        updatedAt: action.record.updatedAt,
-      }));
-    case 'workspace_resume_failed':
-      return mapWorkspace(state, action.workspaceId, (workspace) => ({
-        ...workspace,
-        errorDetail: action.errorDetail,
-      }));
     case 'workspace_deleted':
       return { ...state, workspaces: state.workspaces.filter(({ id }) => id !== action.workspaceId) };
     case 'workspace_delete_rolled_back': {
@@ -189,20 +147,6 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         0,
         action.workspace,
       );
-      return { ...state, workspaces };
-    }
-    case 'workspace_renamed':
-      return mapWorkspace(state, action.workspaceId, (workspace) => ({ ...workspace, title: action.title }));
-    case 'agent_default_changed':
-      return mapWorkspace(state, action.workspaceId, (workspace) => ({ ...workspace, agentDefault: action.agent }));
-    case 'workspace_reordered': {
-      const sourceIndex = state.workspaces.findIndex(({ id }) => id === action.sourceId);
-      const targetIndex = state.workspaces.findIndex(({ id }) => id === action.targetId);
-      if (sourceIndex < 0 || targetIndex < 0) return state;
-      const workspaces = [...state.workspaces];
-      const [moved] = workspaces.splice(sourceIndex, 1);
-      if (!moved) return state;
-      workspaces.splice(targetIndex, 0, moved);
       return { ...state, workspaces };
     }
   }

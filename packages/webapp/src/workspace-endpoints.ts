@@ -1,10 +1,5 @@
-import type { V2WorkspaceRecord } from './api-adapter.js';
+import type { WorkspaceView } from '@blitzos/schema';
 import type { BoxEndpoints, EndpointResolver } from './resolver.js';
-
-export type WorkspaceEndpoints = BoxEndpoints & {
-  label: string;
-  wire: V2WorkspaceRecord['wire'];
-};
 
 export function terminalWebSocketUrl(value: string): string {
   const target = new URL(value, window.location.href);
@@ -16,8 +11,8 @@ export function terminalWebSocketUrl(value: string): string {
 }
 
 export function rememberWorkspaceEndpoints(
-  entries: Map<string, WorkspaceEndpoints>,
-  records: V2WorkspaceRecord[],
+  entries: Map<string, BoxEndpoints>,
+  records: WorkspaceView[],
   resolver: EndpointResolver,
   authoritative = false,
 ): void {
@@ -28,12 +23,10 @@ export function rememberWorkspaceEndpoints(
     }
   }
   for (const record of records) {
-    const endpoints = resolver.resolve(record.wire);
+    const endpoints = resolver.resolve(record);
     entries.set(record.id, {
       ...endpoints,
       terminalUrl: terminalWebSocketUrl(endpoints.terminalUrl),
-      label: record.ingressLabel,
-      wire: record.wire,
     });
   }
 }

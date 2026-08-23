@@ -8,15 +8,12 @@ import {
   isString,
 } from './type-guards';
 
-const CHAT_AUTH_DISMISSALS_KEY_PREFIX = 'blitz-chat-auth-dismissals-v1:';
 type OptionalJsonValue = JsonValue | undefined;
 
 export type StorageNamespace = {
   orgId: string;
   membershipId: string;
 };
-
-type StorageBackend = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export type WorkspacePreference = {
   title?: string;
@@ -124,33 +121,11 @@ export function createStorageNamespace(orgId: string, membershipId: string): Sto
   return { orgId, membershipId };
 }
 
-function namespacePrefix(namespace: StorageNamespace): string {
-  return `${namespace.orgId}:${namespace.membershipId}:`;
-}
-
-function chatAuthDismissalsStorageKey(
-  namespace: StorageNamespace,
-  workspaceId: string,
-): string {
-  return `${namespacePrefix(namespace)}${CHAT_AUTH_DISMISSALS_KEY_PREFIX}${workspaceId}`;
-}
-
 function isSafeRelativePath<Value>(value: Value): value is Value & string {
   return isString(value)
     && value.length > 0
     && !value.startsWith('/')
     && !value.split('/').includes('..');
-}
-
-export function storedWorkspacePreference(
-  title: string,
-  serverName: string,
-  agentDefault: Agent,
-): WorkspacePreference {
-  const preference: WorkspacePreference = {};
-  if (title !== serverName) preference.title = title;
-  preference.agentDefault = agentDefault;
-  return preference;
 }
 
 export function defaultWorkspaceTabs(): WorkspaceTabs {
@@ -576,12 +551,4 @@ export function decodeWorkspaceWebAppStateResponse(
   json: string,
 ): WebAppStateResponse<WorkspaceWebAppStateV1> {
   return decodeStateResponse(json, parseWorkspaceDoc);
-}
-
-export function removeDismissedChatAuthProviders(
-  namespace: StorageNamespace,
-  workspaceId: string,
-  storage: StorageBackend = localStorage,
-): void {
-  storage.removeItem(chatAuthDismissalsStorageKey(namespace, workspaceId));
 }

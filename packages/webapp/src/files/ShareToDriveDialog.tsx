@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ControlPlaneClient } from '../api';
+import { ModalOverlay } from '../ModalOverlay';
 import { normalizeFolderName } from './drive-model';
 
 /** Confirms publishing one live workspace directory to Drive. Reached from
@@ -41,11 +42,7 @@ export function ShareToDriveDialog({
   };
 
   return (
-    <div
-      className="drive-scrim"
-      role="presentation"
-      onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}
-    >
+    <ModalOverlay className="drive-scrim" onDismiss={onCancel} dismissible={!busy}>
       <section className="drive-dialog" role="dialog" aria-modal="true" aria-label="Share a workspace folder to Drive">
         <h2>Share “{path}” to Drive</h2>
         <div className="drive-dialog-body">
@@ -68,6 +65,6 @@ export function ShareToDriveDialog({
           </button>
         </div>
       </section>
-    </div>
+    </ModalOverlay>
   );
 }

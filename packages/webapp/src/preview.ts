@@ -3,7 +3,6 @@ import type { WorkspaceTabs } from './storage';
 import {
   asJsonObject,
   hasObjectType,
-  isDefined,
   isNumber,
   isString,
   type JsonValue,
@@ -209,11 +208,10 @@ export function previewFocusEndpointUrl(filesBase: string): string {
 
 export async function fetchWorkspacePorts(
   filesBase: string,
-  fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<Array<{ port: number; process: string }>> {
   try {
-    const response = await fetcher(portsEndpointUrl(filesBase), {
+    const response = await fetch(portsEndpointUrl(filesBase), {
       credentials: 'include',
       signal,
     });
@@ -227,11 +225,10 @@ export async function fetchWorkspacePorts(
 
 export async function fetchWorkspacePreviews(
   filesBase: string,
-  fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<PreviewLink[]> {
   try {
-    const response = await fetcher(previewsEndpointUrl(filesBase), {
+    const response = await fetch(previewsEndpointUrl(filesBase), {
       credentials: 'include',
       signal,
     });
@@ -254,11 +251,10 @@ export type PreviewFocusResult =
 
 export async function fetchWorkspacePreviewFocus(
   filesBase: string,
-  fetcher: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<PreviewFocusResult> {
   try {
-    const response = await fetcher(previewFocusEndpointUrl(filesBase), {
+    const response = await fetch(previewFocusEndpointUrl(filesBase), {
       credentials: 'include',
       signal,
     });
@@ -371,10 +367,7 @@ export function previewUrl(
 
 export function previewPortFromLocalUrl(href: string): number | null {
   try {
-    const target = new URL(
-      href,
-      !isDefined(globalThis.window) ? 'http://localhost/' : window.location.href,
-    );
+    const target = new URL(href, window.location.href);
     if (target.protocol !== 'http:' && target.protocol !== 'https:') return null;
     const localhost = target.hostname === 'localhost' || target.hostname === '127.0.0.1';
     if (!localhost || !target.port) return null;

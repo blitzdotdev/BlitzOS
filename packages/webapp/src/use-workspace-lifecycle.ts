@@ -1,6 +1,6 @@
 import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
-import { ApiAdapter, ApiError, isTenantMe } from './api-adapter.js';
-import { caughtErrorMessage } from './error-message.js';
+import type { ControlPlaneClient } from './api.js';
+import { caughtErrorMessage, isUnauthorized } from './error-message.js';
 import { parseAppRoute } from './sessions-page-state.js';
 import {
   createStorageNamespace,
@@ -9,22 +9,20 @@ import {
   type StorageNamespace,
   type WorkspaceWebAppStateV1,
 } from './storage.js';
-import type { IdentityRecord } from './protocol.js';
-import type { EndpointResolver } from './resolver.js';
-import type { WorkspaceAction } from './workspace-store.js';
-import {
-  rememberWorkspaceEndpoints,
-  type WorkspaceEndpoints,
-} from './workspace-endpoints.js';
+import { isTenantMe, meFromWire, type IdentityRecord } from './protocol.js';
+import type { BoxEndpoints, EndpointResolver } from './resolver.js';
+import { isVisibleWorkspace, type WorkspaceAction } from './workspace-store.js';
+import { rememberWorkspaceEndpoints } from './workspace-endpoints.js';
 
 type StateSetter<Value> = Dispatch<SetStateAction<Value>>;
 
 type WorkspaceBootstrapOptions = {
-  api: ApiAdapter;
+  client: ControlPlaneClient;
   bootstrapVersion: number;
   signedOut: boolean;
+  onUnauthorized: () => void;
   resolver: EndpointResolver;
-  workspaceEndpoints: MutableRefObject<Map<string, WorkspaceEndpoints>>;
+  workspaceEndpoints: MutableRefObject<Map<string, BoxEndpoints>>;
   activeWorkspaceIdRef: MutableRefObject<string>;
   setActiveWorkspaceId: StateSetter<string>;
   setStorageNamespace: StateSetter<StorageNamespace | null>;
@@ -35,9 +33,10 @@ type WorkspaceBootstrapOptions = {
 };
 
 export function useWorkspaceBootstrap({
-  api,
+  client,
   bootstrapVersion,
   signedOut,
+  onUnauthorized,
   resolver,
   workspaceEndpoints,
   activeWorkspaceIdRef,
@@ -53,8 +52,9 @@ export function useWorkspaceBootstrap({
     let mounted = true;
     setLoaded(false);
     setError(null);
-    void api.getMe()
-      .then(async (me) => {
+    void client.me()
+      .then(async (wireMe) => {
+        const me = meFromWire(wireMe);
         if (!isTenantMe(me)) {
           if (!mounted) return;
           setIdentityOnly(me.identity);
@@ -64,17 +64,18 @@ export function useWorkspaceBootstrap({
         }
         setIdentityOnly(null);
         const namespace = createStorageNamespace(me.org.id, me.membership.id);
-        const [globalState, records] = await Promise.all([
-          api.getGlobalWebAppState(),
-          api.listWorkspaces(),
+        const [globalState, poll] = await Promise.all([
+          client.getGlobalWebAppState(),
+          client.poll(),
         ]);
+        const records = poll.workspaces.filter(isVisibleWorkspace);
         const workspaceStates = new Map<string, WorkspaceWebAppStateV1>();
         await Promise.all(records.map(async ({ id }) => {
           // A preferences doc is never worth failing the boot over: missing,
           // stale, or malformed state falls back to defaults for that
           // workspace while the rest of the app loads normally.
           try {
-            const state = await api.getWorkspaceWebAppState(id);
+            const state = await client.getWorkspaceWebAppState(id);
             if (state.doc !== null) workspaceStates.set(id, state.doc);
           } catch {
             // Defaults apply.
@@ -96,7 +97,11 @@ export function useWorkspaceBootstrap({
         setLoaded(true);
       })
       .catch((cause: unknown) => {
-        if (!mounted || (cause instanceof ApiError && cause.status === 401)) return;
+        if (!mounted) return;
+        if (isUnauthorized(cause)) {
+          onUnauthorized();
+          return;
+        }
         setLoaded(true);
         setError(caughtErrorMessage(cause, 'The control plane request failed.'));
       });
@@ -105,9 +110,10 @@ export function useWorkspaceBootstrap({
     };
   }, [
     activeWorkspaceIdRef,
-    api,
     bootstrapVersion,
+    client,
     dispatch,
+    onUnauthorized,
     resolver,
     setActiveWorkspaceId,
     setError,
@@ -132,30 +138,19 @@ export function useWorkspacePolling({
   transitioningWorkspaceCount,
   refreshWorkspaceRecords,
 }: WorkspacePollingOptions): void {
+  // One poller, two cadences: 15s at rest, 5s (plus an immediate refresh)
+  // while any workspace is transitioning, so lifecycle changes land fast
+  // without a second timer or a doubled focus listener.
   useEffect(() => {
     if (!loaded) return;
+    const transitioning = !signedOut && transitioningWorkspaceCount > 0;
     const refresh = () => {
       void refreshWorkspaceRecords();
     };
-    const interval = window.setInterval(refresh, 15_000);
+    if (transitioning) refresh();
+    const interval = window.setInterval(refresh, transitioning ? 5_000 : 15_000);
     window.addEventListener('focus', refresh);
     return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', refresh);
-    };
-  }, [loaded, refreshWorkspaceRecords, signedOut]);
-
-  useEffect(() => {
-    if (!loaded || signedOut || transitioningWorkspaceCount === 0) return;
-    let mounted = true;
-    const refresh = async () => {
-      if (mounted) await refreshWorkspaceRecords();
-    };
-    void refresh();
-    const interval = window.setInterval(() => { void refresh(); }, 5_000);
-    window.addEventListener('focus', refresh);
-    return () => {
-      mounted = false;
       window.clearInterval(interval);
       window.removeEventListener('focus', refresh);
     };

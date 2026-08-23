@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { AssistantBlocks } from "./chat-blocks.js";
 import { CopyButton, type ContentBlock, type ToolResult } from "./chat-render.js";
-import { activitySummaryParts, type ChatTurn } from "./chat-turns.js";
-import type { ChatItem } from "./chat-items.js";
+import { activitySummaryParts, type ChatItem, type ChatTurn } from "./chat-turns.js";
 
 export function WorkingIndicator({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(Date.now());

@@ -2,6 +2,7 @@ import { CheckGlyph, CloseGlyph, DownloadGlyph, KebabGlyph, LinkGlyph } from './
 import { DocDuoIcon } from '../files-icons';
 import { DriveAvatar } from './DriveAvatar';
 import { formatBytes, formatWhen, type DriveFileEntry } from './drive-model';
+import { ModalOverlay } from '../ModalOverlay';
 
 /** Presentational chrome shared by the Drive surface: the context menu, the
  * small confirm/name dialogs, the upload progress card, and the snackbar.
@@ -90,7 +91,7 @@ export function FolderNameDialog({
   onSubmit: () => void;
 }) {
   return (
-    <div className="drive-scrim" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+    <ModalOverlay className="drive-scrim" onDismiss={onCancel}>
       <section className="drive-dialog" role="dialog" aria-modal="true">
         <h2>{title}</h2>
         <form onSubmit={(event) => {
@@ -117,7 +118,7 @@ export function FolderNameDialog({
           </div>
         </form>
       </section>
-    </div>
+    </ModalOverlay>
   );
 }
 
@@ -133,7 +134,7 @@ export function DriveDeleteDialog({
   onConfirm: () => void;
 }) {
   return (
-    <div className="drive-scrim" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+    <ModalOverlay className="drive-scrim" onDismiss={onCancel}>
       <section className="drive-dialog" role="dialog" aria-modal="true">
         <h2>Delete <em>“{name}”</em></h2>
         <div className="drive-dialog-body">
@@ -146,7 +147,7 @@ export function DriveDeleteDialog({
           </button>
         </div>
       </section>
-    </div>
+    </ModalOverlay>
   );
 }
 

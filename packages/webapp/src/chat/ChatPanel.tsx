@@ -16,7 +16,6 @@ import { WebAppSelectMenu } from "../WebAppSelectMenu.js";
 import { ChatItemView, ChatTurnView, WorkingIndicator } from "./chat-turn-views.js";
 import { textFromContent } from "./chat-render.js";
 import { deriveChatTranscript } from "./chat-turns.js";
-import { deriveChatItems } from "./chat-items.js";
 import { chatReducer, initialChatState } from "./reducer.js";
 import type { ChatActor, ChatPermission } from "./reducer.js";
 
@@ -346,11 +345,7 @@ export function ChatPanel({
   const runningModel = state.running && model !== undefined && model.currentValue !== "default"
     ? model.choices.find((choice) => choice.value === model.currentValue)?.name
     : undefined;
-  const derived = useMemo(() => deriveChatItems(state), [state]);
-  const transcript = useMemo(
-    () => deriveChatTranscript(derived.items, derived.toolResults),
-    [derived],
-  );
+  const derived = useMemo(() => deriveChatTranscript(state), [state]);
   // Viewers cannot prompt, so they are never the ones who have to sign in.
   const signInProvider = readOnly || onSignIn === undefined ? null : authRequired;
   const approval: ChatPermission | null = readOnly ? null : derived.activePermission;
@@ -365,7 +360,7 @@ export function ChatPanel({
       <div className="chat-body">
         <div className="chat-scroll" ref={scrollRef} aria-live="polite" onScroll={updatePinned}>
           <div className="chat-transcript">
-            {derived.items.length === 0 && !state.running && (
+            {derived.entries.length === 0 && !state.running && (
               <div className="chat-empty">
                 <WorkspaceIcon />
                 <strong>Chat</strong>
@@ -376,7 +371,7 @@ export function ChatPanel({
                 </p>
               </div>
             )}
-            {transcript.map((entry) => entry.kind === "turn" ? (
+            {derived.entries.map((entry) => entry.kind === "turn" ? (
               <ChatTurnView
                 key={`turn:${entry.turn.id}`}
                 turn={entry.turn}

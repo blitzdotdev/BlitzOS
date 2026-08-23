@@ -171,17 +171,7 @@ export function bindTerminalTouch({
     setShowPasteHint(true);
     pasteHintTimeout = window.setTimeout(() => setShowPasteHint(false), 5_000);
   };
-  const clipboardPermissionOutcome = async () => {
-    if (!navigator.permissions?.query) return;
-    try {
-      // SAFETY: Chromium implements clipboard-read although older lib.dom PermissionName unions may omit it.
-      await navigator.permissions.query({ name: 'clipboard-read' as PermissionName });
-    } catch {
-      // Clipboard reads still get their own browser permission check.
-    }
-  };
   const pasteFromClipboard = async () => {
-    await clipboardPermissionOutcome();
     try {
       const text = await navigator.clipboard.readText();
       if (clipboardReadDecision(disposed, text, false) === 'paste') {

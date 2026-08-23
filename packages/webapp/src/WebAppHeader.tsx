@@ -6,7 +6,6 @@ import type { TerminalAgent } from './protocol';
 
 export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview' | 'panel';
 export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
-export const SESSION_TITLE_MAX_LENGTH = 64;
 
 export const SPAWN_SESSION_LABELS = {
   chat: 'Chat',
@@ -27,8 +26,6 @@ export type WebAppTabModel = {
   label: string;
   agent: WebAppSessionType;
   pending: boolean;
-  customTitle?: string;
-  renameable?: boolean;
   dirty?: boolean;
   filePath?: string;
   title?: string;
@@ -47,7 +44,6 @@ type WebAppHeaderProps = {
   onOpenDrawer?: () => void;
   onSelect: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
-  onRename?: (sessionId: string, title: string | undefined) => void;
   onSpawn: (type: SpawnSessionType) => void;
   livePorts?: LivePort[];
   previewLinks?: PreviewLink[];
@@ -113,7 +109,6 @@ export function WebAppHeader({
   onOpenDrawer = () => undefined,
   onSelect,
   onClose,
-  onRename,
   onSpawn,
   livePorts = [],
   previewLinks = [],
@@ -128,12 +123,9 @@ export function WebAppHeader({
   draggingSessionId = null,
 }: WebAppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const newTabControl = useRef<HTMLDivElement>(null);
   const newSessionButton = useRef<HTMLButtonElement>(null);
   const tabstrip = useRef<HTMLDivElement>(null);
-  const renameInput = useRef<HTMLInputElement>(null);
-  const renameFinished = useRef(false);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -163,28 +155,6 @@ export function WebAppHeader({
       .find((cell) => cell.dataset.sessionId === activeSessionId);
     active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [activeSessionId, tabs.length]);
-
-  useEffect(() => {
-    renameInput.current?.focus();
-    renameInput.current?.select();
-  }, [renaming?.id]);
-
-  const beginRename = (tab: WebAppTabModel) => {
-    if (!tab.renameable || !onRename) return;
-    renameFinished.current = false;
-    setRenaming({ id: tab.id, value: tab.customTitle ?? tab.label });
-  };
-  const finishRename = (tab: WebAppTabModel) => {
-    if (!renaming || renaming.id !== tab.id || renameFinished.current) return;
-    renameFinished.current = true;
-    setRenaming(null);
-    const title = renaming.value.trim() || undefined;
-    if (title !== (tab.customTitle ?? tab.label)) onRename?.(tab.id, title);
-  };
-  const cancelRename = () => {
-    renameFinished.current = true;
-    setRenaming(null);
-  };
 
   const spawnSession = (agent: SpawnSessionType) => {
     setMenuOpen(false);
@@ -233,62 +203,27 @@ export function WebAppHeader({
                     draggingSessionId === tab.id ? ' webapp-tab-cell--dragging' : ''}`}
                   data-session-id={tab.id}
                 >
-                  {renaming?.id === tab.id ? (
-                    <div className="webapp-tab-select webapp-tab-select--editing">
-                      <SessionTypeIcon
-                        type={tab.agent}
-                        className="webapp-tab-icon"
-                        filePath={tab.filePath}
-                        panel={tab.panel}
-                      />
-                      <input
-                        ref={renameInput}
-                        className="webapp-tab-rename"
-                        aria-label={`Rename ${tab.label}`}
-                        maxLength={SESSION_TITLE_MAX_LENGTH}
-                        value={renaming.value}
-                        onChange={(event) => setRenaming({
-                          id: tab.id,
-                          value: event.target.value.slice(0, SESSION_TITLE_MAX_LENGTH),
-                        })}
-                        onBlur={() => finishRename(tab)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            event.preventDefault();
-                            finishRename(tab);
-                          } else if (event.key === 'Escape') {
-                            event.preventDefault();
-                            cancelRename();
-                          }
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <button
-                      className="webapp-tab-select"
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      title={tab.title ?? tab.label}
-                      draggable={onTabDragStart !== undefined}
-                      onDragStart={(event) => onTabDragStart?.(tab.id, event)}
-                      onDragEnd={() => onTabDragEnd?.()}
-                      onClick={() => onSelect(tab.id)}
-                    >
-                      <SessionTypeIcon
-                        type={tab.agent}
-                        className="webapp-tab-icon"
-                        filePath={tab.filePath}
-                        panel={tab.panel}
-                      />
-                      <span
-                        className="webapp-tab-label"
-                        onDoubleClick={() => beginRename(tab)}
-                      >{tab.label}</span>
-                      {tab.dirty && <span className="webapp-tab-dirty" aria-label="Unsaved changes">•</span>}
-                    </button>
-                  )}
-                  {active && renaming?.id !== tab.id && (
+                  <button
+                    className="webapp-tab-select"
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    title={tab.title ?? tab.label}
+                    draggable={onTabDragStart !== undefined}
+                    onDragStart={(event) => onTabDragStart?.(tab.id, event)}
+                    onDragEnd={() => onTabDragEnd?.()}
+                    onClick={() => onSelect(tab.id)}
+                  >
+                    <SessionTypeIcon
+                      type={tab.agent}
+                      className="webapp-tab-icon"
+                      filePath={tab.filePath}
+                      panel={tab.panel}
+                    />
+                    <span className="webapp-tab-label">{tab.label}</span>
+                    {tab.dirty && <span className="webapp-tab-dirty" aria-label="Unsaved changes">•</span>}
+                  </button>
+                  {active && (
                     <button
                       className="webapp-tab-close"
                       type="button"

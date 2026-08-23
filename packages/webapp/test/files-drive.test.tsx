@@ -1,7 +1,7 @@
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createControlPlaneClient } from '../src/api.js';
-import type { TenantMe } from '../src/api-adapter.js';
+import type { TenantMe } from '../src/protocol.js';
 import { FilesDrive } from '../src/files/FilesDrive.js';
 import { render, settle } from './dom.js';
 

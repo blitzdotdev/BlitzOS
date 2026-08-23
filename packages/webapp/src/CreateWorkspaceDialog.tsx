@@ -9,7 +9,7 @@ import type {
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
-import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
+import { MachineCatalogGrid } from './MachineCatalogGrid';
 import {
   EMPTY_WORKSPACE_ENVIRONMENT,
   EnvironmentEditor,
@@ -199,7 +199,7 @@ export function CreateWorkspaceDialog({
                     }}
                   >
                     <strong>{template.name}</strong>
-                    <span>{machineTypeLabel(template.machineTypeId)}</span>
+                    <span>{template.machineTypeId}</span>
                     <span>
                       {template.folders.length === 1 ? '1 folder' : `${template.folders.length} folders`}
                       {' · by '}{template.createdBy.name}
@@ -224,7 +224,7 @@ export function CreateWorkspaceDialog({
               <div className="blueprint-selection__heading">
                 <h2>{selectedTemplate.name}</h2>
                 <p>
-                  {machineTypeLabel(selectedTemplate.machineTypeId)}
+                  {selectedTemplate.machineTypeId}
                   {' · shared with everyone at '}{orgName}
                   {' · the workspace is named after the template'}
                 </p>

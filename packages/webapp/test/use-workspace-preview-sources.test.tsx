@@ -1,7 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PORTS_POLL_INTERVAL_MS, type PreviewFocus } from "../src/preview.js";
-import { useWorkspacePreviewFocus } from "../src/use-workspace-preview-focus.js";
+import { useWorkspacePreviewSources } from "../src/use-workspace-preview-sources.js";
 import { render } from "./dom.js";
 
 const FILES_BASE = "https://box.example/workspace/";
@@ -10,20 +10,35 @@ function marker(requestedAt: number, path = "/dashboard"): PreviewFocus {
   return { version: 1, port: 3000, path, title: "Docs", requestedAt };
 }
 
-function focusResponse(focus: PreviewFocus | null): Response {
-  return new Response(JSON.stringify({ focus }), {
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
     status: 200,
     headers: { "content-type": "application/json" },
   });
 }
 
+function focusResponse(focus: PreviewFocus | null): Response {
+  return jsonResponse({ focus });
+}
+
+/** Routes the poller's three sibling fetches: ports and previews always
+ * answer empty, the `/preview-focus` read is the scenario under test. */
+function stubGatewayFetch(focusImpl: () => Promise<Response>): void {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (url.endsWith("/preview-focus")) return focusImpl();
+    if (url.endsWith("/ports")) return jsonResponse({ ports: [] });
+    return jsonResponse({ previews: [] });
+  }));
+}
+
 function Poller({ onFocus }: { onFocus: (focus: PreviewFocus) => void }) {
-  useWorkspacePreviewFocus(true, "workspace-1", FILES_BASE, onFocus);
+  useWorkspacePreviewSources(true, "workspace-1", FILES_BASE, onFocus);
   return null;
 }
 
-/** Each poll is one `fetch`; this drives the interval the hook installs and
- * lets the in-flight promise settle before the next tick. */
+/** Each poll is one gateway round; this drives the interval the hook installs
+ * and lets the in-flight promises settle before the next tick. */
 async function poll(times = 1): Promise<void> {
   for (let index = 0; index < times; index += 1) {
     await act(async () => {
@@ -32,7 +47,7 @@ async function poll(times = 1): Promise<void> {
   }
 }
 
-describe("useWorkspacePreviewFocus", () => {
+describe("useWorkspacePreviewSources focus consumption", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -49,10 +64,13 @@ describe("useWorkspacePreviewFocus", () => {
   // and re-opened a marker from a previous visit.
   it("does not adopt a baseline from a failed poll", async () => {
     const stale = marker(1_787_000_000_000);
-    const fetcher = vi.fn()
-      .mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValue(focusResponse(stale));
-    vi.stubGlobal("fetch", fetcher);
+    let focusReads = 0;
+    let current: () => Promise<Response> = async () => {
+      focusReads += 1;
+      if (focusReads === 1) throw new Error("offline");
+      return focusResponse(stale);
+    };
+    stubGatewayFetch(() => current());
     const onFocus = vi.fn();
 
     const { unmount } = await render(<Poller onFocus={onFocus} />);
@@ -60,13 +78,13 @@ describe("useWorkspacePreviewFocus", () => {
     // must be adopted as the baseline rather than opened.
     await poll(2);
 
-    expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(focusReads).toBeGreaterThanOrEqual(2);
     expect(onFocus).not.toHaveBeenCalled();
 
     // A strictly newer focus, raised while the workspace is on screen, still
     // opens: the baseline suppressed the replay, not the feature.
     const fresh = marker(1_787_000_005_000, "/reports");
-    fetcher.mockResolvedValue(focusResponse(fresh));
+    current = async () => focusResponse(fresh);
     await poll();
 
     expect(onFocus).toHaveBeenCalledTimes(1);
@@ -76,10 +94,13 @@ describe("useWorkspacePreviewFocus", () => {
 
   it("treats an old box's 404 as a failed read, not as an absent focus", async () => {
     const stale = marker(1_787_000_000_000);
-    const fetcher = vi.fn()
-      .mockResolvedValueOnce(new Response("not found", { status: 404 }))
-      .mockResolvedValue(focusResponse(stale));
-    vi.stubGlobal("fetch", fetcher);
+    let focusReads = 0;
+    stubGatewayFetch(async () => {
+      focusReads += 1;
+      return focusReads === 1
+        ? new Response("not found", { status: 404 })
+        : focusResponse(stale);
+    });
     const onFocus = vi.fn();
 
     const { unmount } = await render(<Poller onFocus={onFocus} />);
@@ -90,8 +111,8 @@ describe("useWorkspacePreviewFocus", () => {
   });
 
   it("adopts an absent focus as the baseline and opens the next one", async () => {
-    const fetcher = vi.fn().mockResolvedValue(focusResponse(null));
-    vi.stubGlobal("fetch", fetcher);
+    let current: () => Promise<Response> = async () => focusResponse(null);
+    stubGatewayFetch(() => current());
     const onFocus = vi.fn();
 
     const { unmount } = await render(<Poller onFocus={onFocus} />);
@@ -99,7 +120,7 @@ describe("useWorkspacePreviewFocus", () => {
     expect(onFocus).not.toHaveBeenCalled();
 
     const focus = marker(1_787_000_001_000);
-    fetcher.mockResolvedValue(focusResponse(focus));
+    current = async () => focusResponse(focus);
     await poll();
     expect(onFocus).toHaveBeenCalledTimes(1);
     expect(onFocus).toHaveBeenCalledWith(focus);

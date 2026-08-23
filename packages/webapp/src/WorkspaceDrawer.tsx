@@ -1,13 +1,8 @@
 import type { CredentialRequestView } from '@blitzos/schema';
-import {
-  useRef,
-  type CSSProperties,
-  type ReactNode,
-  type PointerEvent as ReactPointerEvent,
-} from 'react';
+import type { ReactNode } from 'react';
 import type { ControlPlaneClient } from './api';
 import type { LivePort, PreviewLink } from './preview';
-import { maxDrawerWidth, type WorkspaceDrawerSegment } from './storage';
+import type { WorkspaceDrawerSegment } from './storage';
 import { TeenyappsPanel } from './TeenyappsPanel';
 import {
   WorkspaceConnectionsPanel,
@@ -21,7 +16,6 @@ export {
   CREDENTIAL_POLL_INTERVAL_MS,
   expiryCountdown,
   newestPerConnection,
-  portAge,
   useWorkspaceCredentialEvents,
   useWorkspaceLeases,
   WorkspaceConnectionsPanel,
@@ -111,37 +105,20 @@ export function WorkspacePanelContent({
   );
 }
 
-/** Below the mobile breakpoint the panels stay an off-canvas sheet with its
- * own segment strip — the panes never split there. */
+/** The mobile-only off-canvas sheet with its own segment strip — CloudApp
+ * mounts it below the mobile breakpoint alone; the desktop hosts panels as
+ * pane tabs, and the sheet's width is fixed by the mobile stylesheet. */
 export function WorkspaceDrawer({
-  mobile,
   open,
-  width,
   segment,
-  onWidthChange,
   onSegmentChange,
   pendingRequests,
   ...panelProps
 }: Omit<WorkspacePanelProps, 'visible'> & {
-  mobile: boolean;
   open: boolean;
-  width: number;
   segment: WorkspaceDrawerSegment;
-  onWidthChange: (width: number) => void;
   onSegmentChange: (segment: WorkspaceDrawerSegment) => void;
 }) {
-  const resizeOrigin = useRef<{ x: number; width: number } | null>(null);
-  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (mobile || event.button !== 0) return;
-    resizeOrigin.current = { x: event.clientX, width };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-  const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const origin = resizeOrigin.current;
-    if (!origin) return;
-    onWidthChange(Math.max(200, Math.min(maxDrawerWidth(window.innerWidth), origin.width + origin.x - event.clientX)));
-  };
-
   const tabs: Array<{ id: WorkspaceDrawerSegment; label: string; icon: ReactNode }> = [
     { id: 'files', label: 'Files', icon: <FolderIcon className="webapp-tab-icon" /> },
     {
@@ -155,38 +132,18 @@ export function WorkspaceDrawer({
       icon: <GenericProviderIcon className="webapp-tab-icon" />,
     },
   ];
-  const effectiveSegment = segment;
 
   return (
     <aside
       id="webapp-workspace-drawer"
       className={`workspace-drawer${open ? ' workspace-drawer--open' : ''}`}
-      style={
-        // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
-        { '--files-sidebar-width': `${width}px` } as CSSProperties
-      }
       aria-label="Workspace drawer"
-      aria-hidden={mobile && !open ? true : undefined}
-      inert={mobile && !open}
+      aria-hidden={!open ? true : undefined}
+      inert={!open}
     >
-      {!mobile && (
-        <div
-          className="files-sidebar-resizer"
-          role="separator"
-          aria-label="Resize workspace drawer"
-          aria-orientation="vertical"
-          onPointerDown={beginResize}
-          onPointerMove={resize}
-          onPointerUp={(event) => {
-            resizeOrigin.current = null;
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }}
-          onPointerCancel={() => { resizeOrigin.current = null; }}
-        />
-      )}
       <header className="workspace-drawer-segments" role="tablist" aria-label="Workspace drawer sections">
         {tabs.map((tab) => {
-          const active = effectiveSegment === tab.id;
+          const active = segment === tab.id;
           return (
             <div
               className={`webapp-tab-cell${active ? ' webapp-tab-cell--active' : ''}`}
@@ -214,12 +171,12 @@ export function WorkspaceDrawer({
       </header>
       <div className="workspace-drawer-body">
         {tabs.map((tab) => (
-          <div role="tabpanel" hidden={effectiveSegment !== tab.id} key={tab.id}>
+          <div role="tabpanel" hidden={segment !== tab.id} key={tab.id}>
             <WorkspacePanelContent
               panel={tab.id}
               pendingRequests={pendingRequests}
               {...panelProps}
-              visible={open && effectiveSegment === tab.id}
+              visible={open && segment === tab.id}
             />
           </div>
         ))}

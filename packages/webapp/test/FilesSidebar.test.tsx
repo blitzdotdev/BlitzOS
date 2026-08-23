@@ -20,7 +20,6 @@ function webDavClient(getDirectoryContents: ReturnType<typeof vi.fn>): WebDAVCli
 
 function sidebar(
   client: WebDAVClient | null,
-  getClient: () => WebDAVClient | null,
   visible = true,
   onUnauthorized = () => undefined,
 ) {
@@ -28,7 +27,6 @@ function sidebar(
     <FilesSidebar
       client={client}
       expanded={[]}
-      getClient={getClient}
       mobile={false}
       open
       ready
@@ -76,7 +74,7 @@ describe("FilesSidebar root listing retries", () => {
       .mockRejectedValueOnce(badGateway())
       .mockResolvedValue([]);
     const client = webDavClient(getDirectoryContents);
-    const view = await render(sidebar(client, () => client));
+    const view = await render(sidebar(client));
     await flushPromises();
 
     expect(getDirectoryContents).toHaveBeenCalledTimes(1);
@@ -94,12 +92,10 @@ describe("FilesSidebar root listing retries", () => {
     await view.unmount();
   });
 
-  it("manual root retry reacquires a client when the client prop is null", async () => {
-    const failingListing = vi.fn().mockRejectedValue(badGateway());
-    const recoveredListing = vi.fn().mockResolvedValue([]);
-    let currentClient = webDavClient(failingListing);
-    const getClient = vi.fn(() => currentClient);
-    const view = await render(sidebar(null, getClient));
+  it("manual root retry recovers after the retry window is exhausted", async () => {
+    const getDirectoryContents = vi.fn().mockRejectedValue(badGateway());
+    const client = webDavClient(getDirectoryContents);
+    const view = await render(sidebar(client));
     await flushPromises();
 
     await act(async () => {
@@ -107,7 +103,7 @@ describe("FilesSidebar root listing retries", () => {
     });
 
     expect(view.container.textContent).toContain("couldn't list");
-    currentClient = webDavClient(recoveredListing);
+    getDirectoryContents.mockResolvedValue([]);
     const retry = [...view.container.querySelectorAll("button")]
       .find((button) => button.textContent === "retry");
     expect(retry).toBeDefined();
@@ -117,29 +113,27 @@ describe("FilesSidebar root listing retries", () => {
       await Promise.resolve();
     });
 
-    expect(getClient).toHaveBeenCalled();
-    expect(recoveredListing).toHaveBeenCalledWith("/");
+    expect(getDirectoryContents).toHaveBeenLastCalledWith("/");
     expect(view.container.textContent).toContain("(empty)");
 
     await view.unmount();
   });
 
-  it("keeps retrying while the client is unavailable and reacquires it", async () => {
+  it("waits while the client is null and loads once the client prop arrives", async () => {
     const recoveredListing = vi.fn().mockResolvedValue([]);
-    let currentClient: WebDAVClient | null = null;
-    const getClient = vi.fn(() => currentClient);
-    const view = await render(sidebar(null, getClient));
+    const view = await render(sidebar(null));
     await flushPromises();
 
-    expect(getClient).toHaveBeenCalledTimes(1);
     expect(view.container.querySelector('[aria-label="Loading workspace files"]')).not.toBeNull();
-
-    currentClient = webDavClient(recoveredListing);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(ROOT_RETRY_INTERVAL_MS);
     });
+    expect(recoveredListing).not.toHaveBeenCalled();
 
-    expect(getClient).toHaveBeenCalledTimes(2);
+    // Endpoints resolving re-renders the app with a client, as CloudApp does.
+    await act(async () => view.root.render(sidebar(webDavClient(recoveredListing))));
+    await flushPromises();
+
     expect(recoveredListing).toHaveBeenCalledWith("/");
     expect(view.container.textContent).toContain("(empty)");
 
@@ -149,12 +143,11 @@ describe("FilesSidebar root listing retries", () => {
   it("stops root retries when the sidebar becomes hidden", async () => {
     const getDirectoryContents = vi.fn().mockRejectedValue(badGateway());
     const client = webDavClient(getDirectoryContents);
-    const getClient = () => client;
-    const view = await render(sidebar(client, getClient));
+    const view = await render(sidebar(client));
     await flushPromises();
     expect(getDirectoryContents).toHaveBeenCalledTimes(1);
 
-    await act(async () => view.root.render(sidebar(client, getClient, false)));
+    await act(async () => view.root.render(sidebar(client, false)));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(ROOT_RETRY_WINDOW_MS);
     });
@@ -170,12 +163,11 @@ describe("FilesSidebar root listing retries", () => {
       rejectListing = reject;
     }));
     const client = webDavClient(getDirectoryContents);
-    const getClient = () => client;
     const onUnauthorized = vi.fn();
-    const view = await render(sidebar(client, getClient, true, onUnauthorized));
+    const view = await render(sidebar(client, true, onUnauthorized));
     await flushPromises();
 
-    await act(async () => view.root.render(sidebar(client, getClient, false, onUnauthorized)));
+    await act(async () => view.root.render(sidebar(client, false, onUnauthorized)));
     await act(async () => {
       rejectListing(Object.assign(new Error("Unauthorized"), { status: 401 }));
       await Promise.resolve();
@@ -205,7 +197,6 @@ describe("FilesSidebar root listing retries", () => {
       <FilesSidebar
         client={client}
         expanded={[]}
-        getClient={() => client}
         mobile={false}
         open
         ready
@@ -271,7 +262,7 @@ describe("FilesSidebar root listing retries", () => {
   it("shows files created outside the sidebar on the next poll", async () => {
     const getDirectoryContents = vi.fn().mockResolvedValue([]);
     const client = webDavClient(getDirectoryContents);
-    const view = await render(sidebar(client, () => client));
+    const view = await render(sidebar(client));
     await flushPromises();
     expect(view.container.textContent).toContain("(empty)");
 
