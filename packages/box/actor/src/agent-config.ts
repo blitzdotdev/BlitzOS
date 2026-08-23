@@ -1,4 +1,5 @@
 import type { SessionConfigOption } from "@agentclientprotocol/sdk";
+import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import type { Provider } from "./types.js";
 
 export const MODEL_CONFIG_ID = "model";
@@ -22,6 +23,16 @@ interface ProviderCatalog {
   efforts: Choice[];
   permissions: Choice[];
   defaults: AgentConfig;
+}
+
+/** The claude lists are pinned to the agent SDK's own literals at compile
+ * time ("default" means: leave the SDK's own choice alone), so the claude
+ * adapter forwards a session's choices without revalidating them. A value
+ * the SDK does not accept fails `satisfies` below instead of shipping. */
+type ClaudeChoice<Value extends string> = { value: Value; name: string };
+interface ClaudeCatalog extends ProviderCatalog {
+  efforts: ClaudeChoice<"default" | NonNullable<Options["effort"]>>[];
+  permissions: ClaudeChoice<NonNullable<Options["permissionMode"]>>[];
 }
 
 const CATALOGS = {
@@ -77,7 +88,7 @@ const CATALOGS = {
     ],
     defaults: { model: "default", effort: "medium", permission: "never" },
   },
-} satisfies Record<Provider, ProviderCatalog>;
+} satisfies Record<Provider, ProviderCatalog> & { claude: ClaudeCatalog };
 
 export function defaultAgentConfig(provider: Provider): AgentConfig {
   return { ...CATALOGS[provider].defaults };
@@ -102,14 +113,11 @@ function select(
 
 export function agentConfigOptions(provider: Provider, config: AgentConfig): SessionConfigOption[] {
   const catalog = CATALOGS[provider];
-  const options = [
+  return [
     select(MODEL_CONFIG_ID, "Model", "model", catalog.models, config.model),
+    select(EFFORT_CONFIG_ID, "Effort", "thought_level", catalog.efforts, config.effort),
+    select(PERMISSION_CONFIG_ID, "Permissions", "mode", catalog.permissions, config.permission),
   ];
-  if (catalog.efforts.length > 0) {
-    options.push(select(EFFORT_CONFIG_ID, "Effort", "thought_level", catalog.efforts, config.effort));
-  }
-  options.push(select(PERMISSION_CONFIG_ID, "Permissions", "mode", catalog.permissions, config.permission));
-  return options;
 }
 
 /** Applies one selector change, ignoring unknown ids and values. */

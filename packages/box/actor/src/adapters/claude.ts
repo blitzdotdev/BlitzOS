@@ -65,26 +65,6 @@ export function claudeEnv(
   return env;
 }
 
-const PERMISSION_MODES: ReadonlySet<string> = new Set([
-  "default",
-  "acceptEdits",
-  "bypassPermissions",
-  "plan",
-]);
-
-export function claudePermissionMode(value: string): NonNullable<Options["permissionMode"]> {
-  // SAFETY: The set above holds exactly the PermissionMode literals the SDK accepts.
-  return PERMISSION_MODES.has(value) ? (value as NonNullable<Options["permissionMode"]>) : "default";
-}
-
-const EFFORT_LEVELS: ReadonlySet<string> = new Set(["low", "medium", "high", "xhigh", "max"]);
-
-/** "default" (or anything unknown) leaves the SDK's own effort choice alone. */
-export function claudeEffort(value: string): Options["effort"] | undefined {
-  // SAFETY: The set above holds exactly the EffortLevel literals the SDK accepts.
-  return EFFORT_LEVELS.has(value) ? (value as NonNullable<Options["effort"]>) : undefined;
-}
-
 export interface ClaudeStreamChunk {
   messageId: string;
   text?: string;
@@ -103,15 +83,6 @@ export function claudeStreamChunk(
     return { messageId: currentMessageId, text: event.delta.text };
   }
   return { messageId: currentMessageId };
-}
-
-export function claudeTurnOutput(
-  stopReason: TurnOutput["stopReason"],
-  resumeId: string | undefined,
-): TurnOutput {
-  const output: TurnOutput = { stopReason };
-  if (resumeId) output.resumeId = resumeId;
-  return output;
 }
 
 export class ClaudeAdapter implements AgentAdapter {
@@ -146,7 +117,11 @@ export class ClaudeAdapter implements AgentAdapter {
       env: claudeEnv(input.token, input.environment),
       includePartialMessages: true,
       pathToClaudeCodeExecutable: CLAUDE_BINARY,
-      permissionMode: claudePermissionMode(input.config.permission),
+      // SAFETY: a session's config is only ever written by defaultAgentConfig/
+      // applyAgentConfig from its provider's catalog, and the claude catalog's
+      // permission values are pinned to the SDK's PermissionMode literals
+      // (ClaudeCatalog in agent-config.ts).
+      permissionMode: input.config.permission as NonNullable<Options["permissionMode"]>,
       // The agent's rules live in ~/.claude/CLAUDE.md (installed each boot by
       // blitz-init-state), not in an appended system prompt. Load all
       // filesystem setting sources so that file is read. This is the SDK's own
@@ -167,8 +142,11 @@ export class ClaudeAdapter implements AgentAdapter {
     // something a reviewer has to catch.
     if (input.resumeId) options.resume = input.resumeId;
     if (input.config.model !== "default") options.model = input.config.model;
-    const effort = claudeEffort(input.config.effort);
-    if (effort !== undefined) options.effort = effort;
+    if (input.config.effort !== "default") {
+      // SAFETY: same catalog pin as permissionMode above — every non-"default"
+      // claude effort value is one of the SDK's effort literals.
+      options.effort = input.config.effort as NonNullable<Options["effort"]>;
+    }
     let resumeId = input.resumeId ?? undefined;
     let stopReason: TurnOutput["stopReason"] = "refusal";
     let messageId = input.turnId;
@@ -186,7 +164,11 @@ export class ClaudeAdapter implements AgentAdapter {
       }
       if (record.type === "result") stopReason = record.subtype === "success" ? "end_turn" : "refusal";
     }
-    return claudeTurnOutput(stopReason, resumeId);
+    // A fresh session's output must not carry a resumeId key at all, the same
+    // omission rule the optional `options` above follow.
+    const output: TurnOutput = { stopReason };
+    if (resumeId) output.resumeId = resumeId;
+    return output;
   }
 }
 

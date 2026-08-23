@@ -122,9 +122,9 @@ export class CredentialSource {
       const reason = error instanceof Error ? brokerReason(execFailure(error)) : "";
       throw new Error(reason ? `broker mint failed: ${reason}` : "broker mint failed");
     }
-    if (stdout.length === 0 || stdout.length > 1_048_576) {
-      throw new Error("broker returned an invalid token");
-    }
+    // Size is already owned on both sides: execFile's maxBuffer above kills
+    // and rejects any child whose stdout exceeds it, and parseToken refuses
+    // an empty line.
     return parseToken(stdout);
   }
 

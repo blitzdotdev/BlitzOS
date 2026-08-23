@@ -52,11 +52,11 @@ chown "$uid:$gid" /workspace
 # HOME (=$state_dir/home): Claude reads ~/.claude/CLAUDE.md, Codex reads
 # ~/.codex/AGENTS.md. Overwrite every boot so the platform rules always win;
 # project rules belong in /workspace/CLAUDE.md. `install -D` creates the parent
-# directories. Skip silently if the skel doc is absent.
-if [ -f /opt/blitz/skel/agent-rules.md ]; then
-  install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.claude/CLAUDE.md"
-  install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.codex/AGENTS.md"
-fi
+# directories. The skel doc is baked into every image (Dockerfile `COPY
+# packages/box/rootfs/ /`), so its absence is a broken image and fails the
+# boot loudly here (set -e), never a silent skip.
+install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.claude/CLAUDE.md"
+install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.codex/AGENTS.md"
 
 host_key="$state_dir/ssh/ssh_host_ed25519_key"
 if [ ! -f "$host_key" ]; then

@@ -188,13 +188,4 @@ export class ChatSessionStore {
       .all(sessionId, limit) as JournalEvent[];
     return rows;
   }
-
-  public sequences(sessionId: string): number[] {
-    // SAFETY: The query projects the integer seq column from schema-owned event rows.
-    return (
-      this.database.prepare("SELECT seq FROM events WHERE session_id = ? ORDER BY seq").all(sessionId) as Array<{
-        seq: number;
-      }>
-    ).map(({ seq }) => seq);
-  }
 }

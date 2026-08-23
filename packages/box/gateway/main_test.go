@@ -66,7 +66,6 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 		terminal:        upstreamURL,
 		webAppTokenPath: tokenPath,
 		workspaceIDPath: workspacePath,
-		transport:       http.DefaultTransport,
 	}
 	viewer := webAppTicketClaims{
 		WorkspaceID: workspaceID, UserID: "viewer-user", MembershipID: "viewer-member",
@@ -266,7 +265,6 @@ func TestGatewayLegacyRoutesWhenBothTokensAbsent(t *testing.T) {
 		webAppTokenPath: filepath.Join(authDir, "webapp-token"),
 		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
 		discover:        func() ([]portInfo, error) { return []portInfo{{Port: 3000, Process: "node"}}, nil },
-		transport:       http.DefaultTransport,
 	}
 
 	portsRequest := httptest.NewRequest(http.MethodGet, "http://box/ports", nil)
@@ -315,7 +313,6 @@ func TestGatewayWebAppTokenAuthentication(t *testing.T) {
 		dufs:            httputil.NewSingleHostReverseProxy(dufsURL),
 		webAppTokenPath: tokenPath,
 		tunnelTokenPath: filepath.Join(filepath.Dir(tokenPath), "tunnel-token"),
-		transport:       http.DefaultTransport,
 	}
 	request := func(token *string, webSocket bool) *httptest.ResponseRecorder {
 		t.Helper()
@@ -442,7 +439,6 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 			discoverCalls++
 			return nil, nil
 		},
-		transport: http.DefaultTransport,
 	}
 
 	tests := []struct {
@@ -580,7 +576,6 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		actor:           upstreamURL,
 		webAppTokenPath: webAppPath,
 		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
-		transport:       http.DefaultTransport,
 	}
 	tests := []struct {
 		name        string
@@ -641,7 +636,6 @@ func TestCORSPreflight(t *testing.T) {
 			discoverCalls++
 			return nil, nil
 		},
-		transport: http.DefaultTransport,
 	}
 
 	t.Run("control plane PROPFIND", func(t *testing.T) {
@@ -828,7 +822,6 @@ func TestCORSActualResponses(t *testing.T) {
 		dufs:                   httputil.NewSingleHostReverseProxy(dufsURL),
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
 		discover:               func() ([]portInfo, error) { return []portInfo{}, nil },
-		transport:              http.DefaultTransport,
 	}
 
 	t.Run("PROPFIND dufs passthrough exposes ETag", func(t *testing.T) {
@@ -918,7 +911,6 @@ func TestWebSocketOriginPolicy(t *testing.T) {
 		terminal:               upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, "https://blitz-control-plane.example"),
 		discover:               func() ([]portInfo, error) { return nil, nil },
-		transport:              http.DefaultTransport,
 	}
 	routes := []string{
 		"/terminal/ws?arg=terminal&arg=origin-matrix",
@@ -992,7 +984,6 @@ func TestTerminalProxyHandshakeContract(t *testing.T) {
 	handler := &gateway{
 		terminal:               upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, "https://blitz-control-plane.example"),
-		transport:              http.DefaultTransport,
 	}
 	request := httptest.NewRequest(
 		http.MethodGet,
@@ -1057,7 +1048,6 @@ func TestACPProxyHTTPAndWebSocketContract(t *testing.T) {
 	handler := &gateway{
 		actor:                  actorURL,
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
-		transport:              http.DefaultTransport,
 	}
 
 	httpRequest := httptest.NewRequest(http.MethodPost, "http://box/acp/v1/sessions?resume=true", strings.NewReader("prompt"))
@@ -1127,9 +1117,8 @@ func TestACPExactPathAndQueryRouteToActor(t *testing.T) {
 	}
 
 	handler := &gateway{
-		dufs:      httputil.NewSingleHostReverseProxy(dufsURL),
-		actor:     actorURL,
-		transport: http.DefaultTransport,
+		dufs:  httputil.NewSingleHostReverseProxy(dufsURL),
+		actor: actorURL,
 	}
 	for _, test := range []struct {
 		path        string
@@ -1189,7 +1178,6 @@ func TestWebSocketControlPlaneOriginAppearsAfterGatewayStart(t *testing.T) {
 	handler := &gateway{
 		terminal:               upstreamURL,
 		controlPlaneOriginPath: originPath,
-		transport:              http.DefaultTransport,
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()

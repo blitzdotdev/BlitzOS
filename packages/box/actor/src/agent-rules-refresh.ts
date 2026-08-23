@@ -12,32 +12,25 @@ import { spawn } from "node:child_process";
 const REFRESH_TTL_MS = 5 * 60 * 1000;
 
 function detachedSync(): void {
+  // SAFETY-equivalent invariant, stated because callers rely on it: spawn with
+  // these fixed, valid arguments never throws synchronously — every failure,
+  // a missing binary included, arrives through the "error" event handled
+  // below, so the refresh stays invisible to the session that triggered it.
   const child = spawn("blitz-rules", ["sync"], { stdio: "ignore", detached: true });
-  // A missing binary or spawn error surfaces asynchronously; swallow it so the
-  // refresh stays invisible to the session.
   child.on("error", () => undefined);
   child.unref();
 }
 
-/** Returns the "a session started" callback the actor service calls. The two
- * optional arguments are test seams; production passes neither. The returned
- * function never throws, so callers need no guard of their own. */
-export function createRulesRefresher(
-  run: () => void = detachedSync,
-  now: () => number = Date.now,
-  ttlMs: number = REFRESH_TTL_MS,
-): () => void {
+/** Returns the "a session started" callback the actor service calls. The
+ * returned function never throws, so callers need no guard of their own. */
+export function createRulesRefresher(): () => void {
   let lastAttempt: number | null = null;
   return () => {
-    const attemptedAt = now();
-    if (lastAttempt !== null && attemptedAt - lastAttempt < ttlMs) return;
+    const attemptedAt = Date.now();
+    if (lastAttempt !== null && attemptedAt - lastAttempt < REFRESH_TTL_MS) return;
     // The attempt counts against the TTL whether or not it works, so a box
     // whose spawn keeps failing does not spin on every session.
     lastAttempt = attemptedAt;
-    try {
-      run();
-    } catch {
-      // Never let a synchronous spawn failure disturb the caller.
-    }
+    detachedSync();
   };
 }

@@ -300,7 +300,8 @@ describe("ACP actor", () => {
     const terminal = await client.take((frame) => frame.id === "prompt-fixture");
     expect((terminal.result as { stopReason: string }).stopReason).toBe("end_turn");
     expect(observed.slice(1)).toEqual(updates);
-    expect(item.store.sequences(sessionId)).toEqual(observed.map((_value, index) => index + 1));
+    expect(item.store.replay(sessionId, observed.length).map(({ seq }) => seq))
+      .toEqual(observed.map((_value, index) => index + 1));
     client.close();
   });
 

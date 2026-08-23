@@ -63,10 +63,6 @@ fi
 
 session="$session_prefix-$session_key"
 
-new_session() {
-  tmux -u new-session -d -s "$session" -c "$workspace" "${session_cmd[@]}"
-}
-
 if [ "$mode" = ro ]; then
   # An observer attaches to what is already running and never starts
   # anything: creating on demand here would let a read-only visitor spawn

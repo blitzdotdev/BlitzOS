@@ -1,77 +1,65 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { spawn } from "node:child_process";
 import { createRulesRefresher } from "../src/agent-rules-refresh.js";
 
-function fixedClock(start: number): { now: () => number; set(value: number): void } {
-  let current = start;
-  return {
-    now: () => current,
-    set: (value: number) => {
-      current = value;
-    },
-  };
-}
+// The refresher's whole job is the boundary call: a detached, unref'd
+// `blitz-rules sync` at most once per TTL window. Stub the boundary itself
+// (child_process) and drive the TTL with fake time.
+vi.mock("node:child_process", () => ({
+  spawn: vi.fn(() => ({ on: vi.fn(), unref: vi.fn() })),
+}));
+
+const spawnMock = vi.mocked(spawn);
+const TTL_MS = 5 * 60 * 1000;
 
 describe("createRulesRefresher", () => {
-  it("runs once and then suppresses repeats inside the TTL window", () => {
-    let runs = 0;
-    const clock = fixedClock(1_000);
-    const refresh = createRulesRefresher(() => {
-      runs += 1;
-    }, clock.now, 5 * 60 * 1000);
+  beforeEach(() => {
+    vi.useFakeTimers({ now: 1_000 });
+    spawnMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("spawns one detached blitz-rules sync and suppresses repeats inside the TTL window", () => {
+    const refresh = createRulesRefresher();
 
     refresh();
     refresh();
-    clock.set(1_000 + 4 * 60 * 1000);
+    vi.setSystemTime(1_000 + TTL_MS - 60_000);
     refresh();
 
-    expect(runs).toBe(1);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock).toHaveBeenCalledWith("blitz-rules", ["sync"], {
+      stdio: "ignore",
+      detached: true,
+    });
+    // Detached AND unref'd, or the refresh would pin the actor's event loop.
+    const child = spawnMock.mock.results[0]?.value as { on: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> };
+    expect(child.unref).toHaveBeenCalledTimes(1);
+    expect(child.on).toHaveBeenCalledWith("error", expect.any(Function));
   });
 
   it("runs again once the TTL has elapsed", () => {
-    let runs = 0;
-    const clock = fixedClock(0);
-    const refresh = createRulesRefresher(() => {
-      runs += 1;
-    }, clock.now, 5 * 60 * 1000);
+    const refresh = createRulesRefresher();
 
     refresh();
-    clock.set(5 * 60 * 1000);
+    vi.setSystemTime(1_000 + TTL_MS);
     refresh();
-    clock.set(10 * 60 * 1000);
+    vi.setSystemTime(1_000 + 2 * TTL_MS);
     refresh();
 
-    expect(runs).toBe(3);
-  });
-
-  it("swallows a synchronous spawn failure and stays gated", () => {
-    let attempts = 0;
-    const clock = fixedClock(0);
-    const refresh = createRulesRefresher(() => {
-      attempts += 1;
-      throw new Error("spawn failed");
-    }, clock.now, 1000);
-
-    expect(() => refresh()).not.toThrow();
-    // The attempt still counts against the TTL, so a failing box does not spin.
-    refresh();
-    expect(attempts).toBe(1);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
   });
 
   it("keeps each refresher's TTL to itself", () => {
-    let first = 0;
-    let second = 0;
-    const clock = fixedClock(0);
-    const refreshFirst = createRulesRefresher(() => {
-      first += 1;
-    }, clock.now, 1000);
-    const refreshSecond = createRulesRefresher(() => {
-      second += 1;
-    }, clock.now, 1000);
+    const refreshFirst = createRulesRefresher();
+    const refreshSecond = createRulesRefresher();
 
     refreshFirst();
     refreshSecond();
 
-    expect(first).toBe(1);
-    expect(second).toBe(1);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 });

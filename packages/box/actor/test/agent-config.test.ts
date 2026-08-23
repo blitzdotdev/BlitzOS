@@ -5,7 +5,7 @@ import {
   applyAgentConfig,
   defaultAgentConfig,
 } from "../src/agent-config.js";
-import { claudeEffort, claudeStreamChunk } from "../src/adapters/claude.js";
+import { claudeStreamChunk } from "../src/adapters/claude.js";
 import { codexConfigArguments, codexThreadRequestParams } from "../src/adapters/codex.js";
 
 describe("agent config selectors", () => {
@@ -43,13 +43,9 @@ describe("agent config selectors", () => {
       .toEqual(["low", "medium", "high", "xhigh", "max", "ultra"]);
   });
 
-  it("maps claude effort choices to SDK levels and leaves default alone", () => {
-    expect(claudeEffort("default")).toBeUndefined();
-    expect(claudeEffort("")).toBeUndefined();
-    expect(claudeEffort("ludicrous")).toBeUndefined();
-    expect(claudeEffort("low")).toBe("low");
-    expect(claudeEffort("xhigh")).toBe("xhigh");
-    expect(claudeEffort("max")).toBe("max");
+  it("applies a claude effort choice through the catalog", () => {
+    // The adapter forwards catalog values verbatim; the "default" → omit rule
+    // is pinned at the runTurn boundary in adapter-object-contracts.test.ts.
     const chosen = applyAgentConfig("claude", defaultAgentConfig("claude"), "effort", "high");
     expect(chosen.effort).toBe("high");
   });

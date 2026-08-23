@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -109,7 +108,6 @@ type gateway struct {
 	previewFocusPath       string
 	connectionsFocusPath   string
 	discover               func() ([]portInfo, error)
-	transport              http.RoundTripper
 	authMu                 sync.Mutex
 	authRequired           bool
 	lastWebAppToken        string
@@ -184,7 +182,6 @@ func main() {
 		previewFocusPath:       previewFocusPath,
 		connectionsFocusPath:   connectionsFocusPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
-		transport:              http.DefaultTransport,
 	}
 	server := &http.Server{
 		Addr:              listenAddress,
@@ -266,7 +263,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}
 	if request.URL.Path == "/terminal/ws" {
 		removeWebAppTokenHeader(request.Header)
-		g.serveTerminal(response, request)
+		g.serveTerminal(response, request, identity)
 		return
 	}
 	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
@@ -348,18 +345,14 @@ func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request
 	response.WriteHeader(http.StatusNoContent)
 }
 
-func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request) {
-	if identity, ok := request.Context().Value(webAppIdentityContextKey{}).(webAppIdentity); ok && identity.Role == "viewer" {
+func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request, identity webAppIdentity) {
+	if identity.Role == "viewer" {
 		if !forceReadOnlyTerminalArgs(request.URL) {
 			http.Error(response, "terminal requires a session type and key", http.StatusBadRequest)
 			return
 		}
 	}
-	target := g.terminal
-	if target == nil {
-		target = &url.URL{Scheme: "http", Host: terminalAddress}
-	}
-	proxy := g.reverseProxy(target, "/ws", "", request)
+	proxy := g.reverseProxy(g.terminal, "/ws", "", request)
 	previousRewrite := proxy.Rewrite
 	proxy.Rewrite = func(proxyRequest *httputil.ProxyRequest) {
 		previousRewrite(proxyRequest)
@@ -370,15 +363,11 @@ func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Requ
 }
 
 func (g *gateway) serveACP(response http.ResponseWriter, request *http.Request) {
-	target := g.actor
-	if target == nil {
-		target = &url.URL{Scheme: "http", Host: actorAddress}
-	}
 	upstreamPath := strings.TrimPrefix(request.URL.Path, "/acp")
 	if upstreamPath == "" {
 		upstreamPath = "/"
 	}
-	proxy := g.reverseProxy(target, upstreamPath, "/acp", request)
+	proxy := g.reverseProxy(g.actor, upstreamPath, "/acp", request)
 	previousRewrite := proxy.Rewrite
 	proxy.Rewrite = func(proxyRequest *httputil.ProxyRequest) {
 		previousRewrite(proxyRequest)
@@ -747,7 +736,6 @@ func (g *gateway) reverseProxy(target *url.URL, upstreamPath, prefix string, req
 	originalHost := request.Host
 	originalProto := request.Header.Get("X-Forwarded-Proto")
 	return &httputil.ReverseProxy{
-		Transport:     g.transport,
 		FlushInterval: -1,
 		ErrorHandler:  proxyError,
 		Rewrite: func(proxyRequest *httputil.ProxyRequest) {
@@ -822,8 +810,6 @@ func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authReq
 	return "", "", false, true
 }
 
-type webAppIdentityContextKey struct{}
-
 func webAppCredential(request *http.Request, secret, workspaceID string, now int64) (webAppIdentity, bool) {
 	values := request.Header.Values(webAppTokenHeader)
 	if len(values) != 1 {
@@ -835,9 +821,7 @@ func webAppCredential(request *http.Request, secret, workspaceID string, now int
 		if subtle.ConstantTimeCompare([]byte(credential), []byte(secret)) != 1 {
 			return webAppIdentity{}, false
 		}
-		identity := webAppIdentity{UserID: "legacy-owner", MembershipID: "legacy-owner", Role: "owner"}
-		*request = *request.WithContext(context.WithValue(request.Context(), webAppIdentityContextKey{}, identity))
-		return identity, true
+		return webAppIdentity{UserID: "legacy-owner", MembershipID: "legacy-owner", Role: "owner"}, true
 	}
 	parts := strings.Split(credential, ".")
 	if len(parts) != 3 || parts[0] != "v1" || workspaceID == "" {
@@ -865,9 +849,7 @@ func webAppCredential(request *http.Request, secret, workspaceID string, now int
 	if claims.UserID == "" || claims.MembershipID == "" || !validWebAppRole(claims.Role) {
 		return webAppIdentity{}, false
 	}
-	identity := webAppIdentity{UserID: claims.UserID, MembershipID: claims.MembershipID, Role: claims.Role}
-	*request = *request.WithContext(context.WithValue(request.Context(), webAppIdentityContextKey{}, identity))
-	return identity, true
+	return webAppIdentity{UserID: claims.UserID, MembershipID: claims.MembershipID, Role: claims.Role}, true
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {
