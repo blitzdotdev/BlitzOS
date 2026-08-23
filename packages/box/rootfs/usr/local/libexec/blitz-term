@@ -2,17 +2,7 @@
 set -euo pipefail
 
 workspace=/workspace
-
-# The workspace's own variables live in the credential env.d directory, which a
-# login shell already sources through /etc/profile.d/blitz-creds.sh. tmux execs
-# the agent commands below without a login shell, so source that one entry here.
-# The credential files beside it are deliberately left alone: minted secrets stay
-# with blitz-cred.
-workspace_environment=${BLITZ_STATE_DIR:-/var/lib/blitz}/creds/env.d/00-workspace.sh
-if [ -r "$workspace_environment" ]; then
-  . "$workspace_environment" || :
-fi
-unset workspace_environment
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
 
 plain_shell() {
   local shell=${SHELL:-}
@@ -77,6 +67,38 @@ if [ "$mode" = ro ]; then
   fi
   exec tmux -u attach-session -r -t "=$session"
 fi
+
+# An agent reads its skills once, when it starts, and the mint that delivers a
+# skill (.claude/skills/<provider>/SKILL.md) is the same one that fills env.d.
+# A tab opened before the first sync would therefore run a whole session
+# believing the workspace is connected to nothing. Only on the create path: an
+# attach re-enters a harness that already scanned, so syncing for it would buy
+# nothing and stall every reconnect. `command -v` guards the way
+# /etc/profile.d/blitz-creds.sh does, so a stripped image loses a sync and not
+# a terminal, and BLITZ_STATE_DIR is passed explicitly so the sync can never
+# write to a directory other than the one sourced below.
+case "$session_type" in
+  claude|codex)
+    if ! tmux has-session -t "=$session" 2>/dev/null &&
+        command -v timeout >/dev/null 2>&1 &&
+        command -v blitz-cred >/dev/null 2>&1; then
+      BLITZ_STATE_DIR="$state_dir" timeout 10 blitz-cred sync >/dev/null 2>&1 || :
+    fi
+    ;;
+esac
+
+# Everything the workspace has connected lives in the credential env.d
+# directory, which a login shell sources as a whole glob through
+# /etc/profile.d/blitz-creds.sh. tmux execs the commands below without a login
+# shell, so the same glob is sourced here, in the same order — 00-workspace.sh
+# first, a later integration file winning a shared name. An agent tab that
+# cannot read the credential its own workspace connected is the bug; the chat
+# actor merges these identical files (box/actor/src/credentials.ts) so the two
+# surfaces cannot disagree about what a variable holds.
+for credential_env_file in "$state_dir"/creds/env.d/*.sh; do
+  [ -r "$credential_env_file" ] && . "$credential_env_file" || :
+done
+unset credential_env_file
 
 # Recipe invocation delivery (plans/RECIPES.md Phase 2): a recipe launch
 # leaves /var/lib/blitz/recipe/{invocation.env,prompt.txt} on the state

@@ -19,6 +19,7 @@ const expected = [
   "connections/catalog/google-workspace.ts",
   "connections/catalog/index.ts",
   "connections/catalog/linear.ts",
+  "connections/catalog/skill-code.ts",
   "connections/catalog/surfaces.ts",
   "connections/catalog/types.ts",
   "connections/catalog/youtrack.ts",
@@ -115,6 +116,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(90);
+    expect(expected).toHaveLength(91);
   });
 });

@@ -62,9 +62,44 @@ highlighted. Then tell the user you opened the connections panel and ask them
 to authorize the provider. Do not keep retrying: the provider's tools stay
 dark until they authorize it.
 
+### After the user authorizes
+
+A provider's credentials and its skill file arrive on this box by a sync, and
+your session read its skills when it started. So once the user says they
+authorized it, run:
+
+```
+blitz-cred sync
+```
+
+Then start a new session (or a new terminal tab) so the skill is loaded. Until
+you do, the provider's skill will look missing even though the connection is
+live.
+
+### Do not use `/mcp` here
+
+Workspace sessions have no MCP servers and no claude.ai connectors. Connections
+arrive as environment variables and skill files, nothing else. `/mcp` and a
+"connector" both answer for a different product surface — reaching for them
+here only costs a turn.
+
+## Never print a credential
+
+Never echo, print, log, or paste the value of a credential — not into a
+message, not into a file, not into a command you show the user. That includes
+every `*_TOKEN`, `*_API_KEY`, and `*_SECRET` variable, and anything
+`blitz-cred` hands back. Use the variable by name (`$GITHUB_TOKEN`), never by
+value. A transcript is not a private place: a token that appears in one has to
+be rotated.
+
+`blitz-cred list` names the connections this workspace holds and the variables
+they set, without printing a single value. Use it instead of dumping the
+environment.
+
 ## Installing packages
 
 - There is no `sudo`. Anything that needs root (including `apt`) will not work.
 - `npm i -g <pkg>` works; global installs go under `/opt/blitz/npm`.
-- `python3` is present, but `pip` is not. Bootstrap pip yourself if you need it
-  (for example with `python3 -m ensurepip` or by fetching `get-pip.py`).
+- **Node 22 is the scripting runtime here.** There is no `python3`, no `curl`,
+  and no `gh`. Use `node -e '...'` and its built-in `fetch` for HTTP, and the
+  REST API rather than a vendor CLI.

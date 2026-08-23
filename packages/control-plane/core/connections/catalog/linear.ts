@@ -1,3 +1,4 @@
+import { nodeFetch } from "./skill-code.js";
 import type { OAuthProviderManifest, SkillRenderInput } from "./types.js";
 
 const HOUR_MS = 60 * 60 * 1_000;
@@ -29,21 +30,31 @@ Linear has exactly one endpoint. There is no REST API.
 
 \`\`\`sh
 # Who am I
-curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
-  -d '{"query":"{ viewer { id name email } }"}'
+${nodeFetch(input, {
+    path: "/graphql",
+    method: "POST",
+    body: `{query: "{ viewer { id name email } }"}`,
+  })}
 
 # My open issues
-curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
-  -d '{"query":"{ issues(filter:{assignee:{isMe:{eq:true}}}, first:20){ nodes { identifier title state { name } } } }"}'
+${nodeFetch(input, {
+    path: "/graphql",
+    method: "POST",
+    body: `{query: "{ issues(filter:{assignee:{isMe:{eq:true}}}, first:20){ nodes { identifier title state { name } } } }"}`,
+  })}
 
 # Create an issue
-curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
-  -d '{"query":"mutation($t:String!,$team:String!){ issueCreate(input:{title:$t,teamId:$team}){ issue { identifier url } } }","variables":{"t":"...","team":"..."}}'
+${nodeFetch(input, {
+    path: "/graphql",
+    method: "POST",
+    body: `{query: "mutation($t:String!,$team:String!){ issueCreate(input:{title:$t,teamId:$team}){ issue { identifier url } } }", variables: {t: "...", team: "..."}}`,
+  })}
 \`\`\`
 
 ## Reach and limits
 
-- Granted scopes: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}.
+- Scopes recorded for this connection: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}. A pasted key carries whatever
+  reach its owner gave it; nothing here narrows that.
 - 5,000 requests per hour on an OAuth token, 2,500 on a personal API key.
 - Webhooks need the \`admin\` scope. Without it, poll instead of subscribing.
 - Official MCP server: \`https://mcp.linear.app/mcp\` (streamable HTTP). It
@@ -103,6 +114,8 @@ export const linearManifest = {
   surfaces: {
     env: [
       { name: "LINEAR_API_KEY", fill: "token" },
+      // The <PROVIDER>_TOKEN alias, for the same reason github carries three.
+      { name: "LINEAR_TOKEN", fill: "token" },
       { name: "LINEAR_API_URL", fill: "proxy-url" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },

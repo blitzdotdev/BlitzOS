@@ -1,3 +1,4 @@
+import { nodeFetch } from "./skill-code.js";
 import type { SkillRenderInput, StaticProviderManifest } from "./types.js";
 
 function skill(input: SkillRenderInput): string {
@@ -21,7 +22,7 @@ ${input.mode === "proxy"
 ## Canonical call
 
 \`\`\`sh
-curl -sS -H '${header}' "${base}/"
+${nodeFetch(input, { path: "/" })}
 \`\`\`
 
 ## Notes

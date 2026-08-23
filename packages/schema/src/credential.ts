@@ -105,13 +105,6 @@ export interface ListCredentialEventsResponse {
   events: CredentialEventView[];
 }
 
-export interface CatalogScopeView {
-  id: string;
-  title: string;
-  detail: string;
-  default: boolean;
-}
-
 /** An env entry for `config.placements` on `PUT /connections/:id`, sent by
  * the admin form verbatim. Distinct from `Placement`: this is a template with
  * a fill, not a filled value. */
@@ -158,7 +151,6 @@ export interface CatalogEntryView {
   /** Non-null for providers an org admin configures once, org-wide. */
   adminForm: CatalogAdminFormView | null;
   environmentNames: string[];
-  scopes: CatalogScopeView[];
 }
 
 export interface ListCatalogResponse {
@@ -187,7 +179,6 @@ export interface PutUserGrantRequest {
   manifestId: string;
   /** Personal access token or API key. Never returned by any route. */
   token: string;
-  scopes?: string[];
   label?: string;
   /** The generic entry requires `envName` (and may name a base URL);
    * instance-hosted catalog providers (YouTrack) take `baseUrl` alone. Other

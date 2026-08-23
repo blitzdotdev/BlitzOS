@@ -1,9 +1,9 @@
 import type { CredentialEventView, CredentialLeaseView, CredentialRequestView } from '@blitzos/schema';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient } from './api';
-import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
-import { ConnectPicker, CUSTODY_BADGE, type ConnectWorkspace } from './settings/ConnectPicker';
+import { pushCredentialSync } from './connections/credential-sync';
+import { WorkspaceProviderRows } from './connections/WorkspaceProviderRows';
 import { asJsonObject, isString } from './type-guards';
 
 export const CREDENTIAL_POLL_INTERVAL_MS = 5_000;
@@ -14,13 +14,6 @@ export function portAge(firstSeenAt: number, now = Date.now()): string {
   if (minutes < 60) return `${minutes}m`;
   return `${Math.floor(minutes / 60)}h`;
 }
-
-/** A workspace row prints its transport with the words the connect card prints
- * for custody: an `inject` lease is the cp column's `injected`. */
-const MODE_BADGE = {
-  inject: CUSTODY_BADGE.cp,
-  proxy: CUSTODY_BADGE.proxy,
-} satisfies Record<CredentialLeaseView['mode'], string>;
 
 function isLive(lease: CredentialLeaseView, now: number): boolean {
   return lease.state === 'active' && lease.expiresAt > now;
@@ -51,23 +44,10 @@ export function newestPerConnection(
   return [...shown.values()];
 }
 
-export function expiryCountdown(expiresAt: number, now = Date.now()): string {
-  const seconds = Math.ceil((expiresAt - now) / 1_000);
-  if (seconds <= 0) return 'expired';
-  if (seconds < 60) return `${seconds}s left`;
-  const minutes = Math.ceil(seconds / 60);
-  if (minutes < 60) return `${minutes}m left`;
-  const hours = Math.ceil(minutes / 60);
-  if (hours < 48) return `${hours}h left`;
-  return `${Math.ceil(hours / 24)}d left`;
-}
-
 /** What this workspace holds, read once. */
 export type WorkspaceLeaseFeed = {
   /** One row per connection: the live lease where there is one. */
   rows: CredentialLeaseView[];
-  /** The connections holding a live lease in this workspace, by name. */
-  live: ReadonlySet<string>;
   loading: boolean;
   error: string | null;
   now: number;
@@ -76,10 +56,9 @@ export type WorkspaceLeaseFeed = {
   noteLease: (lease: CredentialLeaseView) => void;
 };
 
-/** The lease poll, hoisted out of the section that lists it. The connect grid
- * needs the same fact to tell a connection that is live here from an account
- * grant that has not landed here yet, and two readers of one fact owe the
- * server one request. */
+/** The lease poll, hoisted out of the rows that read it. A provider row needs
+ * the same fact the revoke path does — whether this workspace holds a live
+ * lease — and two readers of one fact owe the server one request. */
 export function useWorkspaceLeases(
   client: Pick<ControlPlaneClient, 'listLeases' | 'revokeLease'>,
   workspaceId: string,
@@ -147,145 +126,14 @@ export function useWorkspaceLeases(
   }, []);
 
   const rows = newestPerConnection(leases, now);
-  // The grid reads membership, not identity. Keying the set on its own names
-  // keeps the prop steady through the once-a-second clock tick.
-  const liveNames = rows.filter((lease) => isLive(lease, now))
-    .map((lease) => lease.connection).sort().join('\n');
-  const live = useMemo(
-    () => new Set(liveNames === '' ? [] : liveNames.split('\n')),
-    [liveNames],
-  );
 
-  return { rows, live, loading, error, now, revoking, revoke, noteLease };
-}
-
-/** The workspace's own connections. An empty list is not a section: a heading
- * over an apology for holding nothing is worse than the silence of a workspace
- * that plainly holds no live lease. The host decides that; this draws what
- * the feed holds, and a failed load still speaks. */
-export function WorkspaceLeasesPanel({
-  feed,
-  readOnly,
-}: {
-  feed: WorkspaceLeaseFeed;
-  readOnly?: boolean;
-}) {
-  const { rows, loading, error, now, revoking, revoke } = feed;
-  const [confirmation, setConfirmation] = useState<CredentialLeaseView | null>(null);
-
-  return (
-    <section className="workspace-drawer-panel workspace-leases" aria-label="Workspace connections">
-      {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
-      {loading && <p className="workspace-drawer-state">Loading connections…</p>}
-      {rows.length > 0 && (
-        <div className="workspace-credential-rows">
-          {rows.map((lease) => {
-            const state = lease.state === 'active' && lease.expiresAt <= now
-              ? 'expired'
-              : lease.state;
-            return (
-            <article className="workspace-credential-row" key={lease.id}>
-              <div className="workspace-credential-row__title">
-                <strong>{lease.connection}</strong>
-                <span className={`workspace-state-badge workspace-state-badge--${state}`}>
-                  {state}
-                </span>
-              </div>
-              <p>{lease.scopes.length === 0 ? 'No named scopes' : lease.scopes.join(', ')}</p>
-              <div className="workspace-credential-row__meta">
-                <span>{MODE_BADGE[lease.mode]}</span>
-                <time dateTime={new Date(lease.expiresAt).toISOString()}>
-                  {state === 'active' ? expiryCountdown(lease.expiresAt, now) : state}
-                </time>
-              </div>
-              {readOnly !== true && (
-                <button
-                  className="webapp-action workspace-credential-row__action"
-                  type="button"
-                  disabled={state !== 'active' || revoking !== null}
-                  onClick={() => setConfirmation(lease)}
-                >{revoking === lease.id ? 'Revoking…' : 'Revoke'}</button>
-              )}
-            </article>
-            );
-          })}
-        </div>
-      )}
-      {confirmation && (
-        <ConfirmationDialog
-          title="Revoke this connection?"
-          description={`Revoke ${confirmation.connection} access for this workspace immediately?`}
-          confirmLabel="Revoke access"
-          onCancel={() => setConfirmation(null)}
-          onConfirm={() => {
-            setConfirmation(null);
-            void revoke(confirmation);
-          }}
-        />
-      )}
-    </section>
-  );
+  return { rows, loading, error, now, revoking, revoke, noteLease };
 }
 
 /** An in-box agent asked for this panel by provider, via
  * `blitz connections open`. A fresh object arrives per focus event, so the
  * panel re-selects even when the same provider is asked for twice. */
 export type ConnectionsPanelFocus = { provider: string; at: number };
-
-/** The template's stipulated providers as status rows: each reads off
- * whether its lease is live. Drawn from the workspace ceiling, not the lease
- * list, so a provider with no live lease yet still has a row to click. Same
- * row furniture as the lease list below it. */
-export function WorkspaceStipulatedPanel({
-  stipulated,
-  live,
-  focusProvider,
-  readOnly,
-  onConnect,
-}: {
-  stipulated: readonly string[];
-  live: ReadonlySet<string>;
-  focusProvider: string | null;
-  readOnly?: boolean;
-  onConnect: (provider: string) => void;
-}) {
-  return (
-    <section
-      className="workspace-drawer-panel workspace-leases"
-      aria-label="Template connections"
-    >
-      <div className="workspace-credential-rows">
-        {stipulated.map((provider) => {
-          const leaseLive = live.has(provider);
-          const focused = focusProvider === provider;
-          return (
-            <article
-              className={`workspace-credential-row${focused ? ' workspace-credential-row--focus' : ''}`}
-              key={provider}
-            >
-              <div className="workspace-credential-row__title">
-                <strong>{provider}</strong>
-                <span
-                  className={`workspace-state-badge workspace-state-badge--${leaseLive ? 'active' : 'pending'}`}
-                >{leaseLive ? 'connected' : 'needs you'}</span>
-              </div>
-              <p>{leaseLive
-                ? 'Live in this workspace.'
-                : 'This workspace names it. Its tools stay dark until you connect.'}</p>
-              {readOnly !== true && !leaseLive && (
-                <button
-                  className="webapp-action webapp-action--primary workspace-credential-row__action"
-                  type="button"
-                  onClick={() => onConnect(provider)}
-                >Connect</button>
-              )}
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
 
 /** The connect inbox. A pending row is not a decision waiting on an approver —
  * it is an agent that wanted `@name` and found no grant behind it. An empty
@@ -428,6 +276,7 @@ export function WorkspaceConnectionsPanel({
   pendingRequestsError,
   stipulatedConnections,
   connectionsFocus,
+  filesBase,
   onResolveRequest,
 }: {
   client: ControlPlaneClient;
@@ -437,50 +286,55 @@ export function WorkspaceConnectionsPanel({
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
   /** Connection names the workspace ceiling enables (template-stipulated plus
-   * named-at-create); each gets a status row that reads off whether its lease
-   * is live. */
+   * named-at-create). They head the provider list and carry a badge. */
   stipulatedConnections?: readonly string[];
-  /** The latest `blitz connections open` focus: selects that provider in the
-   * connect grid and highlights its stipulated row. */
+  /** The latest `blitz connections open` focus: opens that provider's row. */
   connectionsFocus?: ConnectionsPanelFocus | null;
+  /** The box's file surface, which is also where its gateway answers. Null
+   * until the workspace is reachable; the delivery push is skipped then, and
+   * the box picks the credential up on its own next sync. */
+  filesBase?: string | null;
   onResolveRequest: (
     request: CredentialRequestView,
     action: 'approve' | 'deny',
   ) => Promise<void>;
 }) {
-  // The asked-for provider plus a version, so a repeat ask for the same name
-  // still re-opens the card the person cancelled.
-  const [connecting, setConnecting] = useState<{ name: string; version: number } | null>(null);
-  const ask = useCallback((name: string) => {
-    setConnecting((current) => ({ name, version: (current?.version ?? 0) + 1 }));
-  }, []);
   const leases = useWorkspaceLeases(client, workspaceId, visible);
   const { events, error: eventsError } = useWorkspaceCredentialEvents(client, workspaceId, visible);
-  const { live, noteLease } = leases;
+  const { noteLease } = leases;
   const stipulated = stipulatedConnections ?? [];
-  // Each focus event is a fresh object, so asking for the same provider twice
-  // still re-selects it after the person closed the card.
+  // Which provider row to open, and a version so asking twice for the same
+  // one re-opens a row the person closed. Two things ask: an agent's
+  // `blitz connections open`, and Connect on a request in the inbox.
+  const [opened, setOpened] = useState<{ name: string; version: number } | null>(null);
+  const ask = useCallback((name: string) => {
+    setOpened((current) => ({ name, version: (current?.version ?? 0) + 1 }));
+  }, []);
   useEffect(() => {
     if (connectionsFocus == null) return;
     ask(connectionsFocus.provider);
   }, [ask, connectionsFocus]);
-  const connectWorkspace = useMemo<ConnectWorkspace>(() => ({
-    id: workspaceId,
-    connections: live,
-    connect: async (connectionName: string) => {
-      const { lease } = await client.mintWorkspaceConnection(workspaceId, connectionName);
-      noteLease(lease);
-    },
-  }), [client, live, noteLease, workspaceId]);
+
+  /** A provider just went live here. Two things follow: the connect request
+   * that asked for it is answered, and the box is told to fetch. Without the
+   * push the box only learns on its own cadence, which is throttled by a
+   * freshness window — the member sat looking at a connected provider whose
+   * tools stayed dark. It is best-effort by design: the box's own sync is
+   * still the guarantee, this only makes it prompt. */
+  const connected = useCallback((connectionName: string) => {
+    const pending = pendingRequests.find(
+      (request) => request.connection_name === connectionName,
+    );
+    // Connecting is the answer to the inbox entry: resolving it also widens
+    // the workspace ceiling so the next mint succeeds.
+    if (pending !== undefined) void onResolveRequest(pending, 'approve');
+    if (filesBase != null) void pushCredentialSync(filesBase);
+  }, [filesBase, onResolveRequest, pendingRequests]);
+
   // Nothing wanted is the everyday state, and a heading over an apology for
   // having nothing to say is worse than silence. The pending count on the
   // connections rail icon is what tells a person there is something here.
   const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
-  // Every section keeps that rule. A workspace with no live lease and
-  // nothing logged is a page with a connect grid on it and no apologies. A
-  // failed load still draws, because an error is information; so does the
-  // first read, because "not yet known" is not the same as "nothing".
-  const connections = leases.loading || leases.error !== null || leases.rows.length > 0;
   const activity = eventsError !== null || events.length > 0;
   return (
     <div className="workspace-connections">
@@ -496,43 +350,25 @@ export function WorkspaceConnectionsPanel({
           />
         </>
       )}
-      {stipulated.length > 0 && (
-        <>
-          <h3 className="workspace-sect">From the template</h3>
-          <WorkspaceStipulatedPanel
-            stipulated={stipulated}
-            live={live}
-            focusProvider={connectionsFocus?.provider ?? null}
-            readOnly={readOnly}
-            onConnect={ask}
-          />
-        </>
+      <h3 className="workspace-sect">Connections</h3>
+      {leases.error !== null && (
+        <p className="webapp-form-message" role="alert">{leases.error}</p>
       )}
-      {readOnly !== true && (
-        <ConnectPicker
-          client={client}
-          requestedProvider={connecting?.name ?? null}
-          requestVersion={connecting?.version ?? 0}
-          // Connecting is a thing that happens to a workspace, so the grid gets
-          // the workspace: what it already holds, and how to give it one more.
-          workspace={connectWorkspace}
-          onConnected={() => {
-            const pending = pendingRequests.find(
-              (request) => request.connection_name === connecting?.name,
-            );
-            setConnecting(null);
-            // Connecting is the answer to the inbox entry: resolving it also
-            // widens the workspace ceiling so the next mint succeeds.
-            if (pending !== undefined) void onResolveRequest(pending, 'approve');
-          }}
-        />
-      )}
-      {connections && (
-        <>
-          <h3 className="workspace-sect">Connections</h3>
-          <WorkspaceLeasesPanel feed={leases} readOnly={readOnly} />
-        </>
-      )}
+      {leases.loading && <p className="workspace-drawer-state">Loading connections…</p>}
+      <WorkspaceProviderRows
+        client={client}
+        workspaceId={workspaceId}
+        stipulated={stipulated}
+        leases={leases.rows}
+        now={leases.now}
+        focusProvider={opened?.name ?? null}
+        focusVersion={opened?.version ?? 0}
+        readOnly={readOnly}
+        revoking={leases.revoking}
+        onRevokeLease={leases.revoke}
+        onLeaseMinted={noteLease}
+        onConnected={connected}
+      />
       {activity && (
         <>
           <h3 className="workspace-sect">Recent activity</h3>

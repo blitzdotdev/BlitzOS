@@ -1,7 +1,6 @@
 import type {
   CatalogAdminFormView,
   CatalogEntryView,
-  CatalogScopeView,
 } from "../types.js";
 import { discordManifest } from "./discord.js";
 import { genericManifest } from "./generic.js";
@@ -55,15 +54,6 @@ function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null 
   };
 }
 
-function scopeViews(manifest: ProviderManifest): CatalogScopeView[] {
-  return manifest.scopes.map((scope) => ({
-    id: scope.id,
-    title: scope.title,
-    detail: scope.detail,
-    default: manifest.defaultScopes.includes(scope.id),
-  }));
-}
-
 /** What the connect picker needs, and nothing that names a secret value.
  * `oauthConfigured` is the honest answer to "will the Connect button work on
  * this instance", computed from the presence of the declared bindings. */
@@ -94,7 +84,6 @@ export function catalogView(
     needsVendorConfig: manifest.id === GENERIC_MANIFEST_ID,
     adminForm: adminFormView(manifest),
     environmentNames: manifest.surfaces.env.map((surface) => surface.name),
-    scopes: scopeViews(manifest),
   };
 }
 

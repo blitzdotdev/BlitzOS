@@ -114,7 +114,6 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     needsVendorConfig: false,
     adminForm: null,
     environmentNames: [],
-    scopes: [],
   };
 }
 
@@ -134,11 +133,14 @@ function accountGrant(provider: string): UserGrantView {
   };
 }
 
+/** A lease the box has already fetched. A box-minted lease carries a box id;
+ * the one the webApp mints when a person connects does not, and that is how
+ * the panel tells "connected" from "still delivering". */
 function liveLease(connection: string): CredentialLeaseView {
   return {
     id: `lease-${connection}`,
     workspaceId: 'workspace-one',
-    boxId: null,
+    boxId: 'box-one',
     connection,
     userId: null,
     scopes: [],
@@ -147,6 +149,25 @@ function liveLease(connection: string): CredentialLeaseView {
     expiresAt: Date.now() + 600_000,
     state: 'active',
   };
+}
+
+/** Minted by the webApp, not yet picked up by the box. */
+function undeliveredLease(connection: string): CredentialLeaseView {
+  return { ...liveLease(connection), boxId: null };
+}
+
+function rowFor(container: ParentNode, title: string): Element {
+  const row = [...container.querySelectorAll('.workspace-provider-row')]
+    .find((candidate) => candidate.querySelector('strong')?.textContent === title);
+  if (row === undefined) throw new Error(`no provider row for ${title}`);
+  return row;
+}
+
+function buttonIn(scope: ParentNode, label: string): HTMLButtonElement {
+  const button = [...scope.querySelectorAll('button')]
+    .find((candidate) => candidate.textContent === label);
+  if (button === undefined) throw new Error(`no ${label} button`);
+  return button;
 }
 
 /** The connections panel as the drawer hosts it, with nothing pending. */
@@ -235,87 +256,6 @@ describe('v2 credential surfaces', () => {
     expect(credentialsTab.getAttribute('aria-selected')).toBe('true');
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
       .toContain('Connections');
-    await view.unmount();
-  });
-
-  it('renders leases and revokes only after confirmation', async () => {
-    const revokeLease = vi.fn(async () => undefined);
-    const lease: CredentialLeaseView = {
-      id: 'lease-one',
-      workspaceId: 'workspace-one',
-      boxId: null,
-      connection: 'github',
-      userId: null,
-      scopes: ['repo:read'],
-      mode: 'inject',
-      issuedAt: Date.now() - 1_000,
-      expiresAt: Date.now() + 60_000,
-      state: 'active',
-    };
-    const wire = client({
-      revokeLease,
-      listLeases: vi.fn(async () => ({
-        leases: [lease],
-      })),
-    });
-    const view = await render(connectionsPanel(wire));
-    await settle();
-    expect(view.container.textContent).toContain('github');
-    expect(view.container.textContent).toContain('repo:read');
-
-    await act(async () => click([...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Revoke')!));
-    expect(revokeLease).not.toHaveBeenCalled();
-    await act(async () => click([...document.body.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Revoke access')!));
-    await settle();
-    expect(revokeLease).toHaveBeenCalledWith('lease-one');
-    expect(view.container.textContent).toContain('revoked');
-    // The panel names the transport the way a connect card names custody.
-    expect(view.container.textContent).toContain('injected');
-    await view.unmount();
-  });
-
-  /** Every credential sync used to mint another lease and retire none, so a
-   * workspace connected once carried a stack of active rows for it. */
-  it('shows one row per connection and revokes the live one', async () => {
-    const revokeLease = vi.fn(async () => undefined);
-    const base = {
-      workspaceId: 'workspace-one',
-      boxId: null,
-      connection: 'google-workspace',
-      userId: null,
-      scopes: [],
-      mode: 'proxy' as const,
-      state: 'active' as const,
-    };
-    const stale: CredentialLeaseView = {
-      ...base,
-      id: 'lease-old',
-      issuedAt: Date.now() - 600_000,
-      expiresAt: Date.now() + 30_000,
-    };
-    const fresh: CredentialLeaseView = {
-      ...base,
-      id: 'lease-new',
-      issuedAt: Date.now() - 1_000,
-      expiresAt: Date.now() + 600_000,
-    };
-    const wire = client({
-      revokeLease,
-      listLeases: vi.fn(async () => ({ leases: [fresh, stale] })),
-    });
-    const view = await render(connectionsPanel(wire));
-    await settle();
-    expect(view.container.querySelectorAll('.workspace-credential-row').length).toBe(1);
-    expect(view.container.textContent).toContain('proxied');
-
-    await act(async () => click([...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Revoke')!));
-    await act(async () => click([...document.body.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Revoke access')!));
-    await settle();
-    expect(revokeLease).toHaveBeenCalledWith('lease-new');
     await view.unmount();
   });
 
@@ -452,72 +392,112 @@ describe('v2 credential surfaces', () => {
     await view.unmount();
   });
 
-  /** A workspace holding nothing is a page with a connect grid on it. Every
-   * other section is a heading over an apology, so none of them are drawn. */
-  it('draws no section for leases or activity a new workspace does not have', async () => {
-    const view = await render(connectionsPanel(client()));
-    await settle();
-    expect([...view.container.querySelectorAll('.workspace-sect')]
-      .map((heading) => heading.textContent)).toEqual([]);
-    expect(view.container.textContent).not.toContain('Nothing is connected in this workspace yet.');
-    expect(view.container.textContent).not.toContain('No credential events for this workspace.');
-    // The connect grid is the whole panel, and it still stands.
-    expect(view.container.querySelector('.connect-picker')).not.toBeNull();
-    await view.unmount();
-  });
+});
 
-  /** Both sections come back the moment there is something to put in them. */
-  it('draws both sections once the workspace holds a lease and an event', async () => {
+
+/** Panel v2: one provider row list. It replaced a template section, a provider
+ * grid, a detail card under the grid, and a separate lease list — four places
+ * that each told part of the truth about one provider. */
+describe('workspace provider rows', () => {
+  it('lists stipulated providers first, badged, and never draws the old grid', async () => {
     const wire = client({
-      listLeases: vi.fn(async () => ({ leases: [liveLease('github')] })),
-      listCredentialEvents: vi.fn(async () => ({
-        events: [{
-          id: 1,
-          leaseId: 'lease-github',
-          event: 'minted' as const,
-          detail: null,
-          createdAt: Date.now(),
-        }],
-      })),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [notion, linear] })),
     });
-    const view = await render(connectionsPanel(wire));
+    const view = await render(
+      <WorkspaceConnectionsPanel
+        client={wire}
+        workspaceId="workspace-one"
+        visible
+        pendingRequests={[]}
+        stipulatedConnections={['linear']}
+        onResolveRequest={async () => undefined}
+      />,
+    );
     await settle();
-    expect([...view.container.querySelectorAll('.workspace-sect')]
-      .map((heading) => heading.textContent)).toEqual(['Connections', 'Recent activity']);
-    expect(view.container.textContent).toContain('minted');
+    const titles = [...view.container.querySelectorAll('.workspace-provider-row strong')]
+      .map((title) => title.textContent);
+    expect(titles).toEqual(['Linear', 'Notion']);
+    expect(rowFor(view.container, 'Linear').textContent).toContain('from template');
+    expect(rowFor(view.container, 'Notion').textContent).not.toContain('from template');
+    // The grid and the section heading it sat under are both gone.
+    expect(view.container.querySelector('.connect-grid')).toBeNull();
+    expect(view.container.textContent).not.toContain('From the template');
     await view.unmount();
   });
 
-  /** The live repro: a brand-new workspace wore a green Connected badge for
-   * every provider the account had ever authorized. Connected means this
-   * workspace holds a live lease, and nothing else means it. */
-  it('shows a grant with no lease here as an unconnected card', async () => {
+  it('reads a delivered lease, an undelivered one, and a missing key differently', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
-      listConnectionGrants: vi.fn(async () => ({
-        grants: [accountGrant('linear'), accountGrant('notion')],
+      listLeases: vi.fn(async () => ({
+        leases: [liveLease('linear'), undeliveredLease('notion')],
       })),
-      listLeases: vi.fn(async () => ({ leases: [liveLease('notion')] })),
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-
-    const cards = [...view.container.querySelectorAll('.connect-card')];
-    const granted = cards.find((card) => card.textContent?.includes('Linear'))!;
-    const leased = cards.find((card) => card.textContent?.includes('Notion'))!;
-    // Authorized but not connected here: exactly as bare as a card for a
-    // provider the account has never touched.
-    expect(granted.querySelector('.connect-badge--connected')).toBeNull();
-    expect(granted.querySelector('.connect-badge--authorized')).toBeNull();
-    expect(granted.classList.contains('connect-card--connected')).toBe(false);
-    expect(leased.querySelector('.connect-badge--connected')?.textContent).toBe('Connected');
-    expect(leased.classList.contains('connect-card--connected')).toBe(true);
+    expect(rowFor(view.container, 'Linear').textContent).toContain('connected');
+    // The lease exists but the box has not fetched it, so nothing inside the
+    // workspace can use it yet. That is a state, not a success.
+    const notionRow = rowFor(view.container, 'Notion');
+    expect(notionRow.textContent).toContain('delivering');
+    expect(notionRow.textContent).toContain('picking it up');
     await view.unmount();
   });
 
-  /** The grant is plumbing whose only job is making this one click instant. */
-  it('connects an authorized provider here in one call and no auth form', async () => {
-    const mintWorkspaceConnection = vi.fn(async () => ({ lease: liveLease('linear') }));
+  it('names who authorized a provider and when', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    // Create-time minting from an existing owner grant is designed behaviour;
+    // provenance is what keeps it from reading as a surprise.
+    expect(rowFor(view.container, 'Linear').textContent).toContain('authorized by you ·');
+    await view.unmount();
+  });
+
+  it('says a key is needed, expands inline, and pastes it without leaving the row', async () => {
+    const putConnectionGrant = vi.fn(async () => undefined);
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
+    const wire = client({
+      putConnectionGrant,
+      mintWorkspaceConnection,
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+    });
+    const view = await render(connectionsPanel(wire));
+    await settle();
+    const row = rowFor(view.container, 'Linear');
+    expect(row.textContent).toContain('needs a key');
+    expect(row.querySelector('.connect-form')).toBeNull();
+
+    await act(async () => click(buttonIn(row, 'Connect')));
+    const token = rowFor(view.container, 'Linear')
+      .querySelector<HTMLInputElement>('input[name="token"]');
+    if (token === null) throw new Error('inline key input is missing');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setValue === undefined) throw new Error('input value setter is unavailable');
+    await act(async () => {
+      setValue.call(token, 'lin_api_test-only');
+      token.dispatchEvent(new Event('input', { bubbles: true }));
+      rowFor(view.container, 'Linear').querySelector('.connect-form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    // No scope checkboxes anywhere: a pasted key carries the reach its owner
+    // gave it, and nothing here can narrow that.
+    expect(putConnectionGrant).toHaveBeenCalledWith('linear', {
+      manifestId: 'linear',
+      token: 'lin_api_test-only',
+    });
+    expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
+    await view.unmount();
+  });
+
+  it('connects an already-authorized provider in one call and no form', async () => {
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
     const wire = client({
       mintWorkspaceConnection,
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
@@ -525,100 +505,76 @@ describe('v2 credential surfaces', () => {
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-    await act(async () => click(view.container.querySelector('.connect-card')!));
-    // No token field, no OAuth trip: the account already authorized this.
-    expect(view.container.querySelector('.connect-form')).toBeNull();
-    expect(view.container.querySelector('.connect-detail__authorized')?.textContent)
-      .toBe('Authorized · oauth');
-    expect([...view.container.querySelectorAll('.connect-detail button')]
-      .map((action) => action.textContent)).toEqual(['Cancel', 'Connect']);
-
-    await act(async () => click([...view.container.querySelectorAll('.connect-detail button')]
-      .find((button) => button.textContent === 'Connect')!));
+    const row = rowFor(view.container, 'Linear');
+    expect(row.textContent).toContain('not here yet');
+    await act(async () => click(buttonIn(row, 'Connect')));
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
-    // The minted lease lands before the next poll, so the card is green now.
-    expect(view.container.querySelector('.connect-card--connected')).not.toBeNull();
-    expect(view.container.querySelectorAll('.workspace-credential-row').length).toBe(1);
+    expect(view.container.querySelector('.connect-form')).toBeNull();
+    // The minted lease lands before the next poll, and it is undelivered.
+    expect(rowFor(view.container, 'Linear').textContent).toContain('delivering');
     await view.unmount();
   });
 
-  /** Connected is the end of the errand, so the pane stops asking for things
-   * and says where disconnecting lives. */
-  it('sends a connected provider to the Connections list to disconnect', async () => {
+  it('offers a connected row Replace key and a Disconnect that names both meanings', async () => {
+    const revokeLease = vi.fn(async () => undefined);
     const wire = client({
+      revokeLease,
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
       listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
       listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-    await act(async () => click(view.container.querySelector('.connect-card')!));
-    expect(view.container.querySelector('.connect-detail__connected')?.textContent)
-      .toBe('Connected in this workspace · revoke it in Connections below to disconnect.');
-    expect(view.container.querySelector('.connect-form')).toBeNull();
-    // Nothing left to ask for; the only action is putting the card away.
-    expect([...view.container.querySelectorAll('.connect-detail button')]
-      .map((action) => action.textContent)).toEqual(['Close']);
+    const row = rowFor(view.container, 'Linear');
+    expect([...row.querySelectorAll('.workspace-credential-row__actions button')]
+      .map((action) => action.textContent)).toEqual(['Replace key', 'Disconnect']);
+
+    // Replace key opens the provider's own key input, inline, on the row.
+    await act(async () => click(buttonIn(row, 'Replace key')));
+    expect(rowFor(view.container, 'Linear').querySelector('input[name="token"]')).not.toBeNull();
+
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Disconnect')));
+    const dialog = document.body.querySelector('[role="dialog"]');
+    if (dialog === null) throw new Error('disconnect chooser is missing');
+    // The lease-versus-grant conflation the old panel shipped: one action, two
+    // meanings, and only the narrow one was reachable.
+    expect(dialog.querySelector('a')?.getAttribute('href')).toBe('/settings/connections');
+    expect(dialog.textContent).toContain('disconnect everywhere');
+    await act(async () => click(buttonIn(dialog, 'disconnect from this workspace')));
+    await settle();
+    expect(revokeLease).toHaveBeenCalledWith('lease-linear');
     await view.unmount();
   });
 
-  /** An OAuth round trip started here comes back here, with the lease minted. */
-  it('carries the workspace into the OAuth round trip', async () => {
-    const oauth = { ...linear, oauthAvailable: true, oauthConfigured: true };
+  it('refetches grants every time a row opens', async () => {
+    const listConnectionGrants = vi.fn(async () => ({ grants: [] }));
     const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [oauth] })),
-      connectStartUrl: (provider: string, workspaceId?: string) => (
-        `/connect/${provider}/start${workspaceId === undefined ? '' : `?workspaceId=${workspaceId}`}`
-      ),
+      listConnectionGrants,
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-    await act(async () => click(view.container.querySelector('.connect-card')!));
-    const cta = view.container.querySelector('.connect-cta');
-    expect(cta?.textContent).toBe('Connect with Linear');
-    expect(cta?.getAttribute('href')).toBe('/connect/linear/start?workspaceId=workspace-one');
-    await view.unmount();
-  });
-});
-
-describe('template-stipulated rows and agent focus', () => {
-  it('draws a needs-you row per stipulated provider and funnels Connect into the picker', async () => {
-    const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
-    });
-    const view = await render(
-      <WorkspaceConnectionsPanel
-        client={wire}
-        workspaceId="workspace-one"
-        visible
-        pendingRequests={[]}
-        stipulatedConnections={['linear']}
-        onResolveRequest={async () => undefined}
-      />,
-    );
+    const before = listConnectionGrants.mock.calls.length;
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
     await settle();
-    expect(view.container.textContent).toContain('From the template');
-    const row = view.container.querySelector(
-      '[aria-label="Template connections"] .workspace-credential-row',
-    );
-    expect(row?.textContent).toContain('linear');
-    expect(row?.textContent).toContain('needs you');
-    expect(row?.textContent).toContain('tools stay dark');
-
-    // Connect on the row selects the provider's card in the picker below —
-    // the OAuth button or paste form there is the actual connect machinery.
-    await act(async () => click([...(row?.querySelectorAll('button') ?? [])]
-      .find((button) => button.textContent === 'Connect')!));
-    const active = view.container.querySelector('.connect-card--active');
-    expect(active?.textContent).toContain('Linear');
+    // A grant authorized in another tab used to leave this panel offering to
+    // authorize it all over again.
+    expect(listConnectionGrants.mock.calls.length).toBeGreaterThan(before);
     await view.unmount();
   });
 
-  it('badges a stipulated provider "connected" once its lease is live', async () => {
+  it('pushes the credential at the box after a connect', async () => {
+    const calls: string[] = [];
+    const stubFetch = vi.fn(async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      return new Response('{"synced":true}', { status: 200 });
+    });
+    vi.stubGlobal('fetch', stubFetch);
     const wire = client({
+      mintWorkspaceConnection: vi.fn(async () => ({ lease: undeliveredLease('linear') })),
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
     });
     const view = await render(
       <WorkspaceConnectionsPanel
@@ -626,21 +582,23 @@ describe('template-stipulated rows and agent focus', () => {
         workspaceId="workspace-one"
         visible
         pendingRequests={[]}
-        stipulatedConnections={['linear']}
+        filesBase="https://cp.example/workspaces/workspace-one/webapp/7445/workspace/"
         onResolveRequest={async () => undefined}
       />,
     );
     await settle();
-    const row = view.container.querySelector(
-      '[aria-label="Template connections"] .workspace-credential-row',
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    await settle();
+    // Boxes pull credentials on a throttled cadence, so without this push the
+    // member watches a connected provider stay dark for the whole window.
+    expect(calls).toContain(
+      'https://cp.example/workspaces/workspace-one/webapp/7445/credentials/sync',
     );
-    expect(row?.textContent).toContain('connected');
-    expect([...(row?.querySelectorAll('button') ?? [])]
-      .find((button) => button.textContent === 'Connect')).toBeUndefined();
+    vi.unstubAllGlobals();
     await view.unmount();
   });
 
-  it('selects the focused provider, highlights its row, and re-fires on a fresh focus', async () => {
+  it('opens the focused provider row and re-opens it on a fresh focus', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
     });
@@ -660,21 +618,73 @@ describe('template-stipulated rows and agent focus', () => {
     const view = await render(<Harness at={1} />);
     await settle();
     // The agent's `blitz connections open linear` landed: the row is
-    // highlighted and the picker card is already selected.
+    // highlighted and its connect surface is already open.
     expect(view.container.querySelector('.workspace-credential-row--focus')?.textContent)
-      .toContain('linear');
-    expect(view.container.querySelector('.connect-card--active')?.textContent)
       .toContain('Linear');
+    expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
 
-    // Closing the card and asking again re-selects: each focus is a fresh
-    // object, so the same provider can be pointed at twice.
-    await act(async () => click([...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Cancel')!));
-    expect(view.container.querySelector('.connect-card--active')).toBeNull();
+    await act(async () => click(buttonIn(view.container, 'Cancel')));
+    expect(view.container.querySelector('input[name="token"]')).toBeNull();
     await act(async () => view.root.render(<Harness at={2} />));
     await settle();
-    expect(view.container.querySelector('.connect-card--active')?.textContent)
-      .toContain('Linear');
+    expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('keeps Wanted here and Recent activity beside the rows', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listCredentialEvents: vi.fn(async () => ({
+        events: [{
+          id: 1,
+          leaseId: 'lease-linear',
+          event: 'minted' as const,
+          detail: null,
+          createdAt: Date.now(),
+        }],
+      })),
+    });
+    const view = await render(
+      <WorkspaceConnectionsPanel
+        client={wire}
+        workspaceId="workspace-one"
+        visible
+        pendingRequests={[{
+          id: 'request-one',
+          workspace_id: 'workspace-one',
+          connection_name: 'linear',
+          requested_scopes: [],
+          created_at: Date.now(),
+          requester: null,
+        }]}
+        onResolveRequest={async () => undefined}
+      />,
+    );
+    await settle();
+    expect([...view.container.querySelectorAll('.workspace-sect')]
+      .map((heading) => heading.textContent))
+      .toEqual(['Wanted here', 'Connections', 'Recent activity']);
+    await view.unmount();
+  });
+
+  it('gives a viewer rows to read and nothing to press', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
+    });
+    const view = await render(
+      <WorkspaceConnectionsPanel
+        client={wire}
+        workspaceId="workspace-one"
+        visible
+        readOnly
+        pendingRequests={[]}
+        onResolveRequest={async () => undefined}
+      />,
+    );
+    await settle();
+    expect(rowFor(view.container, 'Linear').textContent).toContain('connected');
+    expect(view.container.querySelector('.workspace-credential-row__actions')).toBeNull();
     await view.unmount();
   });
 });

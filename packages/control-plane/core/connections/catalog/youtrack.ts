@@ -1,3 +1,4 @@
+import { nodeFetch } from "./skill-code.js";
 import type { SkillRenderInput, StaticProviderManifest } from "./types.js";
 
 function skill(input: SkillRenderInput): string {
@@ -26,22 +27,30 @@ ${input.mode === "proxy"
 
 \`\`\`sh
 # Who does the token act as
-curl -sS -H '${header}' -H 'Accept: application/json' \\
-  "${base}/api/users/me?fields=id,login,name"
+${nodeFetch(input, {
+    path: "/api/users/me?fields=id,login,name",
+    headers: { Accept: "application/json" },
+  })}
 
 # Unresolved issues assigned to the token's user
-curl -sS -H '${header}' -H 'Accept: application/json' \\
-  "${base}/api/issues?query=for:%20me%20%23Unresolved&fields=idReadable,summary,project(shortName)"
+${nodeFetch(input, {
+    path: "/api/issues?query=for:%20me%20%23Unresolved&fields=idReadable,summary,project(shortName)",
+    headers: { Accept: "application/json" },
+  })}
 
 # Create an issue (project id from /api/admin/projects?fields=id,shortName)
-curl -sS -X POST -H '${header}' -H 'Content-Type: application/json' \\
-  "${base}/api/issues?fields=idReadable" \\
-  -d '{"project":{"id":"..."},"summary":"...","description":"..."}'
+${nodeFetch(input, {
+    path: "/api/issues?fields=idReadable",
+    method: "POST",
+    body: `{project: {id: "..."}, summary: "...", description: "..."}`,
+  })}
 
 # Comment on an issue
-curl -sS -X POST -H '${header}' -H 'Content-Type: application/json' \\
-  "${base}/api/issues/DEMO-1/comments?fields=id" \\
-  -d '{"text":"..."}'
+${nodeFetch(input, {
+    path: "/api/issues/DEMO-1/comments?fields=id",
+    method: "POST",
+    body: `{text: "..."}`,
+  })}
 \`\`\`
 
 ## Reach and limits

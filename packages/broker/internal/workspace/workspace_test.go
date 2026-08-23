@@ -190,7 +190,7 @@ func TestApplyMintResultWritesQuotedEnvironmentAndFilePlacements(t *testing.T) {
 	assertFileMode(t, filePath, mode)
 }
 
-func TestApplySyncReplacesEnvironmentDirectoryAndWritesMinimumExpiry(t *testing.T) {
+func TestApplySyncReplacesEnvironmentDirectoryAndCapsTheFreshnessWindow(t *testing.T) {
 	stateDir := t.TempDir()
 	envDir := filepath.Join(stateDir, credentialsDirectory, environmentDirectory)
 	if err := os.MkdirAll(envDir, 0o700); err != nil {
@@ -222,10 +222,32 @@ func TestApplySyncReplacesEnvironmentDirectoryAndWritesMinimumExpiry(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(state) != "{\"synced_at\":123456,\"expires_at\":800000}\n" {
+	// Both leases outlive the freshness window, so the window decides: 123456 +
+	// maxFreshnessWindowMS, not the 800000 minimum.
+	if string(state) != "{\"synced_at\":123456,\"expires_at\":723456}\n" {
 		t.Fatalf("sync state = %q", state)
 	}
 	assertFileMode(t, statePath, 0o600)
+}
+
+// The window is a ceiling, never a floor: a lease that runs out before the
+// window does still decides when the box re-syncs, so no shell can read an
+// expired credential as fresh.
+func TestApplySyncKeepsALeaseExpiringInsideTheFreshnessWindow(t *testing.T) {
+	stateDir := t.TempDir()
+	results := []MintResult{
+		{Integration: "one", Mode: "inject", ExpiresAt: 200_000, Placements: []Placement{{Kind: "env", Name: "ONE", Value: "1"}}},
+	}
+	if err := applySync(stateDir, results, 123_456); err != nil {
+		t.Fatal(err)
+	}
+	state, err := os.ReadFile(filepath.Join(stateDir, credentialsDirectory, syncStateFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(state) != "{\"synced_at\":123456,\"expires_at\":200000}\n" {
+		t.Fatalf("sync state = %q", state)
+	}
 }
 
 func TestEmptySyncUsesZeroExpiry(t *testing.T) {

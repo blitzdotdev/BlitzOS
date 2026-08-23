@@ -99,13 +99,6 @@ export interface ListConnectionsResponse {
   connections: ConnectionView[];
 }
 
-export interface CatalogScopeView {
-  id: string;
-  title: string;
-  detail: string;
-  default: boolean;
-}
-
 /** An env entry for `config.placements` on `PUT /connections/:id`, sent by
  * the admin form verbatim. Distinct from `Placement`: this is a template with
  * a fill, not a filled value. */
@@ -152,7 +145,6 @@ export interface CatalogEntryView {
   /** Non-null for providers an org admin configures once, org-wide. */
   adminForm: CatalogAdminFormView | null;
   environmentNames: string[];
-  scopes: CatalogScopeView[];
 }
 
 /** One member's authorization of one provider. The token itself never leaves

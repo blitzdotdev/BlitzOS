@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -211,6 +213,94 @@ func TestDrainRequiresTokenAndClosesTrackedConnections(t *testing.T) {
 	if _, err := peer.Write([]byte("closed")); err == nil {
 		t.Fatal("tracked peer remained writable after drain")
 	}
+}
+
+func TestCredentialSyncRoute(t *testing.T) {
+	const secret = "credential-sync-secret"
+	const workspaceID = "workspace-credential-sync"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	calls := 0
+	var syncErr error
+	handler := &gateway{
+		webAppTokenPath: tokenPath,
+		workspaceIDPath: workspacePath,
+		credentialSync: func(ctx context.Context) error {
+			calls++
+			if _, capped := ctx.Deadline(); !capped {
+				t.Error("credential sync ran without the request's timeout")
+			}
+			return syncErr
+		},
+	}
+	send := func(method, role string) (*httptest.ResponseRecorder, *http.Request) {
+		t.Helper()
+		request := httptest.NewRequest(method, "http://box/credentials/sync", nil)
+		request.Header.Set(webAppTokenHeader, signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID: workspaceID, UserID: "user-" + role, MembershipID: "member-" + role,
+			Role: role, Exp: time.Now().Unix() + 60,
+		}))
+		request.Header.Set("Origin", "http://localhost:5173")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response, request
+	}
+
+	t.Run("editor sync reports success", func(t *testing.T) {
+		response, request := send(http.MethodPost, "editor")
+		if response.Code != http.StatusOK || response.Body.String() != "{\"synced\":true}\n" {
+			t.Fatalf("status = %d; body = %q", response.Code, response.Body.String())
+		}
+		if calls != 1 {
+			t.Fatalf("credential sync runs = %d, want 1", calls)
+		}
+		if got := response.Header().Get("Content-Type"); got != "application/json" {
+			t.Errorf("Content-Type = %q", got)
+		}
+		if got := response.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("Cache-Control = %q", got)
+		}
+		// The route has no upstream, so the strip is asserted on the request the
+		// gateway routed: removeWebAppTokenHeader edits that same header map.
+		if got := request.Header.Get(webAppTokenHeader); got != "" {
+			t.Errorf("webApp token survived routing = %q", got)
+		}
+		assertActualCORS(t, response.Header(), "http://localhost:5173")
+	})
+
+	t.Run("failed sync is reported, not raised", func(t *testing.T) {
+		syncErr = errors.New("blitz-cred exited 1")
+		defer func() { syncErr = nil }()
+		response, _ := send(http.MethodPost, "owner")
+		if response.Code != http.StatusBadGateway || response.Body.String() != "{\"synced\":false}\n" {
+			t.Fatalf("status = %d; body = %q", response.Code, response.Body.String())
+		}
+		if calls != 2 {
+			t.Fatalf("credential sync runs = %d, want 2", calls)
+		}
+	})
+
+	t.Run("viewer is refused before the sync runs", func(t *testing.T) {
+		response, _ := send(http.MethodPost, "viewer")
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+		}
+		if calls != 2 {
+			t.Fatalf("credential sync runs = %d, want the viewer request to add none", calls)
+		}
+	})
+
+	t.Run("GET is not allowed", func(t *testing.T) {
+		response, _ := send(http.MethodGet, "editor")
+		if response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusMethodNotAllowed, response.Body.String())
+		}
+		if got := response.Header().Get("Allow"); got != http.MethodPost {
+			t.Fatalf("Allow = %q, want %q", got, http.MethodPost)
+		}
+		if calls != 2 {
+			t.Fatalf("credential sync runs = %d, want the GET to add none", calls)
+		}
+	})
 }
 
 func TestParsePreviewPath(t *testing.T) {
@@ -442,6 +532,10 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 			discoverCalls++
 			return nil, nil
 		},
+		credentialSync: func(context.Context) error {
+			t.Error("credential sync ran without a usable webApp token")
+			return nil
+		},
 		transport: http.DefaultTransport,
 	}
 
@@ -452,6 +546,7 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 		configure func(*http.Request)
 	}{
 		{name: "ports", method: http.MethodGet, path: "/ports"},
+		{name: "credential sync", method: http.MethodPost, path: "/credentials/sync"},
 		{name: "dufs", method: http.MethodGet, path: "/workspace/file.txt"},
 		{name: "preview", method: http.MethodGet, path: "/preview/" + strconv.Itoa(upstreamPort) + "/"},
 		{name: "acp", method: http.MethodGet, path: "/acp"},
@@ -582,6 +677,9 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
 		transport:       http.DefaultTransport,
 	}
+	// Every route that reaches an upstream. /credentials/sync is absent because
+	// it has none — it spawns a child — so its strip is asserted directly on the
+	// routed request in TestCredentialSyncRoute.
 	tests := []struct {
 		name        string
 		path        string

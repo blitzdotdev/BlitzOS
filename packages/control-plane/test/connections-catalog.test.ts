@@ -55,12 +55,38 @@ function surfaceInput(
     connection: manifest.id,
     scopes: [...manifest.defaultScopes],
     mode: manifest.custody === "proxy" ? "proxy" : "inject",
+    grantKind: "oauth",
     token: "test-only-lease-token",
     proxyUrl: "https://cp.example/proxy/lease-one",
     tokenHeader: manifest.tokenHeader,
     overrides: null,
     ...overrides,
   };
+}
+
+function renderSkill(
+  manifest: ProviderManifest,
+  grantKind: "oauth" | "pat",
+): string {
+  return manifest.surfaces.skill.render({
+    connection: "acme",
+    scopes: manifest.defaultScopes,
+    mode: "proxy",
+    grantKind,
+    tokenEnv: "ACME_TOKEN",
+    baseUrlEnv: "ACME_BASE_URL",
+    baseUrl: "https://cp.example/proxy/lease-one",
+    tokenHeader: manifest.tokenHeader,
+  });
+}
+
+/** Every `node -e '<program>'` in a rendered skill, as the program alone.
+ * A program may span lines: a newline inside the shell's single quotes is
+ * part of the one argument node receives. */
+function nodeProgramsIn(skill: string): string[] {
+  return [...skill.matchAll(/node -e '([\s\S]*?)'\n/gu)]
+    .map((match) => match[1])
+    .filter((program): program is string => program !== undefined);
 }
 
 function assertPlacementsRideTheFrozenWire(
@@ -287,20 +313,36 @@ describe("provider catalog conformance", () => {
       });
 
       it("renders a skill that tells an agent how to authenticate", () => {
-        const rendered = manifest.surfaces.skill.render({
-          connection: "acme",
-          scopes: manifest.defaultScopes,
-          mode: "proxy",
-          tokenEnv: "ACME_TOKEN",
-          baseUrlEnv: "ACME_BASE_URL",
-          baseUrl: "https://cp.example/proxy/lease-one",
-          tokenHeader: manifest.tokenHeader,
-        });
-        expect(rendered.startsWith("---\nname: acme\n")).toBe(true);
-        expect(rendered).toContain("description:");
-        expect(rendered).toContain("$ACME_TOKEN");
-        expect(rendered).not.toContain("<provider>");
-        expect(rendered).not.toContain("undefined");
+        for (const grantKind of ["oauth", "pat"] as const) {
+          const rendered = renderSkill(manifest, grantKind);
+          expect(rendered.startsWith("---\nname: acme\n")).toBe(true);
+          expect(rendered).toContain("description:");
+          expect(rendered).toContain("$ACME_TOKEN");
+          expect(rendered).not.toContain("<provider>");
+          expect(rendered).not.toContain("undefined");
+        }
+      });
+
+      /** The image ships neither curl nor the gh CLI, so every canonical
+       * example used to be a command that could not run. Node 22 with its
+       * global fetch is what an agent actually has, and this proves each
+       * example compiles as the program `node -e` would receive: `new
+       * Function` uses the same parser and rejects top-level await, which
+       * `node -e` also has no way to run. */
+      it("prints only canonical examples that node can run", () => {
+        for (const grantKind of ["oauth", "pat"] as const) {
+          const rendered = renderSkill(manifest, grantKind);
+          expect(rendered).not.toMatch(/(^|\s)curl\s/u);
+          expect(rendered).not.toMatch(/(^|\s)gh\s+(api|pr|repo)\b/u);
+          const programs = nodeProgramsIn(rendered);
+          expect(programs.length, `${manifest.id} ${grantKind}`).toBeGreaterThan(0);
+          for (const program of programs) {
+            // The whole program rides inside shell single quotes, so one of
+            // them would end the argument and hand node a fragment.
+            expect(program, `${manifest.id} ${grantKind}`).not.toContain("'");
+            expect(() => new Function(program)).not.toThrow();
+          }
+        }
       });
 
       it("compiles placements inside the frozen box wire", () => {

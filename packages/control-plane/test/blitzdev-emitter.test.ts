@@ -53,6 +53,7 @@ const expected = [
   "core/connections/leases.ts",
   "core/connections/catalog/types.ts",
   "core/connections/catalog/surfaces.ts",
+  "core/connections/catalog/skill-code.ts",
   "core/connections/catalog/github.ts",
   "core/connections/catalog/google-workspace.ts",
   "core/connections/catalog/linear.ts",
@@ -135,7 +136,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(93);
+    expect(first.files).toHaveLength(94);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

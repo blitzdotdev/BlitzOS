@@ -338,16 +338,6 @@ const folderAttachments: SharedShape<
 // core/connections/types.ts. It is the second hand-mirrored wire in the
 // repository and had no drift coverage at all, which is how MintResult grew a
 // fifth key on one side only.
-const catalogScope: SharedShape<
-  connections.CatalogScopeView,
-  schema.CatalogScopeView
-> = {
-  id: "read",
-  title: "Read",
-  detail: "Read issues, projects, and comments, but change nothing.",
-  default: true,
-};
-
 const catalogAdminForm: SharedShape<
   connections.CatalogAdminFormView,
   schema.CatalogAdminFormView
@@ -383,8 +373,7 @@ const catalogEntry: SharedShape<
   personalTokenBaseUrlLabel: null,
   needsVendorConfig: false,
   adminForm: catalogAdminForm,
-  environmentNames: ["LINEAR_API_KEY"],
-  scopes: [catalogScope],
+  environmentNames: ["LINEAR_API_KEY", "LINEAR_TOKEN"],
 };
 
 const userGrant: SharedShape<connections.UserGrantView, schema.UserGrantView> = {
@@ -503,7 +492,6 @@ const fullFieldValues = [
   folderObjects,
   folderAttachment,
   folderAttachments,
-  catalogScope,
   catalogAdminForm,
   catalogEntry,
   userGrant,
@@ -576,7 +564,6 @@ describe("local wire copies", () => {
     expectTypeOf<connections.Placement>().toEqualTypeOf<schema.Placement>();
     expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
     expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
-    expectTypeOf<connections.CatalogScopeView>().toEqualTypeOf<schema.CatalogScopeView>();
     expectTypeOf<connections.CatalogAdminPlacement>().toEqualTypeOf<schema.CatalogAdminPlacement>();
     expectTypeOf<connections.CatalogAdminFormView>().toEqualTypeOf<schema.CatalogAdminFormView>();
     expectTypeOf<connections.CatalogEntryView>().toEqualTypeOf<schema.CatalogEntryView>();

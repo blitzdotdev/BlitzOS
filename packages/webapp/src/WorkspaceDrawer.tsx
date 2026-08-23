@@ -19,16 +19,13 @@ import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 // the drawer the one import site its hosts and tests already use.
 export {
   CREDENTIAL_POLL_INTERVAL_MS,
-  expiryCountdown,
   newestPerConnection,
   portAge,
   useWorkspaceCredentialEvents,
   useWorkspaceLeases,
   WorkspaceConnectionsPanel,
   WorkspaceEventsPanel,
-  WorkspaceLeasesPanel,
   WorkspaceRequestsPanel,
-  WorkspaceStipulatedPanel,
   type ConnectionsPanelFocus,
   type WorkspaceEventFeed,
   type WorkspaceLeaseFeed,
@@ -106,6 +103,7 @@ export function WorkspacePanelContent({
       pendingRequestsError={pendingRequestsError}
       stipulatedConnections={stipulatedConnections}
       connectionsFocus={connectionsFocus}
+      filesBase={filesBase}
       onResolveRequest={onResolveRequest}
     />
   );

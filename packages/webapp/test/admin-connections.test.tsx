@@ -126,7 +126,6 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
       app: null,
     },
     environmentNames: [],
-    scopes: [],
   };
 }
 
@@ -723,7 +722,6 @@ describe('connect picker (workspace surface)', () => {
       {
         manifestId: 'youtrack-pat',
         token: 'perm:test-only-token',
-        scopes: [],
         vendor: { baseUrl: 'https://acme.youtrack.example' },
       },
     ]]);
@@ -778,7 +776,6 @@ describe('connect picker (workspace surface)', () => {
       {
         manifestId: 'youtrack-pat',
         token: 'perm:second-member-token',
-        scopes: [],
       },
     ]]);
     await view.unmount();

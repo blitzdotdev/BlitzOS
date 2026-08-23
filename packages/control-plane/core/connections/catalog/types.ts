@@ -74,10 +74,19 @@ export interface ProviderSkillSurface {
   render(input: SkillRenderInput): string;
 }
 
+/** How the credential behind this lease was obtained. It changes what is true
+ * about the token, not just how it was collected: a GitHub App user token
+ * expires in eight hours and reaches the App's installations, while a pasted
+ * fine-grained PAT never expires on our schedule and reaches only the
+ * repositories its own list names. Copy that ignores the difference sends an
+ * agent chasing the wrong explanation for a 404. */
+export type GrantKind = "oauth" | "pat";
+
 export interface SkillRenderInput {
   connection: string;
   scopes: readonly string[];
   mode: "inject" | "proxy";
+  grantKind: GrantKind;
   tokenEnv: string;
   baseUrlEnv: string | null;
   baseUrl: string;
@@ -211,6 +220,7 @@ export interface SurfaceInput {
   connection: string;
   scopes: readonly string[];
   mode: "inject" | "proxy";
+  grantKind: GrantKind;
   /** Real credential for inject custody, lease token for proxy custody. */
   token: string;
   proxyUrl: string;

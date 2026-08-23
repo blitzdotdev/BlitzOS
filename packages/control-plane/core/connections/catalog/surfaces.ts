@@ -62,6 +62,7 @@ export function compileSurfaces(
       connection: input.connection,
       scopes: input.scopes,
       mode: input.mode,
+      grantKind: input.grantKind,
       tokenEnv: tokenEnv?.name ?? "BLITZ_CONNECTION_TOKEN",
       baseUrlEnv: baseUrlEnv?.name ?? null,
       baseUrl,

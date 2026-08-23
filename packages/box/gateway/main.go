@@ -18,6 +18,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -43,6 +44,8 @@ const (
 	previewsPath           = "/var/lib/blitz/previews.json"
 	previewFocusPath       = "/var/lib/blitz/preview-focus.json"
 	connectionsFocusPath   = "/var/lib/blitz/connections-focus.json"
+	credentialSyncCommand  = "/usr/local/bin/blitz-cred"
+	credentialSyncTimeout  = 30 * time.Second
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
@@ -109,6 +112,7 @@ type gateway struct {
 	previewFocusPath       string
 	connectionsFocusPath   string
 	discover               func() ([]portInfo, error)
+	credentialSync         func(ctx context.Context) error
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
 	authRequired           bool
@@ -244,6 +248,23 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		origin, allowed := allowedCORSOrigin(request, controlPlaneOrigin)
 		response = &corsResponseWriter{ResponseWriter: response, origin: origin, allowed: allowed}
 	}
+	if request.URL.Path == "/credentials/sync" {
+		// Box credentials are pull-only, so a member who just connected a
+		// provider in the webapp would wait out the whole freshness window
+		// before any shell saw it. The webapp calls this instead. It is placed
+		// below the CORS wrapper because the caller is the control-plane origin
+		// in a browser tab, not the box.
+		//
+		// Editor and above: a viewer cannot drive the agent that would use the
+		// credential, and a sync spends the workspace's leases.
+		if identity.Role == "viewer" {
+			http.Error(response, "viewers cannot sync workspace credentials", http.StatusForbidden)
+			return
+		}
+		removeWebAppTokenHeader(request.Header)
+		g.serveCredentialSync(response, request)
+		return
+	}
 	if request.URL.Path == "/ports" {
 		removeWebAppTokenHeader(request.Header)
 		g.servePorts(response, request)
@@ -346,6 +367,54 @@ func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request
 		_ = connection.Close()
 	}
 	response.WriteHeader(http.StatusNoContent)
+}
+
+// serveCredentialSync runs the same `blitz-cred sync` a login shell runs, so a
+// credential that just landed reaches creds/env.d now rather than at the next
+// freshness check. The answer is a report on that one run: the webapp learns
+// whether to re-read the workspace's leases, and the login-shell sync still
+// covers the box either way, so a failure here is not an error worth crashing
+// a surface over.
+func (g *gateway) serveCredentialSync(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// The dependency-free `timeout 30 blitz-cred sync`: the child talks to the
+	// control plane, and a hung round trip must not hold a gateway request and
+	// a box process open behind it.
+	ctx, cancel := context.WithTimeout(request.Context(), credentialSyncTimeout)
+	defer cancel()
+	run := g.credentialSync
+	if run == nil {
+		run = runCredentialSync
+	}
+	err := run(ctx)
+	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("Cache-Control", "no-store")
+	if err != nil {
+		// Safe to log: the child's own output went to the null device, so this
+		// is an exit status or a start failure, never a credential.
+		log.Printf("credential sync failed: %v", err)
+		response.WriteHeader(http.StatusBadGateway)
+	}
+	if encodeErr := json.NewEncoder(response).Encode(struct {
+		Synced bool `json:"synced"`
+	}{Synced: err == nil}); encodeErr != nil {
+		log.Printf("credential sync response failed: %v", encodeErr)
+	}
+}
+
+// runCredentialSync spawns the CLI with nothing plumbed around it on purpose.
+// The gateway already runs as the `blitz` user under s6-setuidgid and inherits
+// BLITZ_STATE_DIR from the image environment (see
+// packages/box/rootfs/etc/s6-overlay/s6-rc.d/gateway/run), so the child is
+// already the uid and the state directory `blitz-cred sync` needs — no su, no
+// env rewriting. Stdout and Stderr stay nil so exec wires both to the null
+// device: a credential value must never reach an HTTP response or a log.
+func runCredentialSync(ctx context.Context) error {
+	return exec.CommandContext(ctx, credentialSyncCommand, "sync").Run()
 }
 
 func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request) {

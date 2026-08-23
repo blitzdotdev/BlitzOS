@@ -1,3 +1,4 @@
+import { nodeFetch } from "./skill-code.js";
 import type { SkillRenderInput, StaticProviderManifest } from "./types.js";
 
 function skill(input: SkillRenderInput): string {
@@ -25,15 +26,17 @@ ${input.mode === "proxy"
 
 \`\`\`sh
 # Which bot am I
-curl -sS -H '${header}' "${base}/users/@me"
+${nodeFetch(input, { path: "/users/@me" })}
 
 # Guilds the bot is installed in
-curl -sS -H '${header}' "${base}/users/@me/guilds"
+${nodeFetch(input, { path: "/users/@me/guilds" })}
 
 # Send a message to a channel
-curl -sS -X POST -H '${header}' -H 'Content-Type: application/json' \\
-  "${base}/channels/{channel.id}/messages" \\
-  -d '{"content":"..."}'
+${nodeFetch(input, {
+    path: "/channels/{channel.id}/messages",
+    method: "POST",
+    body: `{content: "..."}`,
+  })}
 \`\`\`
 
 ## Reach and limits
@@ -86,7 +89,11 @@ export const discordManifest = {
   scopes: [],
   defaultScopes: [],
   surfaces: {
-    env: [{ name: "DISCORD_BOT_TOKEN", fill: "token" }],
+    env: [
+      { name: "DISCORD_BOT_TOKEN", fill: "token" },
+      // The <PROVIDER>_TOKEN alias. Libraries differ on which name they read.
+      { name: "DISCORD_TOKEN", fill: "token" },
+    ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
   },
   probe: {
