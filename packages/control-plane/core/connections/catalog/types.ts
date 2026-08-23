@@ -1,13 +1,5 @@
 import type { Custody, Placement } from "../types.js";
 
-/** How a provider treats the refresh token it hands back.
- *  - `strict`   single-use: every refresh invalidates the previous token, so
- *               refreshes must serialize per grant (GitHub).
- *  - `graceful` rotating with a replay window, so a lost race is survivable
- *               (Linear, 30 minutes).
- *  - `none`     one refresh token mints access tokens forever (Google). */
-export type RotationMode = "strict" | "graceful" | "none";
-
 /** Bearer material is not always a Bearer: Linear personal API keys go in a
  * raw `Authorization: <key>` header, so the prefix belongs to the provider. */
 export interface TokenHeader {
@@ -28,6 +20,9 @@ export interface ProviderScope {
   detail: string;
 }
 
+/** Every catalog OAuth flow runs PKCE, and the registered redirect URI is
+ * always `connectRedirectPath(manifest.id)` — both are facts of the connect
+ * routes, not per-provider choices, so neither is declared here. */
 export interface ProviderAuth {
   authorizeUrl: string;
   tokenUrl: string;
@@ -35,7 +30,6 @@ export interface ProviderAuth {
    * fails /connect with a message instead of redirecting into a broken flow. */
   clientIdVar: string;
   clientSecretVar: string;
-  pkce: boolean;
   /** Sent verbatim on the authorize redirect (Google offline consent, Linear actor). */
   authorizeParams: readonly ProviderParam[];
   /** Documented access-token lifetime, used when an exchange omits expires_in. */
@@ -43,8 +37,6 @@ export interface ProviderAuth {
   /** How the provider joins requested scopes. Linear wants commas, the rest
    * want spaces, and getting it wrong reads as "invalid scope". */
   scopeDelimiter: " " | ",";
-  /** Redirect URI path registered with the provider, for the ops runbook. */
-  redirectPath: string;
 }
 
 /** The day-one path: a key the person creates in the provider's own UI. */
@@ -66,14 +58,6 @@ export interface ProviderEnvSurface {
   fill: PlacementFill;
 }
 
-/** Rendered into the lease as a `file` placement. A skill named `<provider>`
- * is what makes "use @<provider>" resolve in any harness that reads skills. */
-export interface ProviderSkillSurface {
-  /** Relative to the box HOME; the compiler makes it absolute. */
-  path: string;
-  render(input: SkillRenderInput): string;
-}
-
 export interface SkillRenderInput {
   connection: string;
   scopes: readonly string[];
@@ -88,7 +72,13 @@ export interface SkillRenderInput {
 
 export interface ProviderSurfaces {
   env: readonly ProviderEnvSurface[];
-  skill: ProviderSkillSurface;
+  /** Rendered into the lease as a `file` placement at `skillPath(connection)`.
+   * A skill named `<provider>` is what makes "use @<provider>" resolve in any
+   * harness that reads skills. Null exactly for admin-only providers (no
+   * OAuth, no personal token): they cannot back a grant, and grant mints are
+   * the only path that renders a skill — the static org-root minter fills the
+   * connection row's own placements instead. */
+  skill: ((input: SkillRenderInput) => string) | null;
 }
 
 /** Declares the org-admin path: an admin stores one static root through
@@ -126,11 +116,10 @@ export interface ProbeRequest {
   body: string | null;
 }
 
-/** The shape a healthy answer has. `jsonFields` are dotted paths that must
- * resolve to a non-empty string; an empty list means the status is the whole
- * contract. */
+/** The shape a healthy answer has beyond the 200 every probe requires.
+ * `jsonFields` are dotted paths that must resolve to a non-empty string; an
+ * empty list means the status is the whole contract. */
 export interface ProbeExpectation {
-  status: number;
   jsonFields: readonly string[];
 }
 
@@ -139,39 +128,12 @@ export interface ProviderProbe {
   expect: ProbeExpectation;
 }
 
-export interface ProbeFixture {
-  name: string;
-  status: number;
-  response: string;
-  healthy: boolean;
-}
-
-export interface ExchangeExpectation {
-  accessToken: string;
-  refreshToken: string | null;
-  expiresInMs: number;
-}
-
-/** A recorded provider answer. The generic exchange is only ever proven
- * against these, never against a live provider, so they are mandatory. */
-export interface ExchangeFixture {
-  name: string;
-  grantType: "authorization_code" | "refresh_token";
-  /** Form fields the exchange must send, asserted field by field. */
-  request: readonly ProviderParam[];
-  response: string;
-  /** `null` records a rejection the exchange must surface as an error —
-   * a replayed single-use refresh is a fixture, not a hypothetical. */
-  expect: ExchangeExpectation | null;
-}
-
 interface ProviderManifestBase {
   id: string;
   title: string;
   summary: string;
   docsUrl: string;
   custody: Custody;
-  rotation: RotationMode;
   /** Header shape for OAuth-issued tokens. */
   tokenHeader: TokenHeader;
   /** Vendor API root; proxy custody rewrites box calls onto it. */
@@ -183,18 +145,18 @@ interface ProviderManifestBase {
   defaultScopes: readonly string[];
   surfaces: ProviderSurfaces;
   probe: ProviderProbe;
-  probeFixtures: readonly [ProbeFixture, ...ProbeFixture[]];
 }
 
+/** Recorded provider answers proving each probe and exchange live in test
+ * land (test/connections-catalog-fixtures.ts), keyed by manifest id; the
+ * conformance suite refuses a manifest that has none. */
 export interface OAuthProviderManifest extends ProviderManifestBase {
   auth: ProviderAuth;
-  fixtures: readonly [ExchangeFixture, ...ExchangeFixture[]];
 }
 
 /** No authorize endpoint: the credential is pasted, not redirected for. */
 export interface StaticProviderManifest extends ProviderManifestBase {
   auth: null;
-  fixtures: readonly [];
 }
 
 export type ProviderManifest = OAuthProviderManifest | StaticProviderManifest;

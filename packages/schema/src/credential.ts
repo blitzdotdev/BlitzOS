@@ -145,7 +145,6 @@ export interface CatalogEntryView {
   summary: string;
   docsUrl: string;
   custody: Custody;
-  rotation: "strict" | "graceful" | "none";
   oauthAvailable: boolean;
   oauthConfigured: boolean;
   personalTokenLabel: string | null;

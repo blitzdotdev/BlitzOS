@@ -41,7 +41,6 @@ export const genericManifest = {
   summary: "Any vendor with a static key: you name the variable and, for proxy custody, the base URL.",
   docsUrl: "https://github.com/blitzdotdev/blitzos",
   custody: "cp",
-  rotation: "none",
   tokenHeader: { name: "Authorization", prefix: "Bearer " },
   baseUrl: "https://example.invalid",
   auth: null,
@@ -65,7 +64,7 @@ export const genericManifest = {
       { name: "SERVICE_API_KEY", fill: "token" },
       { name: "SERVICE_BASE_URL", fill: "proxy-url" },
     ],
-    skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
+    skill,
   },
   probe: {
     request: (input) => ({
@@ -78,11 +77,6 @@ export const genericManifest = {
     }),
     // A generic vendor promises no response shape, so reachability under the
     // credential is the whole contract.
-    expect: { status: 200, jsonFields: [] },
+    expect: { jsonFields: [] },
   },
-  probeFixtures: [
-    { name: "reachable", status: 200, response: "{}", healthy: true },
-    { name: "rejected key", status: 401, response: '{"error":"unauthorized"}', healthy: false },
-  ],
-  fixtures: [],
 } satisfies StaticProviderManifest;

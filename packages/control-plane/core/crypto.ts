@@ -1,14 +1,32 @@
 const encoder = new TextEncoder();
 export const DUMMY_HASH = "0".repeat(64);
 
-export function randomToken(bytes = 32): string {
-  const value = crypto.getRandomValues(new Uint8Array(bytes));
+/** Unpadded base64url of raw bytes: the one encoding for tokens, invite-code
+ * hashes, OAuth state payloads, and webApp ticket segments. */
+export function base64Url(bytes: Uint8Array): string {
   let binary = "";
-  for (const byte of value) binary += String.fromCharCode(byte);
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary)
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replace(/=+$/u, "");
+}
+
+/** Inverse of {@link base64Url}; null for anything that is not unpadded
+ * base64url, so callers reject a malformed segment instead of decoding it. */
+export function decodeBase64Url(value: string): Uint8Array | null {
+  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/")
+    + "=".repeat((4 - (value.length % 4)) % 4);
+  try {
+    return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+export function randomToken(bytes = 32): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(bytes)));
 }
 
 export async function hashSecret(value: string): Promise<string> {

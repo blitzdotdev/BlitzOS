@@ -280,9 +280,9 @@ export function addRecipeRoutes(
     const principal = await memberFor(context);
     const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
     requireRecipeEditRights(principal, recipe);
-    // Workspaces keep running when their recipe goes; provenance nulls out
-    // first so the delete cannot trip the foreign key (same pattern as
-    // agent-rules deletion).
+    // Workspaces keep running when their recipe goes. Unlike agent_rules,
+    // `workspaces.recipe_id` declares no ON DELETE action (migrations/0021),
+    // so provenance must null out here or the enforced key rejects the delete.
     await transaction(runtime.db, [
       { q: "UPDATE workspaces SET recipe_id = NULL WHERE recipe_id = ?1", v: [recipe.id] },
       { q: "DELETE FROM recipes WHERE id = ?1", v: [recipe.id] },

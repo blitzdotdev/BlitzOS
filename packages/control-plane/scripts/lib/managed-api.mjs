@@ -41,8 +41,8 @@ export async function projectAccess(probeFile) {
   };
 }
 
-export async function managedApiRequest(access, route, init = {}, fetcher = fetch, { allowMissing = false } = {}) {
-  const response = await fetcher(`${access.base}${route}`, {
+export async function managedApiRequest(access, route, init = {}, { allowMissing = false } = {}) {
+  const response = await fetch(`${access.base}${route}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${access.token}`,
@@ -61,28 +61,6 @@ export async function managedApiRequest(access, route, init = {}, fetcher = fetc
   return { response, body };
 }
 
-async function managedDataRequest(access, route, init = {}, { allowMissing = false, fetcher = fetch } = {}) {
-  const response = await fetcher(`${access.base}${route}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${access.token}`,
-      ...init.headers,
-    },
-  });
-  const text = await response.text();
-  let body = text;
-  try {
-    body = JSON.parse(text);
-  } catch {
-    // Preserve the managed platform's exact text response for a redacted diagnostic.
-  }
-  if (allowMissing && response.status === 404) return { response, body: null };
-  if (!response.ok) {
-    throw new Error(`managed data API ${response.status}: ${redactSecrets(typeof body === "string" ? body : JSON.stringify(body))}`);
-  }
-  return { response, body };
-}
-
 function assertManagedFileRow(row, file) {
   if (
     row === null ||
@@ -97,13 +75,13 @@ function assertManagedFileRow(row, file) {
   }
 }
 
-async function readManagedFileRow(access, file, fetcher) {
+async function readManagedFileRow(access, file) {
   const id = managedFileId(file.kind, file.logicalPath);
-  const selected = await managedDataRequest(
+  const selected = await managedApiRequest(
     access,
     `/exec/blitz_files/view/${encodeURIComponent(id)}`,
     {},
-    { allowMissing: true, fetcher },
+    { allowMissing: true },
   );
   return selected.body;
 }
@@ -138,11 +116,11 @@ async function fileFormData(file, existing) {
   return form;
 }
 
-export async function uploadManagedAssets(assetSet, access, projectPassword, { fetcher = fetch } = {}) {
+export async function uploadManagedAssets(assetSet, access, projectPassword) {
   if (typeof projectPassword !== "string" || projectPassword.length === 0) throw new Error("project password is empty");
   const result = { inserted: 0, replaced: 0, skipped: 0, verified: 0 };
   for (const file of assetSet.files) {
-    const existing = await readManagedFileRow(access, file, fetcher);
+    const existing = await readManagedFileRow(access, file);
     if (existing !== null && existing.sha256 === file.sha256 && existing.size_bytes === file.sizeBytes) {
       assertManagedFileRow(existing, file);
       result.skipped += 1;
@@ -154,12 +132,12 @@ export async function uploadManagedAssets(assetSet, access, projectPassword, { f
     const route = existing === null
       ? "/exec_write/blitz_files/insert"
       : `/exec_write/blitz_files/edit/${encodeURIComponent(id)}`;
-    await managedDataRequest(access, route, {
+    await managedApiRequest(access, route, {
       method: "POST",
       headers: { "X-Project-Password": projectPassword },
       body: form,
-    }, { fetcher });
-    const verified = await readManagedFileRow(access, file, fetcher);
+    });
+    const verified = await readManagedFileRow(access, file);
     assertManagedFileRow(verified, file);
     if (existing === null) result.inserted += 1;
     else result.replaced += 1;
@@ -199,22 +177,22 @@ export function migrationText(body) {
   return value;
 }
 
-export async function fetchMigrationText(access, fetcher = fetch) {
-  const migration = await managedApiRequest(access, "/files?path=%40migration.sql", {}, fetcher, { allowMissing: true });
+export async function fetchMigrationText(access) {
+  const migration = await managedApiRequest(access, "/files?path=%40migration.sql", {}, { allowMissing: true });
   return migrationText(migration.body);
 }
 
-export async function uploadManagedSet(uploadSet, probeFile, { commit = false, fetcher = fetch, out = process.stdout } = {}) {
-  return pushManagedSet(uploadSet, await projectAccess(probeFile), { commit, fetcher, out });
+export async function uploadManagedSet(uploadSet, probeFile, { commit = false, out = process.stdout } = {}) {
+  return pushManagedSet(uploadSet, await projectAccess(probeFile), { commit, out });
 }
 
-export async function pushManagedSet(uploadSet, access, { commit = false, fetcher = fetch, out = process.stdout } = {}) {
+export async function pushManagedSet(uploadSet, access, { commit = false, out = process.stdout } = {}) {
   await managedApiRequest(access, "/vars/APP_URL", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: access.appUrl }),
-  }, fetcher);
-  const listed = await managedApiRequest(access, "/files", {}, fetcher);
+  });
+  const listed = await managedApiRequest(access, "/files");
   let version = saveVersion(listed.response, listed.body);
   if (version === undefined) throw new Error("file listing omitted x-save-version");
   const byPath = new Map(uploadSet.files.map((file) => [file.path, file]));
@@ -229,7 +207,7 @@ export async function pushManagedSet(uploadSet, access, { commit = false, fetche
       method: "PUT",
       headers: { "Content-Type": "text/plain; charset=utf-8", "If-Match": version },
       body: file.source,
-    }, fetcher);
+    });
     if (typeof saved.body !== "object" || saved.body === null || saved.body.success !== true) {
       throw new Error(`save failed for ${file.path}: ${redactSecrets(JSON.stringify(saved.body))}`);
     }
@@ -246,7 +224,7 @@ export async function pushManagedSet(uploadSet, access, { commit = false, fetche
 
   // An empty migration still commits: a re-run whose schema is unchanged may
   // carry changed worker sources, and the commit is what deploys them.
-  const pending = await fetchMigrationText(access, fetcher);
+  const pending = await fetchMigrationText(access);
   const migration = pending === "" ? "" : normalizeSource(pending);
   writeRedacted(`migration-schema-sha256\t${byPath.get("teenybase.ts").sha256}\n`, out);
   writeRedacted(`migration-sql-sha256\t${sha256(migration)}\n`, out);
@@ -257,7 +235,7 @@ export async function pushManagedSet(uploadSet, access, { commit = false, fetche
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: `blitz-core managed release ${uploadSet.releaseHash}` }),
-    }, fetcher);
+    });
     if (typeof committed.body !== "object" || committed.body === null || committed.body.success !== true) {
       throw new Error(`commit failed: ${redactSecrets(JSON.stringify(committed.body))}`);
     }

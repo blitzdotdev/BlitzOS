@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { UPLOAD_ORDER } from "../scripts/lib/worker-source.mjs";
 import {
   fetchMigrationText,
@@ -70,8 +70,12 @@ function fakeProject(migrationSql = "CREATE TABLE users (id TEXT);"): {
 }
 
 describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contract [vendor-only: set BLITZDEV_MANAGED=1 to run]", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("constructs authenticated requests and preserves JSON and text bodies", async () => {
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
       new Response('{"success":true}', {
         headers: { "x-save-version": "7" },
       }));
@@ -84,10 +88,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contra
         headers: { "Content-Type": "text/plain; charset=utf-8", "If-Match": "6" },
         body: "source",
       },
-      fetcher,
     );
 
-    expect(fetcher).toHaveBeenCalledWith(
+    expect(fetchSpy).toHaveBeenCalledWith(
       "https://blitz.dev/api/v1/projects/example/files?path=core%2Findex.ts",
       {
         method: "PUT",
@@ -102,8 +105,8 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contra
     expect(result.body).toEqual({ success: true });
     expect(saveVersion(result.response, result.body)).toBe("7");
 
-    const textFetcher = vi.fn(async () => new Response("SELECT 1;"));
-    await expect(managedApiRequest(access, "/files?path=%40migration.sql", {}, textFetcher))
+    fetchSpy.mockImplementation(async () => new Response("SELECT 1;"));
+    await expect(managedApiRequest(access, "/files?path=%40migration.sql"))
       .resolves.toMatchObject({ body: "SELECT 1;" });
   });
 
@@ -125,12 +128,12 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contra
   });
 
   it("rejects non-success responses with redacted credentials", async () => {
-    const fetcher = vi.fn(async () => new Response(
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
       JSON.stringify({ token: "tp__secret-value", password: "project-secret" }),
       { status: 409 },
     ));
 
-    await expect(managedApiRequest(access, "/files", {}, fetcher)).rejects.toThrow(
+    await expect(managedApiRequest(access, "/files")).rejects.toThrow(
       'API 409: {"token":"[REDACTED]","password":"[REDACTED]"}',
     );
   });
@@ -158,25 +161,27 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contra
     expect(migrationText("file_not_found")).toBe("");
     expect(migrationText(null)).toBe("");
 
-    const notFound = vi.fn(async () => new Response('{"error":"file_not_found"}', { status: 404 }));
-    await expect(fetchMigrationText(access, notFound)).resolves.toBe("");
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response('{"error":"file_not_found"}', { status: 404 }));
+    await expect(fetchMigrationText(access)).resolves.toBe("");
 
-    const pending = vi.fn(async () => new Response("ALTER TABLE users ADD COLUMN x TEXT;"));
-    await expect(fetchMigrationText(access, pending)).resolves.toBe("ALTER TABLE users ADD COLUMN x TEXT;");
+    fetchSpy.mockImplementation(async () => new Response("ALTER TABLE users ADD COLUMN x TEXT;"));
+    await expect(fetchMigrationText(access)).resolves.toBe("ALTER TABLE users ADD COLUMN x TEXT;");
   });
 
   it("re-runs a deploy against an already-current project as a clean no-op", async () => {
     const platform = fakeProject();
+    vi.spyOn(globalThis, "fetch").mockImplementation(platform.fetcher);
     const uploadSet = fakeUploadSet();
 
-    const first = await pushManagedSet(uploadSet, access, { commit: true, fetcher: platform.fetcher, out: platform.out });
+    const first = await pushManagedSet(uploadSet, access, { commit: true, out: platform.out });
     expect(first.migration).toContain("CREATE TABLE");
     expect(first.committed).toBe(true);
     expect(platform.commits).toBe(1);
 
     // Second run: same artifact, schema already applied, so the platform
     // serves no migration. This is the run that used to throw and exit 1.
-    const second = await pushManagedSet(uploadSet, access, { commit: true, fetcher: platform.fetcher, out: platform.out });
+    const second = await pushManagedSet(uploadSet, access, { commit: true, out: platform.out });
     expect(second.migration).toBe("");
     expect(second.committed).toBe(true);
     expect(second.saves).toHaveLength(UPLOAD_ORDER.length);
@@ -188,7 +193,8 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed API response contra
   // platform's own migration preview printed to stdout raw.
   it("redacts what the deploy prints, not only what it throws", async () => {
     const platform = fakeProject(`-- restoring agent link\n-- https://blitz.dev/agent/tp_a1b2c3d4e5f6g7h8/agents.md\nCREATE TABLE users (id TEXT);`);
-    await pushManagedSet(fakeUploadSet(), access, { fetcher: platform.fetcher, out: platform.out });
+    vi.spyOn(globalThis, "fetch").mockImplementation(platform.fetcher);
+    await pushManagedSet(fakeUploadSet(), access, { out: platform.out });
 
     expect(platform.written()).not.toContain("tp_a1b2c3d4e5f6g7h8");
     expect(platform.written()).toContain("[REDACTED]");

@@ -5,10 +5,8 @@ import { rawDb } from "../src/raw-db.js";
 import type { $Env } from "teenybase/worker";
 import {
   allowedEmailDomainsFromEnv,
-  createSessionPrincipalSource,
   credentialMasterKeyFor,
   installControlPlaneRoutes,
-  maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
   VmProviderRegistry,
@@ -41,17 +39,36 @@ const webAppAuth = new WorkspaceWebAppAuth("test-webapp-root-secret");
  * /connect fill it; everything else sees an unconfigured instance. */
 export const testConnectSecrets = new Map<string, string>();
 
+interface TestExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
+
 interface TestApp {
   request(
     input: RequestInfo | URL,
     init?: RequestInit,
     env?: Record<string, unknown>,
+    executionCtx?: TestExecutionContext,
   ): Promise<Response>;
+}
+
+/** Work the app parked on `runtime.waitUntil` during appRequest calls. In
+ * production that seam is the Worker's ExecutionContext; here appRequest
+ * supplies this collector so tests can settle background passes
+ * deterministically instead of racing them. */
+const backgroundTasks: Promise<unknown>[] = [];
+
+/** Settles when every background task scheduled so far has finished,
+ * including tasks those tasks scheduled while settling. */
+export async function backgroundTasksSettled(): Promise<void> {
+  while (backgroundTasks.length > 0) {
+    await Promise.allSettled(backgroundTasks.splice(0));
+  }
 }
 
 type TestBindings = Env & {
   SESSION_TTL_DAYS: string;
-  MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
   CRED_MASTER_KEY: string;
@@ -197,10 +214,6 @@ export function appWithVmProviders(
       sessionTtlMs: sessionTtlMsFromEnv(
         (context.env as TestBindings).SESSION_TTL_DAYS ?? env.SESSION_TTL_DAYS,
       ),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES ??
-          env.MAX_CONCURRENT_WORKSPACES,
-      ),
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
@@ -216,7 +229,6 @@ export function appWithVmProviders(
       workspaceTunnels,
       webAppAuth,
     },
-    principalSource: createSessionPrincipalSource(),
     assets: {
       fetch: async () => new Response("<!doctype html><title>webapp shell</title>", {
         headers: { "Content-Type": "text/html" },
@@ -249,9 +261,6 @@ export function testRuntime(
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        env.MAX_CONCURRENT_WORKSPACES,
-      ),
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: OPERATOR_KEY,
@@ -263,7 +272,6 @@ export function testRuntime(
       workspaceTunnels,
       webAppAuth,
     },
-    principalSource: createSessionPrincipalSource(),
     waitUntil: () => undefined,
     reportError: () => undefined,
   };
@@ -281,13 +289,15 @@ export async function appRequest(
     BOX_IMAGE_SHA256: env.BOX_IMAGE_SHA256,
     BOX_IMAGE_TAG: env.BOX_IMAGE_TAG,
     SESSION_TTL_DAYS: env.SESSION_TTL_DAYS,
-    MAX_CONCURRENT_WORKSPACES: env.MAX_CONCURRENT_WORKSPACES,
     DB: env.DB,
     CRED_MASTER_KEY,
     GOOGLE_CLIENT_ID: "test-google-client-id",
     GOOGLE_CLIENT_SECRET: "test-google-client-secret",
     OPERATOR_API_KEY: OPERATOR_KEY,
     ...bindings,
+  }, {
+    waitUntil: (promise) => backgroundTasks.push(promise),
+    passThroughOnException: () => undefined,
   });
 }
 

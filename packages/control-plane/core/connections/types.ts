@@ -21,11 +21,13 @@ export interface MintResult {
 
 /** What a minter hands back. Everything beyond `MintResult` is control-plane
  * bookkeeping that `mintOne` consumes and strips before serialization — it can
- * never ride the frozen wire. */
-export interface MinterResult extends MintResult {
-  tokenHash?: string;
-  grantedScopes?: string[];
-}
+ * never ride the frozen wire. The union discriminates on mode: a proxy lease
+ * IS its token, so a proxy result must carry the hash and an inject result
+ * cannot — an unhashed proxy lease is unrepresentable rather than re-checked
+ * at insert time. */
+export type MinterResult =
+  | (MintResult & { mode: "inject"; tokenHash?: never; grantedScopes?: string[] })
+  | (MintResult & { mode: "proxy"; tokenHash: string; grantedScopes?: string[] });
 
 export interface Connection {
   id: string;
@@ -139,7 +141,6 @@ export interface CatalogEntryView {
   summary: string;
   docsUrl: string;
   custody: Custody;
-  rotation: "strict" | "graceful" | "none";
   oauthAvailable: boolean;
   oauthConfigured: boolean;
   personalTokenLabel: string | null;

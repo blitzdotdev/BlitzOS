@@ -1,4 +1,4 @@
-import { randomToken, safeEqualSecret } from "./crypto.js";
+import { base64Url, decodeBase64Url, randomToken, safeEqualSecret } from "./crypto.js";
 import { isNumber, isRecord, isString, type JsonObject, type JsonValue } from "./http.js";
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1_000;
@@ -37,26 +37,6 @@ interface OAuthStateFlow<Extra> {
   /** Reads them back off a parsed payload, or null when they are absent or
    * malformed — which rejects the whole cookie, since they are signed too. */
   read(parsed: JsonObject): Extra | null;
-}
-
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary)
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/u, "");
-}
-
-function decodeBase64Url(value: string): Uint8Array | null {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
-  const padding = "=".repeat((4 - (value.length % 4)) % 4);
-  try {
-    const binary = atob(value.replaceAll("-", "+").replaceAll("_", "/") + padding);
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  } catch {
-    return null;
-  }
 }
 
 async function hmac(value: string, secret: string): Promise<string> {

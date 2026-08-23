@@ -3,7 +3,7 @@ import { first } from "./db.js";
 import { HttpError } from "./http.js";
 import type { Principal } from "./principals.js";
 import { cookieValue, SESSION_COOKIE } from "./principals.js";
-import { hashSecret, matchesStoredHash } from "./crypto.js";
+import { hashSecret } from "./crypto.js";
 import type { CoreContext, CoreRuntime } from "./runtime.js";
 import { workspaceById, type WorkspaceRow } from "./workspace-records.js";
 import type { WorkspaceRole } from "./wire.js";
@@ -63,15 +63,17 @@ export async function webAppWorkspaceForRequest(
   const token = cookieValue(context.req.raw, SESSION_COOKIE);
   if (token !== null) {
     const hash = await hashSecret(token);
+    // SAFETY: sessions are selected by exact equality on the deterministic,
+    // unsalted SHA-256 of the presented token (`s.token_hash = ?1`), so a
+    // returned row's stored hash IS the recomputed hash — re-verifying it
+    // could never reject. Row presence is the authentication result.
     const row = await first<WorkspaceRow & {
-      session_token_hash: string;
       session_principal_id: string;
       session_membership_id: string;
       session_org_id: string;
       session_member_role: "admin" | "member";
     }>(runtime.db, {
-      q: `SELECT w.*, s.token_hash AS session_token_hash,
-                 s.principal_id AS session_principal_id,
+      q: `SELECT w.*, s.principal_id AS session_principal_id,
                  m.id AS session_membership_id, m.org_id AS session_org_id,
                  m.role AS session_member_role, grant.role AS grant_role,
                  owner_user.name AS owner_name,
@@ -90,7 +92,7 @@ export async function webAppWorkspaceForRequest(
           LIMIT 1`,
       v: [hash, Date.now(), id],
     });
-    if (row !== null && (await matchesStoredHash(token, row.session_token_hash))) {
+    if (row !== null) {
       const principal: Principal = {
         id: row.session_principal_id,
         unixName: "blitz",

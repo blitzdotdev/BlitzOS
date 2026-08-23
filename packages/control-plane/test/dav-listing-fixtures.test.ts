@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDavListing } from "../core/files/sync.js";
+import { parseDavListing } from "../core/files/dav.js";
 
 /** The dufs PROPFIND shape is a cross-runtime contract: the box image's file
  * server produces it, this parser consumes it. The fixtures pin the accepted

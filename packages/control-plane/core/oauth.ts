@@ -108,7 +108,10 @@ async function refreshGrant(
   const oldHash = await hashSecret(refreshToken);
   const row = await first<BoxTokenRow>(db, {
     q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-               b.id, b.principal_id, b.workspace_id, b.is_broker
+               b.id, b.principal_id, b.workspace_id,
+               EXISTS(
+                 SELECT 1 FROM broker_boxes broker WHERE broker.box_id = b.id
+               ) AS is_broker
         FROM box_token_families f JOIN boxes b ON b.id = f.box_id
         WHERE f.refresh_hash = ?1 LIMIT 1`,
     v: [oldHash],
@@ -145,7 +148,10 @@ export async function authenticateBox(
   const hash = await hashSecret(token);
   const row = await first<BoxTokenRow>(db, {
     q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-               b.id, b.principal_id, b.workspace_id, b.is_broker,
+               b.id, b.principal_id, b.workspace_id,
+               EXISTS(
+                 SELECT 1 FROM broker_boxes broker WHERE broker.box_id = b.id
+               ) AS is_broker,
                COALESCE(u.platform_operator, 0) AS platform_operator
         FROM box_token_families f
         JOIN boxes b ON b.id = f.box_id

@@ -15,7 +15,7 @@ import {
   verifyGoogleOAuthStateCookie,
 } from "../oauth-state.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
-import { inviteCodeHash, redeemInviteSession } from "./invites.js";
+import { redeemableInvite, redeemInviteSession } from "./invites.js";
 
 const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -152,27 +152,8 @@ function assertAllowedEmailDomain(policy: SignupPolicy, email: string): void {
   }
 }
 
-/** Pre-check used only in invite mode, BEFORE the user row is created.
- * Without it, a well-formed but bogus invite code would still create the
- * user (redemption fails later), and the next plain sign-in would pass the
- * gate as an "existing user". Redemption itself stays transactional in
- * redeemInviteSession and re-validates everything checked here. */
-async function hasRedeemableInvite(
-  db: Db,
-  inviteCode: string | undefined,
-  email: string,
-  now: number,
-): Promise<boolean> {
-  if (inviteCode === undefined) return false;
-  const invite = await first<{ id: string }>(db, {
-    q: `SELECT id FROM invites
-        WHERE code_hash = ?1 AND state = 'ready' AND expires_at > ?2
-          AND (email IS NULL OR email = ?3)
-        LIMIT 1`,
-    v: [await inviteCodeHash(inviteCode), now, email],
-  });
-  return invite !== null;
-}
+const INVITE_ONLY_MESSAGE =
+  "sign-ups are invite-only on this deployment; ask an organization admin for an invite link";
 
 async function activeMembership(db: Db, userId: string): Promise<MembershipRow | null> {
   return first<MembershipRow>(db, {
@@ -186,111 +167,107 @@ async function activeMembership(db: Db, userId: string): Promise<MembershipRow |
   });
 }
 
-/** Removes the rows a sign-in just created. Called only when the invite that
- * admitted a brand-new account then fails to redeem: the account must not
- * outlive its invite, because the existing-user branch of resolveUser never
- * consults the signup gate again, and a survivor is grandfathered into an
- * invite-only deployment forever. A fresh account owns nothing else, so the
- * four tables below are the whole footprint. */
-async function deleteProvisionalUser(db: Db, userId: string): Promise<void> {
-  await transaction(db, [
-    { q: "DELETE FROM sessions WHERE principal_id = ?1", v: [userId] },
-    { q: "DELETE FROM memberships WHERE user_id = ?1", v: [userId] },
-    { q: "DELETE FROM users WHERE id = ?1", v: [userId] },
-    { q: "DELETE FROM principals WHERE id = ?1", v: [userId] },
-  ]);
+async function assertEmailUnclaimed(
+  db: Db,
+  email: string,
+  ownerId: string | null,
+): Promise<void> {
+  const emailOwner = await first<{ id: string }>(db, {
+    q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
+    v: [email],
+  });
+  if (emailOwner !== null && emailOwner.id !== ownerId) {
+    throw new HttpError(409, "email belongs to another Google identity");
+  }
 }
 
-async function resolveUser(
-  db: Db,
-  profile: GoogleProfile,
-  now: number,
-  bootstrapEnabled: boolean,
-  gate: { requireInvite: boolean; inviteCode: string | undefined },
-): Promise<{ user: UserRow; created: boolean }> {
-  let user = await first<UserRow>(db, {
-    q: "SELECT id, platform_operator, name FROM users WHERE google_user_id = ?1 LIMIT 1",
-    v: [profile.googleUserId],
-  });
-  const created = user === null;
-  if (user !== null) {
-    const emailOwner = await first<{ id: string }>(db, {
-      q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
-      v: [profile.email],
-    });
-    if (emailOwner !== null && emailOwner.id !== user.id) {
-      throw new HttpError(409, "email belongs to another Google identity");
-    }
-    await rows(db, {
-      q: `UPDATE users SET email = ?1, name = ?2, avatar_url = ?3, updated_at = ?4
-          WHERE id = ?5`,
-      v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
-    });
-    if (bootstrapEnabled) {
-      // The bootstrap secret was already verified at /auth/google/start, so
-      // this only widens WHICH user can become the first operator: an
-      // existing row now promotes exactly like the insert branch below. The
-      // NOT EXISTS guard keeps promotion first-operator-only, and a wrong or
-      // absent secret still never reaches this branch.
-      await rows(db, {
-        q: `UPDATE users SET platform_operator = 1, updated_at = ?2
-            WHERE id = ?1 AND NOT EXISTS (
-              SELECT 1 FROM users WHERE platform_operator = 1
-            )`,
-        v: [user.id, now],
-      });
-    }
-  } else {
-    if (
-      gate.requireInvite
-      && !(await hasRedeemableInvite(db, gate.inviteCode, profile.email, now))
-    ) {
-      throw new HttpError(
-        403,
-        "sign-ups are invite-only on this deployment; ask an organization admin for an invite link",
-      );
-    }
-    const emailOwner = await first<{ id: string }>(db, {
-      q: "SELECT id FROM users WHERE email = ?1 LIMIT 1",
-      v: [profile.email],
-    });
-    if (emailOwner !== null) {
-      throw new HttpError(409, "email belongs to another Google identity");
-    }
-    const id = crypto.randomUUID();
-    await rows(db, {
-      q: `INSERT INTO users
-          (id, google_user_id, email, name, avatar_url, platform_operator,
-           created_at, updated_at)
-          VALUES (?1, ?2, ?3, ?4, ?5,
-            CASE WHEN ?6 = 1
-                   AND NOT EXISTS (SELECT 1 FROM users WHERE platform_operator = 1)
-                 THEN 1 ELSE 0 END,
-            ?7, ?7)`,
-      v: [
-        id,
-        profile.googleUserId,
-        profile.email,
-        profile.name,
-        profile.avatarUrl,
-        bootstrapEnabled ? 1 : 0,
-        now,
-      ],
-    });
-    user = { id, platform_operator: 0, name: profile.name };
-  }
+async function upsertLoginPrincipal(db: Db, userId: string): Promise<void> {
   await rows(db, {
     q: `INSERT INTO principals (id, unix_name, harnesses)
         VALUES (?1, 'blitz', '["claude","codex"]')
         ON CONFLICT(id) DO UPDATE SET unix_name = 'blitz', harnesses = '["claude","codex"]'`,
-    v: [user.id],
+    v: [userId],
   });
-  const refreshed = await first<UserRow>(db, {
+}
+
+async function userById(db: Db, id: string): Promise<UserRow> {
+  const user = await first<UserRow>(db, {
     q: "SELECT id, platform_operator, name FROM users WHERE id = ?1 LIMIT 1",
-    v: [user.id],
+    v: [id],
   });
-  if (refreshed === null) throw new Error("Google user disappeared during login");
-  return { user: refreshed, created };
+  if (user === null) throw new Error("Google user disappeared during login");
+  return user;
+}
+
+/** Refreshes the account this Google identity already owns, or returns null
+ * for a first sign-in. */
+async function refreshExistingUser(
+  db: Db,
+  profile: GoogleProfile,
+  now: number,
+  bootstrapEnabled: boolean,
+): Promise<UserRow | null> {
+  const user = await first<UserRow>(db, {
+    q: "SELECT id, platform_operator, name FROM users WHERE google_user_id = ?1 LIMIT 1",
+    v: [profile.googleUserId],
+  });
+  if (user === null) return null;
+  await assertEmailUnclaimed(db, profile.email, user.id);
+  await rows(db, {
+    q: `UPDATE users SET email = ?1, name = ?2, avatar_url = ?3, updated_at = ?4
+        WHERE id = ?5`,
+    v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
+  });
+  if (bootstrapEnabled) {
+    // The bootstrap secret was already verified at /auth/google/start, so
+    // this only widens WHICH user can become the first operator: an
+    // existing row now promotes exactly like a created one. The NOT EXISTS
+    // guard keeps promotion first-operator-only, and a wrong or absent
+    // secret still never reaches this branch.
+    await rows(db, {
+      q: `UPDATE users SET platform_operator = 1, updated_at = ?2
+          WHERE id = ?1 AND NOT EXISTS (
+            SELECT 1 FROM users WHERE platform_operator = 1
+          )`,
+      v: [user.id, now],
+    });
+  }
+  await upsertLoginPrincipal(db, user.id);
+  return userById(db, user.id);
+}
+
+/** Creates the account for a sign-up that needs no invite: open signup or
+ * the verified bootstrap secret. Invite-admitted accounts are instead
+ * created inside the redemption batch (redeemInviteSession), conditional on
+ * the invite, so no account ever outlives the invite that admitted it. */
+async function createOpenUser(
+  db: Db,
+  profile: GoogleProfile,
+  now: number,
+  bootstrapEnabled: boolean,
+): Promise<UserRow> {
+  const id = crypto.randomUUID();
+  await rows(db, {
+    q: `INSERT INTO users
+        (id, google_user_id, email, name, avatar_url, platform_operator,
+         created_at, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5,
+          CASE WHEN ?6 = 1
+                 AND NOT EXISTS (SELECT 1 FROM users WHERE platform_operator = 1)
+               THEN 1 ELSE 0 END,
+          ?7, ?7)`,
+    v: [
+      id,
+      profile.googleUserId,
+      profile.email,
+      profile.name,
+      profile.avatarUrl,
+      bootstrapEnabled ? 1 : 0,
+      now,
+    ],
+  });
+  await upsertLoginPrincipal(db, id);
+  return userById(db, id);
 }
 
 async function bootstrapMembership(
@@ -431,26 +408,62 @@ export function addGoogleAuthRoutes(
     assertAllowedEmailDomain(policy, profile.email);
     const bootstrapEnabled =
       state.bootstrap === true && runtime.vars.bootstrapSecret !== "";
-    const { user, created } = await resolveUser(
+    // The verified bootstrap secret is the operator credential, so it may
+    // create the first account on an invite-only deployment; the domain
+    // allowlist above still applies even to bootstrap.
+    const requireInvite = policy.inviteOnly && !bootstrapEnabled;
+    const token = randomToken();
+    const existing = await refreshExistingUser(
       runtime.db,
       profile,
       now,
       bootstrapEnabled,
-      {
-        // The verified bootstrap secret is the operator credential, so it
-        // may create the first account on an invite-only deployment; the
-        // domain allowlist above still applies even to bootstrap.
-        requireInvite: policy.inviteOnly && !bootstrapEnabled,
-        inviteCode: state.inviteCode,
-      },
     );
-    let membership = await activeMembership(runtime.db, user.id);
-    if (membership === null && user.platform_operator === 1) {
-      membership = await bootstrapMembership(runtime.db, user, now);
-    }
-    const token = randomToken();
-    if (state.inviteCode !== undefined) {
-      try {
+    if (existing === null && state.inviteCode !== undefined) {
+      // First sign-in arriving with an invite: the user row is created by
+      // the redemption batch itself, conditional on the invite. A brand-new
+      // operator (bootstrap secret while no operator exists) who also
+      // presents a valid invite therefore joins only the inviting org — no
+      // personal org is bootstrapped, because the account exists only once
+      // its invite membership does.
+      if (requireInvite) {
+        // The invite-only gate answers uniformly: a sign-up presenting a
+        // bad invite learns it needs a working one, not what became of the
+        // code it tried.
+        try {
+          await redeemableInvite(runtime.db, state.inviteCode, profile.email, now);
+        } catch {
+          throw new HttpError(403, INVITE_ONLY_MESSAGE);
+        }
+      }
+      await assertEmailUnclaimed(runtime.db, profile.email, null);
+      await redeemInviteSession(
+        runtime.db,
+        state.inviteCode,
+        crypto.randomUUID(),
+        profile.email,
+        await hashSecret(token),
+        runtime.vars.sessionTtlMs,
+        now,
+        {
+          googleUserId: profile.googleUserId,
+          name: profile.name,
+          avatarUrl: profile.avatarUrl,
+          bootstrapOperator: bootstrapEnabled,
+        },
+      );
+    } else {
+      let user = existing;
+      if (user === null) {
+        if (requireInvite) throw new HttpError(403, INVITE_ONLY_MESSAGE);
+        await assertEmailUnclaimed(runtime.db, profile.email, null);
+        user = await createOpenUser(runtime.db, profile, now, bootstrapEnabled);
+      }
+      let membership = await activeMembership(runtime.db, user.id);
+      if (membership === null && user.platform_operator === 1) {
+        membership = await bootstrapMembership(runtime.db, user, now);
+      }
+      if (state.inviteCode !== undefined) {
         await redeemInviteSession(
           runtime.db,
           state.inviteCode,
@@ -460,26 +473,20 @@ export function addGoogleAuthRoutes(
           runtime.vars.sessionTtlMs,
           now,
         );
-      } catch (error) {
-        // hasRedeemableInvite only pre-checked the invite; redemption can
-        // still lose a race for a single-use code, or find the invite
-        // revoked. The account this invite admitted must not survive it.
-        if (created) await deleteProvisionalUser(runtime.db, user.id);
-        throw error;
+      } else {
+        await rows(runtime.db, {
+          q: `INSERT INTO sessions
+              (token_hash, principal_id, created_at, expires_at, membership_id)
+              VALUES (?1, ?2, ?3, ?4, ?5)`,
+          v: [
+            await hashSecret(token),
+            user.id,
+            now,
+            now + runtime.vars.sessionTtlMs,
+            membership?.id ?? null,
+          ],
+        });
       }
-    } else {
-      await rows(runtime.db, {
-        q: `INSERT INTO sessions
-            (token_hash, principal_id, created_at, expires_at, membership_id)
-            VALUES (?1, ?2, ?3, ?4, ?5)`,
-        v: [
-          await hashSecret(token),
-          user.id,
-          now,
-          now + runtime.vars.sessionTtlMs,
-          membership?.id ?? null,
-        ],
-      });
     }
     context.header("Set-Cookie", sessionCookie(token, runtime.vars.sessionTtlMs));
     context.header("Set-Cookie", clearGoogleOAuthStateCookie(), { append: true });

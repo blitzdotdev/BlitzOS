@@ -130,6 +130,50 @@ describe("identity signup gate", () => {
        WHERE u.google_user_id = 'google-invitee@example.com'`,
     ).first<{ role: string; status: string }>();
     expect(membership).toEqual({ role: "member", status: "active" });
+    // The redemption batch creates the principal row too — the broker member
+    // roster joins principals, so an invited account must not be missing one.
+    expect(await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM principals
+       WHERE id = (SELECT id FROM users WHERE google_user_id = 'google-invitee@example.com')`,
+    ).first<number>("count")).toBe(1);
+  });
+
+  it("open mode reports the invite fault and creates nothing for a bad code", async () => {
+    const { app } = harness();
+    const callback = await signIn(app, "walkin@example.com", {
+      startPath: `/auth/google/start?invite=${"A".repeat(43)}`,
+    });
+    expect(callback.status).toBe(404);
+    await expect(callback.json()).resolves.toMatchObject({
+      error: "invite not found",
+    });
+    expect(await userCount("google-walkin@example.com")).toBe(0);
+  });
+
+  it("a single-use invite admits exactly one account", async () => {
+    const { app } = harness();
+    const operatorCookie = await operatorSession(app);
+    const minted = await appRequest(app, "/invites", {
+      method: "POST",
+      headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "member" }),
+    });
+    expect(minted.status).toBe(201);
+    const { code } = await minted.json<{ code: string }>();
+    expect((await signIn(app, "first@example.com", {
+      startPath: `/auth/google/start?invite=${code}`,
+      bindings: { SIGNUP_MODE: "invite" },
+    })).status).toBe(302);
+    expect((await signIn(app, "second@example.com", {
+      startPath: `/auth/google/start?invite=${code}`,
+      bindings: { SIGNUP_MODE: "invite" },
+    })).status).toBe(403);
+    expect(await userCount("google-second@example.com")).toBe(0);
+    expect(await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM memberships m
+       JOIN users u ON u.id = m.user_id
+       WHERE u.google_user_id IN ('google-first@example.com', 'google-second@example.com')`,
+    ).first<number>("count")).toBe(1);
   });
 
   it("invite mode leaves no account behind when redemption fails after the gate", async () => {
@@ -149,7 +193,7 @@ describe("identity signup gate", () => {
     // trigger below fails exactly that write and nothing else.
     await env.DB.prepare(
       `CREATE TRIGGER invite_taken_concurrently
-       BEFORE UPDATE OF state ON invites WHEN NEW.state = 'redeemed'
+       BEFORE UPDATE OF redeemed_at ON invites WHEN NEW.redeemed_at IS NOT NULL
        BEGIN SELECT RAISE(ABORT, 'invite was redeemed concurrently'); END`,
     ).run();
     try {

@@ -26,6 +26,8 @@ interface BoxRow {
   principal_id: string;
   workspace_id: string | null;
   broker_box_id: string | null;
+  /** Derived: 1 when the box is enrolled in broker_boxes. The boxes table
+   * carries no broker flag; enrollment rows are the single source of truth. */
   is_broker: number;
 }
 
@@ -117,7 +119,11 @@ async function requireOwnBox(
 
 async function boxRow(db: Db, id: string): Promise<BoxRow | null> {
   return first<BoxRow>(db, {
-    q: "SELECT * FROM boxes WHERE id = ?1 LIMIT 1",
+    q: `SELECT b.id, b.principal_id, b.workspace_id, b.broker_box_id,
+               EXISTS(
+                 SELECT 1 FROM broker_boxes broker WHERE broker.box_id = b.id
+               ) AS is_broker
+        FROM boxes b WHERE b.id = ?1 LIMIT 1`,
     v: [id],
   });
 }
@@ -169,21 +175,15 @@ async function leastLoadedBroker(db: Db, excludeBoxId: string): Promise<string |
  * `member_cap` is deliberately NOT consulted here. The cap sizes the blast
  * radius of a NEW identity landing on a box; this member's credential is
  * already there, and refusing them would strand a box they own.
- *
- * The JOIN to `broker_boxes` keeps a de-enrolled broker out of the answer. The
- * CASCADE on `broker_members.broker_box_id` should already have removed the
- * row, so this is belt and braces — but the two failure modes are not
- * comparable. Missing the JOIN and reading a dangling row hands the caller a
- * box that is not enrolled, which `POST /boxes/:id/keys` can only turn into a
- * 500; failing to find a row costs nothing, because placement then falls
- * through to `leastLoadedBroker` and the member lands somewhere real.
  */
 async function stickyBroker(db: Db, principalId: string): Promise<string | null> {
+  // SAFETY: broker_members.broker_box_id is NOT NULL REFERENCES
+  // broker_boxes(box_id) ON DELETE CASCADE (migrations/0020_broker_members.sql),
+  // so a membership row can only name a currently enrolled broker; a
+  // de-enrolled broker deletes its memberships in the same statement.
   const row = await first<{ broker_box_id: string }>(db, {
-    q: `SELECT member.broker_box_id AS broker_box_id
-        FROM broker_members member
-        JOIN broker_boxes broker ON broker.box_id = member.broker_box_id
-        WHERE member.principal_id = ?1
+    q: `SELECT broker_box_id FROM broker_members
+        WHERE principal_id = ?1
         LIMIT 1`,
     v: [principalId],
   });
@@ -224,7 +224,7 @@ export function addRegistryRoutes(
     }
     await transaction(runtimeFactory(context).db, [
       {
-        q: "UPDATE boxes SET is_broker = 1, broker_box_id = NULL WHERE id = ?1",
+        q: "UPDATE boxes SET broker_box_id = NULL WHERE id = ?1",
         v: [box.id],
       },
       {
@@ -241,10 +241,10 @@ export function addRegistryRoutes(
 
   router.delete("/boxes/:id/broker", async (context) => {
     const box = await requireOwnBox(context, runtimeFactory);
-    await transaction(runtimeFactory(context).db, [
-      { q: "DELETE FROM broker_boxes WHERE box_id = ?1", v: [box.id] },
-      { q: "UPDATE boxes SET is_broker = 0 WHERE id = ?1", v: [box.id] },
-    ]);
+    await rows(runtimeFactory(context).db, {
+      q: "DELETE FROM broker_boxes WHERE box_id = ?1",
+      v: [box.id],
+    });
     return context.body(null, 204);
   });
 

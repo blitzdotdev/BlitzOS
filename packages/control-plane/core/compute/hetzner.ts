@@ -108,34 +108,6 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function abortable<T>(
-  promise: Promise<T>,
-  signal: AbortSignal,
-  abortReason: Error,
-): Promise<T> {
-  if (signal.aborted) {
-    void promise.catch(() => {});
-    return Promise.reject(abortReason);
-  }
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort);
-      reject(abortReason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    void promise.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(value);
-      },
-      (cause: unknown) => {
-        signal.removeEventListener("abort", onAbort);
-        reject(cause);
-      },
-    );
-  });
-}
-
 function records(value: unknown, field: string): Record<string, unknown>[] {
   if (!isRecord(value) || !Array.isArray(value[field])) {
     throw new Error(`invalid Hetzner ${field} response`);
@@ -398,24 +370,19 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     }, SHUTDOWN_TIMEOUT_MS);
     const { signal } = controller;
 
+    // Every request below carries the deadline signal, so an in-flight call
+    // rejects with deadlineError the moment the timer aborts; the sleeps are
+    // already capped to the remaining window.
     try {
-      const action = await abortable(
-        this.request(
-          `/servers/${encodedId}/actions/shutdown`,
-          { method: "POST", body: "{}", signal },
-          true,
-        ),
-        signal,
-        deadlineError,
+      const action = await this.request(
+        `/servers/${encodedId}/actions/shutdown`,
+        { method: "POST", body: "{}", signal },
+        true,
       );
       if (action === null) return;
 
       while (this.now() < deadline) {
-        const value = await abortable(
-          this.request(`/servers/${encodedId}`, { signal }, true),
-          signal,
-          deadlineError,
-        );
+        const value = await this.request(`/servers/${encodedId}`, { signal }, true);
         if (value === null) return;
         if (!isRecord(value) || !isRecord(value.server)) {
           throw new Error("invalid Hetzner server response");
@@ -423,11 +390,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
         if (stringField(value.server, "status") === "off") return;
         const remaining = deadline - this.now();
         if (remaining > 0) {
-          await abortable(
-            this.sleep(Math.min(SHUTDOWN_POLL_INTERVAL_MS, remaining)),
-            signal,
-            deadlineError,
-          );
+          await this.sleep(Math.min(SHUTDOWN_POLL_INTERVAL_MS, remaining));
         }
       }
     } catch (error) {

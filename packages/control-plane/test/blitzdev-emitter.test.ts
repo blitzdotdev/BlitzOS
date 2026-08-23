@@ -1,7 +1,6 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
-  UPLOAD_MANIFEST,
   WORKER_SOURCE,
   importSpecifiers,
   isRelative,
@@ -132,7 +131,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
   it("emits the exact deterministic manifest within platform limits", () => {
     const first = managedUploadSet();
     const second = managedUploadSet();
-    expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
     expect(first.files).toHaveLength(93);
@@ -203,10 +201,12 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(teenybase?.source).toContain('name: "users"');
   });
 
-  it("wires the managed worker file bucket and scheduled folder sweep", () => {
+  it("wires the managed worker file bucket and scheduled maintenance", () => {
     expect(WORKER_SOURCE).toContain("fileObjects: env.TEENY_PRIMARY_R2 as R2Bucket");
     expect(WORKER_SOURCE).toContain("async scheduled(");
-    expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
+    // One cron-policy owner: the managed tick pins the hourly literal so
+    // every managed run keeps the full sweep set it always had.
+    expect(WORKER_SOURCE).toContain('await runScheduledMaintenance(runtime, "0 * * * *")');
   });
 
   // Run-3 report, B2. The emitted worker registered only vmRegistry, volume

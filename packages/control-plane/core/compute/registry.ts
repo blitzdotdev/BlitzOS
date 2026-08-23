@@ -12,23 +12,17 @@ export interface VmProviderListResult {
 
 export class VmProviderRegistry {
   private readonly providers: readonly VmProvider[];
-  private readonly providersById: ReadonlyMap<string, VmProvider>;
 
   constructor(providers: readonly VmProvider[]) {
-    const providersById = new Map<string, VmProvider>();
+    const seenIds = new Set<string>();
     for (const provider of providers) {
       if (provider.id === "") throw new Error("VM provider id must not be empty");
-      if (providersById.has(provider.id)) {
+      if (seenIds.has(provider.id)) {
         throw new Error(`duplicate VM provider id: ${provider.id}`);
       }
-      providersById.set(provider.id, provider);
+      seenIds.add(provider.id);
     }
     this.providers = [...providers];
-    this.providersById = providersById;
-  }
-
-  get(id: string): VmProvider | undefined {
-    return this.providersById.get(id);
   }
 
   all(): readonly VmProvider[] {

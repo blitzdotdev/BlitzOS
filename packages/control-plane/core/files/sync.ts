@@ -25,16 +25,6 @@ import {
 import { scheduleSync } from "./schedule.js";
 import { runUsageCapturePush } from "./usage-push.js";
 
-export { scheduleSync, scheduledSyncsSettled } from "./schedule.js";
-// The transfer plumbing and the shared per-tick budget moved to dav.ts when
-// the usage-capture push leg became its second consumer; these re-exports
-// keep the long-standing import sites (src/worker.ts, the test suites) flat.
-export {
-  FILE_SYNC_MAX_BYTES_PER_TICK,
-  FILE_SYNC_MAX_FILES_PER_TICK,
-  parseDavListing,
-} from "./dav.js";
-
 interface SyncAttachmentRow extends GuestChannel {
   folder_id: string;
   folder_name: string;
@@ -333,13 +323,16 @@ export async function runWorkspaceFileSync(
   return (await runAttachmentPass(runtime, await attachmentRows(runtime, { workspaceId }))).result;
 }
 
+/** How long an incomplete ready-time pass waits before retrying, sized for a
+ * tunnel that is seconds from connecting; anything slower is the sweep's job. */
+const READY_RETRY_DELAYS_MS = [8_000, 15_000] as const;
+
 /** Materializes a just-booted workspace's attachments. The guest phones home
  * while its tunnel may still be connecting, so an incomplete first pass retries
  * briefly before the five-minute sweep takes over as the backstop. */
 export async function runReadyWorkspaceFileSync(
   runtime: CoreRuntime,
   workspaceId: string,
-  retryDelaysMs: readonly number[] = [8_000, 15_000],
 ): Promise<FileSyncResult> {
   let pass = await runAttachmentPass(runtime, await attachmentRows(runtime, { workspaceId }));
   const settled = async (): Promise<boolean> => convergeFilesReady(
@@ -348,7 +341,7 @@ export async function runReadyWorkspaceFileSync(
     pass.syncedByWorkspace.get(workspaceId) ?? 0,
   );
   let complete = await settled();
-  for (const delayMs of retryDelaysMs) {
+  for (const delayMs of READY_RETRY_DELAYS_MS) {
     if (complete) break;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
     pass = await runAttachmentPass(runtime, await attachmentRows(runtime, { workspaceId }));

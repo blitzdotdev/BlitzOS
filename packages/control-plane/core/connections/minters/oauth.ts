@@ -47,10 +47,10 @@ export function exchangeForm(input: ExchangeInput): URLSearchParams {
       throw new Error("authorization_code exchange needs a redirect URI");
     }
     form.set("redirect_uri", input.redirectUri);
-    if (input.manifest.auth.pkce) {
-      if (input.codeVerifier === null) throw new Error("PKCE exchange needs a code verifier");
-      form.set("code_verifier", input.codeVerifier);
-    }
+    // Every catalog flow runs PKCE, so a code exchange always proves the
+    // verifier that paired the authorize redirect's challenge.
+    if (input.codeVerifier === null) throw new Error("PKCE exchange needs a code verifier");
+    form.set("code_verifier", input.codeVerifier);
   }
   return form;
 }

@@ -6,7 +6,7 @@ import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
-import type { Principal } from "./principals.js";
+import { findSessionPrincipal, type Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addRecipeRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
@@ -42,10 +42,10 @@ export function installControlPlaneRoutes(
 
   async function requirePrincipal(context: CoreContext): Promise<Principal> {
     const runtime = runtimeFactory(context);
-    const principal = await runtime.principalSource.authenticate(context.req.raw, runtime.db);
+    const principal = await findSessionPrincipal(context.req.raw, runtime.db);
     if (principal === null) throw new HttpError(401, "unauthorized");
-    // Login (mintSession) already upserts the principal; re-upserting here
-    // added a D1 write to every authenticated request.
+    // Login already upserts the principal; re-upserting here added a D1
+    // write to every authenticated request.
     return principal;
   }
 

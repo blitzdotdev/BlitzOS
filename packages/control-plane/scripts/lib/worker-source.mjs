@@ -75,12 +75,6 @@ export const TEXT_ASSETS = Object.freeze([
   }),
 ]);
 export const GENERATED_MANIFEST = Object.freeze(TEXT_ASSETS.map((asset) => asset.uploadPath));
-export const UPLOAD_MANIFEST = Object.freeze([
-  "teenybase.ts",
-  "worker.ts",
-  ...CORE_MANIFEST,
-  ...GENERATED_MANIFEST,
-]);
 export const UPLOAD_ORDER = Object.freeze([
   ...CORE_MANIFEST,
   ...GENERATED_MANIFEST,
@@ -210,9 +204,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
       fields: [
         { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "code_hash", type: "text", sqlType: "text", notNull: true, unique: true, check: "length(code_hash) = 43" },
         { name: "email", type: "email", sqlType: "text", check: "email IS NULL OR email = lower(email)" }, { name: "target_org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
-        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member')" }, { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('ready', 'redeemed', 'revoked', 'expired')" },
+        { name: "role", type: "text", sqlType: "text", notNull: true, check: "role IN ('admin', 'member')" },
         { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "redeemed_by_user_id", type: "text", sqlType: "text", foreignKey: { table: "users", column: "id" } },
-        { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "expires_at", type: "integer", sqlType: "integer", notNull: true }, { name: "redeemed_at", type: "integer", sqlType: "integer" },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "expires_at", type: "integer", sqlType: "integer", notNull: true }, { name: "redeemed_at", type: "integer", sqlType: "integer" }, { name: "revoked_at", type: "integer", sqlType: "integer" },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -275,7 +269,6 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "principal_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "principals", column: "id" } },
         { name: "workspace_id", type: "text", sqlType: "text", unique: true, foreignKey: { table: "workspaces", column: "id" } },
         { name: "broker_box_id", type: "text", sqlType: "text", foreignKey: { table: "broker_boxes", column: "box_id", onDelete: "SET NULL" } },
-        { name: "is_broker", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "is_broker IN (0, 1)" },
         { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
       ],
       indexes: [
@@ -361,13 +354,12 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "token_hash", type: "text", sqlType: "text", unique: true },
         { name: "issued_at", type: "integer", sqlType: "integer", notNull: true },
         { name: "expires_at", type: "integer", sqlType: "integer", notNull: true },
-        { name: "state", type: "text", sqlType: "text", notNull: true, check: "state IN ('active','revoked','expired')" },
+        { name: "revoked_at", type: "integer", sqlType: "integer" },
       ],
       indexes: [
-        { name: "workspace", fields: ["workspace_id", "state"] },
-        { name: "expiry", fields: ["state", "expires_at"] },
+        { name: "workspace", fields: "workspace_id" },
         { name: "token", fields: "token_hash", where: { q: "token_hash IS NOT NULL" } },
-        { name: "grant", fields: ["grant_id", "state"] },
+        { name: "grant", fields: "grant_id" },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -475,15 +467,12 @@ import config from "virtual:teenybase";
 import {
   awsProviderFromEnv,
   credentialMasterKeyFor,
-  createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
   isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
-  maxConcurrentWorkspacesFromEnv,
-  runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
-  runProviderCanary, runSessionSweep, runWorkspaceTunnelSweep,
+  runScheduledMaintenance,
   sessionTtlMsFromEnv,
   workspaceTunnelsFromEnv,
   workspaceWebAppAuthFromEnv,
@@ -512,7 +501,6 @@ type ManagedBindings = {
   BOX_IMAGE_SHA256: string;
   BOX_IMAGE_TAG: string;
   SESSION_TTL_DAYS: string;
-  MAX_CONCURRENT_WORKSPACES: string;
   MICROVM_HOSTS: string;
   CRED_MASTER_KEY: string;
   // Workspace tunnels and webApp auth, named exactly as self-host names them
@@ -663,14 +651,12 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(env.MAX_CONCURRENT_WORKSPACES),
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       connectSecret: (name) => nonEmptyString(dynamicBinding(env, name)),
     },
     providers: providersFor(env, db),
-    principalSource: createSessionPrincipalSource(),
     // SAFETY: Both routed context variants satisfy the webApp blob response contract used for the SPA shell.
     assets: { fetch: async () => webAppResponse(context as WebAppContext, "/index.html") },
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
@@ -708,11 +694,12 @@ const worker = Object.assign(app, {
         env, executionCtx: executionContext,
         get: (name) => name === "$db" ? db : key,
       });
-      await runtime.providers.microvm?.syncStaticHosts();
-      await runSessionSweep(runtime); await runLeaseSweep(runtime);
-      await runInvariantSweep(runtime); await runOrphanSweep(runtime);
-      await runWorkspaceTunnelSweep(runtime); await runProviderCanary(runtime);
-      await runFileSyncSweep(runtime);
+      // The managed platform registers a single trigger whose spelling this
+      // source cannot see. Passing the hourly literal keeps every managed
+      // tick on the full hourly set (host sync, janitors, canary, file
+      // sync) — exactly the behavior this entrypoint always had — while
+      // core/janitors.ts stays the one owner of the cron policy.
+      await runScheduledMaintenance(runtime, "0 * * * *");
     })());
   },
 });

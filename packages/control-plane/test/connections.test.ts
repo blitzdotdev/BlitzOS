@@ -16,7 +16,7 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runLeaseSweep, runProviderCanary } from "../core/index.js";
+import { runProviderCanary } from "../core/index.js";
 import worker from "../src/worker.js";
 import { CANARY_GRANT_LABEL } from "../core/connections/canary.js";
 import {
@@ -834,9 +834,9 @@ describe("connections: connect flow and canary", () => {
     // The lease carries the rotated expiry, not the one the pre-refresh row
     // still remembers.
     const lease = await env.DB.prepare(
-      "SELECT expires_at, state FROM credential_leases ORDER BY issued_at DESC, id LIMIT 1",
-    ).first<{ expires_at: number; state: string }>();
-    expect(lease?.state).toBe("active");
+      "SELECT expires_at, revoked_at FROM credential_leases ORDER BY issued_at DESC, id LIMIT 1",
+    ).first<{ expires_at: number; revoked_at: number | null }>();
+    expect(lease?.revoked_at).toBeNull();
     expect(lease?.expires_at).toBeGreaterThan(Date.now());
 
     // And the mint after it is an ordinary fresh-token mint, not a second 409.
@@ -1997,10 +1997,12 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     ).toBe(204);
     expect(
       await env.DB
-        .prepare("SELECT state, token_hash FROM credential_leases WHERE id = ?1")
+        .prepare(
+          "SELECT revoked_at IS NOT NULL AS revoked, token_hash FROM credential_leases WHERE id = ?1",
+        )
         .bind(revoked.leaseId)
         .first(),
-    ).toEqual({ state: "revoked", token_hash: null });
+    ).toEqual({ revoked: 1, token_hash: null });
 
     const secondMint = await mintFor(app, workspace.id, box.access_token, {
       integration: "dead-proxy",
@@ -2300,7 +2302,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     });
   });
 
-  it("revokes a lease by clearing its token hash in the same state update", async () => {
+  it("revokes a lease by clearing its token hash in the same update", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
@@ -2327,10 +2329,12 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(response.status).toBe(204);
     expect(
       await env.DB
-        .prepare("SELECT state, token_hash FROM credential_leases WHERE id = ?1")
+        .prepare(
+          "SELECT revoked_at IS NOT NULL AS revoked, token_hash FROM credential_leases WHERE id = ?1",
+        )
         .bind(lease.id)
         .first(),
-    ).toEqual({ state: "revoked", token_hash: null });
+    ).toEqual({ revoked: 1, token_hash: null });
   });
 
   it("destroys a workspace with an active lease while preserving revoked audit", async () => {
@@ -2365,14 +2369,14 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(
       await env.DB
         .prepare(
-          "SELECT box_id, state FROM credential_leases WHERE workspace_id = ?1",
+          "SELECT box_id, revoked_at IS NOT NULL AS revoked FROM credential_leases WHERE workspace_id = ?1",
         )
         .bind(workspace.id)
         .first(),
-    ).toEqual({ box_id: null, state: "revoked" });
+    ).toEqual({ box_id: null, revoked: 1 });
   });
 
-  it("expires overdue active leases without deleting their audit rows", async () => {
+  it("derives lease expiry at read time and lets revocation win past it", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
@@ -2386,17 +2390,32 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       )
       .run();
 
-    expect(await runLeaseSweep(testRuntime(providers), 11)).toBe(1);
+    const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases } = await listed.json<{ leases: CredentialLeaseView[] }>();
+    expect(leases.map(({ state }) => state)).toEqual(["expired"]);
+    // The read wrote nothing back: no revocation stamp, and the hash stays
+    // put — the proxy's expiry predicate is the authority, so a hash of an
+    // expired token authorizes nothing anyway.
     expect(
       await env.DB
-        .prepare("SELECT state, token_hash FROM credential_leases")
+        .prepare("SELECT revoked_at, token_hash FROM credential_leases")
         .first(),
-    ).toEqual({ state: "expired", token_hash: null });
-    expect(
-      await env.DB
-        .prepare("SELECT COUNT(*) AS count FROM credential_leases")
-        .first<number>("count"),
-    ).toBe(1);
+    ).toEqual({ revoked_at: null, token_hash: "overdue-token-hash" });
+
+    // Minting again supersedes the pair's previous lease whatever its age,
+    // and revocation wins over expiry at read time — the old sweep never
+    // relabeled a revoked row as it aged either.
+    await mintFor(app, workspace.id, box.access_token, {
+      integration: "hetzner-prod",
+    });
+    const after = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: relisted } = await after.json<{ leases: CredentialLeaseView[] }>();
+    expect(relisted.find(({ id }) => id === leases[0]?.id)?.state).toBe("revoked");
+    expect(relisted.filter(({ state }) => state === "active")).toHaveLength(1);
   });
 
   it("returns an array when a sync-style request mints every allowed connection", async () => {
@@ -2485,9 +2504,11 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     ).toEqual({ revoked: 1, root_ciphertext: null });
     expect(
       await env.DB
-        .prepare("SELECT state, token_hash FROM credential_leases")
+        .prepare(
+          "SELECT revoked_at IS NOT NULL AS revoked, token_hash FROM credential_leases",
+        )
         .first(),
-    ).toEqual({ state: "revoked", token_hash: null });
+    ).toEqual({ revoked: 1, token_hash: null });
   });
 
   it("lists minted leases through the session-authenticated audit route", async () => {

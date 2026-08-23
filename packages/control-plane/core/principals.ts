@@ -1,4 +1,4 @@
-import { DUMMY_HASH, hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
+import { DUMMY_HASH, hashSecret, matchesStoredHash } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows } from "./db.js";
 
@@ -10,10 +10,6 @@ export interface Principal {
   orgId: string | null;
   role: "admin" | "member" | null;
   platformOperator: boolean;
-}
-
-export interface PrincipalSource {
-  authenticate(request: Request, db: Db): Promise<Principal | null>;
 }
 
 interface SessionRow {
@@ -75,10 +71,6 @@ export async function findSessionPrincipal(
   };
 }
 
-export function createSessionPrincipalSource(): PrincipalSource {
-  return { authenticate: findSessionPrincipal };
-}
-
 /** Re-resolves the principal a signed OAuth state names. OAuth callbacks
  * arrive as cross-site navigations, which the SameSite=Strict session cookie
  * deliberately does not accompany, so the connect flow binds the principal
@@ -118,22 +110,6 @@ export async function ensurePrincipal(db: Db, principal: Principal): Promise<voi
         ON CONFLICT(id) DO UPDATE SET unix_name = excluded.unix_name, harnesses = excluded.harnesses`,
     v: [principal.id, principal.unixName, JSON.stringify(principal.harnesses)],
   });
-}
-
-export async function mintSession(
-  db: Db,
-  principal: Principal,
-  ttlMs: number,
-  now = Date.now(),
-): Promise<string> {
-  await ensurePrincipal(db, principal);
-  const token = randomToken();
-  await rows(db, {
-    q: `INSERT INTO sessions (token_hash, principal_id, created_at, expires_at)
-        VALUES (?1, ?2, ?3, ?4)`,
-    v: [await hashSecret(token), principal.id, now, now + ttlMs],
-  });
-  return token;
 }
 
 export function sessionCookie(token: string, ttlMs: number): string {

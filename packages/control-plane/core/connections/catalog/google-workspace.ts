@@ -62,8 +62,6 @@ export const googleWorkspaceManifest = {
   summary: "Drive file handoff, calendar scheduling, and outbound mail as you.",
   docsUrl: "https://developers.google.com/identity/protocols/oauth2/web-server",
   custody: "proxy",
-  // One refresh token mints unlimited parallel access tokens; nothing rotates.
-  rotation: "none",
   tokenHeader: { name: "Authorization", prefix: "Bearer " },
   baseUrl: "https://www.googleapis.com",
   auth: {
@@ -71,7 +69,6 @@ export const googleWorkspaceManifest = {
     tokenUrl: "https://oauth2.googleapis.com/token",
     clientIdVar: "GOOGLE_CONNECT_CLIENT_ID",
     clientSecretVar: "GOOGLE_CONNECT_CLIENT_SECRET",
-    pkce: true,
     // Without both of these Google returns no refresh token on re-consent,
     // and the grant silently becomes a one-hour connection.
     authorizeParams: [
@@ -81,7 +78,6 @@ export const googleWorkspaceManifest = {
     ],
     scopeDelimiter: " ",
     accessTtlMs: HOUR_MS,
-    redirectPath: "/connect/google-workspace/callback",
   },
   // Google issues no user-createable API key for Workspace APIs.
   personalToken: null,
@@ -113,7 +109,7 @@ export const googleWorkspaceManifest = {
       { name: "GOOGLE_OAUTH_TOKEN", fill: "token" },
       { name: "GOOGLE_API_BASE_URL", fill: "proxy-url" },
     ],
-    skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
+    skill,
   },
   probe: {
     request: (input) => ({
@@ -124,69 +120,6 @@ export const googleWorkspaceManifest = {
       ],
       body: null,
     }),
-    expect: { status: 200, jsonFields: ["user.emailAddress"] },
+    expect: { jsonFields: ["user.emailAddress"] },
   },
-  probeFixtures: [
-    {
-      name: "drive about",
-      status: 200,
-      response: '{"user":{"kind":"drive#user","emailAddress":"canary@example.com"}}',
-      healthy: true,
-    },
-    {
-      name: "revoked grant",
-      status: 401,
-      response: '{"error":{"code":401,"message":"Invalid Credentials","status":"UNAUTHENTICATED"}}',
-      healthy: false,
-    },
-  ],
-  fixtures: [
-    {
-      name: "authorization code exchange",
-      grantType: "authorization_code",
-      request: [
-        { name: "grant_type", value: "authorization_code" },
-        { name: "code", value: "recorded-authorization-code" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-        { name: "redirect_uri", value: "https://cp.example/connect/google-workspace/callback" },
-        { name: "code_verifier", value: "recorded-code-verifier" },
-      ],
-      response: '{"access_token":"ya29.recorded-first","expires_in":3599,"refresh_token":"1//recorded-refresh","scope":"https://www.googleapis.com/auth/drive.file","token_type":"Bearer"}',
-      expect: {
-        accessToken: "ya29.recorded-first",
-        refreshToken: "1//recorded-refresh",
-        expiresInMs: 3_599_000,
-      },
-    },
-    {
-      name: "refresh keeps the same refresh token",
-      grantType: "refresh_token",
-      request: [
-        { name: "grant_type", value: "refresh_token" },
-        { name: "refresh_token", value: "1//recorded-refresh" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-      ],
-      // No refresh_token field: Google never rotates, so the stored one stands.
-      response: '{"access_token":"ya29.recorded-second","expires_in":3599,"scope":"https://www.googleapis.com/auth/drive.file","token_type":"Bearer"}',
-      expect: {
-        accessToken: "ya29.recorded-second",
-        refreshToken: null,
-        expiresInMs: 3_599_000,
-      },
-    },
-    {
-      name: "refresh token revoked at the account",
-      grantType: "refresh_token",
-      request: [
-        { name: "grant_type", value: "refresh_token" },
-        { name: "refresh_token", value: "1//recorded-refresh" },
-        { name: "client_id", value: "recorded-client-id" },
-        { name: "client_secret", value: "recorded-client-secret" },
-      ],
-      response: '{"error":"invalid_grant","error_description":"Token has been expired or revoked."}',
-      expect: null,
-    },
-  ],
 } satisfies OAuthProviderManifest;

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { env } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   WORKER_SOURCE,
   createWebAppAssetSet,
@@ -18,6 +18,7 @@ const managedToolchainEnabled = env.BLITZDEV_MANAGED === "1";
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
@@ -85,15 +86,16 @@ describe.skipIf(!managedToolchainEnabled)("managed webapp assets [vendor-only: s
       rows.set(id, { ...previous, ...values, object: physical });
       return Response.json(rows.get(id));
     };
+    vi.spyOn(globalThis, "fetch").mockImplementation(fetcher);
 
     const first = await createWebAppAssetSet(directory);
-    await expect(uploadManagedAssets(first, access, "project-password", { fetcher })).resolves.toEqual({
+    await expect(uploadManagedAssets(first, access, "project-password")).resolves.toEqual({
       inserted: 3,
       replaced: 0,
       skipped: 0,
       verified: 3,
     });
-    await expect(uploadManagedAssets(first, access, "project-password", { fetcher })).resolves.toEqual({
+    await expect(uploadManagedAssets(first, access, "project-password")).resolves.toEqual({
       inserted: 0,
       replaced: 0,
       skipped: 3,
@@ -101,7 +103,7 @@ describe.skipIf(!managedToolchainEnabled)("managed webapp assets [vendor-only: s
     });
     await writeFile(path.join(directory, "index.html"), "<main>changed</main>");
     const changed = await createWebAppAssetSet(directory);
-    await expect(uploadManagedAssets(changed, access, "project-password", { fetcher })).resolves.toEqual({
+    await expect(uploadManagedAssets(changed, access, "project-password")).resolves.toEqual({
       inserted: 0,
       replaced: 1,
       skipped: 2,

@@ -1,10 +1,8 @@
 import { changed, rows, transaction } from "./db.js";
-import {
-  revokeWorkspaceLeasesQuery,
-  runLeaseSweep,
-} from "./connections/leases.js";
+import { runProviderCanary } from "./connections/canary.js";
+import { runFileSyncSweep } from "./files/sync.js";
 import type { CoreRuntime } from "./runtime.js";
-import type { WorkspaceRow } from "./workspaces.js";
+import { finalizeWorkspaceDestroyQueries, type WorkspaceRow } from "./workspaces.js";
 
 const STUCK_CREATING_MS = 60 * 60 * 1000;
 export const LAZY_SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -34,9 +32,13 @@ function sweepPath(path: string): boolean {
 }
 
 export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
+  // SAFETY: only phase 'destroying' can hold a VM. Both destroy finalizers —
+  // the DELETE route and this sweep, via finalizeWorkspaceDestroyQueries —
+  // clear vm_id in the same UPDATE that sets phase = 'destroyed', so a
+  // destroyed row with a non-null vm_id cannot exist.
   const result = await rows<WorkspaceRow>(runtime.db, {
     q: `SELECT * FROM workspaces
-        WHERE vm_id IS NOT NULL AND phase IN ('destroying', 'destroyed')
+        WHERE vm_id IS NOT NULL AND phase = 'destroying'
         ORDER BY updated_at, id`,
     v: [],
   });
@@ -60,28 +62,11 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
     if ((await provider.inspect(row.vm_id)) !== null) {
       await provider.destroy(row.vm_id);
     }
-    if (row.phase === "destroying") {
-      const transition = await transaction(runtime.db, [
-        revokeWorkspaceLeasesQuery(row.id),
-        { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [row.id] },
-        { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [row.id] },
-        {
-          q: `UPDATE workspaces
-              SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
-                  ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
-                  revision = revision + 1, updated_at = ?1
-              WHERE id = ?2 AND phase = 'destroying'
-              RETURNING id`,
-          v: [Date.now(), row.id],
-        },
-      ]);
-      if (transition[3]?.length !== 1) continue;
-    } else {
-      await rows(runtime.db, {
-        q: "UPDATE workspaces SET vm_id = NULL WHERE id = ?1",
-        v: [row.id],
-      });
-    }
+    const transition = await transaction(
+      runtime.db,
+      finalizeWorkspaceDestroyQueries(row.id, Date.now()),
+    );
+    if (transition[3]?.length !== 1) continue;
     destroyed += 1;
   }
   return destroyed;
@@ -114,10 +99,8 @@ export async function runWorkspaceTunnelSweep(runtime: CoreRuntime): Promise<num
   return cleaned;
 }
 
-export async function runInvariantSweep(
-  runtime: CoreRuntime,
-  now = Date.now(),
-): Promise<number> {
+export async function runInvariantSweep(runtime: CoreRuntime): Promise<number> {
+  const now = Date.now();
   return changed(runtime.db, {
     q: `UPDATE workspaces
         SET phase = 'error', error = 'workspace creation timed out',
@@ -128,13 +111,10 @@ export async function runInvariantSweep(
   });
 }
 
-export async function runSessionSweep(
-  runtime: CoreRuntime,
-  now = Date.now(),
-): Promise<number> {
+export async function runSessionSweep(runtime: CoreRuntime): Promise<number> {
   return changed(runtime.db, {
     q: "DELETE FROM sessions WHERE expires_at <= ?1 RETURNING token_hash",
-    v: [now],
+    v: [Date.now()],
   });
 }
 
@@ -150,7 +130,6 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
   inFlight = (async () => {
     try {
       await runSessionSweep(runtime);
-      await runLeaseSweep(runtime);
       await runInvariantSweep(runtime);
       await runOrphanSweep(runtime);
       await runWorkspaceTunnelSweep(runtime);
@@ -166,4 +145,40 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
     }
   })();
   runtime.waitUntil(inFlight);
+}
+
+/** Must stay one of wrangler.toml's `triggers.crons` entries verbatim: the
+ * scheduled handler routes on the literal expression Cloudflare hands back. */
+const HOURLY_CRON = "0 * * * *";
+const DAILY_CRON = "0 3 * * *";
+
+/** The whole cron-tick policy, owned here so the Worker entry point only
+ * builds a runtime and forwards `event.cron`. */
+export async function runScheduledMaintenance(
+  runtime: CoreRuntime,
+  cron: string,
+): Promise<void> {
+  // Only the hourly and daily schedules run the full janitor set. Any
+  // other tick (the */5 backstop today) converges folder sync alone, so
+  // renaming that cron can never silently multiply the heavy sweeps.
+  if (cron !== HOURLY_CRON && cron !== DAILY_CRON) {
+    const swept = await runFileSyncSweep(runtime);
+    console.log(JSON.stringify({ event: "file_sync_tick", cron, ...swept }));
+    return;
+  }
+  await runtime.providers.microvm?.syncStaticHosts();
+  await runSessionSweep(runtime);
+  await runInvariantSweep(runtime);
+  await runOrphanSweep(runtime);
+  await runWorkspaceTunnelSweep(runtime);
+  // The canary is the one sweep that costs an authenticated call to a
+  // third party per provider, so it takes the hourly tick alone. On the
+  // daily tick as well it would be counted twice against the same rate
+  // limit for no extra signal.
+  if (cron === HOURLY_CRON) {
+    const probed = await runProviderCanary(runtime);
+    console.log(JSON.stringify({ event: "provider_canary_tick", cron, probed }));
+  }
+  const swept = await runFileSyncSweep(runtime);
+  console.log(JSON.stringify({ event: "file_sync_tick", cron, ...swept }));
 }

@@ -72,7 +72,6 @@ describe("VM provider registry", () => {
     const microvm = new StubVmProvider("microvm", "mv-2c2g@lab", "microvm:v1:lab:1");
     const registry = new VmProviderRegistry([cloud, microvm]);
 
-    expect(registry.get("cloud")).toBe(cloud);
     expect(registry.all()).toEqual([cloud, microvm]);
     expect(registry.forMachineType("cx22@fsn1")).toBe(cloud);
     expect(registry.forMachineType("mv-2c2g@lab")).toBe(microvm);

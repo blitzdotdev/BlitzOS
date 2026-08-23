@@ -1,5 +1,5 @@
 import { isNumber, isRecord, isString } from "../http.js";
-import { fetchBoundedJson, type Fetcher, type JsonValue } from "./json-fetch.js";
+import { fetchBoundedJson, type JsonValue } from "./json-fetch.js";
 
 const API = "https://api.cloudflare.com/client/v4";
 const ERROR_MESSAGE_MAX_LENGTH = 300;
@@ -8,7 +8,6 @@ export interface CloudflareTunnelsOptions {
   accountId: string;
   zoneId: string;
   apiToken: string;
-  fetcher?: Fetcher;
 }
 
 export interface CreatedTunnel {
@@ -44,16 +43,14 @@ export class CloudflareTunnels {
   private readonly accountId: string;
   private readonly zoneId: string;
   private readonly apiToken: string;
-  private readonly fetcher: Fetcher;
 
+  // Non-empty identifiers are the env boundary's job: the only production
+  // constructor call sits behind workspaceTunnelsFromEnv, which returns
+  // undefined unless every variable is a non-empty string.
   constructor(options: CloudflareTunnelsOptions) {
-    if (options.accountId === "") throw new Error("Cloudflare account id is required");
-    if (options.zoneId === "") throw new Error("Cloudflare zone id is required");
-    if (options.apiToken === "") throw new Error("Cloudflare API token is required");
     this.accountId = options.accountId;
     this.zoneId = options.zoneId;
     this.apiToken = options.apiToken;
-    this.fetcher = options.fetcher ?? fetch;
   }
 
   private async request(
@@ -69,7 +66,7 @@ export class CloudflareTunnels {
       init.body = JSON.stringify(body);
     }
     const { response, body: parsed } = await fetchBoundedJson(
-      this.fetcher,
+      fetch,
       `${API}${path}`,
       init,
       {

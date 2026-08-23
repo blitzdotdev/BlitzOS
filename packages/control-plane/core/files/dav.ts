@@ -67,9 +67,7 @@ export async function guestRequest(
 ): Promise<Response> {
   const provider = runtime.providers.vmRegistry.forVmId(channel.vm_id);
   if (provider?.proxyWebApp !== undefined) {
-    const response = await provider.proxyWebApp(channel.vm_id, 7445, path, request);
-    if (response !== null) return response;
-    throw new Error("workspace WebDAV proxy returned no response");
+    return provider.proxyWebApp(channel.vm_id, 7445, path, request);
   }
   const tunnels = runtime.providers.workspaceTunnels;
   if (tunnels === undefined || channel.tunnel_hostname === null) {

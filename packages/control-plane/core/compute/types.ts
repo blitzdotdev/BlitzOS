@@ -7,7 +7,8 @@ export type ProviderMachineType = Omit<
 
 export interface ProviderCapabilities {
   volumes: boolean;
-  maxUserDataBytes?: number | null;
+  /** Raw user-data byte budget, or null when the provider takes no user data. */
+  maxUserDataBytes: number | null;
   webAppActorBypassesGateway?: boolean;
   /** Epoch ms from which VMs this provider creates boot a guest that verifies
    * v1 webApp tickets. Guest channels version independently, so a workspace's
@@ -55,7 +56,7 @@ export interface VmProvider {
     port: WebAppPort,
     pathAndQuery: string,
     request: Request,
-  ): Promise<Response | null>;
+  ): Promise<Response>;
 }
 
 export interface VolumeProvider {

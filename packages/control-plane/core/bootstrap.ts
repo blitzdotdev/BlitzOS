@@ -213,15 +213,20 @@ async function main() {
   }
   await request(socket, 'session/set_config_option', { sessionId: sessionId, configId: 'permission', value: PERMISSION });
   nextId += 1;
-  socket.send(JSON.stringify({
-    jsonrpc: '2.0',
-    id: nextId,
-    method: 'session/prompt',
-    params: { sessionId: sessionId, prompt: [{ type: 'text', text: prompt }] },
-  }));
+  // ws runs the send callback once the frame is written out; the turn itself
+  // runs in the actor without us, so exit as soon as the frame has left.
+  await new Promise(function (resolve, reject) {
+    socket.send(JSON.stringify({
+      jsonrpc: '2.0',
+      id: nextId,
+      method: 'session/prompt',
+      params: { sessionId: sessionId, prompt: [{ type: 'text', text: prompt }] },
+    }), function (error) {
+      if (error) reject(error);
+      else resolve(undefined);
+    });
+  });
   log('prompt submitted to session ' + sessionId);
-  // Let the frame flush; the turn itself runs in the actor without us.
-  await sleep(2000);
   process.exit(0);
 }
 
@@ -340,7 +345,14 @@ fi
 docker image inspect "$BOX_IMAGE_TAG" >/dev/null
 box_image="$BOX_IMAGE_TAG"`
     : String.raw`if ! docker image inspect "$BOX_IMAGE_REF" >/dev/null 2>&1; then
-  retry docker pull "$BOX_IMAGE_REF"
+  pull_attempt=1
+  until docker pull "$BOX_IMAGE_REF"; do
+    if (( pull_attempt >= 10 )); then
+      fail "docker pull failed after $pull_attempt attempts: $BOX_IMAGE_REF"
+    fi
+    sleep $((pull_attempt * 3))
+    pull_attempt=$((pull_attempt + 1))
+  done
 fi
 docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
@@ -507,19 +519,6 @@ readonly DURABLE_BOOTSTRAP_LOG=/var/lib/blitz/bootstrap.log
 touch "$BOOTSTRAP_LOG"
 chmod 0600 "$BOOTSTRAP_LOG"
 exec >>"$BOOTSTRAP_LOG" 2>&1
-
-retry() {
-  local attempt=1
-  local max_attempts=10
-  until "$@"; do
-    if (( attempt >= max_attempts )); then
-      echo "command failed after $attempt attempts: $*"
-      return 1
-    fi
-    sleep $((attempt * 3))
-    attempt=$((attempt + 1))
-  done
-}
 
 fail() {
   bootstrap_error="$*"

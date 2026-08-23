@@ -11,7 +11,10 @@
 
 const ALGORITHM = "AWS4-HMAC-SHA256";
 const REQUEST_TERMINATOR = "aws4_request";
-const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded; charset=utf-8";
+/** The query protocol's content type, exactly as the published AWS SigV4
+ * test-suite `post-x-www-form-urlencoded` vector signs it. No charset suffix:
+ * the encoded body is pure ASCII (see encodeAwsQueryComponent). */
+const FORM_CONTENT_TYPE = "application/x-www-form-urlencoded";
 
 export interface AwsCredentials {
   readonly accessKeyId: string;
@@ -31,10 +34,6 @@ export interface AwsQueryRequest {
   readonly host: string;
   readonly parameters: AwsQueryParameters;
   readonly signedAt: Date;
-  /** Overrides the form content type. Exists so `test/aws-sigv4.test.ts` can
-   * reproduce the published AWS `post-x-www-form-urlencoded` vector, which
-   * signs the header without the `charset` suffix. */
-  readonly contentType?: string;
 }
 
 export interface SignedAwsRequest {
@@ -107,10 +106,9 @@ export async function signAwsQueryRequest(
   const amzDate = amzDateStamp(request.signedAt);
   const date = amzDate.slice(0, 8);
   const sessionToken = request.credentials.sessionToken ?? "";
-  const contentType = request.contentType ?? FORM_CONTENT_TYPE;
   const canonicalHeaders = sessionToken === ""
-    ? `content-type:${contentType}\nhost:${request.host}\nx-amz-date:${amzDate}\n`
-    : `content-type:${contentType}\nhost:${request.host}\nx-amz-date:${amzDate}\nx-amz-security-token:${sessionToken}\n`;
+    ? `content-type:${FORM_CONTENT_TYPE}\nhost:${request.host}\nx-amz-date:${amzDate}\n`
+    : `content-type:${FORM_CONTENT_TYPE}\nhost:${request.host}\nx-amz-date:${amzDate}\nx-amz-security-token:${sessionToken}\n`;
   const signedHeaders = sessionToken === ""
     ? "content-type;host;x-amz-date"
     : "content-type;host;x-amz-date;x-amz-security-token";
@@ -136,7 +134,7 @@ export async function signAwsQueryRequest(
     ),
   );
   const headers: [string, string][] = [
-    ["content-type", contentType],
+    ["content-type", FORM_CONTENT_TYPE],
     ["x-amz-date", amzDate],
     [
       "authorization",

@@ -375,7 +375,6 @@ const catalogEntry: SharedShape<
   summary: "Issues, projects, and comments through one GraphQL endpoint.",
   docsUrl: "https://linear.app/developers",
   custody: "proxy",
-  rotation: "graceful",
   oauthAvailable: true,
   oauthConfigured: false,
   personalTokenLabel: "Personal API key",

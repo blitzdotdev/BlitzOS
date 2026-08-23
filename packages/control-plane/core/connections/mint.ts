@@ -6,7 +6,7 @@ import { authenticateBox } from "../oauth.js";
 import { providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { tombstoneSurfaces } from "./catalog/surfaces.js";
-import { addConnectRoutes } from "./connect.js";
+import { addConnectRoutes, connectRedirectPath } from "./connect.js";
 import { addGithubRepositoryRoutes } from "./github-repos.js";
 import { addConnectionHealthRoutes } from "./health.js";
 import {
@@ -211,7 +211,7 @@ async function grantSecretForMint(
       key: runtime.credentialMasterKey,
       clientId,
       clientSecret,
-      redirectUri: `${origin}${auth.redirectPath}`,
+      redirectUri: `${origin}${connectRedirectPath(manifest.id)}`,
     },
     { ...manifest, auth },
     grant,
@@ -344,7 +344,10 @@ async function mintOne(
   // Accepted tradeoff: a value already exported into a shell that is still
   // open dies on the next mint. Surfaces are login-fresh by design — a new
   // shell, a new agent run, and the proxy all read the freshest lease.
-  await rows(runtime.db, revokeWorkspaceConnectionLeasesQuery(workspace.id, connection.id));
+  await rows(
+    runtime.db,
+    revokeWorkspaceConnectionLeasesQuery(workspace.id, connection.id, now),
+  );
   const lease = await createLease(runtime.db, {
     id: leaseId,
     workspaceId: workspace.id,
@@ -489,14 +492,14 @@ async function surfaceTombstones(
   )) {
     const declared = parseConnectionSurfaceConfig(stale.config);
     if (declared === null) continue;
-    const manifest = providerManifest(declared.manifestId);
-    if (manifest === null) continue;
+    // Only rows a catalog mint wrote surfaces for get tombstones; a manifest
+    // id the catalog no longer knows left nothing this could clean up.
+    if (providerManifest(declared.manifestId) === null) continue;
     results.push({
       // FROZEN box wire key: the shipped broker requires "integration".
       integration: stale.connection_name,
       mode: "inject",
       placements: tombstoneSurfaces(
-        manifest,
         stale.connection_name,
         declared.environmentNames,
       ),

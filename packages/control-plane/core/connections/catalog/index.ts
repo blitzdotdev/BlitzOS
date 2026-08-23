@@ -82,7 +82,6 @@ export function catalogView(
     summary: manifest.summary,
     docsUrl: manifest.docsUrl,
     custody: manifest.custody,
-    rotation: manifest.rotation,
     oauthAvailable: auth !== null,
     oauthConfigured: configured,
     personalTokenLabel: manifest.personalToken?.label ?? null,

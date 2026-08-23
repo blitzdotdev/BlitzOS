@@ -1,3 +1,4 @@
+import { base64Url, decodeBase64Url } from "./crypto.js";
 import { HttpError, isNumber, isRecord, isString, type JsonValue } from "./http.js";
 import type { WorkspaceRole } from "./wire.js";
 
@@ -31,24 +32,6 @@ export type VerifiedWebAppCredential =
   | { kind: "static"; claims: WebAppTicketClaims };
 
 const encoder = new TextEncoder();
-
-function base64Url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-function decodeBase64Url(value: string): Uint8Array | null {
-  if (!/^[A-Za-z0-9_-]+$/u.test(value)) return null;
-  const padded = value.replaceAll("-", "+").replaceAll("_", "/")
-    + "=".repeat((4 - value.length % 4) % 4);
-  try {
-    return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-  } catch {
-    return null;
-  }
-}
 
 async function hmacKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(

@@ -1,9 +1,8 @@
-import type { CreateVolumeRequest, Volume } from "../wire.js";
 import {
   BOX_IMAGE_TICKETS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
 } from "../webapp-tickets.js";
-import { fetchBoundedText, type Fetcher } from "./json-fetch.js";
+import { fetchBoundedText } from "./json-fetch.js";
 import {
   signAwsQueryRequest,
   type AwsCredentials,
@@ -17,7 +16,6 @@ import type {
   ProviderMachineType,
   VmInspection,
   VmProvider,
-  VolumeProvider,
 } from "./types.js";
 
 const EC2_API_VERSION = "2016-11-15";
@@ -45,7 +43,6 @@ const MACHINE_TYPE_PATTERN =
 const REGION_PATTERN = /^[a-z]{2}(?:-[a-z]+)+-\d+$/u;
 /** VM ids are the raw EC2 instance id: `i-` plus 8 or 17 lowercase hex digits. */
 const VM_ID_PATTERN = /^i-[0-9a-f]{8}(?:[0-9a-f]{9})?$/u;
-const VOLUME_ID_PATTERN = /^vol-[0-9a-f]{8}(?:[0-9a-f]{9})?$/u;
 const SECURITY_GROUP_ID_PATTERN = /^sg-[0-9a-f]{8}(?:[0-9a-f]{9})?$/u;
 const SUBNET_ID_PATTERN = /^subnet-[0-9a-f]{8}(?:[0-9a-f]{9})?$/u;
 const IMAGE_ID_PATTERN = /^ami-[0-9a-f]{8}(?:[0-9a-f]{9})?$/u;
@@ -54,7 +51,6 @@ const CANONICAL_OWNER_ID = "099720109477";
 const UBUNTU_IMAGE_NAME =
   "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*";
 const ROOT_DEVICE_NAME = "/dev/sda1";
-const ATTACH_DEVICE_NAME = "/dev/sdf";
 const DEFAULT_ROOT_DISK_GB = 40;
 const WORKSPACE_TAG = "blitz-workspace";
 const PURPOSE_TAG = "blitz-purpose";
@@ -64,7 +60,6 @@ const POLL_INTERVAL_MS = 1_000;
 const POLL_TIMEOUT_MS = 45_000;
 
 const INSTANCE_GONE_CODES = ["InvalidInstanceID.NotFound", "InvalidInstanceId.NotFound"];
-const VOLUME_GONE_CODES = ["InvalidVolume.NotFound", "InvalidVolumeID.NotFound"];
 
 interface AwsMachineType {
   readonly instanceType: string;
@@ -103,12 +98,6 @@ export interface AwsProviderConfig {
   /** Must admit inbound TCP 22; unset falls back to the VPC default group,
    * which does not. */
   readonly securityGroupIds?: readonly string[];
-}
-
-export interface AwsProviderOptions {
-  fetcher?: Fetcher;
-  now?: () => number;
-  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export interface AwsProviderEnv {
@@ -155,14 +144,6 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function base64Utf8(value: string): string {
-  let binary = "";
-  for (const byte of new TextEncoder().encode(value)) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary);
-}
-
 function base64Bytes(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -199,12 +180,6 @@ function requiredField(element: XmlElement, name: string, label: string): string
   return value;
 }
 
-function requiredInteger(element: XmlElement, name: string, label: string): number {
-  const value = Number(requiredField(element, name, label));
-  if (!Number.isSafeInteger(value)) throw new Error(`invalid AWS ${label} response`);
-  return value;
-}
-
 /** `<Response><Errors><Error><Code>…` is the query protocol's fault shape;
  * a handful of actions answer with `<ErrorResponse>` instead. */
 function errorCode(document: XmlElement): string | null {
@@ -227,22 +202,6 @@ function instanceViews(document: XmlElement): InstanceView[] {
       publicIp: childText(instance, "ipAddress") ?? "",
       state: childText(childElement(instance, "instanceState") ?? instance, "name") ?? "",
     }));
-}
-
-function volumeFromEc2(element: XmlElement): Volume {
-  const attachment = setItems(element, "attachmentSet")[0];
-  const attachedTo = attachment === undefined ? null : childText(attachment, "instanceId");
-  const name = setItems(element, "tagSet")
-    .find((tag) => childText(tag, "key") === "Name");
-  const id = requiredField(element, "volumeId", "volume");
-  return {
-    id,
-    name: (name === undefined ? null : childText(name, "value")) ?? id,
-    sizeGb: requiredInteger(element, "size", "volume"),
-    location: requiredField(element, "availabilityZone", "volume"),
-    status: attachedTo === null || attachedTo === "" ? "available" : "attached",
-    attachedTo: attachedTo === "" ? null : attachedTo,
-  };
 }
 
 function tagParameters(
@@ -273,7 +232,6 @@ function validated(value: string, pattern: RegExp, label: string): string {
  * provider whose credentials are present hides an operator typo. */
 export function awsProviderFromEnv(
   env: AwsProviderEnv,
-  options: AwsProviderOptions = {},
 ): AwsProvider | undefined {
   const accessKeyId = env.AWS_ACCESS_KEY_ID ?? "";
   const secretAccessKey = env.AWS_SECRET_ACCESS_KEY ?? "";
@@ -306,22 +264,16 @@ export function awsProviderFromEnv(
   if (sessionToken !== "") settings.sessionToken = sessionToken;
   if (imageId !== "") settings.imageId = validated(imageId, IMAGE_ID_PATTERN, "AWS_IMAGE_ID");
   if (subnetId !== "") settings.subnetId = validated(subnetId, SUBNET_ID_PATTERN, "AWS_SUBNET_ID");
-  return new AwsProvider(settings, options);
+  return new AwsProvider(settings);
 }
 
-export class AwsProvider implements VmProvider, VolumeProvider {
+export class AwsProvider implements VmProvider {
   readonly id = "aws";
   private readonly credentials: AwsCredentials;
   private readonly host: string;
-  private readonly fetcher: Fetcher;
-  private readonly now: () => number;
-  private readonly sleep: (milliseconds: number) => Promise<void>;
   private cachedImageId: string | null;
 
-  constructor(
-    private readonly config: AwsProviderConfig,
-    options: AwsProviderOptions = {},
-  ) {
+  constructor(private readonly config: AwsProviderConfig) {
     const credentials: AwsCredentialSettings = {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey,
@@ -329,15 +281,15 @@ export class AwsProvider implements VmProvider, VolumeProvider {
     if (config.sessionToken !== undefined) credentials.sessionToken = config.sessionToken;
     this.credentials = credentials;
     this.host = `ec2.${config.region}.amazonaws.com`;
-    this.fetcher = options.fetcher ?? fetch;
-    this.now = options.now ?? Date.now;
-    this.sleep = options.sleep ?? sleep;
     this.cachedImageId = config.imageId ?? null;
   }
 
   capabilities(): ProviderCapabilities {
+    // volumes: false — production routes `providers.volume` to Hetzner, so an
+    // EBS implementation here would never be called; the create route's volume
+    // gate refuses AWS machine types instead.
     return {
-      volumes: true,
+      volumes: false,
       maxUserDataBytes: AWS_USER_DATA_RAW_MAX_BYTES,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
@@ -363,10 +315,10 @@ export class AwsProvider implements VmProvider, VolumeProvider {
       service: EC2_SERVICE,
       host: this.host,
       parameters: [["Action", action], ["Version", EC2_API_VERSION], ...parameters],
-      signedAt: new Date(this.now()),
+      signedAt: new Date(),
     });
     const { response, body } = await fetchBoundedText(
-      this.fetcher,
+      fetch,
       signed.url,
       { method: "POST", headers: signed.headers, body: signed.body },
       { responseLabel: `AWS EC2 ${action}`, bodyDisposition: () => "read" },
@@ -514,15 +466,15 @@ export class AwsProvider implements VmProvider, VolumeProvider {
    * has to be read back. Hetzner returns it inline; this is the cost of the
    * EC2 launch flow, not an extra feature. */
   private async waitForPublicIp(id: string): Promise<string> {
-    const deadline = this.now() + POLL_TIMEOUT_MS;
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
     for (;;) {
       const instance = await this.describeInstance(id);
       if (instance !== null && instance.publicIp !== "") return instance.publicIp;
-      const remaining = deadline - this.now();
+      const remaining = deadline - Date.now();
       if (remaining <= 0) {
         throw new Error(`AWS instance ${id} did not receive a public IPv4 address`);
       }
-      await this.sleep(Math.min(POLL_INTERVAL_MS, remaining));
+      await sleep(Math.min(POLL_INTERVAL_MS, remaining));
     }
   }
 
@@ -540,14 +492,14 @@ export class AwsProvider implements VmProvider, VolumeProvider {
     validated(id, VM_ID_PATTERN, "AWS instance id");
     const stopping = await this.ec2("StopInstances", [["InstanceId.1", id]], INSTANCE_GONE_CODES);
     if (stopping === null) return;
-    const deadline = this.now() + POLL_TIMEOUT_MS;
-    while (this.now() < deadline) {
+    const deadline = Date.now() + POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
       const instance = await this.describeInstance(id);
       if (instance === null) return;
       if (instance.state === "stopped" || instance.state === "terminated") return;
-      const remaining = deadline - this.now();
+      const remaining = deadline - Date.now();
       if (remaining <= 0) return;
-      await this.sleep(Math.min(POLL_INTERVAL_MS, remaining));
+      await sleep(Math.min(POLL_INTERVAL_MS, remaining));
     }
   }
 
@@ -572,80 +524,5 @@ export class AwsProvider implements VmProvider, VolumeProvider {
       user: "blitz",
       state: instance.state === "running" ? "running" : "stopped",
     };
-  }
-
-  async createVolume(input: CreateVolumeRequest): Promise<Volume> {
-    if (!input.location.startsWith(this.config.region)) {
-      throw new Error(
-        `volume location ${input.location} must be an availability zone in ${this.config.region}`,
-      );
-    }
-    const document = await this.required("CreateVolume", [
-      ["AvailabilityZone", input.location],
-      ["Size", String(input.sizeGb)],
-      ["VolumeType", "gp3"],
-      ["TagSpecification.1.ResourceType", "volume"],
-      ["TagSpecification.1.Tag.1.Key", "Name"],
-      ["TagSpecification.1.Tag.1.Value", input.name],
-      ["TagSpecification.1.Tag.2.Key", PURPOSE_TAG],
-      ["TagSpecification.1.Tag.2.Value", PURPOSE_VALUE],
-    ]);
-    return volumeFromEc2(document);
-  }
-
-  /** EBS has no automount: the guest sees a raw block device at
-   * `/dev/sdf` (`/dev/nvme1n1` on Nitro) and the box image, which relies on
-   * Hetzner's `automount`, does not format or mount it. */
-  async attachVolume(volumeId: string, vmId: string): Promise<void> {
-    validated(volumeId, VOLUME_ID_PATTERN, "AWS volume id");
-    validated(vmId, VM_ID_PATTERN, "AWS instance id");
-    await this.required("AttachVolume", [
-      ["VolumeId", volumeId],
-      ["InstanceId", vmId],
-      ["Device", ATTACH_DEVICE_NAME],
-    ]);
-  }
-
-  async detachVolume(volumeId: string, vmId: string): Promise<void> {
-    validated(volumeId, VOLUME_ID_PATTERN, "AWS volume id");
-    const document = await this.ec2(
-      "DescribeVolumes",
-      [["VolumeId.1", volumeId]],
-      VOLUME_GONE_CODES,
-    );
-    if (document === null) return;
-    const element = setItems(document, "volumeSet")[0];
-    if (element === undefined) return;
-    if (volumeFromEc2(element).attachedTo !== vmId) return;
-    await this.ec2(
-      "DetachVolume",
-      [["VolumeId", volumeId], ["InstanceId", vmId]],
-      VOLUME_GONE_CODES,
-    );
-  }
-
-  async deleteVolume(id: string): Promise<void> {
-    validated(id, VOLUME_ID_PATTERN, "AWS volume id");
-    await this.ec2("DeleteVolume", [["VolumeId", id]], VOLUME_GONE_CODES);
-  }
-
-  /** Tag-scoped on purpose. Unlike the dedicated Hetzner project the README
-   * mandates, an AWS account routinely holds unrelated volumes, and none of
-   * them belong in this listing. */
-  async listVolumes(): Promise<Volume[]> {
-    const volumes: Volume[] = [];
-    let nextToken: string | null = null;
-    for (;;) {
-      const parameters: (readonly [string, string])[] = [
-        ["Filter.1.Name", `tag:${PURPOSE_TAG}`],
-        ["Filter.1.Value.1", PURPOSE_VALUE],
-      ];
-      if (nextToken !== null) parameters.push(["NextToken", nextToken]);
-      const page: XmlElement = await this.required("DescribeVolumes", parameters);
-      volumes.push(...setItems(page, "volumeSet").map(volumeFromEc2));
-      const token = childText(page, "nextToken");
-      if (token === null || token === "") return volumes;
-      nextToken = token;
-    }
   }
 }

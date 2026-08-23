@@ -7,13 +7,12 @@ export { changed, first, rows, transaction } from "./db.js";
 /** Shared string guard: the Worker entry points narrow catalog-named
  * bindings with the same predicate core parses boundaries with. */
 export { isString } from "./http.js";
-export { runLeaseSweep } from "./connections/leases.js";
 export { runProviderCanary } from "./connections/canary.js";
 export {
   FILE_SYNC_MAX_BYTES_PER_TICK,
   FILE_SYNC_MAX_FILES_PER_TICK,
-  runFileSyncSweep,
-} from "./files/sync.js";
+} from "./files/dav.js";
+export { runFileSyncSweep } from "./files/sync.js";
 export {
   credentialMasterKeyFor,
   importCredentialMasterKey,
@@ -23,11 +22,11 @@ export {
   maybeScheduleLazySweep,
   runInvariantSweep,
   runOrphanSweep,
+  runScheduledMaintenance,
   runWorkspaceTunnelSweep,
   runSessionSweep,
 } from "./janitors.js";
-export { createSessionPrincipalSource } from "./principals.js";
-export type { Principal, PrincipalSource } from "./principals.js";
+export type { Principal } from "./principals.js";
 export { HetznerProvider } from "./compute/hetzner.js";
 export { HETZNER_USER_DATA_MAX_BYTES } from "./compute/hetzner.js";
 export {
@@ -38,7 +37,6 @@ export {
 export type {
   AwsProviderConfig,
   AwsProviderEnv,
-  AwsProviderOptions,
 } from "./compute/aws.js";
 export { VmProviderRegistry } from "./compute/registry.js";
 export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
@@ -86,7 +84,6 @@ export type {
 } from "./runtime.js";
 export {
   allowedEmailDomainsFromEnv,
-  maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
 } from "./runtime.js";

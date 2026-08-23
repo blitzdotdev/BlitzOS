@@ -1,8 +1,7 @@
 import type { Db, Query } from "../db.js";
-import { changed, first, rows, transaction } from "../db.js";
+import { first, rows, transaction } from "../db.js";
 import { HttpError, isNumber, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
-import type { CoreRuntime } from "../runtime.js";
 import { scopesFromJson } from "./manifest.js";
 import type { Lease, MintResult } from "./types.js";
 import { canControlWorkspace } from "../workspace-access.js";
@@ -18,7 +17,7 @@ interface LeaseRow {
   mode: "inject" | "proxy";
   issued_at: number;
   expires_at: number;
-  state: Lease["state"];
+  revoked_at: number | null;
   owner_id: string;
   org_id: string | null;
   owner_membership_id: string | null;
@@ -39,6 +38,9 @@ interface CreateLeaseInput {
   grantId: string | null;
   scopes: string[];
   result: MintResult;
+  /** Non-null exactly when `result.mode` is "proxy": the caller destructures
+   * this pair out of a `MinterResult`, whose union ties the hash to proxy
+   * mode, so the pairing holds by construction rather than by re-check here. */
   tokenHash: string | null;
   now: number;
   principal: Principal;
@@ -60,7 +62,20 @@ export interface CredentialEventView {
   createdAt: number;
 }
 
-function leaseView(row: LeaseRow): Lease {
+/** The state a reader sees. Storage keeps only what a writer decided —
+ * revoked_at at revocation — and expiry is a fact about expires_at, derived
+ * here instead of swept into the row. Revoked wins over expired, exactly as
+ * the old sweep — which only flipped active rows — left revoked labels alone
+ * as they aged. */
+function leaseState(
+  row: Pick<LeaseRow, "revoked_at" | "expires_at">,
+  now: number,
+): Lease["state"] {
+  if (row.revoked_at !== null) return "revoked";
+  return row.expires_at <= now ? "expired" : "active";
+}
+
+function leaseView(row: LeaseRow, now: number): Lease {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -71,7 +86,7 @@ function leaseView(row: LeaseRow): Lease {
     mode: row.mode,
     issuedAt: row.issued_at,
     expiresAt: row.expires_at,
-    state: row.state,
+    state: leaseState(row, now),
   };
 }
 
@@ -80,15 +95,12 @@ export async function createLease(
   input: CreateLeaseInput,
 ): Promise<Lease> {
   const scopes = JSON.stringify(input.scopes);
-  if ((input.result.mode === "proxy") !== (input.tokenHash !== null)) {
-    throw new Error("proxy leases require a token hash");
-  }
   await transaction(db, [
     {
       q: `INSERT INTO credential_leases
           (id, workspace_id, box_id, connection_id, user_id, grant_id, scopes,
-           mode, token_hash, issued_at, expires_at, state)
-          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active')`,
+           mode, token_hash, issued_at, expires_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
       v: [
         input.id,
         input.workspaceId,
@@ -166,7 +178,8 @@ export async function listLeases(
         ORDER BY lease.issued_at DESC, lease.id`,
     v: [workspaceId],
   });
-  return result.map(leaseView);
+  const now = Date.now();
+  return result.map((row) => leaseView(row, now));
 }
 
 export async function revokeLease(
@@ -188,13 +201,13 @@ export async function revokeLease(
     throw new HttpError(404, "credential lease not found");
   }
   if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
-  if (row.state !== "active") return;
+  if (leaseState(row, now) !== "active") return;
   await transaction(db, [
     {
       q: `UPDATE credential_leases
-          SET state = 'revoked', token_hash = NULL
-          WHERE id = ?1 AND state = 'active'`,
-      v: [id],
+          SET revoked_at = ?2, token_hash = NULL
+          WHERE id = ?1 AND revoked_at IS NULL`,
+      v: [id, now],
     },
     {
       q: `INSERT INTO credential_events (lease_id, event, detail, created_at)
@@ -272,21 +285,27 @@ export async function listCredentialEvents(
   }));
 }
 
-export function revokeWorkspaceLeasesQuery(workspaceId: string): Query {
+export function revokeWorkspaceLeasesQuery(
+  workspaceId: string,
+  now = Date.now(),
+): Query {
   return {
     q: `UPDATE credential_leases
-        SET state = 'revoked', token_hash = NULL
-        WHERE workspace_id = ?1 AND state = 'active'`,
-    v: [workspaceId],
+        SET revoked_at = ?2, token_hash = NULL
+        WHERE workspace_id = ?1 AND revoked_at IS NULL`,
+    v: [workspaceId, now],
   };
 }
 
-export function revokeConnectionLeasesQuery(connectionId: string): Query {
+export function revokeConnectionLeasesQuery(
+  connectionId: string,
+  now = Date.now(),
+): Query {
   return {
     q: `UPDATE credential_leases
-        SET state = 'revoked', token_hash = NULL
-        WHERE connection_id = ?1 AND state = 'active'`,
-    v: [connectionId],
+        SET revoked_at = ?2, token_hash = NULL
+        WHERE connection_id = ?1 AND revoked_at IS NULL`,
+    v: [connectionId, now],
   };
 }
 
@@ -296,23 +315,24 @@ export function revokeConnectionLeasesQuery(connectionId: string): Query {
 export function revokeWorkspaceConnectionLeasesQuery(
   workspaceId: string,
   connectionId: string,
+  now = Date.now(),
 ): Query {
   return {
     q: `UPDATE credential_leases
-        SET state = 'revoked', token_hash = NULL
-        WHERE workspace_id = ?1 AND connection_id = ?2 AND state = 'active'`,
-    v: [workspaceId, connectionId],
+        SET revoked_at = ?3, token_hash = NULL
+        WHERE workspace_id = ?1 AND connection_id = ?2 AND revoked_at IS NULL`,
+    v: [workspaceId, connectionId, now],
   };
 }
 
 /** Revoking a grant kills every box that borrowed it, in the same transaction
  * that clears the ciphertext. */
-export function revokeGrantLeasesQuery(grantId: string): Query {
+export function revokeGrantLeasesQuery(grantId: string, now = Date.now()): Query {
   return {
     q: `UPDATE credential_leases
-        SET state = 'revoked', token_hash = NULL
-        WHERE grant_id = ?1 AND state = 'active'`,
-    v: [grantId],
+        SET revoked_at = ?2, token_hash = NULL
+        WHERE grant_id = ?1 AND revoked_at IS NULL`,
+    v: [grantId, now],
   };
 }
 
@@ -337,7 +357,7 @@ export async function staleSurfaceConnections(
   now = Date.now(),
 ): Promise<StaleSurfaceRow[]> {
   const excluded = liveConnectionIds
-    .map((_id, index) => `?${String(index + 3)}`)
+    .map((_id, index) => `?${String(index + 4)}`)
     .join(", ");
   return rows<StaleSurfaceRow>(db, {
     q: `SELECT lease.connection_id, connection.scoped_name AS connection_name,
@@ -348,21 +368,9 @@ export async function staleSurfaceConnections(
           AND lease.issued_at >= ?2
           ${excluded === "" ? "" : `AND lease.connection_id NOT IN (${excluded})`}
         GROUP BY lease.connection_id
-        HAVING SUM(CASE WHEN lease.state = 'active' THEN 1 ELSE 0 END) = 0
+        HAVING SUM(CASE WHEN lease.revoked_at IS NULL AND lease.expires_at > ?3
+                        THEN 1 ELSE 0 END) = 0
         ORDER BY connection.scoped_name`,
-    v: [workspaceId, now - SURFACE_TOMBSTONE_WINDOW_MS, ...liveConnectionIds],
-  });
-}
-
-export async function runLeaseSweep(
-  runtime: CoreRuntime,
-  now = Date.now(),
-): Promise<number> {
-  return changed(runtime.db, {
-    q: `UPDATE credential_leases
-        SET state = 'expired', token_hash = NULL
-        WHERE state = 'active' AND expires_at <= ?1
-        RETURNING id`,
-    v: [now],
+    v: [workspaceId, now - SURFACE_TOMBSTONE_WINDOW_MS, now, ...liveConnectionIds],
   });
 }

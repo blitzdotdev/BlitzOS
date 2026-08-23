@@ -6,7 +6,7 @@ import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
 import { connectionByName } from "./connections/registry.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
-import type { Db } from "./db.js";
+import type { Db, Query } from "./db.js";
 import { first, rows, transaction } from "./db.js";
 import {
   parseWorkspaceEnvironment,
@@ -38,7 +38,8 @@ import {
   templateWorkspaceName,
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
-import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
+import { scheduleSync } from "./files/schedule.js";
+import { runReadyWorkspaceFileSync } from "./files/sync.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -362,7 +363,12 @@ async function connectRequested(
 ): Promise<void> {
   if (connectionNames.length === 0) return;
   const workspace = await workspaceForMint(runtime, workspaceId);
-  if (workspace === null || workspace.org_id === null) return;
+  // SAFETY: the sole caller invokes this right after inserting the workspace
+  // row with the principal's non-null org id, and nothing deletes workspace
+  // rows between that insert and this read — destroy only flips phase.
+  if (workspace === null || workspace.org_id === null) {
+    throw new Error("workspace row vanished between insert and connection minting");
+  }
   for (const name of connectionNames) {
     const connection = await connectionByName(runtime.db, name, workspace.org_id);
     if (connection === null) continue;
@@ -533,7 +539,7 @@ export async function performWorkspaceCreate(
       undefined,
       shaping,
     );
-    const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
+    const maxUserDataBytes = providerCapabilities.maxUserDataBytes;
     if (maxUserDataBytes !== null) {
       const encoder = new TextEncoder();
       const callerBytes = encoder.encode(input.userData ?? "").byteLength;
@@ -610,6 +616,27 @@ export async function performWorkspaceCreate(
   const row = await workspaceById(runtime.db, id);
   if (row === null) throw new Error("workspace disappeared during create");
   return row;
+}
+
+/** The one destroy-finalize transaction, shared by the DELETE route and the
+ * orphan sweep: revoke leases, drop the box and webApp state, and tombstone
+ * the row — clearing vm_id atomically with the phase change. The final query
+ * RETURNING lets callers detect a lost race on `phase = 'destroying'`. */
+export function finalizeWorkspaceDestroyQueries(id: string, now: number): Query[] {
+  return [
+    revokeWorkspaceLeasesQuery(id, now),
+    { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [id] },
+    { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [id] },
+    {
+      q: `UPDATE workspaces
+          SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
+              ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
+              revision = revision + 1, updated_at = ?1
+          WHERE id = ?2 AND phase = 'destroying'
+          RETURNING id`,
+      v: [now, id],
+    },
+  ];
 }
 
 export function addWorkspaceRoutes(
@@ -742,7 +769,7 @@ export function addWorkspaceRoutes(
       : await webAppAuth.tokenFor(row.id);
     const authenticatedRequest = requestWithWebAppCredential(context.req.raw, credential);
     const workspaceTunnels = runtime.providers.workspaceTunnels;
-    let upstream: Response | null;
+    let upstream: Response;
     try {
       if (provider.proxyWebApp !== undefined) {
         upstream = await provider.proxyWebApp(
@@ -768,12 +795,10 @@ export function addWorkspaceRoutes(
       const detail = error instanceof Error ? error.message : String(error);
       throw new HttpError(502, `workspace webApp proxy is unavailable: ${detail}`);
     }
-    if (upstream === null) {
-      throw new HttpError(409, "workspace VM is not owned by its resolved provider");
-    }
     if (!isWebSocketUpgrade(context.req.raw)) return upstream;
-    if (upstream.status !== 101 || upstream.webSocket === null) return upstream;
-    return websocketProxyResponse(upstream);
+    const upstreamSocket = upstream.webSocket;
+    if (upstream.status !== 101 || upstreamSocket === null) return upstream;
+    return websocketProxyResponse(upstream, upstreamSocket);
   };
 
   router.all("/workspaces/:id/webapp/:port", webApp);
@@ -829,19 +854,7 @@ export function addWorkspaceRoutes(
       }
     }
 
-    await transaction(runtime.db, [
-      revokeWorkspaceLeasesQuery(id),
-      { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [id] },
-      { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [id] },
-      {
-        q: `UPDATE workspaces
-            SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
-                ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
-                revision = revision + 1, updated_at = ?1
-            WHERE id = ?2 AND phase = 'destroying'`,
-        v: [Date.now(), id],
-      },
-    ]);
+    await transaction(runtime.db, finalizeWorkspaceDestroyQueries(id, Date.now()));
     const destroyed = await workspaceById(runtime.db, id);
     if (destroyed === null) throw new Error("workspace disappeared after destroy");
     return context.json<CreateWorkspaceResponse>({
@@ -972,9 +985,7 @@ function pipeWebSocket(source: WebSocket, target: WebSocket): void {
   });
 }
 
-function websocketProxyResponse(upstream: Response): Response {
-  const upstreamSocket = upstream.webSocket;
-  if (upstreamSocket === null) return upstream;
+function websocketProxyResponse(upstream: Response, upstreamSocket: WebSocket): Response {
   const pair = new WebSocketPair();
   const client = pair[0];
   const server = pair[1];

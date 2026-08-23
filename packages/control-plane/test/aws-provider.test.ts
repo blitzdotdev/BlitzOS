@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { env } from "cloudflare:workers";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { rawDb } from "../src/raw-db.js";
 import { HetznerProvider } from "../core/compute/hetzner.js";
 import { MicrovmPoolProvider } from "../core/compute/microvm.js";
 import { VmProviderRegistry } from "../core/compute/registry.js";
@@ -15,7 +17,6 @@ import type { CreateVmInput } from "../core/compute/types.js";
 
 const REGION = "us-east-1";
 const INSTANCE_ID = "i-0123456789abcdef0";
-const VOLUME_ID = "vol-0123456789abcdef0";
 const IMAGE_ID = "ami-0123456789abcdef0";
 const NOW_MS = Date.UTC(2026, 7, 18, 12, 0, 0);
 const PHONE_HOME_URL = "https://cp.example/workspaces/workspace-id/phone-home/capability";
@@ -77,34 +78,28 @@ function fakeEc2(handler: Ec2Handler): FakeEc2 {
   };
 }
 
-interface TestClock {
-  now: () => number;
-  sleep: (milliseconds: number) => Promise<void>;
-}
+// The provider reads global fetch and the real clock. Fake timers pin the
+// signing date to NOW_MS and let the bounded poll loops run without waiting;
+// each provider() call points global fetch at that test's fake EC2.
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW_MS);
+});
 
-/** Advances with each awaited sleep so the bounded poll loops terminate. */
-function testClock(): TestClock {
-  let current = NOW_MS;
-  return {
-    now: () => current,
-    sleep: async (milliseconds: number) => {
-      current += milliseconds;
-    },
-  };
-}
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 function provider(fake: FakeEc2, overrides: Partial<AwsProviderConfig> = {}): AwsProvider {
-  const clock = testClock();
-  return new AwsProvider(
-    {
-      accessKeyId: "AKIDEXAMPLE",
-      secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-      region: REGION,
-      imageId: IMAGE_ID,
-      ...overrides,
-    },
-    { fetcher: fake.fetcher, now: clock.now, sleep: clock.sleep },
-  );
+  vi.stubGlobal("fetch", fake.fetcher);
+  return new AwsProvider({
+    accessKeyId: "AKIDEXAMPLE",
+    secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+    region: REGION,
+    imageId: IMAGE_ID,
+    ...overrides,
+  });
 }
 
 function createInput(machineTypeId: string, userData = "#!/bin/bash\necho hi\n"): CreateVmInput {
@@ -153,22 +148,11 @@ function describeInstances(state: string, publicIp: string): Ec2Reply {
   );
 }
 
-function volumeXml(id: string, name: string, attachedTo: string | null): string {
-  const attachment = attachedTo === null
-    ? "<attachmentSet/>"
-    : `<attachmentSet><item><volumeId>${id}</volumeId>`
-      + `<instanceId>${attachedTo}</instanceId><device>/dev/sdf</device>`
-      + `<status>attached</status></item></attachmentSet>`;
-  return `<volumeId>${id}</volumeId><size>50</size>`
-    + `<availabilityZone>us-east-1a</availabilityZone><status>available</status>`
-    + `${attachment}<tagSet><item><key>Name</key><value>${name}</value></item></tagSet>`;
-}
-
 describe("AWS provider ownership", () => {
   it("claims aws- machine types and i- VM ids without colliding with the other providers", () => {
     const aws = provider(fakeEc2(() => ok("<Response/>")));
     const hetzner = new HetznerProvider("test-token");
-    const microvm = new MicrovmPoolProvider("[]", () => undefined, {});
+    const microvm = new MicrovmPoolProvider("[]", () => undefined, { db: rawDb(env.DB) });
     const registry = new VmProviderRegistry([hetzner, microvm, aws]);
 
     expect(registry.forMachineType("aws-t3.medium@us-east-1")).toBe(aws);
@@ -190,7 +174,7 @@ describe("AWS provider ownership", () => {
     expect(AWS_USER_DATA_MAX_BYTES).toBe(16_384);
     expect(AWS_USER_DATA_RAW_MAX_BYTES).toBe(49_152);
     expect(provider(fakeEc2(() => ok("<Response/>"))).capabilities()).toEqual({
-      volumes: true,
+      volumes: false,
       maxUserDataBytes: 49_152,
       webAppTicketsSinceMs: 1_786_993_800_000,
       webAppViewerGuardsSinceMs: 1_787_043_600_000,
@@ -243,7 +227,7 @@ describe("AWS provider createVm", () => {
     const call = fake.calls[0];
     if (call === undefined) throw new Error("expected a RunInstances call");
     expect(call.url).toBe("https://ec2.us-east-1.amazonaws.com/");
-    expect(call.contentType).toBe("application/x-www-form-urlencoded; charset=utf-8");
+    expect(call.contentType).toBe("application/x-www-form-urlencoded");
     // The signed body embeds base64(gzip(userData)), and workerd's
     // CompressionStream emits different deflate bytes on different platform
     // builds (linux vs darwin), so a golden signature cannot hold on both.
@@ -345,7 +329,9 @@ describe("AWS provider createVm", () => {
         : describeInstances("running", "203.0.113.11");
     });
 
-    const created = await provider(fake).createVm(createInput("aws-t3.medium@us-east-1"));
+    const pending = provider(fake).createVm(createInput("aws-t3.medium@us-east-1"));
+    await vi.runAllTimersAsync();
+    const created = await pending;
 
     expect(created.host).toBe("203.0.113.11");
     expect(fake.calls.map((call) => call.action)).toEqual([
@@ -361,8 +347,10 @@ describe("AWS provider createVm", () => {
       action === "RunInstances" ? runInstances("") : describeInstances("pending", "")
     );
 
-    await expect(provider(fake).createVm(createInput("aws-t3.medium@us-east-1")))
+    const expectation = expect(provider(fake).createVm(createInput("aws-t3.medium@us-east-1")))
       .rejects.toThrow(`AWS instance ${INSTANCE_ID} did not receive a public IPv4 address`);
+    await vi.runAllTimersAsync();
+    await expectation;
   });
 
   it("refuses user data whose gzip exceeds EC2's cap, before the API", async () => {
@@ -475,7 +463,9 @@ describe("AWS provider lifecycle", () => {
         : describeInstances("stopped", "");
     });
 
-    await provider(fake).shutdown(INSTANCE_ID);
+    const pending = provider(fake).shutdown(INSTANCE_ID);
+    await vi.runAllTimersAsync();
+    await pending;
 
     expect(fake.calls.map((call) => call.action)).toEqual([
       "StopInstances",
@@ -556,148 +546,6 @@ describe("AWS provider lifecycle", () => {
 
     await expect(provider(fake).inspect("42")).resolves.toBeNull();
     expect(fake.calls).toHaveLength(0);
-  });
-});
-
-describe("AWS provider volumes", () => {
-  it("creates a tagged gp3 volume in the requested availability zone", async () => {
-    const fake = fakeEc2(() =>
-      ok(`<CreateVolumeResponse>${volumeXml(VOLUME_ID, "scratch", null)}</CreateVolumeResponse>`)
-    );
-
-    await expect(
-      provider(fake).createVolume({ name: "scratch", sizeGb: 50, location: "us-east-1a" }),
-    ).resolves.toEqual({
-      id: VOLUME_ID,
-      name: "scratch",
-      sizeGb: 50,
-      location: "us-east-1a",
-      status: "available",
-      attachedTo: null,
-    });
-    const call = fake.calls[0];
-    if (call === undefined) throw new Error("expected a CreateVolume call");
-    expect(call.parameters.get("AvailabilityZone")).toBe("us-east-1a");
-    expect(call.parameters.get("Size")).toBe("50");
-    expect(call.parameters.get("VolumeType")).toBe("gp3");
-    expect(call.parameters.get("TagSpecification.1.Tag.2.Key")).toBe("blitz-purpose");
-  });
-
-  it("refuses an availability zone outside the configured region", async () => {
-    const fake = fakeEc2(() => ok("<CreateVolumeResponse/>"));
-
-    await expect(
-      provider(fake).createVolume({ name: "scratch", sizeGb: 50, location: "eu-west-1a" }),
-    ).rejects.toThrow(
-      "volume location eu-west-1a must be an availability zone in us-east-1",
-    );
-    expect(fake.calls).toHaveLength(0);
-  });
-
-  it("attaches at a fixed device name", async () => {
-    const fake = fakeEc2(() =>
-      ok(
-        `<AttachVolumeResponse><volumeId>${VOLUME_ID}</volumeId>`
-          + `<instanceId>${INSTANCE_ID}</instanceId><device>/dev/sdf</device>`
-          + `<status>attaching</status></AttachVolumeResponse>`,
-      )
-    );
-
-    await provider(fake).attachVolume(VOLUME_ID, INSTANCE_ID);
-
-    const call = fake.calls[0];
-    if (call === undefined) throw new Error("expected an AttachVolume call");
-    expect(call.action).toBe("AttachVolume");
-    expect(call.parameters.get("VolumeId")).toBe(VOLUME_ID);
-    expect(call.parameters.get("InstanceId")).toBe(INSTANCE_ID);
-    expect(call.parameters.get("Device")).toBe("/dev/sdf");
-  });
-
-  it("detaches only when the volume is attached to that instance", async () => {
-    const attached = fakeEc2((action) =>
-      action === "DescribeVolumes"
-        ? ok(
-          `<DescribeVolumesResponse><volumeSet><item>`
-            + `${volumeXml(VOLUME_ID, "scratch", INSTANCE_ID)}</item></volumeSet>`
-            + `</DescribeVolumesResponse>`,
-        )
-        : ok("<DetachVolumeResponse><status>detaching</status></DetachVolumeResponse>")
-    );
-    const elsewhere = fakeEc2(() =>
-      ok(
-        `<DescribeVolumesResponse><volumeSet><item>`
-          + `${volumeXml(VOLUME_ID, "scratch", "i-0000000000000dead")}</item></volumeSet>`
-          + `</DescribeVolumesResponse>`,
-      )
-    );
-    const missing = fakeEc2(() =>
-      ec2Error("InvalidVolume.NotFound", `The volume '${VOLUME_ID}' does not exist.`)
-    );
-
-    await provider(attached).detachVolume(VOLUME_ID, INSTANCE_ID);
-    await provider(elsewhere).detachVolume(VOLUME_ID, INSTANCE_ID);
-    await provider(missing).detachVolume(VOLUME_ID, INSTANCE_ID);
-
-    expect(attached.calls.map((call) => call.action)).toEqual([
-      "DescribeVolumes",
-      "DetachVolume",
-    ]);
-    expect(elsewhere.calls.map((call) => call.action)).toEqual(["DescribeVolumes"]);
-    expect(missing.calls.map((call) => call.action)).toEqual(["DescribeVolumes"]);
-  });
-
-  it("deletes idempotently and propagates other failures", async () => {
-    const gone = fakeEc2(() =>
-      ec2Error("InvalidVolume.NotFound", `The volume '${VOLUME_ID}' does not exist.`)
-    );
-    const inUse = fakeEc2(() =>
-      ec2Error("VolumeInUse", `Volume ${VOLUME_ID} is currently attached to ${INSTANCE_ID}`)
-    );
-
-    await expect(provider(gone).deleteVolume(VOLUME_ID)).resolves.toBeUndefined();
-    await expect(provider(inUse).deleteVolume(VOLUME_ID)).rejects.toThrow(
-      "AWS EC2 DeleteVolume failed: VolumeInUse:",
-    );
-    await expect(provider(gone).deleteVolume("42")).rejects.toThrow("invalid AWS volume id: 42");
-  });
-
-  it("lists only blitz-tagged volumes and follows the pagination token", async () => {
-    const fake = fakeEc2((_action, parameters) =>
-      parameters.get("NextToken") === null
-        ? ok(
-          `<DescribeVolumesResponse><volumeSet><item>`
-            + `${volumeXml(VOLUME_ID, "scratch", null)}</item></volumeSet>`
-            + `<nextToken>page-two</nextToken></DescribeVolumesResponse>`,
-        )
-        : ok(
-          `<DescribeVolumesResponse><volumeSet><item>`
-            + `${volumeXml("vol-00000000000000002", "second", INSTANCE_ID)}</item></volumeSet>`
-            + `</DescribeVolumesResponse>`,
-        )
-    );
-
-    await expect(provider(fake).listVolumes()).resolves.toEqual([
-      {
-        id: VOLUME_ID,
-        name: "scratch",
-        sizeGb: 50,
-        location: "us-east-1a",
-        status: "available",
-        attachedTo: null,
-      },
-      {
-        id: "vol-00000000000000002",
-        name: "second",
-        sizeGb: 50,
-        location: "us-east-1a",
-        status: "attached",
-        attachedTo: INSTANCE_ID,
-      },
-    ]);
-    expect(fake.calls).toHaveLength(2);
-    expect(fake.calls[0]?.parameters.get("Filter.1.Name")).toBe("tag:blitz-purpose");
-    expect(fake.calls[0]?.parameters.get("Filter.1.Value.1")).toBe("workspace");
-    expect(fake.calls[1]?.parameters.get("NextToken")).toBe("page-two");
   });
 });
 

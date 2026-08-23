@@ -357,16 +357,6 @@ export function connectionProxyBaseUrl(config: string): string | null {
   }
 }
 
-/** Which catalog entry interprets a connection row, when one does. */
-export function connectionManifestId(connection: Connection): string | null {
-  try {
-    const value: unknown = JSON.parse(connection.config);
-    return isRecord(value) && isString(value.manifest_id) ? value.manifest_id : null;
-  } catch {
-    return null;
-  }
-}
-
 export function resolveMinter(connection: Connection): Minter | null {
   return (
     minters.find(

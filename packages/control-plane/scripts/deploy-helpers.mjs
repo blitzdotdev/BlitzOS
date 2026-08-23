@@ -38,43 +38,34 @@ export function parseD1Binding(rawConfig, binding) {
   if (!isRecord(rawConfig) || !Array.isArray(rawConfig.d1_databases)) {
     throw new Error("wrangler config must define d1_databases");
   }
-  const matches = rawConfig.d1_databases.filter(
-    (database) => isRecord(database) && database.binding === binding,
+  const indexes = rawConfig.d1_databases.flatMap((database, index) =>
+    isRecord(database) && database.binding === binding ? [index] : [],
   );
-  if (matches.length !== 1) {
+  if (indexes.length !== 1) {
     throw new Error(`wrangler config must define exactly one ${binding} D1 binding`);
   }
-  const database = matches[0];
+  const database = rawConfig.d1_databases[indexes[0]];
   if (typeof database.database_name !== "string" || database.database_name === "") {
     throw new Error(`${binding} must define database_name`);
   }
   return {
     binding,
+    index: indexes[0],
     databaseName: database.database_name,
     databaseId:
       typeof database.database_id === "string" ? database.database_id : null,
   };
 }
 
-export function d1DatabasePatch(rawConfig, binding, databaseName, databaseId) {
-  if (!isRecord(rawConfig) || !Array.isArray(rawConfig.d1_databases)) {
-    throw new Error("wrangler config must define d1_databases");
-  }
+// `parsed` is parseD1Binding's result for the same rawConfig, so the patch
+// target is the entry it already validated — no re-matching by name here.
+export function d1DatabasePatch(rawConfig, parsed, databaseId) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(databaseId)) {
-    throw new Error(`Cloudflare returned an invalid D1 database UUID for ${databaseName}`);
+    throw new Error(`Cloudflare returned an invalid D1 database UUID for ${parsed.databaseName}`);
   }
-  let replacements = 0;
-  const d1Databases = rawConfig.d1_databases.map((database) => {
-    if (!isRecord(database) || database.binding !== binding) return database;
-    replacements += 1;
-    if (database.database_name !== databaseName) {
-      throw new Error(`${binding} database_name changed while preparing deployment`);
-    }
-    return { ...database, database_id: databaseId };
-  });
-  if (replacements !== 1) {
-    throw new Error(`wrangler config must define exactly one ${binding} D1 binding`);
-  }
+  const d1Databases = rawConfig.d1_databases.map((database, index) =>
+    index === parsed.index ? { ...database, database_id: databaseId } : database,
+  );
   return { d1_databases: d1Databases };
 }
 
@@ -296,14 +287,7 @@ export async function deployControlPlane({
   }
 
   if (databaseBinding.databaseId !== databaseId) {
-    await patchConfig(
-      d1DatabasePatch(
-        rawConfig,
-        DB_BINDING,
-        databaseBinding.databaseName,
-        databaseId,
-      ),
-    );
+    await patchConfig(d1DatabasePatch(rawConfig, databaseBinding, databaseId));
   }
 
   await wrangler(["d1", "migrations", "apply", DB_BINDING, "--remote"]);
@@ -313,12 +297,7 @@ export async function deployControlPlane({
     await wrangler(["r2", "bucket", "create", bucketBinding.bucketName], true);
   }
 
-  let secrets;
-  try {
-    secrets = await wrangler(["secret", "list", "--format", "json"], true);
-  } catch {
-    throw new Error(missingSecretsMessage(REQUIRED_SECRETS));
-  }
+  const secrets = await wrangler(["secret", "list", "--format", "json"], true);
   const present = secretNames(parseJson(secrets.stdout, "Wrangler secret list"));
   const missing = requiredSecretsForConfig(rawConfig).filter((name) => !present.has(name));
   if (missing.length > 0) throw new Error(missingSecretsMessage(missing));

@@ -6,20 +6,12 @@ import {
   allowedEmailDomainsFromEnv,
   awsProviderFromEnv,
   credentialMasterKeyFor,
-  createSessionPrincipalSource,
   HetznerProvider,
   installControlPlaneRoutes,
   isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
-  maxConcurrentWorkspacesFromEnv,
-  runInvariantSweep,
-  runFileSyncSweep,
-  runLeaseSweep,
-  runOrphanSweep,
-  runProviderCanary,
-  runSessionSweep,
-  runWorkspaceTunnelSweep,
+  runScheduledMaintenance,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
   workspaceTunnelsFromEnv,
@@ -33,10 +25,6 @@ import {
 } from "../core/index.js";
 import config from "../teenybase.js";
 
-/** Must stay one of wrangler.toml's `triggers.crons` entries verbatim: the
- * scheduled handler routes on the literal expression Cloudflare hands back. */
-const HOURLY_CRON = "0 * * * *";
-
 type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
   HETZNER_API_TOKEN: string;
@@ -46,7 +34,6 @@ type WorkerBindings = Env & {
   GOOGLE_CLIENT_SECRET: string;
   MICROVM_HOSTS: string;
   SESSION_TTL_DAYS: string;
-  MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
   CRED_MASTER_KEY: string;
@@ -114,28 +101,31 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
   };
 }
 
-function runtimeFor(context: CoreContext): CoreRuntime;
-function runtimeFor(context: TargetContext): CoreRuntime;
-function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
-  // SAFETY: Both routed Hono context variants carry the declared WorkerBindings environment.
-  const env = context.env as WorkerBindings;
-  // SAFETY: The database middleware installs a Db instance under $db before routed handlers run.
-  const db = context.get("$db") as Db;
+interface RuntimeSeed {
+  env: WorkerBindings;
+  db: Db;
+  credentialMasterKey: CryptoKey;
+  waitUntil(promise: Promise<unknown>): void;
+  /** The routed fetch path serves the SPA shell; cron runs have no assets. */
+  assets?: CoreRuntime["assets"];
+}
+
+/** The one place a CoreRuntime is assembled from Worker bindings: the routed
+ * fetch path and the cron path feed different context shapes in, but the vars
+ * block and provider wiring exist exactly once. */
+function buildRuntime(seed: RuntimeSeed): CoreRuntime {
+  const { env, db } = seed;
   return {
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
     blobs: env.BOX_IMAGES as BlobStore,
     fileObjects: env.BOX_IMAGES,
-    // SAFETY: Authentication middleware installs the imported CryptoKey under $credentialMasterKey.
-    credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
+    credentialMasterKey: seed.credentialMasterKey,
     vars: {
       boxImageRef: env.BOX_IMAGE_REF,
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        env.MAX_CONCURRENT_WORKSPACES,
-      ),
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
@@ -144,46 +134,26 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
     },
     providers: providersFor(env, db),
-    principalSource: createSessionPrincipalSource(),
-    assets: { fetch: (request) => env.ASSETS.fetch(request) },
-    waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+    assets: seed.assets,
+    waitUntil: seed.waitUntil,
     reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
   };
 }
 
-function runtimeForScheduled(
-  env: WorkerBindings,
-  db: Db,
-  executionContext: ExecutionContext,
-  credentialMasterKey: CryptoKey,
-): CoreRuntime {
-  const providers = providersFor(env, db);
-  return {
-    db,
-    // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
-    blobs: env.BOX_IMAGES as BlobStore,
-    fileObjects: env.BOX_IMAGES,
-    credentialMasterKey,
-    vars: {
-      boxImageRef: env.BOX_IMAGE_REF,
-      boxImageSha256: env.BOX_IMAGE_SHA256,
-      boxImageTag: env.BOX_IMAGE_TAG,
-      sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        env.MAX_CONCURRENT_WORKSPACES,
-      ),
-      googleClientId: env.GOOGLE_CLIENT_ID,
-      googleClientSecret: env.GOOGLE_CLIENT_SECRET,
-      bootstrapSecret: env.OPERATOR_API_KEY,
-      connectSecret: (name) => connectSecretFrom(env, name),
-      signupMode: signupModeFromEnv(env.SIGNUP_MODE),
-      allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
-    },
-    providers,
-    principalSource: createSessionPrincipalSource(),
-    waitUntil: (promise) => executionContext.waitUntil(promise),
-    reportError: (event, error) => console.error(JSON.stringify({ event, error: error.message })),
-  };
+function runtimeFor(context: CoreContext): CoreRuntime;
+function runtimeFor(context: TargetContext): CoreRuntime;
+function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
+  // SAFETY: Both routed Hono context variants carry the declared WorkerBindings environment.
+  const env = context.env as WorkerBindings;
+  return buildRuntime({
+    env,
+    // SAFETY: The database middleware installs a Db instance under $db before routed handlers run.
+    db: context.get("$db") as Db,
+    // SAFETY: Authentication middleware installs the imported CryptoKey under $credentialMasterKey.
+    credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
+    waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+    assets: { fetch: (request) => env.ASSETS.fetch(request) },
+  });
 }
 
 let lastSyncedHostsConfig: string | undefined;
@@ -250,39 +220,15 @@ export default {
     env: WorkerBindings,
     executionContext: ExecutionContext,
   ): Promise<void> {
-    const db = rawDb(env.DB);
     executionContext.waitUntil(
       (async () => {
-        const runtime =  runtimeForScheduled(
+        const runtime = buildRuntime({
           env,
-          db,
-          executionContext,
-          await credentialMasterKeyFor(env.CRED_MASTER_KEY),
-        );
-        // Only the hourly and daily schedules run the full janitor set. Any
-        // other tick (the */5 backstop today) converges folder sync alone, so
-        // renaming that cron can never silently multiply the heavy sweeps.
-        if (event.cron !== HOURLY_CRON && event.cron !== "0 3 * * *") {
-          const swept = await runFileSyncSweep(runtime);
-          console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
-          return;
-        }
-        await runtime.providers.microvm?.syncStaticHosts();
-        await runSessionSweep(runtime);
-        await runLeaseSweep(runtime);
-        await runInvariantSweep(runtime);
-        await runOrphanSweep(runtime);
-        await runWorkspaceTunnelSweep(runtime);
-        // The canary is the one sweep that costs an authenticated call to a
-        // third party per provider, so it takes the hourly tick alone. On the
-        // daily tick as well it would be counted twice against the same rate
-        // limit for no extra signal.
-        if (event.cron === HOURLY_CRON) {
-          const probed = await runProviderCanary(runtime);
-          console.log(JSON.stringify({ event: "provider_canary_tick", cron: event.cron, probed }));
-        }
-        const swept = await runFileSyncSweep(runtime);
-        console.log(JSON.stringify({ event: "file_sync_tick", cron: event.cron, ...swept }));
+          db: rawDb(env.DB),
+          credentialMasterKey: await credentialMasterKeyFor(env.CRED_MASTER_KEY),
+          waitUntil: (promise) => executionContext.waitUntil(promise),
+        });
+        await runScheduledMaintenance(runtime, event.cron);
       })(),
     );
   },

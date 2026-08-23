@@ -111,16 +111,17 @@ describe("control-plane deploy command", () => {
         },
       ],
     };
-    expect(parseD1Binding(rawConfig, "DB")).toEqual({
+    const parsed = parseD1Binding(rawConfig, "DB");
+    expect(parsed).toEqual({
       binding: "DB",
+      index: 1,
       databaseName: "blitz-control-plane",
       databaseId: "old-id",
     });
 
     const patch = d1DatabasePatch(
       rawConfig,
-      "DB",
-      "blitz-control-plane",
+      parsed,
       "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     );
     expect(patch).toEqual({
@@ -387,6 +388,56 @@ describe("control-plane deploy command", () => {
     ]));
     expect(calls.some(([tool]) => tool === "npm")).toBe(false);
     expect(calls.some(([tool, command]) => tool === "wrangler" && command === "deploy")).toBe(false);
+  });
+
+  it("propagates a secret-list command failure instead of diagnosing missing secrets", async () => {
+    // The catch that translated every `wrangler secret list` failure into the
+    // missing-secrets recipe discarded what wrangler actually said (an expired
+    // login, an API outage) and sent the operator off to re-put secrets.
+    const run = async (
+      tool: string,
+      args: string[],
+      _options: { capture: boolean; env: Record<string, string> },
+    ) => {
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:  blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        throw new Error("wrangler secret list --format json failed with exit 1\nAuthentication error [code: 10000]");
+      }
+      return { stdout: "" };
+    };
+
+    await expect(
+      deployControlPlane({
+        configPath: "packages/control-plane/wrangler.toml",
+        rawConfig: {
+          name: "blitz-control-plane",
+          vars: { MICROVM_HOSTS: "[]" },
+          r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+          d1_databases: [
+            {
+              binding: "DB",
+              database_name: "blitz-control-plane",
+              database_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            },
+          ],
+        },
+        run,
+        async patchConfig() {
+          throw new Error("matching D1 config should not be rewritten");
+        },
+        secretValues: {},
+      }),
+    ).rejects.toThrow("Authentication error [code: 10000]");
   });
 
   it("ships a template a fresh clone can deploy in the documented order", async () => {

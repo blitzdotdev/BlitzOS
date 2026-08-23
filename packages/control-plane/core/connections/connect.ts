@@ -21,6 +21,13 @@ import type { GrantConfig } from "./user-grants.js";
  * reads the query and says what happened. */
 const CONNECT_RETURN_PATH = "/settings/connections";
 
+/** The redirect URI path registered with every provider — one derivation,
+ * beside the `/connect/:provider/callback` route that serves it, so a
+ * manifest cannot drift from the callback it lands on. */
+export function connectRedirectPath(providerId: string): string {
+  return `/connect/${providerId}/callback`;
+}
+
 /** Turns the grant this round trip just stored into a lease in the workspace it
  * started from. Injected by the mint module, which owns every path that writes
  * a lease. Answers false when the workspace refuses — the grant still stands. */
@@ -146,15 +153,15 @@ export function addConnectRoutes(
     const authorize = new URL(manifest.auth.authorizeUrl);
     const parameters = new URLSearchParams({
       client_id: clientId,
-      redirect_uri: `${origin}${manifest.auth.redirectPath}`,
+      redirect_uri: `${origin}${connectRedirectPath(manifest.id)}`,
       response_type: "code",
       scope: manifest.defaultScopes.join(manifest.auth.scopeDelimiter),
       state: oauth.state,
+      // Every catalog flow runs PKCE; the paired verifier rides the signed
+      // state cookie and the exchange always sends it.
+      code_challenge: oauth.codeChallenge,
+      code_challenge_method: "S256",
     });
-    if (manifest.auth.pkce) {
-      parameters.set("code_challenge", oauth.codeChallenge);
-      parameters.set("code_challenge_method", "S256");
-    }
     for (const parameter of manifest.auth.authorizeParams) {
       parameters.set(parameter.name, parameter.value);
     }
@@ -203,7 +210,7 @@ export function addConnectRoutes(
       manifest,
       clientId,
       clientSecret,
-      redirectUri: `${origin}${manifest.auth.redirectPath}`,
+      redirectUri: `${origin}${connectRedirectPath(manifest.id)}`,
       grantType: "authorization_code",
       code,
       codeVerifier: state.codeVerifier,

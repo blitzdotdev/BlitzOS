@@ -19,7 +19,8 @@ import {
   requireFolderAccess,
   type FilesActor,
 } from "./access.js";
-import { runWorkspaceFileSync, scheduleSync } from "./sync.js";
+import { scheduleSync } from "./schedule.js";
+import { runWorkspaceFileSync } from "./sync.js";
 
 interface AttachmentWorkspaceRow {
   id: string;

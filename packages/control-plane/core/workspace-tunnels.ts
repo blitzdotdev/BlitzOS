@@ -4,7 +4,6 @@ import {
   CloudflareTunnels,
   type SurfaceCleanupResult,
 } from "./compute/cloudflare-tunnels.js";
-import type { Fetcher } from "./compute/json-fetch.js";
 import type { WebAppPort } from "./compute/types.js";
 import { WEBAPP_TOKEN_HEADER, WorkspaceWebAppAuth } from "./webapp-tickets.js";
 
@@ -39,18 +38,15 @@ export class WorkspaceTunnels {
   private readonly client: CloudflareTunnels;
   private readonly zone: string;
   private readonly auth: WorkspaceWebAppAuth;
-  private readonly fetcher: Fetcher;
 
   constructor(
     client: CloudflareTunnels,
     zone: string,
     webAppTokenSecret: string,
-    fetcher: Fetcher = fetch,
   ) {
     this.client = client;
     this.zone = zone;
     this.auth = new WorkspaceWebAppAuth(webAppTokenSecret);
-    this.fetcher = fetcher;
   }
 
   hostnameFor(workspaceId: string): string {
@@ -127,8 +123,7 @@ export class WorkspaceTunnels {
     headers.delete("Authorization");
     headers.set(WEBAPP_TOKEN_HEADER, credential ?? await this.webAppTokenFor(workspaceId));
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
-    const fetcher = this.fetcher;
-    return fetcher(`https://${hostname}${upstreamPath}`, {
+    return fetch(`https://${hostname}${upstreamPath}`, {
       method: request.method,
       headers,
       body: hasBody ? request.body : undefined,

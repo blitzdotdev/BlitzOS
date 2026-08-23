@@ -332,7 +332,7 @@ describe("identity phase 2", () => {
 
     const callback = await googleCallback(app, "invitee@example.com", `/auth/google/start?invite=${body.code}`);
     expect(callback.status).toBe(302);
-    expect(await env.DB.prepare("SELECT state FROM invites WHERE id = ?1").bind(body.invite.id).first<string>("state")).toBe("redeemed");
+    expect(await env.DB.prepare("SELECT redeemed_at IS NOT NULL AS redeemed FROM invites WHERE id = ?1").bind(body.invite.id).first<number>("redeemed")).toBe(1);
     expect(await env.DB.prepare(
       `SELECT m.org_id FROM sessions s JOIN memberships m ON m.id = s.membership_id
        WHERE s.principal_id = (SELECT id FROM users WHERE email = 'invitee@example.com')
@@ -413,7 +413,7 @@ describe("identity phase 2", () => {
       "anyone@example.com",
       `/auth/google/start?invite=${openBody.code}`,
     )).status).toBe(302);
-    expect(await env.DB.prepare("SELECT state FROM invites WHERE id = ?1").bind(openBody.invite.id).first<string>("state")).toBe("redeemed");
+    expect(await env.DB.prepare("SELECT redeemed_at IS NOT NULL AS redeemed FROM invites WHERE id = ?1").bind(openBody.invite.id).first<number>("redeemed")).toBe(1);
 
     const second = await appRequest(app, "/invites", {
       ...json({ role: "member" }),
@@ -422,6 +422,43 @@ describe("identity phase 2", () => {
     const secondBody = await second.json<{ code: string; invite: { id: string } }>();
     expect((await appRequest(app, `/invites/${secondBody.invite.id}`, { method: "DELETE", headers: { Cookie: adminCookie } })).status).toBe(204);
     await expect(appRequest(app, `/invite/${secondBody.code}`).then((response) => response.json())).resolves.toMatchObject({ invite: { state: "revoked" } });
+  });
+
+  it("derives 'expired' at read time without writing it back", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const created = await appRequest(app, "/invites", {
+      ...json({ role: "member" }),
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+    });
+    const body = await created.json<{ code: string; invite: { id: string } }>();
+    await env.DB.prepare("UPDATE invites SET expires_at = ?1 WHERE id = ?2")
+      .bind(Date.now() - 1_000, body.invite.id).run();
+
+    await expect(appRequest(app, `/invite/${body.code}`).then((response) => response.json()))
+      .resolves.toMatchObject({ invite: { state: "expired" } });
+    await expect(appRequest(app, "/invites", { headers: { Cookie: adminCookie } })
+      .then((response) => response.json()))
+      .resolves.toMatchObject({ invites: [expect.objectContaining({ state: "expired" })] });
+    // The reads above synced nothing: no stamp appeared on the row.
+    expect(await env.DB.prepare("SELECT revoked_at, redeemed_at FROM invites WHERE id = ?1")
+      .bind(body.invite.id).first()).toEqual({ revoked_at: null, redeemed_at: null });
+
+    // Expired refuses writes too: revocation 409s and redemption creates nothing.
+    expect((await appRequest(app, `/invites/${body.invite.id}`, {
+      method: "DELETE",
+      headers: { Cookie: adminCookie },
+    })).status).toBe(409);
+    const callback = await googleCallback(
+      app,
+      "late@example.com",
+      `/auth/google/start?invite=${body.code}`,
+    );
+    expect(callback.status).toBe(409);
+    await expect(callback.json()).resolves.toMatchObject({ error: "invite is expired" });
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM users WHERE email = 'late@example.com'",
+    ).first<number>("count")).toBe(0);
   });
 
   it("switches sessions among active memberships and scopes volumes and connections", async () => {

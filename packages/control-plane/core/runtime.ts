@@ -1,7 +1,6 @@
 import type { BlobStore } from "./blobs.js";
 import type { Db } from "./db.js";
 import { isNumber } from "./http.js";
-import type { PrincipalSource } from "./principals.js";
 import type { MicrovmPoolProvider } from "./compute/microvm.js";
 import type { VmProviderRegistry } from "./compute/registry.js";
 import type { VolumeProvider } from "./compute/types.js";
@@ -55,7 +54,6 @@ export interface RuntimeVariables {
   boxImageSha256: string;
   boxImageTag: string;
   sessionTtlMs: number;
-  maxConcurrentWorkspaces: number;
   googleClientId: string;
   googleClientSecret: string;
   bootstrapSecret: string;
@@ -82,14 +80,6 @@ export function sessionTtlMsFromEnv(value: string | number | null | undefined): 
   return days * DAY_MS;
 }
 
-export function maxConcurrentWorkspacesFromEnv(value: string | number | null | undefined): number {
-  const limit = isNumber(value) ? value : Number(value);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
-    throw new Error("MAX_CONCURRENT_WORKSPACES must be an integer from 1 through 1000");
-  }
-  return limit;
-}
-
 // Re-exported, not reimplemented: scripts/deploy-helpers.mjs imports the same
 // module to reject a bad SIGNUP_MODE or ALLOWED_EMAIL_DOMAINS at deploy time.
 export { allowedEmailDomainsFromEnv, signupModeFromEnv } from "./signup-config.js";
@@ -107,7 +97,6 @@ export interface CoreRuntime {
     workspaceTunnels?: WorkspaceTunnels;
     webAppAuth?: WorkspaceWebAppAuth;
   };
-  principalSource: PrincipalSource;
   /** Serves the webApp shell for browser navigations that land on API paths
    * shared with SPA pages (a refresh on /workspaces/:id). Absent where the
    * deployment has no programmatic asset access. */

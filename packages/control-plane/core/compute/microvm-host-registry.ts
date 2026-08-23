@@ -40,10 +40,9 @@ function normalizedRegisteredHostUrl(raw: unknown): string {
 }
 
 export async function syncStaticMicrovmHosts(
-  db: Db | undefined,
+  db: Db,
   hosts: ResolvedMicrovmHost[],
 ): Promise<void> {
-  if (db === undefined) return;
   const now = Date.now();
   const upserts = hosts.flatMap((host) =>
     isDynamicMicrovmHost(host)
@@ -65,7 +64,7 @@ export async function syncStaticMicrovmHosts(
 
 export async function prepareMicrovmHostRegistration(
   hostsByName: ReadonlyMap<string, ResolvedMicrovmHost>,
-  db: Db | undefined,
+  db: Db,
   name: string,
   providedToken: string | null,
 ): Promise<(rawUrl: unknown) => Promise<void>> {
@@ -82,9 +81,6 @@ export async function prepareMicrovmHostRegistration(
   }
   return async (rawUrl: unknown) => {
     const url = normalizedRegisteredHostUrl(rawUrl);
-    if (db === undefined) {
-      throw new Error("microVM host registration database is unavailable");
-    }
     const [previousRows] = await transaction<MicrovmHostRow>(db, [
       {
         q: "SELECT url, source FROM microvm_hosts WHERE name = ?1 LIMIT 1",
@@ -127,13 +123,9 @@ function unavailableMicrovmHost(host: ResolvedMicrovmHost): HttpError {
 }
 
 export async function resolveMicrovmHost(
-  db: Db | undefined,
+  db: Db,
   host: ResolvedMicrovmHost,
 ): Promise<ActiveMicrovmHost> {
-  if (db === undefined) {
-    if (isDynamicMicrovmHost(host)) throw unavailableMicrovmHost(host);
-    return { name: host.name, url: host.url, token: host.token };
-  }
   const expectedSource = isDynamicMicrovmHost(host) ? "registered" : "static";
   const row = await first<MicrovmHostRow>(db, {
     q: `SELECT url, source FROM microvm_hosts

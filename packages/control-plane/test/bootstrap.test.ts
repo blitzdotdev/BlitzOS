@@ -74,7 +74,7 @@ describe("production VM bootstrap", () => {
     // the move by behavior: a listener on :2222 must appear.
     expect(userData).toContain("host sshd never bound :2222");
     expect(userData).toContain(`readonly BOX_IMAGE_REF='${BOX_IMAGE_REF}'`);
-    expect(userData).toContain('retry docker pull "$BOX_IMAGE_REF"');
+    expect(userData).toContain('until docker pull "$BOX_IMAGE_REF"; do');
     expect(userData).toContain("--privileged");
     expect(userData).toContain("--restart unless-stopped");
     expect(userData).toContain("--env-file /etc/blitz/env.defaults");
@@ -541,7 +541,7 @@ write_files:
     const inspectGuard = userData.indexOf(
       'if ! docker image inspect "$BOX_IMAGE_REF" >/dev/null 2>&1; then',
     );
-    const pull = userData.indexOf('retry docker pull "$BOX_IMAGE_REF"');
+    const pull = userData.indexOf('until docker pull "$BOX_IMAGE_REF"; do');
     const guardEnd = userData.indexOf("\nfi\n", pull);
     const provenPresent = userData.indexOf(
       'docker image inspect "$BOX_IMAGE_REF" >/dev/null',

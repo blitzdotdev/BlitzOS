@@ -1,9 +1,9 @@
 import type { WorkspaceEnvironmentResponse, WorkspaceView } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { scheduledSyncsSettled } from "../core/files/sync.js";
 import {
   appRequest,
+  backgroundTasksSettled,
   createWorkspace,
   harness,
   operatorSession,
@@ -67,7 +67,7 @@ describe("workspace environments", () => {
       body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
     });
     const box = await ready.json<{ access_token: string }>();
-    await scheduledSyncsSettled();
+    await backgroundTasksSettled();
     await env.DB.prepare("UPDATE workspaces SET files_ready = 0 WHERE id = ?1")
       .bind(workspace.id).run();
 

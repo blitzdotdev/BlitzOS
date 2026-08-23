@@ -213,12 +213,17 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "invites")).toMatchObject({
       fields: expect.arrayContaining([
         expect.objectContaining({ name: "code_hash", check: "length(code_hash) = 43" }),
-        expect.objectContaining({
-          name: "state",
-          check: "state IN ('ready', 'redeemed', 'revoked', 'expired')",
-        }),
+        // Lifecycle is derived from facts: redeemed_at / revoked_at / expires_at.
+        // No stored state label (migration 0029).
+        expect.objectContaining({ name: "redeemed_at", sqlType: "integer" }),
+        expect.objectContaining({ name: "revoked_at", sqlType: "integer" }),
       ]),
     });
+    expect(
+      BLITZDEV_CONFIG.tables
+        .find(({ name }) => name === "invites")
+        ?.fields.some((field) => field.name === "state"),
+    ).toBe(false);
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_grants")).toMatchObject({
       fields: expect.arrayContaining([
         expect.objectContaining({ name: "role", check: "role IN ('editor', 'viewer')" }),
@@ -367,7 +372,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_user_oauth_grants_provider",
       "idx_workspace_template_connections_provider",
       "idx_credential_leases_workspace",
-      "idx_credential_leases_expiry",
       "idx_credential_leases_token",
       "idx_credential_leases_grant",
       "idx_credential_requests_pending",

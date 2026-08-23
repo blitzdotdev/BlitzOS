@@ -1,16 +1,16 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreateVmInput, WebAppPort } from "../core/compute/types.js";
+import { parseDavListing } from "../core/files/dav.js";
 import {
-  parseDavListing,
   runFileSyncSweep,
   runReadyWorkspaceFileSync,
   runWorkspaceFileSync,
-  scheduledSyncsSettled,
 } from "../core/files/sync.js";
 import {
   appRequest,
   appWithProviders,
+  backgroundTasksSettled,
   createWorkspace,
   FakeProviders,
   operatorSession,
@@ -18,6 +18,26 @@ import {
   resetDatabase,
   testRuntime,
 } from "./helpers.js";
+
+/** The ready-time pass sleeps through its real retry delays; tests drive
+ * those with fake timers, yielding a real macrotask between advances so the
+ * pass's own D1 and R2 round trips can settle and register the next timer. */
+async function settleThroughRetryDelays<T>(run: () => Promise<T>): Promise<T> {
+  const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const pending = run();
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    while (!settled) {
+      await vi.advanceTimersByTimeAsync(15_000);
+      await new Promise((resolve) => realSetTimeout(resolve, 1));
+    }
+    return await pending;
+  } finally {
+    vi.useRealTimers();
+  }
+}
 
 interface GuestFile {
   body: string;
@@ -85,7 +105,7 @@ class WebDavProviders extends FakeProviders {
     _port: WebAppPort,
     path: string,
     request: Request,
-  ): Promise<Response | null> {
+  ): Promise<Response> {
     for (const name of this.unreachableFolders) {
       if (path.startsWith(`/workspace/shared/${encodeURIComponent(name)}/`)) {
         throw new Error("tunnel is still connecting");
@@ -155,7 +175,7 @@ async function attachedFolder(providers: WebDavProviders): Promise<{
   expect(attached.status).toBe(201);
   // The attach fires a background convergence pass; settle it so tests own
   // the sync sequencing from here.
-  await scheduledSyncsSettled();
+  await backgroundTasksSettled();
   return { app, cookie, folderId, workspaceId: workspace.id };
 }
 
@@ -300,7 +320,7 @@ describe("control-plane folder sync", () => {
     expect(await env.DB.prepare(
       "SELECT files_ready FROM workspaces WHERE id = ?1",
     ).bind(workspace.id).first<number>("files_ready")).toBe(0);
-    await scheduledSyncsSettled();
+    await backgroundTasksSettled();
     expect(providers.files.get("note.txt")?.body).toBe("remote");
     expect(await env.DB.prepare(
       "SELECT files_ready FROM workspaces WHERE id = ?1",
@@ -329,7 +349,7 @@ describe("control-plane folder sync", () => {
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({ folderId }),
     })).status).toBe(201);
-    await scheduledSyncsSettled();
+    await backgroundTasksSettled();
     expect(providers.files.get("note.txt")?.body).toBe("remote");
   });
 
@@ -345,7 +365,7 @@ describe("control-plane folder sync", () => {
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({ folderId }),
     })).status).toBe(201);
-    await scheduledSyncsSettled();
+    await backgroundTasksSettled();
     await env.BOX_IMAGES.put(`org/personal/${folderId}/note.txt`, "remote", {
       customMetadata: { mtime: "1000", "edited-by": "Operator" },
     });
@@ -379,11 +399,8 @@ describe("control-plane folder sync", () => {
       }
       return healthy(...args);
     };
-    const result = await runReadyWorkspaceFileSync(
-      testRuntime(providers),
-      workspaceId,
-      [1, 1],
-    );
+    const result = await settleThroughRetryDelays(() =>
+      runReadyWorkspaceFileSync(testRuntime(providers), workspaceId));
     expect(failuresLeft).toBe(0);
     expect(result.attachments).toBe(1);
     expect(providers.files.get("note.txt")?.body).toBe("remote");
@@ -490,7 +507,7 @@ describe("control-plane folder sync", () => {
         })).status).toBe(201);
         folderIds.push(folderId);
       }
-      await scheduledSyncsSettled();
+      await backgroundTasksSettled();
       await env.DB.prepare("UPDATE workspaces SET files_ready = 0 WHERE id = ?1")
         .bind(workspace.id).run();
       return { workspaceId: workspace.id, folderIds };
@@ -502,8 +519,10 @@ describe("control-plane folder sync", () => {
       const { workspaceId } = await readyWorkspaceWithFolders(providers, ["Notes"]);
       const runtime = testRuntime(providers);
 
-      // No retry delays: the in-request retries are what a slow tunnel exhausts.
-      const result = await runReadyWorkspaceFileSync(runtime, workspaceId, []);
+      // The pass exhausts its in-request retries against a tunnel that never
+      // comes up, and the readiness bit stays with the sweep.
+      const result = await settleThroughRetryDelays(() =>
+        runReadyWorkspaceFileSync(runtime, workspaceId));
       expect(result.attachments).toBe(0);
       expect(await filesReady(workspaceId)).toBe(0);
     });
@@ -514,7 +533,8 @@ describe("control-plane folder sync", () => {
       const { workspaceId } = await readyWorkspaceWithFolders(providers, ["Quick", "Slow"]);
       const runtime = testRuntime(providers);
 
-      expect(await runReadyWorkspaceFileSync(runtime, workspaceId, []))
+      expect(await settleThroughRetryDelays(() =>
+        runReadyWorkspaceFileSync(runtime, workspaceId)))
         .toMatchObject({ attachments: 1 });
       expect(await filesReady(workspaceId)).toBe(0);
 

@@ -1,7 +1,7 @@
 import type { WorkspaceView } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
 import { rawDb } from "../src/raw-db.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Db } from "../core/db.js";
 import { VmProviderRegistry } from "../core/compute/registry.js";
 import {
@@ -45,12 +45,16 @@ function provider(
     MICROVM_LAB_TOKEN: LAB_TOKEN,
     MICROVM_EDGE_TOKEN: EDGE_TOKEN,
   },
-  db?: Db,
+  db: Db = rawDb(env.DB),
 ): MicrovmPoolProvider {
+  // The provider talks through global fetch. Stubbing before construction
+  // pins this test's fake into the instance (the agent client captures the
+  // global at construction), so several providers in one test stay isolated.
+  vi.stubGlobal("fetch", fetcher);
   return new MicrovmPoolProvider(
     rawHosts,
     (tokenVar) => Reflect.get(secrets, tokenVar),
-    { fetcher, db },
+    { db },
   );
 }
 
@@ -143,6 +147,10 @@ class RecordingVmProvider implements VmProvider {
 describe("microVM pool provider", () => {
   beforeEach(async () => {
     await resetDatabase();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("parses general mv-<cpu>c<memGb>g@<host> machine IDs and rejects malformed IDs", () => {
@@ -300,7 +308,8 @@ describe("microVM pool provider", () => {
       undefined,
       db,
     );
-    await microvm.registerHost("home", EDGE_TOKEN, "https://one.trycloudflare.com/");
+    const register = await microvm.prepareHostRegistration("home", EDGE_TOKEN);
+    await register("https://one.trycloudflare.com/");
 
     const pointAt = async (url: string) => {
       await env.DB
@@ -390,6 +399,7 @@ describe("microVM pool provider", () => {
       ),
       fetcher,
     );
+    await microvm.syncStaticHosts();
 
     expect(await microvm.listMachineTypes()).toEqual([
       {
@@ -423,30 +433,17 @@ describe("microVM pool provider", () => {
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
-  it("invokes a stored fetcher without a receiver", async () => {
-    let observedThis: unknown = "not called";
-    async function fetcher(this: unknown): Promise<Response> {
-      observedThis = this;
-      return Response.json(capacity());
-    }
-    const microvm = provider(
-      hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
-      fetcher,
-    );
-
-    await expect(microvm.listMachineTypes()).resolves.toHaveLength(2);
-    expect(observedThis).toBeUndefined();
-  });
-
   it("accepts legacy and extended capacity responses during a rolling upgrade", async () => {
     const raw = hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" });
     const legacyProvider = provider(raw, async () => Response.json(capacity()));
+    await legacyProvider.syncStaticHosts();
+    await expect(legacyProvider.listMachineTypes()).resolves.toHaveLength(2);
+
     const extendedProvider = provider(raw, async () => Response.json(capacity({
       physical_cpu: 4,
       effective_cpu: 8,
     })));
-
-    await expect(legacyProvider.listMachineTypes()).resolves.toHaveLength(2);
+    await extendedProvider.syncStaticHosts();
     await expect(extendedProvider.listMachineTypes()).resolves.toHaveLength(2);
   });
 
@@ -463,6 +460,7 @@ describe("microVM pool provider", () => {
 
     for (const [description, response] of invalidResponses) {
       const microvm = provider(raw, async () => Response.json(response));
+      await microvm.syncStaticHosts();
       await expect(microvm.listMachineTypes(), description).rejects.toThrow();
     }
   });
@@ -472,11 +470,13 @@ describe("microVM pool provider", () => {
     const errorProvider = provider(raw, async () =>
       Response.json({ error: "host is draining" }, { status: 503 }),
     );
+    await errorProvider.syncStaticHosts();
     await expect(errorProvider.listMachineTypes()).rejects.toThrow(/^host is draining$/u);
 
     const malformedProvider = provider(raw, async () =>
       Response.json({ ...capacity(), unexpected: true }),
     );
+    await malformedProvider.syncStaticHosts();
     await expect(malformedProvider.listMachineTypes()).rejects.toThrow(
       "invalid microVM agent capacity response fields",
     );
@@ -487,6 +487,7 @@ describe("microVM pool provider", () => {
         unexpected: true,
       }),
     );
+    await extendedUnknownFieldProvider.syncStaticHosts();
     await expect(extendedUnknownFieldProvider.listMachineTypes()).rejects.toThrow(
       "invalid microVM agent capacity response fields",
     );
@@ -494,6 +495,7 @@ describe("microVM pool provider", () => {
     const oversizedProvider = provider(raw, async () =>
       new Response("{}", { headers: { "Content-Length": "65537" } }),
     );
+    await oversizedProvider.syncStaticHosts();
     await expect(oversizedProvider.listMachineTypes()).rejects.toThrow(
       "microVM agent response is too large",
     );
@@ -543,6 +545,7 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example/", tokenVar: "MICROVM_LAB_TOKEN" }),
       fetcher,
     );
+    await microvm.syncStaticHosts();
 
     const created = await microvm.createVm(createInput("mv-2c2g@lab"));
 
@@ -563,6 +566,7 @@ describe("microVM pool provider", () => {
         ssh_port: 65_536,
       }, { status: 201 }),
     );
+    await invalidPortProvider.syncStaticHosts();
     await expect(
       invalidPortProvider.createVm(createInput("mv-2c2g@lab")),
     ).rejects.toThrow("invalid microVM agent create response ssh_port");
@@ -581,6 +585,7 @@ describe("microVM pool provider", () => {
         }, { status: 201 });
       },
     );
+    await microvm.syncStaticHosts();
 
     for (const sshPublicKey of [undefined, "", " \t\n "]) {
       await microvm.createVm({
@@ -628,6 +633,7 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       fetcher,
     );
+    await microvm.syncStaticHosts();
     const created = await microvm.createVm(createInput("mv-2c4g@lab"));
 
     await expect(microvm.inspect(created.id)).resolves.toEqual({
@@ -645,6 +651,7 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       async () => Response.json({ error: "insufficient microVM capacity" }, { status: 409 }),
     );
+    await microvm.syncStaticHosts();
     const app = appWithProviders(microvm, new FakeProviders());
     const cookie = await operatorSession(app);
 
@@ -679,6 +686,7 @@ describe("microVM pool provider", () => {
         }, { status: 201 });
       },
     );
+    await microvm.syncStaticHosts();
     const cloud = new FakeProviders();
     const app = appWithVmProviders([cloud, microvm], cloud);
     const cookie = await operatorSession(app);
@@ -746,6 +754,7 @@ describe("microVM pool provider", () => {
         }, { status: 201 });
       },
     );
+    await microvm.syncStaticHosts();
     const app = appWithProviders(microvm, new FakeProviders());
     const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
@@ -832,6 +841,7 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       fetcher,
     );
+    await microvm.syncStaticHosts();
     const app = appWithProviders(microvm, new FakeProviders());
     const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
@@ -935,6 +945,7 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       fetcher,
     );
+    await microvm.syncStaticHosts();
     const app = appWithProviders(microvm, new FakeProviders());
     const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
@@ -994,6 +1005,7 @@ describe("microVM pool provider", () => {
       hosts({ name: "lab", url: "https://lab.example", tokenVar: "MICROVM_LAB_TOKEN" }),
       fetcher,
     );
+    await microvm.syncStaticHosts();
     const registry = new VmProviderRegistry([hetzner, microvm]);
 
     expect((await registry.listMachineTypes()).machineTypes.map(({ id }) => id)).toEqual([
@@ -1030,9 +1042,5 @@ describe("microVM pool provider", () => {
     expect(fetcher.mock.calls.some(([input, init]) =>
       String(input).endsWith("/v1/vms/vm-1-abcdef123456") && init?.method === "DELETE"
     )).toBe(true);
-    expect(registry.get("hetzner")?.capabilities()).toEqual({
-      volumes: true,
-      maxUserDataBytes: 32 * 1_024,
-    });
   });
 });

@@ -827,7 +827,6 @@ describe("control plane security and lifecycle", () => {
               sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
             }),
           },
-          { MAX_CONCURRENT_WORKSPACES: "1" },
         )
       ).status,
     ).toBe(201);
@@ -848,7 +847,6 @@ describe("control plane security and lifecycle", () => {
           sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
         }),
       },
-      { MAX_CONCURRENT_WORKSPACES: "1" },
     );
 
     expect(second.status).toBe(201);
@@ -1521,7 +1519,14 @@ describe("control plane security and lifecycle", () => {
       .bind(workspace.id)
       .run();
     const runtime = testRuntime(providers);
-    expect(await runInvariantSweep(runtime, 2 * 60 * 60 * 1000)).toBe(1);
+    // The stuck-creating cutoff reads Date.now(); pin it past the one-hour
+    // window (the row's updated_at was zeroed above).
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(2 * 60 * 60 * 1000);
+    try {
+      expect(await runInvariantSweep(runtime)).toBe(1);
+    } finally {
+      nowSpy.mockRestore();
+    }
     const errored = await env.DB
       .prepare("SELECT phase, revision FROM workspaces WHERE id = ?1")
       .bind(workspace.id)

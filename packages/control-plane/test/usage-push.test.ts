@@ -71,7 +71,7 @@ class UsageGuestProviders extends FakeProviders {
     _port: WebAppPort,
     path: string,
     request: Request,
-  ): Promise<Response | null> {
+  ): Promise<Response> {
     if (request.method === "PROPFIND") {
       if (!this.hasUsageRoot || !path.startsWith(USAGE_ROOT)) {
         return new Response("not found", { status: 404 });

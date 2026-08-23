@@ -39,7 +39,9 @@ export function evaluateProbe(
   body: string | null,
 ): ProbeOutcome {
   const expected = manifest.probe.expect;
-  if (status !== expected.status) {
+  // Every catalog probe is built to answer 200 when healthy; providers whose
+  // failure also answers 200 (Linear) declare jsonFields to tell them apart.
+  if (status !== 200) {
     return { healthy: false, detail: `status ${String(status)}` };
   }
   if (expected.jsonFields.length === 0) return { healthy: true, detail: null };

@@ -78,6 +78,11 @@ async function proxyLease(
   const nowParameter = candidates.length + 2;
   // A grant-backed lease carries its own secret and header shape, so it is not
   // held to the static-connection rule the org-root path needs.
+  //
+  // An expired lease retains its token_hash now that no sweep NULLs it: the
+  // expiry predicate below is the authority, so a hash of an expired token
+  // authorizes nothing. Revocation still NULLs the hash, and revoked_at IS
+  // NULL keeps even a hash collision from resurrecting a revoked lease.
   return first<ProxyLeaseRow>(db, {
     q: `SELECT lease.token_hash, connection.scoped_name AS connection_name,
                connection.root_ciphertext, connection.config,
@@ -93,7 +98,7 @@ async function proxyLease(
           ON grant_row.id = lease.grant_id AND grant_row.revoked_at IS NULL
         WHERE lease.id = ?1
           AND lease.token_hash IN (${tokenParameters})
-          AND lease.state = 'active'
+          AND lease.revoked_at IS NULL
           AND lease.expires_at > ?${nowParameter}
           AND connection.revoked_at IS NULL
           AND connection.custody = 'proxy'

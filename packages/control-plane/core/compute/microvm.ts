@@ -50,8 +50,7 @@ export {
 export { parseMicrovmHosts } from "./microvm-hosts.js";
 
 export interface MicrovmPoolProviderOptions {
-  fetcher?: Fetcher;
-  db?: Db;
+  db: Db;
 }
 
 interface MachineHostSelection {
@@ -68,14 +67,13 @@ export class MicrovmPoolProvider implements VmProvider {
   readonly id = "microvm";
   private readonly hosts: ResolvedMicrovmHost[];
   private readonly hostsByName: ReadonlyMap<string, ResolvedMicrovmHost>;
-  private readonly fetcher: Fetcher;
-  private readonly db: Db | undefined;
+  private readonly db: Db;
   private readonly agent: MicrovmAgentClient;
 
   constructor(
     rawHosts: unknown,
     resolveToken: (tokenVar: string) => unknown,
-    options: MicrovmPoolProviderOptions = {},
+    options: MicrovmPoolProviderOptions,
   ) {
     this.hosts = parseMicrovmHosts(rawHosts).map((host) => {
       const token = resolveToken(host.tokenVar);
@@ -89,11 +87,10 @@ export class MicrovmPoolProvider implements VmProvider {
       return { ...host, token };
     });
     this.hostsByName = new Map(this.hosts.map((host) => [host.name, host]));
-    this.fetcher = options.fetcher ?? fetch;
     this.db = options.db;
     this.agent = new MicrovmAgentClient(
       (host) => this.resolveHost(host),
-      this.fetcher,
+      fetch,
     );
   }
 
@@ -109,10 +106,6 @@ export class MicrovmPoolProvider implements VmProvider {
     return isMicrovmProviderId(vmId);
   }
 
-  owns(id: string): boolean {
-    return this.ownsVmId(id);
-  }
-
   async syncStaticHosts(): Promise<void> {
     await syncStaticMicrovmHosts(this.db, this.hosts);
   }
@@ -122,15 +115,6 @@ export class MicrovmPoolProvider implements VmProvider {
     providedToken: string | null,
   ) {
     return prepareMicrovmHostRegistration(this.hostsByName, this.db, name, providedToken);
-  }
-
-  async registerHost(
-    name: string,
-    providedToken: string | null,
-    rawUrl: unknown,
-  ): Promise<void> {
-    const register = await this.prepareHostRegistration(name, providedToken);
-    await register(rawUrl);
   }
 
   private async resolveHost(host: ResolvedMicrovmHost): Promise<ActiveMicrovmHost> {
@@ -267,8 +251,7 @@ export class MicrovmPoolProvider implements VmProvider {
     port: WebAppPort,
     pathAndQuery: string,
     request: Request,
-  ): Promise<Response | null> {
-    if (!this.owns(id)) return null;
+  ): Promise<Response> {
     const { host, agentVmId } = this.hostForProviderId(id);
     const activeHost = await this.resolveHost(host);
     const headers = new Headers(request.headers);
@@ -276,7 +259,9 @@ export class MicrovmPoolProvider implements VmProvider {
     headers.delete("Host");
     headers.set("Authorization", `Bearer ${activeHost.token}`);
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
-    const fetcher = this.fetcher;
+    // Raw streaming pass-through: bodies and responses are unbounded, so the
+    // bounded json-fetch helpers do not apply here.
+    const fetcher: Fetcher = fetch;
     return fetcher(
       `${activeHost.url}/vms/${encodeURIComponent(agentVmId)}/webapp/${port}${pathAndQuery}`,
       {

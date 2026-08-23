@@ -242,8 +242,8 @@ describe("identity phase 1", () => {
          VALUES ('legacy-workspace', 'operator', 'small', 'ready', 1, ?1, ?1)`,
       ).bind(now),
       env.DB.prepare(
-        `INSERT INTO boxes (id, principal_id, workspace_id, is_broker, created_at)
-         VALUES ('legacy-box', 'operator', 'legacy-workspace', 0, ?1)`,
+        `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
+         VALUES ('legacy-box', 'operator', 'legacy-workspace', ?1)`,
       ).bind(now),
       env.DB.prepare(
         `INSERT INTO webapp_state (principal_id, workspace_id, doc, updated_at)

@@ -68,14 +68,18 @@ const access = {
 /** The uploader's read of a not-yet-uploaded asset row, driven by a real
  * response from the real handler instead of a hand-written status. */
 async function readAsUploader(response: Response) {
-  const read = await managedApiRequest(
-    access,
-    "/exec/blitz_files/view/webapp-index-html",
-    {},
-    async () => response,
-    { allowMissing: true },
-  );
-  return read.body;
+  const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => response);
+  try {
+    const read = await managedApiRequest(
+      access,
+      "/exec/blitz_files/view/webapp-index-html",
+      {},
+      { allowMissing: true },
+    );
+    return read.body;
+  } finally {
+    fetchSpy.mockRestore();
+  }
 }
 
 describe("control-plane error envelope", () => {

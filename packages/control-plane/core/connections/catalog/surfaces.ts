@@ -32,8 +32,10 @@ function baseUrlFor(input: SurfaceInput, manifest: ProviderManifest): string {
   return input.overrides?.baseUrl ?? manifest.baseUrl;
 }
 
-export function skillPath(manifest: ProviderManifest, connection: string): string {
-  return `${BOX_HOME}/${manifest.surfaces.skill.path.replace("<provider>", connection)}`;
+/** Every provider's skill lands at the one place harnesses resolve
+ * "use @<provider>" from, so the path is derived, never declared. */
+export function skillPath(connection: string): string {
+  return `${BOX_HOME}/.claude/skills/${connection}/SKILL.md`;
 }
 
 /** Everything a lease delivers beyond the raw credential, compiled into the
@@ -53,12 +55,14 @@ export function compileSurfaces(
       value: surface.fill === "proxy-url" ? baseUrl : input.token,
     });
   }
+  const skill = manifest.surfaces.skill;
+  if (skill === null) return placements;
   const tokenEnv = surfaces.find((surface) => surface.fill === "token");
   const baseUrlEnv = surfaces.find((surface) => surface.fill === "proxy-url");
   placements.push({
     kind: "file",
-    path: skillPath(manifest, input.connection),
-    value: manifest.surfaces.skill.render({
+    path: skillPath(input.connection),
+    value: skill({
       connection: input.connection,
       scopes: input.scopes,
       mode: input.mode,
@@ -77,7 +81,6 @@ export function compileSurfaces(
  * environment names are unset. A stale skill for a dead connection would
  * gaslight the agent into retrying a credential that no longer exists. */
 export function tombstoneSurfaces(
-  manifest: ProviderManifest,
   connection: string,
   environmentNames: readonly string[],
 ): Placement[] {
@@ -87,7 +90,7 @@ export function tombstoneSurfaces(
   }
   placements.push({
     kind: "file",
-    path: skillPath(manifest, connection),
+    path: skillPath(connection),
     value: "",
     mode: SKILL_MODE,
   });

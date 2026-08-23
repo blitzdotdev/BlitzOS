@@ -33,8 +33,6 @@ BOX_IMAGE_TAG = ""
 BOX_IMAGE_SHA256 = ""
 # Session cookie lifetime in days (1-3650). Optional, default 30.
 SESSION_TTL_DAYS = "30"
-# Per-principal cap on non-destroyed workspaces (1-1000). Optional, default 10.
-MAX_CONCURRENT_WORKSPACES = "10"
 # JSON array of Firecracker microVM hosts. '[]' disables the microVM provider. Shapes below.
 # WARNING: every configured host requires its MICROVM_<NAME>_TOKEN Worker secret
 # (>=32 chars, no whitespace). A missing or weak token makes EVERY request to

@@ -14,7 +14,6 @@ import {
   tombstoneSurfaces,
 } from "../core/connections/catalog/surfaces.js";
 import type {
-  ExchangeFixture,
   OAuthProviderManifest,
   ProviderManifest,
   StaticProviderManifest,
@@ -25,6 +24,11 @@ import {
   parseExchangeResponse,
 } from "../core/connections/minters/oauth.js";
 import type { MintResult, Placement } from "../core/connections/types.js";
+import {
+  EXCHANGE_FIXTURES,
+  PROBE_FIXTURES,
+  type ExchangeFixture,
+} from "./connections-catalog-fixtures.js";
 
 /** The repository's env contract. Worker vars carry no value there — only a
  * documented name and what it is for — and a connect binding missing from it
@@ -121,6 +125,22 @@ describe("provider catalog conformance", () => {
     expect(providerManifest("no-such-provider")).toBeNull();
   });
 
+  /** Recorded corpora live beside the suite, keyed by manifest id: a catalog
+   * entry cannot land without probe recordings, an OAuth entry cannot land
+   * without exchange recordings, and an orphan recording flags a removal. */
+  it("keeps a recorded probe corpus per entry and an exchange corpus per OAuth entry", () => {
+    const ids = CATALOG.map(({ id }) => id);
+    expect([...PROBE_FIXTURES.keys()].sort()).toEqual([...ids].sort());
+    const oauthIds = CATALOG.filter(({ auth }) => auth !== null).map(({ id }) => id);
+    expect([...EXCHANGE_FIXTURES.keys()].sort()).toEqual([...oauthIds].sort());
+  });
+
+  it("compiles every skill onto the one path harnesses resolve skills from", () => {
+    expect(skillPath("instance")).toBe(
+      `${BOX_HOME}/.claude/skills/instance/SKILL.md`,
+    );
+  });
+
   /** Only the generic entry makes the person name a variable and a base URL,
    * and that is a fact about which catalog entry it is. Inferring it from a
    * missing authorize endpoint would put the vendor form in front of the next
@@ -183,7 +203,6 @@ describe("provider catalog conformance", () => {
         expect(new URL(manifest.docsUrl).protocol).toBe("https:");
         expect(new URL(manifest.baseUrl).protocol).toBe("https:");
         expect(["cp", "broker", "proxy"]).toContain(manifest.custody);
-        expect(["strict", "graceful", "none"]).toContain(manifest.rotation);
         // A header shape that cannot be set would fail only at proxy time.
         expect(() => {
           new Headers().set(
@@ -206,11 +225,7 @@ describe("provider catalog conformance", () => {
           expect(new URL(auth.tokenUrl).protocol).toBe("https:");
           expect(auth.clientIdVar).toMatch(ENVIRONMENT_NAME);
           expect(auth.clientSecretVar).toMatch(ENVIRONMENT_NAME);
-          expect(auth.redirectPath).toBe(`/connect/${manifest.id}/callback`);
           expect(auth.accessTtlMs).toBeGreaterThan(0);
-          expect(manifest.fixtures.length, "recorded exchanges are mandatory").toBeGreaterThan(0);
-        } else {
-          expect(manifest.fixtures).toEqual([]);
         }
         if (manifest.personalToken !== null) {
           expect(() => {
@@ -233,11 +248,6 @@ describe("provider catalog conformance", () => {
         for (const surface of manifest.surfaces.env) {
           expect(surface.name).toMatch(ENVIRONMENT_NAME);
         }
-        expect(manifest.surfaces.skill.path).toContain("<provider>");
-        expect(manifest.surfaces.skill.path.startsWith("/")).toBe(false);
-        expect(skillPath(manifest, "instance")).toBe(
-          `${BOX_HOME}/${manifest.surfaces.skill.path.replace("<provider>", "instance")}`,
-        );
       });
 
       /** The admin form submits `PUT /connections/:id` from this view alone,
@@ -287,7 +297,14 @@ describe("provider catalog conformance", () => {
       });
 
       it("renders a skill that tells an agent how to authenticate", () => {
-        const rendered = manifest.surfaces.skill.render({
+        // Grant mints are the only path that renders skills, so a provider
+        // has one exactly when a member can hold a grant for it (OAuth or a
+        // pasted personal token); admin-only providers declare none.
+        const grantCapable = manifest.auth !== null || manifest.personalToken !== null;
+        expect(manifest.surfaces.skill !== null, "skill exactly for grant-capable providers")
+          .toBe(grantCapable);
+        if (manifest.surfaces.skill === null) return;
+        const rendered = manifest.surfaces.skill({
           connection: "acme",
           scopes: manifest.defaultScopes,
           mode: "proxy",
@@ -307,7 +324,11 @@ describe("provider catalog conformance", () => {
         const placements = compileSurfaces(manifest, surfaceInput(manifest));
         assertPlacementsRideTheFrozenWire(placements, `${manifest.id} mint`);
         const skill = placements.find((placement) => placement.kind === "file");
-        expect(skill?.kind === "file" && skill.value.length > 0).toBe(true);
+        if (manifest.surfaces.skill === null) {
+          expect(skill, "no skill surface, no file placement").toBeUndefined();
+        } else {
+          expect(skill?.kind === "file" && skill.value.length > 0).toBe(true);
+        }
 
         const result: MintResult = {
           integration: manifest.id,
@@ -319,7 +340,6 @@ describe("provider catalog conformance", () => {
           .toEqual(FROZEN_MINT_KEYS);
 
         const tombstone = tombstoneSurfaces(
-          manifest,
           manifest.id,
           manifest.surfaces.env.map(({ name }) => name),
         );
@@ -346,11 +366,13 @@ describe("provider catalog conformance", () => {
       });
 
       it("replays every recorded exchange", () => {
+        const fixtures = EXCHANGE_FIXTURES.get(manifest.id);
         if (manifest.auth === null) {
-          expect(manifest.fixtures).toEqual([]);
+          expect(fixtures, "a pasted credential records no exchange").toBeUndefined();
           return;
         }
-        for (const fixture of manifest.fixtures) replayExchange(manifest, fixture);
+        if (fixtures === undefined) throw new Error("recorded exchanges are mandatory");
+        for (const fixture of fixtures) replayExchange(manifest, fixture);
       });
 
       it("replays every recorded probe answer", () => {
@@ -367,7 +389,9 @@ describe("provider catalog conformance", () => {
         expect(authorization?.value).toContain("test-only-probe-token");
         if (request.method === "GET") expect(request.body).toBeNull();
 
-        for (const fixture of manifest.probeFixtures) {
+        const fixtures = PROBE_FIXTURES.get(manifest.id);
+        if (fixtures === undefined) throw new Error("recorded probe answers are mandatory");
+        for (const fixture of fixtures) {
           const outcome = evaluateProbe(manifest, fixture.status, fixture.response);
           expect(outcome.healthy, `${manifest.id}/${fixture.name}`).toBe(fixture.healthy);
           // A recorded failure must never echo the provider's own body.

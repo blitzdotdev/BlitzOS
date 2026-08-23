@@ -34,7 +34,6 @@ describe("AWS SigV4 query signing", () => {
       host: SUITE_HOST,
       parameters: [["Param1", "value1"]],
       signedAt: SUITE_SIGNED_AT,
-      contentType: "application/x-www-form-urlencoded",
     });
 
     expect(signed.url).toBe("https://example.amazonaws.com/");

@@ -1,6 +1,6 @@
 import agentRulesMarkdown from "../../box/rootfs/opt/blitz/skel/agent-rules.md";
 import type { Db } from "./db.js";
-import { first, rows, transaction } from "./db.js";
+import { first, rows } from "./db.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
 import { authenticateBox } from "./oauth.js";
 import type { Principal } from "./principals.js";
@@ -224,8 +224,12 @@ export function addAgentRuleLibraryRoutes(
   });
 
   // Deleting a referenced rule is allowed: the templates and workspaces that
-  // point at it fall back to the built-in doc. The nulling is done here so the
-  // ON DELETE SET NULL semantics hold whether or not D1 enforces the key.
+  // point at it fall back to the built-in doc.
+  // SAFETY: `workspaces.agent_rule_id` and `workspace_templates.agent_rule_id`
+  // are both declared REFERENCES agent_rules(id) ON DELETE SET NULL
+  // (migrations/0018_agent_rules.sql and the managed schema alike), and both
+  // deployment targets run SQLite with foreign keys enforced, so this DELETE
+  // nulls the holders itself.
   router.delete("/agent-rules/:id", async (context) => {
     const runtime = runtimeFactory(context);
     const orgId = await orgFor(context);
@@ -235,14 +239,7 @@ export function addAgentRuleLibraryRoutes(
       v: [id, orgId],
     });
     if (existing === null) throw new HttpError(404, "agent rule not found");
-    await transaction(runtime.db, [
-      { q: "UPDATE workspaces SET agent_rule_id = NULL WHERE agent_rule_id = ?1", v: [id] },
-      {
-        q: "UPDATE workspace_templates SET agent_rule_id = NULL WHERE agent_rule_id = ?1",
-        v: [id],
-      },
-      { q: "DELETE FROM agent_rules WHERE id = ?1", v: [id] },
-    ]);
+    await rows(runtime.db, { q: "DELETE FROM agent_rules WHERE id = ?1", v: [id] });
     return context.body(null, 204);
   });
 }

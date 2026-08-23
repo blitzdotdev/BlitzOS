@@ -201,7 +201,7 @@ export async function storeGrant(
     // inject-mode lease carries the credential itself, so without this it
     // stays active — and reads as active in the lease UI — for its full hour
     // with a value the vendor has already invalidated.
-    ...(replaced === null ? [] : [revokeGrantLeasesQuery(replaced.id)]),
+    ...(replaced === null ? [] : [revokeGrantLeasesQuery(replaced.id, now)]),
     {
       q: `INSERT INTO user_oauth_grants
           (id, user_id, provider, manifest_id, kind, label, config,
@@ -245,7 +245,7 @@ export async function revokeGrant(
           WHERE id = ?2 AND revoked_at IS NULL`,
       v: [now, grant.id],
     },
-    revokeGrantLeasesQuery(grant.id),
+    revokeGrantLeasesQuery(grant.id, now),
   ]);
   return true;
 }

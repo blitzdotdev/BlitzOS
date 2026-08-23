@@ -106,20 +106,8 @@ export function addMemberRoutes(
     const mutation = parseMutation(await readJson(context.req.raw));
     const nextRole = mutation.role ?? member.role;
     const nextStatus = mutation.status ?? member.status;
-    if (
-      member.role === "admin"
-      && member.status === "active"
-      && (nextRole !== "admin" || nextStatus !== "active")
-    ) {
-      const activeAdmins = await first<{ count: number }>(runtime.db, {
-        q: `SELECT COUNT(*) AS count FROM memberships
-            WHERE org_id = ?1 AND role = 'admin' AND status = 'active'`,
-        v: [orgId],
-      });
-      if ((activeAdmins?.count ?? 0) <= 1) {
-        throw new HttpError(409, "the last active admin cannot be changed");
-      }
-    }
+    // The last-active-admin rule lives in the UPDATE's own guard below, where
+    // it holds under concurrency; zero changed rows is that 409.
     const changed = await rows<{ id: string }>(runtime.db, {
       q: `UPDATE memberships SET role = ?1, status = ?2
           WHERE id = ?3 AND org_id = ?4

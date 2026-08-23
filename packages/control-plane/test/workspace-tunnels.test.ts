@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { rows } from "../core/db.js";
 import { CloudflareTunnels } from "../core/compute/cloudflare-tunnels.js";
 import { WorkspaceTunnels } from "../core/workspace-tunnels.js";
@@ -14,10 +14,22 @@ import {
 } from "./helpers.js";
 
 describe("workspace tunnels", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("provisions, proxies, and cleans up a cloud workspace tunnel end to end", async () => {
     const cfCalls: string[] = [];
-    const cfFetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const proxied: { request?: Request } = {};
+    // One global fetch serves both upstreams the tunnels module talks to: the
+    // Cloudflare API (provision/cleanup) and the per-workspace tunnel hostname
+    // (the webApp proxy).
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = new URL(String(input));
+      if (url.hostname !== "api.cloudflare.com") {
+        proxied.request = new Request(String(input), init);
+        return Response.json({ ok: true });
+      }
       const method = init?.method ?? "GET";
       cfCalls.push(`${method} ${url.pathname}`);
       if (method === "DELETE") return Response.json({ success: false, errors: [] }, { status: 404 });
@@ -26,16 +38,11 @@ describe("workspace tunnels", () => {
       if (url.pathname.includes("/dns_records")) return Response.json({ success: true, result: { id: "dns-1" } });
       if (url.pathname.endsWith("/token")) return Response.json({ success: true, result: "TUNNEL-RUN-TOKEN" });
       return Response.json({ success: false, errors: [] }, { status: 500 });
-    };
-    const proxied: { request?: Request } = {};
+    });
     const workspaceTunnels = new WorkspaceTunnels(
-      new CloudflareTunnels({ accountId: "test-account", zoneId: "test-zone-id", apiToken: "test-api-token", fetcher: cfFetcher }),
+      new CloudflareTunnels({ accountId: "test-account", zoneId: "test-zone-id", apiToken: "test-api-token" }),
       "webapp.test",
       "test-webapp-root-secret",
-      async (input, init) => {
-        proxied.request = new Request(String(input), init);
-        return Response.json({ ok: true });
-      },
     );
     const providers = new FakeProviders();
     const app = appWithVmProviders([providers], providers, workspaceTunnels);
