@@ -15,7 +15,7 @@ import {
   GENERIC_MANIFEST_ID,
   providerManifest,
 } from "./catalog/index.js";
-import type { ProviderManifest, SurfaceOverrides, TokenHeader } from "./catalog/types.js";
+import type { ProviderManifest, DeliveryOverrides, TokenHeader } from "./catalog/types.js";
 import { revokeGrantLeasesQuery } from "./leases.js";
 import { scopesFromJson } from "./manifest.js";
 import {
@@ -96,11 +96,11 @@ export function grantConfig(row: GrantRow): GrantConfig {
 }
 
 /** Only the generic entry produces overrides; catalog providers describe their
- * own surfaces and must not be reshaped by a stored config. */
+ * own delivery and must not be reshaped by a stored config. */
 export function grantOverrides(
   manifest: ProviderManifest,
   config: GrantConfig,
-): SurfaceOverrides | null {
+): DeliveryOverrides | null {
   if (manifest.id !== GENERIC_MANIFEST_ID || config.envName === null) return null;
   return {
     envName: config.envName,
@@ -282,26 +282,13 @@ export async function rotateGrantTokens(
   return updated.length === 1;
 }
 
-function parseScopes(value: JsonValue | undefined, manifest: ProviderManifest): string[] {
-  if (value === undefined) return [...manifest.defaultScopes];
-  if (!Array.isArray(value)) {
-    throw new HttpError(400, "scopes must be an array of non-empty strings");
-  }
-  const requested: string[] = [];
-  for (const scope of value) {
-    if (!isString(scope) || scope.length === 0) {
-      throw new HttpError(400, "scopes must be an array of non-empty strings");
-    }
-    requested.push(scope);
-  }
-  const known = new Set(manifest.scopes.map((scope) => scope.id));
-  if (known.size > 0) {
-    const unknownScope = requested.find((scope) => !known.has(scope));
-    if (unknownScope !== undefined) {
-      throw new HttpError(400, `scope ${unknownScope} is not in the ${manifest.id} catalog`);
-    }
-  }
-  return [...new Set(requested)];
+/** Every scope the provider's catalog knows about. A pasted key carries the
+ * reach the person created it with and nothing here can narrow that, so the
+ * grant records the vocabulary rather than pretending to a choice: the token's
+ * own ceiling is the ceiling. Providers with no scope vocabulary (youtrack,
+ * discord, generic) record nothing, which is the truthful answer for them. */
+function fullManifestScopes(manifest: ProviderManifest): string[] {
+  return manifest.scopes.map((scope) => scope.id);
 }
 
 function grantLabel(value: JsonValue | undefined): string | null {
@@ -484,7 +471,7 @@ export function addUserGrantRoutes(
       kind: "pat",
       label: grantLabel(value.label),
       config,
-      scopes: parseScopes(value.scopes, manifest),
+      scopes: fullManifestScopes(manifest),
       refresh: token,
       access: null,
       accessExpiresAt: null,

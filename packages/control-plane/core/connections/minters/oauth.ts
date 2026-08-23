@@ -6,8 +6,17 @@ import type { GrantRow } from "../user-grants.js";
 import { grantFor, openGrantSecret, rotateGrantTokens } from "../user-grants.js";
 
 /** Refresh this far ahead of expiry so a mint never hands out a token that
- * dies mid-call. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1_000;
+ * dies mid-call.
+ *
+ * This margin is also the floor on an OAuth lease: `leaseExpiry` in the grant
+ * minter hands the access token's own death back as the lease expiry, so a
+ * mint that reuses a stored token issues a lease with exactly the token's
+ * remaining life. At two minutes a box syncing on the tail of an hour-long
+ * Google token got a two-minute lease and the agent's next call 401'd
+ * mid-turn. Ten minutes is the floor, enforced here rather than at mint
+ * because one constant does it: refreshing early is the only way to make the
+ * lease longer, since the lease may never outlive the token it carries. */
+const REFRESH_MARGIN_MS = 10 * 60 * 1_000;
 
 export interface ExchangeInput {
   manifest: OAuthProviderManifest;

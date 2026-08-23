@@ -178,6 +178,13 @@ class SessionActor {
         stopReason = "cancelled";
         return { stopReason };
       }
+      // Placed after the mint so a turn that is about to abandon ship over
+      // credentials never pays for this, and before the read below because the
+      // sync is what puts the integration's variables in creds/env.d and its
+      // skill under .claude/skills in the first place — the harness scans
+      // skills once, at spawn, so anything that lands later is invisible for
+      // the whole turn. It swallows every failure itself.
+      await this.credentials.sync();
       // Workspace variables are optional configuration: this call degrades to
       // the actor's own environment rather than failing the prompt.
       const environment = await this.credentials.environment();

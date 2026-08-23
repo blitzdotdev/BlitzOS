@@ -198,15 +198,16 @@ describe("recipe invocation fixture conformance", () => {
     }
   });
 
-  it("pre-creates the remote-control terminal session on every create", () => {
-    // The webApp's default terminal tab (id 3) attaches to tmux session
-    // `term-3` through blitz-term's `new-session -A`; the bootstrap creates
-    // that session running claude remote-control. The un-shimmed
-    // /opt/blitz/npm/bin/claude path and the env -u flags keep every OAuth
-    // credential out of the process (remote-control rejects
-    // CLAUDE_CODE_OAUTH_TOKEN), and `|| true` keeps the boot fail-open.
+  it("starts the detached remote-control retry loop on every create", () => {
+    // No tab attaches to this session: `claude remote-control` exits at once
+    // when the box is logged out, so a one-shot session was dead a second
+    // after boot. The 15-second retry loop is what notices the member's
+    // eventual `/login`. The un-shimmed /opt/blitz/npm/bin/claude path and
+    // the env -u flags keep every OAuth credential out of the process
+    // (remote-control rejects CLAUDE_CODE_OAUTH_TOKEN), and `|| true` keeps
+    // the boot fail-open.
     const execLine =
-      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n";
+      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace 'while :; do env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
     const plain = buildBootstrapScript({
       boxImageSha256: "",
       boxImageRef: "ghcr.io/blitzdotdev/blitz-box@sha256:" + "a".repeat(64),
@@ -228,6 +229,8 @@ describe("recipe invocation fixture conformance", () => {
       expect(at, name).toBeLessThan(script.indexOf("read_host_key()"));
       const sender = script.indexOf("<<'RECIPE_SENDER'");
       if (sender !== -1) expect(at, name).toBeGreaterThan(sender);
+      // The webApp no longer opens a default terminal tab for it.
+      expect(script, name).not.toContain("term-3");
     }
   });
 

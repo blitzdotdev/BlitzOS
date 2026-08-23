@@ -68,6 +68,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates=20250419~deb12u1 \
+      curl=7.88.1-10+deb12u15 \
       git=1:2.39.5-0+deb12u3 \
       iproute2=6.1.0-3 \
       iptables=1.8.9-2 \
@@ -77,9 +78,18 @@ RUN set -eux; \
       openssh-server=1:9.2p1-2+deb12u10 \
       passwd=1:4.13+dfsg1-1+deb12u2 \
       procps=2:4.0.2-3 \
+      python3=3.11.2-1+b1 \
       tmux=3.3a-3 \
       vim=2:9.0.1378-2+deb12u2 \
       xz-utils=5.4.1-1+deb12u1; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gh; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
     rm -f /etc/ssh/ssh_host_*; \

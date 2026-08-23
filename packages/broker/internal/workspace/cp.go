@@ -27,12 +27,31 @@ const (
 	syncStateFile        = "sync-state.json"
 	syncLockFile         = ".lock"
 	freshnessMarginMS    = int64(60_000)
+	// The recorded expiry is a re-sync throttle, not a statement about how long
+	// a token lives: a login shell skips its sync while the state is fresh, so
+	// the recorded window is exactly how long the box can stay blind to a
+	// credential that just arrived. Lease expiries are hours, which made that
+	// blindness most of an hour. Capping the window at ten minutes costs one
+	// cheap control-plane round trip per shell every ten minutes and buys a
+	// ten-minute worst case instead.
+	maxFreshnessWindowMS = int64(10 * 60 * 1000)
 	// The workspace's own variables share creds/env.d so the box has exactly
 	// one environment pipeline. The name sorts ahead of every integration file
 	// (blitz-creds.sh sources the glob in order), so a minted credential always
 	// wins a collision with a user-supplied variable of the same name.
 	workspaceEnvironmentEntry = "00-workspace.sh"
+	// Exported for `blitz-cred list`, which reads this directory back and has to
+	// tell the workspace's own entry apart from an integration's.
+	WorkspaceEnvironmentFile = workspaceEnvironmentEntry
 )
+
+// EnvironmentDir is where a sync leaves the shell fragments that
+// /etc/profile.d/blitz-creds.sh sources. `blitz-cred list` reads them back, so
+// the layout is spelled once, next to the writer, rather than a second time in
+// the CLI.
+func EnvironmentDir(stateDir string) string {
+	return filepath.Join(stateDir, credentialsDirectory, environmentDirectory)
+}
 
 var (
 	ErrCredentialDenied         = errors.New("credential access denied by workspace policy")
@@ -338,8 +357,7 @@ func decodeCredentialJSON(data []byte, target any) error {
 }
 
 func applyMintResult(stateDir string, result MintResult) error {
-	credsDir := filepath.Join(stateDir, credentialsDirectory)
-	envDir := filepath.Join(credsDir, environmentDirectory)
+	envDir := EnvironmentDir(stateDir)
 	if err := os.MkdirAll(envDir, 0o700); err != nil {
 		return err
 	}
@@ -387,10 +405,16 @@ func applySync(stateDir string, results []MintResult, nowMS int64) error {
 	if err := stageWorkspaceEnvironment(stateDir, stage); err != nil {
 		return err
 	}
-	if err := replaceEnvironmentDirectory(filepath.Join(credsDir, environmentDirectory), stage); err != nil {
+	if err := replaceEnvironmentDirectory(EnvironmentDir(stateDir), stage); err != nil {
 		return err
 	}
 	stage = ""
+	// A ceiling, applied here rather than to the per-result minimum: a lease
+	// that expires sooner still wins, and a sync that minted nothing still
+	// records 0 so the box never counts an empty env.d as fresh.
+	if expiresAt > nowMS+maxFreshnessWindowMS {
+		expiresAt = nowMS + maxFreshnessWindowMS
+	}
 	state, err := json.Marshal(SyncState{SyncedAt: nowMS, ExpiresAt: expiresAt})
 	if err != nil {
 		return err

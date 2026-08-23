@@ -5,7 +5,7 @@ import { HttpError, isRecord, isString, readJson, requiredString } from "../http
 import { authenticateBox } from "../oauth.js";
 import { providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
-import { tombstoneSurfaces } from "./catalog/surfaces.js";
+import { tombstoneDelivery } from "./catalog/workspace-delivery.js";
 import { addConnectRoutes } from "./connect.js";
 import { addGithubRepositoryRoutes } from "./github-repos.js";
 import { addConnectionHealthRoutes } from "./health.js";
@@ -20,7 +20,6 @@ import {
 import {
   connectionDefaultScopes,
   manifestAllows,
-  scopesFromJson,
   usableByAllows,
 } from "./manifest.js";
 import { mintFromGrant } from "./minters/grant.js";
@@ -134,16 +133,6 @@ async function recordDenied(
   });
 }
 
-/** What the owner consented to when they connected the provider, frozen at
- * that moment (migrations/0018). An empty list is not an empty consent: it is a
- * provider with no scope vocabulary — the generic entry — so there is nothing
- * to bound and the request stands as asked. */
-function consentedScopes(grant: GrantRow, requested: readonly string[]): string[] {
-  const consented = new Set(scopesFromJson(grant.scopes));
-  if (consented.size === 0) return [...requested];
-  return requested.filter((scope) => consented.has(scope));
-}
-
 /** The workspace's identity spine is its owner: one disk, one env, one value
  * per variable. Every mint resolves against the owner's grants no matter which
  * member's box triggered it. */
@@ -235,11 +224,6 @@ interface MintOneInput {
   origin: string;
   connection: Connection;
   scopes: string[];
-  /** True when the box named the scopes. A named scope the owner never
-   * consented to is an error; an unnamed default that falls outside consent is
-   * simply narrowed, because a narrower consent must still deliver a narrower
-   * credential rather than nothing at all. */
-  scopesAreExplicit: boolean;
   denied: "error" | "skip";
 }
 
@@ -304,21 +288,12 @@ async function mintOne(
       requestId,
     );
   }
-  // The consent the owner gave at connect time is the outer bound on every
-  // mint. Without this the workspace ceiling is the only gate, and a ceiling
-  // that names no scopes allows all of them — so a box could ask for `write`
-  // against a grant the owner deliberately connected read-only.
-  let scopes = input.scopes;
-  if (grant !== null) {
-    scopes = consentedScopes(grant, input.scopes);
-    if (input.scopesAreExplicit && scopes.length !== input.scopes.length) {
-      const excess = input.scopes.filter((scope) => !scopes.includes(scope));
-      return deny(
-        "outside owner consent",
-        `credential mint exceeds the scopes ${connection.name} was connected with: ${excess.join(", ")}`,
-      );
-    }
-  }
+  // The scopes pass through. A grant's stored scope list is the full manifest
+  // vocabulary now, not a per-grant choice: a pasted key carries whatever the
+  // person created it with, an OAuth token carries what the provider issued,
+  // and neither can be narrowed after the fact. The workspace ceiling above is
+  // the gate that still means something.
+  const scopes = input.scopes;
   const leaseId = crypto.randomUUID();
   const request: MintRequest = {
     workspaceId: workspace.id,
@@ -386,10 +361,8 @@ export async function mintWorkspaceConnection(
     principal: input.principal,
     origin: input.origin,
     connection: input.connection,
-    // The grid asks for the connection, never for a scope list, so a consent
-    // narrower than the default narrows the lease instead of refusing it.
+    // The grid asks for the connection, never for a scope list.
     scopes: connectionDefaultScopes(input.connection),
-    scopesAreExplicit: false,
     denied: input.denied,
   });
 }
@@ -495,7 +468,7 @@ async function surfaceTombstones(
       // FROZEN box wire key: the shipped broker requires "integration".
       integration: stale.connection_name,
       mode: "inject",
-      placements: tombstoneSurfaces(
+      placements: tombstoneDelivery(
         manifest,
         stale.connection_name,
         declared.environmentNames,
@@ -603,7 +576,6 @@ export function addCredentialRoutes(
         origin,
         connection,
         scopes: input.scopes ?? connectionDefaultScopes(connection),
-        scopesAreExplicit: input.scopes !== undefined,
         denied: "error",
       });
       if (outcome === null) throw new Error("specific credential mint was skipped");
@@ -613,16 +585,44 @@ export function addCredentialRoutes(
     const results: MintResult[] = [];
     const minted: string[] = [];
     for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
-      const outcome = await mintOne(runtime, {
-        workspace,
-        boxId: box.id,
-        principal: boxPrincipal,
-        origin,
-        connection,
-        scopes: connectionDefaultScopes(connection),
-        scopesAreExplicit: false,
-        denied: "skip",
-      });
+      // One connection may not take the others down with it. A YouTrack row
+      // whose instance stopped answering, or a Google grant whose refresh
+      // token was revoked at the provider, used to throw out of this loop and
+      // abort the whole sync — so a box lost every credential it already had
+      // because one it never needed went bad. The failure is recorded where
+      // credential failures are recorded (the workspace's credential events,
+      // which the connections panel prints under "Recent activity") and the
+      // loop moves on. `denied: "skip"` already swallows the routine
+      // no-grant-here case; this catches the rest.
+      let outcome: MintOutcome | null = null;
+      try {
+        outcome = await mintOne(runtime, {
+          workspace,
+          boxId: box.id,
+          principal: boxPrincipal,
+          origin,
+          connection,
+          scopes: connectionDefaultScopes(connection),
+          denied: "skip",
+        });
+      } catch (caught) {
+        // An HttpError message is our own text and is safe to keep; any other
+        // throw could carry a vendor body, so only its name survives.
+        const detail = caught instanceof HttpError
+          ? caught.message
+          : caught instanceof Error ? caught.name : "unknown error";
+        await recordDenied(
+          runtime,
+          workspace.id,
+          box.id,
+          connection.name,
+          connectionDefaultScopes(connection),
+          Date.now(),
+          boxPrincipal,
+          `sync mint failed: ${detail}`,
+        );
+        continue;
+      }
       if (outcome === null) continue;
       results.push(outcome.result);
       minted.push(connection.id);

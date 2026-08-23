@@ -972,6 +972,69 @@
   border-color: color-mix(in oklab, var(--status-warm-yellow) 30%, var(--rule));
 }
 
+/* A provider row opens onto its own connect surface: the OAuth button or the
+ * key input, inline, where the person already is. The old panel put that
+ * surface in a card below a grid, so connecting meant leaving the row that
+ * said what was wrong. */
+.workspace-provider-row__toggle {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.workspace-provider-row__toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  font: 600 13px/1.3 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-provider-row__toggle:hover strong {
+  text-decoration: underline;
+}
+
+.workspace-provider-row__surface {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in oklab, var(--ink) 8%, transparent);
+}
+
+.workspace-provider-row__surface .connect-form {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-provider-row__surface .connect-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* The row's title line holds a toggle plus up to two badges; the badges keep
+ * their own size and the name takes what is left. */
+.workspace-provider-row .workspace-credential-row__title {
+  justify-content: flex-start;
+}
+
+.workspace-provider-row .workspace-credential-row__title
+  .workspace-provider-row__toggle {
+  margin-right: auto;
+}
+
+.workspace-provider-row .workspace-credential-row__actions {
+  justify-content: flex-start;
+}
+
 /* The picker carries its own heading; here it has to read as one of those four
  * titles, so the settings eyebrow trails the name instead of stacking on it. */
 .workspace-connections .connect-picker {

@@ -43,7 +43,8 @@ curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/
 
 ## Reach and limits
 
-- Granted scopes: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}.
+- Scopes recorded for this connection: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}. A pasted key carries whatever
+  reach its owner gave it; nothing here narrows that.
 - 5,000 requests per hour on an OAuth token, 2,500 on a personal API key.
 - Webhooks need the \`admin\` scope. Without it, poll instead of subscribing.
 - Official MCP server: \`https://mcp.linear.app/mcp\` (streamable HTTP). It
@@ -92,17 +93,21 @@ export const linearManifest = {
     baseUrlLabel: null,
   },
   adminForm: null,
+  // Exactly the entries `defaultScopes` names, and no more. Linear enforces
+  // this list server-side because it rides the authorize URL, which is the one
+  // place a provider scope still reaches. The narrower entries this list used
+  // to carry (issues:create, comments:create, admin) were selectable only from
+  // a scope-checkbox UI that no longer exists.
   scopes: [
     { id: "read", title: "Read", detail: "Read issues, projects, comments, and team structure." },
     { id: "write", title: "Write", detail: "Create and edit issues, projects, and comments." },
-    { id: "issues:create", title: "Create issues only", detail: "Narrower than write: file issues without editing existing ones." },
-    { id: "comments:create", title: "Comment only", detail: "Narrower than write: comment without editing issues." },
-    { id: "admin", title: "Admin", detail: "Workspace administration, including webhook management. Grant only when change observation is needed." },
   ],
   defaultScopes: ["read", "write"],
-  surfaces: {
+  delivery: {
     env: [
       { name: "LINEAR_API_KEY", fill: "token" },
+      // The <PROVIDER>_TOKEN alias, for the same reason github carries three.
+      { name: "LINEAR_TOKEN", fill: "token" },
       { name: "LINEAR_API_URL", fill: "proxy-url" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },

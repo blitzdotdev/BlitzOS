@@ -58,7 +58,7 @@ export const genericManifest = {
   adminForm: null,
   scopes: [],
   defaultScopes: [],
-  surfaces: {
+  delivery: {
     // Placeholders: a generic grant always supplies its own overrides, and
     // these are what the picker shows before the person types anything.
     env: [

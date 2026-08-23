@@ -495,11 +495,11 @@ describe("webapp shell smoke", () => {
     const sessionTabs = [...view.container.querySelectorAll<HTMLButtonElement>(
       '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"]',
     )];
-    // The default tab set: Claude in front, plus the remote-control terminal
-    // tab that attaches to the bootstrap's pre-created `term-3` session.
-    expect(sessionTabs).toHaveLength(2);
+    // The default tab set is Claude alone in the main pane; Files rides in
+    // the side pane. Remote control runs detached with no tab of its own, so
+    // there is no default terminal tab any more.
+    expect(sessionTabs).toHaveLength(1);
     expect(sessionTabs[0]?.textContent ?? "").toMatch(/claude/i);
-    expect(sessionTabs[1]?.textContent ?? "").toMatch(/terminal/i);
     expect(vi.mocked(wire.putWorkspaceWebAppState)).not.toHaveBeenCalled();
     expect(serverWorkspaceStates.size).toBe(0);
 

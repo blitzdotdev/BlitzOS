@@ -94,7 +94,7 @@ export const youtrackManifest = {
   adminForm: null,
   scopes: [],
   defaultScopes: [],
-  surfaces: {
+  delivery: {
     env: [
       { name: "YOUTRACK_TOKEN", fill: "token" },
       { name: "YOUTRACK_BASE_URL", fill: "proxy-url" },

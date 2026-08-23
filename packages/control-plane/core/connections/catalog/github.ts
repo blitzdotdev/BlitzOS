@@ -4,9 +4,29 @@ const HOUR_MS = 60 * 60 * 1_000;
 
 function skill(input: SkillRenderInput): string {
   const header = `${input.tokenHeader.name}: ${input.tokenHeader.prefix}$${input.tokenEnv}`;
+  // Two different credentials wear the same environment variable, and they are
+  // wrong about each other in ways an agent cannot guess. The App token dies
+  // in eight hours and reaches whatever the installation covers; a pasted
+  // fine-grained PAT has its own expiry (often none of ours) and reaches only
+  // the repositories the person listed when they created it.
+  const pasted = input.grantKind === "pat";
   const auth = input.mode === "proxy"
     ? `Send \`${header}\` to \`${input.baseUrl}\`, which swaps in the real token server-side. The token itself never lands on this disk.`
-    : `Send \`${header}\`. The token is a GitHub App user access token: it expires 8 hours after issue and is replaced at the next shell login.`;
+    : pasted
+      ? `Send \`${header}\`. The token is a personal access token the workspace owner pasted. It carries whatever reach and lifetime they gave it — this workspace neither narrows it nor expires it.`
+      : `Send \`${header}\`. The token is a GitHub App user access token: it expires 8 hours after issue and is replaced at the next shell login.`;
+  const reach = pasted
+    ? `- The token reaches exactly the repositories its own list names, with the
+  permissions chosen when it was created. **A 403 or 404 on a repository
+  almost always means the repository is outside that list**, not that it is
+  missing or that the account lacks access.
+- \`git clone\` over HTTPS reports an out-of-scope repository as
+  \`remote: Write access to repository not granted\` even for a read. That
+  wording is GitHub's, and it means out-of-scope, not read-only. Ask for the
+  repository to be added to the token instead of retrying.`
+    : `- The token reaches the intersection of the App installation's repositories
+  and permissions with the connecting person's own access. A 404 on a repo
+  usually means the App was never installed there, not that the repo is gone.`;
   return `---
 name: ${input.connection}
 description: Read and write GitHub through the REST API and the gh CLI, acting as the workspace owner.
@@ -21,28 +41,34 @@ connected it, badged with the app that issued the token.
 
 ${auth}
 
-\`gh\` and \`git\` read \`$${input.tokenEnv}\` natively, so \`gh pr create\` and
-\`git push\` work with no extra setup.
+\`gh\` reads \`$${input.tokenEnv}\` natively, and \`git\` reads it through this
+box's credential helper, so \`gh pr create\`, \`git clone\`, and \`git push\`
+over HTTPS all work with no extra setup.
 
 ## Canonical calls
 
 \`\`\`sh
+# Who the token acts as
 gh api user
-gh api repos/{owner}/{repo}/pulls --method POST --field title=... --field head=... --field base=...
-curl -sS -H '${header}' ${input.baseUrl}/user/repos
+
+# Repositories the token can reach
+curl -sS -H '${header}' "${input.baseUrl}/user/repos?per_page=20"
+
+# Open a pull request
+gh api repos/{owner}/{repo}/pulls --method POST \\
+  --field title=... --field head=... --field base=main
 \`\`\`
 
 ## Reach and limits
 
-- The token reaches the intersection of the App installation's repositories
-  and permissions with the connecting person's own access. A 404 on a repo
-  usually means the App was never installed there, not that the repo is gone.
-- Granted permissions here: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}.
+${reach}
+- Permissions recorded for this connection: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}. This records the provider's own
+  vocabulary, not a narrowing: the token's own ceiling is the ceiling.
 - 5,000 requests per hour.
 
 ## When a call returns 401
 
-The lease expired. Start a new login shell (or run \`blitz-cred sync\`) and
+The lease expired. Run \`blitz-cred sync\` (or start a new login shell) and
 retry once. If it still fails, the grant needs reconnecting from the
 Connections panel — say so instead of retrying.
 `;
@@ -92,19 +118,17 @@ export const githubManifest = {
       installationIdLabel: "Installation ID",
     },
   },
-  // GitHub App user tokens carry no OAuth scope string: reach comes from the
-  // App's installation permissions. These entries name what the person is
-  // consenting to hand an agent, and double as the mint ceiling.
-  scopes: [
-    { id: "metadata:read", title: "Repository metadata", detail: "See which repositories the agent may touch." },
-    { id: "contents:read", title: "Read code", detail: "Clone and read file contents on the installed repositories." },
-    { id: "contents:write", title: "Write code", detail: "Push commits and branches." },
-    { id: "pull_requests:write", title: "Pull requests", detail: "Open, comment on, and update pull requests." },
-    { id: "issues:write", title: "Issues", detail: "Open and comment on issues." },
-    { id: "workflows:write", title: "Actions workflows", detail: "Change workflow files, which can change what CI runs." },
-  ],
+  // Empty on purpose. GitHub App user tokens carry no OAuth scope string:
+  // reach comes from the App's installation permissions, GitHub ignores the
+  // `scope` parameter on authorize, and the org-app mint narrows from the
+  // connection row's config rather than from here. This list once held six
+  // display entries for a scope-checkbox UI; that UI is gone, so nothing could
+  // select them and a pasted token recorded a vocabulary it never carried.
+  scopes: [],
+  // Kept because a live consumer reads it: the OAuth callback records these on
+  // the grant, and the skill prints them as what this connection asked for.
   defaultScopes: ["metadata:read", "contents:read", "contents:write", "pull_requests:write"],
-  surfaces: {
+  delivery: {
     env: [
       { name: "GH_TOKEN", fill: "token" },
       { name: "GITHUB_TOKEN", fill: "token" },

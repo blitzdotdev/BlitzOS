@@ -239,8 +239,8 @@ main().catch(function (error) {
  * the way you would edit a wire format, not a script. Recipe launches add
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
  * without a recipe or usage capture emits byte-identical output. Every create
- * additionally emits the `term-3` remote-control session exec (pinned by the
- * same suite). */
+ * additionally emits the detached `blitz-rc` remote-control loop (pinned by
+ * the same suite). */
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");
@@ -393,17 +393,36 @@ nohup docker exec \\
   node /var/lib/blitz/recipe/sender.cjs >>/var/lib/blitz/recipe/sender.log 2>&1 &
 
 `;
-  // Unconditional on every create: pre-creates the webApp's default terminal
-  // tab session (tab id 3 -> tmux session `term-3`; blitz-term's
-  // `tmux new-session -A` then attaches instead of starting a shell), so the
-  // tab opens onto the running remote-control TUI. Emitted after box health
-  // and after the recipe segments. /opt/blitz/npm/bin/claude bypasses the
-  // /usr/local/bin/claude PATH shim so no OAuth token is injected
-  // (remote-control rejects CLAUDE_CODE_OAUTH_TOKEN and needs an interactive
-  // claude.ai login); the `env -u` flags defend against template-env
-  // injection; `|| true` keeps bootstrap fail-open.
+  // Unconditional on every create: a detached tmux session running claude
+  // remote-control in a retry loop, with no visible tab.
+  //
+  // The previous shape pre-created tmux session `term-3` so the webApp's
+  // third default tab would open onto a live remote-control TUI. Measured on
+  // the canary: `claude remote-control` EXITS with code 1 when the box is
+  // logged out, so that session died in about a second and the tab attached
+  // to a plain shell instead — the feature was invisible and looked broken.
+  //
+  // The loop is the login detector. Each attempt costs nothing when logged
+  // out (it exits immediately), sleeps 15 seconds, and tries again; the
+  // moment a member finishes `/login` in any claude tab, the next attempt
+  // sticks. There is deliberately no deadline: the member may log in an hour
+  // after the box boots, and a loop that gave up would need a second
+  // mechanism to notice.
+  //
+  // Everything else is unchanged from the pre-created session:
+  // /opt/blitz/npm/bin/claude bypasses the /usr/local/bin/claude PATH shim so
+  // no OAuth token is injected (remote-control rejects
+  // CLAUDE_CODE_OAUTH_TOKEN and needs an interactive claude.ai login); the
+  // `env -u` flags defend against template-env injection; `|| true` keeps
+  // bootstrap fail-open. The whole loop is ONE argv element, because tmux
+  // joins its remaining arguments with spaces before handing them to
+  // `/bin/sh -c` — a loop split across arguments loses its own quoting.
+  //
+  // Known limits, accepted: a VM reboot kills the session until an s6
+  // service ships in a box image, and the claude.ai entry names itself by
+  // hostname rather than by workspace name.
   const remoteControlSession =
-    "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n\n";
+    "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace 'while :; do env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n\n";
 
   // ---- TEMPLATES-V2 repo cloner (keep as one self-contained segment) ----
   // "" on every create without template repos, so the emitted bytes stay

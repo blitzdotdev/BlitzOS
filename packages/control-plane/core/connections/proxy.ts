@@ -51,6 +51,51 @@ interface ProxyCredential extends ProxyConfig {
   root: string;
 }
 
+/** Why a proxied call was refused. Every one of these used to be a byte-
+ * identical empty 401, so an agent holding a stale lease, an agent that put
+ * the token in the query string, and an agent typing the wrong path all read
+ * the same nothing. The code is the whole point: it tells the agent which of
+ * them happened, and the message tells it what to do about it. */
+type ProxyDenial =
+  | "missing_bearer"
+  | "unknown_lease"
+  | "bad_token"
+  | "lease_revoked"
+  | "lease_expired"
+  | "token_in_url"
+  | "bad_proxy_path"
+  | "connection_unavailable";
+
+const DENIAL_MESSAGE = {
+  missing_bearer:
+    "no lease token was presented; send the lease token this connection's environment variable holds",
+  unknown_lease: "no such lease; run `blitz-cred sync` to get the current one",
+  bad_token: "the presented token does not match this lease",
+  lease_revoked:
+    "this lease was revoked; reconnect the provider in the workspace connections panel",
+  lease_expired:
+    "the credential behind this lease has expired; run `blitz-cred sync` to mint a fresh one",
+  token_in_url:
+    "the lease token appeared in the request path or query string; send it in the header instead",
+  bad_proxy_path: "the request path is not /proxy/<lease-id>/<upstream-path>",
+  connection_unavailable:
+    "this connection is no longer proxied; reconnect it in the workspace connections panel",
+} satisfies Record<ProxyDenial, string>;
+
+/** One shape for every refusal: `{"error":{"code","message"}}` plus the
+ * challenge header, so a harness can branch on the code and a person reading
+ * a transcript can read the sentence. */
+function denyProxy(context: CoreContext, code: ProxyDenial): Response {
+  return context.body(
+    JSON.stringify({ error: { code, message: DENIAL_MESSAGE[code] } }),
+    401,
+    {
+      "Content-Type": "application/json",
+      "WWW-Authenticate": "Bearer",
+    },
+  );
+}
+
 async function tokenCandidates(headers: Headers): Promise<TokenCandidate[]> {
   const candidates: Array<Omit<TokenCandidate, "hash">> = [];
   for (const [header, value] of headers) {
@@ -209,16 +254,64 @@ async function upstreamSecret(
   };
 }
 
+/** The lease row read with no state, expiry, or connection filter. The live
+ * lookup answers "may this call go through"; this answers "why not", which is
+ * a different question and needs a query that hides nothing. */
+interface LeaseDiagnosisRow {
+  /** Null on a revoked row: revoking destroys the hash, which is why the
+   * state has to be read before the token is compared. */
+  token_hash: string | null;
+  state: string;
+  expires_at: number;
+}
+
+async function diagnoseLease(
+  db: Db,
+  leaseId: string,
+  candidates: readonly TokenCandidate[],
+  now: number,
+): Promise<ProxyDenial> {
+  if (candidates.length === 0) return "missing_bearer";
+  const row = await first<LeaseDiagnosisRow>(db, {
+    q: `SELECT token_hash, state, expires_at FROM credential_leases
+        WHERE id = ?1 LIMIT 1`,
+    v: [leaseId],
+  });
+  if (row === null) return "unknown_lease";
+  // Revocation first: it wipes the hash, so the token comparison below would
+  // call every revoked lease a bad token and send the agent to re-read a
+  // variable that is perfectly correct. The caller already had to know this
+  // lease id to ask, so naming its state tells them nothing they could not
+  // learn by looking at the panel.
+  if (row.state === "revoked") return "lease_revoked";
+  const presented = candidates.some(({ hash }) => hash === row.token_hash);
+  if (!presented) return "bad_token";
+  if (row.expires_at <= now) return "lease_expired";
+  // The lease itself is fine, so the refusal came from the connection behind
+  // it: revoked, no longer proxy custody, unreadable config, or an OAuth
+  // access token that died before the lease did.
+  return "connection_unavailable";
+}
+
+type ProxyResolution =
+  | { ok: true; credential: ProxyCredential }
+  | { ok: false; denial: ProxyDenial };
+
 async function proxyCredential(
   context: CoreContext,
   runtime: ReturnType<RuntimeFactory>,
   leaseId: string,
-): Promise<ProxyCredential | null> {
+): Promise<ProxyResolution> {
+  const now = Date.now();
   const candidates = await tokenCandidates(context.req.raw.headers);
-  const lease = await proxyLease(runtime.db, leaseId, candidates, Date.now());
-  if (lease === null) return null;
+  const deny = async (): Promise<ProxyResolution> => ({
+    ok: false,
+    denial: await diagnoseLease(runtime.db, leaseId, candidates, now),
+  });
+  const lease = await proxyLease(runtime.db, leaseId, candidates, now);
+  if (lease === null) return deny();
   const config = parseProxyConfig(lease.config);
-  if (config === null) return null;
+  if (config === null) return { ok: false, denial: "connection_unavailable" };
   // The box always presents the lease token in the connection's configured
   // header; the upstream header shape may differ and is applied on the way out.
   const candidate = candidates.find(
@@ -230,18 +323,26 @@ async function proxyCredential(
       `${config.tokenPrefix}${candidate.token}` ||
     !(await matchesStoredHash(candidate.token, lease.token_hash))
   ) {
-    return null;
+    // The token reached us in some other header, or under a prefix this
+    // connection does not use. Either way the presented value is not the one
+    // this lease accepts.
+    return { ok: false, denial: "bad_token" };
   }
   try {
     const upstream = await upstreamSecret(runtime, lease, config);
-    if (upstream === null) return null;
+    // The only null here is a grant whose access token expired or was never
+    // stored; a fresh mint is the repair, which is what a sync does.
+    if (upstream === null) return { ok: false, denial: "lease_expired" };
     return {
-      ...upstream.config,
-      leaseToken: candidate.token,
-      root: upstream.root,
+      ok: true,
+      credential: {
+        ...upstream.config,
+        leaseToken: candidate.token,
+        root: upstream.root,
+      },
     };
   } catch {
-    return null;
+    return { ok: false, denial: "connection_unavailable" };
   }
 }
 
@@ -283,25 +384,26 @@ async function handleProxyRequest(
   runtimeFactory: RuntimeFactory,
 ): Promise<Response> {
   const leaseId = context.req.param("leaseId");
-  const credential = await proxyCredential(
+  const resolved = await proxyCredential(
     context,
     runtimeFactory(context),
     leaseId,
   );
-  if (credential === null) return context.body(null, 401);
+  if (!resolved.ok) return denyProxy(context, resolved.denial);
+  const credential = resolved.credential;
   const requestUrl = new URL(context.req.url);
   if (
     requestUrl.pathname.includes(credential.leaseToken) ||
     requestUrl.search.includes(credential.leaseToken)
   ) {
-    return context.body(null, 401);
+    return denyProxy(context, "token_in_url");
   }
   const destination = upstreamUrl(
     requestUrl,
     leaseId,
     credential.baseUrl,
   );
-  if (destination === null) return context.body(null, 401);
+  if (destination === null) return denyProxy(context, "bad_proxy_path");
 
   const request = context.req.raw;
   const headers = stripHopByHop(request.headers);

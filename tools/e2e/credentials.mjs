@@ -895,8 +895,17 @@ try {
       );
     }
     const minted = runLoginSsh("blitz-cred token resend-e2e");
-    if (minted.status !== 0 || !/^\d+\s*$/u.test(String(minted.stdout ?? ""))) {
-      return fail("approved resend-e2e mint did not exit 0 with a numeric expiry");
+    // The mint prints a labeled summary now, not a bare epoch: the connection
+    // name, the variables it set, and an ISO-8601 expiry. The old bare number
+    // read as the credential itself to an agent probing the CLI.
+    const mintedOut = String(minted.stdout ?? "");
+    if (
+      minted.status !== 0
+      || !mintedOut.startsWith("resend-e2e\n")
+      || !/expires: \d{4}-\d{2}-\d{2}T/u.test(mintedOut)
+      || mintedOut.includes(RESEND_SENTINEL)
+    ) {
+      return fail("approved resend-e2e mint did not exit 0 with a labeled, value-free summary");
     }
     const fresh = runFreshLogin("printenv RESEND_API_KEY");
     if (fresh.status !== 0) {

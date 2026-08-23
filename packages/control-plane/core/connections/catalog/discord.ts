@@ -58,7 +58,7 @@ the Discord developer portal — say so instead of retrying.
  * stores the token once:
  *
  *   PUT /connections/discord  kind=static custody=cp root=<bot token>
- *     config.placements = the env surface below
+ *     config.placements = the env delivery below
  *
  * Custody is `cp` (inject), not proxy, because bot libraries authenticate the
  * gateway websocket with the raw token; a proxy-custody lease token would
@@ -85,8 +85,12 @@ export const discordManifest = {
   },
   scopes: [],
   defaultScopes: [],
-  surfaces: {
-    env: [{ name: "DISCORD_BOT_TOKEN", fill: "token" }],
+  delivery: {
+    env: [
+      { name: "DISCORD_BOT_TOKEN", fill: "token" },
+      // The <PROVIDER>_TOKEN alias. Libraries differ on which name they read.
+      { name: "DISCORD_TOKEN", fill: "token" },
+    ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
   },
   probe: {

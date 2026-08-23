@@ -16,11 +16,14 @@ Google Workspace access for this workspace, acting as the person who connected i
 
 ## Auth
 
-Send \`${header}\` on every call.
+Send \`${header}\` on every call, to \`${base}\`. That base URL is this
+workspace's Google connection — **it is the only Google access here.** Do not
+look for a claude.ai connector and do not run \`/mcp\`: neither is wired into a
+workspace session, and reaching for them wastes a turn.
 
 ${input.mode === "proxy"
-    ? `\`$${input.tokenEnv}\` is a lease token, not a Google credential: it works only against \`${base}\`, and the control plane swaps in a fresh access token on the way out. That swap is why an access token can never go stale mid-task.`
-    : `\`$${input.tokenEnv}\` is a Google access token. It lives one hour and is replaced at the next shell login.`}
+    ? `\`$${input.tokenEnv}\` is a lease token, not a Google credential: it works only against \`${base}\`, and the control plane swaps in the access token on the way out. The access token is refreshed when the lease is minted, not on every call, so a long turn can still outlive it — a 401 means re-sync, not re-plan.`
+    : `\`$${input.tokenEnv}\` is a Google access token. It lives one hour and is replaced at the next mint.`}
 
 ## Canonical calls
 
@@ -39,7 +42,7 @@ curl -sS -X POST -H '${header}' "${base}/gmail/v1/users/me/messages/send" \\
 
 ## Reach and limits
 
-- Granted scopes: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}.
+- Scopes recorded for this connection: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}.
 - \`drive.file\` is per-file: the agent sees files it created or the person
   explicitly picked, not the whole Drive. Listing an unrelated document and
   finding nothing is the scope working, not a bug.
@@ -47,9 +50,13 @@ curl -sS -X POST -H '${header}' "${base}/gmail/v1/users/me/messages/send" \\
 
 ## When a call returns 401 or 403
 
-401 means the lease expired — start a new login shell and retry once. 403 with
+401 means the credential behind the lease expired — run \`blitz-cred sync\`
+(or start a new login shell) and retry once. 403 with
 \`insufficientPermissions\` means the scope was never granted; report which
-scope is missing instead of retrying.
+scope is missing instead of retrying. 403 with \`accessNotConfigured\` is a
+different thing entirely: the API itself is switched off on the Google Cloud
+project behind this deployment. No amount of reconnecting fixes it — report
+that the operator must enable that API, and name which one.
 `;
 }
 
@@ -108,9 +115,13 @@ export const googleWorkspaceManifest = {
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/gmail.send",
   ],
-  surfaces: {
+  delivery: {
     env: [
       { name: "GOOGLE_OAUTH_TOKEN", fill: "token" },
+      // The <PROVIDER>_TOKEN alias every other provider answers to. An agent
+      // that guesses a variable name guesses this one first, and guessing
+      // wrong reads as "not connected".
+      { name: "GOOGLE_TOKEN", fill: "token" },
       { name: "GOOGLE_API_BASE_URL", fill: "proxy-url" },
     ],
     skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },

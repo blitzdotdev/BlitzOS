@@ -52,7 +52,7 @@ const expected = [
   "core/connections/manifest.ts",
   "core/connections/leases.ts",
   "core/connections/catalog/types.ts",
-  "core/connections/catalog/surfaces.ts",
+  "core/connections/catalog/workspace-delivery.ts",
   "core/connections/catalog/github.ts",
   "core/connections/catalog/google-workspace.ts",
   "core/connections/catalog/linear.ts",

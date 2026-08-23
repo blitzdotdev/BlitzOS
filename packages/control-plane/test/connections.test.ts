@@ -24,7 +24,7 @@ import {
   createConnectOAuthState,
   verifyConnectOAuthStateCookie,
 } from "../core/oauth-state.js";
-import { BOX_HOME } from "../core/connections/catalog/surfaces.js";
+import { BOX_HOME } from "../core/connections/catalog/workspace-delivery.js";
 import {
   importGithubAppPrivateKey,
   normalizeGithubAppPrivateKey,
@@ -57,7 +57,6 @@ async function connectLinear(
     body: JSON.stringify({
       manifestId: "linear",
       token: LINEAR_KEY,
-      scopes: ["read", "write"],
       ...overrides,
     }),
   });
@@ -208,6 +207,11 @@ describe("connections: per-user grants", () => {
       manifestId: "linear",
       kind: "pat",
       label: "work",
+      // Every scope the provider's catalog knows about. A pasted key carries
+      // whatever reach its owner gave it and nothing here can narrow that, so
+      // the grant records the vocabulary rather than pretending to a choice.
+      // The vocabulary is only what a caller can still name: the three
+      // narrower Linear scopes went with the checkbox UI that selected them.
       scopes: ["read", "write"],
       createdAt: expect.any(Number),
       updatedAt: expect.any(Number),
@@ -343,32 +347,40 @@ describe("connections: per-user grants", () => {
     ]);
   });
 
-  it("narrows a default-scoped mint down to what the owner consented to", async () => {
+  /** The scope checkboxes are gone and so is the narrowing behind them: a
+   * pasted key carries the reach its owner created it with, the OAuth path
+   * never sent per-grant scopes, and only an org-app mint could narrow at all
+   * (API-only). What the grant records is the provider's vocabulary; what the
+   * lease records is the connection's declared default. */
+  it("records the connection's declared scopes on the lease and in the skill", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    // The catalog default is read,write; this owner consented to read alone.
+    // A body that still names scopes is accepted and ignored: the grant is not
+    // where reach is decided any more.
     expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
     const { workspace, box } = await readyWorkspace(app, providers, cookie);
 
     const response = await mint(app, box.access_token, { integration: "linear" });
     expect(response.status).toBe(200);
     const result = await response.json<MintResult>();
-    // The skill tells the agent what it may do, so it may not claim `write`.
     const skill = filePlacement(result, LINEAR_SKILL_PATH) ?? "";
-    expect(skill).toContain("Granted scopes: read.");
-    expect(skill).not.toContain("read, write");
+    expect(skill).toContain("Scopes recorded for this connection: read, write.");
+    // The copy describes the token's own ceiling instead of implying a narrowing.
+    expect(skill).toContain("nothing here narrows that");
 
     const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
     const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
-    expect(rows[0]?.scopes).toEqual(["read"]);
+    expect(rows[0]?.scopes).toEqual(["read", "write"]);
   });
 
-  /** The workspace ceiling is not a consent boundary: enablement writes
-   * `{linear:{}}`, which names no scopes and therefore allows all of them. Only
-   * the grant knows what the owner agreed to. */
-  it("denies a box that asks past the scopes the owner consented to", async () => {
+  /** The mint-time consent gate is a pass-through now. It used to compare a
+   * box's requested scopes against a per-grant list the checkboxes wrote, and
+   * refuse the difference — a gate over a choice the person could not really
+   * make, since no provider lets us narrow a key after the fact. The workspace
+   * ceiling is the gate that still means something. */
+  it("hands a box the scopes it names, with no per-grant consent gate", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
@@ -378,29 +390,20 @@ describe("connections: per-user grants", () => {
       integration: "linear",
       scopes: ["read", "write"],
     });
-    expect(response.status).toBe(403);
-    const body = await response.json<{ error: string; request_id: string }>();
-    expect(body.error).toContain("write");
-    expect(body.request_id).toMatch(/^[0-9a-f-]+$/u);
+    expect(response.status).toBe(200);
 
-    // No lease was cut, and the denial is auditable with its reason.
-    const lease = await env.DB.prepare(
-      "SELECT COUNT(*) AS total FROM credential_leases WHERE workspace_id = ?1",
-    ).bind(workspace.id).first<{ total: number }>();
-    expect(lease?.total).toBe(0);
+    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+      headers: { Cookie: cookie },
+    });
+    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
+    expect(rows[0]?.scopes).toEqual(["read", "write"]);
+
+    // Nothing was refused, so nothing is in the denial log.
     const events = await appRequest(app, `/workspaces/${workspace.id}/credential-events`, {
       headers: { Cookie: cookie },
     });
-    await expect(events.json()).resolves.toMatchObject({
-      events: [{ event: "denied", detail: { reason: "outside owner consent" } }],
-    });
-
-    // Asking only for what was consented still works.
-    const allowed = await mint(app, box.access_token, {
-      integration: "linear",
-      scopes: ["read"],
-    });
-    expect(allowed.status).toBe(200);
+    const { events: logged } = await events.json<{ events: { event: string }[] }>();
+    expect(logged.map(({ event }) => event)).not.toContain("denied");
   });
 
   it("resolves the workspace owner's grant for an editor's box", async () => {
@@ -1059,16 +1062,16 @@ describe("connections: connecting from the webApp", () => {
     await expect(inbox.json()).resolves.toEqual({ requests: [] });
   });
 
-  it("narrows the lease to what the owner consented to", async () => {
+  it("cuts the lease at the connection's declared scopes", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
     const { workspace } = await readyWorkspace(app, providers, cookie);
 
     const response = await connectHere(app, cookie, workspace.id);
     expect(response.status).toBe(200);
     const { lease } = await response.json<{ lease: CredentialLeaseView }>();
-    expect(lease.scopes).toEqual(["read"]);
+    expect(lease.scopes).toEqual(["read", "write"]);
   });
 
   it("answers a provider the account never authorized", async () => {
@@ -2071,12 +2074,67 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
 
     expect(pathToken.status).toBe(401);
     expect(queryToken.status).toBe(401);
-    expect(await pathToken.text()).toBe("");
-    expect(await queryToken.text()).toBe("");
+    // The refusal names itself. Every one of these used to be a byte-identical
+    // empty 401, so an agent that put the token in the query string read the
+    // same nothing as an agent holding an expired lease.
+    expect(pathToken.headers.get("WWW-Authenticate")).toBe("Bearer");
+    await expect(pathToken.json()).resolves.toMatchObject({
+      error: { code: "token_in_url" },
+    });
+    await expect(queryToken.json()).resolves.toMatchObject({
+      error: { code: "token_in_url" },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("returns detail-free 401s for revoked and independently expired proxy leases", async () => {
+  it("tells missing, unknown, mistyped, and mis-pathed apart", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    await putProxyConnection(app, cookie, "named-401-proxy");
+    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+      "named-401-proxy": {},
+    });
+    const minted = await mintFor(app, workspace.id, box.access_token, {
+      integration: "named-401-proxy",
+    });
+    const handle = proxyHandle(await minted.json<MintResult>());
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("must not be reached"),
+    );
+
+    const code = async (response: Response): Promise<string> => {
+      const body = await response.json<{ error: { code: string } }>();
+      return body.error.code;
+    };
+
+    const missing = await appRequest(app, `/proxy/${handle.leaseId}/v1`);
+    expect(missing.status).toBe(401);
+    expect(await code(missing)).toBe("missing_bearer");
+
+    const unknown = await appRequest(app, "/proxy/00000000-0000-4000-8000-000000000000/v1", {
+      headers: { Authorization: `Bearer ${handle.token}` },
+    });
+    expect(await code(unknown)).toBe("unknown_lease");
+
+    const wrongToken = await appRequest(app, `/proxy/${handle.leaseId}/v1`, {
+      headers: { Authorization: `Bearer ${"z".repeat(43)}` },
+    });
+    expect(await code(wrongToken)).toBe("bad_token");
+
+    // A lease id the router decodes to a real row but whose raw path the
+    // upstream builder cannot line up: percent-encoding the first character
+    // is the only way the two disagree, and it is exactly the case the path
+    // guard exists for.
+    const encodedId = `%${handle.leaseId.charCodeAt(0).toString(16)}${handle.leaseId.slice(1)}`;
+    const badPath = await appRequest(app, `/proxy/${encodedId}/v1`, {
+      headers: { Authorization: `Bearer ${handle.token}` },
+    });
+    expect(await code(badPath)).toBe("bad_proxy_path");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("names a revoked lease and an expired one differently in the 401 body", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putProxyConnection(app, cookie, "dead-proxy");
@@ -2127,8 +2185,17 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
 
     expect(revokedResponse.status).toBe(401);
     expect(expiredResponse.status).toBe(401);
-    expect(await revokedResponse.text()).toBe("");
-    expect(await expiredResponse.text()).toBe("");
+    expect(revokedResponse.headers.get("WWW-Authenticate")).toBe("Bearer");
+    await expect(revokedResponse.json()).resolves.toMatchObject({
+      error: { code: "lease_revoked" },
+    });
+    // The expired body names the one command that repairs it, because the
+    // agent that reads it is the one that has to act.
+    const expiredBody = await expiredResponse.json<{ error: { code: string; message: string } }>();
+    expect(expiredBody.error.code).toBe("lease_expired");
+    expect(expiredBody.error.message).toContain("blitz-cred sync");
+    // Still value-free: no token, no upstream secret, no vendor detail.
+    expect(JSON.stringify(expiredBody)).not.toContain(expired.token);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -2798,10 +2865,16 @@ describe("connections: admin-configured providers through templates", () => {
       personalTokenLabel: null,
       personalTokenBaseUrlLabel: null,
       needsVendorConfig: false,
-      environmentNames: ["DISCORD_BOT_TOKEN"],
+      // The <PROVIDER>_TOKEN alias rides beside the vendor's own name: an
+      // agent guessing a variable guesses that shape first, and guessing
+      // wrong reads as "not connected".
+      environmentNames: ["DISCORD_BOT_TOKEN", "DISCORD_TOKEN"],
       adminForm: {
         rootLabel: "Bot token",
-        placements: [{ kind: "env", name: "DISCORD_BOT_TOKEN", fill: "token" }],
+        placements: [
+          { kind: "env", name: "DISCORD_BOT_TOKEN", fill: "token" },
+          { kind: "env", name: "DISCORD_TOKEN", fill: "token" },
+        ],
         proxy: null,
       },
     });

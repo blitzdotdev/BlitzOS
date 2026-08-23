@@ -313,13 +313,14 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("chown 1000:1000 /var/lib/blitz/origin");
   });
 
-  it("pre-creates the remote-control terminal tab session on every create", () => {
+  it("starts the detached remote-control retry loop on every create", () => {
     const userData = registryUserData();
-    // One exact line, part of every bootstrap: tab id 3 of the webApp default
-    // tab set maps to tmux session `term-3`, and blitz-term's
-    // `new-session -A` attaches the tab to this pre-created session.
+    // One exact line, part of every bootstrap. `claude remote-control` exits
+    // immediately when the box is logged out, so a one-shot session died in
+    // about a second; the loop retries every 15 seconds forever and is
+    // therefore also the login detector. No tab attaches to it.
     const execLine =
-      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s term-3 -c /workspace env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control || true\n";
+      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace 'while :; do env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
 
     const at = userData.indexOf(execLine);
     expect(at).toBeGreaterThan(-1);
@@ -336,6 +337,12 @@ describe("production VM bootstrap", () => {
       "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control",
     );
     expect(userData).not.toContain("/usr/local/bin/claude");
+    // No terminal tab attaches to it any more: the webApp's default tab set
+    // is back to two tabs, and nothing names `term-3`.
+    expect(userData).not.toContain("term-3");
+    // The whole loop is one shell-command argument, because tmux joins its
+    // remaining arguments with spaces before running them through /bin/sh.
+    expect(userData).toContain("-c /workspace 'while :; do env -u");
   });
 
   it("pokes registration after both enrollment files are installed with a bounded logged best-effort command", () => {

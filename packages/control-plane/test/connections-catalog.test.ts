@@ -9,16 +9,16 @@ import {
 import { genericManifest } from "../core/connections/catalog/generic.js";
 import {
   BOX_HOME,
-  compileSurfaces,
+  compileDelivery,
   skillPath,
-  tombstoneSurfaces,
-} from "../core/connections/catalog/surfaces.js";
+  tombstoneDelivery,
+} from "../core/connections/catalog/workspace-delivery.js";
 import type {
   ExchangeFixture,
   OAuthProviderManifest,
   ProviderManifest,
   StaticProviderManifest,
-  SurfaceInput,
+  DeliveryInput,
 } from "../core/connections/catalog/types.js";
 import {
   exchangeForm,
@@ -47,20 +47,63 @@ const PLACEMENT_KEYS = {
   file: ["kind", "path", "value"],
 } as const;
 
-function surfaceInput(
+function deliveryInput(
   manifest: ProviderManifest,
-  overrides: Partial<SurfaceInput> = {},
-): SurfaceInput {
+  overrides: Partial<DeliveryInput> = {},
+): DeliveryInput {
   return {
     connection: manifest.id,
     scopes: [...manifest.defaultScopes],
     mode: manifest.custody === "proxy" ? "proxy" : "inject",
+    grantKind: "oauth",
     token: "test-only-lease-token",
     proxyUrl: "https://cp.example/proxy/lease-one",
     tokenHeader: manifest.tokenHeader,
     overrides: null,
     ...overrides,
   };
+}
+
+function renderSkill(
+  manifest: ProviderManifest,
+  grantKind: "oauth" | "pat",
+): string {
+  return manifest.delivery.skill.render({
+    connection: "acme",
+    scopes: manifest.defaultScopes,
+    mode: "proxy",
+    grantKind,
+    tokenEnv: "ACME_TOKEN",
+    baseUrlEnv: "ACME_BASE_URL",
+    baseUrl: "https://cp.example/proxy/lease-one",
+    tokenHeader: manifest.tokenHeader,
+  });
+}
+
+/** What packages/box/Dockerfile puts on PATH for an agent. `git` and
+ * `blitz-cred` were always there; curl, gh, and python3 arrived with the
+ * runtime apt block that this list is the skill-side twin of. */
+const BOX_IMAGE_TOOLS = ["blitz-cred", "curl", "gh", "git", "python3"];
+
+/** The first word of every command in a rendered skill's ```sh blocks.
+ * Comments, blank lines, and a wrapped command's continuation lines are not
+ * invocations, so they are skipped. */
+function shellCommandsIn(skill: string): string[] {
+  const commands: string[] = [];
+  for (const block of skill.matchAll(/```sh\n([\s\S]*?)```/gu)) {
+    const body = block[1];
+    if (body === undefined) continue;
+    let continued = false;
+    for (const line of body.split("\n")) {
+      const wasContinued = continued;
+      continued = line.endsWith("\\");
+      const trimmed = line.trim();
+      if (wasContinued || trimmed.length === 0 || trimmed.startsWith("#")) continue;
+      const [word] = trimmed.split(/\s+/u);
+      if (word !== undefined) commands.push(word);
+    }
+  }
+  return commands;
 }
 
 function assertPlacementsRideTheFrozenWire(
@@ -191,11 +234,15 @@ describe("provider catalog conformance", () => {
             `${manifest.tokenHeader.prefix}token`,
           );
         }).not.toThrow();
+        // The scope vocabulary carries only what something still reads. Where
+        // a manifest declares one, `defaultScopes` selects from it and nothing
+        // else may sit in it: an entry no caller can name is dead text that
+        // reads as a promise. An empty list is the honest answer for a
+        // provider whose reach is decided somewhere other than a scope string.
         const scopeIds = manifest.scopes.map(({ id }) => id);
         expect(new Set(scopeIds).size).toBe(scopeIds.length);
-        for (const scope of manifest.defaultScopes) {
-          if (scopeIds.length === 0) continue;
-          expect(scopeIds, `${manifest.id} default scope ${scope}`).toContain(scope);
+        if (scopeIds.length > 0) {
+          expect([...scopeIds].sort()).toEqual([...manifest.defaultScopes].sort());
         }
         for (const scope of manifest.scopes) {
           expect(scope.detail.length, `${scope.id} states what it allows`).toBeGreaterThan(20);
@@ -227,16 +274,16 @@ describe("provider catalog conformance", () => {
         }
       });
 
-      it("declares surfaces the box can accept", () => {
-        const tokenSurfaces = manifest.surfaces.env.filter(({ fill }) => fill === "token");
-        expect(tokenSurfaces.length, "exactly one variable carries the token").toBeGreaterThan(0);
-        for (const surface of manifest.surfaces.env) {
-          expect(surface.name).toMatch(ENVIRONMENT_NAME);
+      it("declares a delivery the box can accept", () => {
+        const tokenDeliveries = manifest.delivery.env.filter(({ fill }) => fill === "token");
+        expect(tokenDeliveries.length, "exactly one variable carries the token").toBeGreaterThan(0);
+        for (const delivery of manifest.delivery.env) {
+          expect(delivery.name).toMatch(ENVIRONMENT_NAME);
         }
-        expect(manifest.surfaces.skill.path).toContain("<provider>");
-        expect(manifest.surfaces.skill.path.startsWith("/")).toBe(false);
+        expect(manifest.delivery.skill.path).toContain("<provider>");
+        expect(manifest.delivery.skill.path.startsWith("/")).toBe(false);
         expect(skillPath(manifest, "instance")).toBe(
-          `${BOX_HOME}/${manifest.surfaces.skill.path.replace("<provider>", "instance")}`,
+          `${BOX_HOME}/${manifest.delivery.skill.path.replace("<provider>", "instance")}`,
         );
       });
 
@@ -276,7 +323,7 @@ describe("provider catalog conformance", () => {
         expect(view.rootHelp).toBe(form.rootHelp);
         expect(view.app).toEqual(form.app);
         expect(view.placements).toEqual(
-          manifest.surfaces.env.map(({ name, fill }) => ({ kind: "env", name, fill })),
+          manifest.delivery.env.map(({ name, fill }) => ({ kind: "env", name, fill })),
         );
         expect(view.proxy === null).toBe(manifest.custody !== "proxy");
         if (view.proxy !== null) {
@@ -287,24 +334,33 @@ describe("provider catalog conformance", () => {
       });
 
       it("renders a skill that tells an agent how to authenticate", () => {
-        const rendered = manifest.surfaces.skill.render({
-          connection: "acme",
-          scopes: manifest.defaultScopes,
-          mode: "proxy",
-          tokenEnv: "ACME_TOKEN",
-          baseUrlEnv: "ACME_BASE_URL",
-          baseUrl: "https://cp.example/proxy/lease-one",
-          tokenHeader: manifest.tokenHeader,
-        });
-        expect(rendered.startsWith("---\nname: acme\n")).toBe(true);
-        expect(rendered).toContain("description:");
-        expect(rendered).toContain("$ACME_TOKEN");
-        expect(rendered).not.toContain("<provider>");
-        expect(rendered).not.toContain("undefined");
+        for (const grantKind of ["oauth", "pat"] as const) {
+          const rendered = renderSkill(manifest, grantKind);
+          expect(rendered.startsWith("---\nname: acme\n")).toBe(true);
+          expect(rendered).toContain("description:");
+          expect(rendered).toContain("$ACME_TOKEN");
+          expect(rendered).not.toContain("<provider>");
+          expect(rendered).not.toContain("undefined");
+        }
+      });
+
+      /** The box image installs curl, gh, and python3 (packages/box/Dockerfile),
+       * so a canonical example is a command an agent can paste and run. This
+       * pins that every example invokes a tool the image actually ships — the
+       * bug it guards is a skill full of commands that answer
+       * "command not found", which sends the agent off inventing its own. */
+      it("prints canonical examples the box image can run", () => {
+        for (const grantKind of ["oauth", "pat"] as const) {
+          const commands = shellCommandsIn(renderSkill(manifest, grantKind));
+          expect(commands.length, `${manifest.id} ${grantKind}`).toBeGreaterThan(0);
+          for (const command of commands) {
+            expect(BOX_IMAGE_TOOLS, `${manifest.id} runs ${command}`).toContain(command);
+          }
+        }
       });
 
       it("compiles placements inside the frozen box wire", () => {
-        const placements = compileSurfaces(manifest, surfaceInput(manifest));
+        const placements = compileDelivery(manifest, deliveryInput(manifest));
         assertPlacementsRideTheFrozenWire(placements, `${manifest.id} mint`);
         const skill = placements.find((placement) => placement.kind === "file");
         expect(skill?.kind === "file" && skill.value.length > 0).toBe(true);
@@ -318,10 +374,10 @@ describe("provider catalog conformance", () => {
         expect(Object.keys(JSON.parse(JSON.stringify(result))).sort())
           .toEqual(FROZEN_MINT_KEYS);
 
-        const tombstone = tombstoneSurfaces(
+        const tombstone = tombstoneDelivery(
           manifest,
           manifest.id,
-          manifest.surfaces.env.map(({ name }) => name),
+          manifest.delivery.env.map(({ name }) => name),
         );
         assertPlacementsRideTheFrozenWire(tombstone, `${manifest.id} tombstone`);
         const emptied = tombstone.find((placement) => placement.kind === "file");
@@ -334,9 +390,9 @@ describe("provider catalog conformance", () => {
           baseUrlEnvName: "ACME_BASE_URL",
           baseUrl: "https://api.acme.example",
         };
-        const placements = compileSurfaces(
+        const placements = compileDelivery(
           manifest,
-          surfaceInput(manifest, { overrides, mode: "inject" }),
+          deliveryInput(manifest, { overrides, mode: "inject" }),
         );
         const names = placements
           .filter((placement) => placement.kind === "env")

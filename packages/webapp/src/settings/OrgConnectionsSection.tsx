@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
-import { CUSTODY_BADGE } from './ConnectPicker';
+import { CUSTODY_BADGE } from '../connections/custody-badge';
 
 type OrgClient = Pick<ControlPlaneClient, 'listConnections' | 'deleteConnection'>;
 

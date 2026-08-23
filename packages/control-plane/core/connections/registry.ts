@@ -18,7 +18,7 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import type { ProviderManifest, SurfaceOverrides } from "./catalog/types.js";
+import type { ProviderManifest, DeliveryOverrides } from "./catalog/types.js";
 import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
 import {
@@ -291,7 +291,7 @@ export async function ensureCatalogConnection(
   provider: string,
   manifest: ProviderManifest,
   custody: Custody,
-  overrides: SurfaceOverrides | null,
+  overrides: DeliveryOverrides | null,
   principal: Principal,
   /** The org's instance URL for instance-hosted vendors (YouTrack): rides
    * `config.proxy.base_url` on the declared row so later members inherit it. */
@@ -299,10 +299,10 @@ export async function ensureCatalogConnection(
   now = Date.now(),
 ): Promise<Connection> {
   const placements = (overrides === null
-    ? manifest.surfaces.env.map((surface) => ({
+    ? manifest.delivery.env.map((delivery) => ({
         kind: "env" as const,
-        name: surface.name,
-        fill: surface.fill,
+        name: delivery.name,
+        fill: delivery.fill,
       }))
     : [{ kind: "env" as const, name: overrides.envName, fill: "token" as const }]);
   const baseUrl = overrides?.baseUrl ?? instanceBaseUrl ?? manifest.baseUrl;
