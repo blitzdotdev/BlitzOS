@@ -61,6 +61,7 @@ describe("production VM bootstrap", () => {
     const userData = registryUserData();
 
     expect(userData).toContain("apt_watchdog install -y docker.io curl");
+    expect(userData).toContain("2>/dev/null | head -1 || true)");
     expect(userData).toContain("systemctl enable --now docker");
     expect(userData).toContain("/dev/disk/by-id/scsi-0HC_Volume_*");
     expect(userData).toContain("/var/lib/blitz/authorized_key");
