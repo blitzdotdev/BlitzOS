@@ -25,12 +25,22 @@
 set -uo pipefail
 
 state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
-credentials="$state_dir/home/.claude/.credentials.json"
+home=$state_dir/home
+credentials="$home/.claude/.credentials.json"
+log="$state_dir/remote-control.log"
+attempts="$state_dir/.remote-control-attempts"
 
-# s6 restarts a longrun as soon as its run script exits. This delay is the
-# restart backoff: without it, a `claude rc` that fails on start would spin.
-# At boot it costs five seconds against a login the member has yet to perform.
-sleep 5
+# Escalating backoff. s6 restarts a longrun the moment its run script exits,
+# and every attempt starts the claude binary, so a lasting failure must not
+# spin. The file's own mtime is the time of the last restart: an hour with no
+# restart means the service was healthy, so the count starts again.
+[ -n "$(find "$attempts" -mmin +60 2>/dev/null)" ] && rm -f "$attempts"
+count=$(cat "$attempts" 2>/dev/null || echo 0)
+case "$count" in ''|*[!0-9]*) count=0 ;; esac
+echo $((count + 1)) > "$attempts"
+delay=$((count * 10))
+[ "$delay" -gt 120 ] && delay=120
+[ "$delay" -gt 0 ] && sleep "$delay"
 
 announced=0
 while [ ! -s "$credentials" ]; do
@@ -41,8 +51,27 @@ while [ ! -s "$credentials" ]; do
 	sleep 15
 done
 
+# claude's own output goes to a file the member and the agent can read. s6
+# sends service output to the container's stdout, which needs `docker logs` on
+# the VM host — nobody working inside the box can reach it.
+[ -f "$log" ] || install -m 0644 /dev/null "$log"
+[ "$(stat -c %s "$log" 2>/dev/null || echo 0)" -gt 1048576 ] && : > "$log"
+
+launch() {
+	exec /command/s6-setuidgid blitz /usr/bin/env \
+		-u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL \
+		HOME="$home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+		/usr/bin/script -qec '/opt/blitz/npm/bin/claude rc' /dev/null
+}
+
 echo "remote-control: login present, connecting"
-exec /command/s6-setuidgid blitz /usr/bin/env \
-	-u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL \
-	HOME="$state_dir/home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
-	/usr/bin/script -qec '/opt/blitz/npm/bin/claude rc' /dev/null
+# First run on a box asks "Enable Remote Control? (y/n)". With no answer the
+# process dies and the service restarts into the same question forever. claude
+# records the answer as `remoteDialogSeen`, so send the `y` only while that is
+# absent: a later run would deliver it into the session as a message instead.
+# `script` keeps the pty open after this input ends, so the session survives.
+if grep -qs '"remoteDialogSeen":true' "$home/.claude.json" "$home/.claude/.config.json"; then
+	launch < /dev/null >> "$log" 2>&1
+else
+	launch <<< y >> "$log" 2>&1
+fi
