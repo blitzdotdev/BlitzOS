@@ -1,0 +1,48 @@
+#!/command/with-contenv bash
+# Claude Remote Control: the member picks this workspace as a target on
+# claude.ai and drives the box from there. No visible terminal tab.
+#
+# WHY A SERVICE AND NOT A BOOTSTRAP tmux SESSION: the previous shape ran this
+# from `docker exec` inside a detached tmux session (parked in #29). That
+# session created the box's tmux server from a bare environment, and every
+# later tab inherited it. A service also survives a VM reboot, which the
+# bootstrap session did not.
+#
+# WHY A FILE POLL AND NOT A claude RUN: `claude rc` refuses to start when the
+# box is logged out, and a logged-out run rewrites ~/.claude.json — that is how
+# a loop calling claude every few seconds erased a login the member had just
+# finished in a tab. `.credentials.json` is what an interactive `/login`
+# writes, so the cheap file test is the login detector. There is deliberately
+# no deadline: the member may log in an hour after the box boots.
+#
+# WHY NOT THE PATH SHIM: /usr/local/bin/claude injects CLAUDE_CODE_OAUTH_TOKEN
+# from the broker. Remote Control rejects it outright ("Long-lived tokens are
+# limited to inference-only"), so call the pinned binary and unset the three
+# token variables a template environment could also set.
+#
+# WHY A PTY: Remote Control opens an interactive session. `script` supplies the
+# pty without involving tmux, so this can never own the box's tmux server.
+set -uo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+credentials="$state_dir/home/.claude/.credentials.json"
+
+# s6 restarts a longrun as soon as its run script exits. This delay is the
+# restart backoff: without it, a `claude rc` that fails on start would spin.
+# At boot it costs five seconds against a login the member has yet to perform.
+sleep 5
+
+announced=0
+while [ ! -s "$credentials" ]; do
+	if [ "$announced" -eq 0 ]; then
+		echo "remote-control: waiting for an interactive claude.ai login"
+		announced=1
+	fi
+	sleep 15
+done
+
+echo "remote-control: login present, connecting"
+exec /command/s6-setuidgid blitz /usr/bin/env \
+	-u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL \
+	HOME="$state_dir/home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+	/usr/bin/script -qec '/opt/blitz/npm/bin/claude rc' /dev/null
