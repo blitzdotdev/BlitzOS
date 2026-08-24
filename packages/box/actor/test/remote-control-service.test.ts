@@ -91,6 +91,17 @@ describe("remote-control s6 service", () => {
     expect(runCode).toMatch(/launch < \/dev\/null/u);
   });
 
+  it("runs in the workspace, not in the s6 service directory", () => {
+    // claude trusts a directory by path and refuses to run in an untrusted
+    // one. s6 starts a service in its own service directory, whose path also
+    // changes every boot, so claude demanded trust for that path. Terminal
+    // tabs start in /workspace, so the login the member must perform already
+    // trusts it.
+    expect(runCode).toMatch(/cd \/workspace/u);
+    const launchAt = runCode.indexOf("launch()");
+    expect(runCode.indexOf("cd /workspace")).toBeLessThan(launchAt);
+  });
+
   it("writes claude's output where the box can read it", () => {
     // s6 sends service output to the container's stdout, which needs
     // `docker logs` on the VM host. Nobody inside the box can reach that.
