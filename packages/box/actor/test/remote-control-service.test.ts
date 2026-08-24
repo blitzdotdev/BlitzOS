@@ -42,8 +42,9 @@ describe("remote-control s6 service", () => {
     // member had just completed in a tab. The guard must not execute claude.
     expect(runCode).toMatch(/\.claude\/\.credentials\.json/u);
     // "claude" appears in the guard as a path segment; what must be absent is
-    // an invocation of the binary.
-    const guard = runCode.slice(0, runCode.indexOf("login present"));
+    // an invocation of the binary. Everything up to the launch definition is
+    // the part that runs before a login is known to exist.
+    const guard = runCode.slice(0, runCode.indexOf("launch()"));
     expect(guard).not.toMatch(/bin\/claude|claude rc/u);
   });
 
@@ -77,5 +78,29 @@ describe("remote-control s6 service", () => {
 
   it("runs as the box user, not root", () => {
     expect(runCode).toMatch(/s6-setuidgid blitz/u);
+  });
+
+  it("answers the first-run consent prompt, and only while it is unanswered", () => {
+    // `claude rc` asks "Enable Remote Control? (y/n)" once per box. With no
+    // answer the process dies and the service restarts into the same question
+    // forever. Sending it unconditionally is just as wrong: once claude has
+    // recorded the answer there is no prompt, and the `y` lands in the session
+    // as a message.
+    expect(runCode).toMatch(/launch <<< y/u);
+    expect(runCode).toMatch(/remoteDialogSeen/u);
+    expect(runCode).toMatch(/launch < \/dev\/null/u);
+  });
+
+  it("writes claude's output where the box can read it", () => {
+    // s6 sends service output to the container's stdout, which needs
+    // `docker logs` on the VM host. Nobody inside the box can reach that.
+    expect(runCode).toMatch(/remote-control\.log/u);
+  });
+
+  it("grows the delay between repeated restarts", () => {
+    // Every attempt starts the claude binary. A lasting failure at the old
+    // fixed five seconds spun it about seventeen thousand times a day.
+    expect(runCode).toMatch(/delay=\$\(\(count \* 10\)\)/u);
+    expect(runCode).toMatch(/delay" -gt 120/u);
   });
 });
