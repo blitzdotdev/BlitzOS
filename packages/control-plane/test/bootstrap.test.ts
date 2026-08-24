@@ -313,46 +313,18 @@ describe("production VM bootstrap", () => {
     expect(userData).toContain("chown 1000:1000 /var/lib/blitz/origin");
   });
 
-  it("starts the detached remote-control retry loop on every create", () => {
+  it("starts no remote-control session and no tmux server", () => {
     const userData = registryUserData();
-    // One exact line, part of every bootstrap. `claude remote-control` exits
-    // immediately when the box is logged out, so a one-shot session died in
-    // about a second; the loop retries every 15 seconds forever and is
-    // therefore also the login detector. No tab attaches to it.
-    //
-    // The `[ -s ... .credentials.json ]` guard is load-bearing: a logged-out
-    // `claude remote-control` run rewrites the whole of ~/.claude.json, which
-    // clobbered a login a member had just completed in a tab. While logged
-    // out the loop must poll the file and start no claude process at all.
-    const execLine =
-      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ] || { sleep 15; continue; }; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
-
-    const at = userData.indexOf(execLine);
-    expect(at).toBeGreaterThan(-1);
-    expect(userData.indexOf(execLine, at + 1)).toBe(-1);
-    // The session needs a running container: after the health gate, before
-    // the phone-home host-key read.
-    expect(at).toBeGreaterThan(userData.indexOf('[ "$box_healthy" = true ]'));
-    expect(at).toBeLessThan(userData.indexOf("read_host_key()"));
-    // The un-shimmed binary path bypasses the OAuth-injecting
-    // /usr/local/bin/claude PATH shim, and env -u strips any
-    // template-injected credential variables: remote-control rejects
-    // CLAUDE_CODE_OAUTH_TOKEN and needs its own interactive login.
-    expect(userData).toContain(
-      "env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control",
-    );
-    expect(userData).not.toContain("/usr/local/bin/claude");
-    // No terminal tab attaches to it any more: the webApp's default tab set
-    // is back to two tabs, and nothing names `term-3`.
+    // Parked 2026-08-24. Bootstrap used to start a detached `blitz-rc` tmux
+    // session for `claude remote-control`. That session created the box's
+    // tmux server from a bare `docker exec` environment, so every later tab
+    // inherited a hollow environment and fresh-workspace logins broke.
+    // Bootstrap must now start no tmux server at all: the first session on
+    // the box comes from blitz-term, which sets its own environment.
+    expect(userData).not.toContain("blitz-rc");
+    expect(userData).not.toContain("remote-control");
+    expect(userData).not.toContain("tmux");
     expect(userData).not.toContain("term-3");
-    // The whole loop is one shell-command argument, because tmux joins its
-    // remaining arguments with spaces before running them through /bin/sh.
-    expect(userData).toContain(
-      "-e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ]",
-    );
-    // A logged-out box must reach `sleep 15` and go round again without ever
-    // reaching claude. That is the whole point of the guard.
-    expect(userData).toContain("|| { sleep 15; continue; }; env -u");
   });
 
   it("pokes registration after both enrollment files are installed with a bounded logged best-effort command", () => {

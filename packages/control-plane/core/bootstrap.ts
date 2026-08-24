@@ -238,9 +238,7 @@ main().catch(function (error) {
  * `test/bootstrap-python.test.mjs` and the phone-home fixtures — edit them
  * the way you would edit a wire format, not a script. Recipe launches add
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
- * without a recipe or usage capture emits byte-identical output. Every create
- * additionally emits the detached `blitz-rc` remote-control loop (pinned by
- * the same suite). */
+ * without a recipe or usage capture emits byte-identical output. */
 export function buildBootstrapScript(options: BootstrapOptions): string {
   const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
   const isTarball = options.boxImageRef.startsWith("https://");
@@ -393,47 +391,12 @@ nohup docker exec \\
   node /var/lib/blitz/recipe/sender.cjs >>/var/lib/blitz/recipe/sender.log 2>&1 &
 
 `;
-  // Unconditional on every create: a detached tmux session running claude
-  // remote-control in a retry loop, with no visible tab.
-  //
-  // The previous shape pre-created tmux session `term-3` so the webApp's
-  // third default tab would open onto a live remote-control TUI. Measured on
-  // the canary: `claude remote-control` EXITS with code 1 when the box is
-  // logged out, so that session died in about a second and the tab attached
-  // to a plain shell instead — the feature was invisible and looked broken.
-  //
-  // The loop is the login detector, but it may not RUN claude to detect a
-  // login. Measured on canary-695adca: one logged-out `claude remote-control`
-  // rewrites the whole of ~/.claude.json, so a loop that called claude every
-  // 15 seconds overwrote a login the member had just completed in a tab — the
-  // "login succeeded but I am still logged out" report. The guard makes the
-  // logged-out state a cheap file poll: the credentials file is what a
-  // finished `/login` writes, so no login means no claude process at all.
-  // There is deliberately no deadline: the member may log in an hour after
-  // the box boots, and a loop that gave up would need a second mechanism to
-  // notice.
-  //
-  // Everything else is unchanged from the pre-created session:
-  // /opt/blitz/npm/bin/claude bypasses the /usr/local/bin/claude PATH shim so
-  // no OAuth token is injected (remote-control rejects
-  // CLAUDE_CODE_OAUTH_TOKEN and needs an interactive claude.ai login); the
-  // `env -u` flags defend against template-env injection; `|| true` keeps
-  // bootstrap fail-open. The whole loop is ONE argv element, because tmux
-  // joins its remaining arguments with spaces before handing them to
-  // `/bin/sh -c` — a loop split across arguments loses its own quoting.
-  //
-  // `-e` gives this session a real locale. It is usually the FIRST session on
-  // the box, so it starts the tmux server, and the server keeps the
-  // environment of whoever started it. That bare `docker exec` environment is
-  // what every later session inherits by default, so set the locale here too
-  // and leave nothing to mojibake. Tabs no longer depend on this: blitz-term
-  // passes its own `-e` flags (rootfs/usr/local/libexec/blitz-term).
-  //
-  // Known limits, accepted: a VM reboot kills the session until an s6
-  // service ships in a box image, and the claude.ai entry names itself by
-  // hostname rather than by workspace name.
-  const remoteControlSession =
-    "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ] || { sleep 15; continue; }; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n\n";
+  // The detached `blitz-rc` remote-control tmux session used to be emitted
+  // here. Parked 2026-08-24 (owner ruling): that session created the box's
+  // tmux server from a bare `docker exec` environment, and every later tab
+  // inherited the hollow server, which broke fresh-workspace logins. Bring
+  // the feature back only as an in-image service with a real login
+  // environment.
 
   // ---- TEMPLATES-V2 repo cloner (keep as one self-contained segment) ----
   // "" on every create without template repos, so the emitted bytes stay
@@ -750,7 +713,7 @@ while (( SECONDS < health_deadline )); do
 done
 [ "$box_healthy" = true ] || fail "box health timeout after 180 seconds"
 
-${promptSender}${remoteControlSession}${repoCloner}read_host_key() {
+${promptSender}${repoCloner}read_host_key() {
   local key_path="/var/lib/blitz/ssh/ssh_host_$1_key.pub"
   if [ -s "$key_path" ]; then
     sed -n '1p' "$key_path"

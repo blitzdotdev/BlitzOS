@@ -198,18 +198,12 @@ describe("recipe invocation fixture conformance", () => {
     }
   });
 
-  it("starts the detached remote-control retry loop on every create", () => {
-    // No tab attaches to this session: `claude remote-control` exits at once
-    // when the box is logged out, so a one-shot session was dead a second
-    // after boot. The 15-second retry loop is what notices the member's
-    // eventual `/login`. The un-shimmed /opt/blitz/npm/bin/claude path and
-    // the env -u flags keep every OAuth credential out of the process
-    // (remote-control rejects CLAUDE_CODE_OAUTH_TOKEN), and `|| true` keeps
-    // the boot fail-open. The credentials-file guard keeps the logged-out
-    // loop from running claude at all: a logged-out run rewrites
-    // ~/.claude.json and wiped fresh logins.
-    const execLine =
-      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ] || { sleep 15; continue; }; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
+  it("starts no remote-control session on any create, recipe or not", () => {
+    // Parked 2026-08-24. Bootstrap used to emit a detached `blitz-rc` tmux
+    // session for `claude remote-control` on every create. That session made
+    // the box's tmux server from a bare `docker exec` environment, and every
+    // later tab inherited it, so fresh-workspace logins broke. No create
+    // shape may start a tmux server again.
     const plain = buildBootstrapScript({
       boxImageSha256: "",
       boxImageRef: "ghcr.io/blitzdotdev/blitz-box@sha256:" + "a".repeat(64),
@@ -222,16 +216,9 @@ describe("recipe invocation fixture conformance", () => {
       ...cases.map(({ name, bootstrap }): [string, string] => [name, scriptFor(bootstrap)]),
     ];
     for (const [name, script] of scripts) {
-      const at = script.indexOf(execLine);
-      expect(at, name).toBeGreaterThan(-1);
-      expect(script.indexOf(execLine, at + 1), name).toBe(-1);
-      // After the box is healthy (and after the chat sender when one is
-      // emitted), before the phone-home host-key read.
-      expect(at, name).toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
-      expect(at, name).toBeLessThan(script.indexOf("read_host_key()"));
-      const sender = script.indexOf("<<'RECIPE_SENDER'");
-      if (sender !== -1) expect(at, name).toBeGreaterThan(sender);
-      // The webApp no longer opens a default terminal tab for it.
+      expect(script, name).not.toContain("blitz-rc");
+      expect(script, name).not.toContain("remote-control");
+      expect(script, name).not.toContain("tmux");
       expect(script, name).not.toContain("term-3");
     }
   });
