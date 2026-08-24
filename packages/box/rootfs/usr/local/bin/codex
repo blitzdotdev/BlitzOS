@@ -1,0 +1,27 @@
+#!/bin/sh
+# PATH shim for the Codex CLI. Every terminal `codex` comes through here, turns
+# the startup update check off, and execs the pinned binary.
+#
+# WHAT IT PREVENTS: codex offers "Update available!" on its first screen, and
+# taking that offer runs `npm install -g @openai/codex` into NPM_CONFIG_PREFIX
+# — which is /opt/blitz/npm, the pinned copy the image shipped. The pin is
+# overwritten in place, and the box silently stops running the version it was
+# built with. claude cannot do this: its own shim exports DISABLE_AUTOUPDATER.
+# codex had no shim at all.
+#
+# WHY A CONFIG OVERRIDE AND NOT AN ENVIRONMENT VARIABLE: codex has no
+# environment variable for this. DISABLE_AUTOUPDATER belongs to Claude Code and
+# codex ignores it. The setting is a config key, so `-c key=value` is the only
+# per-process way to set it. Checked against @openai/codex@0.147.0, the pinned
+# version: `codex doctor --json` reports `"check for update on startup":
+# "true"` by default and `"false"` with this flag.
+#
+# WHY THE FLAG GOES FIRST: codex accepts `-c` more than once and the last one
+# wins, so a caller that really wants the check keeps the last word. The
+# recipe path already passes its own `-c model_reasoning_effort=…` this way.
+#
+# NOTHING HERE IS FATAL. The flag is an ordinary argument and codex ignores a
+# config key it does not know, so a future version that drops the key still
+# starts.
+
+exec /opt/blitz/npm/bin/codex -c check_for_update_on_startup=false "$@"

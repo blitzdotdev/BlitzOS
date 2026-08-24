@@ -4,7 +4,13 @@ set -euo pipefail
 script_dir=$(realpath "$(dirname "$0")")
 box_dir=$(realpath "$script_dir/..")
 
-sh -n "$box_dir/rootfs/usr/local/bin/blitz"
+# Every /usr/local/bin entry is POSIX sh. `claude` and `codex` are PATH shims:
+# a syntax error in one does not degrade a tab, it removes the version pin the
+# shim exists to hold. What each shim must CONTAIN is pinned in
+# box/actor/test/agent-shims.test.ts, which runs without docker.
+for shim in blitz claude codex; do
+  sh -n "$box_dir/rootfs/usr/local/bin/$shim"
+done
 
 while IFS= read -r script; do
   bash -n "$script"
