@@ -53,10 +53,6 @@ fi
 
 session="$session_prefix-$session_key"
 
-new_session() {
-  tmux -u new-session -d -s "$session" -c "$workspace" "${session_cmd[@]}"
-}
-
 if [ "$mode" = ro ]; then
   # An observer attaches to what is already running and never starts
   # anything: creating on demand here would let a read-only visitor spawn
@@ -77,12 +73,19 @@ fi
 # /etc/profile.d/blitz-creds.sh does, so a stripped image loses a sync and not
 # a terminal, and BLITZ_STATE_DIR is passed explicitly so the sync can never
 # write to a directory other than the one sourced below.
+#
+# Detached, never waited on. The mint holds one sync lock, and the gateway's
+# POST /credentials/sync can hold it for up to 30 seconds, so waiting here made
+# opening a tab wait on somebody else's refresh. The skills still land within
+# seconds and still race the harness scan, which is exactly what they did
+# before this line existed. `( ... & )` lets the subshell exit at once, so the
+# sync is reparented away and the exec below never has a job to reap.
 case "$session_type" in
   claude|codex)
     if ! tmux has-session -t "=$session" 2>/dev/null &&
         command -v timeout >/dev/null 2>&1 &&
         command -v blitz-cred >/dev/null 2>&1; then
-      BLITZ_STATE_DIR="$state_dir" timeout 10 blitz-cred sync >/dev/null 2>&1 || :
+      ( BLITZ_STATE_DIR="$state_dir" timeout 10 blitz-cred sync >/dev/null 2>&1 & )
     fi
     ;;
 esac
@@ -95,10 +98,48 @@ esac
 # cannot read the credential its own workspace connected is the bug; the chat
 # actor merges these identical files (box/actor/src/credentials.ts) so the two
 # surfaces cannot disagree about what a variable holds.
+#
+# Snapshot the exported environment first, so the delta after the glob names
+# exactly what env.d contributed. Prefixed plain variables rather than an
+# associative array: this script also has to parse under the bash 3.2 that
+# macOS still installs, where `declare -A` does not exist. `compgen -e` yields
+# valid identifiers only, so the eval builds a valid name every time.
+for env_name in $(compgen -e); do
+  eval "blitz_env_was_$env_name=\${$env_name-}"
+done
+
 for credential_env_file in "$state_dir"/creds/env.d/*.sh; do
   [ -r "$credential_env_file" ] && . "$credential_env_file" || :
 done
 unset credential_env_file
+
+# Exporting the variables above is not enough. tmux gives a NEW session the
+# environment of the client that created it only when that client also STARTS
+# the server; every later session copies the server's snapshot instead. A box
+# boots a detached `blitz-rc` session first, so the server snapshot is
+# whatever bootstrap's `docker exec` held — no LANG, no credential. Tabs then
+# inherited that bare snapshot and saw none of the env.d glob. `-e NAME=VALUE`
+# writes each variable into the session environment explicitly, so delivery no
+# longer depends on who started the server.
+#
+# The locale pair goes first: ttyd hands blitz-term LANG/LC_ALL, but the delta
+# below only carries what env.d changed, and an env.d file that sets either one
+# appends a later `-e` that tmux applies last — the same "later file wins" rule
+# the sourcing loop follows.
+#
+# -e applies on CREATE only. `new-session -A` that attaches to a live session
+# leaves that session's environment untouched, which matches today's
+# semantics: an attach never re-sourced env.d either.
+session_env=(-e "LANG=${LANG:-C.UTF-8}" -e "LC_ALL=${LC_ALL:-C.UTF-8}")
+for env_name in $(compgen -e); do
+  eval "env_seen=\${blitz_env_was_$env_name+set}"
+  eval "env_was=\${blitz_env_was_$env_name-}"
+  eval "env_now=\${$env_name-}"
+  if [ "$env_seen" != set ] || [ "$env_was" != "$env_now" ]; then
+    session_env+=(-e "$env_name=$env_now")
+  fi
+done
+unset env_name env_seen env_was env_now
 
 # Recipe invocation delivery (plans/RECIPES.md Phase 2): a recipe launch
 # leaves /var/lib/blitz/recipe/{invocation.env,prompt.txt} on the state
@@ -134,4 +175,4 @@ case "$session_type" in
     ;;
 esac
 
-exec tmux -u new-session -A -s "$session" -c "$workspace" "${session_cmd[@]}"
+exec tmux -u new-session -A -s "$session" -c "$workspace" "${session_env[@]}" "${session_cmd[@]}"

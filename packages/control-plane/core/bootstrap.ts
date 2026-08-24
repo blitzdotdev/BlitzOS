@@ -402,12 +402,16 @@ nohup docker exec \\
   // logged out, so that session died in about a second and the tab attached
   // to a plain shell instead — the feature was invisible and looked broken.
   //
-  // The loop is the login detector. Each attempt costs nothing when logged
-  // out (it exits immediately), sleeps 15 seconds, and tries again; the
-  // moment a member finishes `/login` in any claude tab, the next attempt
-  // sticks. There is deliberately no deadline: the member may log in an hour
-  // after the box boots, and a loop that gave up would need a second
-  // mechanism to notice.
+  // The loop is the login detector, but it may not RUN claude to detect a
+  // login. Measured on canary-695adca: one logged-out `claude remote-control`
+  // rewrites the whole of ~/.claude.json, so a loop that called claude every
+  // 15 seconds overwrote a login the member had just completed in a tab — the
+  // "login succeeded but I am still logged out" report. The guard makes the
+  // logged-out state a cheap file poll: the credentials file is what a
+  // finished `/login` writes, so no login means no claude process at all.
+  // There is deliberately no deadline: the member may log in an hour after
+  // the box boots, and a loop that gave up would need a second mechanism to
+  // notice.
   //
   // Everything else is unchanged from the pre-created session:
   // /opt/blitz/npm/bin/claude bypasses the /usr/local/bin/claude PATH shim so
@@ -418,11 +422,18 @@ nohup docker exec \\
   // joins its remaining arguments with spaces before handing them to
   // `/bin/sh -c` — a loop split across arguments loses its own quoting.
   //
+  // `-e` gives this session a real locale. It is usually the FIRST session on
+  // the box, so it starts the tmux server, and the server keeps the
+  // environment of whoever started it. That bare `docker exec` environment is
+  // what every later session inherits by default, so set the locale here too
+  // and leave nothing to mojibake. Tabs no longer depend on this: blitz-term
+  // passes its own `-e` flags (rootfs/usr/local/libexec/blitz-term).
+  //
   // Known limits, accepted: a VM reboot kills the session until an s6
   // service ships in a box image, and the claude.ai entry names itself by
   // hostname rather than by workspace name.
   const remoteControlSession =
-    "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace 'while :; do env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n\n";
+    "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ] || { sleep 15; continue; }; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n\n";
 
   // ---- TEMPLATES-V2 repo cloner (keep as one self-contained segment) ----
   // "" on every create without template repos, so the emitted bytes stay

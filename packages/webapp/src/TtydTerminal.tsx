@@ -5,11 +5,20 @@ import { Terminal, type ITheme } from '@xterm/xterm';
 import { WebAppLoadingPane } from './LoadingSkeleton';
 import { hasTerminalChoiceMenu } from './terminal-choices';
 import { isTouchInputDevice } from './terminal-touch';
-import { extractTerminalUrls } from './terminal-url';
+import { extractTerminalUrls, scanOsc8Links } from './terminal-url';
 import { useTerminalTouch } from './use-terminal-touch';
 import type { TerminalAgent } from './protocol';
 
 const encoder = new TextEncoder();
+
+/** How many OSC 8 hyperlink targets one tab keeps. The scan only needs the
+ * links still on screen, and the login flow prints one. */
+const OSC8_LINK_MEMORY = 8;
+
+/** How much input one tab holds while its socket is down or its pane is not
+ * selected. A login code is 100-odd characters, so this is thousands of
+ * pastes; past it the oldest chunk goes, loudly. */
+const MAX_PENDING_INPUT_CHARS = 32 * 1024;
 
 export const TERMINAL_BACKGROUND_PROPERTY = '--terminal-background';
 
@@ -91,16 +100,48 @@ export function TtydTerminal({
   onOpenPreview?: (port: number) => boolean;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const sendRef = useRef<((command: '0' | '1', data: string) => void) | null>(null);
+  /** Reports whether the bytes actually left: a closed or reconnecting socket
+   * cannot take them, and the caller has to hold them instead. */
+  const sendRef = useRef<((command: '0' | '1', data: string) => boolean) | null>(null);
+  const flushRef = useRef<(() => void) | null>(null);
   const choiceMenuActiveRef = useRef(false);
+  const osc8LinksRef = useRef<string[]>([]);
   const activeRef = useRef(active);
   activeRef.current = active;
   const [terminalInstance, setTerminalInstance] = useState<Terminal | null>(null);
   const [connected, setConnected] = useState(false);
+
+  // The url arrives as `activeSessionUrl ?? ''` (CloudApp), so an empty string
+  // means "no url this render" — a lifecycle poll or an endpoint row that has
+  // not landed yet — not "the endpoint moved". Rebuilding on it closes the
+  // socket and disposes xterm under a live session, and anything typed in the
+  // meantime goes with it. Hold the last real url: only a genuinely different
+  // endpoint rebuilds the pane.
+  const lastUrlRef = useRef(url);
+  if (url !== '') lastUrlRef.current = url;
+  const socketUrl = url === '' ? lastUrlRef.current : url;
+
+  // Input the pane could not send yet, oldest first. Dropping it was silent
+  // and looked like a rejected login: claude answers an empty code with
+  // "Invalid code", so a swallowed paste reads as a failed sign-in.
+  const pendingInputRef = useRef<string[]>([]);
+  const queueInput = useCallback((data: string) => {
+    const pending = pendingInputRef.current;
+    pending.push(data);
+    let queued = pending.reduce((total, chunk) => total + chunk.length, 0);
+    while (queued > MAX_PENDING_INPUT_CHARS && pending.length > 1) {
+      const dropped = pending.shift() ?? '';
+      queued -= dropped.length;
+      console.warn(`terminal: input queue full, dropped ${dropped.length} characters`);
+    }
+  }, []);
   const sendInput = useCallback((data: string) => {
-    if (readOnly || !activeRef.current) return;
-    sendRef.current?.('0', data);
-  }, [readOnly]);
+    // A viewer has no write path at all. Queuing would deliver an observer's
+    // keystrokes to the tenant on the next reconnect.
+    if (readOnly) return;
+    if (activeRef.current && sendRef.current?.('0', data) === true) return;
+    queueInput(data);
+  }, [queueInput, readOnly]);
   const {
     selectionChip,
     copySelection,
@@ -172,6 +213,9 @@ export function TtydTerminal({
       terminalInstance.blur();
       return;
     }
+    // Selecting the tab is one of the two moments input can start moving
+    // again; the socket opening is the other.
+    flushRef.current?.();
     if (!isTouchInputDevice()) terminalInstance.focus();
   }, [active, terminalInstance]);
 
@@ -191,7 +235,7 @@ export function TtydTerminal({
       for (let row = firstRow; row < buffer.length; row += 1) {
         rows.push(buffer.getLine(row)?.translateToString(true) ?? '');
       }
-      const matches = extractTerminalUrls(rows, terminalInstance.cols)
+      const matches = extractTerminalUrls(rows, terminalInstance.cols, osc8LinksRef.current)
         .filter((candidate) => /oauth|login|authorize|device/iu.test(candidate));
       onSignInUrl?.(matches.at(-1) ?? null);
       choiceMenuActiveRef.current = hasTerminalChoiceMenu(rows);
@@ -298,9 +342,17 @@ export function TtydTerminal({
     let reconnectDelay = 500;
     let stopped = false;
 
-    const send = (command: '0' | '1', data: string) => {
-      if (socket?.readyState !== WebSocket.OPEN) return;
+    const send = (command: '0' | '1', data: string): boolean => {
+      if (socket?.readyState !== WebSocket.OPEN) return false;
       socket.send(encoder.encode(`${command}${data}`));
+      return true;
+    };
+    const flushInput = () => {
+      if (readOnly || !activeRef.current) return;
+      const pending = pendingInputRef.current;
+      // Stops at the first refusal so the order the member typed in survives a
+      // socket that closes mid-flush.
+      while (pending.length > 0 && send('0', pending[0]!)) pending.shift();
     };
     if (!readOnly) {
       terminal.attachCustomKeyEventHandler((event) => {
@@ -320,6 +372,7 @@ export function TtydTerminal({
       });
     }
     sendRef.current = send;
+    flushRef.current = flushInput;
     setTerminalInstance(terminal);
 
     // Trailing debounce: mid-animation refits while the iOS keyboard is
@@ -342,13 +395,19 @@ export function TtydTerminal({
 
     const connect = () => {
       if (stopped) return;
+      // claude prints the login URL as an OSC 8 hyperlink, so the full URL is
+      // in the escape even when the visible copy wraps. Read it off the wire
+      // here, before xterm turns the stream into rows and the width becomes a
+      // question. Per connection: a reconnect replays its own escapes.
+      const decoder = new TextDecoder();
+      let osc8Carry = '';
       // Second arg = a per-tab key so blitz-session names a UNIQUE tmux session
       // (claude-<key>); without it every Claude tab attached to the same session.
       // Third arg "ro" = observer mode: blitz-session does tmux attach -r, so the
       // VM itself discards observer keystrokes (goldens without ro support just
       // ignore the extra arg — client-side read-only still applies).
       const next = new WebSocket(
-        `${url}?arg=${encodeURIComponent(sessionType)}&arg=${encodeURIComponent(sessionKey)}${readOnly ? '&arg=ro' : ''}`,
+        `${socketUrl}?arg=${encodeURIComponent(sessionType)}&arg=${encodeURIComponent(sessionKey)}${readOnly ? '&arg=ro' : ''}`,
         'tty',
       );
       socket = next;
@@ -365,6 +424,7 @@ export function TtydTerminal({
           terminal.rows,
         );
         next.send(JSON.stringify(handshake));
+        flushInput();
         if (activeRef.current && !isTouchInputDevice()) terminal.focus();
       };
 
@@ -374,7 +434,14 @@ export function TtydTerminal({
         if (frame[0] === '0'.charCodeAt(0)) {
           reconnectDelay = 500;
           setConnected(true);
-          terminal.write(frame.subarray(1));
+          const payload = frame.subarray(1);
+          const scan = scanOsc8Links(decoder.decode(payload, { stream: true }), osc8Carry);
+          osc8Carry = scan.carry;
+          if (scan.links.length > 0) {
+            osc8LinksRef.current = [...osc8LinksRef.current, ...scan.links]
+              .slice(-OSC8_LINK_MEMORY);
+          }
+          terminal.write(payload);
         }
       };
 
@@ -387,11 +454,11 @@ export function TtydTerminal({
       };
     };
 
+    // Keystrokes take the same queue as a programmatic paste: a tab switch or
+    // a reconnect between keypress and send must not eat the character.
     const input = readOnly
       ? { dispose: () => undefined }
-      : terminal.onData((data) => {
-          if (activeRef.current) send('0', data);
-        });
+      : terminal.onData(sendInput);
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     connect();
@@ -406,9 +473,10 @@ export function TtydTerminal({
       input.dispose();
       socket?.close();
       if (sendRef.current === send) sendRef.current = null;
+      if (flushRef.current === flushInput) flushRef.current = null;
       terminal.dispose();
     };
-  }, [readOnly, sessionType, sessionKey, url]);
+  }, [readOnly, sendInput, sessionType, sessionKey, socketUrl]);
 
   return (
     <div className="terminal-panel">

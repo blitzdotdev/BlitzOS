@@ -139,7 +139,7 @@ COPY --from=actor-build /src/packages/box/actor/node_modules /opt/blitz/actor/no
 COPY env.defaults /etc/blitz/env.defaults
 COPY packages/box/rootfs/ /
 RUN set -eux; \
-    chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude \
+    chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude /usr/local/bin/codex \
       /usr/local/bin/blitz-cred-claude /usr/local/bin/blitz-cred-codex \
       /usr/local/bin/blitz-rules; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
@@ -147,14 +147,19 @@ RUN set -eux; \
     ln -s /workspace /srv/blitz-files/workspace; \
     chown -R blitz:blitz /opt/blitz/npm
 
-# /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shim at
-# /usr/local/bin/claude wins over the real binary it execs — and so a copy a
-# member installs into their own writable prefix cannot shadow it. That
-# shadowing is the single most common way a terminal ends up signed out while
-# the same box's chat is authenticated.
+# /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
+# /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
+# exec — and so a copy a member installs into their own writable prefix cannot
+# shadow them. That shadowing is the single most common way a terminal ends up
+# signed out while the same box's chat is authenticated.
 #
 # DISABLE_AUTOUPDATER is set image-wide for the same reason: an auto-update
 # breaks the version pin above AND drops a second copy into the member's prefix.
+# It only reaches claude. codex has no such variable, so its shim passes
+# `-c check_for_update_on_startup=false` instead — without it, codex's
+# "Update available!" prompt runs `npm install -g @openai/codex` straight into
+# NPM_CONFIG_PREFIX and overwrites the pin above in place — the chown on the
+# line above hands uid 1000 the write permission that makes it possible.
 ENV HOME=/var/lib/blitz/home \
     USER=blitz \
     NPM_CONFIG_PREFIX=/opt/blitz/npm \
