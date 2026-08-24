@@ -630,7 +630,7 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  it('keeps Wanted here and Recent activity beside the rows', async () => {
+  it('keeps Wanted here beside the rows and hides Recent activity', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
       listCredentialEvents: vi.fn(async () => ({
@@ -662,7 +662,7 @@ describe('workspace provider rows', () => {
     await settle();
     expect([...view.container.querySelectorAll('.workspace-sect')]
       .map((heading) => heading.textContent))
-      .toEqual(['Wanted here', 'Connections', 'Recent activity']);
+      .toEqual(['Wanted here', 'Connections']);
     await view.unmount();
   });
 

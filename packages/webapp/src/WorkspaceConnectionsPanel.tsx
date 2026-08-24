@@ -300,7 +300,8 @@ export function WorkspaceConnectionsPanel({
   ) => Promise<void>;
 }) {
   const leases = useWorkspaceLeases(client, workspaceId, visible);
-  const { events, error: eventsError } = useWorkspaceCredentialEvents(client, workspaceId, visible);
+  // Recent activity is hidden per product ruling 2026-08-24; the hook above it,
+  // WorkspaceEventsPanel, and the control-plane route all stay.
   const { noteLease } = leases;
   const stipulated = stipulatedConnections ?? [];
   // Which provider row to open, and a version so asking twice for the same
@@ -335,7 +336,6 @@ export function WorkspaceConnectionsPanel({
   // having nothing to say is worse than silence. The pending count on the
   // connections rail icon is what tells a person there is something here.
   const wanted = pendingRequests.length > 0 || (pendingRequestsError ?? null) !== null;
-  const activity = eventsError !== null || events.length > 0;
   return (
     <div className="workspace-connections">
       {wanted && (
@@ -369,12 +369,6 @@ export function WorkspaceConnectionsPanel({
         onLeaseMinted={noteLease}
         onConnected={connected}
       />
-      {activity && (
-        <>
-          <h3 className="workspace-sect">Recent activity</h3>
-          <WorkspaceEventsPanel events={events} error={eventsError} />
-        </>
-      )}
     </div>
   );
 }
