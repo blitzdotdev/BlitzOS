@@ -111,6 +111,8 @@ for service in sshd ttyd actor dufs gateway watch dockerd; do
 done
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 [ "$dufs_version" = 'dufs 0.46.0' ] || fail "unexpected dufs version: $dufs_version"
+home_target=$(docker exec "$container" readlink /srv/blitz-files/home)
+[ "$home_target" = '/var/lib/blitz/home' ] || fail "dufs home route is missing or points to $home_target"
 echo "PASS s6 graph and longruns"
 
 docker logs "$container" >"$test_dir/container.log" 2>&1
@@ -205,10 +207,20 @@ if docker exec --user blitz "$container" /usr/local/libexec/blitz-term terminal 
 fi
 echo "PASS ttyd URL args, no-arg shell, read-only attach, and tmux persistence ($session_before)"
 
+# The actor always authenticates WebSocket upgrades, including in standalone
+# mode. Install the per-run sentinel as its temporary static compatibility
+# token, then remove it before the unauthenticated files smoke below.
+docker exec "$container" install -o blitz -g blitz -m 0600 \
+  /run/blitz/smoke-secret /var/lib/blitz/webapp-token
 docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
+import { readFileSync } from "node:fs";
 import { WebSocket } from "ws";
 
-const socket = new WebSocket("ws://127.0.0.1:7444");
+const token = readFileSync("/run/blitz/smoke-secret", "utf8").trim();
+const socket = new WebSocket("ws://127.0.0.1:7444", {
+  origin: "http://127.0.0.1",
+  headers: { "x-blitz-webapp-token": token },
+});
 const result = await new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error("ACP smoke timeout")), 5000);
   socket.on("open", () => {
@@ -230,6 +242,7 @@ const result = await new Promise((resolve, reject) => {
 console.log(`PASS ACP initialize + session/new (${result})`);
 socket.close();
 NODE
+docker exec "$container" rm -f /var/lib/blitz/webapp-token
 
 docker run --rm \
   --network "container:$container" \
@@ -262,8 +275,9 @@ grep -Eq '"url":"https://demo\.blitz\.dev/app","title":"Public demo","source":"a
   || fail "/previews omitted the registered link: $preview_links_json"
 [ "$(docker exec --user blitz "$container" blitz preview list)" = 'Public demo — https://demo.blitz.dev/app' ] \
   || fail "blitz preview list did not print the registered link"
-[ "$(docker exec "$container" stat -c '%U:%G %a' /var/lib/blitz/previews.json)" = 'blitz:blitz 600' ] \
-  || fail "previews state file has the wrong owner or mode"
+preview_state=$(docker exec "$container" stat -c '%u:%g %a' /var/lib/blitz/previews.json)
+[ "$preview_state" = "$(id -u):$(id -g) 600" ] \
+  || fail "previews state file has the wrong owner or mode: $preview_state"
 if docker exec --user blitz "$container" blitz preview add 'javascript:alert(1)' >/dev/null 2>&1; then
   fail "blitz preview add accepted a non-http(s) URL"
 fi
@@ -278,7 +292,9 @@ docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module 
 import { WebSocket } from "ws";
 
 const result = await new Promise((resolve, reject) => {
-  const socket = new WebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1");
+  const socket = new WebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
+    origin: "http://127.0.0.1",
+  });
   const timer = setTimeout(() => reject(new Error("preview WebSocket timeout")), 5000);
   socket.on("open", () => socket.send("hello"));
   socket.on("message", (message) => {

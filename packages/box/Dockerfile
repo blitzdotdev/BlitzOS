@@ -145,6 +145,7 @@ RUN set -eux; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
+    ln -s /var/lib/blitz/home /srv/blitz-files/home; \
     chown -R blitz:blitz /opt/blitz/npm
 
 # /usr/local/bin comes FIRST, ahead of the npm prefix, so the PATH shims at
