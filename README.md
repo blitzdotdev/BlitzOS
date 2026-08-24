@@ -26,7 +26,7 @@
 
 A computer OS makes you more productive with computers. An AI OS makes your company more productive using AI. It does this by providing abstractions for managing the AI's level of access, context, and work environment in your company. 
 
-An AI OS improves your capability to experiment with AI and spread useful AI workflows. Since AI keeps advancing faster, a company's capability to "digest" AI advancements will become very important. 
+An AI OS improves your company's capability to experiment with AI and spread useful AI workflows. Since AI keeps advancing faster, a company's capability to "digest" AI advancements will become very important. 
 
 BlitzOS helps companies digest AI advancements as fast as they happen. BlitzOS abstractions like agent workspaces, templates, and recipes help by enabling **faster experimentation** and **workflow sharing**. Also, features like automatic evals can be built on workspaces + templates + recipes to optimize the cost of AI.
 
