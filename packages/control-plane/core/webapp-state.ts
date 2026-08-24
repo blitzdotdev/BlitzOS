@@ -30,9 +30,10 @@ type WebAppTabType =
   | "preview"
   | "panel";
 
-interface WebAppTabV1 {
+export interface WebAppTabV1 {
   id: number;
   type: WebAppTabType;
+  sessionId?: string;
   filePath?: string;
   port?: number;
   url?: string;
@@ -42,7 +43,7 @@ interface WebAppTabV1 {
   path?: string;
 }
 
-interface WebAppTabsV1 {
+export interface WebAppTabsV1 {
   version: 1;
   tabs: WebAppTabV1[];
   activeId: number | null;
@@ -117,6 +118,12 @@ function positiveId(value: OptionalJsonValue, field: string): number {
     throw new HttpError(400, `${field} must be a positive integer`);
   }
   return value;
+}
+
+function parseSessionId(value: OptionalJsonValue, field: string): string {
+  const id = boundedString(value, field, 128);
+  if (!/^[A-Za-z0-9_-]+$/u.test(id)) throw new HttpError(400, `${field} is invalid`);
+  return id;
 }
 
 function stringList(value: OptionalJsonValue, field: string, maxItems: number): string[] {
@@ -215,6 +222,9 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
   const tab: WebAppTabV1 = { id, type };
   if (title !== undefined) tab.title = title;
+  if (value.sessionId !== undefined) {
+    tab.sessionId = parseSessionId(value.sessionId, `tabs.tabs[${index}].sessionId`);
+  }
   return withRegion(tab, region);
 }
 
@@ -291,7 +301,7 @@ function parseGlobalDoc(value: OptionalJsonValue): GlobalWebAppStateV1 {
   };
 }
 
-function parseWorkspaceDoc(value: OptionalJsonValue): WorkspaceWebAppStateV1 {
+export function parseWorkspaceDoc(value: OptionalJsonValue): WorkspaceWebAppStateV1 {
   if (!isRecord(value) || value.version !== 1) {
     throw new HttpError(400, "doc must be a version 1 workspace webApp state document");
   }

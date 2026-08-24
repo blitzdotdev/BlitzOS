@@ -120,6 +120,7 @@ const expected = [
   "core/webapp-proxy.ts",
   "core/webapp-surface.ts",
   "core/webapp-tickets.ts",
+  "core/workspace-sessions.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts",
   "core/workspace-credential-import.ts",
@@ -160,7 +161,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(112);
+    expect(first.files).toHaveLength(113);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

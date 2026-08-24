@@ -1,6 +1,7 @@
 # Organization presence and collaboration safety
 
-Status: implementation plan, not shipped
+Status: Phase 1 implemented on `codex/org-presence-plan`; Phases 2-5 are not
+shipped
 
 ## Goal
 
@@ -285,6 +286,8 @@ Exit: the desired state, redaction behavior, and known collision are executable
 tests rather than plan-only prose.
 
 ### Phase 1 — Shared-session and personal-view V2
+
+Implementation status: complete on `codex/org-presence-plan`.
 
 1. Add `workspace_sessions` and `workspace_member_views` migrations.
 2. Add CRUD/operation routes for shared sessions and revision-checked personal

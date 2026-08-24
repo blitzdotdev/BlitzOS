@@ -28,6 +28,7 @@ import { addWorkspaceMemberRoutes } from "./workspace-members.js";
 import { addSessionShareRoutes } from "./session-shares.js";
 import { addWorkspaceSettingsRoutes } from "./workspace-settings.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
+import { addWorkspaceSessionRoutes } from "./workspace-sessions.js";
 
 // TODO(house-canon): Route structured core logs through the canonical logger.
 // `detail` carries the thrown message so config faults (for example a
@@ -87,6 +88,7 @@ export function installControlPlaneRoutes(
   addOrgComputeCredentialRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceSessionRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Templates and Recipes are disabled product-wide (2026-08-29). Both
   // registrations stay here, commented, so the decision is visible where the

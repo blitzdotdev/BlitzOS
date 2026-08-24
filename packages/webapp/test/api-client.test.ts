@@ -37,6 +37,68 @@ describe("wire API client", () => {
     expect(fetcher.mock.calls[1]?.[1]?.method).toBe("DELETE");
   });
 
+  it("uses revisioned member-view and shared-session routes", async () => {
+    const session = {
+      id: "session-one",
+      workspaceId: "workspace-one",
+      kind: "claude" as const,
+      title: null,
+      chatSessionId: null,
+      chatProvider: null,
+      revision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const doc = {
+      version: 1 as const,
+      agentDefault: "claude" as const,
+      tabs: {
+        version: 1 as const,
+        tabs: [{ id: 1, type: "claude" as const, sessionId: session.id }],
+        activeId: 1,
+        nextId: 2,
+      },
+      drawer: { version: 1 as const, width: 340, expanded: [] },
+    };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/view") && init?.method === "PUT") {
+        const body = JSON.parse(String(init.body));
+        return Response.json({
+          doc: body.doc,
+          revision: body.revision + 1,
+          migratedFromV1: false,
+          sessions: [session],
+        });
+      }
+      if (url.endsWith("/view")) {
+        return Response.json({ doc, revision: 4, migratedFromV1: false, sessions: [session] });
+      }
+      if (url.endsWith("/sessions") && init?.method === "POST") {
+        return Response.json({ session }, { status: 201 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const client = createControlPlaneClient("https://control.example");
+
+    await expect(client.getWorkspaceWebAppState("workspace-one")).resolves.toMatchObject({
+      revision: 4,
+      doc: { tabs: { tabs: [{ sessionId: "session-one" }] } },
+    });
+    await expect(client.putWorkspaceWebAppState("workspace-one", doc, 4)).resolves
+      .toMatchObject({ revision: 5 });
+    await expect(client.createWorkspaceSession("workspace-one", { kind: "claude" })).resolves
+      .toEqual({ session });
+
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
+      "https://control.example/workspaces/workspace-one/view",
+      "https://control.example/workspaces/workspace-one/view",
+      "https://control.example/workspaces/workspace-one/sessions",
+    ]);
+    expect(fetcher.mock.calls[1]?.[1]?.body).toBe(JSON.stringify({ revision: 4, doc }));
+  });
+
   it("uses Google login and omits an absent SSH key from create", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       return new Response(JSON.stringify({

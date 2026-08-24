@@ -14,3 +14,4 @@ export * from "./recipe.js";
 export * from "./volume.js";
 export * from "./webapp-surface.js";
 export * from "./workspace.js";
+export * from "./workspace-session.js";

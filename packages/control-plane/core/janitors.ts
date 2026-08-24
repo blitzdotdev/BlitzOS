@@ -113,7 +113,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
           v: [Date.now(), row.id],
         },
       ]);
-      if (transition[3]?.length !== 1) continue;
+      if (transition.at(-1)?.length !== 1) continue;
     } else {
       await rows(runtime.db, {
         q: "UPDATE machines SET vm_id = NULL WHERE id = ?1",

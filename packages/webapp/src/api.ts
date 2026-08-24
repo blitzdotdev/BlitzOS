@@ -38,6 +38,7 @@ import type {
   ListMachineTypesResponse,
   ListRecipesResponse,
   ListWorkspaceTemplatesResponse,
+  ListWorkspaceSessionsResponse,
   ListVolumesResponse,
   OrgBillingResponse,
   OrgUsageCaptureResponse,
@@ -46,12 +47,18 @@ import type {
   PutConnectionRequest,
   RecipeResponse,
   RetryAction,
+  CreateWorkspaceSessionRequest,
+  UpdateWorkspaceSessionRequest,
+  WorkspaceSessionResponse,
 } from "@blitzos/schema";
 import {
   decodeGlobalWebAppStateResponse,
-  decodeWorkspaceWebAppStateResponse,
+  decodeListWorkspaceSessionsResponse,
+  decodeWorkspaceMemberViewResponse,
+  decodeWorkspaceSessionResponse,
   type GlobalWebAppStateV1,
   type WebAppStateResponse,
+  type WorkspaceMemberViewResponse,
   type WorkspaceWebAppStateV1,
 } from "./storage.js";
 import {
@@ -235,11 +242,23 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   ): Promise<WebAppStateResponse<GlobalWebAppStateV1>>;
   getWorkspaceWebAppState(
     workspaceId: string,
-  ): Promise<WebAppStateResponse<WorkspaceWebAppStateV1>>;
+  ): Promise<WorkspaceMemberViewResponse>;
   putWorkspaceWebAppState(
     workspaceId: string,
     doc: WorkspaceWebAppStateV1,
-  ): Promise<WebAppStateResponse<WorkspaceWebAppStateV1>>;
+    revision: number,
+  ): Promise<WorkspaceMemberViewResponse>;
+  listWorkspaceSessions(workspaceId: string): Promise<ListWorkspaceSessionsResponse>;
+  createWorkspaceSession(
+    workspaceId: string,
+    input: CreateWorkspaceSessionRequest,
+  ): Promise<WorkspaceSessionResponse>;
+  updateWorkspaceSession(
+    workspaceId: string,
+    sessionId: string,
+    input: UpdateWorkspaceSessionRequest,
+  ): Promise<WorkspaceSessionResponse>;
+  archiveWorkspaceSession(workspaceId: string, sessionId: string, revision: number): Promise<void>;
   poll(signal?: AbortSignal): Promise<PollResponse>;
   create(input: CreateWorkspaceRequest): Promise<CreateWorkspaceResponse>;
   destroy(id: string): Promise<CreateWorkspaceResponse>;
@@ -724,20 +743,51 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         decodeGlobalWebAppStateResponse,
       ),
     getWorkspaceWebAppState: (workspaceId) =>
-      request<WebAppStateResponse<WorkspaceWebAppStateV1>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/webapp-state`,
+      request<WorkspaceMemberViewResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/view`,
         {},
-        decodeWorkspaceWebAppStateResponse,
+        decodeWorkspaceMemberViewResponse,
       ),
-    putWorkspaceWebAppState: (workspaceId, doc) =>
-      request<WebAppStateResponse<WorkspaceWebAppStateV1>>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/webapp-state`,
+    putWorkspaceWebAppState: (workspaceId, doc, revision) =>
+      request<WorkspaceMemberViewResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/view`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(doc),
+          body: JSON.stringify({ revision, doc }),
         },
-        decodeWorkspaceWebAppStateResponse,
+        decodeWorkspaceMemberViewResponse,
+      ),
+    listWorkspaceSessions: (workspaceId) =>
+      request<ListWorkspaceSessionsResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions`,
+        {},
+        decodeListWorkspaceSessionsResponse,
+      ),
+    createWorkspaceSession: (workspaceId, input) =>
+      request<WorkspaceSessionResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+        decodeWorkspaceSessionResponse,
+      ),
+    updateWorkspaceSession: (workspaceId, sessionId, input) =>
+      request<WorkspaceSessionResponse>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+        decodeWorkspaceSessionResponse,
+      ),
+    archiveWorkspaceSession: (workspaceId, sessionId, revision) =>
+      request<void>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        { method: "DELETE", headers: { "If-Match": String(revision) } },
       ),
     poll: (signal) => request<PollResponse>("/workspaces", { signal }),
     create: (input) =>

@@ -1,4 +1,10 @@
 import type { Agent, TerminalAgent } from './protocol';
+import {
+  type ListWorkspaceSessionsResponse,
+  type WorkspaceSessionResponse,
+  type WorkspaceSessionKind,
+  type WorkspaceSessionView,
+} from '@blitzos/schema';
 import { isPreviewPath, isPreviewPort } from './preview';
 import { LODY_SESSIONS_ENABLED } from './lody/flag';
 import {
@@ -38,6 +44,7 @@ export type ManagedWorkspaceTab = {
   id: number;
   type: TerminalAgent | 'terminal';
   title?: string;
+  sessionId?: string;
   region?: WorkspaceRegion;
 };
 
@@ -112,6 +119,7 @@ interface RestoredSessionTab {
   id: number;
   type: TerminalAgent | 'terminal';
   title?: string;
+  sessionId?: string;
 }
 
 export const SESSION_TITLE_MAX_LENGTH = 64;
@@ -125,6 +133,13 @@ export function isManagedWorkspaceTab(tab: WorkspaceTab): tab is ManagedWorkspac
     || tab.type === 'kimi'
     || tab.type === 'prime';
 }
+
+export type WorkspaceMemberViewResponse = {
+  doc: WorkspaceWebAppStateV1 | null;
+  revision: number;
+  migratedFromV1: boolean;
+  sessions: WorkspaceSessionView[];
+};
 
 export function createStorageNamespace(orgId: string, membershipId: string): StorageNamespace {
   return { orgId, membershipId };
@@ -456,6 +471,9 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
       type: object.type as TerminalAgent | 'terminal',
     };
     if (title !== '') tab.title = title;
+    if (isString(object.sessionId) && /^[A-Za-z0-9_-]{1,128}$/u.test(object.sessionId)) {
+      tab.sessionId = object.sessionId;
+    } else if (object.sessionId !== undefined) return null;
     // SAFETY: The branch checks every TerminalAgent literal plus terminal.
     return withRegion(tab as WorkspaceTab, region);
   }
@@ -629,4 +647,125 @@ export function decodeWorkspaceWebAppStateResponse(
   json: string,
 ): WebAppStateResponse<WorkspaceWebAppStateV1> {
   return decodeStateResponse(json, parseWorkspaceDoc);
+}
+
+function isWorkspaceSessionKind(value: OptionalJsonValue): value is WorkspaceSessionKind {
+  switch (value) {
+    case 'claude':
+    case 'codex':
+    case 'opencode':
+    case 'pi':
+    case 'kimi':
+    case 'prime':
+    case 'terminal':
+    case 'chat':
+      return true;
+    default:
+      return false;
+  }
+}
+
+function parseWorkspaceSession(value: OptionalJsonValue): WorkspaceSessionView | null {
+  const object = asJsonObject(value);
+  if (
+    object === null
+    || !isString(object.id)
+    || !/^[A-Za-z0-9_-]{1,128}$/u.test(object.id)
+    || !isString(object.workspaceId)
+    || !isWorkspaceSessionKind(object.kind)
+    || !(object.title === null || isString(object.title))
+    || !(object.chatSessionId === null || isString(object.chatSessionId))
+    || !(object.chatProvider === null || object.chatProvider === 'claude' || object.chatProvider === 'codex')
+    || !isNumber(object.revision)
+    || !Number.isSafeInteger(object.revision)
+    || object.revision < 1
+    || !isNumber(object.createdAt)
+    || !Number.isSafeInteger(object.createdAt)
+    || !isNumber(object.updatedAt)
+    || !Number.isSafeInteger(object.updatedAt)
+  ) return null;
+  return {
+    id: object.id,
+    workspaceId: object.workspaceId,
+    kind: object.kind,
+    title: object.title,
+    chatSessionId: object.chatSessionId,
+    chatProvider: object.chatProvider,
+    revision: object.revision,
+    createdAt: object.createdAt,
+    updatedAt: object.updatedAt,
+  };
+}
+
+export function decodeWorkspaceSessionResponse(json: string): WorkspaceSessionResponse {
+  let value: JsonValue;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error('workspace session response is invalid JSON');
+  }
+  const object = asJsonObject(value);
+  const session = object === null ? null : parseWorkspaceSession(object.session);
+  if (session === null) throw new Error('workspace session response is invalid');
+  return { session };
+}
+
+export function decodeListWorkspaceSessionsResponse(json: string): ListWorkspaceSessionsResponse {
+  let value: JsonValue;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error('workspace sessions response is invalid JSON');
+  }
+  const object = asJsonObject(value);
+  if (object === null || !Array.isArray(object.sessions)) {
+    throw new Error('workspace sessions response is invalid');
+  }
+  const sessions: WorkspaceSessionView[] = [];
+  for (const value of object.sessions) {
+    const session = parseWorkspaceSession(value);
+    if (session === null) throw new Error('workspace sessions response is invalid');
+    sessions.push(session);
+  }
+  return { sessions };
+}
+
+export function decodeWorkspaceMemberViewResponse(json: string): WorkspaceMemberViewResponse {
+  let value: JsonValue;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    throw new Error('workspace view response is invalid JSON');
+  }
+  const object = asJsonObject(value);
+  if (
+    object === null
+    || !isNumber(object.revision)
+    || !Number.isSafeInteger(object.revision)
+    || object.revision < 0
+    || !isBoolean(object.migratedFromV1)
+    || !Array.isArray(object.sessions)
+  ) throw new Error('workspace view response is invalid');
+  const sessions: WorkspaceSessionView[] = [];
+  for (const value of object.sessions) {
+    const session = parseWorkspaceSession(value);
+    if (session === null) throw new Error('workspace view response has invalid sessions');
+    sessions.push(session);
+  }
+  if (object.doc === null) {
+    return {
+      doc: null,
+      revision: object.revision,
+      migratedFromV1: object.migratedFromV1,
+      sessions,
+    };
+  }
+  const doc = parseWorkspaceDoc(object.doc);
+  if (doc === null) throw new Error('workspace view response has invalid doc');
+  return {
+    doc,
+    revision: object.revision,
+    migratedFromV1: object.migratedFromV1,
+    sessions,
+  };
 }

@@ -121,4 +121,8 @@ export type {
   GlobalWebAppStateV1,
   WorkspaceWebAppStateV1,
 } from "./webapp-state.js";
+export {
+  addWorkspaceSessionRoutes,
+  type WorkspaceMemberViewResponse,
+} from "./workspace-sessions.js";
 export * from "./wire.js";

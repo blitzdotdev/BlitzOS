@@ -347,13 +347,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         title: activeWorkspace.title,
         serverName: activeWorkspace.serverName,
         agentDefault: activeWorkspace.agentDefault,
-        canWrite: activeWorkspace.accessRole !== 'viewer',
+        canCreateSessions: activeWorkspace.accessRole !== 'viewer',
       }, [activeWorkspace]);
   const {
     workspaceTabs,
     setWorkspaceTabs,
     workspaceFiles,
     setWorkspaceFiles,
+    workspaceSessions,
+    setWorkspaceSessions,
   } = useWorkspacePersistence(
     api,
     storageNamespace !== null,
@@ -1171,9 +1173,31 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (nextWorkspaceTabId === null) closeChat();
     else selectWorkspaceTab(String(nextWorkspaceTabId));
   }, [closeChat, nextWorkspaceTabId, selectWorkspaceTab, updateWorkspaceTabs]);
-  const spawnTtydSession = (type: SpawnSessionType) => {
-    addWorkspaceTab((id) => ({ id, type }));
-  };
+  const spawnTtydSession = useCallback(async (type: SpawnSessionType): Promise<string | null> => {
+    const workspaceId = activeWorkspaceId;
+    if (!workspaceId || activeWorkspace?.accessRole === 'viewer') return null;
+    try {
+      const { session } = await api.createWorkspaceSession(workspaceId, { kind: type });
+      if (activeWorkspaceIdRef.current !== workspaceId) return null;
+      setWorkspaceSessions((current) => current.workspaceId !== workspaceId
+        ? current
+        : { ...current, value: [...current.value, session] });
+      addWorkspaceTab((id) => ({ id, type, sessionId: session.id }));
+      return session.id;
+    } catch (cause) {
+      handlePersistenceError(
+        cause instanceof Error ? cause : new Error('workspace session create failed'),
+      );
+      return null;
+    }
+  }, [
+    activeWorkspace?.accessRole,
+    activeWorkspaceId,
+    addWorkspaceTab,
+    api,
+    handlePersistenceError,
+    setWorkspaceSessions,
+  ]);
   const selectTtydSession = useCallback((id: string) => {
     const session = ttydSessions.find((tab) => String(tab.id) === id);
     if (session === undefined) return;

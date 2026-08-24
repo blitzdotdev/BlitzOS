@@ -2,6 +2,7 @@ import { MAX_PREVIEW_PATH_LENGTH } from "@blitzos/schema";
 import { describe, expect, it } from "vitest";
 import {
   decodeWorkspaceWebAppStateResponse,
+  decodeWorkspaceMemberViewResponse,
   defaultWorkspaceFiles,
   storedWorkspacePreference,
   withPreviewTabPath,
@@ -11,6 +12,46 @@ import {
 import { ttydHandshake } from "../src/TtydTerminal.js";
 
 describe("UI protocol and persistence object contracts", () => {
+  it("keeps durable session IDs separate from local tab IDs", () => {
+    const response = decodeWorkspaceMemberViewResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs: {
+          version: 1,
+          tabs: [
+            { id: 7, type: "claude", sessionId: "shared-terminal" },
+            { id: 8, type: "chat", sessionId: "shared-chat" },
+          ],
+          activeId: 7,
+          nextId: 9,
+        },
+        drawer: { version: 1, width: 340, expanded: [] },
+      },
+      revision: 3,
+      migratedFromV1: false,
+      sessions: [{
+        id: "shared-terminal",
+        workspaceId: "workspace",
+        kind: "claude",
+        title: null,
+        chatSessionId: null,
+        chatProvider: null,
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+    }));
+    expect(response.doc?.tabs.tabs).toEqual([
+      { id: 7, type: "claude", sessionId: "shared-terminal" },
+      { id: 8, type: "chat", sessionId: "shared-chat" },
+    ]);
+    expect(() => decodeWorkspaceMemberViewResponse(JSON.stringify({
+      ...response,
+      sessions: [{ ...response.sessions[0], id: "bad/session" }],
+    }))).toThrow("workspace view response has invalid sessions");
+  });
+
   it("preserves ttyd observer geometry omission and tenant key order", () => {
     const observer = ttydHandshake(true, 120, 40);
     expect(Object.keys(observer)).toEqual(["AuthToken"]);

@@ -1,9 +1,13 @@
 import type {
   CreateWorkspaceRequest,
+  CreateWorkspaceSessionRequest,
+  ListWorkspaceSessionsResponse,
   ListMachineTypesResponse,
   RetryAction,
   Volume,
   WorkspaceView,
+  UpdateWorkspaceSessionRequest,
+  WorkspaceSessionResponse,
 } from "@blitzos/schema";
 import {
   ApiRequestError,
@@ -13,6 +17,7 @@ import {
 import type {
   GlobalWebAppStateV1,
   WebAppStateResponse,
+  WorkspaceMemberViewResponse,
   WorkspaceWebAppStateV1,
 } from "./storage.js";
 import type {
@@ -65,6 +70,10 @@ type WebAppWireClient = Pick<
   | "putGlobalWebAppState"
   | "getWorkspaceWebAppState"
   | "putWorkspaceWebAppState"
+  | "listWorkspaceSessions"
+  | "createWorkspaceSession"
+  | "updateWorkspaceSession"
+  | "archiveWorkspaceSession"
   | "poll"
   | "create"
   | "destroy"
@@ -213,15 +222,43 @@ export class ApiAdapter {
 
   public getWorkspaceWebAppState(
     workspaceId: string,
-  ): Promise<WebAppStateResponse<WorkspaceWebAppStateV1>> {
+  ): Promise<WorkspaceMemberViewResponse> {
     return this.call(() => this.client.getWorkspaceWebAppState(workspaceId));
   }
 
   public putWorkspaceWebAppState(
     workspaceId: string,
     doc: WorkspaceWebAppStateV1,
-  ): Promise<WebAppStateResponse<WorkspaceWebAppStateV1>> {
-    return this.call(() => this.client.putWorkspaceWebAppState(workspaceId, doc));
+    revision: number,
+  ): Promise<WorkspaceMemberViewResponse> {
+    return this.call(() => this.client.putWorkspaceWebAppState(workspaceId, doc, revision));
+  }
+
+  public listWorkspaceSessions(workspaceId: string): Promise<ListWorkspaceSessionsResponse> {
+    return this.call(() => this.client.listWorkspaceSessions(workspaceId));
+  }
+
+  public createWorkspaceSession(
+    workspaceId: string,
+    input: CreateWorkspaceSessionRequest,
+  ): Promise<WorkspaceSessionResponse> {
+    return this.call(() => this.client.createWorkspaceSession(workspaceId, input));
+  }
+
+  public updateWorkspaceSession(
+    workspaceId: string,
+    sessionId: string,
+    input: UpdateWorkspaceSessionRequest,
+  ): Promise<WorkspaceSessionResponse> {
+    return this.call(() => this.client.updateWorkspaceSession(workspaceId, sessionId, input));
+  }
+
+  public archiveWorkspaceSession(
+    workspaceId: string,
+    sessionId: string,
+    revision: number,
+  ): Promise<void> {
+    return this.call(() => this.client.archiveWorkspaceSession(workspaceId, sessionId, revision));
   }
 
   private async call<T>(operation: () => Promise<T>): Promise<T> {

@@ -303,6 +303,41 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   credentials: [workspaceCredential],
 };
 
+const workspaceSession: SharedShape<
+  wire.WorkspaceSessionView,
+  schema.WorkspaceSessionView
+> = {
+  id: "session",
+  workspaceId: workspace.id,
+  kind: "chat",
+  title: "Planning",
+  chatSessionId: "actor-session",
+  chatProvider: "claude",
+  revision: 2,
+  createdAt: 1,
+  updatedAt: 2,
+};
+
+const createWorkspaceSession: SharedShape<
+  wire.CreateWorkspaceSessionRequest,
+  schema.CreateWorkspaceSessionRequest
+> = { kind: "claude", title: "Implementation" };
+
+const updateWorkspaceSession: SharedShape<
+  wire.UpdateWorkspaceSessionRequest,
+  schema.UpdateWorkspaceSessionRequest
+> = { revision: 1, title: null, chatSessionId: null, chatProvider: null };
+
+const workspaceSessionResponse: SharedShape<
+  wire.WorkspaceSessionResponse,
+  schema.WorkspaceSessionResponse
+> = { session: workspaceSession };
+
+const workspaceSessionsResponse: SharedShape<
+  wire.ListWorkspaceSessionsResponse,
+  schema.ListWorkspaceSessionsResponse
+> = { sessions: [workspaceSession] };
+
 const templateConnection: SharedShape<
   wire.TemplateConnectionView,
   schema.TemplateConnectionView
@@ -754,6 +789,11 @@ const fullFieldValues = [
   putAgentRuleRequest,
   putAgentRuleResponse,
   workspace,
+  workspaceSession,
+  createWorkspaceSession,
+  updateWorkspaceSession,
+  workspaceSessionResponse,
+  workspaceSessionsResponse,
   templateConnection,
   templateRepo,
   addWorkspaceRepoRequest,
@@ -851,6 +891,12 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PutAgentRuleRequest>().toEqualTypeOf<schema.PutAgentRuleRequest>();
     expectTypeOf<wire.PutAgentRuleResponse>().toEqualTypeOf<schema.PutAgentRuleResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
+    expectTypeOf<wire.WorkspaceSessionKind>().toEqualTypeOf<schema.WorkspaceSessionKind>();
+    expectTypeOf<wire.WorkspaceSessionView>().toEqualTypeOf<schema.WorkspaceSessionView>();
+    expectTypeOf<wire.CreateWorkspaceSessionRequest>().toEqualTypeOf<schema.CreateWorkspaceSessionRequest>();
+    expectTypeOf<wire.UpdateWorkspaceSessionRequest>().toEqualTypeOf<schema.UpdateWorkspaceSessionRequest>();
+    expectTypeOf<wire.WorkspaceSessionResponse>().toEqualTypeOf<schema.WorkspaceSessionResponse>();
+    expectTypeOf<wire.ListWorkspaceSessionsResponse>().toEqualTypeOf<schema.ListWorkspaceSessionsResponse>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
     expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
     expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
@@ -949,6 +995,7 @@ describe("local wire copies", () => {
     expect(wire.MACHINE_STATES).toEqual(schema.MACHINE_STATES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
+    expect(wire.WORKSPACE_SESSION_KINDS).toEqual(schema.WORKSPACE_SESSION_KINDS);
     expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);
     expect(wire.FILES_MULTIPART_CHUNK_BYTES).toBe(schema.FILES_MULTIPART_CHUNK_BYTES);
     for (const value of fullFieldValues) {

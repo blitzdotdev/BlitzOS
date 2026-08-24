@@ -473,8 +473,19 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     createOrg: vi.fn(async () => { throw new Error('unused'); }),
     getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
     putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
-    getWorkspaceWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
-    putWorkspaceWebAppState: vi.fn(async (_id, doc) => ({ doc, updatedAt: 1 })),
+    getWorkspaceWebAppState: vi.fn(async () => ({
+      doc: null, revision: 0, migratedFromV1: false, sessions: [],
+    })),
+    putWorkspaceWebAppState: vi.fn(async (_id, doc, revision) => ({
+      doc, revision: revision + 1, migratedFromV1: false, sessions: [],
+    })),
+    listWorkspaceSessions: vi.fn(async () => ({ sessions: [] })),
+    createWorkspaceSession: vi.fn(async (_id, input) => ({ session: {
+      id: 'session', workspaceId: 'workspace', kind: input.kind, title: input.title ?? null,
+      chatSessionId: null, chatProvider: null, revision: 1, createdAt: 1, updatedAt: 1,
+    } })),
+    updateWorkspaceSession: vi.fn(async () => { throw new Error('unused'); }),
+    archiveWorkspaceSession: vi.fn(async () => undefined),
     poll: vi.fn(async () => ({ workspaces: [] })),
     create: vi.fn(async () => { throw new Error('unused'); }),
     destroy: vi.fn(async () => { throw new Error('unused'); }),

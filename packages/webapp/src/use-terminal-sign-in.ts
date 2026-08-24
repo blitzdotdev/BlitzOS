@@ -26,14 +26,13 @@ export interface TerminalSignInShell {
   workspaceId: string;
   /** The active workspace's tabs, or null while they are still loading. */
   tabs: WorkspaceTab[] | null;
-  /** The id `addWorkspaceTab` will give the pane it creates next. */
-  nextId: number;
   accessRole: WorkspaceRole | null | undefined;
   /** The selected pane's id, as the tab strip spells it. */
   ttydActiveId: string | null;
   retainedSessions: RefObject<RetainedTerminalSessions>;
   selectSession: (sessionId: string) => void;
-  spawnSession: (type: Agent) => void;
+  /** Creates a shared session and returns its durable terminal key. */
+  spawnSession: (type: Agent) => Promise<string | null>;
 }
 
 interface PendingTerminalSignIn {
@@ -66,7 +65,6 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
   const {
     workspaceId,
     tabs,
-    nextId,
     accessRole,
     ttydActiveId,
     retainedSessions,
@@ -88,7 +86,14 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
 
   useEffect(() => {
     if (pending === null) return;
-    if (ttydActiveId !== pending.sessionKey) {
+    const target = tabs?.find((tab) => (
+      tab.type === 'file' || tab.type === 'preview' || tab.type === 'panel'
+        ? false
+        : (tab.sessionId ?? String(tab.id)) === pending.sessionKey
+    ));
+    if (target === undefined) return;
+    const targetTabId = String(target.id);
+    if (ttydActiveId !== targetTabId) {
       // Two different situations reach here, and only one of them is a
       // cancellation. BEFORE the tab switch commits, the target pane is simply
       // not selected yet — that is the whole reason this is state, so the
@@ -97,7 +102,13 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
       // below already stopped the timers, and dropping the state is what stops
       // it re-arming. Without this, returning to the tab an hour later types
       // `/login` and Enter into a live agent TUI mid-session.
-      if (arrivedRef.current) setPending(null);
+      if (
+        arrivedRef.current
+        || (
+          retainedSessions.current.workspaceId === workspaceId
+          && retainedSessions.current.ids.has(targetTabId)
+        )
+      ) setPending(null);
       return;
     }
     arrivedRef.current = true;
@@ -106,7 +117,7 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
       pending.warmupMs,
       () => setPending(null),
     );
-  }, [pending, ttydActiveId]);
+  }, [pending, tabs, ttydActiveId]);
 
   return (provider: Agent) => {
     if (tabs === null || accessRole === 'viewer') return;
@@ -130,12 +141,23 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
       return;
     }
     const existing = tabs.find((session) => session.type === provider);
-    const sessionKey = String(existing?.id ?? nextId);
-    if (existing) selectSession(sessionKey);
-    else spawnSession(provider);
-    const mounted = retainedSessions.current.workspaceId === workspaceId
-      && retainedSessions.current.ids.has(sessionKey);
-    arrivedRef.current = false;
-    setPending({ sessionKey, warmupMs: mounted ? 0 : TERMINAL_SIGN_IN_WARMUP_MS });
+    if (existing) {
+      const tabId = String(existing.id);
+      const sessionKey = ('sessionId' in existing ? existing.sessionId : undefined) ?? tabId;
+      selectSession(tabId);
+      const mounted = retainedSessions.current.workspaceId === workspaceId
+        && retainedSessions.current.ids.has(tabId);
+      arrivedRef.current = false;
+      setPending({ sessionKey, warmupMs: mounted ? 0 : TERMINAL_SIGN_IN_WARMUP_MS });
+      return;
+    }
+    // Session creation crosses the control plane. The tab appears after the
+    // server supplies its durable key; the effect above then finds the local
+    // tab id and waits for React to select/mount it before typing `/login`.
+    void spawnSession(provider).then((sessionKey) => {
+      if (sessionKey === null) return;
+      arrivedRef.current = false;
+      setPending({ sessionKey, warmupMs: TERMINAL_SIGN_IN_WARMUP_MS });
+    });
   };
 }
