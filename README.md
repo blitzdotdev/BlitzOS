@@ -1,6 +1,6 @@
 <h1 align="center">BlitzOS</h1>
 
-<p align="center"><strong>Your org's AI Operating System</strong></p>
+<p align="center"><strong>Your company's AI Operating System</strong></p>
 
 <p align="center">
   <a href="#features">Features</a> •
@@ -20,15 +20,15 @@
 - **Workspace templates** Create agent workspace templates defining what repos, credentials, machine environment, etc. are put in the agent workspace. Set up once and share with everyone. 
 - **Recipes** Like skills but on steroids: define the runtime of a successful agent workflow (AI model, machine env, data + credentials) and trigger it with a webhook from Slack, GitHub, etc.
 - **Teenyapps** Mini apps you can vibe-code to build internal tools like dashboards, CRMs, and task managers — each comes with a backend, auth, and a URL.
-- **Automatic Evals** [Experimental] A built-in eval skill that generates evals from aggregated real AI usage data across your org. 
+- **Automatic Evals** [Experimental] A built-in eval skill that generates evals from aggregated real AI usage data across your company. 
 
 # About 
 
 A computer OS makes you more productive with computers. An AI OS makes you more productive using AI. It does this by providing abstractions for managing the AI's access, context, and working environment. 
 
-An AI OS improves your capability to experiment with AI and spread useful AI workflows. Since AI keeps advancing faster, an org's capability to "digest" AI advancements will become very important. 
+An AI OS improves your capability to experiment with AI and spread useful AI workflows. Since AI keeps advancing faster, a company's capability to "digest" AI advancements will become very important. 
 
-BlitzOS helps orgs digest AI advancements as fast as they happen. BlitzOS abstractions like agent workspaces, templates, and recipes help by enabling **faster experimentation** and **workflow sharing**. Also, features like automatic evals can be built on workspaces + templates + recipes to optimize the cost of AI.
+BlitzOS helps companies digest AI advancements as fast as they happen. BlitzOS abstractions like agent workspaces, templates, and recipes help by enabling **faster experimentation** and **workflow sharing**. Also, features like automatic evals can be built on workspaces + templates + recipes to optimize the cost of AI.
 
 # Installation
 
