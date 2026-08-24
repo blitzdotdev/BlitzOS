@@ -131,6 +131,10 @@ import { useWorkspacePreviewSources } from './use-workspace-preview-sources';
 import { useWorkspaceConnectionsFocus } from './use-workspace-connections-focus';
 import { useWorkspacePreviewFocus } from './use-workspace-preview-focus';
 
+/** Shared empty list for a workspace whose tabs have not loaded. A fresh `[]`
+ * per render would give every callback derived from it a new identity, and the
+ * terminal touch controller rebinds on those identities. */
+const NO_WORKSPACE_TABS: WorkspaceTab[] = [];
 const UPDATE_CHECK_INTERVAL_MS = 10 * 60 * 1_000;
 const UPDATE_RELOAD_MARKER_PREFIX = 'blitzos:update-reloaded:';
 
@@ -947,12 +951,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     window.addEventListener('beforeunload', warnBeforeUnload);
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [dirtyFileIds.size]);
-  const ttydSessions = activeWorkspaceTabs?.tabs ?? [];
+  const ttydSessions = activeWorkspaceTabs?.tabs ?? NO_WORKSPACE_TABS;
   // The pane a tab is drawn in. Mobile has one column, so a tab parked in the
   // side pane on a desktop still shows up in the single strip there.
-  const surfaceRegion = (session: WorkspaceTab): WorkspaceRegion => (
+  const surfaceRegion = useCallback((session: WorkspaceTab): WorkspaceRegion => (
     splitEnabled ? tabRegion(session) : 'main'
-  );
+  ), [splitEnabled]);
   const visibleRegions: WorkspaceRegion[] = splitEnabled && activeWorkspaceTabs !== null
     ? paneRegions(activeWorkspaceTabs)
     : ['main'];
@@ -1068,24 +1072,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     || ttydActiveType === 'terminal'
     ? ttydActiveType
     : null;
-  const addWorkspaceTab = (
+  const addWorkspaceTab = useCallback((
     createTab: (id: number) => WorkspaceTab,
     region: WorkspaceRegion = 'main',
   ) => {
     updateWorkspaceTabs((tabs) => appendTab(tabs, region, createTab));
     setFocusedRegion(region);
-  };
+  }, [updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
     addWorkspaceTab((id) => type === 'chat'
       ? { id, type, chatProvider: 'claude' }
       : { id, type });
   };
-  const selectTtydSession = (id: string) => {
+  const selectTtydSession = useCallback((id: string) => {
     const session = ttydSessions.find((tab) => String(tab.id) === id);
     if (session === undefined) return;
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
-  };
+  }, [surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1112,7 +1116,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     selectSession: selectTtydSession,
     spawnSession: spawnTtydSession,
   });
-  const retargetPreviewTab = (tabId: number, path: string | undefined) => {
+  const retargetPreviewTab = useCallback((tabId: number, path: string | undefined) => {
     setWorkspaceTabs((current) => {
       if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
       const tabs = withPreviewTabPath(current.value.tabs, tabId, path);
@@ -1120,13 +1124,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         ? current
         : { ...current, value: { ...current.value, tabs } };
     });
-  };
+  }, [activeWorkspaceId, setWorkspaceTabs]);
   const orderedLivePorts = useMemo(() => newestPorts(livePorts), [livePorts]);
   const orderedPreviewLinks = useMemo(
     () => newestPreviewLinks(previewLinks),
     [previewLinks],
   );
-  const openPreviewPort = (port: number, path?: string) => {
+  // Handed straight to every terminal pane as `onOpenPreview`, and that prop
+  // feeds the touch controller's bindings. A fresh arrow per render rebound the
+  // controller constantly, and a paste landing in a rebind window was eaten.
+  const openPreviewPort = useCallback((port: number, path?: string) => {
     if (!isPreviewPort(port)) return false;
     // Only a non-root, usable deep-link is recorded, so plain port opens keep
     // the bare { id, type, port } tab shape (and its persisted round-trip).
@@ -1148,7 +1155,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         : { id, type: 'preview', port, path: deepLink });
     }
     return true;
-  };
+  }, [addWorkspaceTab, retargetPreviewTab, selectTtydSession, ttydSessions]);
   const openPreviewLink = (url: string, title: string) => {
     if (url.trim() === '') return false;
     const existing = ttydSessions.find(
