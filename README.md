@@ -12,95 +12,56 @@
   <img src="docs/images/workspace.png" alt="A BlitzOS workspace: agent terminal, chat, files, and connections in the browser" width="100%">
 </p>
 
-
-# What's an AI Operating System? 
-
-> A system manages how AI works inside an organization: what it can access, what context it receives, where it runs, and how its work is evaluated. It provides primitives for building, sharing, and evaluating AI workflows across an organization.
-
-Just as a traditional OS makes you more productive with computers, an AI OS makes your org more productive with AI.
-
-# Why BlitzOS exists
-
-
-AI capabilities improve faster than orgs can adopt them. BlitzOS closes that gap by helping teams:
-
-1. **Test the frontier.** Run new models on real work with the right org context, tools, and connections already configured.
-2. **Share what works.** Turn successful setups from AI pioneers in the org into reusable workspaces and workflows for the rest of the organization.
-3. **Optimize cost and quality.** Evaluate models on real work to learn which model should do each job.
-
-Together, these form an org learning loop:
-
-```text
-┌─ WORLD ─────────────────────────────────────────────┐
-│                                                     │
-│               new AI model expands                  │
-│            frontier of what's possible              │
-│                                                     │
-└─────────────────────────┬───────────────────────────┘
-                          ▼
-┌─ ORGANIZATION ──────────────────────────────────────┐
-│                                                     │
-│    ┌────▶ pioneers experiment and discover          │
-│    │        the frontier of AI work                 │
-│    │                     │                          │
-│    │                     ▼                          │
-│    │             frontier diffuses                  │
-│    │             throughout the org                 │
-│    │                     │                          │
-│    │                     ▼                          │
-│    └────── org capacity and efficiency grows        │
-│                                                     │
-└─────────────────────────────────────────────────────┘
-```
-BlitzOS exists to let you run that loop out of the box.
-
 # Features
 
-- **Agent workspaces** Sandboxed cloud computers holding only the credentials and data AI agents need.
-- **Multiplayer** Setup AI environment once in a workspace, then share it with teammates.
-- **Teenyapps** Mini apps you can vibe-code to build internal tools like dashboards, CRMs, task managers in BlitzOS - each comes with a backend, auth and URL
-- **Automatic Evals** A built-in eval agent generates agent evals based on aggregated real AI usage data across your org. 
-- **Recipes** Like skills but on steroids, recipes let you capture the entire runtime of a successful agent workflow (AI model, machine env, data + credentials) and invoke it at scale.  
-- **Agent Drive** Upload files to the agent drive to attach it to any workspace, or share with any teammate.
-- **Workspace API** Agents can use the workspace API to provision any allowed {machine, data, credentials} combination for their own subagents through the API.
+**BYO Agent and self-host on any cloud** 
 
-By default, BlitzOS is BYO agent and cloud
+- **Agent workspaces** Shareable, sandboxed cloud computers holding only the credentials and data AI agents need.
+- **Workspace templates** Create agent workspace templates defining what repos, credentials, machine environment, etc are put in the agent workspace. Setup once and share with everyone. 
+- **Recipes** Like skills but on steroids: define the runtime of a successful agent workflow (AI model, machine env, data + credentials) and trigger it with a webhook from Slack, Github, etc
+- **Teenyapps** Mini apps you can vibe-code to build internal tools like dashboards, CRMs, and task managers — each comes with a backend, auth, and a URL.
+- **Automatic Evals** [Experimental] A built-in eval skill to generates evals from aggregated real AI usage data across your org. 
+
+# About 
+
+A computer OS makes you more productive with computers. An AI OS makes you more productive using AI. It does this by providing abstractions for managing the AI's access, context, and working environment. 
+
+These abstractions help orgs experiment with AI and spread useful AI workflows quickly and reliably. Since AI keeps advancing at an increasing pace, an orgs capability to "digest" AI advancements gains will become important. 
+
+BlitzOS aims to help your org digest AI advancements as fast as they come. Our provided abstractions, such as agent workspaces, templates, and recipes, helps by enabling **faster experimentation** and **workflow sharing**. Features like Automatic Evals can be built on abstractions like Workspaces, Templates, Recipes to optimize cost of AI.
 
 # Installation
 
-Self-hosting BlitzOS needs:
+## 1. Automated agent setup
 
-- a Cloudflare account — the control plane is one Worker using D1, R2, and cron triggers;
-- a spare domain you can add as a zone on that account, for workspace tunnels;
-- a Google Cloud project — Google OAuth is the only login method;
-- workspace compute: a Hetzner Cloud project, **or** your own Firecracker host running the microvm-host agent;
-- Node.js 22.13+, npm, and Docker.
+Paste this prompt into your coding agent:
 
-Then follow the [self-host guide](docs/SELF-HOST.md): clone → deploy the
-control plane → Google OAuth → tunnel → box image → first workspace.
+```text
+Self-host BlitzOS from this repo. Read docs/SELF-HOST.md. Follow its steps in order. Ask me for the accounts you need: Cloudflare, a spare domain, Google OAuth, and Hetzner or a Firecracker host.
+```
 
-Built-in providers are Hetzner and Firecracker. Any other cloud is one
-`VmProvider` implementation, not a fork — see the
-[control-plane README](packages/control-plane/README.md).
+## 2. Manual setup
+
+Follow the [self-host guide](docs/SELF-HOST.md).
 
 
 # Packages
 
-- [`box`](packages/box/README.md) — the complete workspace runtime: SSH, Docker, agent harnesses, terminal, chat, files, and previews.
-- [`control-plane`](packages/control-plane/README.md) — workspace lifecycle, sessions, access, credential injection, volumes, and compute providers.
-- [`microvm-host`](packages/microvm-host/README.md) — the Go host agent that runs and networks Firecracker workspaces.
-- [`webApp`](packages/webapp/README.md) — the browser webApp for creating, configuring, sharing, and working inside workspaces.
-- [`broker`](packages/broker/README.md) — short-lived Claude and Codex credential delivery for workspace fleets.
-- [`schema`](packages/schema/README.md) — shared wire types and ACP conformance fixtures.
+- [`box`](packages/box/README.md) the complete workspace runtime: SSH, Docker, agent harnesses, terminal, chat, files, and previews.
+- [`control-plane`](packages/control-plane/README.md) workspace lifecycle, sessions, access, credential injection, volumes, and compute providers.
+- [`microvm-host`](packages/microvm-host/README.md) the Go host agent that runs and networks Firecracker workspaces.
+- [`webApp`](packages/webapp/README.md) the browser webApp for creating, configuring, sharing, and working inside workspaces.
+- [`broker`](packages/broker/README.md) short-lived Claude and Codex credential delivery for workspace fleets.
+- [`schema`](packages/schema/README.md) shared wire types and ACP conformance fixtures.
 
 # Docs
 
-- [Self-host guide](docs/SELF-HOST.md) — clone to first workspace, in order.
-- [Workspace tunnels](docs/TUNNEL.md) — browser access to cloud-VM workspaces.
-- [Box image](docs/BOX-IMAGE.md) — build, publish, and upgrade the workspace image.
-- [Automatic evals](docs/AUTOMATIC-EVALS.md) — turn captured agent usage into an eval suite with one recipe.
-- [Contributing](CONTRIBUTING.md) — the three gates, the lint ratchet, fixtures, commit style.
-- [Security](SECURITY.md) — reporting, secret blast radius, the workspace trust model.
+- [Self-host guide](docs/SELF-HOST.md) clone to first workspace, in order.
+- [Workspace tunnels](docs/TUNNEL.md) browser access to cloud-VM workspaces.
+- [Box image](docs/BOX-IMAGE.md) build, publish, and upgrade the workspace image.
+- [Automatic evals](docs/AUTOMATIC-EVALS.md) turn captured agent usage into an eval suite with one recipe.
+- [Contributing](CONTRIBUTING.md) the three gates, the lint ratchet, fixtures, commit style.
+- [Security](SECURITY.md) reporting, secret blast radius, the workspace trust model.
 - Packages: [box](packages/box/README.md) · [control-plane](packages/control-plane/README.md) · [microvm-host](packages/microvm-host/README.md) · [webapp](packages/webapp/README.md) · [broker](packages/broker/README.md) · [schema](packages/schema/README.md)
 
 
