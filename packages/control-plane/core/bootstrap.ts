@@ -536,7 +536,7 @@ APTCONF
 # rewrite before the first update, or the package lists are silently incomplete and
 # the docker.io install fails later for a reason that looks unrelated.
 ec2_mirror=$(grep -rhoE 'https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com' \
-  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1)
+  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1 || true)
 if [ -n "$ec2_mirror" ] && ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/dists/noble/InRelease"; then
   echo "blitz: $ec2_mirror is unreachable; falling back to archive.ubuntu.com"
   sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
