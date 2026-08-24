@@ -205,9 +205,11 @@ describe("recipe invocation fixture conformance", () => {
     // eventual `/login`. The un-shimmed /opt/blitz/npm/bin/claude path and
     // the env -u flags keep every OAuth credential out of the process
     // (remote-control rejects CLAUDE_CODE_OAUTH_TOKEN), and `|| true` keeps
-    // the boot fail-open.
+    // the boot fail-open. The credentials-file guard keeps the logged-out
+    // loop from running claude at all: a logged-out run rewrites
+    // ~/.claude.json and wiped fresh logins.
     const execLine =
-      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace 'while :; do env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
+      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ] || { sleep 15; continue; }; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
     const plain = buildBootstrapScript({
       boxImageSha256: "",
       boxImageRef: "ghcr.io/blitzdotdev/blitz-box@sha256:" + "a".repeat(64),

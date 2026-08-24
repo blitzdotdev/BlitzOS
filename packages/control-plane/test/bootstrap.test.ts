@@ -319,8 +319,13 @@ describe("production VM bootstrap", () => {
     // immediately when the box is logged out, so a one-shot session died in
     // about a second; the loop retries every 15 seconds forever and is
     // therefore also the login detector. No tab attaches to it.
+    //
+    // The `[ -s ... .credentials.json ]` guard is load-bearing: a logged-out
+    // `claude remote-control` run rewrites the whole of ~/.claude.json, which
+    // clobbered a login a member had just completed in a tab. While logged
+    // out the loop must poll the file and start no claude process at all.
     const execLine =
-      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace 'while :; do env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
+      "docker exec --user 1000:1000 --env HOME=/var/lib/blitz/home --env USER=blitz blitz-box tmux -u new-session -d -s blitz-rc -c /workspace -e LANG=C.UTF-8 -e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ] || { sleep 15; continue; }; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_BASE_URL -u ANTHROPIC_API_KEY /opt/blitz/npm/bin/claude remote-control >>/var/lib/blitz/remote-control.log 2>&1; sleep 15; done' || true\n";
 
     const at = userData.indexOf(execLine);
     expect(at).toBeGreaterThan(-1);
@@ -342,7 +347,12 @@ describe("production VM bootstrap", () => {
     expect(userData).not.toContain("term-3");
     // The whole loop is one shell-command argument, because tmux joins its
     // remaining arguments with spaces before running them through /bin/sh.
-    expect(userData).toContain("-c /workspace 'while :; do env -u");
+    expect(userData).toContain(
+      "-e LC_ALL=C.UTF-8 'while :; do [ -s /var/lib/blitz/home/.claude/.credentials.json ]",
+    );
+    // A logged-out box must reach `sleep 15` and go round again without ever
+    // reaching claude. That is the whole point of the guard.
+    expect(userData).toContain("|| { sleep 15; continue; }; env -u");
   });
 
   it("pokes registration after both enrollment files are installed with a bounded logged best-effort command", () => {

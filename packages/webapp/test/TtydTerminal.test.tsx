@@ -6,6 +6,7 @@ import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from "../src/TtydTerminal.js";
 const harness = vi.hoisted(() => ({
   blur: vi.fn(),
   dataHandlers: [] as Array<(data: string) => void>,
+  dispose: vi.fn(),
   fit: vi.fn(),
   focus: vi.fn(),
   sockets: [] as Array<{
@@ -36,7 +37,9 @@ vi.mock("@xterm/xterm", () => ({
     blur() {
       harness.blur();
     }
-    dispose() {}
+    dispose() {
+      harness.dispose();
+    }
     focus() {
       harness.focus();
     }
@@ -82,13 +85,16 @@ vi.mock("../src/use-terminal-touch.js", () => ({
 }));
 
 class FakeWebSocket {
+  static readonly CONNECTING = 0;
   static readonly OPEN = 1;
   binaryType = "";
   readonly close = vi.fn();
   onclose: (() => void) | null = null;
   onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
   onopen: (() => void) | null = null;
-  readonly readyState = FakeWebSocket.OPEN;
+  /** Writable, so a test can put a socket back into the reconnecting state
+   * the component has to hold input through. */
+  readyState: number = FakeWebSocket.OPEN;
   readonly send = vi.fn();
 
   constructor(readonly url: string) {
@@ -103,6 +109,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   harness.blur.mockClear();
   harness.dataHandlers.length = 0;
+  harness.dispose.mockClear();
   harness.fit.mockClear();
   harness.focus.mockClear();
   harness.sockets.length = 0;
@@ -230,5 +237,139 @@ describe("TtydTerminal retained lifecycle", () => {
     expect(new TextDecoder().decode(socket.send.mock.calls.at(-1)![0] as Uint8Array)).toBe(
       '1{"columns":88,"rows":27}',
     );
+  });
+});
+
+describe("TtydTerminal input delivery", () => {
+  const decode = (frame: unknown) => new TextDecoder().decode(frame as Uint8Array);
+
+  it("holds a paste sent while the socket is down and delivers it on reconnect", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+    await act(async () => root.render(
+      <TtydTerminal
+        url="wss://workspace.test/ws"
+        sessionType="claude"
+        sessionKey="q"
+        active
+      />,
+    ));
+    const socket = harness.sockets[0]!;
+    await act(async () => socket.onopen?.());
+    const handshake = socket.send.mock.calls.length;
+
+    // A reconnect in flight. The paste used to vanish here without a word,
+    // and claude answers an empty login code with "Invalid code" — the member
+    // read that as a rejected sign-in.
+    socket.readyState = FakeWebSocket.CONNECTING;
+    window.dispatchEvent(new CustomEvent(TERMINAL_SUBMIT_EVENT, {
+      detail: { data: "paste-code", enters: 0, sessionKey: "q" },
+    }));
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(socket.send).toHaveBeenCalledTimes(handshake);
+
+    socket.readyState = FakeWebSocket.OPEN;
+    await act(async () => socket.onopen?.());
+    expect(decode(socket.send.mock.calls.at(-1)![0])).toBe("0paste-code");
+  });
+
+  it("holds a keystroke typed while the tab is hidden until it is selected", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+    const render = async (active: boolean) => {
+      await act(async () => root.render(
+        <TtydTerminal
+          url="wss://workspace.test/ws"
+          sessionType="terminal"
+          sessionKey="held"
+          active={active}
+        />,
+      ));
+    };
+
+    await render(false);
+    const socket = harness.sockets[0]!;
+    await act(async () => socket.onopen?.());
+    const handshake = socket.send.mock.calls.length;
+
+    harness.dataHandlers[0]?.("x");
+    await act(async () => vi.advanceTimersByTimeAsync(200));
+    expect(socket.send).toHaveBeenCalledTimes(handshake);
+
+    await render(true);
+    expect(decode(socket.send.mock.calls.at(-1)![0])).toBe("0x");
+  });
+
+  it("never queues an observer's keystrokes", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+    await act(async () => root.render(
+      <TtydTerminal
+        url="wss://workspace.test/ws"
+        sessionType="claude"
+        sessionKey="obs"
+        active
+        readOnly
+      />,
+    ));
+    const socket = harness.sockets[0]!;
+    await act(async () => socket.onopen?.());
+    const handshake = socket.send.mock.calls.length;
+
+    // A viewer has no write path at all. Queuing here would type an
+    // observer's keys into the tenant's session on the next reconnect.
+    window.dispatchEvent(new CustomEvent(TERMINAL_SUBMIT_EVENT, {
+      detail: { data: "rm -rf /", enters: 0, sessionKey: "obs" },
+    }));
+    await act(async () => socket.onopen?.());
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    // Handshakes go out as JSON strings; input goes out as encoded bytes. A
+    // reconnect must produce the first and never the second.
+    expect(socket.send.mock.calls.slice(handshake)
+      .filter(([frame]) => frame instanceof Uint8Array)).toEqual([]);
+  });
+});
+
+describe("TtydTerminal url stability", () => {
+  const render = async (root: Root, url: string) => {
+    await act(async () => root.render(
+      <TtydTerminal url={url} sessionType="claude" sessionKey="blip" active />,
+    ));
+  };
+
+  it("keeps the pane through a lifecycle blip that empties the url", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+    await render(root, "wss://workspace.test/ws");
+    const socket = harness.sockets[0]!;
+    await act(async () => socket.onopen?.());
+    const disposals = harness.dispose.mock.calls.length;
+
+    // CloudApp nulls activeSessionUrl whenever lifecycleStatus stops reading
+    // `running` or the endpoint row is momentarily absent, and renders ''.
+    // Tearing the socket and xterm down for that lost whatever was typed.
+    await render(root, "");
+    await act(async () => vi.advanceTimersByTimeAsync(400));
+    expect(harness.sockets).toHaveLength(1);
+    expect(socket.close).not.toHaveBeenCalled();
+    expect(harness.dispose.mock.calls.length).toBe(disposals);
+  });
+
+  it("still rebuilds when the endpoint really moves", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    roots.push(root);
+    await render(root, "wss://workspace.test/ws");
+    const socket = harness.sockets[0]!;
+    await act(async () => socket.onopen?.());
+
+    await render(root, "wss://moved.test/ws");
+    expect(harness.sockets).toHaveLength(2);
+    expect(socket.close).toHaveBeenCalled();
+    expect(harness.sockets[1]!.url.startsWith("wss://moved.test/ws")).toBe(true);
   });
 });

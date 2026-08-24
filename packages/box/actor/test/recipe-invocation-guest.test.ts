@@ -186,6 +186,10 @@ function runTerm(box: TermBox, args: string[]): Promise<RunResult> {
       { name: "PATH", value: `${box.binDir}:${process.env.PATH ?? ""}` },
       { name: "BLITZ_STATE_DIR", value: box.stateDir },
       { name: "TMUX_STUB_STATE", value: box.stateDir },
+      // What the ttyd service hands blitz-term on a real box, pinned so the
+      // tmux `-e` flags below do not follow the developer's own locale.
+      { name: "LANG", value: "C.UTF-8" },
+      { name: "LC_ALL", value: "C.UTF-8" },
     ],
   );
 }
@@ -204,8 +208,16 @@ function expectPlanted(box: TermBox, planted: boolean): void {
   expect(existsSync(join(box.recipeDir, "prompt.txt.delivered"))).toBe(!planted);
 }
 
+/** The `-e` flags carry the tab's own environment into the new session,
+ * because a tmux server hands later sessions its own startup snapshot rather
+ * than the creating client's environment (blitz-term-credentials.test.ts pins
+ * the rule). These boxes have no creds/env.d, so only the locale pair
+ * appears — the recipe argv still has to be exact around it. */
 function tmuxCreateArgv(session: string): string[] {
-  return ["-u", "new-session", "-A", "-s", session, "-c", "/workspace"];
+  return [
+    "-u", "new-session", "-A", "-s", session, "-c", "/workspace",
+    "-e", "LANG=C.UTF-8", "-e", "LC_ALL=C.UTF-8",
+  ];
 }
 
 function harnessCommand(harness: TuiHarness): string[] {
