@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blitz webApp — connection rows on the house idiom</title>
+<style>
+/* ------------------------------------------------------------------
+   tokens — copied from packages/webapp/src/tokens.css.
+   ------------------------------------------------------------------ */
+:root,
+:root[data-theme='dark'] {
+  --paper: #16181d;
+  --ink: #dfe2e8;
+  --accent: #7e95d7;
+  --ansi-green: #8fa879;
+  --ansi-yellow: #b7a06b;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --paper: #f7f7f4;
+  --ink: #1c1f26;
+  --accent: #4c62aa;
+  --ansi-green: #5f7d46;
+  --ansi-yellow: #8a6d28;
+  color-scheme: light;
+}
+
+:root {
+  --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
+  --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+  --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+  --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
+  --r-card: 12px;
+  --r-control: 10px;
+  --r-item: 8px;
+  --r-pill: 999px;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 26px;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-ui);
+}
+
+h1 { margin: 0 0 6px; font: 650 19px/1.3 var(--font-ui); }
+.lede { max-width: 78ch; margin: 0 0 8px; color: var(--muted); font: 13px/1.65 var(--font-ui); }
+.lede code { font: 12px/1 var(--font-mono); }
+
+.theme-toggle {
+  margin: 10px 0 24px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--soft-ink);
+  background: var(--paper);
+  font: 650 11.5px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.decks { display: flex; align-items: flex-start; gap: 30px; flex-wrap: wrap; }
+.deck { display: grid; gap: 10px; }
+/* Direct child only: the panel's own h2 sits deeper and must not inherit
+ * this mockup-chrome eyebrow. */
+.deck > h2 {
+  margin: 0; color: var(--faint);
+  font: 650 10px/1 var(--font-ui); letter-spacing: .08em; text-transform: uppercase;
+}
+.deck > p { max-width: 40ch; margin: 0; color: var(--muted); font: 12px/1.6 var(--font-ui); }
+
+/* The real drawer column is 339px wide (annotation viewportRect). */
+.drawer { width: 339px; }
+
+/* ==================================================================
+   THE HOUSE IDIOM, taken from create-workspace-dialog.css
+   .blueprint-selection  — bordered card, --r-card, 16px pad, 14px gap
+   heading pair          — h2 700/15 --ink, then p 11.5 --muted
+   .template-tile        — tile: border, --r-item, strong + muted spans
+   selected              — border --ink plus a 1px inset ring
+   .blueprint-machine-*  — facts strip under a top rule, 10px --muted
+   ================================================================== */
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+}
+
+.panel__heading { display: grid; gap: 3px; }
+.panel__heading h2 { margin: 0; color: var(--ink); font: 700 15px/1.6 var(--font-ui); letter-spacing: -.01em; }
+.panel__heading p { margin: 0; color: var(--muted); font-size: 11.5px; }
+
+.wsc-list { display: grid; gap: 8px; }
+
+/* One tile per provider. Same anatomy as .template-tile: the whole tile is
+ * the control, the name is a strong, the state lines are muted spans, and a
+ * facts strip closes it under a rule. */
+.wsc-tile {
+  position: relative;
+  display: grid;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  overflow: hidden;
+}
+
+.wsc-tile:hover { border-color: var(--muted); }
+
+/* Connected wears the template tile's selected treatment, in the green the
+ * app already spends on live state. One signal, on the whole tile. */
+.wsc-tile--on,
+.wsc-tile--on:hover {
+  border-color: color-mix(in oklab, var(--ansi-green) 70%, var(--ink));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--ansi-green) 70%, var(--ink)) inset;
+}
+
+/* The tile `blitz connections open` pointed the person at. */
+.wsc-tile--focus,
+.wsc-tile--focus:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.wsc-head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 12px 10px;
+}
+
+.wsc-glyph { width: 16px; height: 16px; flex: none; color: var(--soft-ink); }
+
+.wsc-name { min-width: 0; display: grid; gap: 4px; }
+.wsc-name strong {
+  overflow: hidden;
+  font: 650 12px/1.3 var(--font-ui);
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.wsc-name span { color: var(--muted); font: 11px/1.5 var(--font-ui); }
+
+/* The check the machine card uses for its chosen row, in the live-state green. */
+.wsc-check { flex: none; color: color-mix(in oklab, var(--ansi-green) 62%, var(--ink)); font: 12px var(--font-ui); }
+
+/* .tplf-chip: pill, rule border, uppercase micro-caps. */
+.wsc-chip {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font: 650 9.5px/1.5 var(--font-ui);
+  font-style: normal;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* .blueprint-machine-facts: min 44px, top rule, 10px --muted, ends apart. */
+.wsc-facts {
+  min-width: 0;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font: 10px var(--font-ui);
+}
+
+.wsc-facts em { font-style: normal; color: var(--soft-ink); font-weight: 650; }
+.wsc-facts--go em { color: var(--accent); }
+.wsc-facts--on em { color: color-mix(in oklab, var(--ansi-green) 62%, var(--ink)); }
+
+/* Actions live in the opened tile, never on the collapsed one — five pill
+ * buttons down a column was the wall this replaces. */
+.wsc-open {
+  display: grid;
+  gap: 10px;
+  padding: 11px 12px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.wsc-open p { margin: 0; color: var(--muted); font: 11.5px/1.6 var(--font-ui); }
+.wsc-open-actions { display: flex; gap: 8px; }
+
+/* .webapp-action, verbatim from webapp-base.css. */
+.webapp-action {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--soft-ink);
+  background: var(--paper);
+  font: 650 11.5px/1 var(--font-ui);
+  text-decoration: none;
+  cursor: pointer;
+}
+.webapp-action:hover { border-color: var(--muted); color: var(--ink); }
+
+/* .create-workspace-primary, verbatim. */
+.webapp-primary {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-control);
+  color: var(--paper);
+  background: var(--ink);
+  font: 650 11.5px/1 var(--font-ui);
+  cursor: pointer;
+}
+.webapp-primary:hover { border-color: var(--accent); }
+
+/* ---- variant B: the 2-up grid the wide pane can afford --------------- */
+.wsc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 8px; }
+.wsc-grid .wsc-head { grid-template-columns: 16px minmax(0, 1fr); padding: 11px 11px 9px; }
+.wsc-grid .wsc-facts { min-height: 34px; padding: 6px 11px; }
+
+.notes { max-width: 66ch; margin: 32px 0 0; padding: 0; list-style: none; display: grid; gap: 9px; }
+.notes li { color: var(--muted); font: 13px/1.6 var(--font-ui); }
+.notes b { color: var(--ink); font-weight: 650; }
+.notes code { font: 11.5px/1 var(--font-mono); color: var(--soft-ink); }
+</style>
+</head>
+<body>
+
+<h1>Workspace connections, on the idiom the rest of the app already uses</h1>
+<p class="lede">
+  <code>/templates/new</code> and the new-workspace page say the same thing twice:
+  a section is a bordered card with a heading pair, and everything choosable
+  inside it is a <b>tile</b> — border, <code>--r-item</code>, a strong name over
+  muted lines, a facts strip under a rule, and a selected state drawn as a
+  1&nbsp;px inset ring. The connections panel was the one surface that instead
+  used bare list rows with a trailing pill button each. These are the same
+  connections, rebuilt as tiles.
+</p>
+<button class="theme-toggle" type="button" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'">Toggle light / dark</button>
+
+<div class="decks">
+
+  <section class="deck">
+    <h2>A — stacked tiles (drawer width, 339px)</h2>
+    <p>One tile per provider. The whole tile is the control. Actions appear only in the opened tile.</p>
+    <div class="drawer">
+      <div class="panel">
+        <div class="panel__heading">
+          <h2>Connections</h2>
+          <p>Apps this workspace can reach. Sign in once, here.</p>
+        </div>
+        <div class="wsc-list">
+
+          <button class="wsc-tile wsc-tile--on" type="button" aria-expanded="false">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.64 5.59.64 11.87c0 5.02 3.26 9.28 7.78 10.78.57.11.78-.25.78-.55l-.02-1.93c-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.52-2.52-.29-5.18-1.27-5.18-5.64 0-1.25.44-2.27 1.16-3.06-.12-.29-.5-1.45.11-3.02 0 0 .95-.31 3.11 1.17a10.7 10.7 0 0 1 5.66 0c2.16-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.72.79 1.16 1.81 1.16 3.06 0 4.38-2.67 5.35-5.2 5.63.41.36.78 1.06.78 2.14l-.01 3.17c0 .3.2.66.79.55a11.38 11.38 0 0 0 7.77-10.78C23.36 5.59 18.27.5 12 .5Z"/></svg>
+              <span class="wsc-name"><strong>GitHub</strong><span>you signed in Aug 23</span></span>
+              <span class="wsc-check" aria-hidden="true">✓</span>
+            </span>
+            <span class="wsc-facts wsc-facts--on"><em>Connected</em><span>renews Sep 22</span></span>
+          </button>
+
+          <button class="wsc-tile" type="button" aria-expanded="false">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.24 10.29v3.5h5.02c-.22 1.3-.88 2.4-1.87 3.14l3.02 2.34c1.76-1.62 2.78-4.02 2.78-6.87 0-.66-.06-1.3-.17-1.92l-8.78-.19Z"/><path d="M12.24 21.6c2.52 0 4.63-.83 6.17-2.25l-3.02-2.34c-.84.56-1.9.9-3.15.9-2.43 0-4.49-1.64-5.22-3.84l-3.12 2.4A9.36 9.36 0 0 0 12.24 21.6Z"/><path d="M7.02 14.07a5.6 5.6 0 0 1 0-3.58l-3.12-2.4a9.35 9.35 0 0 0 0 8.38l3.12-2.4Z"/><path d="M12.24 6.62c1.37 0 2.6.47 3.57 1.39l2.67-2.67A9.36 9.36 0 0 0 3.9 8.09l3.12 2.4c.73-2.2 2.79-3.87 5.22-3.87Z"/></svg>
+              <span class="wsc-name"><strong>Google Workspace</strong><span>you signed in Aug 21</span></span>
+            </span>
+            <span class="wsc-facts wsc-facts--go"><em>Connect</em><span>one click, no form</span></span>
+          </button>
+
+          <button class="wsc-tile" type="button" aria-expanded="false">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0.72 14.9 9.1 23.28A12.03 12.03 0 0 1 .72 14.9ZM.1 11.75l12.15 12.15c-.6-.03-1.18-.11-1.75-.24L.34 13.5a12 12 0 0 1-.24-1.75ZM.62 8.2l15.18 15.18c-.83.3-1.7.5-2.6.6L.02 10.8c.1-.9.3-1.77.6-2.6ZM2.14 5.2 18.8 21.86a12.1 12.1 0 0 1-2.03 1.24L.9 7.23c.33-.72.75-1.4 1.24-2.03ZM21.4 19.65 4.35 2.6a12 12 0 0 1 17.05 17.05Z"/></svg>
+              <span class="wsc-name"><strong>Linear</strong><span>you signed in Aug 23</span></span>
+            </span>
+            <span class="wsc-facts wsc-facts--go"><em>Connect</em><span>one click, no form</span></span>
+          </button>
+
+          <button class="wsc-tile wsc-tile--focus" type="button" aria-expanded="true">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.63 5.33a17.6 17.6 0 0 0-4.35-1.35l-.21.42c-.18.35-.39.81-.53 1.16a16.2 16.2 0 0 0-4.99 0 12.4 12.4 0 0 0-.55-1.16l-.2-.42a17.6 17.6 0 0 0-4.35 1.35C1.72 9.24.9 13.05 1.19 16.8a17.7 17.7 0 0 0 5.36 2.71c.43-.59.81-1.21 1.14-1.86a11.4 11.4 0 0 1-1.79-.86l.44-.35a12.6 12.6 0 0 0 11.32 0l.45.35c-.57.34-1.17.63-1.8.86.33.65.71 1.27 1.15 1.86a17.6 17.6 0 0 0 5.36-2.71c.34-4.35-.97-8.13-3.19-11.47ZM8.32 14.53c-1.05 0-1.92-.96-1.92-2.15 0-1.18.84-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.85 2.15-1.93 2.15Zm7.09 0c-1.05 0-1.92-.96-1.92-2.15 0-1.18.85-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.84 2.15-1.93 2.15Z"/></svg>
+              <span class="wsc-name"><strong>Discord</strong></span>
+              <em class="wsc-chip">from template</em>
+            </span>
+            <span class="wsc-facts"><em>Needs a key</em><span>admin sets this one</span></span>
+            <span class="wsc-open">
+              <p>Discord has no personal sign-in. An organization admin stores one key on the template page, and every workspace gets it.</p>
+              <span class="wsc-open-actions">
+                <span class="webapp-action">Ask an admin</span>
+              </span>
+            </span>
+          </button>
+
+          <button class="wsc-tile" type="button" aria-expanded="false">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M6.5 2h11A4.5 4.5 0 0 1 22 6.5v11a4.5 4.5 0 0 1-4.5 4.5h-11A4.5 4.5 0 0 1 2 17.5v-11A4.5 4.5 0 0 1 6.5 2ZM6.4 6.6h2.4L12 9.8l3.2-3.2h2.4L13.2 11v6.4h-2.4V11Z"/></svg>
+              <span class="wsc-name"><strong>YouTrack</strong></span>
+            </span>
+            <span class="wsc-facts"><em>Sign in</em><span>paste a token</span></span>
+          </button>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="deck">
+    <h2>A — one tile opened</h2>
+    <p>Replace, reauthorize and disconnect were five pills down a column. They belong here, in the tile you opened.</p>
+    <div class="drawer">
+      <div class="panel">
+        <div class="panel__heading">
+          <h2>Connections</h2>
+          <p>Apps this workspace can reach. Sign in once, here.</p>
+        </div>
+        <div class="wsc-list">
+          <button class="wsc-tile wsc-tile--on" type="button" aria-expanded="true">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.64 5.59.64 11.87c0 5.02 3.26 9.28 7.78 10.78.57.11.78-.25.78-.55l-.02-1.93c-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.52-2.52-.29-5.18-1.27-5.18-5.64 0-1.25.44-2.27 1.16-3.06-.12-.29-.5-1.45.11-3.02 0 0 .95-.31 3.11 1.17a10.7 10.7 0 0 1 5.66 0c2.16-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.72.79 1.16 1.81 1.16 3.06 0 4.38-2.67 5.35-5.2 5.63.41.36.78 1.06.78 2.14l-.01 3.17c0 .3.2.66.79.55a11.38 11.38 0 0 0 7.77-10.78C23.36 5.59 18.27.5 12 .5Z"/></svg>
+              <span class="wsc-name"><strong>GitHub</strong><span>you signed in Aug 23</span></span>
+              <span class="wsc-check" aria-hidden="true">✓</span>
+            </span>
+            <span class="wsc-facts wsc-facts--on"><em>Connected</em><span>renews Sep 22</span></span>
+            <span class="wsc-open">
+              <p>The agent in this workspace can reach GitHub as you. Disconnecting stops this workspace only; your sign-in stays.</p>
+              <span class="wsc-open-actions">
+                <span class="webapp-action">Replace key</span>
+                <span class="webapp-action">Disconnect</span>
+              </span>
+            </span>
+          </button>
+
+          <button class="wsc-tile" type="button" aria-expanded="true">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M6.5 2h11A4.5 4.5 0 0 1 22 6.5v11a4.5 4.5 0 0 1-4.5 4.5h-11A4.5 4.5 0 0 1 2 17.5v-11A4.5 4.5 0 0 1 6.5 2ZM6.4 6.6h2.4L12 9.8l3.2-3.2h2.4L13.2 11v6.4h-2.4V11Z"/></svg>
+              <span class="wsc-name"><strong>YouTrack</strong></span>
+            </span>
+            <span class="wsc-facts"><em>Sign in</em><span>paste a token</span></span>
+            <span class="wsc-open">
+              <p>Paste a permanent token from your YouTrack profile.</p>
+              <span class="wsc-open-actions">
+                <span class="webapp-primary">Sign in</span>
+                <span class="webapp-action">Cancel</span>
+              </span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="deck">
+    <h2>B — 2-up tiles</h2>
+    <p>Same tile, laid out like the template grid. Reflows to 3 or 4 up when the pane is wide.</p>
+    <div class="drawer">
+      <div class="panel">
+        <div class="panel__heading">
+          <h2>Connections</h2>
+          <p>Apps this workspace can reach. Sign in once, here.</p>
+        </div>
+        <div class="wsc-grid">
+
+          <button class="wsc-tile wsc-tile--on" type="button">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.64 5.59.64 11.87c0 5.02 3.26 9.28 7.78 10.78.57.11.78-.25.78-.55l-.02-1.93c-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.52-2.52-.29-5.18-1.27-5.18-5.64 0-1.25.44-2.27 1.16-3.06-.12-.29-.5-1.45.11-3.02 0 0 .95-.31 3.11 1.17a10.7 10.7 0 0 1 5.66 0c2.16-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.72.79 1.16 1.81 1.16 3.06 0 4.38-2.67 5.35-5.2 5.63.41.36.78 1.06.78 2.14l-.01 3.17c0 .3.2.66.79.55a11.38 11.38 0 0 0 7.77-10.78C23.36 5.59 18.27.5 12 .5Z"/></svg>
+              <span class="wsc-name"><strong>GitHub</strong></span>
+            </span>
+            <span class="wsc-facts wsc-facts--on"><em>Connected</em><span>✓</span></span>
+          </button>
+
+          <button class="wsc-tile" type="button">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.24 10.29v3.5h5.02c-.22 1.3-.88 2.4-1.87 3.14l3.02 2.34c1.76-1.62 2.78-4.02 2.78-6.87 0-.66-.06-1.3-.17-1.92l-8.78-.19Z"/><path d="M12.24 21.6c2.52 0 4.63-.83 6.17-2.25l-3.02-2.34c-.84.56-1.9.9-3.15.9-2.43 0-4.49-1.64-5.22-3.84l-3.12 2.4A9.36 9.36 0 0 0 12.24 21.6Z"/><path d="M7.02 14.07a5.6 5.6 0 0 1 0-3.58l-3.12-2.4a9.35 9.35 0 0 0 0 8.38l3.12-2.4Z"/><path d="M12.24 6.62c1.37 0 2.6.47 3.57 1.39l2.67-2.67A9.36 9.36 0 0 0 3.9 8.09l3.12 2.4c.73-2.2 2.79-3.87 5.22-3.87Z"/></svg>
+              <span class="wsc-name"><strong>Google</strong></span>
+            </span>
+            <span class="wsc-facts wsc-facts--go"><em>Connect</em></span>
+          </button>
+
+          <button class="wsc-tile" type="button">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0.72 14.9 9.1 23.28A12.03 12.03 0 0 1 .72 14.9ZM.1 11.75l12.15 12.15c-.6-.03-1.18-.11-1.75-.24L.34 13.5a12 12 0 0 1-.24-1.75ZM.62 8.2l15.18 15.18c-.83.3-1.7.5-2.6.6L.02 10.8c.1-.9.3-1.77.6-2.6ZM2.14 5.2 18.8 21.86a12.1 12.1 0 0 1-2.03 1.24L.9 7.23c.33-.72.75-1.4 1.24-2.03ZM21.4 19.65 4.35 2.6a12 12 0 0 1 17.05 17.05Z"/></svg>
+              <span class="wsc-name"><strong>Linear</strong></span>
+            </span>
+            <span class="wsc-facts wsc-facts--go"><em>Connect</em></span>
+          </button>
+
+          <button class="wsc-tile" type="button">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.63 5.33a17.6 17.6 0 0 0-4.35-1.35l-.21.42c-.18.35-.39.81-.53 1.16a16.2 16.2 0 0 0-4.99 0 12.4 12.4 0 0 0-.55-1.16l-.2-.42a17.6 17.6 0 0 0-4.35 1.35C1.72 9.24.9 13.05 1.19 16.8a17.7 17.7 0 0 0 5.36 2.71c.43-.59.81-1.21 1.14-1.86a11.4 11.4 0 0 1-1.79-.86l.44-.35a12.6 12.6 0 0 0 11.32 0l.45.35c-.57.34-1.17.63-1.8.86.33.65.71 1.27 1.15 1.86a17.6 17.6 0 0 0 5.36-2.71c.34-4.35-.97-8.13-3.19-11.47ZM8.32 14.53c-1.05 0-1.92-.96-1.92-2.15 0-1.18.84-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.85 2.15-1.93 2.15Zm7.09 0c-1.05 0-1.92-.96-1.92-2.15 0-1.18.85-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.84 2.15-1.93 2.15Z"/></svg>
+              <span class="wsc-name"><strong>Discord</strong></span>
+            </span>
+            <span class="wsc-facts"><em>Needs a key</em></span>
+          </button>
+
+          <button class="wsc-tile" type="button">
+            <span class="wsc-head">
+              <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M6.5 2h11A4.5 4.5 0 0 1 22 6.5v11a4.5 4.5 0 0 1-4.5 4.5h-11A4.5 4.5 0 0 1 2 17.5v-11A4.5 4.5 0 0 1 6.5 2ZM6.4 6.6h2.4L12 9.8l3.2-3.2h2.4L13.2 11v6.4h-2.4V11Z"/></svg>
+              <span class="wsc-name"><strong>YouTrack</strong></span>
+            </span>
+            <span class="wsc-facts"><em>Sign in</em></span>
+          </button>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<ul class="notes">
+  <li><b>Where each part comes from.</b> The panel is
+    <code>.blueprint-selection</code> — border, <code>--r-card</code>, 16&nbsp;px
+    pad, 14&nbsp;px gap — with the same heading pair. The tile is
+    <code>.template-tile</code>. The strip is
+    <code>.blueprint-machine-facts</code>. The check is
+    <code>.blueprint-machine-check</code>. Nothing here is a new invention.</li>
+  <li><b>The tile is the control.</b> Like <code>.template-tile</code>, the
+    whole card is one button. That is what removes the trailing pill from every
+    row, which was the wall of five buttons.</li>
+  <li><b>One state, drawn as a ring.</b> Connected is a green 1&nbsp;px inset
+    ring plus a check — the treatment the template tile already uses for
+    selected. Focus keeps the accent ring, so
+    <code>blitz connections open</code> still wins the eye.</li>
+  <li><b>The strip says the verb.</b> <b>Connected</b>, <b>Connect</b>,
+    <b>Sign in</b>, <b>Needs a key</b> — one word pair on the left, the fine
+    print on the right, at the machine card's 10&nbsp;px.</li>
+  <li><b>No custody words.</b> <code>injected</code> and <code>proxied</code>
+    never appear. That already shipped.</li>
+  <li><b>A or B.</b> A is the stacked tile and holds long provider names and a
+    date. B is the template grid, denser, but "Google Workspace" has to
+    shorten. A is the safer default at 339&nbsp;px; B earns its place when the
+    pane is wide.</li>
+</ul>
+
+</body>
+</html>
