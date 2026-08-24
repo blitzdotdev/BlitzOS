@@ -11,6 +11,7 @@ import {
   orgCredentialFor,
   ProviderAdminForm,
 } from '../connections/ProviderAdminForm';
+import { ProviderGlyph } from '../connections/ProviderGlyph';
 
 /** The template's connections picker plus the org-credential surface. A
  * template names providers; members supply their own identity inside each
@@ -71,11 +72,7 @@ export function TemplateConnectionsSection({
   return (
     <div className="tplf-connections">
       <h2>Connections</h2>
-      <p>
-        Named here, connected by members inside each workspace from
-        its connections panel. Admin-configured providers store one
-        organization credential right here instead.
-      </p>
+      <p>Apps this template needs. Members sign in to each one inside their workspace.</p>
       {connectionError && (
         <p className="webapp-form-message" role="alert">{connectionError}</p>
       )}
@@ -111,6 +108,7 @@ export function TemplateConnectionsSection({
                   });
                 }}
               />
+              <ProviderGlyph className="tplf-connection-glyph" provider={entry.id} />
               <span>{entry.title}</span>
               {wantsOrgConfig && configured && (
                 <em className="tplf-chip tplf-chip--attached">org credential</em>

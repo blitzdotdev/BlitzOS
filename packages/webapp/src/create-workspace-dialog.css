@@ -702,6 +702,13 @@
   font: 12px/1.5 var(--font-ui);
 }
 
+.tplf-connection-glyph {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--ink);
+}
+
 .tplf-connection-block {
   display: grid;
   gap: 6px;
@@ -994,6 +1001,20 @@
 }
 
 .tplf-foot-hint { color: var(--muted); font: 11px/1 var(--font-ui); }
+
+/* The one upload control sits bottom-right and wears the same skin as the
+ * Create template button. Its menu opens upward: the footer is the last row
+ * of the browser, so a downward menu would leave the viewport. */
+.tplf-upload-wrap { position: relative; }
+
+.tplf-upload-menu {
+  position: absolute;
+  z-index: 410;
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: auto;
+}
 
 .tplf-share {
   display: flex;

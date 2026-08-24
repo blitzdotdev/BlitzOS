@@ -115,12 +115,17 @@ function row(view: { container: HTMLElement }, label: string): HTMLElement {
   return found!;
 }
 
-function attachButton(view: { container: HTMLElement }): HTMLButtonElement {
-  const found = [...view.container.querySelectorAll('button')]
-    .find((candidate) => candidate.closest('.tplf-foot') !== null
-      && candidate.textContent !== 'Upload files');
-  expect(found).toBeDefined();
-  return found as HTMLButtonElement;
+function uploadButton(view: { container: HTMLElement }): HTMLButtonElement {
+  const found = view.container.querySelector<HTMLButtonElement>('.tplf-upload');
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+function uploadMenuItem(view: { container: HTMLElement }, label: string): HTMLButtonElement {
+  const found = [...view.container.querySelectorAll<HTMLButtonElement>('.tplf-upload-menu .drive-menu-item')]
+    .find((candidate) => candidate.textContent === label);
+  expect(found, label).toBeDefined();
+  return found!;
 }
 
 async function screenWith(fetcher = stub()) {
@@ -138,7 +143,7 @@ async function screenWith(fetcher = stub()) {
 }
 
 describe('create template screen', () => {
-  it('selects with one click, attaches with the button, and posts the template', async () => {
+  it('attaches on row click, detaches on a second click, and posts the template', async () => {
     const fetcher = stub();
     const { view, onCreated } = await screenWith(fetcher);
 
@@ -147,25 +152,29 @@ describe('create template screen', () => {
     expect(view.container.querySelector<HTMLDetailsElement>('.blueprint-advanced')?.open).toBe(false);
     expect(row(view, 'datasets').textContent).toContain('me');
     expect(row(view, 'ada-notes').textContent).toContain('Ada Park');
-    expect(attachButton(view).disabled).toBe(true);
-    expect(attachButton(view).textContent).toContain('Select a folder');
+    // The footer carries exactly one button, and it is the upload control.
+    expect([...view.container.querySelectorAll('.tplf-foot button')]).toHaveLength(1);
+    expect(uploadButton(view).textContent).toBe('Upload');
 
     await act(async () => {
       row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(attachButton(view).textContent).toBe('Attach “datasets”');
-    await act(async () => {
-      attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
     expect(view.container.querySelector('.tplf-side')?.textContent).toContain('datasets');
     expect(row(view, 'datasets').textContent).toContain('In template');
-    expect(attachButton(view).textContent).toBe('Detach “datasets”');
+    expect(row(view, 'datasets').getAttribute('aria-pressed')).toBe('true');
+
+    // Clicking the same row again takes it back out.
+    await act(async () => {
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('Nothing attached');
+    expect(row(view, 'datasets').getAttribute('aria-pressed')).toBe('false');
 
     await act(async () => {
-      row(view, 'ada-notes').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await act(async () => {
-      attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      row(view, 'ada-notes').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('2 attachments');
 
@@ -588,10 +597,15 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
-  it('enters a folder on double click, walks back up, and keeps the attach target', async () => {
+  it('enters a folder on double click, walks back up, and keeps what is attached', async () => {
     const { view } = await screenWith();
     const back = view.container.querySelector<HTMLButtonElement>('.tplf-back')!;
     expect(back.disabled).toBe(true);
+
+    await act(async () => {
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('1 attachment');
 
     await act(async () => {
       row(view, 'ada-notes').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -600,7 +614,8 @@ describe('create template screen', () => {
     expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('ada-notes');
     expect(row(view, 'raw').textContent).toContain('1 file');
     expect(row(view, 'report.md').textContent).toContain('128 B');
-    expect(attachButton(view).textContent).toBe('Attach “ada-notes”');
+    // Looking inside a folder changes nothing about what is attached.
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('1 attachment');
 
     await act(async () => {
       row(view, 'raw').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -723,7 +738,7 @@ describe('create template screen', () => {
     // member, so the hint routes them to their admin, not to a form.
     const unconfigured = await screenWith();
     expect(unconfigured.view.container.textContent)
-      .toContain('Ask an organization admin to configure the GitHub App');
+      .toContain('Ask an admin to set up GitHub above');
     expect(unconfigured.view.container.querySelector(
       'input[aria-label="Filter repositories"]',
     )).toBeNull();
@@ -907,7 +922,7 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
-  it('uploads files picked through the Upload files button', async () => {
+  it('uploads files picked through the Upload menu', async () => {
     const filesFolder = {
       id: 'folder-files',
       name: 'new-template-files',
@@ -934,8 +949,20 @@ describe('create template screen', () => {
       return null;
     });
     const { view } = await screenWith(fetcher);
-    // The section reads as attachments, not folders-only.
-    expect(view.container.textContent).toContain('Attachments');
+    // The section reads as files, not folders-only.
+    expect([...view.container.querySelectorAll('h2')].map((node) => node.textContent))
+      .toContain('Files');
+
+    // One button opens the menu; the menu reaches both pickers.
+    await act(async () => {
+      uploadButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(uploadMenuItem(view, 'Files')).toBeDefined();
+    expect(uploadMenuItem(view, 'Folder')).toBeDefined();
+    await act(async () => {
+      uploadMenuItem(view, 'Files').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-upload-menu')).toBeNull();
 
     const picker = view.container.querySelector<HTMLInputElement>('input[aria-label="Upload files"]')!;
     expect(picker).not.toBeNull();
@@ -1082,6 +1109,25 @@ describe('template screen org-credential config', () => {
       box.click();
     });
   }
+
+  it('marks every catalog row with its provider glyph', async () => {
+    connectionsStub();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    const rows = [...view.container.querySelectorAll<HTMLElement>('.tplf-connection')];
+    expect(rows).toHaveLength(3);
+    for (const label of rows) {
+      expect(label.querySelector('svg.tplf-connection-glyph'), label.textContent ?? '').not.toBeNull();
+    }
+    await view.unmount();
+  });
 
   it('opens the inline config form when an admin attaches an unconfigured provider', async () => {
     const puts: [string, unknown][] = [];
@@ -1346,7 +1392,7 @@ describe('template screen org-credential config', () => {
       />,
     );
     await settle();
-    expect(view.container.textContent).toContain('Configure the GitHub App first');
+    expect(view.container.textContent).toContain('Set up GitHub above first');
     expect(view.container.querySelector('input[aria-label="Filter repositories"]')).toBeNull();
 
     await tick(view, 'GitHub');

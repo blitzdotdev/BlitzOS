@@ -407,13 +407,6 @@ export function WorkspaceProviderRows({
           );
         })}
       </div>
-      {readOnly !== true && (
-        <p className="connect-help">
-          A key for anything not listed here is yours to place: write it to a
-          file or <code>.env</code> in the workspace and tell the agent where
-          it is.
-        </p>
-      )}
       {disconnecting !== null && (
         <DisconnectChooser
           row={disconnecting}
