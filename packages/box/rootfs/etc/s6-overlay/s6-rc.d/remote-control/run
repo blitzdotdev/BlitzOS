@@ -57,6 +57,18 @@ done
 [ -f "$log" ] || install -m 0644 /dev/null "$log"
 [ "$(stat -c %s "$log" 2>/dev/null || echo 0)" -gt 1048576 ] && : > "$log"
 
+# claude trusts a directory by its path, and it refuses to run in one it does
+# not trust. s6 starts a service in its own service directory, whose path also
+# changes on every boot, so claude asked to be trusted there instead of in the
+# workspace: "Workspace not trusted. Please run `claude` in
+# /run/s6-rc:s6-rc-init:.../servicedirs/remote-control first". Terminal tabs
+# start in /workspace (blitz-term passes tmux `-c`), so entering it here also
+# means the login the member has to perform already trusted this path.
+cd /workspace || {
+	echo "remote-control: /workspace is missing"
+	exit 1
+}
+
 launch() {
 	exec /command/s6-setuidgid blitz /usr/bin/env \
 		-u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL \
