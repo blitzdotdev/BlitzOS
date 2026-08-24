@@ -51,11 +51,19 @@ chown "$uid:$gid" /workspace
 # Managed, authoritative agent rules. Both agents read a canonical file under
 # HOME (=$state_dir/home): Claude reads ~/.claude/CLAUDE.md, Codex reads
 # ~/.codex/AGENTS.md. Overwrite every boot so the platform rules always win;
-# project rules belong in /workspace/CLAUDE.md. `install -D` creates the parent
-# directories. Skip silently if the skel doc is absent.
+# project rules belong in /workspace/CLAUDE.md. Skip silently if the skel doc
+# is absent.
+#
+# The agent config dirs MUST belong to the box user: this script runs as root,
+# and `install -D` would create root-owned parents. Claude persists its OAuth
+# credential at ~/.claude/.credentials.json and Codex writes state under
+# ~/.codex; a root-owned dir makes every such write EACCES, so login "works"
+# but never sticks. `install -d` also repairs ownership on dirs that already
+# exist, healing state dirs written by images that carried the bug.
 if [ -f /opt/blitz/skel/agent-rules.md ]; then
-  install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.claude/CLAUDE.md"
-  install -D -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.codex/AGENTS.md"
+  install -d -m 0755 -o "$uid" -g "$gid" "$state_dir/home/.claude" "$state_dir/home/.codex"
+  install -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.claude/CLAUDE.md"
+  install -m 0644 -o "$uid" -g "$gid" /opt/blitz/skel/agent-rules.md "$state_dir/home/.codex/AGENTS.md"
 fi
 
 host_key="$state_dir/ssh/ssh_host_ed25519_key"
