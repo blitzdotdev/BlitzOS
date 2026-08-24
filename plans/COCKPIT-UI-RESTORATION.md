@@ -1,0 +1,412 @@
+# Cockpit UI restoration on the ACP runtime
+
+Status: **plan** (2026-08-24). Scope approved: restore the P0 and P1
+capabilities identified by comparing a previous merged PR from an older repo
+with the current BlitzOS webapp. P2 mobile/accessibility polish is explicitly
+out of scope for this plan.
+
+This is not a port of the old bridge. The current control-plane → webapp → box
+actor/ACP architecture stays authoritative. We restore the user-visible
+behavior over those contracts and leave the retired bridge, completion store,
+and provider handoff protocol behind.
+
+## Outcome
+
+When this plan is complete:
+
+- every new native Chat tab owns a distinct ACP session;
+- an existing Chat tab reliably reloads its own session and transcript;
+- managed sessions can be renamed, archived, restored, and permanently
+  removed from the cockpit layout;
+- the workspace rail reports native-chat `generating`, `needs input`, `done`,
+  and `error` states, without pretending terminal tabs expose structured
+  lifecycle state;
+- workspace-file links in agent Markdown open the corresponding file tab;
+- a user can queue prompts while a turn runs and remove them before dispatch;
+- model, effort, permission, and thinking-view choices survive a reload per
+  Chat tab;
+- Finder rows support rename and delete without losing the newer Drive
+  actions or leaving stale open-file tabs behind; and
+- workspace details are available separately from Share, using real current
+  control-plane data and not exposing secrets or provider identifiers.
+
+## Current ground truth
+
+| Capability | Current state | Implementation consequence |
+|---|---|---|
+| Chat session journal/list/load | Shipped in the box actor | Reuse ACP `session/new`, `session/list`, and `session/load`; do not recreate bridge history routes. |
+| New Chat tab binding | Incorrectly adopts the first listed session when no ID is stored | New and recovery intent must be distinguished explicitly. |
+| Tab persistence | Shipped as the shared workspace webapp-state document | Extend the existing document additively for titles, archive state, and chat preferences. |
+| Header rename UI | Present but disconnected | Wire it to persisted tab state rather than rebuilding the control. |
+| Archive UI/state | Absent; the close tooltip says Archive but close only removes the tab | Add archive state and make the labels match the operation. |
+| Actor prompt queue | Shipped and bounded | Keep removable browser messages locally until dispatch; actor serialization remains the race/multi-client backstop. |
+| Chat lifecycle data | Present in the ACP reducer (`running`, permission requests, turn results) | Derive rail state from real reducer events. |
+| Workspace file-link parser | Present in `chat-render.tsx` | Thread `onOpenFile` through the currently missing component props. |
+| Finder create and Drive actions | Shipped | Add rename/delete to the same context menu; do not replace the newer Finder design. |
+| Workspace metadata | Machine, volume, environment, lifecycle, and timestamps exist in control-plane rows, but the webapp wire/model drops part of them | Extend the workspace view and adapter before rendering Details. |
+| Park/resume | Deliberately removed from the current control-plane product | Do not restore the old stopped-workspace Resume screen. |
+
+## Decisions
+
+### 1. The control-plane webapp-state document remains the layout authority
+
+Use an additive extension to the existing version-1 document instead of a new
+database table or a parallel local-storage model:
+
+```ts
+type WorkspaceTabs = {
+  version: 1;
+  tabs: WorkspaceTab[];
+  archivedTabs?: WorkspaceTab[];
+  activeId: number | null;
+  sideActiveId?: number;
+  nextId: number;
+};
+
+type ManagedTabFields = {
+  title?: string;
+};
+
+type ChatTabFields = ManagedTabFields & {
+  chatSessionId?: string;
+  chatProvider?: "claude" | "codex";
+  chatConfig?: {
+    model?: string;
+    effort?: string;
+    permission?: string;
+  };
+  showThinking?: boolean;
+};
+```
+
+- Missing `archivedTabs` reads as `[]`, so existing documents need no data
+  migration.
+- IDs must be unique across active and archived tabs.
+- `activeId` and `sideActiveId` may only identify active tabs.
+- `nextId` must be greater than every active or archived ID so a restore can
+  never collide with a newly created tab.
+- Titles remain bounded by the existing 64-character UI limit and a matching
+  server-side limit.
+- File, preview, and panel tabs continue to close rather than archive.
+- The server parser must preserve every accepted optional field instead of
+  silently stripping it during a round trip.
+
+Do not put model/effort UI preferences in `chat_session.db`. That database is
+scope-fenced to session list, replay, and resume. The preferences belong to
+the shared cockpit document and are reapplied through ACP when the tab loads.
+
+### 2. “Archive” is a layout operation
+
+Archive removes a managed tab from the active strips while preserving all tab
+metadata, including its ACP session ID. Restore puts the same tab back with
+the same ID and selects it.
+
+Permanent removal deletes the cockpit record. It does **not** claim to erase
+Claude/Codex native transcripts or every underlying runtime artifact. The UI
+must use “Remove permanently” language rather than implying provider-data
+erasure. A true ACP/provider transcript deletion API is a separate future
+capability.
+
+### 3. New Chat and recovered Chat are different operations
+
+The current fallback (`session.list` → first session) is useful for adopting a
+legacy/orphaned session but wrong for a user pressing New Chat.
+
+- A newly spawned Chat tab uses explicit `create` intent and calls
+  `session/new`, even when other sessions already exist.
+- A tab with `chatSessionId` uses `session/load` for exactly that ID.
+- A legacy persisted Chat tab without an ID uses one-time `recover` intent:
+  list sessions, exclude IDs already bound to other tabs, adopt the newest
+  remaining session, and persist the ID. If none remains, create one.
+- Failure to load a stored ID becomes a visible recover/create choice. It must
+  not silently switch the tab to somebody else's conversation.
+- Session IDs are persisted immediately after creation/recovery through the
+  existing workspace-state writer.
+
+### 4. Chat lifecycle state is ephemeral UI state
+
+Rail state is not added to the control-plane document or actor database. It is
+derived while the webapp is connected:
+
+| ACP/UI event | Rail state |
+|---|---|
+| Prompt accepted, streaming, tool work, or queued work draining | `generating` |
+| Unanswered tool permission | `needs-attention` (“needs input” in the rail) |
+| Successful completed turn | `done` |
+| Refusal, fatal connection/provider failure, or failed turn | `error` |
+| User cancellation/interruption | `idle` |
+
+Only native Chat tabs receive these states. Ttyd/tmux terminals remain
+unmarked. Inactive `done` and `error` states are unread; selecting the tab
+acknowledges and clears them. If completion/error arrives while the tab is
+already active, the transcript keeps the result but the rail does not show a
+stale unread state.
+
+### 5. Queued messages are removable until sent
+
+The webapp owns the visible queue:
+
+- Enter/Send during a running turn appends a bounded local queue item.
+- Queue rows display the message and a Remove action.
+- After a turn settles, the panel shifts exactly one item and sends it through
+  the normal ACP prompt path.
+- Stop cancels only the active turn; queued items remain visible and removable.
+- A disconnected/reloaded page does not automatically resend unsent browser
+  queue items. Losing an unsent queue on reload is safer than duplicating a
+  prompt.
+- The actor's existing queue remains authoritative for concurrent clients and
+  races that reach it at the same time.
+
+## Implementation phases
+
+### Phase 1 — session identity, titles, archive, and restore
+
+1. Extend `WorkspaceTab`, `WorkspaceTabs`, the webapp parser/serializer, and
+   `core/webapp-state.ts` with the additive fields above.
+2. Update normalization helpers so moving, closing, archiving, restoring, and
+   removing tabs preserve pane invariants and never reuse IDs.
+3. Add explicit Chat `create | load | recover` behavior. Remove the generic
+   “no ID means first listed session” path.
+4. Populate `customTitle`/`renameable` in `CloudApp`, pass `onRename` to
+   `WebAppHeader`, and persist trimmed titles. Empty input resets to the
+   generated label.
+5. Restore the managed-session context menu: Rename, Archive, and Remove
+   permanently. Keep the active-tab close button for file/preview/panel tabs;
+   for managed sessions it archives.
+6. Restore the Archived sessions menu with bounded height, long-name
+   truncation, Restore, and Remove permanently.
+7. Make archive/restore work from either pane. Restoring selects the tab in
+   its recorded region; if that region is unavailable on mobile, normal tab
+   normalization places it in main.
+
+Done when two newly created Chat tabs have different ACP IDs and independent
+histories; titles survive reload; archive/reload/restore returns the same
+session; and removing an archived entry does not corrupt `activeId`,
+`sideActiveId`, or `nextId`.
+
+### Phase 2 — native-chat rail states and workspace-file links
+
+1. Add a `ChatSessionStatus` callback to `ChatPanel` and derive it only from
+   reducer/ACP state.
+2. Store statuses in `CloudApp` by workspace ID and cockpit tab ID. Clear the
+   map when the active workspace changes.
+3. Extend the rail session model/rendering for spinner, needs-input, done,
+   error, and unread styling. Reuse the dormant current status classes where
+   valid; remove dead CSS rather than duplicating selectors.
+4. Apply the acknowledgement rules in Decision 4.
+5. Add `onOpenFile` to `ChatPanel`, `ChatTurnView`, `TurnWork`, and
+   `ChatItemView`, then pass it into `AssistantBlocks`.
+6. Wire `CloudApp.openFile` into Chat so safe relative paths and absolute
+   `/workspace/...` links open or focus the corresponding file tab. External
+   URLs and paths outside `/workspace` keep their existing behavior.
+
+Done when a background Chat tab visibly transitions through generating →
+needs input/done/error, opening it clears only the unread rail marker, terminal
+tabs never gain synthetic state, and a Markdown link to a workspace file opens
+that file without duplicating an already-open tab.
+
+### Phase 3 — queued prompts and persistent chat selections
+
+1. Refactor the current `send` function into one dispatch path accepting an
+   explicit message string.
+2. Add the bounded local queue and drain rules from Decision 5.
+3. Render queued rows beneath the transcript/composer with Remove actions and
+   clear state labels.
+4. Add `onConfigChange` and `onShowThinkingChange` callbacks to `ChatPanel`.
+5. Persist model, effort, permission, and `showThinking` on the Chat tab in
+   workspace state.
+6. After `session/new` or `session/load`, compare saved values with the ACP
+   options currently advertised. Reapply only values that still exist; drop
+   or replace stale values with the actor's current default.
+7. Replace the hardcoded `showThinking` prop with the persisted toggle. Keep
+   the control in the existing composer-control language; do not restore the
+   old bridge-specific composer sheet.
+8. Ensure config updates from one shared webapp state do not interrupt an
+   already running turn; they apply to the next turn.
+
+Done when two messages entered during a running turn appear in order, either
+can be removed before dispatch, the remaining message runs exactly once, and
+chat selections plus thinking visibility survive a browser reload and actor
+reconnect.
+
+### Phase 4 — Finder rename and delete
+
+1. Extend `FilesContextMenuState` with the clicked file/directory target and a
+   `rename | delete` action state.
+2. Keep New file, New folder, Open in Drive, and Share to Drive. Add Rename and
+   Delete for actual tree rows.
+3. Implement rename with WebDAV `moveFile` and delete with `deleteFile`, using
+   the current error-envelope/401 handling and collision messages.
+4. On rename, update every affected open file tab, expanded directory path,
+   selected path, and breadcrumb whose path equals or descends from the moved
+   path.
+5. On delete, close affected open file tabs, remove affected expanded/selected
+   paths, and reload the parent directory.
+6. If a target or descendant has an unsaved editor tab, require confirmation
+   before rename/delete. Never silently discard a dirty editor.
+7. Keep the current Finder alphabetical interleaving. Folder-first sorting was
+   intentionally replaced and is not part of this restoration.
+
+Done when files and folders can be renamed/deleted, open tabs follow a rename,
+deleted tabs disappear, dirty content is protected, and all existing Drive
+context actions continue to work.
+
+### Phase 5 — workspace details separate from Share
+
+1. Add `createdAt` and `updatedAt` to the shared `WorkspaceView` wire type and
+   populate them from the existing workspace row. Stop treating revision as a
+   timestamp in the webapp adapter.
+2. Preserve the current wire/model fields needed for details: machine type,
+   volume presence, environment presence, lifecycle, owner/role, and
+   timestamps.
+3. Resolve display metadata through the existing machine and volume catalogs:
+   provider label, location, CPU, memory, disk, volume size, and volume
+   location. Do not expose raw provider resource IDs.
+4. Add a `WorkspaceDetailsDialog` using the current modal/focus primitives.
+   Sections:
+   - Compute: machine label, provider, location, CPU, memory, disk.
+   - Storage: persistent volume attached/not attached, size, location.
+   - Workspace: lifecycle, owner, access role, created, updated.
+   - Configuration: environment/startup configured as yes/no only.
+5. Never render environment values, startup-script contents, SSH details,
+   credential data, or raw volume/VM IDs.
+6. Keep Share as its own action. Rename the misleading
+   `onOpenWorkspaceDetails` share callback and introduce a real details
+   callback/state. Details remains limited to controllable workspaces.
+
+Done when Details and Share open different dialogs, the values come from the
+current workspace/catalog records, ordinary ungranted users cannot request
+details, and no secret-bearing field reaches rendered markup.
+
+## Recommended PR sequence
+
+Keep these reviewable rather than recreating PR #252 as one large change:
+
+1. **Session contract and lifecycle:** distinct Chat sessions, titles,
+   archive/restore/remove, persistence contracts.
+2. **Chat visibility:** rail lifecycle statuses and workspace-file links.
+3. **Chat interaction:** removable queue and persistent config/thinking.
+4. **Finder actions:** rename/delete plus open-tab/path reconciliation.
+5. **Workspace details:** wire timestamps/metadata, dialog, and separate rail
+   actions.
+
+Each PR must update tests and documentation for its own contract. Do not land
+UI that writes fields the deployed control-plane parser strips; session-state
+webapp and control-plane changes ship together.
+
+## Test plan
+
+### Session and persistence tests
+
+- `session/new` is called for each explicitly new Chat tab even when
+  `session/list` is non-empty.
+- A stored session ID loads exactly that session.
+- Legacy no-ID recovery excludes IDs already bound to other tabs.
+- Missing stored session surfaces recovery instead of silently adopting the
+  first result.
+- Titles and archived tabs survive webapp-state PUT/GET and browser reload.
+- Server and browser parsers enforce the same bounds and active/archived ID
+  invariants.
+- Archive/restore works in main and side panes; permanent removal preserves
+  active IDs and monotonically increasing `nextId`.
+
+### Chat tests
+
+- generating, permission attention, success, cancellation, refusal, and fatal
+  paths emit the expected status.
+- done/error acknowledgement is symmetric and terminal tabs remain excluded.
+- background/inactive completion is unread; active completion is already seen.
+- safe workspace Markdown links call `onOpenFile`; external/traversal links do
+  not.
+- queued messages drain in order, can be removed, do not duplicate after a
+  connection failure, and Stop only cancels the active turn.
+- valid persisted config is reapplied; stale config falls back safely; thinking
+  visibility round-trips.
+
+### Files tests
+
+- Context menus retain create and Drive actions while adding target actions.
+- File and directory rename call the correct DAV path and rewrite descendants.
+- Delete closes affected tabs and clears expanded/selected descendants.
+- Dirty files require confirmation.
+- 401, 403, collision, and general DAV failures remain visible and recoverable.
+
+### Workspace-details tests
+
+- Workspace wire timestamps round-trip and wire-drift tests stay exact.
+- Owner/admin gating is enforced in both UI entry points and API data access.
+- Machine/volume catalog joins render human labels, never raw IDs.
+- Environment values, startup script content, SSH data, and credentials are
+  absent from rendered output.
+- Share and Details remain separate actions.
+
+### Required gates
+
+Run under the repository-supported Node 22 runtime:
+
+```sh
+npm run test -w @blitzos/webapp
+npm run test -w @blitzos/box-actor
+npm run test -w @blitzos/control-plane
+npm run typecheck
+npm run lint:gate
+npm run build -w @blitzos/webapp
+git diff --check
+```
+
+The box actor is expected to need no source change for this plan: session
+creation/list/load, config options, prompt cancellation, and queue
+serialization already exist. Run its tests because the webapp relies on those
+contracts. A box image rebuild should not be required. The workspace-state and
+details phases do require the webapp and control plane to be deployed together
+to staging.
+
+### Self-host staging walkthrough
+
+1. Create two Chat tabs and verify different ACP session IDs and independent
+   histories.
+2. Rename both, archive one, reload, restore it, and confirm its transcript.
+3. Start a turn in a background tab and observe generating, needs-input, done,
+   and error acknowledgement behavior.
+4. Open a file path from an agent response and confirm the correct editor tab
+   focuses.
+5. Queue two prompts, remove one, and confirm the other runs exactly once.
+6. Change model/effort/permission/thinking, reload, and confirm the choices.
+7. Rename and delete a file and folder; verify editor tabs and breadcrumbs
+   reconcile and dirty-file confirmation blocks data loss.
+8. Open Workspace Details and Share separately; verify metadata and inspect the
+   DOM/network payload for forbidden secret fields.
+
+## Explicit non-goals
+
+- P2 mobile drawer, focus, inert/ARIA, and mobile context-menu positioning.
+- Restoring park/resume or the stopped-workspace screen.
+- Reintroducing bridge history/auth/completion-store routes.
+- Provider handoff or switching the actor provider inside one Chat session.
+- A provider-discovered slash-command protocol. Current ACP config controls
+  remain the supported model/effort/permission surface.
+- Token/cost analytics in `chat_session.db`.
+- OpenCode, Pi, Kimi, or Prime runtime installation/spawn support.
+- Folder-first Finder ordering.
+- Native transcript/provider-data deletion.
+- Attachments or unified terminal/chat session views that existed only as plan
+  documents in the older PR.
+
+## Primary files and contracts
+
+- `packages/webapp/src/CloudApp.tsx`: coordination, tab/status state, file and
+  details actions.
+- `packages/webapp/src/WebAppHeader.tsx`: rename/context/archive UI.
+- `packages/webapp/src/files/DriveRail.tsx`: session states and separate
+  Share/Details entry points.
+- `packages/webapp/src/chat/ChatPanel.tsx` and `chat-turn-views.tsx`: session
+  intent, lifecycle, queue, config, and file-link propagation.
+- `packages/webapp/src/storage.ts` and `workspace-panes.ts`: active/archived
+  tab model and invariants.
+- `packages/control-plane/core/webapp-state.ts`: server mirror of the shared
+  cockpit document.
+- `packages/webapp/src/FilesSidebar.tsx`, `FilesContextMenu.tsx`, and
+  `FilesTreeRow.tsx`: target actions and path reconciliation.
+- `packages/schema/src/workspace.ts`, `packages/control-plane/core/wire.ts`,
+  `workspace-records.ts`, and `packages/webapp/src/api-adapter.ts`: workspace
+  details data contract.
