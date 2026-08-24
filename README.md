@@ -24,7 +24,7 @@
 
 # About 
 
-A computer OS makes you more productive with computers. An AI OS makes you more productive using AI. It does this by providing abstractions for managing the AI's access, context, and working environment. 
+A computer OS makes you more productive with computers. An AI OS makes your company more productive using AI. It does this by providing abstractions for managing the AI's level of access, context, and work environment in your company. 
 
 An AI OS improves your capability to experiment with AI and spread useful AI workflows. Since AI keeps advancing faster, a company's capability to "digest" AI advancements will become very important. 
 
