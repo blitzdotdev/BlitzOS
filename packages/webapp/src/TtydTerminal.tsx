@@ -4,6 +4,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { WebAppLoadingPane } from './LoadingSkeleton';
 import { hasTerminalChoiceMenu } from './terminal-choices';
+import { installTerminalKeyHandler } from './terminal-paste-binding';
 import { isTouchInputDevice } from './terminal-touch';
 import { extractTerminalUrls, scanOsc8Links } from './terminal-url';
 import { useTerminalTouch } from './use-terminal-touch';
@@ -354,23 +355,26 @@ export function TtydTerminal({
       // socket that closes mid-flush.
       while (pending.length > 0 && send('0', pending[0]!)) pending.shift();
     };
-    if (!readOnly) {
-      terminal.attachCustomKeyEventHandler((event) => {
-        if (!activeRef.current) return false;
-        if (
-          event.type === 'keydown'
-          && event.key === 'Enter'
-          && event.shiftKey
-          && !event.altKey
-          && !event.ctrlKey
-          && !event.metaKey
-        ) {
-          send('0', '\x1b[13;2u');
-          return false;
-        }
-        return true;
-      });
-    }
+    // Registered through the slot tracker, not straight onto xterm: the paste
+    // binding claims the same single custom-handler slot afterwards and has to
+    // be able to delegate back here, and to hand the slot back on teardown.
+    const releaseKeyHandler = readOnly
+      ? () => undefined
+      : installTerminalKeyHandler(terminal, (previous) => (event) => {
+          if (!activeRef.current) return false;
+          if (
+            event.type === 'keydown'
+            && event.key === 'Enter'
+            && event.shiftKey
+            && !event.altKey
+            && !event.ctrlKey
+            && !event.metaKey
+          ) {
+            send('0', '\x1b[13;2u');
+            return false;
+          }
+          return previous(event);
+        });
     sendRef.current = send;
     flushRef.current = flushInput;
     setTerminalInstance(terminal);
@@ -471,6 +475,7 @@ export function TtydTerminal({
       schemeQuery?.removeEventListener('change', applyTheme);
       observer.disconnect();
       input.dispose();
+      releaseKeyHandler();
       socket?.close();
       if (sendRef.current === send) sendRef.current = null;
       if (flushRef.current === flushInput) flushRef.current = null;

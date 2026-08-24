@@ -5,7 +5,6 @@ import { pasteToSession } from './session-input';
 import { previewPortFromLocalUrl } from './preview';
 import { parseTerminalChoiceRow } from './terminal-choices';
 import { classifyTerminalInputRow } from './terminal-input';
-import { isPasteKeyEvent } from './terminal-paste';
 import {
   TERMINAL_KEYBOARD_EVENT,
   TERMINAL_PASTE_EVENT,
@@ -197,32 +196,9 @@ export function bindTerminalTouch({
       if (clipboardReadDecision(disposed, '', true) === 'hint') showPasteFailureHint();
     }
   };
-  // Keyboard paste needs BOTH halves below — each alone is a shipped bug:
-  // 1. Suppress the paste combos from xterm's keydown processing (send
-  //    nothing!). Without this, xterm turns ctrl+V into the control byte
-  //    \x16 and cancels the event, so the browser never fires a paste event
-  //    and paste goes fully dead on non-mac.
-  // 2. Own the native "paste" event in the capture phase: stopPropagation
-  //    keeps xterm's own textarea paste listener from delivering the same
-  //    clipboard a second time (sending from the keydown instead is what
-  //    caused the double-paste — the un-prevented default still fired).
-  const isMac = navigator.platform.toLowerCase().includes('mac');
-  terminal.attachCustomKeyEventHandler((event) => !isPasteKeyEvent(event, isMac));
-  const handleNativePaste = (event: ClipboardEvent) => {
-    const text = event.clipboardData?.getData('text/plain');
-    event.preventDefault();
-    event.stopPropagation();
-    if (text) {
-      pasteToSession(text, {
-        bracketedPasteMode: terminal.modes.bracketedPasteMode,
-        input: (payload) => {
-          sendInput(payload);
-          return true;
-        },
-      });
-    }
-  };
-  surface.addEventListener('paste', handleNativePaste, { capture: true });
+  // Keyboard paste is NOT bound here. It owns xterm's single custom key
+  // handler and a capture-phase paste listener, and it must outlive this
+  // controller's rebinds — see bindTerminalPaste in terminal-paste-binding.ts.
 
   let syncingNativeViewport = false;
   let programmaticScrollTop: number | null = null;
@@ -862,8 +838,6 @@ export function bindTerminalTouch({
     window.removeEventListener(TERMINAL_KEYBOARD_EVENT, handleKeyboardRequest);
     window.removeEventListener(TERMINAL_PASTE_EVENT, handlePasteRequest);
     stopObservingKeyboardGeometry();
-    surface.removeEventListener('paste', handleNativePaste, { capture: true });
-    terminal.attachCustomKeyEventHandler(() => true);
     webLinksAddon.dispose();
     nativeScrollSpacer.remove();
     if (nativeViewport) {
