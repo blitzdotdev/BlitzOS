@@ -110,7 +110,7 @@ export function ProviderConnectSurface({
           <InfoGlyph />
           <span>
             {entry.adminForm !== null
-              ? `An organization admin configures ${entry.title} once for everyone, on the template page where it is attached. Workspaces that enable it get credentials automatically — no step here.`
+              ? `An admin stores one ${entry.title} key for everyone, on the template page.`
               : `${entry.title} issues no personal token. Connecting requires OAuth.`}
           </span>
         </p>

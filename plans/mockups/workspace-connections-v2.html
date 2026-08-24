@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blitz webApp — workspace connections (refactor)</title>
+<style>
+/* ------------------------------------------------------------------
+   tokens — copied from packages/webapp/src/tokens.css and the
+   --quiet / --soft-ink / --sheet block at packages/webapp/src/files.css.
+   ------------------------------------------------------------------ */
+:root,
+:root[data-theme='dark'] {
+  --paper: #16181d;
+  --ink: #dfe2e8;
+  --accent: #7e95d7;
+  --ansi-green: #8fa879;
+  --ansi-yellow: #b7a06b;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --paper: #f7f7f4;
+  --ink: #1c1f26;
+  --accent: #4c62aa;
+  --ansi-green: #5f7d46;
+  --ansi-yellow: #8a6d28;
+  color-scheme: light;
+}
+
+:root {
+  --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
+  --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+  --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+  --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
+  --sheet: var(--paper);
+  --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
+  --quiet: color-mix(in oklab, var(--ink) 8%, var(--paper));
+  --quiet-hover: color-mix(in oklab, var(--ink) 12%, var(--paper));
+  --status-warm-yellow: var(--ansi-yellow);
+  --r-card: 12px;
+  --r-item: 8px;
+  --r-pill: 999px;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 28px;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-ui);
+}
+
+/* ------------------------------------------------------------------ page */
+h1 { margin: 0 0 6px; font: 650 19px/1.3 var(--font-ui); }
+.lede { max-width: 74ch; margin: 0 0 22px; color: var(--muted); font: 13px/1.65 var(--font-ui); }
+.lede code { font: 12px/1 var(--font-mono); }
+
+.decks { display: flex; align-items: flex-start; gap: 34px; flex-wrap: wrap; }
+
+.deck { display: grid; gap: 10px; }
+.deck h2 { margin: 0; font: 650 12px/1 var(--font-ui); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.deck > p { max-width: 40ch; margin: 0; color: var(--muted); font: 12px/1.6 var(--font-ui); }
+
+/* The real drawer column is 339px wide (annotation viewportRect). */
+.drawer {
+  width: 339px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  background: var(--sheet);
+  overflow: hidden;
+}
+
+.drawer-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--rule);
+  font: 650 12px/1 var(--font-ui);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.notes { max-width: 62ch; margin: 30px 0 0; padding: 0; list-style: none; display: grid; gap: 9px; }
+.notes li { color: var(--muted); font: 13px/1.6 var(--font-ui); }
+.notes b { color: var(--ink); font-weight: 650; }
+.notes s { color: var(--faint); }
+
+/* ==================================================================
+   NOW — verbatim from packages/webapp/src/files.css
+   ================================================================== */
+.workspace-credential-row { display: grid; gap: 7px; padding: 12px 14px; }
+.workspace-credential-row + .workspace-credential-row {
+  border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
+}
+.workspace-credential-row__title,
+.workspace-credential-row__meta,
+.workspace-credential-row__actions {
+  display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px;
+}
+.workspace-credential-row__meta {
+  justify-content: flex-start;
+  color: var(--faint);
+  font: 10.5px/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.workspace-credential-row__meta > :last-child { margin-left: auto; }
+.workspace-provider-row__toggle {
+  display: flex; min-width: 0; align-items: center;
+  padding: 0; border: 0; color: inherit; background: none; cursor: pointer;
+  font: inherit; text-align: left;
+}
+.workspace-provider-row__toggle strong {
+  min-width: 0; overflow: hidden;
+  font: 600 13px/1.3 var(--font-ui);
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.workspace-provider-row .workspace-credential-row__title { justify-content: flex-start; }
+.workspace-provider-row .workspace-credential-row__title .workspace-provider-row__toggle { margin-right: auto; }
+.workspace-provider-row .workspace-credential-row__actions { justify-content: flex-start; }
+.workspace-state-badge {
+  display: inline-flex; flex: none; align-items: center;
+  padding: 2.5px 9px; border-radius: var(--r-pill);
+  color: var(--muted); background: color-mix(in oklab, var(--ink) 7%, transparent);
+  font: 600 10.5px/1.3 var(--font-ui);
+}
+.workspace-credential-row__actions .webapp-action {
+  min-height: 28px; padding: 0 14px; border: 0; border-radius: var(--r-pill);
+  color: var(--soft-ink); background: var(--quiet);
+  font: 600 11.5px/1 var(--font-ui); cursor: pointer;
+}
+.workspace-credential-row__actions .webapp-action--primary { color: var(--paper); background: var(--accent); }
+.connect-help { margin: 0; padding: 0 14px 14px; color: var(--muted); font: 11px/1.5 var(--font-ui); }
+.connect-help code { font: 10.5px/1 var(--font-mono); }
+
+/* ==================================================================
+   REFACTOR — one grid, one state word, one action shape
+   ================================================================== */
+.wc2-rows { display: grid; }
+
+.wc2-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wc2-row + .wc2-row { border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent); }
+.wc2-row:hover { background: var(--hover); }
+
+.wc2-glyph { width: 18px; height: 18px; flex: none; color: var(--soft-ink); }
+
+.wc2-body { display: grid; gap: 2px; min-width: 0; }
+
+.wc2-name {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  font: 600 13px/1.3 var(--font-ui);
+}
+
+.wc2-name span {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* One eyebrow, and only for a fact the member cannot change. */
+.wc2-eyebrow {
+  flex: none;
+  padding: 1.5px 7px;
+  border-radius: var(--r-pill);
+  color: var(--faint);
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  font: 650 9.5px/1.4 var(--font-ui);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+/* One state line. A dot plus one plain word, then the date if there is one. */
+.wc2-state {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--faint);
+  font: 11px/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.wc2-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--faint); }
+.wc2-state--on .wc2-dot { background: var(--ansi-green); }
+.wc2-state--on { color: color-mix(in oklab, var(--ansi-green) 60%, var(--ink)); }
+.wc2-state--ready .wc2-dot { background: var(--accent); }
+
+/* One action shape. Accent fill is spent on the row that blocks the
+ * workspace — a provider the template stipulates that is still off. */
+.wc2-action {
+  min-height: 26px; flex: none;
+  padding: 0 12px;
+  border: 0; border-radius: var(--r-pill);
+  color: var(--soft-ink); background: var(--quiet);
+  font: 650 11px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.wc2-action:hover { color: var(--ink); background: var(--quiet-hover); }
+.wc2-action--primary { color: var(--paper); background: var(--accent); }
+.wc2-action--primary:hover { background: color-mix(in oklab, var(--accent) 88%, var(--ink)); }
+
+/* The custody word is an operator fact. It lives in the opened detail,
+ * never on the collapsed row, and never for a lease that is not live. */
+.wc2-detail {
+  display: grid; gap: 8px;
+  padding: 0 14px 13px 42px;
+  border-bottom: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.wc2-detail p { margin: 0; color: var(--muted); font: 11.5px/1.6 var(--font-ui); }
+.wc2-detail dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+.wc2-detail dt { color: var(--faint); font: 11px/1.5 var(--font-ui); }
+.wc2-detail dd { margin: 0; color: var(--soft-ink); font: 11px/1.5 var(--font-ui); }
+.wc2-detail-actions { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Workspace connections — provider rows, refactored</h1>
+<p class="lede">
+  The panel prints three signals for one fact. A row can say
+  <b>authorized by you · Aug 23</b>, <b>injected</b>, and <b>Connect</b> at the
+  same time, and each one is true of a different thing: the grant, a dead
+  lease, and the next action. Five accent-filled buttons then compete for the
+  same eye. The refactor keeps one grid, one state word, and one action shape.
+</p>
+
+<div class="decks">
+
+  <section class="deck">
+    <h2>Now</h2>
+    <p>Three stacked flex lines per row. Custody jargon rides a stale lease. Every row is primary.</p>
+    <div class="drawer">
+      <div class="drawer-head">Connections</div>
+
+      <article class="workspace-credential-row workspace-provider-row">
+        <div class="workspace-credential-row__title">
+          <button class="workspace-provider-row__toggle" type="button"><strong>Discord</strong></button>
+        </div>
+        <div class="workspace-credential-row__meta"><span>injected</span></div>
+        <div class="workspace-credential-row__actions">
+          <button class="webapp-action webapp-action--primary" type="button">Connect</button>
+        </div>
+      </article>
+
+      <article class="workspace-credential-row workspace-provider-row">
+        <div class="workspace-credential-row__title">
+          <button class="workspace-provider-row__toggle" type="button"><strong>GitHub</strong></button>
+        </div>
+        <div class="workspace-credential-row__meta">
+          <span>authorized by you · Aug 23</span><span>injected</span>
+        </div>
+        <div class="workspace-credential-row__actions">
+          <button class="webapp-action webapp-action--primary" type="button">Connect</button>
+        </div>
+      </article>
+
+      <article class="workspace-credential-row workspace-provider-row">
+        <div class="workspace-credential-row__title">
+          <button class="workspace-provider-row__toggle" type="button"><strong>Google Workspace</strong></button>
+        </div>
+        <div class="workspace-credential-row__meta">
+          <span>authorized by you · Aug 21</span><span>proxied</span>
+        </div>
+        <div class="workspace-credential-row__actions">
+          <button class="webapp-action webapp-action--primary" type="button">Connect</button>
+        </div>
+      </article>
+
+      <article class="workspace-credential-row workspace-provider-row">
+        <div class="workspace-credential-row__title">
+          <button class="workspace-provider-row__toggle" type="button"><strong>Linear</strong></button>
+        </div>
+        <div class="workspace-credential-row__meta">
+          <span>authorized by you · Aug 23</span><span>proxied</span>
+        </div>
+        <div class="workspace-credential-row__actions">
+          <button class="webapp-action webapp-action--primary" type="button">Connect</button>
+        </div>
+      </article>
+
+      <article class="workspace-credential-row workspace-provider-row">
+        <div class="workspace-credential-row__title">
+          <button class="workspace-provider-row__toggle" type="button"><strong>YouTrack</strong></button>
+        </div>
+        <div class="workspace-credential-row__meta">
+          <span>authorized by you · Aug 23</span><span>proxied</span>
+        </div>
+        <div class="workspace-credential-row__actions">
+          <button class="webapp-action webapp-action--primary" type="button">Connect</button>
+        </div>
+      </article>
+
+      <p class="connect-help">
+        A key for anything not listed here is yours to place: write it to a file
+        or <code>.env</code> in the workspace and tell the agent where it is.
+      </p>
+    </div>
+  </section>
+
+  <section class="deck">
+    <h2>Refactor</h2>
+    <p>One row grid. A mark, a name, one state word, one action. Custody moves into the opened row.</p>
+    <div class="drawer">
+      <div class="drawer-head">Connections</div>
+      <div class="wc2-rows">
+
+        <button class="wc2-row" type="button" aria-expanded="false">
+          <svg class="wc2-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.63 5.33a17.6 17.6 0 0 0-4.35-1.35l-.21.42c-.18.35-.39.81-.53 1.16a16.2 16.2 0 0 0-4.99 0 12.4 12.4 0 0 0-.55-1.16l-.2-.42a17.6 17.6 0 0 0-4.35 1.35C1.72 9.24.9 13.05 1.19 16.8a17.7 17.7 0 0 0 5.36 2.71c.43-.59.81-1.21 1.14-1.86a11.4 11.4 0 0 1-1.79-.86l.44-.35a12.6 12.6 0 0 0 11.32 0l.45.35c-.57.34-1.17.63-1.8.86.33.65.71 1.27 1.15 1.86a17.6 17.6 0 0 0 5.36-2.71c.34-4.35-.97-8.13-3.19-11.47ZM8.32 14.53c-1.05 0-1.92-.96-1.92-2.15 0-1.18.84-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.85 2.15-1.93 2.15Zm7.09 0c-1.05 0-1.92-.96-1.92-2.15 0-1.18.85-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.84 2.15-1.93 2.15Z"/></svg>
+          <span class="wc2-body">
+            <span class="wc2-name"><span>Discord</span><em class="wc2-eyebrow">from template</em></span>
+            <span class="wc2-state"><i class="wc2-dot"></i>Needs a key</span>
+          </span>
+          <span class="wc2-action wc2-action--primary">Connect</span>
+        </button>
+
+        <button class="wc2-row" type="button" aria-expanded="false">
+          <svg class="wc2-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.64 5.59.64 11.87c0 5.02 3.26 9.28 7.78 10.78.57.11.78-.25.78-.55l-.02-1.93c-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.52-2.52-.29-5.18-1.27-5.18-5.64 0-1.25.44-2.27 1.16-3.06-.12-.29-.5-1.45.11-3.02 0 0 .95-.31 3.11 1.17a10.7 10.7 0 0 1 5.66 0c2.16-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.72.79 1.16 1.81 1.16 3.06 0 4.38-2.67 5.35-5.2 5.63.41.36.78 1.06.78 2.14l-.01 3.17c0 .3.2.66.79.55a11.38 11.38 0 0 0 7.77-10.78C23.36 5.59 18.27.5 12 .5Z"/></svg>
+          <span class="wc2-body">
+            <span class="wc2-name"><span>GitHub</span></span>
+            <span class="wc2-state wc2-state--on"><i class="wc2-dot"></i>Connected · Aug 23</span>
+          </span>
+          <span class="wc2-action">Disconnect</span>
+        </button>
+
+        <div class="wc2-detail">
+          <p>You authorized GitHub on Aug 23. This workspace holds a key minted from that.</p>
+          <dl>
+            <dt>Key sits</dt><dd>in the box, as an environment variable</dd>
+            <dt>Expires</dt><dd>Sep 22</dd>
+          </dl>
+          <div class="wc2-detail-actions">
+            <span class="wc2-action">Replace key</span>
+            <span class="wc2-action">Disconnect</span>
+          </div>
+        </div>
+
+        <button class="wc2-row" type="button" aria-expanded="false">
+          <svg class="wc2-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.24 10.29v3.5h5.02c-.22 1.3-.88 2.4-1.87 3.14l3.02 2.34c1.76-1.62 2.78-4.02 2.78-6.87 0-.66-.06-1.3-.17-1.92l-8.78-.19Z"/><path d="M12.24 21.6c2.52 0 4.63-.83 6.17-2.25l-3.02-2.34c-.84.56-1.9.9-3.15.9-2.43 0-4.49-1.64-5.22-3.84l-3.12 2.4A9.36 9.36 0 0 0 12.24 21.6Z"/><path d="M7.02 14.07a5.6 5.6 0 0 1 0-3.58l-3.12-2.4a9.35 9.35 0 0 0 0 8.38l3.12-2.4Z"/><path d="M12.24 6.62c1.37 0 2.6.47 3.57 1.39l2.67-2.67A9.36 9.36 0 0 0 3.9 8.09l3.12 2.4c.73-2.2 2.79-3.87 5.22-3.87Z"/></svg>
+          <span class="wc2-body">
+            <span class="wc2-name"><span>Google Workspace</span></span>
+            <span class="wc2-state wc2-state--ready"><i class="wc2-dot"></i>Ready · one click</span>
+          </span>
+          <span class="wc2-action">Connect</span>
+        </button>
+
+        <button class="wc2-row" type="button" aria-expanded="false">
+          <svg class="wc2-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0.72 14.9 9.1 23.28A12.03 12.03 0 0 1 .72 14.9ZM.1 11.75l12.15 12.15c-.6-.03-1.18-.11-1.75-.24L.34 13.5a12 12 0 0 1-.24-1.75ZM.62 8.2l15.18 15.18c-.83.3-1.7.5-2.6.6L.02 10.8c.1-.9.3-1.77.6-2.6ZM2.14 5.2 18.8 21.86a12.1 12.1 0 0 1-2.03 1.24L.9 7.23c.33-.72.75-1.4 1.24-2.03ZM21.4 19.65 4.35 2.6a12 12 0 0 1 17.05 17.05Z"/></svg>
+          <span class="wc2-body">
+            <span class="wc2-name"><span>Linear</span></span>
+            <span class="wc2-state wc2-state--ready"><i class="wc2-dot"></i>Ready · one click</span>
+          </span>
+          <span class="wc2-action">Connect</span>
+        </button>
+
+        <button class="wc2-row" type="button" aria-expanded="false">
+          <svg class="wc2-glyph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M6.5 2h11A4.5 4.5 0 0 1 22 6.5v11a4.5 4.5 0 0 1-4.5 4.5h-11A4.5 4.5 0 0 1 2 17.5v-11A4.5 4.5 0 0 1 6.5 2ZM6.4 6.6h2.4L12 9.8l3.2-3.2h2.4L13.2 11v6.4h-2.4V11Z"/></svg>
+          <span class="wc2-body">
+            <span class="wc2-name"><span>YouTrack</span></span>
+            <span class="wc2-state wc2-state--ready"><i class="wc2-dot"></i>Ready · one click</span>
+          </span>
+          <span class="wc2-action">Connect</span>
+        </button>
+
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<ul class="notes">
+  <li><b>One grid, not three flex lines.</b> Every row is
+    <code>mark | name + state | action</code>. Rows keep the same height whether
+    or not a grant exists, so the column scans.</li>
+  <li><b>One state word.</b> <s>authorized by you · Aug 23</s> and
+    <s>injected</s> collapse to a dot plus one word: <b>Connected</b>,
+    <b>Ready</b>, or <b>Needs a key</b>. The date trails the word.</li>
+  <li><b>Custody stops leaking.</b> <code>injected</code> and
+    <code>proxied</code> are operator words. They are removed from the row in
+    this change; a member has no decision that depends on them.</li>
+  <li><b>A live connection colours the whole row</b>, not just its badge. That
+    ships in this change too. The refactor column above still shows the
+    single-line grid, which does not.</li>
+  <li><b>One accent per panel.</b> Accent fill is spent only on a provider the
+    template stipulates that is still off, because that row is what blocks the
+    workspace. Every other action is the quiet pill.</li>
+  <li><b>Provider marks.</b> The same glyph set the template page uses, so one
+    connection reads the same everywhere.</li>
+  <li><b>The trailing help paragraph goes.</b> It told members how to place a
+    key by hand. It is removed in this change.</li>
+</ul>
+
+</body>
+</html>

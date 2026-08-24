@@ -115,12 +115,17 @@ function row(view: { container: HTMLElement }, label: string): HTMLElement {
   return found!;
 }
 
-function attachButton(view: { container: HTMLElement }): HTMLButtonElement {
-  const found = [...view.container.querySelectorAll('button')]
-    .find((candidate) => candidate.closest('.tplf-foot') !== null
-      && candidate.textContent !== 'Upload files');
-  expect(found).toBeDefined();
-  return found as HTMLButtonElement;
+function uploadButton(view: { container: HTMLElement }): HTMLButtonElement {
+  const found = view.container.querySelector<HTMLButtonElement>('.tplf-upload');
+  expect(found).not.toBeNull();
+  return found!;
+}
+
+function uploadMenuItem(view: { container: HTMLElement }, label: string): HTMLButtonElement {
+  const found = [...view.container.querySelectorAll<HTMLButtonElement>('.tplf-upload-menu .drive-menu-item')]
+    .find((candidate) => candidate.textContent === label);
+  expect(found, label).toBeDefined();
+  return found!;
 }
 
 async function screenWith(fetcher = stub()) {
@@ -138,7 +143,7 @@ async function screenWith(fetcher = stub()) {
 }
 
 describe('create template screen', () => {
-  it('selects with one click, attaches with the button, and posts the template', async () => {
+  it('attaches on row click, detaches on a second click, and posts the template', async () => {
     const fetcher = stub();
     const { view, onCreated } = await screenWith(fetcher);
 
@@ -147,25 +152,29 @@ describe('create template screen', () => {
     expect(view.container.querySelector<HTMLDetailsElement>('.blueprint-advanced')?.open).toBe(false);
     expect(row(view, 'datasets').textContent).toContain('me');
     expect(row(view, 'ada-notes').textContent).toContain('Ada Park');
-    expect(attachButton(view).disabled).toBe(true);
-    expect(attachButton(view).textContent).toContain('Select a folder');
+    // The footer carries exactly one button, and it is the upload control.
+    expect([...view.container.querySelectorAll('.tplf-foot button')]).toHaveLength(1);
+    expect(uploadButton(view).textContent).toBe('Upload');
 
     await act(async () => {
       row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(attachButton(view).textContent).toBe('Attach “datasets”');
-    await act(async () => {
-      attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
     expect(view.container.querySelector('.tplf-side')?.textContent).toContain('datasets');
     expect(row(view, 'datasets').textContent).toContain('In template');
-    expect(attachButton(view).textContent).toBe('Detach “datasets”');
+    expect(row(view, 'datasets').getAttribute('aria-pressed')).toBe('true');
+
+    // Clicking the same row again takes it back out.
+    await act(async () => {
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('Nothing attached');
+    expect(row(view, 'datasets').getAttribute('aria-pressed')).toBe('false');
 
     await act(async () => {
-      row(view, 'ada-notes').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await act(async () => {
-      attachButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      row(view, 'ada-notes').dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('2 attachments');
 
@@ -588,10 +597,15 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
-  it('enters a folder on double click, walks back up, and keeps the attach target', async () => {
+  it('enters a folder on double click, walks back up, and keeps what is attached', async () => {
     const { view } = await screenWith();
     const back = view.container.querySelector<HTMLButtonElement>('.tplf-back')!;
     expect(back.disabled).toBe(true);
+
+    await act(async () => {
+      row(view, 'datasets').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('1 attachment');
 
     await act(async () => {
       row(view, 'ada-notes').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -600,7 +614,8 @@ describe('create template screen', () => {
     expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('ada-notes');
     expect(row(view, 'raw').textContent).toContain('1 file');
     expect(row(view, 'report.md').textContent).toContain('128 B');
-    expect(attachButton(view).textContent).toBe('Attach “ada-notes”');
+    // Looking inside a folder changes nothing about what is attached.
+    expect(view.container.querySelector('.tplf-foot-hint')?.textContent).toBe('1 attachment');
 
     await act(async () => {
       row(view, 'raw').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
@@ -616,6 +631,66 @@ describe('create template screen', () => {
       back.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(view.container.querySelector('.tplf-crumb')?.textContent).toBe('All folders');
+    await view.unmount();
+  });
+
+  it('attaches a single Drive file by copying it into the template files folder', async () => {
+    const filesFolder = {
+      id: 'folder-files',
+      name: 'new-template-files',
+      role: 'owner',
+      orgRole: null,
+      owner: { name: 'Min Song', avatarUrl: null },
+      attachedWorkspaceIds: [],
+      createdAt: 4,
+      updatedAt: 4,
+      grants: [],
+    };
+    let created = false;
+    const puts: string[] = [];
+    const deletes: string[] = [];
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/folders' && init?.method === 'POST') {
+        created = true;
+        return Response.json({ folder: filesFolder }, { status: 201 });
+      }
+      if (url.pathname === '/folders' && init?.method === undefined && created) {
+        return Response.json({ folders: [...folders, filesFolder] });
+      }
+      if (url.pathname === '/folders/folder-ada/objects/report.md' && init?.method === undefined) {
+        return new Response('# report\n');
+      }
+      if (url.pathname === '/folders/folder-files/objects/report.md') {
+        if (init?.method === 'PUT') { puts.push(url.pathname); return new Response(null, { status: 200 }); }
+        if (init?.method === 'DELETE') { deletes.push(url.pathname); return new Response(null, { status: 204 }); }
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+
+    await act(async () => {
+      row(view, 'ada-notes').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    await settle();
+
+    // A file is a first-class attachment: clicking it copies the bytes into
+    // the template's own files folder, which is what gets attached.
+    await act(async () => {
+      row(view, 'report.md').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settle();
+    expect(puts).toEqual(['/folders/folder-files/objects/report.md']);
+    expect(row(view, 'report.md').getAttribute('aria-pressed')).toBe('true');
+    expect(row(view, 'report.md').textContent).toContain('In template');
+    expect(view.container.querySelector('.tplf-side')?.textContent).toContain('new-template-files');
+
+    // Clicking again removes the copy.
+    await act(async () => {
+      row(view, 'report.md').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settle();
+    expect(deletes).toEqual(['/folders/folder-files/objects/report.md']);
+    expect(row(view, 'report.md').getAttribute('aria-pressed')).toBe('false');
     await view.unmount();
   });
 
@@ -723,7 +798,7 @@ describe('create template screen', () => {
     // member, so the hint routes them to their admin, not to a form.
     const unconfigured = await screenWith();
     expect(unconfigured.view.container.textContent)
-      .toContain('Ask an organization admin to configure the GitHub App');
+      .toContain('Ask an admin to set up GitHub above');
     expect(unconfigured.view.container.querySelector(
       'input[aria-label="Filter repositories"]',
     )).toBeNull();
@@ -741,7 +816,7 @@ describe('create template screen', () => {
     });
     const { view } = await screenWith(fetcher);
     expect(view.container.textContent)
-      .not.toContain('Ask an organization admin to configure the GitHub App');
+      .not.toContain('Ask an admin to add the GitHub key');
 
     // The filter narrows without losing the selection UI.
     const filter = view.container.querySelector<HTMLInputElement>(
@@ -907,7 +982,7 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
-  it('uploads files picked through the Upload files button', async () => {
+  it('uploads files picked through the Upload menu', async () => {
     const filesFolder = {
       id: 'folder-files',
       name: 'new-template-files',
@@ -934,8 +1009,20 @@ describe('create template screen', () => {
       return null;
     });
     const { view } = await screenWith(fetcher);
-    // The section reads as attachments, not folders-only.
-    expect(view.container.textContent).toContain('Attachments');
+    // The section reads as files, not folders-only.
+    expect([...view.container.querySelectorAll('h2')].map((node) => node.textContent))
+      .toContain('Files');
+
+    // One button opens the menu; the menu reaches both pickers.
+    await act(async () => {
+      uploadButton(view).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(uploadMenuItem(view, 'Files')).toBeDefined();
+    expect(uploadMenuItem(view, 'Folder')).toBeDefined();
+    await act(async () => {
+      uploadMenuItem(view, 'Files').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(view.container.querySelector('.tplf-upload-menu')).toBeNull();
 
     const picker = view.container.querySelector<HTMLInputElement>('input[aria-label="Upload files"]')!;
     expect(picker).not.toBeNull();
@@ -1083,6 +1170,25 @@ describe('template screen org-credential config', () => {
     });
   }
 
+  it('marks every catalog row with its provider glyph', async () => {
+    connectionsStub();
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    const rows = [...view.container.querySelectorAll<HTMLElement>('.tplf-connection')];
+    expect(rows).toHaveLength(3);
+    for (const label of rows) {
+      expect(label.querySelector('svg.tplf-connection-glyph'), label.textContent ?? '').not.toBeNull();
+    }
+    await view.unmount();
+  });
+
   it('opens the inline config form when an admin attaches an unconfigured provider', async () => {
     const puts: [string, unknown][] = [];
     const fetcher = connectionsStub((url, init) => {
@@ -1165,7 +1271,7 @@ describe('template screen org-credential config', () => {
     await settle();
     await tick(view, 'Discord');
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
-    expect(view.container.textContent).toContain('Ask an organization admin to configure Discord');
+    expect(view.container.textContent).toContain('Ask an admin to add the Discord key.');
     await view.unmount();
   });
 
@@ -1196,18 +1302,20 @@ describe('template screen org-credential config', () => {
     );
     await settle();
     await tick(view, 'Discord');
-    expect(view.container.textContent).toContain('org credential');
+    expect(view.container.textContent).toContain('org key');
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
     // Replacing swaps the one org-wide credential under every template and
     // workspace, so the form opens only after an explicit confirmation.
     const replace = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Replace credential');
+      .find((button) => button.textContent === 'Replace Discord key');
     expect(replace).toBeDefined();
     await act(async () => {
       replace!.click();
     });
     const confirmation = view.container.querySelector('.webapp-confirmation-dialog');
-    expect(confirmation?.textContent).toContain('Replace the Discord credential for the whole organization?');
+    expect(confirmation?.textContent).toContain('Replace the Discord key?');
+    expect(confirmation?.textContent)
+      .toContain('Every template and workspace at this organization switches to the new key immediately.');
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
 
     // Escape backs out without opening the form.
@@ -1219,7 +1327,7 @@ describe('template screen org-credential config', () => {
 
     await act(async () => {
       [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Replace credential')!.click();
+        .find((button) => button.textContent === 'Replace Discord key')!.click();
     });
     await act(async () => {
       view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
@@ -1245,9 +1353,9 @@ describe('template screen org-credential config', () => {
     // the org credential is an offer behind a button, not a gate.
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
     expect(view.container.textContent)
-      .toContain('each member authorizes GitHub themselves');
+      .toContain('Without an org key, members sign in to GitHub themselves.');
     const configure = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Configure org credential (optional)');
+      .find((button) => button.textContent === 'Add GitHub key');
     expect(configure).toBeDefined();
     await act(async () => {
       configure!.click();
@@ -1284,7 +1392,7 @@ describe('template screen org-credential config', () => {
     // members to an admin for the org App credential.
     expect(view.container.querySelector('.tplf-connections')?.textContent)
       .not.toContain('Ask an organization admin');
-    expect(view.container.textContent).toContain('Members connect GitHub themselves');
+    expect(view.container.textContent).toContain('Members sign in to GitHub themselves.');
     await view.unmount();
   });
 
@@ -1346,13 +1454,13 @@ describe('template screen org-credential config', () => {
       />,
     );
     await settle();
-    expect(view.container.textContent).toContain('Configure the GitHub App first');
+    expect(view.container.textContent).toContain('Set up GitHub above first');
     expect(view.container.querySelector('input[aria-label="Filter repositories"]')).toBeNull();
 
     await tick(view, 'GitHub');
     await act(async () => {
       [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Configure org credential (optional)')!.click();
+        .find((button) => button.textContent === 'Add GitHub key')!.click();
     });
     const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;

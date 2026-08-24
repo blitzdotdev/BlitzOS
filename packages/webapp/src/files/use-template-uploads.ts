@@ -22,7 +22,14 @@ export function useTemplateUploads({
   onFolders,
   onError,
 }: {
-  client: Pick<ControlPlaneClient, 'createFolder' | 'uploadFolderObject' | 'listFolders'>;
+  client: Pick<
+    ControlPlaneClient,
+    | 'createFolder'
+    | 'uploadFolderObject'
+    | 'listFolders'
+    | 'downloadFolderObject'
+    | 'deleteFolderObject'
+  >;
   /** The template name at upload time; it names the loose-files folder. */
   templateName: string;
   onAttach: (folderId: string) => void;
@@ -31,6 +38,9 @@ export function useTemplateUploads({
 }) {
   const [uploading, setUploading] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<string | null>(null);
+  // Drive files picked out of a folder, by the name they took inside the
+  // template's files folder — which is also their object key there.
+  const [pickedNames, setPickedNames] = useState<Set<string>>(new Set());
   // Files uploaded through this screen, keyed by their folder, so the
   // attached sidebar can show a per-file count for the files folder.
   const [fileCounts, setFileCounts] = useState<Map<string, number>>(new Map());
@@ -101,6 +111,52 @@ export function useTemplateUploads({
       .catch((caught: Error) => onError(caught.message));
   };
 
+  /** Attach one file that already lives in Drive. A template delivers folders,
+   * so the bytes are copied into the same auto-created files folder a loose
+   * upload uses: nothing downstream learns a second kind of attachment. The
+   * copy round-trips through the browser because Drive has no server-side
+   * copy route; the per-file ceiling the drop path enforces still applies. */
+  const pickDriveFile = async (sourceFolderId: string, key: string, name: string) => {
+    setUploading(name);
+    setDropHint(null);
+    try {
+      const blob = await client.downloadFolderObject(sourceFolderId, key);
+      await uploadLooseFiles([{ file: new File([blob], name), relativePath: name }]);
+      setPickedNames((current) => new Set(current).add(name));
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : 'That file could not be attached.');
+      setUploading(null);
+      return;
+    }
+    setUploading(null);
+    await client.listFolders()
+      .then(({ folders: loaded }) => onFolders(loaded))
+      .catch((caught: Error) => onError(caught.message));
+  };
+
+  /** Undo of pickDriveFile. The files folder stays attached even when it goes
+   * empty — detaching it is the sidebar's job, and doing it here would drop
+   * files the same folder holds from a local upload. */
+  const dropDriveFile = async (name: string) => {
+    const folderId = filesFolderId.current;
+    if (folderId === null) return;
+    try {
+      await client.deleteFolderObject(folderId, name);
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : 'That file could not be removed.');
+      return;
+    }
+    setPickedNames((current) => {
+      const next = new Set(current);
+      next.delete(name);
+      return next;
+    });
+    setFileCounts((current) => new Map(current).set(
+      folderId,
+      Math.max(0, (current.get(folderId) ?? 1) - 1),
+    ));
+  };
+
   const uploadPickedFiles = (picked: File[]) => {
     try {
       void uploadDropped(payloadFromPickedFiles(picked));
@@ -116,6 +172,9 @@ export function useTemplateUploads({
     setDropHint,
     fileCounts,
     looseFolderName,
+    pickedNames,
+    pickDriveFile,
+    dropDriveFile,
     uploadDropped,
     uploadPickedFiles,
   };

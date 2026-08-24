@@ -9,12 +9,12 @@ import type { ControlPlaneClient } from '../api';
 import { caughtErrorMessage } from '../error-message';
 import { ModalOverlay } from '../ModalOverlay';
 import { settingsPath } from '../sessions-page-state';
-import { CUSTODY_BADGE } from './custody-badge';
 import {
   grantInput,
   lockedInstanceBaseUrl,
   ProviderConnectSurface,
 } from './ProviderConnectSurface';
+import { ProviderGlyph } from './ProviderGlyph';
 
 export type ProviderRowsClient = Pick<
   ControlPlaneClient,
@@ -64,16 +64,44 @@ function isBacked(
     && connection.orgCredential);
 }
 
-/** "authorized by you · Aug 21". The workspace mints from its owner's grants
- * at create time by design, so a member who never touched this panel can find
- * a provider already connected. Saying when they authorized it is what turns
- * that from a surprise into a fact. */
+/** "you signed in Aug 21". The workspace mints from its owner's grants at
+ * create time by design, so a member who never touched this panel can find a
+ * provider already connected. This line is the only thing on the tile that
+ * answers "why is this on when I never touched it", so it prints on a
+ * connected tile and nowhere else — beside Connect it reads as a contradiction
+ * rather than an explanation. */
 function provenance(grant: UserGrantView): string {
   const when = new Date(grant.createdAt).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
   });
-  return `authorized by you · ${when}`;
+  return `you signed in ${when}`;
+}
+
+/** What the tile says, in one word.
+ *
+ * Three states, and no fourth. `on` means the workspace holds a live lease.
+ * `go` means pressing the tile connects it — whether that mints silently from
+ * a credential already on file or opens a form is exactly what the press
+ * reveals, so the tile does not say. `blocked` means pressing would fail, and
+ * clearing it is an admin's job or an operator's. */
+interface TileState {
+  kind: 'on' | 'go' | 'blocked';
+  word: string;
+}
+
+function tileState(
+  row: ProviderRow,
+  connected: boolean,
+  backed: boolean,
+  memberPath: boolean,
+): TileState {
+  if (connected) return { kind: 'on', word: 'Connected' };
+  // An agent asked for a name the catalog does not know. There is no form to
+  // open and nothing to mint.
+  if (row.entry === null) return { kind: 'blocked', word: 'Unknown' };
+  if (!backed && !memberPath) return { kind: 'blocked', word: 'Needs a key' };
+  return { kind: 'go', word: 'Connect' };
 }
 
 /** Revoking a lease and revoking a grant are different acts with different
@@ -293,7 +321,7 @@ export function WorkspaceProviderRows({
       aria-label="Workspace providers"
     >
       {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
-      <div className="workspace-credential-rows">
+      <div className="wsc-list">
         {rows.map((row) => {
           const connected = isConnected(row, now);
           const backed = isBacked(row, orgConnections);
@@ -302,85 +330,57 @@ export function WorkspaceProviderRows({
           const oauthHref = row.entry?.oauthConfigured === true
             ? client.connectStartUrl(row.name, workspaceId)
             : null;
+          // A path the member can walk without waiting on anyone: a token to
+          // paste, or an OAuth round trip this instance actually has a client
+          // registered for.
+          const memberPath = row.entry !== null
+            && (row.entry.personalTokenLabel !== null
+              || (row.entry.oauthAvailable && oauthHref !== null));
+          const state = tileState(row, connected, backed, memberPath);
           return (
             <article
-              className={`workspace-credential-row workspace-provider-row${
-                focusProvider === row.name ? ' workspace-credential-row--focus' : ''
+              className={`wsc-tile wsc-tile--${state.kind}${
+                focusProvider === row.name ? ' wsc-tile--focus' : ''
               }`}
               key={row.name}
             >
-              <div className="workspace-credential-row__title">
-                <button
-                  className="workspace-provider-row__toggle"
-                  type="button"
-                  aria-expanded={isOpen}
-                  onClick={() => (isOpen ? close() : open(row, 'connect'))}
-                >
-                  <strong>{row.title}</strong>
-                </button>
-                {row.stipulated && (
-                  <span className="workspace-state-badge">from template</span>
-                )}
-                {connected && (
-                  <span className="workspace-state-badge workspace-state-badge--active">
-                    Connected
+              {/* The whole tile is the control, the way a template tile is.
+                * That is what keeps a trailing button off every row. */}
+              <button
+                className="wsc-tile__main"
+                type="button"
+                aria-expanded={isOpen}
+                disabled={readOnly === true}
+                onClick={() => {
+                  if (isOpen) {
+                    close();
+                    return;
+                  }
+                  // A credential already stands behind it, so the press is the
+                  // whole act: mint, and let the tile flip.
+                  if (!connected && backed) {
+                    void connectNow(row);
+                    return;
+                  }
+                  open(row, 'connect');
+                }}
+              >
+                <span className="wsc-tile__head">
+                  <ProviderGlyph className="wsc-tile__glyph" provider={row.name} />
+                  <span className="wsc-tile__name">
+                    <strong>{row.title}</strong>
+                    {connected && row.grant !== null && <span>{provenance(row.grant)}</span>}
                   </span>
-                )}
-              </div>
-              {(row.grant !== null || row.lease !== null) && (
-                <div className="workspace-credential-row__meta">
-                  {row.grant !== null && <span>{provenance(row.grant)}</span>}
-                  {row.lease !== null && (
-                    <span>{CUSTODY_BADGE[row.lease.mode === 'inject' ? 'cp' : 'proxy']}</span>
-                  )}
-                </div>
-              )}
-              {readOnly !== true && (
-                <div className="workspace-credential-row__actions">
-                  {connected ? (
-                    <>
-                      {row.entry?.personalTokenLabel != null ? (
-                        <button
-                          className="webapp-action"
-                          type="button"
-                          onClick={() => open(row, 'replace')}
-                        >Replace key</button>
-                      ) : oauthHref !== null && (
-                        <a className="webapp-action" href={oauthHref}>Reauthorize</a>
-                      )}
-                      <button
-                        className="webapp-action"
-                        type="button"
-                        disabled={revoking !== null}
-                        onClick={() => setDisconnecting(row)}
-                      >{revoking === row.lease?.id ? 'Disconnecting…' : 'Disconnect'}</button>
-                    </>
-                  ) : (
-                    // One word, whatever stands behind the provider. With a
-                    // credential already there this mints silently and the
-                    // chip flips; without one the row opens its connect
-                    // surface. The member never has to tell the two apart.
-                    <button
-                      className="webapp-action webapp-action--primary"
-                      type="button"
-                      disabled={saving}
-                      onClick={() => {
-                        if (backed) {
-                          void connectNow(row);
-                          return;
-                        }
-                        open(row, 'connect');
-                      }}
-                    >Connect</button>
-                  )}
-                </div>
-              )}
+                  {row.stipulated && <em className="wsc-tile__chip">from template</em>}
+                </span>
+                <span className="wsc-tile__state">{state.word}</span>
+              </button>
               {isOpen && readOnly !== true && (
-                <div className="workspace-provider-row__surface">
+                <div className="wsc-tile__open">
                   {row.entry === null ? (
                     <p className="connect-help">
-                      An agent asked for {row.name} by name. It is not in the provider
-                      catalog, so there is nothing to authorize here.
+                      An agent asked for {row.name} by name. It is not in the
+                      provider catalog.
                     </p>
                   ) : showForm ? (
                     <ProviderConnectSurface
@@ -395,11 +395,40 @@ export function WorkspaceProviderRows({
                       onSubmit={(event) => { void submit(row, event); }}
                       onCancel={close}
                     />
+                  ) : connected ? (
+                    <>
+                      <p className="connect-help">
+                        Disconnecting stops this workspace only. Your sign-in stays.
+                      </p>
+                      <div className="wsc-tile__actions">
+                        {row.entry.personalTokenLabel != null ? (
+                          <button
+                            className="webapp-action"
+                            type="button"
+                            onClick={() => open(row, 'replace')}
+                          >Replace key</button>
+                        ) : oauthHref !== null && (
+                          <a className="webapp-action" href={oauthHref}>Reauthorize</a>
+                        )}
+                        <button
+                          className="webapp-action"
+                          type="button"
+                          disabled={revoking !== null}
+                          onClick={() => setDisconnecting(row)}
+                        >{revoking === row.lease?.id ? 'Disconnecting…' : 'Disconnect'}</button>
+                      </div>
+                    </>
                   ) : (
-                    <p className="connect-help">
-                      {row.title} already has a credential behind it. Connecting
-                      takes one click and no form.
-                    </p>
+                    // Only `blitz connections open` reaches this: pressing the
+                    // tile would have minted instead of opening it.
+                    <div className="wsc-tile__actions">
+                      <button
+                        className="webapp-action webapp-action--primary"
+                        type="button"
+                        disabled={saving}
+                        onClick={() => { void connectNow(row); }}
+                      >Connect</button>
+                    </div>
                   )}
                 </div>
               )}
@@ -407,13 +436,6 @@ export function WorkspaceProviderRows({
           );
         })}
       </div>
-      {readOnly !== true && (
-        <p className="connect-help">
-          A key for anything not listed here is yours to place: write it to a
-          file or <code>.env</code> in the workspace and tell the agent where
-          it is.
-        </p>
-      )}
       {disconnecting !== null && (
         <DisconnectChooser
           row={disconnecting}

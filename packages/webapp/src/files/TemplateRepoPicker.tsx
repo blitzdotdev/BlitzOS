@@ -62,12 +62,8 @@ export function TemplateRepoPicker({
     return (
       <p className="tplf-repos-hint">
         {admin
-          ? 'Configure the GitHub App first — attach GitHub in the Connections '
-            + 'section above and store the org credential there. Repos become '
-            + 'pickable here the moment it saves.'
-          : 'Ask an organization admin to configure the GitHub App — its '
-            + 'credential is stored in the Connections section above, right on '
-            + 'this template page. Repos become pickable here once it exists.'}
+          ? 'Set up GitHub above first. Repos show up here when it saves.'
+          : 'Ask an admin to set up GitHub above. Repos show up here after that.'}
       </p>
     );
   }

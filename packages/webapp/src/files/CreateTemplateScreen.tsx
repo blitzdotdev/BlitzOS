@@ -78,8 +78,9 @@ export function CreateTemplateScreen({
   const [machineTypeId, setMachineTypeId] = useState('');
   const [folders, setFolders] = useState<FolderView[]>([]);
   const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [browse, setBrowse] = useState<BrowseState | null>(null);
+  /** Open state of the single Upload button's files-or-folder menu. */
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [objectsByFolder, setObjectsByFolder] = useState<Map<string, FolderObjectView[]>>(new Map());
   const [shareWithOrg, setShareWithOrg] = useState(true);
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
@@ -104,12 +105,15 @@ export function CreateTemplateScreen({
   const [repos, setRepos] = useState<string[]>([]);
   const dragDepth = useRef(0);
   const filePickerRef = useRef<HTMLInputElement | null>(null);
+  const folderPickerRef = useRef<HTMLInputElement | null>(null);
   const {
     uploading,
     dropHint,
     setDropHint,
     fileCounts,
-    looseFolderName,
+    pickedNames,
+    pickDriveFile,
+    dropDriveFile,
     uploadDropped,
     uploadPickedFiles,
   } = useTemplateUploads({
@@ -160,8 +164,6 @@ export function CreateTemplateScreen({
   const browsedFolder = browse === null
     ? null
     : accessible.find(({ id }) => id === browse.folderId) ?? null;
-  const target = browsedFolder ?? accessible.find(({ id }) => id === selectedId) ?? null;
-  const targetAttached = target !== null && attachedIds.has(target.id);
 
   const loadObjects = (folderId: string) => {
     if (objectsByFolder.has(folderId)) return;
@@ -173,7 +175,6 @@ export function CreateTemplateScreen({
   };
 
   const enterFolder = (folderId: string) => {
-    setSelectedId(folderId);
     setBrowse({ folderId, path: [] });
     loadObjects(folderId);
   };
@@ -186,13 +187,11 @@ export function CreateTemplateScreen({
     });
   };
 
-  const toggleAttach = () => {
-    if (target === null) return;
-    const id = target.id;
+  const toggleAttach = (folderId: string) => {
     setAttachedIds((current) => {
       const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
       return next;
     });
   };
@@ -291,10 +290,11 @@ export function CreateTemplateScreen({
       )}
       {rows.map((folder) => (
         <button
-          className={`tplf-row${selectedId === folder.id ? ' tplf-row--selected' : ''}`}
+          className={`tplf-row${attachedIds.has(folder.id) ? ' tplf-row--selected' : ''}`}
           type="button"
           key={folder.id}
-          onClick={() => setSelectedId(folder.id)}
+          aria-pressed={attachedIds.has(folder.id)}
+          onClick={() => toggleAttach(folder.id)}
           onDoubleClick={() => enterFolder(folder.id)}
         >
           <FolderDuoIcon className="drive-folder-icon" />
@@ -339,14 +339,31 @@ export function CreateTemplateScreen({
             <span className="tplf-row-state">{dir.fileCount} {dir.fileCount === 1 ? 'file' : 'files'}</span>
           </button>
         ))}
-        {entries.files.map((file) => (
-          <div className="tplf-row tplf-row--file" key={file.key}>
-            <DocDuoIcon name={file.name} className="drive-folder-icon" />
-            <span className="tplf-row-name">{file.name}</span>
-            <span className="tplf-row-owner" />
-            <span className="tplf-row-state">{formatWhen(file.mtime)} · {formatBytes(file.size)}</span>
-          </div>
-        ))}
+        {entries.files.map((file) => {
+          const picked = pickedNames.has(file.name);
+          return (
+            <button
+              className={`tplf-row${picked ? ' tplf-row--selected' : ''}`}
+              type="button"
+              key={file.key}
+              aria-pressed={picked}
+              disabled={uploading !== null}
+              onClick={() => {
+                if (browse === null) return;
+                if (picked) void dropDriveFile(file.name);
+                else void pickDriveFile(browse.folderId, file.key, file.name);
+              }}
+            >
+              <DocDuoIcon name={file.name} className="drive-folder-icon" />
+              <span className="tplf-row-name">{file.name}</span>
+              <span className="tplf-row-owner" />
+              <span className="tplf-row-state">
+                {picked && <em className="tplf-chip tplf-chip--attached">In template</em>}
+                <span>{formatWhen(file.mtime)} · {formatBytes(file.size)}</span>
+              </span>
+            </button>
+          );
+        })}
       </>
     );
   };
@@ -410,13 +427,8 @@ export function CreateTemplateScreen({
 
           <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
-              <h2>Attachments</h2>
-              <p>
-                Attachments sync into every workspace created from this template.
-                Click to select, double-click to look inside — or drop folders or
-                files from your computer anywhere in the list. Loose files land in
-                a “{looseFolderName}” Drive folder made for this template.
-              </p>
+              <h2>Files</h2>
+              <p>Every workspace starts with these. Click to attach, double-click to look inside.</p>
             </div>
             <div className="tplf">
               <div
@@ -486,11 +498,11 @@ export function CreateTemplateScreen({
                   </div>
                 )}
               </div>
-              <aside className="tplf-side" aria-label="Attachments">
+              <aside className="tplf-side" aria-label="In this template">
                 <h3>In this template</h3>
                 <div className="tplf-side-list">
                   {attached.length === 0
-                    ? <p className="tplf-side-empty">Nothing attached yet. Select a folder and press Attach, or upload files.</p>
+                    ? <p className="tplf-side-empty">Nothing yet. Click a folder, or upload.</p>
                     : attached.map((folder) => (
                       <div className="tplf-side-item" key={folder.id}>
                         <FolderDuoIcon className="drive-folder-icon" />
@@ -529,24 +541,69 @@ export function CreateTemplateScreen({
                     if (picked.length > 0) uploadPickedFiles(picked);
                   }}
                 />
-                <button
-                  className="webapp-action"
-                  type="button"
-                  disabled={uploading !== null}
-                  onClick={() => filePickerRef.current?.click()}
-                >
-                  Upload files
-                </button>
-                <button
-                  className={`webapp-action${targetAttached ? '' : ' webapp-action--primary'}`}
-                  type="button"
-                  disabled={target === null}
-                  onClick={toggleAttach}
-                >
-                  {target === null
-                    ? 'Select a folder to attach'
-                    : targetAttached ? `Detach “${target.name}”` : `Attach “${target.name}”`}
-                </button>
+                <input
+                  // The directory-picker flag is not in React's typed DOM props,
+                  // so the ref callback stamps the attribute; webkitdirectory
+                  // works cross-browser.
+                  ref={(node) => {
+                    folderPickerRef.current = node;
+                    node?.setAttribute('webkitdirectory', '');
+                  }}
+                  type="file"
+                  hidden
+                  aria-label="Upload a folder"
+                  onChange={(event) => {
+                    const picked = Array.from(event.currentTarget.files ?? []);
+                    event.currentTarget.value = '';
+                    if (picked.length > 0) uploadPickedFiles(picked);
+                  }}
+                />
+                <div className="tplf-upload-wrap">
+                  <button
+                    className="create-workspace-primary tplf-upload"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={uploadMenuOpen}
+                    disabled={uploading !== null}
+                    onClick={() => setUploadMenuOpen((open) => !open)}
+                  >
+                    {uploading === null ? 'Upload' : 'Uploading…'}
+                  </button>
+                  {uploadMenuOpen && (
+                    <>
+                      <button
+                        className="drive-new-scrim"
+                        type="button"
+                        aria-label="Close menu"
+                        onClick={() => setUploadMenuOpen(false)}
+                      />
+                      <div className="drive-menu tplf-upload-menu" role="menu">
+                        <button
+                          className="drive-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setUploadMenuOpen(false);
+                            filePickerRef.current?.click();
+                          }}
+                        >
+                          <DocDuoIcon name="file" /><span>Files</span>
+                        </button>
+                        <button
+                          className="drive-menu-item"
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setUploadMenuOpen(false);
+                            folderPickerRef.current?.click();
+                          }}
+                        >
+                          <FolderDuoIcon /><span>Folder</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
             <TemplateConnectionsSection
@@ -560,10 +617,7 @@ export function CreateTemplateScreen({
             />
             <div className="tplf-repos">
               <h2>Repositories</h2>
-              <p>
-                GitHub repos cloned into /workspace when a workspace starts from
-                this template. Picking any attaches the GitHub connection above.
-              </p>
+              <p>Repos cloned into /workspace at start. Picking one attaches GitHub above.</p>
               <TemplateRepoPicker
                 client={client}
                 admin={admin}
@@ -578,10 +632,7 @@ export function CreateTemplateScreen({
                 checked={shareWithOrg}
                 onChange={(event) => setShareWithOrg(event.currentTarget.checked)}
               />
-              <span>
-                Share attachments you own with everyone at {orgName} (viewer),
-                so the template works without individual grants
-              </span>
+              <span>Let everyone at {orgName} see these files</span>
             </label>
             {isAdmin && (
               <label className="tplf-share">
@@ -591,10 +642,7 @@ export function CreateTemplateScreen({
                   checked={isOrgDefault}
                   onChange={(event) => setIsOrgDefault(event.currentTarget.checked)}
                 />
-                <span>
-                  Default template for {orgName} — the create-workspace page
-                  starts on it for every member
-                </span>
+                <span>Make this the default for {orgName}</span>
               </label>
             )}
           </section>

@@ -656,13 +656,14 @@ describe('provider connect surface (workspace rows)', () => {
     };
   }
 
+  /** The whole tile is the control, so pressing it is what opens it. */
   function expand(container: ParentNode, title: string): Element {
-    const row = [...container.querySelectorAll('.workspace-provider-row')]
+    const row = [...container.querySelectorAll('.wsc-tile')]
       .find((candidate) => candidate.querySelector('strong')?.textContent === title);
-    if (row === undefined) throw new Error(`no provider row for ${title}`);
-    const toggle = row.querySelector('.workspace-provider-row__toggle');
-    if (toggle === null) throw new Error(`no toggle for ${title}`);
-    return toggle;
+    if (row === undefined) throw new Error(`no provider tile for ${title}`);
+    const main = row.querySelector('.wsc-tile__main');
+    if (main === null) throw new Error(`no tile button for ${title}`);
+    return main;
   }
 
   it('explains admin-configured providers point at the template page', async () => {
@@ -679,7 +680,7 @@ describe('provider connect surface (workspace rows)', () => {
 
     await act(async () => click(expand(view.container, 'Acme Tracker')));
     expect(view.container.querySelector('.connect-form')).toBeNull();
-    expect(view.container.textContent).toContain('An organization admin configures Acme Tracker once');
+    expect(view.container.textContent).toContain('An admin stores one Acme Tracker key for everyone');
     expect(view.container.textContent).toContain('template page');
     expect(view.container.textContent).not.toContain('Connecting requires OAuth');
 

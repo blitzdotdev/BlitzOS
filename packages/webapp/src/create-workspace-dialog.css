@@ -16,7 +16,7 @@
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--rule);
-  border-radius: 10px;
+  border-radius: var(--r-card);
   color: var(--ink);
   background: var(--paper);
   font: 13px/1.6 var(--font-ui);
@@ -52,7 +52,7 @@
   min-height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--faint);
   background: var(--paper);
   font-size: 18px;
@@ -103,7 +103,7 @@
 .blueprint-machine-context select {
   min-width: 0;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--ink);
   background: var(--paper);
   outline: 0;
@@ -121,7 +121,7 @@
   gap: 14px;
   padding: 16px;
   border: 1px solid var(--rule);
-  border-radius: 9px;
+  border-radius: var(--r-card);
 }
 
 .blueprint-selection__heading {
@@ -131,7 +131,7 @@
 
 .blueprint-selection__empty {
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
 }
 
 .blueprint-selection__empty {
@@ -184,7 +184,7 @@
   display: grid;
   grid-template-rows: minmax(82px, auto) auto;
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--r-item);
   overflow: hidden;
   color: var(--muted);
   cursor: pointer;
@@ -277,7 +277,7 @@
   padding: 9px 10px;
   resize: vertical;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--ink);
   background: var(--paper);
   outline: 0;
@@ -324,7 +324,7 @@
 .blueprint-environment-row input,
 .blueprint-startup-script textarea {
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: var(--paper);
   color: var(--ink);
   padding: 10px 12px;
@@ -372,7 +372,7 @@
 
 .blueprint-agent-rules-row select {
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: var(--paper);
   color: var(--ink);
   padding: 10px 12px;
@@ -382,7 +382,7 @@
   min-height: 38px;
   padding: 0 14px;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--ink);
   cursor: pointer;
@@ -401,6 +401,7 @@
   max-height: min(760px, 100%);
   grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid var(--rule);
+  border-radius: var(--r-card);
   color: var(--ink);
   background: color-mix(in oklab, var(--ink) 2%, var(--paper));
   font-family: var(--font-ui);
@@ -440,7 +441,7 @@
 
 .blueprint-agent-rules-body input {
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: var(--paper);
   color: var(--ink);
   padding: 10px 12px;
@@ -453,7 +454,7 @@
   padding: 10px 12px;
   resize: vertical;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--ink);
   background: var(--paper);
   outline: 0;
@@ -485,7 +486,7 @@
   margin-right: auto;
   padding: 0 14px;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   background: transparent;
   color: var(--ansi-red);
   cursor: pointer;
@@ -516,7 +517,7 @@
   margin-right: auto;
   padding: 0 14px;
   border: 1px solid var(--rule);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--muted);
   background: var(--paper);
   font-size: 11px;
@@ -545,7 +546,7 @@
   min-height: 38px;
   padding: 0 14px;
   border: 1px solid var(--ink);
-  border-radius: 7px;
+  border-radius: var(--r-control);
   color: var(--paper);
   background: var(--ink);
   font-size: 11.5px;
@@ -626,6 +627,7 @@
   gap: 4px;
   padding: 12px 14px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-item);
   background: var(--paper);
   color: var(--ink);
   text-align: left;
@@ -702,6 +704,13 @@
   font: 12px/1.5 var(--font-ui);
 }
 
+.tplf-connection-glyph {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--ink);
+}
+
 .tplf-connection-block {
   display: grid;
   gap: 6px;
@@ -743,6 +752,7 @@
 .tplf-repos-picker input[aria-label='Filter repositories'] {
   padding: 5px 8px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-item);
   background: var(--paper);
   color: var(--ink);
   font: 12px/1.5 var(--font-ui);
@@ -754,6 +764,7 @@
   gap: 2px;
   overflow-y: auto;
   border: 1px solid var(--rule);
+  border-radius: var(--r-item);
   padding: 6px 8px;
 }
 
@@ -780,6 +791,7 @@
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--rule);
+  border-radius: var(--r-card);
   background: var(--paper);
 }
 
@@ -809,6 +821,7 @@
   flex: none;
   place-items: center;
   border: 1px solid transparent;
+  border-radius: var(--r-item);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -831,6 +844,7 @@
 .tplf-row {
   display: grid;
   width: 100%;
+  border-radius: var(--r-item);
   grid-template-columns: 16px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 9px;
@@ -847,8 +861,6 @@
 .tplf-row:hover { background: color-mix(in oklab, var(--ink) 5%, var(--paper)); }
 .tplf-row--selected,
 .tplf-row--selected:hover { background: color-mix(in oklab, var(--ink) 10%, var(--paper)); }
-.tplf-row--file { cursor: default; }
-.tplf-row--file:hover { background: transparent; }
 .tplf-row > svg { width: 15px; height: 15px; color: var(--muted); }
 
 .tplf-row-name {
@@ -875,12 +887,14 @@
 }
 
 .tplf-chip {
-  padding: 2px 6px;
+  padding: 2px 8px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
   color: var(--muted);
   font-style: normal;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .tplf-chip--attached { border-color: var(--accent); color: var(--accent); }
@@ -911,6 +925,7 @@
   justify-content: center;
   inset: 0;
   border: 1px dashed var(--accent);
+  border-radius: var(--r-card);
   background: color-mix(in oklab, var(--accent) 8%, var(--paper));
   pointer-events: none;
 }
@@ -918,6 +933,7 @@
 .tplf-dropover span {
   padding: 7px 12px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-item);
   background: var(--paper);
   color: var(--ink);
   font: 11px/1 var(--font-ui);
@@ -947,6 +963,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
+  border-radius: var(--r-item);
   font-size: 12px;
 }
 
@@ -967,6 +984,7 @@
   flex: none;
   place-items: center;
   border: 1px solid transparent;
+  border-radius: var(--r-item);
   background: transparent;
   color: var(--faint);
   cursor: pointer;
@@ -994,6 +1012,20 @@
 }
 
 .tplf-foot-hint { color: var(--muted); font: 11px/1 var(--font-ui); }
+
+/* The one upload control sits bottom-right and wears the same skin as the
+ * Create template button. Its menu opens upward: the footer is the last row
+ * of the browser, so a downward menu would leave the viewport. */
+.tplf-upload-wrap { position: relative; }
+
+.tplf-upload-menu {
+  position: absolute;
+  z-index: 410;
+  top: auto;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: auto;
+}
 
 .tplf-share {
   display: flex;

@@ -976,64 +976,6 @@
  * key input, inline, where the person already is. The old panel put that
  * surface in a card below a grid, so connecting meant leaving the row that
  * said what was wrong. */
-.workspace-provider-row__toggle {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  padding: 0;
-  border: 0;
-  color: inherit;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.workspace-provider-row__toggle strong {
-  min-width: 0;
-  overflow: hidden;
-  font: 600 13px/1.3 var(--font-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-provider-row__toggle:hover strong {
-  text-decoration: underline;
-}
-
-.workspace-provider-row__surface {
-  display: grid;
-  gap: 10px;
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in oklab, var(--ink) 8%, transparent);
-}
-
-.workspace-provider-row__surface .connect-form {
-  display: grid;
-  gap: 8px;
-}
-
-.workspace-provider-row__surface .connect-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-/* The row's title line holds a toggle plus up to two badges; the badges keep
- * their own size and the name takes what is left. */
-.workspace-provider-row .workspace-credential-row__title {
-  justify-content: flex-start;
-}
-
-.workspace-provider-row .workspace-credential-row__title
-  .workspace-provider-row__toggle {
-  margin-right: auto;
-}
-
-.workspace-provider-row .workspace-credential-row__actions {
-  justify-content: flex-start;
-}
 
 /* The picker carries its own heading; here it has to read as one of those four
  * titles, so the settings eyebrow trails the name instead of stacking on it. */
@@ -1099,7 +1041,8 @@
   border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
-/* The row `blitz connections open` pointed the person at. */
+/* The row `blitz connections open` pointed the person at. Focus wins over the
+ * connected wash — it is the answer to a question the person just asked. */
 .workspace-credential-row--focus {
   background: color-mix(in oklab, var(--accent) 8%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
@@ -1169,22 +1112,135 @@
   margin-left: auto;
 }
 
-/* Quiet pill buttons; the primary keeps the accent fill. */
+/* ------------------------------------------------------- connection tiles */
+/* The provider list is built from the shapes the create-workspace pages
+ * already use: the tile is .template-tile, the state strip under it is
+ * .blueprint-machine-facts, the chip is .tplf-chip, and connected wears the
+ * 1px inset ring that marks a chosen template tile. Nothing here is new. */
+.wsc-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 14px;
+}
+
+.wsc-tile {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--sheet);
+}
+
+.wsc-tile:hover { border-color: var(--muted); }
+
+.wsc-tile--on,
+.wsc-tile--on:hover {
+  border-color: color-mix(in oklab, var(--ansi-green) 70%, var(--ink));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--ansi-green) 70%, var(--ink)) inset;
+}
+
+/* The tile `blitz connections open` pointed the person at. It outranks the
+ * connected ring: it answers a question somebody just asked out loud. */
+.wsc-tile--focus,
+.wsc-tile--focus:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.wsc-tile__main {
+  display: grid;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wsc-tile__main:disabled { cursor: default; }
+
+.wsc-tile__head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 12px 10px;
+}
+
+.wsc-tile__glyph { width: 16px; height: 16px; flex: none; color: var(--soft-ink); }
+
+.wsc-tile__name { min-width: 0; display: grid; gap: 4px; }
+
+.wsc-tile__name strong {
+  overflow: hidden;
+  font: 650 12px/1.3 var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wsc-tile__name span { color: var(--muted); font: 11px/1.5 var(--font-ui); }
+
+.wsc-tile__chip {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font: 650 9.5px/1.5 var(--font-ui);
+  font-style: normal;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* One word, and nothing beside it. */
+.wsc-tile__state {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font: 650 10px/1 var(--font-ui);
+}
+
+.wsc-tile--on .wsc-tile__state { color: color-mix(in oklab, var(--ansi-green) 62%, var(--ink)); }
+.wsc-tile--go .wsc-tile__state { color: var(--accent); }
+
+/* Everything the press reveals, and only what the press reveals. */
+.wsc-tile__open {
+  display: grid;
+  gap: 10px;
+  padding: 11px 12px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.wsc-tile__open .connect-help { margin: 0; color: var(--muted); font: 11.5px/1.6 var(--font-ui); }
+.wsc-tile__open .connect-form { display: grid; gap: 8px; }
+.wsc-tile__open .connect-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.wsc-tile__actions { display: flex; gap: 8px; }
+
+/* Quiet pill buttons; the primary keeps the accent fill. The fill alone sat
+ * too close to the panel — an 8% wash on a paper sheet reads as a label, not
+ * a control — so the quiet variant carries a rule and full-ink text. */
 .workspace-credential-row__action,
 .workspace-credential-row__actions .webapp-action {
   min-height: 28px;
   padding: 0 14px;
-  border: 0;
+  border: 1px solid var(--rule);
   border-radius: var(--r-pill);
-  color: var(--soft-ink);
-  background: var(--quiet);
-  font: 600 11.5px/1 var(--font-ui);
+  color: var(--ink);
+  background: var(--quiet-hover);
+  font: 650 11.5px/1 var(--font-ui);
 }
 
 .workspace-credential-row__action:hover,
 .workspace-credential-row__actions .webapp-action:hover {
+  border-color: var(--muted);
   color: var(--ink);
-  background: var(--quiet-hover);
+  background: color-mix(in oklab, var(--ink) 17%, var(--paper));
 }
 
 .workspace-credential-row__actions .webapp-action--primary {

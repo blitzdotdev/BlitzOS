@@ -153,10 +153,22 @@ function undeliveredLease(connection: string): CredentialLeaseView {
 }
 
 function rowFor(container: ParentNode, title: string): Element {
-  const row = [...container.querySelectorAll('.workspace-provider-row')]
+  const row = [...container.querySelectorAll('.wsc-tile')]
     .find((candidate) => candidate.querySelector('strong')?.textContent === title);
-  if (row === undefined) throw new Error(`no provider row for ${title}`);
+  if (row === undefined) throw new Error(`no provider tile for ${title}`);
   return row;
+}
+
+/** The whole tile is the control, so a press is a press on the tile itself. */
+function pressTile(row: ParentNode): HTMLButtonElement {
+  const main = row.querySelector<HTMLButtonElement>('.wsc-tile__main');
+  if (main === null) throw new Error('no tile button');
+  return main;
+}
+
+/** The one word the tile prints. */
+function stateWord(row: ParentNode): string {
+  return row.querySelector('.wsc-tile__state')?.textContent ?? '';
 }
 
 function buttonIn(scope: ParentNode, label: string): HTMLButtonElement {
@@ -368,7 +380,7 @@ describe('workspace provider rows', () => {
       />,
     );
     await settle();
-    const titles = [...view.container.querySelectorAll('.workspace-provider-row strong')]
+    const titles = [...view.container.querySelectorAll('.wsc-tile strong')]
       .map((title) => title.textContent);
     expect(titles).toEqual(['Linear', 'Notion']);
     expect(rowFor(view.container, 'Linear').textContent).toContain('from template');
@@ -388,12 +400,10 @@ describe('workspace provider rows', () => {
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
-    const notionRow = rowFor(view.container, 'Notion');
-    expect(notionRow.querySelector('.workspace-state-badge')).toBeNull();
-    expect(buttonIn(notionRow, 'Connect')).not.toBeNull();
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
+    expect(stateWord(rowFor(view.container, 'Notion'))).toBe('Connect');
     // The four shades of not-connected the panel used to print are gone.
-    for (const gone of ['delivering', 'not here yet', 'needs a key', 'needs you']) {
+    for (const gone of ['delivering', 'not here yet', 'needs you']) {
       expect(view.container.textContent).not.toContain(gone);
     }
     await view.unmount();
@@ -422,7 +432,7 @@ describe('workspace provider rows', () => {
     await settle();
     // Create-time minting from an existing owner grant is designed behaviour;
     // provenance is what keeps it from reading as a surprise.
-    expect(rowFor(view.container, 'Linear').textContent).toContain('authorized by you ·');
+    expect(rowFor(view.container, 'Linear').textContent).toContain('you signed in');
     await view.unmount();
   });
 
@@ -440,7 +450,7 @@ describe('workspace provider rows', () => {
     expect(row.textContent).not.toContain('Connected');
     expect(row.querySelector('.connect-form')).toBeNull();
 
-    await act(async () => click(buttonIn(row, 'Connect')));
+    await act(async () => click(pressTile(row)));
     const token = rowFor(view.container, 'Linear')
       .querySelector<HTMLInputElement>('input[name="token"]');
     if (token === null) throw new Error('inline key input is missing');
@@ -476,7 +486,7 @@ describe('workspace provider rows', () => {
     await settle();
     const row = rowFor(view.container, 'Linear');
     expect(row.textContent).not.toContain('Connected');
-    await act(async () => click(buttonIn(row, 'Connect')));
+    await act(async () => click(pressTile(row)));
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(view.container.querySelector('.connect-form')).toBeNull();
@@ -507,7 +517,7 @@ describe('workspace provider rows', () => {
     });
     const view = await render(connectionsPanel(wire));
     await settle();
-    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(view.container.querySelector('.connect-form')).toBeNull();
@@ -526,13 +536,19 @@ describe('workspace provider rows', () => {
     const view = await render(connectionsPanel(wire));
     await settle();
     const row = rowFor(view.container, 'Linear');
-    expect([...row.querySelectorAll('.workspace-credential-row__actions button')]
+    // A connected tile rests on one word. Its actions arrive with the press.
+    expect(row.querySelector('.wsc-tile__actions')).toBeNull();
+    await act(async () => click(pressTile(row)));
+    expect([...rowFor(view.container, 'Linear').querySelectorAll('.wsc-tile__actions button')]
       .map((action) => action.textContent)).toEqual(['Replace key', 'Disconnect']);
 
-    // Replace key opens the provider's own key input, inline, on the row.
-    await act(async () => click(buttonIn(row, 'Replace key')));
+    // Replace key opens the provider's own key input, inline, on the tile.
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Replace key')));
     expect(rowFor(view.container, 'Linear').querySelector('input[name="token"]')).not.toBeNull();
 
+    // Cancel puts the tile back, and the press reopens the two actions.
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Cancel')));
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
     await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Disconnect')));
     const dialog = document.body.querySelector('[role="dialog"]');
     if (dialog === null) throw new Error('disconnect chooser is missing');
@@ -555,7 +571,7 @@ describe('workspace provider rows', () => {
     const view = await render(connectionsPanel(wire));
     await settle();
     const before = listConnectionGrants.mock.calls.length;
-    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
     await settle();
     // A grant authorized in another tab used to leave this panel offering to
     // authorize it all over again.
@@ -586,7 +602,7 @@ describe('workspace provider rows', () => {
       />,
     );
     await settle();
-    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
+    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
     await settle();
     // Boxes pull credentials on a throttled cadence, so without this push the
     // member watches a connected provider stay dark for the whole window.
@@ -618,7 +634,7 @@ describe('workspace provider rows', () => {
     await settle();
     // The agent's `blitz connections open linear` landed: the row is
     // highlighted and its connect surface is already open.
-    expect(view.container.querySelector('.workspace-credential-row--focus')?.textContent)
+    expect(view.container.querySelector('.wsc-tile--focus')?.textContent)
       .toContain('Linear');
     expect(view.container.querySelector('input[name="token"]')).not.toBeNull();
 
@@ -683,7 +699,8 @@ describe('workspace provider rows', () => {
     );
     await settle();
     expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
-    expect(view.container.querySelector('.workspace-credential-row__actions')).toBeNull();
+    expect(view.container.querySelector('.wsc-tile__actions')).toBeNull();
+    expect(pressTile(rowFor(view.container, 'Linear')).disabled).toBe(true);
     await view.unmount();
   });
 });

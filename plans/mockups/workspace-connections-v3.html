@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blitz webApp — connection tiles</title>
+<style>
+/* ------------------------------------------------------------------
+   tokens — copied from packages/webapp/src/tokens.css.
+   ------------------------------------------------------------------ */
+:root,
+:root[data-theme='dark'] {
+  --paper: #16181d;
+  --ink: #dfe2e8;
+  --accent: #7e95d7;
+  --ansi-green: #8fa879;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --paper: #f7f7f4;
+  --ink: #1c1f26;
+  --accent: #4c62aa;
+  --ansi-green: #5f7d46;
+  color-scheme: light;
+}
+
+:root {
+  --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
+  --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+  --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
+  --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
+  --r-control: 10px;
+  --r-item: 8px;
+  --r-pill: 999px;
+  --font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 26px;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-ui);
+}
+
+h1 { margin: 0 0 6px; font: 650 19px/1.3 var(--font-ui); }
+.lede { max-width: 78ch; margin: 0 0 8px; color: var(--muted); font: 13px/1.65 var(--font-ui); }
+.lede code, .notes code, td code { font: 12px/1 var(--font-mono); color: var(--soft-ink); }
+
+.theme-toggle {
+  margin: 10px 0 24px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--soft-ink);
+  background: var(--paper);
+  font: 650 11.5px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.decks { display: flex; align-items: flex-start; gap: 34px; flex-wrap: wrap; }
+.deck { display: grid; gap: 10px; }
+.deck > h2 {
+  margin: 0; color: var(--faint);
+  font: 650 10px/1 var(--font-ui); letter-spacing: .08em; text-transform: uppercase;
+}
+.deck > p { max-width: 40ch; margin: 0; color: var(--muted); font: 12px/1.6 var(--font-ui); }
+
+/* The real drawer column is 339px wide (annotation viewportRect). The panel
+ * itself draws no heading: WorkspaceConnectionsPanel.tsx already renders
+ * <h3 class="workspace-sect">Connections</h3> directly above these rows. */
+.drawer { width: 339px; padding: 14px; border: 1px solid var(--rule); border-radius: 12px; }
+
+.workspace-sect {
+  margin: 0 0 10px;
+  color: var(--faint);
+  font: 650 10px/1 var(--font-ui);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* ==================================================================
+   THE TILE — .template-tile from create-workspace-dialog.css, with the
+   facts strip of .blueprint-machine-card. Nothing here is invented.
+   ================================================================== */
+.wsc-list { display: grid; gap: 8px; }
+
+.wsc-tile {
+  display: grid;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  overflow: hidden;
+}
+
+.wsc-tile:hover { border-color: var(--muted); }
+
+/* Connected wears the template tile's selected treatment, in the green the
+ * app already spends on live state. */
+.wsc-tile--on,
+.wsc-tile--on:hover {
+  border-color: color-mix(in oklab, var(--ansi-green) 70%, var(--ink));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--ansi-green) 70%, var(--ink)) inset;
+}
+
+/* The tile `blitz connections open` pointed the person at. */
+.wsc-tile--focus,
+.wsc-tile--focus:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.wsc-head {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 12px 10px;
+}
+
+.wsc-glyph { width: 16px; height: 16px; flex: none; color: var(--soft-ink); }
+
+.wsc-name { min-width: 0; display: grid; gap: 4px; }
+.wsc-name strong {
+  overflow: hidden;
+  font: 650 12px/1.3 var(--font-ui);
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.wsc-name span { color: var(--muted); font: 11px/1.5 var(--font-ui); }
+
+/* .tplf-chip: pill, rule border, uppercase micro-caps. */
+.wsc-chip {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font: 650 9.5px/1.5 var(--font-ui);
+  font-style: normal;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* .blueprint-machine-facts, holding one word and nothing else. */
+.wsc-facts {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-top: 1px solid var(--rule);
+  font: 650 10px/1 var(--font-ui);
+  color: var(--muted);
+}
+
+.wsc-facts--on { color: color-mix(in oklab, var(--ansi-green) 62%, var(--ink)); }
+.wsc-facts--go { color: var(--accent); }
+
+/* Everything a click would reveal lives here, and only here. */
+.wsc-open {
+  display: grid;
+  gap: 10px;
+  padding: 11px 12px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.wsc-open p { margin: 0; color: var(--muted); font: 11.5px/1.6 var(--font-ui); }
+.wsc-open-actions { display: flex; gap: 8px; }
+
+.wsc-field {
+  display: grid; gap: 6px;
+  color: var(--faint);
+  font: 700 10px/1 var(--font-ui);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.wsc-field input {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  background: var(--paper);
+  font: 12.5px var(--font-ui);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* .webapp-action and .create-workspace-primary, verbatim. */
+.webapp-action, .webapp-primary {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: var(--r-control);
+  font: 650 11.5px/1 var(--font-ui);
+  text-decoration: none;
+  cursor: pointer;
+}
+.webapp-action { border: 1px solid var(--rule); color: var(--soft-ink); background: var(--paper); }
+.webapp-action:hover { border-color: var(--muted); color: var(--ink); }
+.webapp-primary { border: 1px solid var(--ink); color: var(--paper); background: var(--ink); padding: 0 14px; }
+.webapp-primary:hover { border-color: var(--accent); }
+
+/* ------------------------------------------------------------ the table */
+table { border-collapse: collapse; margin-top: 14px; max-width: 92ch; }
+caption { text-align: left; color: var(--muted); font: 13px/1.65 var(--font-ui); padding-bottom: 10px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); }
+th { color: var(--faint); font: 650 10px/1.4 var(--font-ui); letter-spacing: .06em; text-transform: uppercase; }
+td { color: var(--muted); font: 12.5px/1.6 var(--font-ui); }
+td:first-child { color: var(--ink); font-weight: 650; white-space: nowrap; }
+td.cut { color: var(--faint); }
+td.cut s { color: var(--faint); }
+
+.notes { max-width: 70ch; margin: 30px 0 0; padding: 0; list-style: none; display: grid; gap: 9px; }
+.notes li { color: var(--muted); font: 13px/1.6 var(--font-ui); }
+.notes b { color: var(--ink); font-weight: 650; }
+</style>
+</head>
+<body>
+
+<h1>Workspace connection tiles</h1>
+<p class="lede">
+  The tile is <code>.template-tile</code>, the strip under it is
+  <code>.blueprint-machine-facts</code>, the chip is <code>.tplf-chip</code>,
+  and connected is the 1&nbsp;px inset ring the template tile already uses for
+  selected. A resting tile carries a mark, a name, and one word. Everything a
+  click would reveal is behind the click.
+</p>
+<button class="theme-toggle" type="button" onclick="document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'">Toggle light / dark</button>
+
+<div class="decks">
+
+  <section class="deck">
+    <h2>Resting</h2>
+    <p>Five providers, five tiles, one word each.</p>
+    <div class="drawer">
+      <h3 class="workspace-sect">Connections</h3>
+      <div class="wsc-list">
+
+        <button class="wsc-tile wsc-tile--on" type="button" aria-expanded="false">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.64 5.59.64 11.87c0 5.02 3.26 9.28 7.78 10.78.57.11.78-.25.78-.55l-.02-1.93c-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.52-2.52-.29-5.18-1.27-5.18-5.64 0-1.25.44-2.27 1.16-3.06-.12-.29-.5-1.45.11-3.02 0 0 .95-.31 3.11 1.17a10.7 10.7 0 0 1 5.66 0c2.16-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.72.79 1.16 1.81 1.16 3.06 0 4.38-2.67 5.35-5.2 5.63.41.36.78 1.06.78 2.14l-.01 3.17c0 .3.2.66.79.55a11.38 11.38 0 0 0 7.77-10.78C23.36 5.59 18.27.5 12 .5Z"/></svg>
+            <span class="wsc-name"><strong>GitHub</strong><span>you signed in Aug 23</span></span>
+          </span>
+          <span class="wsc-facts wsc-facts--on">Connected</span>
+        </button>
+
+        <button class="wsc-tile" type="button" aria-expanded="false">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.24 10.29v3.5h5.02c-.22 1.3-.88 2.4-1.87 3.14l3.02 2.34c1.76-1.62 2.78-4.02 2.78-6.87 0-.66-.06-1.3-.17-1.92l-8.78-.19Z"/><path d="M12.24 21.6c2.52 0 4.63-.83 6.17-2.25l-3.02-2.34c-.84.56-1.9.9-3.15.9-2.43 0-4.49-1.64-5.22-3.84l-3.12 2.4A9.36 9.36 0 0 0 12.24 21.6Z"/><path d="M7.02 14.07a5.6 5.6 0 0 1 0-3.58l-3.12-2.4a9.35 9.35 0 0 0 0 8.38l3.12-2.4Z"/><path d="M12.24 6.62c1.37 0 2.6.47 3.57 1.39l2.67-2.67A9.36 9.36 0 0 0 3.9 8.09l3.12 2.4c.73-2.2 2.79-3.87 5.22-3.87Z"/></svg>
+            <span class="wsc-name"><strong>Google Workspace</strong></span>
+          </span>
+          <span class="wsc-facts wsc-facts--go">Connect</span>
+        </button>
+
+        <button class="wsc-tile" type="button" aria-expanded="false">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0.72 14.9 9.1 23.28A12.03 12.03 0 0 1 .72 14.9ZM.1 11.75l12.15 12.15c-.6-.03-1.18-.11-1.75-.24L.34 13.5a12 12 0 0 1-.24-1.75ZM.62 8.2l15.18 15.18c-.83.3-1.7.5-2.6.6L.02 10.8c.1-.9.3-1.77.6-2.6ZM2.14 5.2 18.8 21.86a12.1 12.1 0 0 1-2.03 1.24L.9 7.23c.33-.72.75-1.4 1.24-2.03ZM21.4 19.65 4.35 2.6a12 12 0 0 1 17.05 17.05Z"/></svg>
+            <span class="wsc-name"><strong>Linear</strong></span>
+          </span>
+          <span class="wsc-facts wsc-facts--go">Connect</span>
+        </button>
+
+        <button class="wsc-tile" type="button" aria-expanded="false">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.63 5.33a17.6 17.6 0 0 0-4.35-1.35l-.21.42c-.18.35-.39.81-.53 1.16a16.2 16.2 0 0 0-4.99 0 12.4 12.4 0 0 0-.55-1.16l-.2-.42a17.6 17.6 0 0 0-4.35 1.35C1.72 9.24.9 13.05 1.19 16.8a17.7 17.7 0 0 0 5.36 2.71c.43-.59.81-1.21 1.14-1.86a11.4 11.4 0 0 1-1.79-.86l.44-.35a12.6 12.6 0 0 0 11.32 0l.45.35c-.57.34-1.17.63-1.8.86.33.65.71 1.27 1.15 1.86a17.6 17.6 0 0 0 5.36-2.71c.34-4.35-.97-8.13-3.19-11.47ZM8.32 14.53c-1.05 0-1.92-.96-1.92-2.15 0-1.18.84-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.85 2.15-1.93 2.15Zm7.09 0c-1.05 0-1.92-.96-1.92-2.15 0-1.18.85-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.84 2.15-1.93 2.15Z"/></svg>
+            <span class="wsc-name"><strong>Discord</strong></span>
+            <em class="wsc-chip">from template</em>
+          </span>
+          <span class="wsc-facts">Needs a key</span>
+        </button>
+
+        <button class="wsc-tile" type="button" aria-expanded="false">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M6.5 2h11A4.5 4.5 0 0 1 22 6.5v11a4.5 4.5 0 0 1-4.5 4.5h-11A4.5 4.5 0 0 1 2 17.5v-11A4.5 4.5 0 0 1 6.5 2ZM6.4 6.6h2.4L12 9.8l3.2-3.2h2.4L13.2 11v6.4h-2.4V11Z"/></svg>
+            <span class="wsc-name"><strong>YouTrack</strong></span>
+          </span>
+          <span class="wsc-facts wsc-facts--go">Connect</span>
+        </button>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="deck">
+    <h2>Opened</h2>
+    <p>The click happened. Now, and only now, the tile explains itself.</p>
+    <div class="drawer">
+      <h3 class="workspace-sect">Connections</h3>
+      <div class="wsc-list">
+
+        <button class="wsc-tile wsc-tile--on" type="button" aria-expanded="true">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.73.5.64 5.59.64 11.87c0 5.02 3.26 9.28 7.78 10.78.57.11.78-.25.78-.55l-.02-1.93c-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.03-.71.08-.69.08-.69 1.14.08 1.74 1.17 1.74 1.17 1.01 1.74 2.66 1.24 3.31.95.1-.74.4-1.24.72-1.52-2.52-.29-5.18-1.27-5.18-5.64 0-1.25.44-2.27 1.16-3.06-.12-.29-.5-1.45.11-3.02 0 0 .95-.31 3.11 1.17a10.7 10.7 0 0 1 5.66 0c2.16-1.48 3.11-1.17 3.11-1.17.62 1.57.23 2.73.11 3.02.72.79 1.16 1.81 1.16 3.06 0 4.38-2.67 5.35-5.2 5.63.41.36.78 1.06.78 2.14l-.01 3.17c0 .3.2.66.79.55a11.38 11.38 0 0 0 7.77-10.78C23.36 5.59 18.27.5 12 .5Z"/></svg>
+            <span class="wsc-name"><strong>GitHub</strong><span>you signed in Aug 23</span></span>
+          </span>
+          <span class="wsc-facts wsc-facts--on">Connected</span>
+          <span class="wsc-open">
+            <p>Disconnecting stops this workspace only. Your sign-in stays.</p>
+            <span class="wsc-open-actions">
+              <span class="webapp-action">Replace key</span>
+              <span class="webapp-action">Disconnect</span>
+            </span>
+          </span>
+        </button>
+
+        <button class="wsc-tile" type="button" aria-expanded="true">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M6.5 2h11A4.5 4.5 0 0 1 22 6.5v11a4.5 4.5 0 0 1-4.5 4.5h-11A4.5 4.5 0 0 1 2 17.5v-11A4.5 4.5 0 0 1 6.5 2ZM6.4 6.6h2.4L12 9.8l3.2-3.2h2.4L13.2 11v6.4h-2.4V11Z"/></svg>
+            <span class="wsc-name"><strong>YouTrack</strong></span>
+          </span>
+          <span class="wsc-facts wsc-facts--go">Connect</span>
+          <span class="wsc-open">
+            <span class="wsc-field">Token
+              <input placeholder="perm:…">
+            </span>
+            <span class="wsc-field">Instance URL
+              <input placeholder="https://acme.youtrack.cloud">
+            </span>
+            <span class="wsc-open-actions">
+              <span class="webapp-primary">Connect</span>
+              <span class="webapp-action">Cancel</span>
+            </span>
+          </span>
+        </button>
+
+        <button class="wsc-tile wsc-tile--focus" type="button" aria-expanded="true">
+          <span class="wsc-head">
+            <svg class="wsc-glyph" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.63 5.33a17.6 17.6 0 0 0-4.35-1.35l-.21.42c-.18.35-.39.81-.53 1.16a16.2 16.2 0 0 0-4.99 0 12.4 12.4 0 0 0-.55-1.16l-.2-.42a17.6 17.6 0 0 0-4.35 1.35C1.72 9.24.9 13.05 1.19 16.8a17.7 17.7 0 0 0 5.36 2.71c.43-.59.81-1.21 1.14-1.86a11.4 11.4 0 0 1-1.79-.86l.44-.35a12.6 12.6 0 0 0 11.32 0l.45.35c-.57.34-1.17.63-1.8.86.33.65.71 1.27 1.15 1.86a17.6 17.6 0 0 0 5.36-2.71c.34-4.35-.97-8.13-3.19-11.47ZM8.32 14.53c-1.05 0-1.92-.96-1.92-2.15 0-1.18.84-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.85 2.15-1.93 2.15Zm7.09 0c-1.05 0-1.92-.96-1.92-2.15 0-1.18.85-2.15 1.92-2.15 1.09 0 1.95.97 1.93 2.15 0 1.19-.84 2.15-1.93 2.15Z"/></svg>
+            <span class="wsc-name"><strong>Discord</strong></span>
+            <em class="wsc-chip">from template</em>
+          </span>
+          <span class="wsc-facts">Needs a key</span>
+          <span class="wsc-open">
+            <p>An admin stores one Discord key for everyone.</p>
+            <span class="wsc-open-actions">
+              <span class="webapp-action">Ask an admin</span>
+            </span>
+          </span>
+        </button>
+
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<table>
+  <caption>Every string a member sees at rest, and what it is doing there. A string that only answers a question the next click answers is cut.</caption>
+  <thead>
+    <tr><th>String</th><th>Question it answers</th><th>What breaks without it</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>GitHub</td>
+      <td>Which app is this?</td>
+      <td>The row is unidentifiable. The mark alone does not name a provider a person has never seen.</td>
+    </tr>
+    <tr>
+      <td>Connected</td>
+      <td>Can the agent reach it right now?</td>
+      <td>The ring carries the state alone, and a colour is not a word. This is the only state a person checks before asking the agent to do work.</td>
+    </tr>
+    <tr>
+      <td>Connect</td>
+      <td>What happens if I press this?</td>
+      <td>The off tile has no verb, so it reads as a disabled label rather than a control.</td>
+    </tr>
+    <tr>
+      <td>Needs a key</td>
+      <td>Why can I not just press Connect?</td>
+      <td>The member presses Connect, it fails, and nothing on screen said it would. This is the one case where the act is not theirs.</td>
+    </tr>
+    <tr>
+      <td>you signed in Aug 23</td>
+      <td>Why is this already on when I never touched it?</td>
+      <td>A workspace mints from its owner's grants at create time, so a member finds providers already connected. Without the line that is a surprise with no explanation on screen. This is the one line I would cut next if you disagree.</td>
+    </tr>
+    <tr>
+      <td>from template</td>
+      <td>Why is Discord in my list at all?</td>
+      <td>A provider the member never chose appears with no account of itself, and no hint that removing it is not theirs to do.</td>
+    </tr>
+  </tbody>
+</table>
+
+<table>
+  <caption>Cut. Each one told a member something the next click tells them, or repeated a signal already on the tile.</caption>
+  <thead>
+    <tr><th>Cut</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="cut"><s>one click, no form</s></td><td class="cut">The click is one second away and settles it.</td></tr>
+    <tr><td class="cut"><s>paste a token</s></td><td class="cut">Same. The form appears and shows a token field.</td></tr>
+    <tr><td class="cut"><s>admin sets this one</s></td><td class="cut">Duplicates <b>Needs a key</b>, which already says the act is not the member's.</td></tr>
+    <tr><td class="cut"><s>renews Sep 22</s></td><td class="cut">Nothing is decided with it. If a lease is about to lapse that is a state change, and the state word should say so.</td></tr>
+    <tr><td class="cut"><s>✓</s></td><td class="cut">Third signal for one fact, after the green ring and the word <b>Connected</b>.</td></tr>
+    <tr><td class="cut"><s>Sign in</s></td><td class="cut">A second word for the same act as <b>Connect</b>. The difference between a form and one click is exactly what the click reveals.</td></tr>
+    <tr><td class="cut"><s>Apps this workspace can reach…</s></td><td class="cut">A blurb under a heading that already says Connections.</td></tr>
+    <tr><td class="cut"><s>Connections</s> (panel heading)</td><td class="cut">Duplicate. <code>WorkspaceConnectionsPanel.tsx</code> already renders <code>&lt;h3 class="workspace-sect"&gt;Connections&lt;/h3&gt;</code> above these tiles.</td></tr>
+    <tr><td class="cut"><s>injected</s> / <s>proxied</s></td><td class="cut">Operator words. Already removed and shipped to canary.</td></tr>
+  </tbody>
+</table>
+
+<ul class="notes">
+  <li><b>Three state words, not five.</b> <b>Connected</b>, <b>Connect</b>,
+    <b>Needs a key</b>. The third exists only because pressing Connect there
+    would fail.</li>
+  <li><b>The tile is the control.</b> Like <code>.template-tile</code>, the
+    whole card is one button. That is what deletes the trailing pill from every
+    row.</li>
+  <li><b>Focus still wins.</b> <code>blitz connections open</code> keeps the
+    accent ring, so it reads over the green one.</li>
+</ul>
+
+</body>
+</html>
