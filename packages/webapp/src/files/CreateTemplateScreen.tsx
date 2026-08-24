@@ -111,6 +111,9 @@ export function CreateTemplateScreen({
     dropHint,
     setDropHint,
     fileCounts,
+    pickedNames,
+    pickDriveFile,
+    dropDriveFile,
     uploadDropped,
     uploadPickedFiles,
   } = useTemplateUploads({
@@ -336,14 +339,31 @@ export function CreateTemplateScreen({
             <span className="tplf-row-state">{dir.fileCount} {dir.fileCount === 1 ? 'file' : 'files'}</span>
           </button>
         ))}
-        {entries.files.map((file) => (
-          <div className="tplf-row tplf-row--file" key={file.key}>
-            <DocDuoIcon name={file.name} className="drive-folder-icon" />
-            <span className="tplf-row-name">{file.name}</span>
-            <span className="tplf-row-owner" />
-            <span className="tplf-row-state">{formatWhen(file.mtime)} · {formatBytes(file.size)}</span>
-          </div>
-        ))}
+        {entries.files.map((file) => {
+          const picked = pickedNames.has(file.name);
+          return (
+            <button
+              className={`tplf-row${picked ? ' tplf-row--selected' : ''}`}
+              type="button"
+              key={file.key}
+              aria-pressed={picked}
+              disabled={uploading !== null}
+              onClick={() => {
+                if (browse === null) return;
+                if (picked) void dropDriveFile(file.name);
+                else void pickDriveFile(browse.folderId, file.key, file.name);
+              }}
+            >
+              <DocDuoIcon name={file.name} className="drive-folder-icon" />
+              <span className="tplf-row-name">{file.name}</span>
+              <span className="tplf-row-owner" />
+              <span className="tplf-row-state">
+                {picked && <em className="tplf-chip tplf-chip--attached">In template</em>}
+                <span>{formatWhen(file.mtime)} · {formatBytes(file.size)}</span>
+              </span>
+            </button>
+          );
+        })}
       </>
     );
   };
@@ -612,10 +632,7 @@ export function CreateTemplateScreen({
                 checked={shareWithOrg}
                 onChange={(event) => setShareWithOrg(event.currentTarget.checked)}
               />
-              <span>
-                Share attachments you own with everyone at {orgName} (viewer),
-                so the template works without individual grants
-              </span>
+              <span>Let everyone at {orgName} see these files</span>
             </label>
             {isAdmin && (
               <label className="tplf-share">
@@ -625,10 +642,7 @@ export function CreateTemplateScreen({
                   checked={isOrgDefault}
                   onChange={(event) => setIsOrgDefault(event.currentTarget.checked)}
                 />
-                <span>
-                  Default template for {orgName} — the create-workspace page
-                  starts on it for every member
-                </span>
+                <span>Make this the default for {orgName}</span>
               </label>
             )}
           </section>

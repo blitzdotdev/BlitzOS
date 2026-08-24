@@ -1099,7 +1099,15 @@
   border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
-/* The row `blitz connections open` pointed the person at. */
+/* A live connection colours the whole row, not just its badge: the state is
+ * the row's, and a lone tinted pill is easy to miss down a column of five. */
+.workspace-credential-row--connected {
+  background: color-mix(in oklab, var(--ansi-green) 9%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in oklab, var(--ansi-green) 70%, var(--ink));
+}
+
+/* The row `blitz connections open` pointed the person at. Focus wins over the
+ * connected wash — it is the answer to a question the person just asked. */
 .workspace-credential-row--focus {
   background: color-mix(in oklab, var(--accent) 8%, transparent);
   box-shadow: inset 2px 0 0 var(--accent);
@@ -1169,22 +1177,25 @@
   margin-left: auto;
 }
 
-/* Quiet pill buttons; the primary keeps the accent fill. */
+/* Quiet pill buttons; the primary keeps the accent fill. The fill alone sat
+ * too close to the panel — an 8% wash on a paper sheet reads as a label, not
+ * a control — so the quiet variant carries a rule and full-ink text. */
 .workspace-credential-row__action,
 .workspace-credential-row__actions .webapp-action {
   min-height: 28px;
   padding: 0 14px;
-  border: 0;
+  border: 1px solid var(--rule);
   border-radius: var(--r-pill);
-  color: var(--soft-ink);
-  background: var(--quiet);
-  font: 600 11.5px/1 var(--font-ui);
+  color: var(--ink);
+  background: var(--quiet-hover);
+  font: 650 11.5px/1 var(--font-ui);
 }
 
 .workspace-credential-row__action:hover,
 .workspace-credential-row__actions .webapp-action:hover {
+  border-color: var(--muted);
   color: var(--ink);
-  background: var(--quiet-hover);
+  background: color-mix(in oklab, var(--ink) 17%, var(--paper));
 }
 
 .workspace-credential-row__actions .webapp-action--primary {

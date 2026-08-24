@@ -6,6 +6,10 @@
 
   --muted: color-mix(in oklab, var(--ink) 52%, var(--paper));
   --faint: color-mix(in oklab, var(--ink) 30%, var(--paper));
+  /* One step below --ink. Control labels sit here: --muted reads as prose,
+   * which is why a .webapp-action used to look like a notice. The panel
+   * chrome in files.css redeclares the same value for its own scope. */
+  --soft-ink: color-mix(in oklab, var(--ink) 82%, var(--paper));
   --rule: color-mix(in oklab, var(--ink) 13%, var(--paper));
   --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
   --sunken: color-mix(in oklab, var(--ink) 5%, var(--paper));

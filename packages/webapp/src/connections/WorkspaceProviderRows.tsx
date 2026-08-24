@@ -9,7 +9,6 @@ import type { ControlPlaneClient } from '../api';
 import { caughtErrorMessage } from '../error-message';
 import { ModalOverlay } from '../ModalOverlay';
 import { settingsPath } from '../sessions-page-state';
-import { CUSTODY_BADGE } from './custody-badge';
 import {
   grantInput,
   lockedInstanceBaseUrl,
@@ -305,8 +304,8 @@ export function WorkspaceProviderRows({
           return (
             <article
               className={`workspace-credential-row workspace-provider-row${
-                focusProvider === row.name ? ' workspace-credential-row--focus' : ''
-              }`}
+                connected ? ' workspace-credential-row--connected' : ''
+              }${focusProvider === row.name ? ' workspace-credential-row--focus' : ''}`}
               key={row.name}
             >
               <div className="workspace-credential-row__title">
@@ -327,12 +326,9 @@ export function WorkspaceProviderRows({
                   </span>
                 )}
               </div>
-              {(row.grant !== null || row.lease !== null) && (
+              {row.grant !== null && (
                 <div className="workspace-credential-row__meta">
-                  {row.grant !== null && <span>{provenance(row.grant)}</span>}
-                  {row.lease !== null && (
-                    <span>{CUSTODY_BADGE[row.lease.mode === 'inject' ? 'cp' : 'proxy']}</span>
-                  )}
+                  <span>{provenance(row.grant)}</span>
                 </div>
               )}
               {readOnly !== true && (

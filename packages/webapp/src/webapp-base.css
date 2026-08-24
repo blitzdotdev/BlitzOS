@@ -67,12 +67,23 @@ a {
   background: var(--terminal-selection);
 }
 
+/* The one secondary button in the app. It carries the shape scale's control
+ * radius and enough weight to read as a control rather than a notice —
+ * square corners and --muted text made it look like static chrome. */
 .webapp-action {
+  /* inline-flex, not the button default, because an <a> wears this class too
+   * (Reauthorize) and an anchor does not centre its own label. */
+  display: inline-flex;
   min-height: 32px;
+  align-items: center;
+  justify-content: center;
   padding: 0 12px;
   border: 1px solid var(--rule);
-  color: var(--muted);
+  border-radius: var(--r-control);
+  color: var(--soft-ink);
   background: var(--paper);
+  font: 650 11.5px/1 var(--font-ui);
+  text-decoration: none;
   cursor: pointer;
 }
 

@@ -111,51 +111,45 @@ export function TemplateConnectionsSection({
               <ProviderGlyph className="tplf-connection-glyph" provider={entry.id} />
               <span>{entry.title}</span>
               {wantsOrgConfig && configured && (
-                <em className="tplf-chip tplf-chip--attached">org credential</em>
+                <em className="tplf-chip tplf-chip--attached">org key</em>
               )}
               {wantsOrgConfig && admin && configured && configuring !== entry.id && (
                 <button
-                  className="webapp-action"
+                  className="webapp-action tplf-connection-action"
                   type="button"
                   onClick={() => setConfirmingReplace(entry)}
-                >Replace credential</button>
+                >Replace {entry.title} key</button>
               )}
               {wantsOrgConfig && admin && !configured && memberPath
                 && configuring !== entry.id && (
                 <button
-                  className="webapp-action"
+                  className="webapp-action tplf-connection-action"
                   type="button"
                   onClick={() => setConfiguring(entry.id)}
-                >Configure org credential (optional)</button>
+                >Add {entry.title} key</button>
               )}
             </label>
             {wantsOrgConfig && admin && !configured && memberPath
               && configuring !== entry.id && (
               <p className="tplf-connection-note">
-                Without an org credential, each member authorizes {entry.title}{' '}
-                themselves in the workspace connections panel.
+                Without an org key, members sign in to {entry.title} themselves.
               </p>
             )}
             {wantsOrgConfig && !admin && !configured && (
               memberPath ? (
                 <p className="tplf-connection-note">
-                  Members connect {entry.title} themselves, inside each
-                  workspace, from its connections panel. An organization
-                  admin can optionally store one org credential here instead.
+                  Members sign in to {entry.title} themselves.
                 </p>
               ) : (
                 <p className="tplf-connection-note">
-                  Ask an organization admin to configure {entry.title}:
-                  its credential is stored once, right here on the
-                  template page, and reaches every workspace.
+                  Ask an admin to add the {entry.title} key.
                 </p>
               )
             )}
             {formOpen && (
               <>
                 <p className="tplf-connection-note">
-                  Saving stores the credential for the whole organization
-                  immediately — it does not wait for this template to be saved.
+                  Saving applies to the whole org right away.
                 </p>
                 <ProviderAdminForm
                   entry={entry}
@@ -185,9 +179,9 @@ export function TemplateConnectionsSection({
       })}
       {confirmingReplace !== null && (
         <ConfirmationDialog
-          title="Replace this organization credential?"
-          description={`Replace the ${confirmingReplace.title} credential for the whole organization? Every template and workspace using it switches immediately.`}
-          confirmLabel="Replace credential"
+          title={`Replace the ${confirmingReplace.title} key?`}
+          description="Every template and workspace at this organization switches to the new key immediately."
+          confirmLabel="Replace key"
           onCancel={() => setConfirmingReplace(null)}
           onConfirm={() => {
             setConfiguring(confirmingReplace.id);

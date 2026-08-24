@@ -389,9 +389,11 @@ h1 { margin: 0 0 6px; font: 650 19px/1.3 var(--font-ui); }
     <s>injected</s> collapse to a dot plus one word: <b>Connected</b>,
     <b>Ready</b>, or <b>Needs a key</b>. The date trails the word.</li>
   <li><b>Custody stops leaking.</b> <code>injected</code> and
-    <code>proxied</code> are operator words. They move into the opened row, in
-    plain words, and never print for a lease that is not live — which is the
-    bug the screenshot shows.</li>
+    <code>proxied</code> are operator words. They are removed from the row in
+    this change; a member has no decision that depends on them.</li>
+  <li><b>A live connection colours the whole row</b>, not just its badge. That
+    ships in this change too. The refactor column above still shows the
+    single-line grid, which does not.</li>
   <li><b>One accent per panel.</b> Accent fill is spent only on a provider the
     template stipulates that is still off, because that row is what blocks the
     workspace. Every other action is the quiet pill.</li>
