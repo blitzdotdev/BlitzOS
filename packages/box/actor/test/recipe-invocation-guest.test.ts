@@ -223,7 +223,7 @@ function tmuxCreateArgv(session: string): string[] {
 function harnessCommand(harness: TuiHarness): string[] {
   return harness === "claude"
     ? ["claude", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"]
-    : ["codex", "--dangerously-bypass-approvals-and-sandbox"];
+    : ["/usr/local/libexec/blitz-codex-session"];
 }
 
 /** The flag mapping blitz-term ships, verified against each CLI's --help:

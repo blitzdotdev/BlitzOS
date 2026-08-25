@@ -45,9 +45,10 @@ interface PendingTerminalSignIn {
  * Drives a harness's terminal tab into its login flow on behalf of chat.
  *
  * Chat reported that the box could not authenticate. The returned callback
- * creates or selects that harness's own terminal tab and queues the login
- * command for it; the existing sign-in-URL scraper and "Paste code" button in
- * the terminal statusline finish the job.
+ * For Claude, this creates or selects its terminal tab and queues the TUI's
+ * login command. Codex gets a fresh terminal tab instead: the box launcher
+ * detects signed-out Codex sessions and starts device authentication, which
+ * works when the browser and CLI are on different machines.
  *
  * The request has to survive a render, which is why it is state rather than a
  * straight call: only the selected pane consumes terminal input, and a pane
@@ -102,6 +103,16 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
 
   return (provider: Agent) => {
     if (tabs === null || accessRole === 'viewer') return;
+    if (provider === 'codex') {
+      // Never type `/login` into Codex here. Its default browser flow redirects
+      // to localhost on the reader's computer, while the CLI listener lives on
+      // the remote box. A new tmux session runs blitz-codex-session, which owns
+      // the supported device-code flow before starting the Codex TUI.
+      arrivedRef.current = false;
+      setPending(null);
+      spawnSession(provider);
+      return;
+    }
     const existing = tabs.find((session) => session.type === provider);
     const sessionKey = String(existing?.id ?? nextId);
     if (existing) selectSession(sessionKey);

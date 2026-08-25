@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+fallback_shell() {
+  local shell=${SHELL:-/bin/bash}
+  if [ ! -x "$shell" ]; then
+    shell=/bin/bash
+  fi
+  echo "Codex sign-in did not complete. Starting a shell so you can try again with: codex login --device-auth" >&2
+  exec "$shell" -l
+}
+
+# Browser OAuth redirects to localhost. In a remote workspace that localhost is
+# the reader's computer, not this box, so the callback can never reach the CLI.
+# Codex's device-code flow is the supported remote/headless authentication path.
+if ! codex login status >/dev/null 2>&1; then
+  echo "Codex is not signed in. Starting device authentication..." >&2
+  if ! codex login --device-auth; then
+    fallback_shell
+  fi
+fi
+
+exec codex --dangerously-bypass-approvals-and-sandbox "$@"
