@@ -469,6 +469,82 @@ describe("create workspace dialog", () => {
     await deselected.unmount();
   });
 
+  it("offers a blank tile that leaves the org default and creates with no template", async () => {
+    const submit = vi.fn();
+    const template = {
+      id: "template-default",
+      name: "org starter",
+      machineTypeId: "cx23@fsn1",
+      createdAt: 1,
+      createdBy: { name: "Ada Park", avatarUrl: null },
+      agentRuleId: "rule-1",
+      isOrgDefault: true,
+      environment: {
+        env: { FROM_TEMPLATE: "yes" },
+        startupScript: "./setup.sh\n",
+      },
+      folders: [],
+      connections: [],
+      repos: [],
+    };
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient([BUILT_IN_RULE, {
+          id: "rule-1",
+          name: "House rules",
+          content: "# House rules\n",
+          updatedAt: 3,
+          builtIn: false,
+        }])}
+        listTemplates={async () => [template]}
+        initialTemplateId="template-default"
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+
+    // The blank choice leads the grid, before any template.
+    const blank = view.container.querySelector<HTMLButtonElement>(".template-grid > button")!;
+    expect(blank.textContent).toContain("No template");
+    // The org default is seeded, so the blank tile is not the pressed one yet.
+    expect(blank.getAttribute("aria-pressed")).toBe("false");
+    expect(view.container.querySelector('input[name="name"]')).toBeNull();
+
+    await act(async () => {
+      blank.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const tiles = [...view.container.querySelectorAll<HTMLButtonElement>(".template-grid > button")];
+    expect(tiles[0]?.getAttribute("aria-pressed")).toBe("true");
+    expect(tiles[1]?.getAttribute("aria-pressed")).toBe("false");
+    // The member now picks the machine, so the manual form is back.
+    expect(view.container.querySelector(".machine-catalog-groups")).not.toBeNull();
+    expect(view.container.querySelector('input[name="name"]')).not.toBeNull();
+    expect(view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Agent rules document"]',
+    )?.value).toBe("");
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    // The template's id, environment and rule all left with it.
+    expect(submit).toHaveBeenCalledWith({
+      machineTypeId: "cx23@fsn1",
+      orgShareRole: "editor",
+    });
+    expect("templateId" in submit.mock.calls[0]![0]).toBe(false);
+    await view.unmount();
+  });
+
   it("ignores an initialTemplateId the list no longer carries and stays manual", async () => {
     const view = await render(
       <CreateWorkspaceDialog

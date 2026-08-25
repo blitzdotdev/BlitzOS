@@ -1448,7 +1448,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       listVolumes={listVolumes}
       listTemplates={listTemplates}
       initialTemplateId={orgDefaultTemplateId}
-      onNewTemplate={() => navigateTo(templateNewPath())}
+      // The template page draws this dialog too, since #40. Close it on the
+      // way out, or it covers the page it just opened.
+      onNewTemplate={() => {
+        setShowCreateWorkspace(false);
+        navigateTo(templateNewPath());
+      }}
       onCancel={() => {
         if (!createWorkspaceBusy) setShowCreateWorkspace(false);
       }}
