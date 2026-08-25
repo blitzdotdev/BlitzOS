@@ -908,6 +908,52 @@
   margin: 0 auto 16px;
 }
 
+.chat-prompt-queue {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--paper) 98%, var(--ink));
+}
+
+.chat-prompt-queue-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.chat-prompt-queue-row + .chat-prompt-queue-row {
+  border-top: 1px solid var(--rule);
+}
+
+.chat-prompt-queue-position {
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.chat-prompt-queue-text {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-prompt-queue-row button {
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  font: inherit;
+}
+
+.chat-prompt-queue-row button:hover {
+  color: var(--ink);
+}
+
 .chat-composer {
   position: relative;
   flex: none;

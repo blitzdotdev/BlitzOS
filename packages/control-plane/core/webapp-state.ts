@@ -37,6 +37,11 @@ interface WebAppTabV1 {
   type: WebAppTabType;
   chatSessionId?: string;
   chatProvider?: WebAppAgent;
+  chatConfig?: {
+    model?: string;
+    effort?: string;
+    permission?: string;
+  };
   filePath?: string;
   port?: number;
   url?: string;
@@ -157,6 +162,15 @@ function parseAgent(value: OptionalJsonValue, field: string): WebAppAgent {
   return value;
 }
 
+function parseChatConfig(value: OptionalJsonValue, field: string): NonNullable<WebAppTabV1["chatConfig"]> {
+  if (!isRecord(value)) throw new HttpError(400, `${field} must be an object`);
+  const config: NonNullable<WebAppTabV1["chatConfig"]> = {};
+  for (const key of ["model", "effort", "permission"] as const) {
+    if (value[key] !== undefined) config[key] = boundedString(value[key], `${field}.${key}`, 256);
+  }
+  return config;
+}
+
 function parseSegment(value: OptionalJsonValue, field: string): WebAppDrawerSegment {
   // Legacy documents stored earlier segment names ('integrations' most
   // recently); they normalize to the combined connections panel instead of
@@ -256,6 +270,9 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   }
   if (value.chatProvider !== undefined) {
     tab.chatProvider = parseAgent(value.chatProvider, `tabs.tabs[${index}].chatProvider`);
+  }
+  if (value.chatConfig !== undefined) {
+    tab.chatConfig = parseChatConfig(value.chatConfig, `tabs.tabs[${index}].chatConfig`);
   }
   const windowOpen = parseWindowOpen(value.windowOpen, `tabs.tabs[${index}].windowOpen`);
   if (windowOpen === false) tab.windowOpen = false;

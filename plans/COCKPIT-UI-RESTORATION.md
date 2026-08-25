@@ -81,7 +81,6 @@ type ChatTabFields = ManagedTabFields & {
     effort?: string;
     permission?: string;
   };
-  showThinking?: boolean;
 };
 ```
 
@@ -221,29 +220,45 @@ needs input/done/error, opening it clears only the unread rail marker, terminal
 tabs never gain synthetic state, and a Markdown link to a workspace file opens
 that file without duplicating an already-open tab.
 
-### Phase 3 — queued prompts and persistent chat selections
+### Phase 3A — queued prompts and persistent chat selections
 
 1. Refactor the current `send` function into one dispatch path accepting an
    explicit message string.
 2. Add the bounded local queue and drain rules from Decision 5.
 3. Render queued rows beneath the transcript/composer with Remove actions and
    clear state labels.
-4. Add `onConfigChange` and `onShowThinkingChange` callbacks to `ChatPanel`.
-5. Persist model, effort, permission, and `showThinking` on the Chat tab in
-   workspace state.
+4. Add an `onConfigChange` callback to `ChatPanel`.
+5. Persist model, effort, and permission on the Chat tab in workspace state.
 6. After `session/new` or `session/load`, compare saved values with the ACP
    options currently advertised. Reapply only values that still exist; drop
    or replace stale values with the actor's current default.
-7. Replace the hardcoded `showThinking` prop with the persisted toggle. Keep
-   the control in the existing composer-control language; do not restore the
-   old bridge-specific composer sheet.
+7. Keep `showThinking` hard-coded on. Do not add a visibility toggle.
 8. Ensure config updates from one shared webapp state do not interrupt an
    already running turn; they apply to the next turn.
 
 Done when two messages entered during a running turn appear in order, either
 can be removed before dispatch, the remaining message runs exactly once, and
-chat selections plus thinking visibility survive a browser reload and actor
-reconnect.
+chat selections survive a browser reload and actor reconnect.
+
+### Phase 3B — provider authentication and available Chat options
+
+1. Add an actor-owned, secret-free authentication-status response for Claude
+   and Codex. A failed status check must remain distinct from signed out.
+2. Gate a new Chat before its first prompt when neither provider is signed in,
+   with actions to sign in to Claude or Codex.
+3. Show only authenticated providers in Chat's provider/model controls. When
+   both are authenticated, expose both; after one provider is authenticated,
+   remove the gate and expose only that provider.
+4. Create each Chat session with the selected provider and preserve that
+   provider when the tab/session is restored. Provider changes create or bind
+   an appropriate provider session rather than changing an in-flight turn.
+5. Re-check status after a sign-in flow without requiring a workspace reload,
+   while retaining the existing live `blitz/auth_required` response for
+   credentials that expire later.
+
+Done when a new signed-out workspace cannot accidentally submit a Chat prompt,
+either sign-in action can unlock Chat, and the provider/model choices always
+match the providers currently authenticated on that workspace.
 
 ### Phase 4 — Finder rename and delete
 

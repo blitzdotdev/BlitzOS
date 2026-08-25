@@ -154,6 +154,20 @@ async function enterMessage(container: HTMLElement, text: string): Promise<void>
   )?.click());
 }
 
+async function queueMessage(container: HTMLElement, text: string): Promise<void> {
+  const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]');
+  const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  if (textarea === null || valueSetter === undefined) throw new Error("chat textarea is unavailable");
+  await act(async () => {
+    valueSetter.call(textarea, text);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => textarea.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+  })));
+}
+
 function signInButton(container: HTMLElement): HTMLButtonElement | null {
   return [...container.querySelectorAll("button")]
     .find((button) => button.textContent?.startsWith("Sign in to")) ?? null;
@@ -351,6 +365,85 @@ describe("chat session lifecycle status", () => {
     await answer(socket, "session/prompt", { stopReason: "cancelled" });
     expect(statuses.at(-1)).toBe("idle");
 
+    await view.unmount();
+  });
+});
+
+describe("chat prompt queue and selections", () => {
+  it("queues prompts during a turn, removes one, and drains the remainder once", async () => {
+    const { socket, view } = await connectedPanel(false, () => undefined);
+    await enterMessage(view.container, "First");
+    await queueMessage(view.container, "Remove me");
+    await queueMessage(view.container, "Run second");
+
+    expect(view.container.textContent).toContain("Queued 1");
+    expect(view.container.textContent).toContain("Remove me");
+    expect(view.container.textContent).toContain("Run second");
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(({ textContent }) => textContent === "Remove")?.click());
+
+    await answer(socket, "session/prompt", { stopReason: "end_turn" });
+    const second = await requestFor(socket, "session/prompt");
+    expect(second.params?.prompt).toEqual([{ type: "text", text: "Run second" }]);
+    expect(socket.sent.filter((line) => (JSON.parse(line) as WireFrame).method === "session/prompt"))
+      .toHaveLength(2);
+    await socket.deliver({ jsonrpc: "2.0", id: second.id, result: { stopReason: "end_turn" } });
+    await view.unmount();
+  });
+
+  it("reapplies a valid saved selection after loading and reports the resulting config", async () => {
+    const onConfigChange = vi.fn();
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId="stored-session"
+        initialConfig={{ model: "claude-sonnet-5" }}
+        onSessionId={() => undefined}
+        onConfigChange={onConfigChange}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answer(socket, "session/load", {
+      configOptions: [{
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "default",
+        options: [
+          { value: "default", name: "Default" },
+          { value: "claude-sonnet-5", name: "Sonnet 5" },
+        ],
+      }],
+    });
+    const setConfig = await requestFor(socket, "session/set_config_option");
+    expect(setConfig.params).toMatchObject({
+      sessionId: "stored-session",
+      configId: "model",
+      value: "claude-sonnet-5",
+    });
+    await socket.deliver({
+      jsonrpc: "2.0",
+      id: setConfig.id,
+      result: {
+        configOptions: [{
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "claude-sonnet-5",
+          options: [{ value: "claude-sonnet-5", name: "Sonnet 5" }],
+        }],
+      },
+    });
+    await settle();
+    expect(onConfigChange).toHaveBeenCalledWith({ model: "claude-sonnet-5" });
     await view.unmount();
   });
 });

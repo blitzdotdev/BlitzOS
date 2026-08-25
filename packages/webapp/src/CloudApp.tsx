@@ -70,6 +70,7 @@ import {
   tabRegion,
   withPreviewTabPath,
   type StorageNamespace,
+  type ChatConfig,
   type WorkspaceDrawerSegment,
   type WorkspaceRegion,
   type WorkspaceTab,
@@ -1351,6 +1352,22 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   };
+  const rememberChatConfig = (id: string, chatConfig: ChatConfig) => {
+    updateWorkspaceTabs((current) => {
+      const numericId = current.tabs.find((tab) => String(tab.id) === id)?.id;
+      if (numericId === undefined) return current;
+      const tab = current.tabs.find((entry) => entry.id === numericId);
+      if (tab?.type !== 'chat' || JSON.stringify(tab.chatConfig ?? {}) === JSON.stringify(chatConfig)) {
+        return current;
+      }
+      return {
+        ...current,
+        tabs: current.tabs.map((entry) => entry.id === numericId && entry.type === 'chat'
+          ? { ...entry, chatConfig }
+          : entry),
+      };
+    });
+  };
 
   const {
     tabDrag,
@@ -2064,6 +2081,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         }}
                         onOpenPreview={openPreviewPort}
                         onOpenFile={openFile}
+                        initialConfig={session.chatConfig}
+                        onConfigChange={(config) => rememberChatConfig(sessionId, config)}
                         onStatusChange={(status) => {
                           setChatSessionStatuses((current) => {
                             if (activeWorkspaceIdRef.current !== activeWorkspaceId) return current;

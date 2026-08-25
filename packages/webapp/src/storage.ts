@@ -48,9 +48,16 @@ export type ManagedWorkspaceTab = {
   type: 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
+  chatConfig?: ChatConfig;
   title?: string;
   windowOpen?: false;
   region?: WorkspaceRegion;
+};
+
+export type ChatConfig = {
+  model?: string;
+  effort?: string;
+  permission?: string;
 };
 
 export type WorkspaceTab = ManagedWorkspaceTab | {
@@ -127,8 +134,22 @@ interface RestoredSessionTab {
   type: TerminalAgent | 'terminal' | 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
+  chatConfig?: ChatConfig;
   title?: string;
   windowOpen?: false;
+}
+
+function parseChatConfig(value: OptionalJsonValue): ChatConfig | null {
+  const object = asJsonObject(value);
+  if (object === null) return null;
+  const config: ChatConfig = {};
+  for (const key of ['model', 'effort', 'permission'] as const) {
+    const candidate = object[key];
+    if (candidate === undefined) continue;
+    if (!isString(candidate) || candidate.length > 256) return null;
+    config[key] = candidate;
+  }
+  return config;
 }
 
 export const SESSION_TITLE_MAX_LENGTH = 64;
@@ -470,6 +491,11 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
     if (isString(object.chatSessionId)) tab.chatSessionId = object.chatSessionId;
     if (object.chatProvider === 'claude' || object.chatProvider === 'codex') {
       tab.chatProvider = object.chatProvider;
+    }
+    if (object.chatConfig !== undefined) {
+      const chatConfig = parseChatConfig(object.chatConfig);
+      if (chatConfig === null) return null;
+      tab.chatConfig = chatConfig;
     }
     // SAFETY: The chat branch and checked optional fields establish the chat tab variant.
     return withRegion(tab as WorkspaceTab, region);

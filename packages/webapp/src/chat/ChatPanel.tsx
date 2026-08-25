@@ -35,6 +35,12 @@ interface PermissionAnsweredNotification {
 }
 
 const APPROVAL_PREVIEW_CHARS = 600;
+const LOCAL_PROMPT_QUEUE_LIMIT = 32;
+const CHAT_CONFIG_IDS = ["model", "effort", "permission"] as const;
+
+export type ChatConfigSelections = Partial<Record<(typeof CHAT_CONFIG_IDS)[number], string>>;
+
+type QueuedPrompt = { id: number; text: string };
 
 /** The runtime half of {@link AuthRequiredProvider}, from the same list.
  *
@@ -61,6 +67,16 @@ function selectConfigs(options: SessionConfigOption[]): SelectConfig[] {
     );
     return [{ id: option.id, name: option.name, currentValue: option.currentValue, choices }];
   });
+}
+
+function configSelections(options: SessionConfigOption[]): ChatConfigSelections {
+  const selections: ChatConfigSelections = {};
+  for (const option of selectConfigs(options)) {
+    if (CHAT_CONFIG_IDS.includes(option.id as (typeof CHAT_CONFIG_IDS)[number])) {
+      selections[option.id as (typeof CHAT_CONFIG_IDS)[number]] = option.currentValue;
+    }
+  }
+  return selections;
 }
 
 type PermissionResolver = (response: RequestPermissionResponse) => void;
@@ -94,6 +110,8 @@ export function ChatPanel({
   onOpenPreview,
   onOpenFile,
   onStatusChange,
+  initialConfig = {},
+  onConfigChange,
   onSignIn,
   readOnly = false,
 }: {
@@ -108,6 +126,8 @@ export function ChatPanel({
   onOpenPreview?: (port: number) => boolean;
   onOpenFile?: (filePath: string) => void;
   onStatusChange?: (status: ChatSessionStatus) => void;
+  initialConfig?: ChatConfigSelections;
+  onConfigChange?: (config: ChatConfigSelections) => void;
   /** Drives the harness's terminal tab into its login flow. */
   onSignIn?: (provider: Agent) => void;
   readOnly?: boolean;
@@ -116,6 +136,7 @@ export function ChatPanel({
   const [status, setStatus] = useState("Connecting…");
   const [draft, setDraft] = useState("");
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
+  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [authRequired, setAuthRequired] = useState<Agent | null>(null);
   const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
@@ -129,14 +150,46 @@ export function ChatPanel({
   const boundSessionIdsRef = useRef<ReadonlySet<string>>(new Set(boundSessionIds));
   const onSessionIdRef = useRef(onSessionId);
   const onStatusChangeRef = useRef(onStatusChange);
+  const onConfigChangeRef = useRef(onConfigChange);
+  const savedConfigRef = useRef(initialConfig);
   const runningRef = useRef(false);
   const turnRef = useRef(0);
+  const queuedPromptIdRef = useRef(0);
   const permissionResolvers = useRef(new Map<string, Set<PermissionResolver>>());
   const permissionAnswers = useRef(new Map<string, RequestPermissionResponse>());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   onSessionIdRef.current = onSessionId;
   onStatusChangeRef.current = onStatusChange;
+  onConfigChangeRef.current = onConfigChange;
   boundSessionIdsRef.current = new Set(boundSessionIds);
+
+  const installConfigOptions = useCallback(async (
+    context: ClientContext,
+    sessionId: string,
+    advertised: SessionConfigOption[],
+  ): Promise<void> => {
+    let options = advertised;
+    for (const configId of CHAT_CONFIG_IDS) {
+      const saved = savedConfigRef.current[configId];
+      const select = selectConfigs(options).find((option) => option.id === configId);
+      if (
+        saved === undefined
+        || select === undefined
+        || select.currentValue === saved
+        || !select.choices.some((choice) => choice.value === saved)
+      ) continue;
+      const answer = await context.request(acp.methods.agent.session.setConfigOption, {
+        sessionId,
+        configId,
+        value: saved,
+      });
+      options = answer.configOptions ?? options;
+    }
+    setConfigOptions(options);
+    const current = configSelections(options);
+    savedConfigRef.current = current;
+    onConfigChangeRef.current?.(current);
+  }, []);
 
   useEffect(() => {
     onStatusChangeRef.current?.(sessionStatus);
@@ -249,7 +302,7 @@ export function ChatPanel({
             sessionIdRef.current = created.sessionId;
             sessionIntentRef.current = "load";
             onSessionIdRef.current(workspaceId, created.sessionId);
-            setConfigOptions(created.configOptions ?? []);
+            await installConfigOptions(context, created.sessionId, created.configOptions ?? []);
           } else if (existingSession !== null) {
             dispatch({ type: "begin-replay" });
             try {
@@ -261,7 +314,7 @@ export function ChatPanel({
               sessionIntentRef.current = "load";
               dispatch({ type: "reconcile-running" });
               runningRef.current = false;
-              setConfigOptions(loaded.configOptions ?? []);
+              await installConfigOptions(context, existingSession, loaded.configOptions ?? []);
             } catch {
               setMissingSessionId(existingSession);
               setStatus("Stored chat session is unavailable");
@@ -311,7 +364,7 @@ export function ChatPanel({
       connection?.close();
       connectionRef.current = null;
     };
-  }, [connectionVersion, readOnly, requestPermission, url, workspaceId]);
+  }, [connectionVersion, installConfigOptions, readOnly, requestPermission, url, workspaceId]);
 
   const chooseSessionRecovery = (intent: "create" | "recover"): void => {
     sessionIdRef.current = null;
@@ -360,8 +413,7 @@ export function ChatPanel({
     setPinned(true);
   };
 
-  const send = async (): Promise<void> => {
-    const text = draft.trim();
+  const dispatchMessage = useCallback(async (text: string): Promise<void> => {
     const context = connectionRef.current;
     const sessionId = sessionIdRef.current;
     if (text.length === 0 || context === null || sessionId === null || runningRef.current) return;
@@ -370,7 +422,6 @@ export function ChatPanel({
     setTurnStartedAt(Date.now());
     dispatch({ type: "turn-started", turnId });
     setSessionStatus("generating");
-    setDraft("");
     try {
       const result = await context.request(acp.methods.agent.session.prompt, {
         sessionId,
@@ -380,12 +431,36 @@ export function ChatPanel({
       // other ending proves the credential works again, so the prompt goes.
       if (result.stopReason !== "refusal") setAuthRequired(null);
       dispatch({ type: "turn-ended", turnId, stopReason: result.stopReason });
+      runningRef.current = false;
       setSessionStatus(statusForStopReason(result.stopReason));
     } catch {
       dispatch({ type: "generic", label: "The connection closed; the prompt was not resent." });
+      dispatch({ type: "turn-ended", turnId, stopReason: "refusal" });
+      runningRef.current = false;
       setSessionStatus("error");
     }
+  }, []);
+
+  const send = (): void => {
+    const text = draft.trim();
+    if (text.length === 0) return;
+    setDraft("");
+    if (runningRef.current) {
+      setQueuedPrompts((current) => current.length >= LOCAL_PROMPT_QUEUE_LIMIT
+        ? current
+        : [...current, { id: ++queuedPromptIdRef.current, text }]);
+      return;
+    }
+    void dispatchMessage(text);
   };
+
+  useEffect(() => {
+    if (state.running || runningRef.current || queuedPrompts.length === 0) return;
+    const [next] = queuedPrompts;
+    if (next === undefined) return;
+    setQueuedPrompts((current) => current.filter((prompt) => prompt.id !== next.id));
+    void dispatchMessage(next.text);
+  }, [dispatchMessage, queuedPrompts, state.running]);
 
   const cancel = (): void => {
     const sessionId = sessionIdRef.current;
@@ -404,7 +479,11 @@ export function ChatPanel({
       configId,
       value,
     });
-    setConfigOptions(answer.configOptions ?? []);
+    const next = answer.configOptions ?? [];
+    setConfigOptions(next);
+    const current = configSelections(next);
+    savedConfigRef.current = current;
+    onConfigChangeRef.current?.(current);
   };
 
   const connected = status.startsWith("Connected");
@@ -482,6 +561,20 @@ export function ChatPanel({
       </div>
 
       <div className="chat-dock">
+        {queuedPrompts.length > 0 && (
+          <div className="chat-prompt-queue" aria-label="Queued messages">
+            {queuedPrompts.map((prompt, index) => (
+              <div className="chat-prompt-queue-row" key={prompt.id}>
+                <span className="chat-prompt-queue-position">Queued {index + 1}</span>
+                <span className="chat-prompt-queue-text">{prompt.text}</span>
+                <button
+                  type="button"
+                  onClick={() => setQueuedPrompts((current) => current.filter(({ id }) => id !== prompt.id))}
+                >Remove</button>
+              </div>
+            ))}
+          </div>
+        )}
         {missingSessionId !== null && (
           <div className="chat-session-recovery" role="alert">
             <div>
@@ -575,7 +668,7 @@ export function ChatPanel({
                     cancel();
                   } else if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    void send();
+                    send();
                   }
                 }}
               />
@@ -589,7 +682,7 @@ export function ChatPanel({
                     type="button"
                     className="chat-send"
                     aria-label="Send message"
-                    onClick={() => { void send(); }}
+                    onClick={send}
                     disabled={!connected || draft.trim().length === 0}
                   ><ArrowIcon direction="up" /></button>
                 )}
