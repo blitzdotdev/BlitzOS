@@ -185,6 +185,11 @@ There is no traffic ramp. A deploy goes to full traffic at once.
 
 ## Gotchas
 
+- **A tag does not wait for CI.** `release.yml` triggers on the tag alone and
+  has no dependency on `ci.yml`, so a red build can still reach the approval
+  step. This is deliberate — the reviewer is the gate — but it means you must
+  check CI on the commit yourself before you approve. It has already shipped a
+  release whose commit had a failing test.
 - **A bundle hash identifies the webapp build only.** `/assets/index-*.js` is
   derived from webapp source, so a change to a route, a provider, or
   `core/bootstrap.ts` leaves it identical. Two deployments running different
