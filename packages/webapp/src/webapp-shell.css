@@ -608,6 +608,32 @@
   white-space: nowrap;
 }
 
+.webapp-session-state {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--ansi-magenta);
+  border-radius: 4px;
+  color: var(--ansi-magenta);
+  font-size: 9.5px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.webapp-session-state--attention {
+  border-color: var(--ansi-yellow);
+  color: var(--ansi-yellow);
+}
+
+.webapp-session-state--done {
+  border-color: var(--ansi-green);
+  color: var(--ansi-green);
+}
+
+.webapp-session-state--error {
+  border-color: var(--ansi-red);
+  color: var(--ansi-red);
+}
+
 .webapp-session-spinner {
   width: 10px;
   height: 10px;

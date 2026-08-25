@@ -5,8 +5,8 @@ capabilities identified by comparing a previous merged PR from an older repo
 with the current BlitzOS webapp. P2 mobile/accessibility polish is explicitly
 out of scope for this plan.
 
-Progress: **Phase 1 implemented locally** on `feat-ui-changes` (2026-08-24).
-Phases 2–5 remain pending.
+Progress: **Phases 1–2 implemented locally** on `feat-ui-changes` (2026-08-24).
+Phases 3–5 remain pending.
 
 This is not a port of the old bridge. The current control-plane → webapp → box
 actor/ACP architecture stays authoritative. We restore the user-visible
@@ -188,6 +188,8 @@ session; and removing an archived entry does not corrupt `activeId`,
 `sideActiveId`, or `nextId`.
 
 ### Phase 2 — native-chat rail states and workspace-file links
+
+Implemented locally on `feat-ui-changes` (2026-08-24).
 
 1. Add a `ChatSessionStatus` callback to `ChatPanel` and derive it only from
    reducer/ACP state.

@@ -26,6 +26,7 @@ export function ChatItemView({
   toolResults,
   showThinking,
   onOpenPreview,
+  onOpenFile,
   workingDirectory,
   finalAssistantId,
   finalTextOnly = false,
@@ -34,6 +35,7 @@ export function ChatItemView({
   toolResults: Record<string, import("./chat-render.js").ToolResult>;
   showThinking: boolean;
   onOpenPreview?: ((port: number) => boolean) | undefined;
+  onOpenFile?: ((filePath: string) => void) | undefined;
   workingDirectory: string;
   finalAssistantId?: number | undefined;
   finalTextOnly?: boolean;
@@ -67,6 +69,7 @@ export function ChatItemView({
         showThinking={showThinking}
         inFlight={item.inFlight}
         onOpenPreview={onOpenPreview}
+        onOpenFile={onOpenFile}
         workingDirectory={workingDirectory}
       />
     </div>
@@ -78,12 +81,14 @@ export function TurnWork({
   toolResults,
   showThinking,
   onOpenPreview,
+  onOpenFile,
   workingDirectory,
 }: {
   turn: ChatTurn;
   toolResults: Record<string, import("./chat-render.js").ToolResult>;
   showThinking: boolean;
   onOpenPreview?: ((port: number) => boolean) | undefined;
+  onOpenFile?: ((filePath: string) => void) | undefined;
   workingDirectory: string;
 }) {
   const activities = activitySummaryParts(turn.activity);
@@ -109,6 +114,7 @@ export function TurnWork({
             toolResults={toolResults}
             showThinking={showThinking}
             onOpenPreview={onOpenPreview}
+            onOpenFile={onOpenFile}
             workingDirectory={workingDirectory}
             finalAssistantId={turn.finalAssistantId}
           />
@@ -123,12 +129,14 @@ export function ChatTurnView({
   toolResults,
   showThinking,
   onOpenPreview,
+  onOpenFile,
   workingDirectory,
 }: {
   turn: ChatTurn;
   toolResults: Record<string, import("./chat-render.js").ToolResult>;
   showThinking: boolean;
   onOpenPreview?: ((port: number) => boolean) | undefined;
+  onOpenFile?: ((filePath: string) => void) | undefined;
   workingDirectory: string;
 }) {
   const finalAssistant = turn.finalAssistantId == null
@@ -141,6 +149,7 @@ export function ChatTurnView({
         toolResults={toolResults}
         showThinking={showThinking}
         onOpenPreview={onOpenPreview}
+        onOpenFile={onOpenFile}
         workingDirectory={workingDirectory}
       />
       <TurnWork
@@ -148,6 +157,7 @@ export function ChatTurnView({
         toolResults={toolResults}
         showThinking={showThinking}
         onOpenPreview={onOpenPreview}
+        onOpenFile={onOpenFile}
         workingDirectory={workingDirectory}
       />
       {finalAssistant && (
@@ -156,6 +166,7 @@ export function ChatTurnView({
           toolResults={toolResults}
           showThinking={showThinking}
           onOpenPreview={onOpenPreview}
+          onOpenFile={onOpenFile}
           workingDirectory={workingDirectory}
           finalAssistantId={turn.finalAssistantId}
           finalTextOnly
@@ -164,4 +175,3 @@ export function ChatTurnView({
     </article>
   );
 }
-

@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { ChatPanel } from "../src/chat/ChatPanel.js";
+import type { ChatSessionStatus } from "../src/chat/ChatPanel.js";
 import { SPAWN_SESSION_LABELS } from "../src/WebAppHeader.js";
 import { render, settle } from "./dom.js";
 
@@ -82,10 +83,11 @@ class FakeSocket {
 /** Waits for the panel to issue one request, then answers it. */
 async function requestFor(socket: FakeSocket, method: string): Promise<WireFrame> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const request = socket.sent
+    const requests = socket.sent
       // SAFETY: The panel writes JSON-RPC frames; only the id and method are read back out.
       .map((line) => JSON.parse(line) as WireFrame)
-      .find((frame) => frame.method === method);
+      .filter((frame) => frame.method === method);
+    const request = requests.at(-1);
     if (request !== undefined) {
       return request;
     }
@@ -109,7 +111,11 @@ async function answerError(socket: FakeSocket, method: string, message: string):
 }
 
 /** Brings a panel up to the point where it is attached to an existing session. */
-async function connectedPanel(readOnly: boolean, onSignIn: (provider: "claude" | "codex") => void) {
+async function connectedPanel(
+  readOnly: boolean,
+  onSignIn: (provider: "claude" | "codex") => void,
+  onStatusChange?: (status: ChatSessionStatus) => void,
+) {
   const view = await render(
     <ChatPanel
       url="wss://workspace.test/acp"
@@ -117,6 +123,7 @@ async function connectedPanel(readOnly: boolean, onSignIn: (provider: "claude" |
       initialSessionId={null}
       onSessionId={() => undefined}
       onSignIn={onSignIn}
+      onStatusChange={onStatusChange}
       readOnly={readOnly}
     />,
   );
@@ -129,6 +136,22 @@ async function connectedPanel(readOnly: boolean, onSignIn: (provider: "claude" |
   await answer(socket, "session/list", { sessions: [{ sessionId: "session-one", cwd: "/workspace" }] });
   await answer(socket, "session/load", { configOptions: [] });
   return { socket, view };
+}
+
+async function enterMessage(container: HTMLElement, text: string): Promise<void> {
+  const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]');
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  if (textarea === null || valueSetter === undefined) throw new Error("chat textarea is unavailable");
+  await act(async () => {
+    valueSetter.call(textarea, text);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => container.querySelector<HTMLButtonElement>(
+    'button[aria-label="Send message"]',
+  )?.click());
 }
 
 function signInButton(container: HTMLElement): HTMLButtonElement | null {
@@ -293,6 +316,41 @@ describe("chat session identity", () => {
       .toEqual(expect.arrayContaining(["Recover existing", "Start new chat"]));
     expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/new"))
       .toBe(false);
+    await view.unmount();
+  });
+});
+
+describe("chat session lifecycle status", () => {
+  it("reports ACP turn, permission, completion, failure, and cancellation states", async () => {
+    const statuses: ChatSessionStatus[] = [];
+    const { socket, view } = await connectedPanel(false, () => undefined, (status) => {
+      statuses.push(status);
+    });
+    expect(statuses.at(-1)).toBe("idle");
+
+    await enterMessage(view.container, "Change the file");
+    expect(statuses.at(-1)).toBe("generating");
+
+    await socket.deliver(forSession(fixtureFrames("permission.jsonl")[0], "session-one"));
+    expect(statuses.at(-1)).toBe("needs-attention");
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(({ textContent }) => textContent === "Allow once")?.click());
+    expect(statuses.at(-1)).toBe("generating");
+
+    await answer(socket, "session/prompt", { stopReason: "end_turn" });
+    expect(statuses.at(-1)).toBe("done");
+
+    await enterMessage(view.container, "Try again");
+    await answer(socket, "session/prompt", { stopReason: "refusal" });
+    expect(statuses.at(-1)).toBe("error");
+
+    await enterMessage(view.container, "Stop this one");
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(({ textContent }) => textContent?.includes("Stop"))?.click());
+    expect(statuses.at(-1)).toBe("idle");
+    await answer(socket, "session/prompt", { stopReason: "cancelled" });
+    expect(statuses.at(-1)).toBe("idle");
+
     await view.unmount();
   });
 });

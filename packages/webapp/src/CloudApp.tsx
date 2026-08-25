@@ -26,7 +26,7 @@ import { FileIcon } from './WebAppIcons';
 import { DriveHome } from './files/DriveHome';
 import { CreateRecipeScreen } from './files/CreateRecipeScreen';
 import { CreateTemplateScreen } from './files/CreateTemplateScreen';
-import { DriveRail, type DriveRailNav } from './files/DriveRail';
+import { DriveRail, type DriveRailNav, type DriveRailSession } from './files/DriveRail';
 import { RecipesHome } from './files/RecipesHome';
 import { TemplatesHome } from './files/TemplatesHome';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
@@ -96,7 +96,7 @@ import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
 import { useTerminalSignIn } from './use-terminal-sign-in';
-import { ChatPanel } from './chat/ChatPanel';
+import { ChatPanel, type ChatSessionStatus } from './chat/ChatPanel';
 import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { FileEditor } from './FileEditor';
@@ -282,6 +282,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
   const [sessionRemoveConfirmation, setSessionRemoveConfirmation] = useState<SessionRemoveConfirmation | null>(null);
+  const [chatSessionStatuses, setChatSessionStatuses] = useState<{
+    workspaceId: string;
+    byTabId: Record<string, ChatSessionStatus>;
+  }>(() => ({ workspaceId: '', byTabId: {} }));
   const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
   const [workspaceAttachments, setWorkspaceAttachments] = useState<{
     workspaceId: string;
@@ -519,6 +523,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // rather than highlighting the same provider name somewhere else.
   useEffect(() => {
     setConnectionsFocus(null);
+    setChatSessionStatuses({ workspaceId: activeWorkspaceId, byTabId: {} });
   }, [activeWorkspaceId]);
 
   // Drive attachments feed the files view (shared pin count, context-menu
@@ -1088,6 +1093,23 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       customTitle: session.title,
       renameable: true,
     })), [archivedSessions]);
+  const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
+    .filter((tab) => tab.agent !== 'panel')
+    .map((tab) => {
+      const status = tab.agent === 'chat'
+        && chatSessionStatuses.workspaceId === activeWorkspaceId
+        ? chatSessionStatuses.byTabId[tab.id]
+        : undefined;
+      const session: DriveRailSession = {
+        id: tab.id,
+        label: tab.label,
+        agent: tab.agent,
+      };
+      if (tab.filePath !== undefined) session.filePath = tab.filePath;
+      if (status !== undefined && status !== 'idle') session.state = status;
+      if (status === 'done' || status === 'error') session.unread = true;
+      return session;
+    }), [activeWorkspaceId, chatSessionStatuses, ttydTabs]);
   const canEditWorkspaceLayout = activeWorkspace?.accessRole !== 'viewer';
   /** Tab models for one column, in the order that column draws them. */
   const paneTabModels = (region: WorkspaceRegion): WebAppTabModel[] => ttydTabs.filter(
@@ -1128,9 +1150,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const selectTtydSession = useCallback((id: string) => {
     const session = ttydSessions.find((tab) => String(tab.id) === id);
     if (session === undefined) return;
+    setChatSessionStatuses((current) => (
+      current.workspaceId === activeWorkspaceId
+        && (current.byTabId[id] === 'done' || current.byTabId[id] === 'error')
+        ? { ...current, byTabId: { ...current.byTabId, [id]: 'idle' } }
+        : current
+    ));
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
-  }, [surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+  }, [activeWorkspaceId, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1493,7 +1521,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       org={store.viewer?.org ?? null}
       organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
-        ? ttydTabs.filter((tab) => tab.agent !== 'panel')
+        ? railSessions
         : []}
       activeSessionId={ttydActiveId ?? ''}
       onSelectSession={selectTtydSession}
@@ -1994,6 +2022,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                           rememberChatSession(sessionId, chatSessionId, 'claude');
                         }}
                         onOpenPreview={openPreviewPort}
+                        onOpenFile={openFile}
+                        onStatusChange={(status) => {
+                          setChatSessionStatuses((current) => {
+                            if (activeWorkspaceIdRef.current !== activeWorkspaceId) return current;
+                            const byTabId = current.workspaceId === activeWorkspaceId
+                              ? current.byTabId
+                              : {};
+                            const nextStatus = active
+                              && (status === 'done' || status === 'error')
+                              ? 'idle'
+                              : status;
+                            if (byTabId[sessionId] === nextStatus) return current;
+                            return {
+                              workspaceId: activeWorkspaceId,
+                              byTabId: { ...byTabId, [sessionId]: nextStatus },
+                            };
+                          });
+                        }}
                         onSignIn={signInToTerminal}
                         readOnly={activeWorkspace?.accessRole === 'viewer'}
                       />

@@ -4,6 +4,7 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionConfigOption,
+  StopReason,
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { HARNESSES, type AuthRequiredParams, type AuthRequiredProvider } from "@blitzos/schema";
@@ -75,6 +76,13 @@ function approvalPayload<Value>(input: Value): string {
 
 const MAX_RECONNECT_ATTEMPTS = 8;
 export type ChatSessionIntent = "create" | "load" | "recover";
+export type ChatSessionStatus = "idle" | "generating" | "needs-attention" | "done" | "error";
+
+function statusForStopReason(stopReason: StopReason): ChatSessionStatus {
+  if (stopReason === "end_turn") return "done";
+  if (stopReason === "cancelled") return "idle";
+  return "error";
+}
 
 export function ChatPanel({
   url,
@@ -84,6 +92,8 @@ export function ChatPanel({
   boundSessionIds = [],
   onSessionId,
   onOpenPreview,
+  onOpenFile,
+  onStatusChange,
   onSignIn,
   readOnly = false,
 }: {
@@ -96,6 +106,8 @@ export function ChatPanel({
   boundSessionIds?: readonly string[];
   onSessionId: (workspaceId: string, sessionId: string) => void;
   onOpenPreview?: (port: number) => boolean;
+  onOpenFile?: (filePath: string) => void;
+  onStatusChange?: (status: ChatSessionStatus) => void;
   /** Drives the harness's terminal tab into its login flow. */
   onSignIn?: (provider: Agent) => void;
   readOnly?: boolean;
@@ -109,19 +121,26 @@ export function ChatPanel({
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const [missingSessionId, setMissingSessionId] = useState<string | null>(null);
   const [connectionVersion, setConnectionVersion] = useState(0);
+  const [sessionStatus, setSessionStatus] = useState<ChatSessionStatus>("idle");
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const sessionIntentRef = useRef<ChatSessionIntent>(sessionIntent);
   const recoverCanCreateRef = useRef(sessionIntent === "recover");
   const boundSessionIdsRef = useRef<ReadonlySet<string>>(new Set(boundSessionIds));
   const onSessionIdRef = useRef(onSessionId);
+  const onStatusChangeRef = useRef(onStatusChange);
   const runningRef = useRef(false);
   const turnRef = useRef(0);
   const permissionResolvers = useRef(new Map<string, Set<PermissionResolver>>());
   const permissionAnswers = useRef(new Map<string, RequestPermissionResponse>());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   onSessionIdRef.current = onSessionId;
+  onStatusChangeRef.current = onStatusChange;
   boundSessionIdsRef.current = new Set(boundSessionIds);
+
+  useEffect(() => {
+    onStatusChangeRef.current?.(sessionStatus);
+  }, [sessionStatus]);
 
   useEffect(() => {
     runningRef.current = state.running;
@@ -131,6 +150,7 @@ export function ChatPanel({
   const requestPermission = useCallback((request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
     if (readOnly) return Promise.resolve({ outcome: { outcome: "cancelled" } });
     dispatch({ type: "permission-request", request });
+    setSessionStatus("needs-attention");
     const id = request.toolCall.toolCallId;
     const answered = permissionAnswers.current.get(id);
     if (answered !== undefined) return Promise.resolve(answered);
@@ -245,11 +265,13 @@ export function ChatPanel({
             } catch {
               setMissingSessionId(existingSession);
               setStatus("Stored chat session is unavailable");
+              setSessionStatus("error");
               haltAfterClose = true;
             }
           } else {
             setMissingSessionId((current) => current ?? "unavailable");
             setStatus("No chat session is available to replay");
+            setSessionStatus("error");
             haltAfterClose = true;
           }
           if (haltAfterClose) throw new Error("chat session selection required");
@@ -273,6 +295,7 @@ export function ChatPanel({
         // and let the reader retry deliberately.
         if (attempts >= MAX_RECONNECT_ATTEMPTS) {
           setStatus("Disconnected · reload to reconnect");
+          setSessionStatus("error");
           break;
         }
         setStatus("Disconnected");
@@ -296,6 +319,7 @@ export function ChatPanel({
     recoverCanCreateRef.current = false;
     setMissingSessionId(null);
     setStatus("Connecting…");
+    setSessionStatus("idle");
     setConnectionVersion((version) => version + 1);
   };
 
@@ -307,6 +331,7 @@ export function ChatPanel({
     };
     permissionAnswers.current.set(toolCallId, response);
     dispatch({ type: "permission-answered", toolCallId, optionId });
+    if (runningRef.current) setSessionStatus("generating");
     for (const resolve of permissionResolvers.current.get(toolCallId) ?? []) resolve(response);
     permissionResolvers.current.delete(toolCallId);
   };
@@ -344,6 +369,7 @@ export function ChatPanel({
     runningRef.current = true;
     setTurnStartedAt(Date.now());
     dispatch({ type: "turn-started", turnId });
+    setSessionStatus("generating");
     setDraft("");
     try {
       const result = await context.request(acp.methods.agent.session.prompt, {
@@ -354,8 +380,10 @@ export function ChatPanel({
       // other ending proves the credential works again, so the prompt goes.
       if (result.stopReason !== "refusal") setAuthRequired(null);
       dispatch({ type: "turn-ended", turnId, stopReason: result.stopReason });
+      setSessionStatus(statusForStopReason(result.stopReason));
     } catch {
       dispatch({ type: "generic", label: "The connection closed; the prompt was not resent." });
+      setSessionStatus("error");
     }
   };
 
@@ -364,6 +392,7 @@ export function ChatPanel({
     if (sessionId !== null) {
       void connectionRef.current?.notify(acp.methods.agent.session.cancel, { sessionId });
     }
+    setSessionStatus("idle");
   };
 
   const chooseConfig = async (configId: string, value: string): Promise<void> => {
@@ -424,6 +453,7 @@ export function ChatPanel({
                 toolResults={derived.toolResults}
                 showThinking
                 onOpenPreview={onOpenPreview}
+                onOpenFile={onOpenFile}
                 workingDirectory={workingDirectory}
               />
             ) : (
@@ -433,6 +463,7 @@ export function ChatPanel({
                 toolResults={derived.toolResults}
                 showThinking
                 onOpenPreview={onOpenPreview}
+                onOpenFile={onOpenFile}
                 workingDirectory={workingDirectory}
               />
             ))}

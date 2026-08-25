@@ -58,10 +58,12 @@ vi.mock("../src/TtydTerminal.js", async () => {
 vi.mock("../src/chat/ChatPanel.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatPanel: ({ initialSessionId, sessionIntent, onSignIn }: {
+    ChatPanel: ({ initialSessionId, sessionIntent, onOpenFile, onSignIn, onStatusChange }: {
       initialSessionId: string | null;
       sessionIntent?: string;
+      onOpenFile?: (filePath: string) => void;
       onSignIn?: (provider: "claude" | "codex") => void;
+      onStatusChange?: (status: "idle" | "generating" | "needs-attention" | "done" | "error") => void;
     }) => {
       const [mountId] = React.useState(() => `chat-${++webAppHarness.nextMountId}`);
       React.useEffect(() => {
@@ -85,6 +87,19 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
             data-testid="chat-sign-in-codex"
             onClick={() => onSignIn?.("codex")}
           >Sign in to Codex</button>
+          {(["generating", "needs-attention", "done", "error"] as const).map((status) => (
+            <button
+              type="button"
+              data-testid={`chat-status-${status}`}
+              key={status}
+              onClick={() => onStatusChange?.(status)}
+            >{status}</button>
+          ))}
+          <button
+            type="button"
+            data-testid="chat-open-file"
+            onClick={() => onOpenFile?.("src/app.ts")}
+          >open file</button>
         </div>
       );
     },
@@ -814,6 +829,83 @@ describe("webapp shell smoke", () => {
     const chats = [...view.container.querySelectorAll<HTMLElement>("[data-testid='chat-session']")];
     expect(chats).toHaveLength(2);
     expect(chats.at(-1)?.dataset.sessionIntent).toBe("create");
+    await view.unmount();
+  });
+
+  it("shows native Chat states in the rail and acknowledges background results", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 2, type: "terminal" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const railSession = (id: string) => view.container.querySelector<HTMLButtonElement>(
+      `[data-rail-session-id="${id}"]`,
+    );
+    const chatStatus = (status: string) => view.container.querySelector<HTMLButtonElement>(
+      `[data-testid="chat-status-${status}"]`,
+    );
+
+    await act(async () => chatStatus("generating")?.click());
+    expect(railSession("1")?.querySelector('[aria-label="generating"]')).not.toBeNull();
+    await act(async () => chatStatus("needs-attention")?.click());
+    expect(railSession("1")?.textContent).toContain("needs input");
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    await act(async () => chatStatus("done")?.click());
+    expect(railSession("1")?.textContent).toContain("done");
+    expect(railSession("1")?.classList.contains("webapp-session--unread")).toBe(true);
+    await act(async () => railSession("1")?.click());
+    expect(railSession("1")?.textContent).not.toContain("done");
+    expect(railSession("1")?.classList.contains("webapp-session--unread")).toBe(false);
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    await act(async () => chatStatus("error")?.click());
+    expect(railSession("1")?.textContent).toContain("error");
+    await act(async () => railSession("1")?.click());
+    expect(railSession("1")?.textContent).not.toContain("error");
+
+    await act(async () => chatStatus("done")?.click());
+    expect(railSession("1")?.textContent).not.toContain("done");
+    expect(railSession("2")?.querySelector(".webapp-session-state, .webapp-session-spinner"))
+      .toBeNull();
+
+    await view.unmount();
+  });
+
+  it("focuses an existing file tab when Chat opens a workspace-file link", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 2, type: "file", filePath: "src/app.ts" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-open-file"]',
+    )?.click());
+
+    expect(selectedSessionId(view.container)).toBe("2");
+    expect(view.container.querySelectorAll(".webapp-tab-cell")).toHaveLength(2);
     await view.unmount();
   });
 
