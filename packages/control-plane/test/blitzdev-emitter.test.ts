@@ -98,6 +98,7 @@ const expected = [
   "core/recipes.ts",
   "core/registry.ts",
   "core/sessions.ts",
+  "core/version.ts",
   "core/signup-config.js",
   "core/types.ts",
   "core/volumes.ts",
@@ -135,7 +136,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(93);
+    expect(first.files).toHaveLength(94);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

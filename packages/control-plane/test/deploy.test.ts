@@ -134,6 +134,76 @@ describe("control-plane deploy command", () => {
     });
   });
 
+  it("passes the checked-out commit to the deploy, so GET /version can report it", async () => {
+    const calls: { tool: string; args: string[] }[] = [];
+    const run = async (tool: string, args: string[]) => {
+      calls.push({ tool, args });
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:           blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        return {
+          stdout: JSON.stringify(
+            [
+              "HETZNER_API_TOKEN",
+              "GOOGLE_CLIENT_ID",
+              "GOOGLE_CLIENT_SECRET",
+              "WEBAPP_TOKEN_SECRET",
+              "CRED_MASTER_KEY",
+            ].map((name) => ({ name, type: "secret_text" })),
+          ),
+        };
+      }
+      return { stdout: "" };
+    };
+    const rawConfig = {
+      name: "blitz-control-plane",
+      vars: { MICROVM_HOSTS: "[]" },
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+      d1_databases: [
+        {
+          binding: "DB",
+          database_name: "blitz-control-plane",
+          database_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          migrations_dir: "migrations",
+        },
+      ],
+    };
+
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {},
+      secretValues: {},
+      gitCommitSha: "0bd4a8b1c2d3e4f5",
+    });
+    const deployCall = calls.find(({ tool, args }) => tool === "wrangler" && args[0] === "deploy");
+    expect(deployCall?.args).toContain("--var");
+    expect(deployCall?.args).toContain("GIT_COMMIT_SHA:0bd4a8b1c2d3e4f5");
+
+    // A deploy that cannot name its commit must still deploy. An unset var is
+    // the honest answer, and GET /version reports "unknown" for it.
+    calls.length = 0;
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {},
+      secretValues: {},
+    });
+    const bare = calls.find(({ tool, args }) => tool === "wrangler" && args[0] === "deploy");
+    expect(bare?.args).not.toContain("--var");
+  });
+
   it("creates a missing D1 once, then runs the prompt-free deploy sequence", async () => {
     const calls: Array<{
       tool: string;
@@ -209,6 +279,8 @@ describe("control-plane deploy command", () => {
       ["wrangler", "d1", "list", "--json", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "d1", "create", "blitz-control-plane", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "d1", "list", "--json", "--config", "packages/control-plane/wrangler.toml"],
+      // The listing runs first so the deploy log names what is about to change.
+      ["wrangler", "d1", "migrations", "list", "DB", "--remote", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "d1", "migrations", "apply", "DB", "--remote", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "r2", "bucket", "list", "--config", "packages/control-plane/wrangler.toml"],
       ["wrangler", "r2", "bucket", "create", "blitz-box-images", "--config", "packages/control-plane/wrangler.toml"],

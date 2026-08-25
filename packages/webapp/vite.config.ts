@@ -32,6 +32,7 @@ const CONTROL_PLANE_ROUTE_PREFIXES = [
   "/oauth",
   "/boxes",
   "/box-image",
+  "/version",
   "/api",
 ];
 

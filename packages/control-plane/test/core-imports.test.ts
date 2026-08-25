@@ -83,6 +83,7 @@ const expected = [
   "registry.ts",
   "runtime.ts",
   "sessions.ts",
+  "version.ts",
   "signup-config.js",
   "template-repos.ts",
   "workspace-names.ts",
@@ -115,6 +116,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(90);
+    expect(expected).toHaveLength(91);
   });
 });

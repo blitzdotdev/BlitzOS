@@ -12,6 +12,7 @@ import { addRecipeRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
+import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
 import { addWorkspaceTemplateRoutes } from "./workspace-templates.js";
@@ -35,6 +36,9 @@ export function installControlPlaneRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
 ): void {
+  // Unauthenticated by construction: it calls no principal helper. Deploy
+  // tooling must read it without a session.
+  addVersionRoutes(router, runtimeFactory);
   addBoxImageRoutes(router, runtimeFactory);
   addMicrovmHostRoutes(router, runtimeFactory);
   // Box-authenticated read of the managed agent rules; no session principal.
