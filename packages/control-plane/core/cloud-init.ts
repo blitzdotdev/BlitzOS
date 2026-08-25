@@ -79,6 +79,10 @@ export interface BootShaping {
    * this create. The caller resolves the provider; this only carries the
    * lines. */
   providerAptSetup?: string;
+  /** The box container's `--hostname`, already built by `boxHostname`. The
+   * caller owns the workspace name and id. This field carries only the
+   * label. */
+  boxHostname?: string;
 }
 
 export function buildUserData(
@@ -111,6 +115,9 @@ export function buildUserData(
   if (shaping?.repos !== undefined) bootstrapOptions.repos = shaping.repos;
   if (shaping?.providerAptSetup !== undefined) {
     bootstrapOptions.providerAptSetup = shaping.providerAptSetup;
+  }
+  if (shaping?.boxHostname !== undefined) {
+    bootstrapOptions.boxHostname = shaping.boxHostname;
   }
   parts.push(
     mimePart(boundary, "text/x-shellscript", buildBootstrapScript(bootstrapOptions)),

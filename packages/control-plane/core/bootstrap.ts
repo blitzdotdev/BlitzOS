@@ -46,6 +46,29 @@ export interface BootstrapOptions {
    * lines at all, so one provider's fault can never reach another provider's
    * box (plans/PROVIDER-BOOTSTRAP.md). */
   providerAptSetup?: string;
+  /** The box container's `--hostname`. Claude's Remote Control names its
+   * target `os.hostname()`. No flag overrides that name. Docker defaults the
+   * box hostname to the container id, which is hex, so every workspace reads
+   * alike in claude.ai/code. Build this value with `boxHostname`. An absent
+   * value leaves the emitted bytes untouched. */
+  boxHostname?: string;
+}
+
+/** Makes one DNS label from a workspace name for `docker run --hostname`.
+ * Docker refuses a hostname above 64 characters. Above that, runc fails with
+ * `sethostname: invalid argument`. The cap here is 63, the DNS label limit,
+ * which sits below both failure points. A name holds any Unicode, so each run
+ * outside `[a-z0-9-]` becomes one dash. The edges then lose their dashes. A
+ * name of non-Latin characters leaves nothing. The workspace id takes over
+ * there: it is a UUID, which is already a legal label. An empty `--hostname`
+ * must never reach the shell. */
+export function boxHostname(workspaceName: string, workspaceId: string): string {
+  const label = workspaceName
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9-]+/gu, "-")
+    .slice(0, 63)
+    .replaceAll(/^-+|-+$/gu, "");
+  return label === "" ? workspaceId : label;
 }
 
 /** Shell-escapes a value into one single-quoted token. Exported because the
@@ -368,6 +391,17 @@ chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env
   const agentFlag = recipe?.harness !== "chat"
     ? ""
     : `  -e BLITZ_AGENT=${shellQuote(recipe.agentProvider)} \\\n`;
+  // This value lands in an emitted shell command. The emitter is the
+  // shell-interpolation boundary. `boxHostname` is the real gate. This
+  // re-check keeps the boundary local, the way the template repos do.
+  // Refuse a bad shape. Never quote around one.
+  const hostname = options.boxHostname;
+  if (hostname !== undefined && !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(hostname)) {
+    throw new Error(`box hostname is not a DNS label: ${hostname}`);
+  }
+  const hostnameFlag = hostname === undefined
+    ? ""
+    : `  --hostname ${shellQuote(hostname)} \\\n`;
   // The two transcript HOME dirs pre-exist owned by the blitz user so the
   // read-only mounts never make docker invent root-owned sources, and
   // /workspace/shared/agent-usage pre-exists for the same reason on the
@@ -687,7 +721,7 @@ docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blit
 chmod 0644 /etc/blitz/env.defaults
 ${invocationFiles}${usageDirectories}docker run --detach \
   --name blitz-box \
-  --restart unless-stopped \
+${hostnameFlag}  --restart unless-stopped \
   --privileged \
   --env-file /etc/blitz/env.defaults \
   -e BLITZ_UID=1000 \

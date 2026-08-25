@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildBootstrapScript } from "../core/bootstrap.js";
+import { boxHostname, buildBootstrapScript } from "../core/bootstrap.js";
 import { buildUserData } from "../core/cloud-init.js";
 import { AwsProvider } from "../core/compute/aws.js";
 import { HetznerProvider } from "../core/compute/hetzner.js";
@@ -692,6 +692,96 @@ write_files:
     // owner/name shaped is refused outright, never quoted around.
     expect(() => buildBootstrapScript({ ...base, repos: ["bad'; rm -rf /'"] }))
       .toThrow("template repo is not owner/name shaped");
+  });
+
+  // ---- Remote Control target name ----
+  // Claude 2.1.228 registers its Remote Control environment with two readable
+  // strings. `machine_name` is always `os.hostname()`. `directory` is always
+  // `/workspace`. No flag overrides either one. Docker gives the box the
+  // container id as its hostname, which is hex. Every workspace then reads
+  // the same in claude.ai/code. A real container proved `--hostname`: it
+  // changes `os.hostname()`, and it survives the service launch chain.
+
+  it("names the box container so each workspace is a distinct Remote Control target", () => {
+    const base = {
+      boxImageSha256: "",
+      boxImageRef: BOX_IMAGE_REF,
+      boxImageTag: "",
+      phoneHomeUrl: PHONE_HOME_URL,
+      sshPublicKey: SSH_PUBLIC_KEY,
+    };
+    const script = buildBootstrapScript({ ...base, boxHostname: "design-partner" });
+
+    expect(script).toContain("  --hostname 'design-partner' \\\n");
+    // The flag belongs to the box container spec, not to any earlier docker
+    // call in the script.
+    const runStart = script.indexOf("docker run --detach");
+    const runEnd = script.indexOf("\n\nhealth_deadline=", runStart);
+    expect(script.slice(runStart, runEnd)).toContain("--hostname");
+    expect(script.slice(0, runStart)).not.toContain("--hostname");
+
+    // Absent name: the pre-hostname bytes, exactly.
+    const plain = buildBootstrapScript(base);
+    expect(plain).not.toContain("--hostname");
+    expect(plain).toContain(`docker run --detach \\
+  --name blitz-box \\
+  --restart unless-stopped \\`);
+
+    // The emitter is the shell-interpolation boundary: anything that is not
+    // one DNS label is refused outright, never quoted around.
+    for (const bad of ["bad'; rm -rf /", "", "-lead", "trail-", "UPPER", "a".repeat(64)]) {
+      expect(() => buildBootstrapScript({ ...base, boxHostname: bad }))
+        .toThrow("box hostname is not a DNS label");
+    }
+  });
+
+  it.each([
+    ["Design Partner", "design-partner"],
+    ["Blitz OS v2.0!", "blitz-os-v2-0"],
+    ["  Anoop's AEC harness!  ", "anoop-s-aec-harness"],
+    ["bad'; rm -rf /'", "bad-rm--rf"],
+    ["`$(id)`;", "id"],
+    ["a".repeat(80), "a".repeat(63)],
+    [`${"a".repeat(62)} b`, "a".repeat(62)],
+  ])("turns the workspace name %j into the box hostname %j", (name, expected) => {
+    const label = boxHostname(name, "workspace-id");
+
+    expect(label).toBe(expected);
+    expect(label.length).toBeLessThanOrEqual(63);
+    expect(label).toMatch(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u);
+  });
+
+  it("falls back to the workspace id when the name leaves no label", () => {
+    // A workspace can carry a name with no Latin letters at all. An empty
+    // `--hostname` must never reach the shell, so the id takes over.
+    for (const name of ["研究ワークスペース", "Ωμέγα", "  ", "!!!"]) {
+      expect(boxHostname(name, "d3f7a1c2-0000-4000-8000-abcdefabcdef"))
+        .toBe("d3f7a1c2-0000-4000-8000-abcdefabcdef");
+    }
+  });
+
+  it("carries the created workspace's own name into its box hostname", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const create = async (name: string): Promise<{ id: string; userData: string }> => {
+      const response = await appRequest(app, "/workspaces", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ machineTypeId: "small", name }),
+      });
+      expect(response.status).toBe(201);
+      const { workspace } = await response.json<{ workspace: { id: string } }>();
+      return { id: workspace.id, userData: providers.userData.get(workspace.id) ?? "" };
+    };
+
+    const first = await create("Design Partner");
+    const second = await create("Anoop's AEC Harness");
+    expect(first.userData).toContain("  --hostname 'design-partner' \\\n");
+    expect(second.userData).toContain("  --hostname 'anoop-s-aec-harness' \\\n");
+
+    // A name with no Latin letters still boots: the id is the label.
+    const third = await create("研究ワークスペース");
+    expect(third.userData).toContain(`  --hostname '${third.id}' \\\n`);
   });
 
   // ---- provider bootstrap seam (plans/PROVIDER-BOOTSTRAP.md) ----
