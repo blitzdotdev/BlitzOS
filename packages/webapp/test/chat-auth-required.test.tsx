@@ -133,6 +133,7 @@ async function connectedPanel(
     agentCapabilities: { loadSession: true },
     authMethods: [],
   });
+  await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
   await answer(socket, "session/list", { sessions: [{ sessionId: "session-one", cwd: "/workspace" }] });
   await answer(socket, "session/load", { configOptions: [] });
   return { socket, view };
@@ -183,6 +184,134 @@ afterEach(() => {
 });
 
 describe("chat sign-in affordance", () => {
+  it("gates a new Chat when both providers are signed out and offers either login", async () => {
+    const onSignIn = vi.fn();
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId={null}
+        sessionIntent="create"
+        onSessionId={() => undefined}
+        onSignIn={onSignIn}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answer(socket, "blitz/auth_status", { claude: "signed-out", codex: "signed-out" });
+    await settle();
+
+    expect(view.container.textContent).toContain("Sign in to start Chat");
+    expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/new"))
+      .toBe(false);
+    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>("button")];
+    expect(buttons.map(({ textContent }) => textContent)).toEqual(expect.arrayContaining([
+      "Sign in to Claude",
+      "Sign in to Codex",
+      "Check again",
+    ]));
+    await act(async () => buttons.find(({ textContent }) => textContent === "Sign in to Codex")?.click());
+    expect(onSignIn).toHaveBeenCalledWith("codex");
+    await view.unmount();
+  });
+
+  it("creates with the available provider and filters signed-out provider choices", async () => {
+    const onSessionId = vi.fn();
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId={null}
+        initialProvider="codex"
+        sessionIntent="create"
+        onSessionId={onSessionId}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-out" });
+    const create = await requestFor(socket, "session/new");
+    expect(create.params?._meta).toEqual({ "blitz/provider": "claude" });
+    await socket.deliver({
+      jsonrpc: "2.0",
+      id: create.id,
+      result: {
+        sessionId: "claude-session",
+        configOptions: [],
+        _meta: { "blitz/provider": "claude" },
+      },
+    });
+    await settle();
+    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "claude-session", "claude");
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Provider"]',
+    )?.click());
+    const providerOptions = [...view.container.querySelectorAll<HTMLElement>(
+      '[role="listbox"][aria-label="Provider"] [role="option"]',
+    )].map(({ textContent }) => textContent);
+    expect(providerOptions).toEqual([expect.stringContaining("Claude")]);
+    expect(providerOptions.join(" ")).not.toContain("Codex");
+    await view.unmount();
+  });
+
+  it("offers Claude and Codex when both are authenticated and creates with the selected provider", async () => {
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId={null}
+        initialProvider="codex"
+        sessionIntent="create"
+        onSessionId={() => undefined}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
+    const create = await requestFor(socket, "session/new");
+    expect(create.params?._meta).toEqual({ "blitz/provider": "codex" });
+    await socket.deliver({
+      jsonrpc: "2.0",
+      id: create.id,
+      result: {
+        sessionId: "codex-session",
+        configOptions: [{
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "gpt-5.6-sol",
+          options: [{ value: "gpt-5.6-sol", name: "GPT-5.6-Sol" }],
+        }],
+        _meta: { "blitz/provider": "codex" },
+      },
+    });
+    await settle();
+    expect(view.container.textContent).toContain("GPT-5.6-Sol");
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Provider"]',
+    )?.click());
+    const options = view.container.querySelector<HTMLElement>(
+      '[role="listbox"][aria-label="Provider"]',
+    )?.textContent;
+    expect(options).toContain("Claude");
+    expect(options).toContain("Codex");
+    await view.unmount();
+  });
+
   it("offers the harness login only after the box reports it could not authenticate", async () => {
     const onSignIn = vi.fn();
     const { socket, view } = await connectedPanel(false, onSignIn);
@@ -245,10 +374,11 @@ describe("chat session identity", () => {
       agentCapabilities: { loadSession: true },
       authMethods: [],
     });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
     await answer(socket, "session/new", { sessionId: "fresh-session", configOptions: [] });
     expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/list"))
       .toBe(false);
-    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "fresh-session");
+    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "fresh-session", "claude");
     await view.unmount();
   });
 
@@ -268,6 +398,7 @@ describe("chat session identity", () => {
       agentCapabilities: { loadSession: true },
       authMethods: [],
     });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
     const load = await requestFor(socket, "session/load");
     expect(load.params?.sessionId).toBe("stored-session");
     expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/list"))
@@ -294,6 +425,7 @@ describe("chat session identity", () => {
       agentCapabilities: { loadSession: true },
       authMethods: [],
     });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
     await answer(socket, "session/list", {
       sessions: [
         { sessionId: "already-bound", cwd: "/workspace" },
@@ -302,7 +434,7 @@ describe("chat session identity", () => {
     });
     const load = await requestFor(socket, "session/load");
     expect(load.params?.sessionId).toBe("recover-me");
-    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "recover-me");
+    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "recover-me", "claude");
     await socket.deliver({ jsonrpc: "2.0", id: load.id, result: { configOptions: [] } });
     await view.unmount();
   });
@@ -323,6 +455,7 @@ describe("chat session identity", () => {
       agentCapabilities: { loadSession: true },
       authMethods: [],
     });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
     await answerError(socket, "session/load", "unknown session");
     await settle();
     expect(view.container.textContent).toContain("saved session could not be loaded");
@@ -409,6 +542,7 @@ describe("chat prompt queue and selections", () => {
       agentCapabilities: { loadSession: true },
       authMethods: [],
     });
+    await answer(socket, "blitz/auth_status", { claude: "signed-in", codex: "signed-in" });
     await answer(socket, "session/load", {
       configOptions: [{
         id: "model",

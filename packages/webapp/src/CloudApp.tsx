@@ -2066,6 +2066,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         url={activeAcpUrl ?? ''}
                         workspaceId={activeWorkspaceId}
                         initialSessionId={session.chatSessionId ?? null}
+                        initialProvider={session.chatProvider ?? 'claude'}
+                        active={active}
                         sessionIntent={session.chatSessionId
                           ? 'load'
                           : newChatTabIdsRef.current.ids.has(session.id) ? 'create' : 'recover'}
@@ -2075,9 +2077,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                             && tab.chatSessionId
                             ? [tab.chatSessionId]
                             : [])}
-                        onSessionId={(_workspaceId, chatSessionId) => {
-                          newChatTabIdsRef.current.ids.delete(session.id);
-                          rememberChatSession(sessionId, chatSessionId, 'claude');
+                        onSessionId={(_workspaceId, chatSessionId, provider) => {
+                          if (chatSessionId !== null) newChatTabIdsRef.current.ids.delete(session.id);
+                          rememberChatSession(sessionId, chatSessionId ?? undefined, provider);
                         }}
                         onOpenPreview={openPreviewPort}
                         onOpenFile={openFile}

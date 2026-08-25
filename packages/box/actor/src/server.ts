@@ -13,6 +13,20 @@ interface DrainTarget {
   userId?: string;
 }
 
+function requestedProvider<Value>(value: Value): "claude" | "codex" | undefined {
+  const meta = asJsonObject(value);
+  const provider = meta?.["blitz/provider"];
+  return provider === "claude" || provider === "codex" ? provider : undefined;
+}
+
+function emptyRequest<Value>(value: Value): Record<string, never> {
+  const request = asJsonObject(value);
+  if (request === null || Object.keys(request).length > 0) {
+    throw new Error("auth status request must be empty");
+  }
+  return {};
+}
+
 export class ActorServer {
   private readonly http: HttpServer;
   private readonly websocket: WebSocketServer;
@@ -98,12 +112,23 @@ export class ActorServer {
         agentInfo: { name: "BlitzOS box", version: "0.1.0" },
       }))
       .onRequest(acp.methods.agent.session.new, async ({ params }) => {
-        const sessionId = await this.service.newSession(params.cwd, subscriber);
-        return { sessionId, configOptions: this.service.configOptions(sessionId) };
+        const sessionId = await this.service.newSession(
+          params.cwd,
+          subscriber,
+          requestedProvider(params._meta),
+        );
+        return {
+          sessionId,
+          configOptions: this.service.configOptions(sessionId),
+          _meta: { "blitz/provider": this.service.provider(sessionId) },
+        };
       })
       .onRequest(acp.methods.agent.session.load, async ({ params }) => {
         await this.service.loadSession(params.sessionId, params.cwd, subscriber);
-        return { configOptions: this.service.configOptions(params.sessionId) };
+        return {
+          configOptions: this.service.configOptions(params.sessionId),
+          _meta: { "blitz/provider": this.service.provider(params.sessionId) },
+        };
       })
       .onRequest(acp.methods.agent.session.list, () => ({
         sessions: this.service.listSessions().map((session) => ({
@@ -125,6 +150,7 @@ export class ActorServer {
           subscriber,
         ),
       }))
+      .onRequest("blitz/auth_status", emptyRequest, async () => this.service.authStatus())
       .onRequest(acp.methods.agent.session.prompt, ({ params }) => this.service.prompt(params.sessionId, params.prompt, subscriber))
       .onNotification(acp.methods.agent.session.cancel, ({ params }) => this.service.cancel(params.sessionId, subscriber));
     const connection = app.connect(socketStream(socket));

@@ -1237,6 +1237,48 @@
   padding: 4px 14px;
 }
 
+.chat-auth-gate {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  border: 1px solid var(--ansi-yellow);
+  background: color-mix(in srgb, var(--ansi-yellow) 8%, var(--paper));
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.chat-auth-gate > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.chat-auth-gate > div:first-child span {
+  color: var(--muted);
+}
+
+.chat-auth-gate-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chat-auth-gate-actions button {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  padding: 5px 9px;
+}
+
+.chat-auth-gate-actions button:not(:last-child) {
+  background: var(--accent);
+  color: var(--paper);
+}
+
 .chat-session-recovery {
   display: flex;
   flex: none;

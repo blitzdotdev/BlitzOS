@@ -38,7 +38,16 @@ const APPROVAL_PREVIEW_CHARS = 600;
 const LOCAL_PROMPT_QUEUE_LIMIT = 32;
 const CHAT_CONFIG_IDS = ["model", "effort", "permission"] as const;
 
-export type ChatConfigSelections = Partial<Record<(typeof CHAT_CONFIG_IDS)[number], string>>;
+export type ChatConfigSelections = {
+  model?: string;
+  effort?: string;
+  permission?: string;
+};
+type HarnessAuthStatus = "signed-in" | "signed-out" | "unknown";
+type HarnessAuthStatuses = {
+  claude: HarnessAuthStatus;
+  codex: HarnessAuthStatus;
+};
 
 type QueuedPrompt = { id: number; text: string };
 
@@ -72,11 +81,22 @@ function selectConfigs(options: SessionConfigOption[]): SelectConfig[] {
 function configSelections(options: SessionConfigOption[]): ChatConfigSelections {
   const selections: ChatConfigSelections = {};
   for (const option of selectConfigs(options)) {
-    if (CHAT_CONFIG_IDS.includes(option.id as (typeof CHAT_CONFIG_IDS)[number])) {
-      selections[option.id as (typeof CHAT_CONFIG_IDS)[number]] = option.currentValue;
-    }
+    if (option.id === "model") selections.model = option.currentValue;
+    else if (option.id === "effort") selections.effort = option.currentValue;
+    else if (option.id === "permission") selections.permission = option.currentValue;
   }
   return selections;
+}
+
+function unknownAuthStatuses(): HarnessAuthStatuses {
+  return { claude: "unknown", codex: "unknown" };
+}
+
+function validAuthStatuses(value: HarnessAuthStatuses): boolean {
+  const valid = (status: HarnessAuthStatus) => status === "signed-in"
+    || status === "signed-out"
+    || status === "unknown";
+  return valid(value.claude) && valid(value.codex);
 }
 
 type PermissionResolver = (response: RequestPermissionResponse) => void;
@@ -104,6 +124,7 @@ export function ChatPanel({
   url,
   workspaceId,
   initialSessionId,
+  initialProvider = "claude",
   sessionIntent = initialSessionId === null ? "recover" : "load",
   boundSessionIds = [],
   onSessionId,
@@ -113,16 +134,18 @@ export function ChatPanel({
   initialConfig = {},
   onConfigChange,
   onSignIn,
+  active = true,
   readOnly = false,
 }: {
   url: string;
   workspaceId: string;
   initialSessionId: string | null;
+  initialProvider?: Agent;
   /** New tabs create; stored ids load exactly; legacy id-less tabs recover. */
   sessionIntent?: ChatSessionIntent;
   /** Session ids already owned by other active or archived Chat tabs. */
   boundSessionIds?: readonly string[];
-  onSessionId: (workspaceId: string, sessionId: string) => void;
+  onSessionId: (workspaceId: string, sessionId: string | null, provider: Agent) => void;
   onOpenPreview?: (port: number) => boolean;
   onOpenFile?: (filePath: string) => void;
   onStatusChange?: (status: ChatSessionStatus) => void;
@@ -130,6 +153,7 @@ export function ChatPanel({
   onConfigChange?: (config: ChatConfigSelections) => void;
   /** Drives the harness's terminal tab into its login flow. */
   onSignIn?: (provider: Agent) => void;
+  active?: boolean;
   readOnly?: boolean;
 }): React.JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
@@ -138,6 +162,9 @@ export function ChatPanel({
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [authRequired, setAuthRequired] = useState<Agent | null>(null);
+  const [authStatuses, setAuthStatuses] = useState<HarnessAuthStatuses | null>(null);
+  const [authGate, setAuthGate] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<Agent>(initialProvider);
   const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
   const [missingSessionId, setMissingSessionId] = useState<string | null>(null);
@@ -145,8 +172,12 @@ export function ChatPanel({
   const [sessionStatus, setSessionStatus] = useState<ChatSessionStatus>("idle");
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
+  const selectedProviderRef = useRef<Agent>(initialProvider);
   const sessionIntentRef = useRef<ChatSessionIntent>(sessionIntent);
   const recoverCanCreateRef = useRef(sessionIntent === "recover");
+  const authGateRef = useRef(false);
+  const authRequiredRef = useRef<Agent | null>(null);
+  const wasActiveRef = useRef(active);
   const boundSessionIdsRef = useRef<ReadonlySet<string>>(new Set(boundSessionIds));
   const onSessionIdRef = useRef(onSessionId);
   const onStatusChangeRef = useRef(onStatusChange);
@@ -162,6 +193,8 @@ export function ChatPanel({
   onStatusChangeRef.current = onStatusChange;
   onConfigChangeRef.current = onConfigChange;
   boundSessionIdsRef.current = new Set(boundSessionIds);
+  authGateRef.current = authGate;
+  authRequiredRef.current = authRequired;
 
   const installConfigOptions = useCallback(async (
     context: ClientContext,
@@ -199,6 +232,14 @@ export function ChatPanel({
     runningRef.current = state.running;
     if (state.running) setTurnStartedAt(Date.now());
   }, [state.running]);
+
+  useEffect(() => {
+    const returnedToChat = active && !wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (returnedToChat && (authGateRef.current || authRequiredRef.current !== null)) {
+      setConnectionVersion((version) => version + 1);
+    }
+  }, [active]);
 
   const requestPermission = useCallback((request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
     if (readOnly) return Promise.resolve({ outcome: { outcome: "cancelled" } });
@@ -277,32 +318,69 @@ export function ChatPanel({
             clientCapabilities: {},
             clientInfo: { name: "BlitzOS webapp", version: "0.0.0" },
           });
+          let latestAuth = unknownAuthStatuses();
+          try {
+            const response = await context.request<HarnessAuthStatuses, Record<string, never>>(
+              "blitz/auth_status",
+              {},
+            );
+            if (validAuthStatuses(response)) latestAuth = response;
+          } catch {
+            // Compatibility window for an older actor. Its reactive
+            // blitz/auth_required signal remains the fallback.
+          }
+          setAuthStatuses(latestAuth);
+          const signedInProviders = (["claude", "codex"] as const)
+            .filter((provider) => latestAuth[provider] === "signed-in");
+          if (
+            signedInProviders.length > 0
+            && !signedInProviders.includes(selectedProviderRef.current)
+          ) {
+            selectedProviderRef.current = signedInProviders[0] ?? selectedProviderRef.current;
+            setSelectedProvider(selectedProviderRef.current);
+          }
+          if (latestAuth[selectedProviderRef.current] === "signed-in") setAuthRequired(null);
           let existingSession = sessionIdRef.current;
           if (existingSession === null && sessionIntentRef.current === "recover") {
             try {
               const listed = await context.request(acp.methods.agent.session.list, { cwd: "/workspace" });
-              existingSession = listed.sessions.find(
+              const recovered = listed.sessions.find(
                 (session) => !boundSessionIdsRef.current.has(session.sessionId),
-              )?.sessionId ?? null;
+              );
+              existingSession = recovered?.sessionId ?? null;
+              const recoveredProvider = parseProviderMeta(recovered?._meta);
+              if (recoveredProvider !== null) {
+                selectedProviderRef.current = recoveredProvider;
+                setSelectedProvider(recoveredProvider);
+              }
             } catch {
               // Compatibility window: an already-pinned actor may predate session/list.
             }
             if (existingSession !== null) {
               sessionIdRef.current = existingSession;
-              onSessionIdRef.current(workspaceId, existingSession);
+              onSessionIdRef.current(workspaceId, existingSession, selectedProviderRef.current);
             }
           }
           const mayCreate = sessionIntentRef.current === "create"
             || (sessionIntentRef.current === "recover" && recoverCanCreateRef.current);
           if (existingSession === null && !readOnly && mayCreate) {
-            const created = await context.request(acp.methods.agent.session.new, {
-              cwd: "/workspace",
-              mcpServers: [],
-            });
-            sessionIdRef.current = created.sessionId;
-            sessionIntentRef.current = "load";
-            onSessionIdRef.current(workspaceId, created.sessionId);
-            await installConfigOptions(context, created.sessionId, created.configOptions ?? []);
+            if (latestAuth.claude === "signed-out" && latestAuth.codex === "signed-out") {
+              setAuthGate(true);
+            } else {
+              const created = await context.request(acp.methods.agent.session.new, {
+                cwd: "/workspace",
+                mcpServers: [],
+                _meta: { "blitz/provider": selectedProviderRef.current },
+              });
+              const createdProvider = parseProviderMeta(created._meta) ?? selectedProviderRef.current;
+              selectedProviderRef.current = createdProvider;
+              setSelectedProvider(createdProvider);
+              sessionIdRef.current = created.sessionId;
+              sessionIntentRef.current = "load";
+              setAuthGate(false);
+              onSessionIdRef.current(workspaceId, created.sessionId, createdProvider);
+              await installConfigOptions(context, created.sessionId, created.configOptions ?? []);
+            }
           } else if (existingSession !== null) {
             dispatch({ type: "begin-replay" });
             try {
@@ -311,6 +389,12 @@ export function ChatPanel({
                 cwd: "/workspace",
                 mcpServers: [],
               });
+              const loadedProvider = parseProviderMeta(loaded._meta);
+              if (loadedProvider !== null) {
+                selectedProviderRef.current = loadedProvider;
+                setSelectedProvider(loadedProvider);
+                onSessionIdRef.current(workspaceId, existingSession, loadedProvider);
+              }
               sessionIntentRef.current = "load";
               dispatch({ type: "reconcile-running" });
               runningRef.current = false;
@@ -321,7 +405,7 @@ export function ChatPanel({
               setSessionStatus("error");
               haltAfterClose = true;
             }
-          } else {
+          } else if (!authGateRef.current && !(latestAuth.claude === "signed-out" && latestAuth.codex === "signed-out")) {
             setMissingSessionId((current) => current ?? "unavailable");
             setStatus("No chat session is available to replay");
             setSessionStatus("error");
@@ -373,6 +457,22 @@ export function ChatPanel({
     setMissingSessionId(null);
     setStatus("Connecting…");
     setSessionStatus("idle");
+    setConnectionVersion((version) => version + 1);
+  };
+
+  const chooseProvider = (provider: Agent): void => {
+    if (provider === selectedProviderRef.current || runningRef.current) return;
+    selectedProviderRef.current = provider;
+    setSelectedProvider(provider);
+    sessionIdRef.current = null;
+    sessionIntentRef.current = "create";
+    recoverCanCreateRef.current = false;
+    savedConfigRef.current = {};
+    setConfigOptions([]);
+    setMissingSessionId(null);
+    setAuthRequired(null);
+    dispatch({ type: "reset" });
+    onSessionIdRef.current(workspaceId, null, provider);
     setConnectionVersion((version) => version + 1);
   };
 
@@ -491,6 +591,13 @@ export function ChatPanel({
     ? "connected"
     : status === "Disconnected" ? "disconnected" : "connecting";
   const selects = selectConfigs(configOptions);
+  const authenticatedProviders = (["claude", "codex"] as const)
+    .filter((provider) => authStatuses?.[provider] === "signed-in");
+  const providerChoices = authenticatedProviders.length > 0
+    ? authenticatedProviders
+    : authStatuses?.claude === "signed-out" && authStatuses.codex === "signed-out"
+      ? []
+      : [selectedProvider];
   const model = selects.find((option) => option.id === "model");
   const runningModel = state.running && model !== undefined && model.currentValue !== "default"
     ? model.choices.find((choice) => choice.value === model.currentValue)?.name
@@ -501,7 +608,13 @@ export function ChatPanel({
     [derived],
   );
   // Viewers cannot prompt, so they are never the ones who have to sign in.
-  const signInProvider = readOnly || onSignIn === undefined ? null : authRequired;
+  const statusRequiredProvider = authStatuses?.[selectedProvider] === "signed-out"
+    ? selectedProvider
+    : null;
+  const signInProvider = readOnly || onSignIn === undefined
+    ? null
+    : authRequired ?? statusRequiredProvider;
+  const chatBlocked = authGate || signInProvider !== null || sessionIdRef.current === null;
   const approval: ChatPermission | null = readOnly ? null : derived.activePermission;
   const approvalText = approval === null
     ? ""
@@ -573,6 +686,19 @@ export function ChatPanel({
                 >Remove</button>
               </div>
             ))}
+          </div>
+        )}
+        {authGate && !readOnly && onSignIn !== undefined && (
+          <div className="chat-auth-gate" role="status">
+            <div>
+              <strong>Sign in to start Chat</strong>
+              <span>Connect Claude or Codex on this workspace.</span>
+            </div>
+            <div className="chat-auth-gate-actions">
+              <button type="button" onClick={() => onSignIn("claude")}>Sign in to Claude</button>
+              <button type="button" onClick={() => onSignIn("codex")}>Sign in to Codex</button>
+              <button type="button" onClick={() => setConnectionVersion((version) => version + 1)}>Check again</button>
+            </div>
           </div>
         )}
         {missingSessionId !== null && (
@@ -659,8 +785,8 @@ export function ChatPanel({
                 aria-label="Message"
                 rows={1}
                 value={draft}
-                disabled={!connected}
-                placeholder={connected ? "message the agent…" : "Connecting…"}
+                disabled={!connected || chatBlocked}
+                placeholder={chatBlocked ? "Sign in to start chatting…" : connected ? "message the agent…" : "Connecting…"}
                 onChange={(event) => setDraft(event.currentTarget.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Escape" && state.running) {
@@ -683,15 +809,30 @@ export function ChatPanel({
                     className="chat-send"
                     aria-label="Send message"
                     onClick={send}
-                    disabled={!connected || draft.trim().length === 0}
+                    disabled={!connected || chatBlocked || draft.trim().length === 0}
                   ><ArrowIcon direction="up" /></button>
                 )}
               </div>
             </div>
             <div className="chat-composer-controls">
+              {providerChoices.length > 0 && (
+                <WebAppSelectMenu
+                  className="chat-composer-control"
+                  ariaLabel="Provider"
+                  value={selectedProvider}
+                  options={providerChoices.map((provider) => ({
+                    value: provider,
+                    label: SPAWN_SESSION_LABELS[provider],
+                  }))}
+                  onChange={(value) => {
+                    if (value === "claude" || value === "codex") chooseProvider(value);
+                  }}
+                  disabled={!connected || state.running}
+                />
+              )}
               {selects.map((option, index) => (
                 <span key={option.id} style={{ display: "contents" }}>
-                  {index > 0 && <span aria-hidden="true">·</span>}
+                  {(index > 0 || providerChoices.length > 0) && <span aria-hidden="true">·</span>}
                   <WebAppSelectMenu
                     className={`chat-composer-control${option.id === "model" ? " chat-composer-control--model" : ""}`}
                     ariaLabel={option.name}
@@ -747,6 +888,12 @@ function parseAuthRequiredNotification<Value>(value: Value): AuthRequiredParams 
 
 function isHarnessName<Value>(value: Value): value is Value & AuthRequiredProvider {
   return isString(value) && HARNESS_NAMES.has(value);
+}
+
+function parseProviderMeta<Value>(value: Value): Agent | null {
+  if (!isRecord(value)) return null;
+  const provider = value["blitz/provider"];
+  return provider === "claude" || provider === "codex" ? provider : null;
 }
 
 function parseActor<Value>(value: Value): ChatActor | undefined {

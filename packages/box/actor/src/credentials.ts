@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { isString } from "./type-guards.js";
+import { isNumber, isString } from "./type-guards.js";
 import type { Provider } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -14,11 +14,21 @@ interface ExecFailure {
   stderr?: Buffer | string;
 }
 
+interface ExecStatusFailure {
+  code?: string | number;
+}
+
 function execFailure(error: Error): ExecFailure {
   // SAFETY: promisify(execFile) attaches the child's captured streams to the
   // rejected Error. `stderr` is declared optional and read defensively, so any
   // other rejection shape simply yields no reason.
   return error as ExecFailure;
+}
+
+function execStatusFailure(error: Error): ExecStatusFailure {
+  // SAFETY: execFile attaches its process exit code to Error rejections. The
+  // field stays optional and is validated before it affects auth state.
+  return error as ExecStatusFailure;
 }
 
 /** One short line of the broker's own words, for a log.
@@ -186,6 +196,40 @@ export class CredentialSource {
   private environmentWaited = false;
 
   public constructor(private readonly stateDir: string) {}
+
+  public async authStatus(provider: Provider): Promise<"signed-in" | "signed-out" | "unknown"> {
+    try {
+      await access(join(this.stateDir, "broker.json"), constants.R_OK);
+      const { stdout } = await execFileAsync("blitz-cred", ["status", provider], {
+        encoding: "utf8",
+        timeout: 10_000,
+        env: { ...process.env, BLITZ_STATE_DIR: this.stateDir },
+      });
+      const status = stdout.trim();
+      return status === "signed-in" || status === "signed-out" ? status : "unknown";
+    } catch {
+      try {
+        await access(join(this.stateDir, "broker.json"), constants.R_OK);
+        return "unknown";
+      } catch {
+        // A standalone/self-hosted box keeps the vendor's own login files, so
+        // the official status commands are authoritative in this mode.
+      }
+      const command = provider === "claude"
+        ? { file: "/opt/blitz/npm/bin/claude", args: ["auth", "status"] }
+        : { file: "/opt/blitz/npm/bin/codex", args: ["login", "status"] };
+      try {
+        await execFileAsync(command.file, command.args, {
+          timeout: 10_000,
+          env: { ...process.env, HOME: "/var/lib/blitz/home" },
+        });
+        return "signed-in";
+      } catch (statusError) {
+        if (!(statusError instanceof Error)) return "unknown";
+        return isNumber(execStatusFailure(statusError).code) ? "signed-out" : "unknown";
+      }
+    }
+  }
 
   public async token(provider: Provider): Promise<string | null> {
     try {

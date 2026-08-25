@@ -63,6 +63,21 @@ func Mint(ctx context.Context, home string, allowed []string, requested string, 
 	return token, err
 }
 
+// CredentialAvailable reports only whether a stored harness credential is
+// parseable. It never refreshes or returns the access token, so an auth-status
+// poll cannot revoke or interfere with a running turn.
+func CredentialAvailable(home string, allowed []string, requested string, definition vendor.Definition) bool {
+	if !contains(allowed, requested) || requested != definition.Name {
+		return false
+	}
+	data, err := readCredential(filepath.Join(home, filepath.FromSlash(definition.CredentialPath)))
+	if err != nil {
+		return false
+	}
+	token, _, err := definition.ReadToken(data)
+	return err == nil && token != ""
+}
+
 func contains(values []string, value string) bool {
 	for _, candidate := range values {
 		if candidate == value {

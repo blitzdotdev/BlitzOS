@@ -107,6 +107,10 @@ func runEnroll(args []string, stateDir string, output io.Writer) error {
 }
 
 func runMint(args []string, output io.Writer) error {
+	requested := os.Getenv("SSH_ORIGINAL_COMMAND")
+	if strings.HasPrefix(requested, "status ") {
+		return runStatus(args, output, requested)
+	}
 	_, allowed, definition, home, err := forcedCommand(args)
 	if err != nil {
 		return err
@@ -127,6 +131,23 @@ func runMint(args []string, output io.Writer) error {
 	return err
 }
 
+func runStatus(args []string, output io.Writer, requested string) error {
+	harness := strings.TrimPrefix(requested, "status ")
+	if !feed.ValidHarness(harness) || requested != "status "+harness {
+		return errors.New("invalid status request")
+	}
+	_, allowed, definition, home, err := forcedCommandFor(args, harness)
+	if err != nil {
+		return err
+	}
+	status := "signed-out"
+	if broker.CredentialAvailable(home, allowed, harness, definition) {
+		status = "signed-in"
+	}
+	_, err = fmt.Fprintln(output, status)
+	return err
+}
+
 func runDeposit(args []string, output io.Writer, input io.Reader) error {
 	_, _, definition, home, err := forcedCommand(args)
 	if err != nil {
@@ -142,6 +163,10 @@ func runDeposit(args []string, output io.Writer, input io.Reader) error {
 }
 
 func forcedCommand(args []string) (string, []string, vendor.Definition, string, error) {
+	return forcedCommandFor(args, os.Getenv("SSH_ORIGINAL_COMMAND"))
+}
+
+func forcedCommandFor(args []string, requested string) (string, []string, vendor.Definition, string, error) {
 	if len(args) != 2 || os.Getenv("SSH_CONNECTION") == "" {
 		return "", nil, vendor.Definition{}, "", errors.New("command is restricted to forced-command SSH")
 	}
@@ -153,7 +178,6 @@ func forcedCommand(args []string) (string, []string, vendor.Definition, string, 
 	if err != nil {
 		return "", nil, vendor.Definition{}, "", err
 	}
-	requested := os.Getenv("SSH_ORIGINAL_COMMAND")
 	definition, err := vendor.Lookup(requested)
 	if err != nil || !contains(allowed, requested) {
 		return "", nil, vendor.Definition{}, "", errors.New("requested harness is not allowed")

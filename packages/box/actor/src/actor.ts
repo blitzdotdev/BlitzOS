@@ -35,6 +35,8 @@ export interface ActorSessionSummary {
   updatedAt: number;
 }
 
+export type HarnessAuthStatus = "signed-in" | "signed-out" | "unknown";
+
 function attributedActor(identity: ConnectionIdentity) {
   return { userId: identity.userId, name: identity.name };
 }
@@ -346,13 +348,13 @@ export class ActorService {
     private readonly onSessionStart: () => void = () => undefined,
   ) {}
 
-  public async newSession(cwd: string, subscriber: Subscriber): Promise<string> {
+  public async newSession(cwd: string, subscriber: Subscriber, provider = this.defaultProvider): Promise<string> {
     requireEditor(subscriber);
     this.onSessionStart();
     const id = randomUUID();
     this.store.createSession({
       id,
-      provider: this.defaultProvider,
+      provider,
       cwd,
       resumeId: null,
       createdBy: subscriber.identity.userId,
@@ -372,6 +374,20 @@ export class ActorService {
 
   public listSessions(): ActorSessionSummary[] {
     return this.store.listSessions();
+  }
+
+  public provider(id: string): Provider {
+    const session = this.store.session(id);
+    if (!session) throw new Error("unknown session");
+    return session.provider;
+  }
+
+  public async authStatus(): Promise<Record<Provider, HarnessAuthStatus>> {
+    const [claude, codex] = await Promise.all([
+      this.credentials.authStatus("claude"),
+      this.credentials.authStatus("codex"),
+    ]);
+    return { claude, codex };
   }
 
   public configOptions(id: string): SessionConfigOption[] {

@@ -30,6 +30,7 @@ const workspaceDoc = {
         type: "chat",
         chatSessionId: "chat-session-1",
         chatProvider: "claude",
+        chatConfig: { model: "claude-sonnet-5", effort: "high", permission: "acceptEdits" },
       },
     ],
     activeId: 2,

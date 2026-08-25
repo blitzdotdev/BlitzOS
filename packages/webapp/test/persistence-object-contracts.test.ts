@@ -58,7 +58,13 @@ describe("UI protocol and persistence object contracts", () => {
         agentDefault: "claude",
         tabs: {
           version: 1,
-          tabs: [{ id: 1, type: "chat", chatSessionId: "session-1", chatProvider: "codex" }],
+          tabs: [{
+            id: 1,
+            type: "chat",
+            chatSessionId: "session-1",
+            chatProvider: "codex",
+            chatConfig: { model: "gpt-5.6-sol", effort: "high", permission: "never" },
+          }],
           activeId: 1,
           nextId: 2,
         },
@@ -66,11 +72,17 @@ describe("UI protocol and persistence object contracts", () => {
       },
       updatedAt: 1,
     })).doc?.tabs.tabs[0];
-    expect(Object.keys(present ?? {})).toEqual(["id", "type", "chatSessionId", "chatProvider"]);
+    expect(Object.keys(present ?? {})).toEqual([
+      "id",
+      "type",
+      "chatSessionId",
+      "chatProvider",
+      "chatConfig",
+    ]);
     expect(present && "chatSessionId" in present).toBe(true);
     expect(present && "chatProvider" in present).toBe(true);
     expect(JSON.stringify(present)).toBe(
-      '{"id":1,"type":"chat","chatSessionId":"session-1","chatProvider":"codex"}',
+      '{"id":1,"type":"chat","chatSessionId":"session-1","chatProvider":"codex","chatConfig":{"model":"gpt-5.6-sol","effort":"high","permission":"never"}}',
     );
   });
 
