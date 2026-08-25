@@ -73,7 +73,7 @@ not "refuse to deploy". So you can run step 4 immediately and come back here.
 | `SESSION_TTL_DAYS` | no | Session cookie lifetime in days, 1–3650. Default 30. |
 | `MAX_CONCURRENT_WORKSPACES` | no | Per-principal cap on non-destroyed workspaces, 1–1000. Default 10. |
 | `MICROVM_HOSTS` | yes | JSON array of Firecracker hosts. **Set `'[]'` if you have none** — that cleanly disables the microVM provider and removes its token secret from the required set. Each configured host names a `tokenVar`; that Worker secret must then exist and be at least 32 characters with no whitespace, or **every request to the Worker fails with 500**. |
-| `HETZNER_MACHINE_TYPES` | no | Comma-separated `type@location` entries for the Hetzner machine catalog, e.g. `cpx21@hil,cx32@fsn1`. Unset or blank keeps the default catalog (`cpx21@hil`, `cpx31@hil`). Malformed entries are skipped with a logged warning. |
+| `HETZNER_MACHINE_TYPES` | no | Comma-separated `type@location` entries for the Hetzner machine catalog, e.g. `cpx21@hil,cx32@fsn1`. Unset or blank keeps the default catalog (`cx23@hel1`, `cx33@hel1`, `cpx21@hil`, `cpx31@hil`). Malformed entries are skipped with a logged warning. |
 | `SIGNUP_MODE` | no | `open` (default) or `invite`. In `invite` mode a Google sign-in that would create a new user is refused unless it carries a valid invite (step 7) or the verified bootstrap secret (step 6). Existing users always sign in. |
 | `ALLOWED_EMAIL_DOMAINS` | no | Comma-separated email domains, e.g. `example.com,example.org`. When set, **every** sign-in — new or existing user, invited or bootstrap — is refused unless the account's domain is listed. Empty (default) allows any domain. |
 | `CLOUDFLARE_ACCOUNT_ID` | for tunnels (step 8) | The account that owns the tunnel zone. |
@@ -229,10 +229,11 @@ listing or deleting it, so a server or volume this control plane did not
 create is never touched. Workspace servers do carry `blitz-purpose=workspace`
 and `blitz-workspace=<workspace-id>` labels, for your own filtering.
 
-The machine-type catalog offered in the create dialog defaults to `cpx21@hil`
-and `cpx31@hil`; set the `HETZNER_MACHINE_TYPES` var (comma-separated
-`type@location`) to offer the types and locations your project can actually
-get. Types with no availability in their location produce an empty catalog.
+The machine-type catalog offered in the create dialog defaults to `cx23@hel1`,
+`cx33@hel1`, `cpx21@hil`, and `cpx31@hil`; set the `HETZNER_MACHINE_TYPES` var
+(comma-separated `type@location`) to offer the types and locations your project
+can actually get. Types with no availability in their location produce an empty
+catalog.
 
 **Firecracker (microVM).** Run the
 [microvm-host agent](../packages/microvm-host/README.md) on your own hardware,
