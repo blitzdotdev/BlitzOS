@@ -11,7 +11,12 @@ import {
   missingListEntries,
 } from "../scripts/config-drift.mjs";
 import { isNonEmptyString, isTable } from "../scripts/lib/values.mjs";
-import { deploymentVersionIds, rollbackTarget } from "../scripts/rollback.mjs";
+import {
+  CONFIG_PATH,
+  deploymentVersionIds,
+  REPO_ROOT,
+  rollbackTarget,
+} from "../scripts/rollback.mjs";
 
 const fixturesDirectory = fileURLToPath(
   new URL("../../schema/fixtures/version/", import.meta.url),
@@ -200,6 +205,20 @@ test("every version fixture carries the fields the consumer reads", () => {
 const deployment = (createdOn, ...versionIds) => ({
   created_on: createdOn,
   versions: versionIds.map((id) => ({ version_id: id })),
+});
+
+// `npm run rollback -w packages/control-plane` runs with cwd set to the
+// package, so a cwd-relative CONFIG_PATH resolved to
+// packages/control-plane/packages/control-plane/wrangler.toml and the tool
+// could not run at all. The unit tests covered only the pure functions, so
+// nothing caught it.
+test("the config path resolves against the repo root, not the caller's cwd", () => {
+  const resolved = path.join(REPO_ROOT, CONFIG_PATH);
+  assert.equal(resolved, path.join(packageDirectory, "wrangler.toml"));
+  assert.equal(
+    JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).name,
+    "blitz-core",
+  );
 });
 
 test("deploymentVersionIds reads both version_id and id spellings", () => {

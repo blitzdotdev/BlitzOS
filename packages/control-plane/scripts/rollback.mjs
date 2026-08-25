@@ -19,6 +19,13 @@ import { isNonEmptyString, isTable } from "./lib/values.mjs";
 
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
 
+// CONFIG_PATH is repo-relative, and `npm run rollback -w packages/control-plane`
+// runs with cwd set to the package, not the repo. Resolving it against cwd
+// therefore looked inside packages/control-plane for another packages/
+// directory. Anchor to the repo root from this file's own location, the way
+// every other script here already does, and run wrangler from there.
+export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+
 /**
  * Reads the version ids a deployment serves.
  *
@@ -75,6 +82,7 @@ export function rollbackTarget(listed) {
 
 const wrangler = (args) =>
   execFileSync("npx", ["wrangler", ...args, "--config", CONFIG_PATH], {
+    cwd: REPO_ROOT,
     encoding: "utf8",
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
   });
