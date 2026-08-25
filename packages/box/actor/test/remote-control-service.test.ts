@@ -68,6 +68,20 @@ describe("remote-control s6 service", () => {
     }
   });
 
+  it("starts every claude.ai session in bypassPermissions", () => {
+    // A workspace is the permission boundary, so an agent must never stop for a
+    // prompt. `claude rc` copies this flag onto each session it spawns for
+    // claude.ai. Measured at the pinned 2.1.228: a child of
+    // `rc --permission-mode bypassPermissions` runs with
+    // `--print … --permission-mode bypassPermissions`. A bare `rc` gives the
+    // child no mode at all, so claude.ai picks one.
+    expect(runCode).toMatch(/claude rc --permission-mode bypassPermissions/u);
+    // Terminal tabs also pass `--dangerously-skip-permissions`. `rc` parses its
+    // own flags and rejects that one: "Error: Unknown argument:
+    // --dangerously-skip-permissions". The service would exit on every restart.
+    expect(runCode).not.toMatch(/--dangerously-skip-permissions/u);
+  });
+
   it("supplies a pty without involving tmux", () => {
     // Remote Control opens an interactive session. tmux would make this
     // service the owner of the box's tmux server, which is what broke tabs

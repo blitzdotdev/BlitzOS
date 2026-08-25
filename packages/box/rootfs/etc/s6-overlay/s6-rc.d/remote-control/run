@@ -22,6 +22,25 @@
 #
 # WHY A PTY: Remote Control opens an interactive session. `script` supplies the
 # pty without involving tmux, so this can never own the box's tmux server.
+#
+# WHY THE PERMISSION MODE ON THIS LINE: a workspace is the permission boundary,
+# so an agent must never stop for a prompt. `claude rc` copies its own
+# `--permission-mode` onto every session it spawns for claude.ai. Measured at
+# the pinned 2.1.228: the child of `rc --permission-mode bypassPermissions` runs
+# `--print … --permission-mode bypassPermissions`. A bare `rc` gives the child
+# no mode, so claude.ai chooses one instead.
+#
+# DO NOT COPY THE TERMINAL-TAB FLAGS HERE. Tabs also pass
+# `--dangerously-skip-permissions`. `rc` parses its own flag set and answers
+# "Error: Unknown argument: --dangerously-skip-permissions", then exits. The
+# service would fail on every restart.
+#
+# THE MODE IS A START STATE, NOT A LOCK. claude.ai may send
+# `set_permission_mode` at any time. 2.1.228 refuses only `bypassPermissions`
+# and `auto`; it accepts plan, acceptEdits, dontAsk and default with no check.
+# No setting forbids those. `permissions.disableBypassPermissionsMode` is the
+# only mode policy, and it removes bypass. Launching in bypass also makes bypass
+# reachable in the claude.ai picker, which a bare `rc` does not.
 set -uo pipefail
 
 state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
@@ -73,7 +92,8 @@ launch() {
 	exec /command/s6-setuidgid blitz /usr/bin/env \
 		-u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL \
 		HOME="$home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
-		/usr/bin/script -qec '/opt/blitz/npm/bin/claude rc' /dev/null
+		/usr/bin/script -qec \
+		'/opt/blitz/npm/bin/claude rc --permission-mode bypassPermissions' /dev/null
 }
 
 echo "remote-control: login present, connecting"
