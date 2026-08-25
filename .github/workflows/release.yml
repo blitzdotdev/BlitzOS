@@ -155,7 +155,7 @@ jobs:
             reported="$(curl -fsS "$origin/version" | jq -r '.commit // empty' || true)"
             [ "$reported" = "$GITHUB_SHA" ] && echo "$origin reports $reported" && exit 0
             echo "attempt $attempt: reported '${reported:-none}', expected $GITHUB_SHA"
-            sleep 6
+            [ "$attempt" = "5" ] || sleep 6
           done
           echo "::error::$origin/version reports '${reported:-none}', not $GITHUB_SHA."
           exit 1

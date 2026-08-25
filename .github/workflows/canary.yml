@@ -24,6 +24,11 @@ jobs:
     name: Deploy canary from main
     runs-on: ubuntu-latest
     environment: canary
+    # The push trigger is already main-only, but workflow_dispatch lets a person
+    # pick any ref in the Actions UI. Without this, the one failure mode this
+    # workflow exists to remove — a branch deployed to the shared canary Worker —
+    # is still reachable by hand.
+    if: github.ref == 'refs/heads/main'
     steps:
       # A fork, or this repository before the secrets exist, skips with a
       # notice instead of failing. Same shape as release.yml's gate.
@@ -74,9 +79,12 @@ jobs:
       # new workspaces only, and images are built by hand for canary. Say so
       # loudly rather than deploy a worker-only half of a change in silence.
       - name: Report whether the box image is now stale
-        if: steps.gate.outputs.configured == 'true' && steps.origin.outputs.url != ''
-        continue-on-error: true
+        if: steps.gate.outputs.configured == 'true'
         run: |
+          if [ -z "${{ steps.origin.outputs.url }}" ]; then
+            echo "::warning::The canary config sets no APP_URL, so the box image cannot be checked from here."
+            exit 0
+          fi
           set +e
           output="$(node packages/control-plane/scripts/check-box-image.mjs --url "${{ steps.origin.outputs.url }}" 2>&1)"
           code=$?
@@ -95,15 +103,19 @@ jobs:
       # A green deploy command proves upload, not content. Ask the running
       # deployment which commit it is, and fail when it disagrees.
       - name: Verify the deployment reports this commit
-        if: steps.gate.outputs.configured == 'true' && steps.origin.outputs.url != ''
+        if: steps.gate.outputs.configured == 'true'
         env:
           ORIGIN: ${{ steps.origin.outputs.url }}
         run: |
+          if [ -z "$ORIGIN" ]; then
+            echo "::warning::The canary config sets no APP_URL, so this deploy could not be verified. A gate that could not run is not a gate that passed."
+            exit 0
+          fi
           for attempt in 1 2 3 4 5; do
             reported="$(curl -fsS "$ORIGIN/version" | jq -r '.commit // empty' || true)"
             [ "$reported" = "$GITHUB_SHA" ] && echo "canary reports $reported" && exit 0
             echo "attempt $attempt: reported '${reported:-none}', expected $GITHUB_SHA"
-            sleep 6
+            [ "$attempt" = "5" ] || sleep 6
           done
           echo "::error::$ORIGIN/version reports '${reported:-none}', not $GITHUB_SHA. The deploy uploaded, but the origin is serving something else."
           exit 1
