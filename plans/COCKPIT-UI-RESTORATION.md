@@ -2,13 +2,14 @@
 
 Status: **plan** (2026-08-24). Scope approved: restore the P0 and P1
 capabilities identified by comparing a previous merged PR from an older repo
-with the current BlitzOS webapp. P2 mobile/accessibility polish is explicitly
-out of scope for this plan.
+with the current BlitzOS webapp, then complete a dedicated mobile pass and a
+final refinement/bug-polish pass.
 
-Progress: **Phases 1–2 implemented locally** on `feat-ui-changes` (2026-08-24).
-A follow-up also separates closing a session window from archiving the session,
+Progress: **Phases 1–3 implemented locally** on `feat-ui-changes` (2026-08-25).
+The work also separates closing a session window from archiving the session,
 adds the Start/Resume empty states, and implements the rename half of Phase 4.
-Phases 3 and 5, plus Finder delete, remain pending.
+Finder delete and its dirty-editor protections remain pending; Phases 5–7 have
+not started.
 
 This is not a port of the old bridge. The current control-plane → webapp → box
 actor/ACP architecture stays authoritative. We restore the user-visible
@@ -33,7 +34,11 @@ When this plan is complete:
 - Finder rows support rename and delete without losing the newer Drive
   actions or leaving stale open-file tabs behind; and
 - workspace details are available separately from Share, using real current
-  control-plane data and not exposing secrets or provider identifiers.
+  control-plane data and not exposing secrets or provider identifiers;
+- restored workflows remain usable at the supported mobile breakpoints without
+  hidden, clipped, or unreachable controls; and
+- a final cross-feature pass resolves remaining visual inconsistencies,
+  interaction regressions, and release-blocking bugs.
 
 ## Current ground truth
 
@@ -222,6 +227,8 @@ that file without duplicating an already-open tab.
 
 ### Phase 3A — queued prompts and persistent chat selections
 
+Implemented locally on `feat-ui-changes` (2026-08-25).
+
 1. Refactor the current `send` function into one dispatch path accepting an
    explicit message string.
 2. Add the bounded local queue and drain rules from Decision 5.
@@ -241,6 +248,10 @@ can be removed before dispatch, the remaining message runs exactly once, and
 chat selections survive a browser reload and actor reconnect.
 
 ### Phase 3B — provider authentication and available Chat options
+
+Implemented locally on `feat-ui-changes` (2026-08-25). Standalone status
+checks are implemented; the optional broker status contract remains deferred
+to a broker-specific plan/PR.
 
 1. Add an actor-owned, secret-free authentication-status response for Claude
    and Codex. A failed status check must remain distinct from signed out.
@@ -262,8 +273,9 @@ chat selections survive a browser reload and actor reconnect.
    credentials that expire later.
 
 Done when a new signed-out workspace cannot accidentally submit a Chat prompt,
-either sign-in action can unlock Chat, and the provider/model choices always
-match the providers currently authenticated on that workspace.
+signing into either provider in its terminal and selecting `Check again`
+unlocks Chat, and the provider/model choices always match the providers
+currently authenticated on that workspace.
 
 ### Phase 4 — Finder rename and delete
 
@@ -320,6 +332,51 @@ Done when Details and Share open different dialogs, the values come from the
 current workspace/catalog records, ordinary ungranted users cannot request
 details, and no secret-bearing field reaches rendered markup.
 
+### Phase 6 — mobile responsiveness
+
+1. Audit every primary webapp workflow at the existing mobile breakpoints:
+   global navigation, workspace creation, Templates, Recipes, Drive, Settings,
+   workspace rail, tab strips, session menus, Chat, Finder, archive/restore,
+   Share, and Workspace Details.
+2. Keep the single-pane mobile model authoritative. Tabs restored from a side
+   region must remain reachable and usable when only the main surface is shown.
+3. Ensure menus, dialogs, confirmations, provider/config controls, queued
+   prompts, permission requests, and empty states fit the viewport without
+   horizontal scrolling or clipped actions.
+4. Position file/session context menus within the visible viewport and provide
+   touch-accessible alternatives for actions that otherwise depend on
+   right-click or hover.
+5. Verify the rail/drawer opens and closes predictably, preserves the active
+   workspace/session, and does not leave background content interactive while
+   an overlay is open.
+6. Check touch target sizes, mobile keyboard behavior, focus return, long-name
+   truncation, safe-area spacing, and portrait/landscape transitions.
+7. Add breakpoint-focused interaction tests for the highest-risk flows instead
+   of relying only on desktop DOM coverage.
+
+Done when every primary webapp workflow can be completed on a phone-sized
+viewport, no primary control is hidden or clipped, overlay/focus behavior is
+predictable, and desktop behavior remains unchanged.
+
+### Phase 7 — final refinement, polish, and bug sweep
+
+1. Walk the complete plan end to end on a fresh workspace and on a workspace
+   with persisted sessions, files, archived tabs, and provider authentication.
+2. Resolve remaining copy, spacing, alignment, loading, empty, error, disabled,
+   hover, focus, and unread-state inconsistencies across desktop and mobile.
+3. Exercise cross-feature transitions that commonly expose regressions:
+   reload/reconnect, workspace switching, split-pane changes, close/reopen,
+   archive/restore, rename/delete, sign-in changes, and background completion.
+4. Review browser console/network failures and remove stale UI paths, dead CSS,
+   and obsolete compatibility code only when coverage proves they are unused.
+5. Run the full required gates and self-host staging walkthrough, then document
+   any intentional limitations or deferred work before opening the final PR.
+
+Done when no known release-blocking bugs remain, the desktop and mobile
+surfaces feel visually consistent, all required gates pass or have a documented
+unrelated infrastructure exception, and the plan accurately describes the
+shipped behavior and remaining limitations.
+
 ## Recommended PR sequence
 
 Keep these reviewable rather than recreating PR #252 as one large change:
@@ -331,6 +388,10 @@ Keep these reviewable rather than recreating PR #252 as one large change:
 4. **Finder actions:** rename/delete plus open-tab/path reconciliation.
 5. **Workspace details:** wire timestamps/metadata, dialog, and separate rail
    actions.
+6. **Mobile responsiveness:** breakpoint, drawer, overlay, touch, and
+   mobile-workflow coverage.
+7. **Final refinement:** cross-feature bug sweep, visual polish, staging
+   walkthrough, and release notes.
 
 Each PR must update tests and documentation for its own contract. Do not land
 UI that writes fields the deployed control-plane parser strips; session-state
@@ -382,6 +443,27 @@ webapp and control-plane changes ship together.
   absent from rendered output.
 - Share and Details remain separate actions.
 
+### Mobile tests
+
+- Primary webapp workflows remain reachable in the single-pane mobile layout.
+- Rail/drawer, menus, dialogs, and confirmations stay inside the viewport and
+  return focus to the invoking control.
+- Touch-accessible actions cover file/session operations that use context menus
+  on desktop.
+- Chat provider/config controls, queue rows, approvals, and empty states remain
+  usable with the on-screen keyboard open.
+- Long labels and portrait/landscape changes do not hide primary actions.
+
+### Final refinement tests
+
+- Fresh and persisted workspaces pass the same end-to-end workflow.
+- Reload, reconnect, workspace switching, split changes, close/reopen, and
+  archive/restore preserve the correct visible and selected state.
+- Expected loading, empty, error, disabled, active, focus, and unread states are
+  covered without stale duplicate UI.
+- Browser console/network inspection shows no unexplained failures during the
+  staging walkthrough.
+
 ### Required gates
 
 Run under the repository-supported Node 22 runtime:
@@ -418,10 +500,13 @@ to staging.
    reconcile and dirty-file confirmation blocks data loss.
 8. Open Workspace Details and Share separately; verify metadata and inspect the
    DOM/network payload for forbidden secret fields.
+9. Repeat the complete workflow at the supported phone-width breakpoint in
+   portrait and landscape, including touch-accessible session/file actions.
+10. Perform the final desktop/mobile bug sweep, inspect console/network errors,
+    and record intentional limitations before release.
 
 ## Explicit non-goals
 
-- P2 mobile drawer, focus, inert/ARIA, and mobile context-menu positioning.
 - Restoring park/resume or the stopped-workspace screen.
 - Reintroducing bridge history/auth/completion-store routes.
 - Provider handoff or switching the actor provider inside one Chat session.
