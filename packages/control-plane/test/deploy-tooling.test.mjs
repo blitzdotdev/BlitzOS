@@ -4,7 +4,12 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { boxImageDecision, IMAGE_PATHS } from "../scripts/check-box-image.mjs";
-import { configKeyPaths, missingConfigKeys } from "../scripts/config-drift.mjs";
+import {
+  COMPARED_LISTS,
+  configKeyPaths,
+  missingConfigKeys,
+  missingListEntries,
+} from "../scripts/config-drift.mjs";
 import { isNonEmptyString, isTable } from "../scripts/lib/values.mjs";
 import { deploymentVersionIds, rollbackTarget } from "../scripts/rollback.mjs";
 
@@ -73,6 +78,79 @@ test("the example declares GIT_COMMIT_SHA and routes /version to the worker", ()
   const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
   assert.match(example, /GIT_COMMIT_SHA/u);
   assert.match(example, /"\/version"/u);
+});
+
+// --- routing list drift -----------------------------------------------------
+
+// The case this check was added for. /version reached wrangler.toml.example and
+// neither deployment config, and the key-path comparison passed both, because
+// run_worker_first is a key every config has.
+const EXAMPLE_ASSETS = [
+  "[assets]",
+  'run_worker_first = [ "/sessions*", "/version", "/api/*" ]',
+  "",
+  "[triggers]",
+  'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+  "",
+].join("\n");
+
+test("missingListEntries names a route the config never routes to the worker", () => {
+  const config = [
+    "[assets]",
+    'run_worker_first = [ "/sessions*", "/api/*" ]',
+    "",
+    "[triggers]",
+    'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+    "",
+  ].join("\n");
+  assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, config), [
+    { path: "assets.run_worker_first", missing: ["/version"] },
+  ]);
+});
+
+test("missingListEntries names a missing cron", () => {
+  const config = [
+    "[assets]",
+    'run_worker_first = [ "/sessions*", "/version", "/api/*" ]',
+    "",
+    "[triggers]",
+    'crons = [ "*/5 * * * *" ]',
+    "",
+  ].join("\n");
+  assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, config), [
+    { path: "triggers.crons", missing: ["0 3 * * *"] },
+  ]);
+});
+
+test("a config may route more than the example, and that is not drift", () => {
+  const config = [
+    "[assets]",
+    'run_worker_first = [ "/sessions*", "/version", "/api/*", "/extra*" ]',
+    "",
+    "[triggers]",
+    'crons = [ "*/5 * * * *", "0 3 * * *" ]',
+    "",
+  ].join("\n");
+  assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, config), []);
+});
+
+test("an absent table reports every entry rather than passing quietly", () => {
+  assert.deepEqual(missingListEntries(EXAMPLE_ASSETS, 'name = "w"\n'), [
+    { path: "assets.run_worker_first", missing: ["/sessions*", "/version", "/api/*"] },
+    { path: "triggers.crons", missing: ["*/5 * * * *", "0 3 * * *"] },
+  ]);
+});
+
+test("the example agrees with itself on every compared list", () => {
+  const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
+  assert.deepEqual(missingListEntries(example, example), []);
+});
+
+test("COMPARED_LISTS covers the two lists that route requests", () => {
+  assert.deepEqual(COMPARED_LISTS.map((entry) => entry.join(".")), [
+    "assets.run_worker_first",
+    "triggers.crons",
+  ]);
 });
 
 // --- box image decision -----------------------------------------------------
