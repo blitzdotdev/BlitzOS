@@ -1,26 +1,35 @@
 .org-presence {
-  position: relative;
   display: flex;
   flex: none;
   align-items: center;
   margin-right: 7px;
 }
 
-.org-presence-trigger {
+/* Scoped under the rail to outrank its button reset without !important. */
+.webapp-rail .org-presence-trigger {
   display: grid;
   min-width: 34px;
   height: 34px;
   place-items: center;
-  padding: 0 7px !important;
-  border-radius: 8px !important;
-  color: var(--muted) !important;
+  padding: 0 7px;
+  border-radius: 8px;
+  color: var(--muted);
 }
 
-.org-presence-trigger:hover,
-.org-presence-trigger:focus-visible,
-.org-presence-trigger[aria-expanded='true'] {
-  color: var(--ink) !important;
-  background: var(--hover) !important;
+.webapp-rail .org-presence-trigger:hover,
+.webapp-rail .org-presence-trigger:focus-visible,
+.webapp-rail .org-presence-trigger[aria-expanded='true'] {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+/* Last known people, not live ones: dim until a poll succeeds again. */
+.org-presence--stale .org-presence-trigger {
+  opacity: .45;
+}
+
+.org-presence--stale .org-presence-face::after {
+  background: var(--faint);
 }
 
 .org-presence-trigger:focus-visible {
@@ -128,11 +137,14 @@
   content: '';
 }
 
+/* Anchored to the rail header (.webapp-org-wrap is the positioned ancestor),
+ * not to the 34px trigger at its right edge: a 320px box hung from that edge
+ * would start 60px past the left side of the viewport. */
 .org-presence-popover {
   position: absolute;
   z-index: 80;
   top: calc(100% - 4px);
-  right: 0;
+  left: 8px;
   width: min(320px, calc(100vw - 16px));
   max-height: min(560px, calc(100dvh - var(--headerH) - 12px));
   overflow-y: auto;
@@ -147,6 +159,11 @@
 
 .org-presence-popover[hidden] {
   display: none;
+}
+
+.org-presence-popover:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .org-presence-popover > header {

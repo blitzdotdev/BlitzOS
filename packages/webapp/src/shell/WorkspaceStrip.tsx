@@ -227,6 +227,7 @@ export function WorkspaceStrip({
 
       <OrgPresence
         snapshot={presenceSnapshot}
+        stale={presenceStale}
         viewerMembershipId={viewer?.membership.id ?? null}
         activeWorkspaceId={presenceWorkspaceId}
         onNavigate={onOpenPresenceActivity}

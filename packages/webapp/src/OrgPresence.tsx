@@ -5,8 +5,12 @@ import type {
   PresenceSurfaceView,
 } from '@blitzos/schema';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { SESSION_KIND_LABELS } from './session-labels';
 
 const MAX_STACK_FACES = 3;
+/** How long a join/leave announcement stays in the live region. Clearing it
+ * lets an identical later message announce again. */
+const ANNOUNCEMENT_MS = 4_000;
 
 function activityRank(activity: PresenceActivityView, workspaceId: string | null): number {
   if (activity.location === 'workspace' && activity.workspaceId === workspaceId) return 0;
@@ -93,6 +97,15 @@ function initial(name: string): string {
   return name.trim().charAt(0).toUpperCase() || 'M';
 }
 
+/** Says who, not only how many: the faces themselves are decorative. */
+export function presenceStackLabel(members: readonly PresenceMemberView[]): string {
+  const count = `${members.length} collaborator${members.length === 1 ? '' : 's'} online`;
+  if (members.length === 0) return 'No other collaborators online';
+  const names = members.slice(0, MAX_STACK_FACES).map(({ name }) => name).join(', ');
+  const rest = members.length - MAX_STACK_FACES;
+  return rest > 0 ? `${count}: ${names} and ${rest} more` : `${count}: ${names}`;
+}
+
 function PresenceFace({ member }: { member: PresenceMemberView }) {
   return (
     <span
@@ -120,7 +133,8 @@ export function PresenceFaceStack({
   return (
     <span
       className={`org-presence-faces${compact ? ' org-presence-faces--compact' : ''}`}
-      aria-label={`${members.length} collaborator${members.length === 1 ? '' : 's'} online`}
+      role="img"
+      aria-label={presenceStackLabel(members)}
     >
       {visible.map((member) => <PresenceFace member={member} key={member.membershipId} />)}
       {hidden > 0 && <span className="org-presence-more" aria-hidden="true">+{hidden}</span>}
@@ -131,11 +145,7 @@ export function PresenceFaceStack({
 function surfaceLabel(surface: PresenceSurfaceView): string {
   switch (surface.kind) {
     case 'session':
-      return surface.title?.trim() || (
-        surface.sessionKind === 'chat'
-          ? 'Chat'
-          : `${surface.sessionKind.charAt(0).toUpperCase()}${surface.sessionKind.slice(1)}`
-      );
+      return surface.title?.trim() || SESSION_KIND_LABELS[surface.sessionKind];
     case 'file':
       return `File · ${surface.label}`;
     case 'preview':
@@ -216,13 +226,19 @@ function joinedLeftMessage(
 
 export function OrgPresence({
   snapshot,
+  stale,
   viewerMembershipId,
   activeWorkspaceId,
   onNavigate,
   onOpenChange,
 }: {
   snapshot: PresenceSnapshotResponse | null;
+  /** No poll has succeeded within the expiry window: show the last known
+   * people dimmed and say so, never as live. */
+  stale: boolean;
   viewerMembershipId: string | null;
+  /** The workspace the viewer is looking at right now — null on Drive and
+   * settings pages, where nobody is "here". */
   activeWorkspaceId: string | null;
   onNavigate: (workspaceId: string, sessionId?: string) => void;
   onOpenChange?: (open: boolean) => void;
@@ -231,6 +247,7 @@ export function OrgPresence({
   const [announcement, setAnnouncement] = useState('');
   const wrapper = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const popover = useRef<HTMLDivElement>(null);
   const previousMembers = useRef<Map<string, string> | null>(null);
   const members = useMemo(
     () => otherPresenceMembers(snapshot, viewerMembershipId),
@@ -242,16 +259,35 @@ export function OrgPresence({
   );
 
   useEffect(() => {
+    // Nothing to announce when presence itself goes away (sign-out, polling
+    // off): everyone "leaving" at once is not news. The next snapshot starts
+    // a fresh baseline instead of announcing everyone as joined.
+    if (snapshot === null) {
+      previousMembers.current = null;
+      return;
+    }
     const current = new Map(members.map((member) => [member.membershipId, member.name]));
-    if (previousMembers.current !== null) {
+    // A truncated snapshot's tail churns from poll to poll; announcing that
+    // churn would be noise, not joins and leaves.
+    if (previousMembers.current !== null && !snapshot.truncated) {
       const message = joinedLeftMessage(previousMembers.current, current);
       if (message !== '') setAnnouncement(message);
     }
     previousMembers.current = current;
-  }, [members]);
+  }, [members, snapshot]);
+
+  useEffect(() => {
+    if (announcement === '') return;
+    const timer = window.setTimeout(() => setAnnouncement(''), ANNOUNCEMENT_MS);
+    return () => window.clearTimeout(timer);
+  }, [announcement]);
 
   useEffect(() => {
     if (!open) return;
+    // A dialog takes focus when it opens; the first link, or the dialog
+    // itself when there is nothing to activate.
+    const first = popover.current?.querySelector<HTMLElement>('button');
+    (first ?? popover.current)?.focus();
     const closeOnPointerDown = (event: PointerEvent) => {
       // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
       if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
@@ -259,7 +295,9 @@ export function OrgPresence({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       setOpen(false);
-      trigger.current?.focus();
+      // Return focus only if it is still ours: Escape pressed in a terminal
+      // that was reached by tabbing away must not yank focus back to the rail.
+      if (wrapper.current?.contains(document.activeElement)) trigger.current?.focus();
     };
     window.addEventListener('pointerdown', closeOnPointerDown);
     window.addEventListener('keydown', closeOnEscape);
@@ -274,8 +312,9 @@ export function OrgPresence({
     onNavigate(workspaceId, sessionId);
   };
 
+  const label = presenceStackLabel(members);
   return (
-    <div className="org-presence" ref={wrapper}>
+    <div className={`org-presence${stale ? ' org-presence--stale' : ''}`} ref={wrapper}>
       <button
         className="org-presence-trigger"
         type="button"
@@ -283,8 +322,8 @@ export function OrgPresence({
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls="org-presence-popover"
-        aria-label={`${members.length} collaborator${members.length === 1 ? '' : 's'} online`}
-        title="Organization presence"
+        aria-label={stale ? `Presence reconnecting; last known: ${label}` : label}
+        title={stale ? 'Organization presence · reconnecting' : 'Organization presence'}
         onClick={() => setOpen((current) => {
           const next = !current;
           onOpenChange?.(next);
@@ -292,7 +331,7 @@ export function OrgPresence({
         })}
       >
         {members.length > 0
-          ? <PresenceFaceStack members={members} compact />
+          ? <span aria-hidden="true"><PresenceFaceStack members={members} compact /></span>
           : <span className="org-presence-empty-icon" aria-hidden="true"><i /><i /></span>}
       </button>
       <div
@@ -301,10 +340,12 @@ export function OrgPresence({
         role="dialog"
         aria-label="Organization presence"
         hidden={!open}
+        tabIndex={-1}
+        ref={popover}
       >
         <header>
           <strong>Organization</strong>
-          <span>{members.length} online</span>
+          <span>{stale ? 'Reconnecting…' : `${members.length} online`}</span>
         </header>
         {members.length === 0 ? (
           <p className="org-presence-empty">No other collaborators are online.</p>

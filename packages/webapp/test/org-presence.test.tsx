@@ -1,6 +1,6 @@
 import type { PresenceMemberView, PresenceSnapshotResponse } from '@blitzos/schema';
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   membersInWorkspace,
   membersOnSession,
@@ -61,6 +61,9 @@ function snapshot(members: PresenceMemberView[]): PresenceSnapshotResponse {
 }
 
 describe('organization presence UI', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
   it('filters the viewer and derives workspace/session indicators without basename matching', () => {
     const collaborators = otherPresenceMembers(snapshot([self, here, redacted, online]), 'self');
     expect(collaborators.map(({ membershipId }) => membershipId)).toEqual(['ada', 'lin', 'max']);
@@ -88,13 +91,14 @@ describe('organization presence UI', () => {
     const view = await render(
       <OrgPresence
         snapshot={snapshot([self, here, redacted, online])}
+        stale={false}
         viewerMembershipId="self"
         activeWorkspaceId="workspace-one"
         onNavigate={onNavigate}
       />,
     );
     const trigger = view.container.querySelector<HTMLButtonElement>('.org-presence-trigger');
-    expect(trigger?.getAttribute('aria-label')).toBe('3 collaborators online');
+    expect(trigger?.getAttribute('aria-label')).toBe('3 collaborators online: Ada, Lin, Max');
     await act(async () => trigger?.click());
 
     const dialog = view.container.querySelector<HTMLElement>('[role="dialog"]');
@@ -120,6 +124,7 @@ describe('organization presence UI', () => {
     const view = await render(
       <OrgPresence
         snapshot={first}
+        stale={false}
         viewerMembershipId="self"
         activeWorkspaceId="workspace-one"
         onNavigate={() => undefined}
@@ -131,17 +136,85 @@ describe('organization presence UI', () => {
     expect(view.container.querySelector<HTMLElement>('[role="dialog"]')?.hidden).toBe(true);
     expect(document.activeElement).toBe(trigger);
 
-    await act(async () => view.root.render(
+    const rerender = async (next: PresenceSnapshotResponse | null, stale = false) => act(async () => view.root.render(
       <OrgPresence
-        snapshot={{ ...snapshot([self, here, redacted]), truncated: true }}
+        snapshot={next}
+        stale={stale}
         viewerMembershipId="self"
         activeWorkspaceId="workspace-one"
         onNavigate={() => undefined}
       />,
     ));
-    expect(view.container.querySelector('[role="status"]')?.textContent).toBe('Lin joined');
+    const status = () => view.container.querySelector('[role="status"]')?.textContent;
+    await rerender(snapshot([self, here, redacted]));
+    expect(status()).toBe('Lin joined');
+    // A refresh with the same people (only clocks moved) announces nothing new.
+    await rerender(snapshot([self, here, { ...redacted, activities: [{ ...redacted.activities[0]!, lastSeenAt: 99 }] }]));
+    expect(status()).toBe('Lin joined');
+    // The announcement clears so an identical later one can be heard again.
+    await act(async () => vi.advanceTimersByTime(4_000));
+    expect(status()).toBe('');
+    // A truncated snapshot's tail churns; it is not announced as joins/leaves.
+    await rerender({ ...snapshot([self, here]), truncated: true });
+    expect(status()).toBe('');
     await act(async () => trigger?.click());
     expect(view.container.textContent).toContain('Showing the most active collaborators.');
+    // Presence going away entirely is not everyone leaving.
+    await rerender(snapshot([self, here, redacted]));
+    expect(status()).toBe('Lin joined');
+    await act(async () => vi.advanceTimersByTime(4_000));
+    await rerender(null);
+    expect(status()).toBe('');
+    // And when it comes back, the people already there are a new baseline,
+    // not a wave of joins.
+    await rerender(snapshot([self, here, redacted]));
+    expect(status()).toBe('');
+    await view.unmount();
+  });
+
+  it('moves focus into the popover on open and only takes it back when it still owns it', async () => {
+    const view = await render(
+      <OrgPresence
+        snapshot={snapshot([self, here])}
+        stale={false}
+        viewerMembershipId="self"
+        activeWorkspaceId="workspace-one"
+        onNavigate={() => undefined}
+      />,
+    );
+    const trigger = view.container.querySelector<HTMLButtonElement>('.org-presence-trigger');
+    await act(async () => trigger?.click());
+    const dialog = view.container.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog?.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement?.tagName).toBe('BUTTON');
+
+    // Focus tabbed away to something else (a terminal, say): Escape closes
+    // the popover but leaves that focus alone.
+    const elsewhere = document.createElement('input');
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
+    expect(dialog?.hidden).toBe(true);
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+    await view.unmount();
+  });
+
+  it('shows last-known people as reconnecting, never as live, when stale', async () => {
+    const view = await render(
+      <OrgPresence
+        snapshot={snapshot([self, here])}
+        stale
+        viewerMembershipId="self"
+        activeWorkspaceId="workspace-one"
+        onNavigate={() => undefined}
+      />,
+    );
+    const trigger = view.container.querySelector<HTMLButtonElement>('.org-presence-trigger');
+    expect(trigger?.getAttribute('aria-label')).toBe('Presence reconnecting; last known: 1 collaborator online: Ada');
+    expect(view.container.querySelector('.org-presence--stale')).not.toBeNull();
+    await act(async () => trigger?.click());
+    expect(view.container.querySelector('.org-presence-popover header')?.textContent).toContain('Reconnecting…');
     await view.unmount();
   });
 
@@ -149,6 +222,7 @@ describe('organization presence UI', () => {
     const empty = await render(
       <OrgPresence
         snapshot={snapshot([self])}
+        stale={false}
         viewerMembershipId="self"
         activeWorkspaceId={null}
         onNavigate={() => undefined}
@@ -167,6 +241,7 @@ describe('organization presence UI', () => {
     const large = await render(
       <OrgPresence
         snapshot={snapshot([self, ...crowd])}
+        stale={false}
         viewerMembershipId="self"
         activeWorkspaceId={null}
         onNavigate={() => undefined}

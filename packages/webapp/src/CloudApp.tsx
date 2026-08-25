@@ -985,15 +985,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     presenceVisibleTabIds,
     presenceFocusedTabId,
   );
-  const presenceSnapshot = useOrgPresence(
+  const { snapshot: presenceSnapshot, stale: presenceStale } = useOrgPresence(
     api,
     store.viewer !== null && !signedOut,
     presenceView,
     { poll: true },
   );
+  // Indicators on rows and tabs claim someone is there now; a stale snapshot
+  // cannot back that claim, so they disappear until a poll succeeds again.
   const presenceMembers = useMemo(
-    () => otherPresenceMembers(presenceSnapshot, store.viewer?.membership.id ?? null),
-    [presenceSnapshot, store.viewer?.membership.id],
+    () => (presenceStale
+      ? []
+      : otherPresenceMembers(presenceSnapshot, store.viewer?.membership.id ?? null)),
+    [presenceSnapshot, presenceStale, store.viewer?.membership.id],
   );
   const tabsLoaded = activeWorkspaceTabs !== null;
   // Does this workspace's own MACHINE serve sessions? The build flag cannot
@@ -1263,14 +1267,42 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     selectWorkspaceTab(String(opened.tabId));
     return true;
   }, [activeSharedSessions, activeWorkspaceTabs, selectWorkspaceTab, updateWorkspaceTabs]);
+  const deepLinkRefreshed = useRef<string | null>(null);
   useEffect(() => {
     if (route.page !== 'webApp' || route.sessionId === undefined) return;
     if (route.workspaceId !== activeWorkspaceId || activeWorkspaceTabs === null) return;
     if (activeSharedSessions === null) return;
-    openSharedSession(route.sessionId);
-    window.history.replaceState({}, '', workspacePath(route.workspaceId));
-    setRoute({ workspaceId: route.workspaceId, page: 'webApp', chat: null });
-  }, [activeSharedSessions, activeWorkspaceId, activeWorkspaceTabs, openSharedSession, route]);
+    const { workspaceId, sessionId } = route;
+    if (!openSharedSession(sessionId)) {
+      // This client's registry is as old as its last save. A collaborator
+      // whose session was created since is exactly who a presence link points
+      // at, so refresh once and let the effect run again on the fresh list.
+      const key = `${workspaceId}:${sessionId}`;
+      if (deepLinkRefreshed.current !== key) {
+        deepLinkRefreshed.current = key;
+        void api.listWorkspaceSessions(workspaceId).then(({ sessions }) => {
+          if (activeWorkspaceIdRef.current !== workspaceId) return;
+          setWorkspaceSessions((current) => (
+            current.workspaceId === workspaceId ? { ...current, value: sessions } : current
+          ));
+        }).catch(handlePersistenceError);
+        return;
+      }
+      handlePersistenceError(new Error('That session is no longer available.'));
+    }
+    window.history.replaceState({}, '', workspacePath(workspaceId));
+    setRoute({ workspaceId, page: 'webApp', chat: null });
+  }, [
+    activeSharedSessions,
+    activeWorkspaceId,
+    activeWorkspaceIdRef,
+    activeWorkspaceTabs,
+    api,
+    handlePersistenceError,
+    openSharedSession,
+    route,
+    setWorkspaceSessions,
+  ]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1691,7 +1723,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       activeWorkspace={activeWorkspace}
       showRail={railActiveWorkspaceId !== null || (mobileWebApp && activeWorkspace !== undefined)}
       presenceSnapshot={presenceSnapshot}
-      presenceStale={false}
+      presenceStale={presenceStale}
       presenceWorkspaceId={presenceView.workspaceId}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
         ? railSessions

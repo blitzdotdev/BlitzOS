@@ -25,6 +25,24 @@ Review hardening (2026-08-24), before Phase 3:
 - Phase 0 corpus: `packages/schema/fixtures/presence/` with conformance tests
   on both sides.
 
+Phase 3 review hardening (2026-08-24):
+
+- The popover anchors to the rail header, not the trigger, so it stays on
+  screen in the 264px rail; mobile keeps its fixed full-width placement.
+- A presence deep link whose session this client has not loaded yet refreshes
+  the session registry once before giving up, so a collaborator's session
+  created since the page loaded still opens.
+- The hook keeps the previous snapshot object when only clocks moved, so idle
+  polls do not re-render the shell; after `expiresAfterMs` without a
+  successful poll it reports `stale`, and the UI dims, says "Reconnecting…",
+  and drops row/tab indicators rather than showing last-known people as live.
+- The popover takes focus on open and returns it to the trigger on Escape only
+  while it still owns focus; face stacks name who is present, not just how
+  many; joins/leaves are not announced from truncated snapshots or when
+  presence goes away, and an announcement clears after four seconds.
+- "Here" follows the page: nobody is "here" from Drive or settings.
+- Session kinds are named from one `SESSION_KIND_LABELS` map.
+
 ## Goal
 
 Let an organization member answer three questions without guessing:
