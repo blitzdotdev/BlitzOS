@@ -23,11 +23,23 @@ const SHUTDOWN_TIMEOUT_MS = 45_000;
 // are lowercase ASCII letters followed by decimal digits, with no dash.
 const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
 const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
-// Curated default catalog: two mid-size x86 types in the US-west location.
-// Operators override it with the HETZNER_MACHINE_TYPES Worker var. The
-// catalog constrains what the create page offers; existing workspaces on
+// Default catalog: two cheap EU types first, then the two US-west types.
+// Gross price each month in EUR, measured 2026-08-25: cx23@hel1 6.49,
+// cx33@hel1 9.99, cpx21@hil 37.49, cpx31@hil 73.49.
+// cx33@hel1 gives the same 4 cpu and 8 GB as cpx31@hil. It costs about one
+// seventh as much. That is the reason for the EU entries.
+// Hetzner does not sell cpx21 or cpx31 in any EU location. It sells the cx
+// line only in hel1. A cheaper EU box needs a different type, not the same
+// type in a different region.
+// Operators override the catalog with the HETZNER_MACHINE_TYPES Worker var.
+// The catalog constrains what the create page offers; existing workspaces on
 // other types keep working because ownership stays shape-based.
-export const DEFAULT_HETZNER_MACHINE_TYPES: readonly string[] = ["cpx21@hil", "cpx31@hil"];
+export const DEFAULT_HETZNER_MACHINE_TYPES: readonly string[] = [
+  "cx23@hel1",
+  "cx33@hel1",
+  "cpx21@hil",
+  "cpx31@hil",
+];
 
 export interface HetznerMachineTypeCatalogWarning {
   event: "hetzner_machine_type_catalog_entry_rejected";

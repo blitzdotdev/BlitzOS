@@ -496,15 +496,97 @@ describe("control plane security and lifecycle", () => {
     ]);
   });
 
-  it("keeps the two-type default catalog when HETZNER_MACHINE_TYPES is unset or blank", () => {
-    expect(DEFAULT_HETZNER_MACHINE_TYPES).toEqual(["cpx21@hil", "cpx31@hil"]);
+  it("keeps the four-type default catalog when HETZNER_MACHINE_TYPES is unset or blank", () => {
+    expect(DEFAULT_HETZNER_MACHINE_TYPES).toEqual([
+      "cx23@hel1",
+      "cx33@hel1",
+      "cpx21@hil",
+      "cpx31@hil",
+    ]);
     expect([...hetznerMachineTypeAllowlistFromEnv(undefined)].sort()).toEqual([
       "cpx21@hil",
       "cpx31@hil",
+      "cx23@hel1",
+      "cx33@hel1",
     ]);
     expect([...hetznerMachineTypeAllowlistFromEnv("  ")].sort()).toEqual([
       "cpx21@hil",
       "cpx31@hil",
+      "cx23@hel1",
+      "cx33@hel1",
+    ]);
+  });
+
+  it("keeps the default catalog's Helsinki cx types through the allowlist filter", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        server_types: [
+          {
+            name: "cx23",
+            cores: 2,
+            memory: 4,
+            disk: 40,
+            architecture: "x86",
+            deprecation: null,
+            locations: [
+              { name: "hel1", available: true, deprecation: null },
+              { name: "fsn1", available: true, deprecation: null },
+            ],
+          },
+          {
+            name: "cx33",
+            cores: 4,
+            memory: 8,
+            disk: 80,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "hel1", available: true, deprecation: null }],
+          },
+          {
+            name: "cpx31",
+            cores: 4,
+            memory: 8,
+            disk: 160,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "hil", available: true, deprecation: null }],
+          },
+        ],
+        meta: { pagination: { next_page: null } },
+      }),
+    );
+    const provider = new HetznerProvider("test-token");
+
+    // cx23@fsn1 is healthy but not allowlisted; only hel1 carries the cx line
+    // in the default catalog.
+    expect(await provider.listMachineTypes()).toEqual([
+      {
+        id: "cx23@hel1",
+        name: "cx23",
+        cpuCores: 2,
+        memGb: 4,
+        diskGb: 40,
+        arch: "x86",
+        location: "hel1",
+      },
+      {
+        id: "cx33@hel1",
+        name: "cx33",
+        cpuCores: 4,
+        memGb: 8,
+        diskGb: 80,
+        arch: "x86",
+        location: "hel1",
+      },
+      {
+        id: "cpx31@hil",
+        name: "cpx31",
+        cpuCores: 4,
+        memGb: 8,
+        diskGb: 160,
+        arch: "x86",
+        location: "hil",
+      },
     ]);
   });
 
