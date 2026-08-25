@@ -1,0 +1,157 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { buildBootstrapScript } from "../dist/core/bootstrap.js";
+import { AwsProvider } from "../dist/core/compute/aws.js";
+
+// Text pins prove what the emitter writes. They cannot prove what bash does
+// with it, and the incident was a shell-semantics fault: `set -Eeuo pipefail`
+// plus a command substitution from a grep that matched nothing. So this suite
+// runs the emitted apt setup in real bash. See plans/PROVIDER-BOOTSTRAP.md.
+
+const BOOTSTRAP_BASE = {
+  boxImageSha256: "",
+  boxImageRef: "ghcr.io/blitzdotdev/blitz-box:test",
+  boxImageTag: "",
+  phoneHomeUrl: "https://cp.example/workspaces/workspace/phone-home/token",
+  sshPublicKey: "ssh-ed25519 AAAAcaller",
+};
+
+const AWS_APT_SETUP = new AwsProvider({
+  accessKeyId: "AKIDEXAMPLE",
+  secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  region: "us-east-1",
+}).bootstrapAptSetup();
+
+const EC2_MIRROR = "http://us-east-1.ec2.archive.ubuntu.com";
+const FALLBACK_MIRROR = "http://archive.ubuntu.com";
+
+/** The emitted apt setup, ready to run: the real shebang and shell options,
+ * then everything from the apt tuning up to the first `apt_watchdog` call.
+ * The run stops before that call, because installing docker.io needs a real
+ * box. `/etc/apt` is repointed at a scratch directory so a test never reads or
+ * writes the machine's own apt sources. */
+function runnableAptSetup(providerAptSetup, aptRoot, extraLines = "") {
+  const script = providerAptSetup === undefined
+    ? buildBootstrapScript(BOOTSTRAP_BASE)
+    : buildBootstrapScript({ ...BOOTSTRAP_BASE, providerAptSetup });
+  const lines = script.split("\n");
+  const start = lines.indexOf("export DEBIAN_FRONTEND=noninteractive");
+  const end = lines.indexOf("apt_watchdog update");
+  assert.ok(start > 0, "apt setup start was not found in the emitted script");
+  assert.ok(end > start, "apt_watchdog call was not found in the emitted script");
+  const header = lines.slice(0, 2).join("\n");
+  assert.equal(header, "#!/bin/bash\nset -Eeuo pipefail");
+  const section = lines.slice(start, end).join("\n");
+  return `${header}\n${section.replaceAll("/etc/apt", `${aptRoot}/etc/apt`)}\n${extraLines}`;
+}
+
+/** A scratch apt tree plus a curl that answers without a network. `curlStatus`
+ * is what the mirror probe sees: 0 for a mirror that answers, 22 for curl's
+ * own "HTTP error" status on one that does not. */
+function scratchBox(sources, curlStatus) {
+  const root = mkdtempSync(path.join(tmpdir(), "blitz-bootstrap-bash-"));
+  mkdirSync(path.join(root, "etc/apt/apt.conf.d"), { recursive: true });
+  mkdirSync(path.join(root, "etc/apt/sources.list.d"), { recursive: true });
+  mkdirSync(path.join(root, "bin"));
+  writeFileSync(path.join(root, "etc/apt/sources.list"), "# deb822 sources live in sources.list.d\n");
+  for (const [name, content] of Object.entries(sources)) {
+    writeFileSync(path.join(root, "etc/apt/sources.list.d", name), content);
+  }
+  const curl = path.join(root, "bin/curl");
+  writeFileSync(
+    curl,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >>"${root}/curl.argv"\nexit ${curlStatus}\n`,
+  );
+  chmodSync(curl, 0o755);
+  return root;
+}
+
+/** Runs the section under `bash -x`. A boot that dies under `set -e` prints
+ * nothing of its own, so the trace names the command that killed it. */
+function runBash(script, root) {
+  const scriptPath = path.join(root, "apt-setup.sh");
+  writeFileSync(scriptPath, script);
+  const result = spawnSync("bash", ["-x", scriptPath], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${path.join(root, "bin")}:${process.env.PATH ?? ""}` },
+  });
+  const trace = (result.stderr ?? "").trimEnd().split("\n").slice(-3).join("\n");
+  return { status: result.status, report: `bash exited ${result.status}; last trace:\n${trace}` };
+}
+
+function ubuntuSources(mirror) {
+  return `Types: deb\nURIs: ${mirror}/ubuntu\nSuites: noble noble-updates\nComponents: main universe\n`;
+}
+
+/** The box runs Ubuntu, so the emitted `sed -i -E` is GNU sed. BSD sed reads
+ * `-i -E` as an edit-in-place suffix and changes nothing. Exit statuses stay
+ * under test everywhere; only the rewritten bytes need the real tool. */
+const gnuSed = spawnSync("sed", ["--version"], { encoding: "utf8" }).status === 0;
+
+test("a box whose provider contributes nothing runs the apt setup to the end", () => {
+  const root = scratchBox({ "ubuntu.sources": ubuntuSources(FALLBACK_MIRROR) }, 0);
+  try {
+    // The watchdog calls apt_mirror_fallback between attempts. Call it here:
+    // an undefined function exits 127, which set -e turns into a dead boot.
+    const result = runBash(runnableAptSetup(undefined, root, "apt_mirror_fallback\n"), root);
+    assert.equal(result.status, 0, result.report);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the AWS apt setup survives a box that has no EC2 mirror", () => {
+  const root = scratchBox({ "ubuntu.sources": ubuntuSources(FALLBACK_MIRROR) }, 0);
+  try {
+    const result = runBash(runnableAptSetup(AWS_APT_SETUP, root), root);
+    assert.equal(result.status, 0, result.report);
+    // grep matched nothing, so the probe never ran.
+    assert.equal(existsSync(path.join(root, "curl.argv")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the AWS apt setup leaves an EC2 mirror that does not answer", () => {
+  const root = scratchBox({ "ubuntu.sources": ubuntuSources(EC2_MIRROR) }, 22);
+  try {
+    const result = runBash(runnableAptSetup(AWS_APT_SETUP, root), root);
+    assert.equal(result.status, 0, result.report);
+    assert.match(
+      readFileSync(path.join(root, "curl.argv"), "utf8"),
+      /us-east-1\.ec2\.archive\.ubuntu\.com\/ubuntu\/dists\/noble\/InRelease/u,
+    );
+    if (gnuSed) {
+      const rewritten = readFileSync(path.join(root, "etc/apt/sources.list.d/ubuntu.sources"), "utf8");
+      assert.equal(rewritten, ubuntuSources(FALLBACK_MIRROR));
+    } else {
+      console.warn("SKIP: GNU sed is missing, so the rewritten sources were not checked");
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the AWS apt setup keeps an EC2 mirror that answers", () => {
+  const root = scratchBox({ "ubuntu.sources": ubuntuSources(EC2_MIRROR) }, 0);
+  try {
+    const result = runBash(runnableAptSetup(AWS_APT_SETUP, root), root);
+    assert.equal(result.status, 0, result.report);
+    const kept = readFileSync(path.join(root, "etc/apt/sources.list.d/ubuntu.sources"), "utf8");
+    assert.equal(kept, ubuntuSources(EC2_MIRROR));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

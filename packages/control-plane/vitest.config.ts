@@ -33,6 +33,7 @@ export default defineConfig(async () => {
     test: {
       exclude: [
         ...configDefaults.exclude,
+        "test/bootstrap-bash.test.mjs",
         "test/bootstrap-python.test.mjs",
         "test/publish-box-image.test.mjs",
         "test/set-box-image-ref.test.mjs",

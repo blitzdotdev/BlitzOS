@@ -88,6 +88,37 @@ const MACHINE_TYPES: readonly AwsMachineType[] = [
   { instanceType: "m6i.xlarge", cpuCores: 4, memGb: 16, diskGb: 80 },
 ];
 
+/** The bootstrap lines only an AWS box needs.
+ *
+ * Canonical gives each EC2 region a mirror at <region>.ec2.archive.ubuntu.com.
+ * A dead one accepts the TCP connection and then never answers, and apt-get
+ * update still exits 0. So the exit code cannot find the fault. The probe
+ * tests the mirror itself and rewrites the sources before the first update.
+ * Without it the package lists stay incomplete, and the docker.io install
+ * fails later for a reason that looks unrelated.
+ *
+ * These lines sat in the shared bootstrap until 2026-08-25. There the grep
+ * found nothing on a Hetzner box, exited 1, and `set -e` killed the boot at
+ * that line. Every non-AWS box failed to create. See
+ * plans/PROVIDER-BOOTSTRAP.md. */
+const BOOTSTRAP_APT_SETUP = String.raw`# grep exits 1 when it finds no EC2 mirror. That is an ordinary state, not a
+# failure, so the condition reads the status. A bare assignment here killed
+# every box that has no EC2 mirror.
+if ec2_mirror=$(grep -rhoE 'https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com' \
+  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1) &&
+  ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/dists/noble/InRelease"; then
+  echo "blitz: $ec2_mirror is unreachable; falling back to archive.ubuntu.com"
+  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+fi
+# The probe catches a dead mirror. A live one can still trickle, so leave it
+# behind between apt attempts.
+apt_mirror_fallback() {
+  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+}
+`;
+
 export interface AwsProviderConfig {
   readonly accessKeyId: string;
   readonly secretAccessKey: string;
@@ -350,6 +381,10 @@ export class AwsProvider implements VmProvider, VolumeProvider {
 
   ownsVmId(vmId: string): boolean {
     return VM_ID_PATTERN.test(vmId);
+  }
+
+  bootstrapAptSetup(): string {
+    return BOOTSTRAP_APT_SETUP;
   }
 
   private async ec2(

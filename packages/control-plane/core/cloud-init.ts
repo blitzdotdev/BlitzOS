@@ -67,13 +67,18 @@ mv /var/lib/blitz/tunnel-token.tmp /var/lib/blitz/tunnel-token
 }
 
 /** Boot shaping beyond the pinned base script: a recipe launch's invocation,
- * the org's usage-capture switch, and the template's repo list. Absent (or
- * all-absent fields) emits the exact pre-recipe bytes. */
+ * the org's usage-capture switch, the template's repo list, and the resolved
+ * VM provider's own setup lines. Absent (or all-absent fields) emits the exact
+ * pre-recipe bytes. */
 export interface BootShaping {
   recipe?: RecipeBootstrap;
   usageCapture?: boolean;
   /** Template repos ("owner/name") for the bootstrap's detached clone loop. */
   repos?: string[];
+  /** What `VmProvider.bootstrapAptSetup` returned for the provider that owns
+   * this create. The caller resolves the provider; this only carries the
+   * lines. */
+  providerAptSetup?: string;
 }
 
 export function buildUserData(
@@ -104,6 +109,9 @@ export function buildUserData(
     bootstrapOptions.usageCapture = shaping.usageCapture;
   }
   if (shaping?.repos !== undefined) bootstrapOptions.repos = shaping.repos;
+  if (shaping?.providerAptSetup !== undefined) {
+    bootstrapOptions.providerAptSetup = shaping.providerAptSetup;
+  }
   parts.push(
     mimePart(boundary, "text/x-shellscript", buildBootstrapScript(bootstrapOptions)),
   );

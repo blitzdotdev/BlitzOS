@@ -50,6 +50,13 @@ export interface VmProvider {
   shutdown(id: string): Promise<void>;
   destroy(id: string): Promise<void>;
   inspect(id: string): Promise<VmInspection | null>;
+  /** Bash lines the bootstrap runs only on this provider's machines. They are
+   * spliced into the shared apt setup. Return complete lines, each one ending
+   * in a newline. Omit the member when the provider needs nothing extra.
+   * AWS returns a probe for Canonical's EC2 mirrors. That probe lived in the
+   * shared script until 2026-08-25 and killed every Hetzner box that ran it.
+   * See plans/PROVIDER-BOOTSTRAP.md. */
+  bootstrapAptSetup?(): string;
   proxyWebApp?(
     id: string,
     port: WebAppPort,

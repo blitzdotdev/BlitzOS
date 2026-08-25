@@ -425,6 +425,11 @@ export async function performWorkspaceCreate(
   const shaping: BootShaping = {
     usageCapture: orgCapture?.usage_capture === 1,
   };
+  // Ask the provider that will own this VM for its own bootstrap lines. A
+  // provider that answers nothing gets a script with no other provider's lines
+  // in it (plans/PROVIDER-BOOTSTRAP.md).
+  const providerAptSetup = vmProvider.bootstrapAptSetup?.();
+  if (providerAptSetup !== undefined) shaping.providerAptSetup = providerAptSetup;
   if (recipe !== undefined) shaping.recipe = recipe.bootstrap;
   // Template repos ride the bootstrap as a detached clone loop; an empty
   // list stays absent so the emitted bytes match every pre-repo pin.
