@@ -650,6 +650,31 @@ describe('recipe run flow', () => {
     });
   });
 
+  it.each(['/templates', '/recipes'])(
+    'opens the create-workspace dialog from the rail on %s',
+    async (path) => {
+      window.history.replaceState({}, '', path);
+      const view = await render(
+        <CloudApp
+          client={client()}
+          resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+        />,
+      );
+      await settle();
+      await settle();
+
+      const createWorkspaceButton = view.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Create workspace"]',
+      );
+      expect(createWorkspaceButton).not.toBeNull();
+      await act(async () => { createWorkspaceButton?.click(); });
+
+      expect(view.container.querySelector('form[aria-label="Create workspace"]'))
+        .not.toBeNull();
+      await view.unmount();
+    },
+  );
+
   it('posts the launch and navigates to the new workspace like create does', async () => {
     const wire = client();
     const view = await render(
