@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { ChatPanel } from "../src/chat/ChatPanel.js";
 import type { ChatSessionStatus } from "../src/chat/ChatPanel.js";
-import { SPAWN_SESSION_LABELS } from "../src/WebAppHeader.js";
 import { render, settle } from "./dom.js";
 
 type SocketListener = (event: { data: string }) => void;
@@ -113,7 +112,6 @@ async function answerError(socket: FakeSocket, method: string, message: string):
 /** Brings a panel up to the point where it is attached to an existing session. */
 async function connectedPanel(
   readOnly: boolean,
-  onSignIn: (provider: "claude" | "codex") => void,
   onStatusChange?: (status: ChatSessionStatus) => void,
 ) {
   const view = await render(
@@ -122,7 +120,6 @@ async function connectedPanel(
       workspaceId="workspace-one"
       initialSessionId={null}
       onSessionId={() => undefined}
-      onSignIn={onSignIn}
       onStatusChange={onStatusChange}
       readOnly={readOnly}
     />,
@@ -169,11 +166,6 @@ async function queueMessage(container: HTMLElement, text: string): Promise<void>
   })));
 }
 
-function signInButton(container: HTMLElement): HTMLButtonElement | null {
-  return [...container.querySelectorAll("button")]
-    .find((button) => button.textContent?.startsWith("Sign in to")) ?? null;
-}
-
 beforeEach(() => {
   sockets.length = 0;
   vi.stubGlobal("WebSocket", FakeSocket);
@@ -184,8 +176,7 @@ afterEach(() => {
 });
 
 describe("chat sign-in affordance", () => {
-  it("gates a new Chat when both providers are signed out and offers either login", async () => {
-    const onSignIn = vi.fn();
+  it("gates a new Chat with one recheck notice when both providers are signed out", async () => {
     const view = await render(
       <ChatPanel
         url="wss://workspace.test/acp"
@@ -193,7 +184,6 @@ describe("chat sign-in affordance", () => {
         initialSessionId={null}
         sessionIntent="create"
         onSessionId={() => undefined}
-        onSignIn={onSignIn}
       />,
     );
     const socket = sockets[0]!;
@@ -208,14 +198,11 @@ describe("chat sign-in affordance", () => {
     expect(view.container.textContent).toContain("Sign in to start Chat");
     expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/new"))
       .toBe(false);
-    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>("button")];
-    expect(buttons.map(({ textContent }) => textContent)).toEqual(expect.arrayContaining([
-      "Sign in to Claude",
-      "Sign in to Codex",
-      "Check again",
-    ]));
-    await act(async () => buttons.find(({ textContent }) => textContent === "Sign in to Codex")?.click());
-    expect(onSignIn).toHaveBeenCalledWith("codex");
+    const gate = view.container.querySelector<HTMLElement>(".chat-auth-gate");
+    expect(gate?.querySelectorAll("button")).toHaveLength(1);
+    expect(gate?.querySelector("button")?.textContent).toBe("Check again");
+    expect(gate?.textContent).not.toContain("Sign in to Claude");
+    expect(gate?.textContent).not.toContain("Sign in to Codex");
     await view.unmount();
   });
 
@@ -301,6 +288,22 @@ describe("chat sign-in affordance", () => {
     });
     await settle();
     expect(view.container.textContent).toContain("GPT-5.6-Sol");
+
+    // CloudApp persists the new ACP id immediately and then rerenders this
+    // same tab as "load". That must not lock provider selection before the
+    // first conversational update.
+    await act(async () => view.root.render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId="codex-session"
+        initialProvider="codex"
+        sessionIntent="load"
+        onSessionId={() => undefined}
+      />,
+    ));
+    expect(view.container.querySelector<HTMLButtonElement>('button[aria-label="Provider"]')?.disabled)
+      .toBe(false);
     await act(async () => view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Provider"]',
     )?.click());
@@ -309,26 +312,35 @@ describe("chat sign-in affordance", () => {
     )?.textContent;
     expect(options).toContain("Claude");
     expect(options).toContain("Codex");
+
+    await socket.deliver({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: "codex-session",
+        update: {
+          sessionUpdate: "user_message_chunk",
+          messageId: "message-one",
+          content: { type: "text", text: "Keep this provider." },
+        },
+      },
+    });
+    expect(view.container.querySelector<HTMLButtonElement>('button[aria-label="Provider"]')?.disabled)
+      .toBe(true);
     await view.unmount();
   });
 
-  it("offers the harness login only after the box reports it could not authenticate", async () => {
-    const onSignIn = vi.fn();
-    const { socket, view } = await connectedPanel(false, onSignIn);
-    expect(signInButton(view.container)).toBeNull();
+  it("uses the same single recheck notice after a live authentication failure", async () => {
+    const { socket, view } = await connectedPanel(false);
+    expect(view.container.querySelector(".chat-auth-gate")).toBeNull();
 
     await socket.deliver(forSession(AUTH_REQUIRED, "session-one"));
 
-    // "Codex" is the fixture's provider spelled by the shared session-type
-    // labels; a fixture that changes harness must fail here rather than
-    // quietly render a different button.
-    const button = signInButton(view.container);
-    expect(button?.textContent).toBe("Sign in to Codex");
-    // The panel spells harnesses with the tab strip's labels rather than a
-    // second copy of them, so a rename lands in both places at once.
-    expect(button?.textContent).toBe(`Sign in to ${SPAWN_SESSION_LABELS.codex}`);
-    await act(async () => button?.click());
-    expect(onSignIn).toHaveBeenCalledWith(AUTH_REQUIRED?.params?.provider);
+    const gate = view.container.querySelector<HTMLElement>(".chat-auth-gate");
+    expect(gate?.textContent).toContain("Sign in to start Chat");
+    expect(gate?.querySelectorAll("button")).toHaveLength(1);
+    expect(gate?.querySelector("button")?.textContent).toBe("Check again");
+    expect(view.container.textContent).not.toContain("could not authenticate on this workspace");
 
     // The other half of the same event: the notification raises the
     // affordance, the journaled bubble is what a reader sees in the
@@ -340,17 +352,15 @@ describe("chat sign-in affordance", () => {
   });
 
   it("ignores the signal for another session and hides the affordance from viewers", async () => {
-    const onSignIn = vi.fn();
-    const editor = await connectedPanel(false, onSignIn);
+    const editor = await connectedPanel(false);
     await editor.socket.deliver(forSession(AUTH_REQUIRED, "session-elsewhere"));
-    expect(signInButton(editor.view.container)).toBeNull();
+    expect(editor.view.container.querySelector(".chat-auth-gate")).toBeNull();
     await editor.view.unmount();
 
     sockets.length = 0;
-    const viewer = await connectedPanel(true, onSignIn);
+    const viewer = await connectedPanel(true);
     await viewer.socket.deliver(forSession(AUTH_REQUIRED, "session-one"));
-    expect(signInButton(viewer.view.container)).toBeNull();
-    expect(onSignIn).not.toHaveBeenCalled();
+    expect(viewer.view.container.querySelector(".chat-auth-gate")).toBeNull();
 
     await viewer.view.unmount();
   });
@@ -474,7 +484,7 @@ describe("chat session identity", () => {
 describe("chat session lifecycle status", () => {
   it("reports ACP turn, permission, completion, failure, and cancellation states", async () => {
     const statuses: ChatSessionStatus[] = [];
-    const { socket, view } = await connectedPanel(false, () => undefined, (status) => {
+    const { socket, view } = await connectedPanel(false, (status) => {
       statuses.push(status);
     });
     expect(statuses.at(-1)).toBe("idle");
@@ -508,7 +518,7 @@ describe("chat session lifecycle status", () => {
 
 describe("chat prompt queue and selections", () => {
   it("queues prompts during a turn, removes one, and drains the remainder once", async () => {
-    const { socket, view } = await connectedPanel(false, () => undefined);
+    const { socket, view } = await connectedPanel(false);
     await enterMessage(view.container, "First");
     await queueMessage(view.container, "Remove me");
     await queueMessage(view.container, "Run second");

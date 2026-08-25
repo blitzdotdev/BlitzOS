@@ -37,14 +37,6 @@
   font: 10.5px/1.3 var(--font-ui);
 }
 
-.chat-active-model {
-  align-self: center;
-  margin-left: auto;
-  color: var(--faint);
-  font-size: 10px;
-  white-space: nowrap;
-}
-
 .chat-permission-control .webapp-select-trigger {
   color: var(--ansi-red);
 }
@@ -1060,10 +1052,20 @@
   width: auto;
   align-items: center;
   align-self: end;
-  gap: 6px;
+  gap: 5px;
+  min-height: 26px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
-  color: var(--ink);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 6px;
   white-space: nowrap;
+}
+
+.chat-input-row .chat-stop:hover {
+  background: var(--hover);
+  color: var(--ink);
 }
 
 .chat-input-row .chat-send {
@@ -1083,10 +1085,13 @@
 
 .chat-key {
   border: 1px solid var(--faint);
+  border-radius: 3px;
+  background: var(--paper);
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10px;
-  padding: 1px 3px;
+  font-size: 9px;
+  line-height: 1.2;
+  padding: 1px 4px;
 }
 
 @media (max-width: 899px) {
@@ -1212,31 +1217,6 @@
   font-size: 12px;
 }
 
-/* The box could not mint a credential: offer the harness login instead of
- * leaving the reader with a dead prompt. */
-.chat-auth-required {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  border: 1px solid var(--ansi-yellow);
-  background: color-mix(in srgb, var(--ansi-yellow) 8%, var(--paper));
-  padding: 8px 12px;
-  font-size: 12.5px;
-}
-
-.chat-auth-required-action {
-  border: 1px solid var(--rule);
-  background: var(--accent);
-  color: var(--paper);
-  cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: 12px;
-  padding: 4px 14px;
-}
-
 .chat-auth-gate {
   display: flex;
   flex: none;
@@ -1272,11 +1252,6 @@
   cursor: pointer;
   font: inherit;
   padding: 5px 9px;
-}
-
-.chat-auth-gate-actions button:not(:last-child) {
-  background: var(--accent);
-  color: var(--paper);
 }
 
 .chat-session-recovery {

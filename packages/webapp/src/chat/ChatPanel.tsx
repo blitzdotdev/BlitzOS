@@ -133,7 +133,6 @@ export function ChatPanel({
   onStatusChange,
   initialConfig = {},
   onConfigChange,
-  onSignIn,
   active = true,
   readOnly = false,
 }: {
@@ -151,8 +150,6 @@ export function ChatPanel({
   onStatusChange?: (status: ChatSessionStatus) => void;
   initialConfig?: ChatConfigSelections;
   onConfigChange?: (config: ChatConfigSelections) => void;
-  /** Drives the harness's terminal tab into its login flow. */
-  onSignIn?: (provider: Agent) => void;
   active?: boolean;
   readOnly?: boolean;
 }): React.JSX.Element {
@@ -170,6 +167,10 @@ export function ChatPanel({
   const [missingSessionId, setMissingSessionId] = useState<string | null>(null);
   const [connectionVersion, setConnectionVersion] = useState(0);
   const [sessionStatus, setSessionStatus] = useState<ChatSessionStatus>("idle");
+  // Creating the backing ACP session is an implementation detail. A new Chat
+  // remains provider-selectable until its first conversational update arrives.
+  const [providerSelectionOpen, setProviderSelectionOpen] = useState(sessionIntent === "create");
+  const providerLocked = !providerSelectionOpen || state.rows.length > 0 || state.running;
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const selectedProviderRef = useRef<Agent>(initialProvider);
@@ -357,6 +358,7 @@ export function ChatPanel({
               // Compatibility window: an already-pinned actor may predate session/list.
             }
             if (existingSession !== null) {
+              setProviderSelectionOpen(false);
               sessionIdRef.current = existingSession;
               onSessionIdRef.current(workspaceId, existingSession, selectedProviderRef.current);
             }
@@ -367,6 +369,7 @@ export function ChatPanel({
             if (latestAuth.claude === "signed-out" && latestAuth.codex === "signed-out") {
               setAuthGate(true);
             } else {
+              setProviderSelectionOpen(true);
               const created = await context.request(acp.methods.agent.session.new, {
                 cwd: "/workspace",
                 mcpServers: [],
@@ -382,6 +385,7 @@ export function ChatPanel({
               await installConfigOptions(context, created.sessionId, created.configOptions ?? []);
             }
           } else if (existingSession !== null) {
+            setProviderSelectionOpen(false);
             dispatch({ type: "begin-replay" });
             try {
               const loaded = await context.request(acp.methods.agent.session.load, {
@@ -454,6 +458,7 @@ export function ChatPanel({
     sessionIdRef.current = null;
     sessionIntentRef.current = intent;
     recoverCanCreateRef.current = false;
+    setProviderSelectionOpen(intent === "create");
     setMissingSessionId(null);
     setStatus("Connecting…");
     setSessionStatus("idle");
@@ -461,12 +466,13 @@ export function ChatPanel({
   };
 
   const chooseProvider = (provider: Agent): void => {
-    if (provider === selectedProviderRef.current || runningRef.current) return;
+    if (provider === selectedProviderRef.current || providerLocked) return;
     selectedProviderRef.current = provider;
     setSelectedProvider(provider);
     sessionIdRef.current = null;
     sessionIntentRef.current = "create";
     recoverCanCreateRef.current = false;
+    setProviderSelectionOpen(true);
     savedConfigRef.current = {};
     setConfigOptions([]);
     setMissingSessionId(null);
@@ -598,10 +604,6 @@ export function ChatPanel({
     : authStatuses?.claude === "signed-out" && authStatuses.codex === "signed-out"
       ? []
       : [selectedProvider];
-  const model = selects.find((option) => option.id === "model");
-  const runningModel = state.running && model !== undefined && model.currentValue !== "default"
-    ? model.choices.find((choice) => choice.value === model.currentValue)?.name
-    : undefined;
   const derived = useMemo(() => deriveChatItems(state), [state]);
   const transcript = useMemo(
     () => deriveChatTranscript(derived.items, derived.toolResults),
@@ -611,10 +613,9 @@ export function ChatPanel({
   const statusRequiredProvider = authStatuses?.[selectedProvider] === "signed-out"
     ? selectedProvider
     : null;
-  const signInProvider = readOnly || onSignIn === undefined
-    ? null
-    : authRequired ?? statusRequiredProvider;
-  const chatBlocked = authGate || signInProvider !== null || sessionIdRef.current === null;
+  const authBlockedProvider = readOnly ? null : authRequired ?? statusRequiredProvider;
+  const showAuthGate = !readOnly && (authGate || authBlockedProvider !== null);
+  const chatBlocked = showAuthGate || sessionIdRef.current === null;
   const approval: ChatPermission | null = readOnly ? null : derived.activePermission;
   const approvalText = approval === null
     ? ""
@@ -688,15 +689,13 @@ export function ChatPanel({
             ))}
           </div>
         )}
-        {authGate && !readOnly && onSignIn !== undefined && (
+        {showAuthGate && (
           <div className="chat-auth-gate" role="status">
             <div>
               <strong>Sign in to start Chat</strong>
               <span>Connect Claude or Codex on this workspace.</span>
             </div>
             <div className="chat-auth-gate-actions">
-              <button type="button" onClick={() => onSignIn("claude")}>Sign in to Claude</button>
-              <button type="button" onClick={() => onSignIn("codex")}>Sign in to Codex</button>
               <button type="button" onClick={() => setConnectionVersion((version) => version + 1)}>Check again</button>
             </div>
           </div>
@@ -719,19 +718,6 @@ export function ChatPanel({
             </div>
           </div>
         )}
-        {signInProvider !== null && (
-          <div className="chat-auth-required" role="status">
-            <span>{SPAWN_SESSION_LABELS[signInProvider]} could not authenticate on this workspace.</span>
-            <button
-              type="button"
-              className="chat-auth-required-action"
-              onClick={() => onSignIn?.(signInProvider)}
-            >
-              Sign in to {SPAWN_SESSION_LABELS[signInProvider]}
-            </button>
-          </div>
-        )}
-
         {approval !== null && (
           <div className="chat-approval" role="alertdialog" aria-label="Tool approval">
             <div className="chat-approval-title">Allow {approval.title}?</div>
@@ -827,7 +813,7 @@ export function ChatPanel({
                   onChange={(value) => {
                     if (value === "claude" || value === "codex") chooseProvider(value);
                   }}
-                  disabled={!connected || state.running}
+                  disabled={!connected || providerLocked}
                 />
               )}
               {selects.map((option, index) => (
@@ -843,7 +829,6 @@ export function ChatPanel({
                   />
                 </span>
               ))}
-              {runningModel && <span className="chat-active-model">running {runningModel}</span>}
             </div>
           </div>
         )}

@@ -247,14 +247,16 @@ chat selections survive a browser reload and actor reconnect.
    Standalone boxes use the pinned vendor CLIs; broker-enrolled boxes report
    `unknown` until the broker status contract is designed and tested in its own
    package/PR.
-2. Gate a new Chat before its first prompt when neither provider is signed in,
-   with actions to sign in to Claude or Codex.
+2. Gate a new Chat before its first prompt when neither provider is signed in.
+   Show one notice with a `Check again` action after the user signs in from the
+   provider's terminal; do not duplicate provider-specific sign-in notices.
 3. Show only authenticated providers in Chat's provider/model controls. When
    both are authenticated, expose both; after one provider is authenticated,
    remove the gate and expose only that provider.
 4. Create each Chat session with the selected provider and preserve that
-   provider when the tab/session is restored. Provider changes create or bind
-   an appropriate provider session rather than changing an in-flight turn.
+   provider when the tab/session is restored. A brand-new Chat can select its
+   provider before the first turn; loaded, recovered, running, or already-used
+   conversations keep that provider locked.
 5. Re-check status after a sign-in flow without requiring a workspace reload,
    while retaining the existing live `blitz/auth_required` response for
    credentials that expire later.

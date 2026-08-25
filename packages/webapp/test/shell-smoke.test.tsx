@@ -58,11 +58,10 @@ vi.mock("../src/TtydTerminal.js", async () => {
 vi.mock("../src/chat/ChatPanel.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatPanel: ({ initialSessionId, sessionIntent, onOpenFile, onSignIn, onStatusChange }: {
+    ChatPanel: ({ initialSessionId, sessionIntent, onOpenFile, onStatusChange }: {
       initialSessionId: string | null;
       sessionIntent?: string;
       onOpenFile?: (filePath: string) => void;
-      onSignIn?: (provider: "claude" | "codex") => void;
       onStatusChange?: (status: "idle" | "generating" | "needs-attention" | "done" | "error") => void;
     }) => {
       const [mountId] = React.useState(() => `chat-${++webAppHarness.nextMountId}`);
@@ -77,16 +76,6 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
           data-session-intent={sessionIntent ?? ""}
           data-mount-id={mountId}
         >
-          <button
-            type="button"
-            data-testid="chat-sign-in"
-            onClick={() => onSignIn?.("claude")}
-          >Sign in to Claude</button>
-          <button
-            type="button"
-            data-testid="chat-sign-in-codex"
-            onClick={() => onSignIn?.("codex")}
-          >Sign in to Codex</button>
           {(["generating", "needs-attention", "done", "error"] as const).map((status) => (
             <button
               type="button"
@@ -105,19 +94,6 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
     },
   };
 });
-
-type TerminalSubmitDetail = { data?: string; enters?: number; sessionKey?: string };
-
-/** Collects what the shell types at terminal tabs until the returned stop. */
-function recordTerminalSubmits(): { submits: TerminalSubmitDetail[]; stop: () => void } {
-  const submits: TerminalSubmitDetail[] = [];
-  const record = (event: Event) => {
-    // SAFETY: The shell is the only dispatcher of this event name in the test environment.
-    submits.push((event as CustomEvent<TerminalSubmitDetail>).detail);
-  };
-  window.addEventListener("blitz:terminal-submit", record);
-  return { submits, stop: () => window.removeEventListener("blitz:terminal-submit", record) };
-}
 
 function selectedSessionId(container: HTMLElement): string | undefined {
   return container.querySelector<HTMLElement>(
@@ -885,6 +861,60 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("keeps file tabs out of the workspace session rail and collapsed count", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 2, type: "terminal" },
+      { id: 3, type: "file", filePath: "getting-started.md" },
+    ], 3);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(2);
+    expect(view.container.querySelector('[data-rail-session-id="3"]')).toBeNull();
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="3"]')).not.toBeNull();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      ".webapp-workspace-disclosure",
+    )?.click());
+    expect(view.container.querySelector(".webapp-workspace-session-count")?.textContent)
+      .toBe("2 sessions");
+
+    await view.unmount();
+  });
+
+  it("keeps the visible Chat highlighted when a side-pane file has focus", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 2, type: "file", filePath: "test1.md", region: "side" },
+    ], 1, 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-pane-strip[data-region="side"] .webapp-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    const railChat = view.container.querySelector<HTMLButtonElement>('[data-rail-session-id="1"]');
+    expect(railChat?.classList.contains("webapp-session--active")).toBe(true);
+    expect(view.container.querySelector('[data-rail-session-id="2"]')).toBeNull();
+
+    await view.unmount();
+  });
+
   it("focuses an existing file tab when Chat opens a workspace-file link", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
@@ -1240,169 +1270,6 @@ describe("webapp shell smoke", () => {
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs.find(
       (tab) => tab.id === 1,
     )).toEqual({ id: 1, type: "terminal", region: "side" });
-
-    await view.unmount();
-  });
-
-  it("drives the open claude tab into its login flow from chat", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
-      { id: 2, type: "claude" },
-    ], 2);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    // Visit chat second, so the claude pane is already mounted behind it.
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )?.click());
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("2");
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    });
-    recorder.stop();
-
-    // The slash command and its submit are separate writes, and both are
-    // addressed at the claude tab rather than at whatever happens to be
-    // selected when they land.
-    expect(recorder.submits).toEqual([
-      { data: "/login", enters: 0, sessionKey: "2" },
-      { data: "\r", enters: 0, sessionKey: "2" },
-    ]);
-
-    await view.unmount();
-  });
-
-  it("opens a claude tab for the login flow when none is running", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("2");
-    const terminal = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="2"]',
-    );
-    expect(terminal?.textContent).toBe("claude");
-    expect(terminal?.dataset.active).toBe("true");
-    expect(recorder.submits).toEqual([]);
-
-    // A tab that was not open yet has to connect and let the TUI take the pty
-    // before anything typed at it is read.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_800));
-    });
-    recorder.stop();
-    expect(recorder.submits).toEqual([
-      { data: "/login", enters: 0, sessionKey: "2" },
-      { data: "\r", enters: 0, sessionKey: "2" },
-    ]);
-
-    await view.unmount();
-  });
-
-  it("opens a fresh codex device-auth tab without typing the localhost login command", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "codex", chatSessionId: "chat-one" },
-      { id: 2, type: "codex" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in-codex"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("3");
-    const terminal = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="3"]',
-    );
-    expect(terminal?.textContent).toBe("codex");
-    expect(terminal?.dataset.active).toBe("true");
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_800));
-    });
-    recorder.stop();
-    expect(recorder.submits).toEqual([]);
-
-    await view.unmount();
-  });
-
-  it("drops an abandoned sign-in instead of re-arming it on the way back", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in"]',
-    )?.click());
-    expect(selectedSessionId(view.container)).toBe("2");
-
-    // Leaving the tab inside the warm-up window is the reader abandoning the
-    // flow, not pausing it.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    });
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )?.click());
-    expect(recorder.submits).toEqual([]);
-
-    // Coming back to that tab must not resume the request. The pane is a live
-    // agent TUI by then, and `/login` plus Enter typed into it mid-session
-    // interrupts whatever the reader was actually doing there.
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
-    )?.click());
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_800));
-    });
-    recorder.stop();
-    expect(recorder.submits).toEqual([]);
 
     await view.unmount();
   });

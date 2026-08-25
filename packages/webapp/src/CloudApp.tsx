@@ -99,7 +99,6 @@ import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
-import { useTerminalSignIn } from './use-terminal-sign-in';
 import { ChatPanel, type ChatSessionStatus } from './chat/ChatPanel';
 import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
@@ -995,8 +994,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const sideActiveId = activeWorkspaceTabs === null
     ? null
     : regionActiveId(activeWorkspaceTabs, 'side');
-  // The focused session drives the statusline, the rail and terminal keyboard
-  // events. Mobile skips panel tabs: those live in the sheet, not the strip.
+  // The focused session drives the statusline and terminal keyboard events.
+  // Mobile skips panel tabs: those live in the sheet, not the strip.
   const focusedSessionId = (() => {
     const preferred = focusedRegion === 'side' ? sideActiveId : mainActiveId;
     for (const candidate of [preferred, mainActiveId, sideActiveId]) {
@@ -1098,7 +1097,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       renameable: true,
     })), [archivedSessions]);
   const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
-    .filter((tab) => tab.agent !== 'panel')
+    .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'file' && tab.agent !== 'preview')
     .map((tab) => {
       const status = tab.agent === 'chat'
         && chatSessionStatuses.workspaceId === activeWorkspaceId
@@ -1114,6 +1113,20 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (status === 'done' || status === 'error') session.unread = true;
       return session;
     }), [activeWorkspaceId, chatSessionStatuses, ttydTabs]);
+  const railActiveSessionId = (() => {
+    const railIds = new Set(railSessions.map(({ id }) => id));
+    if (ttydActiveId !== null && railIds.has(ttydActiveId)) return ttydActiveId;
+    // Files, previews and utility panels are not rail sessions. When one has
+    // focus, keep the agent-like session still visible in the other pane
+    // highlighted instead of making the rail appear to have no active item.
+    const fallback = focusedRegion === 'side'
+      ? [mainActiveId, sideActiveId]
+      : [sideActiveId, mainActiveId];
+    for (const id of fallback) {
+      if (id !== null && railIds.has(String(id))) return String(id);
+    }
+    return null;
+  })();
   const canEditWorkspaceLayout = activeWorkspace?.accessRole !== 'viewer';
   /** Tab models for one column, in the order that column draws them. */
   const paneTabModels = (region: WorkspaceRegion): WebAppTabModel[] => ttydTabs.filter(
@@ -1182,16 +1195,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     if (mobileWebApp) setFilesDrawerOpen(false);
   };
-  const signInToTerminal = useTerminalSignIn({
-    workspaceId: activeWorkspaceId,
-    tabs: activeWorkspaceTabs === null ? null : ttydSessions,
-    nextId: activeWorkspaceTabs?.nextId ?? 0,
-    accessRole: activeWorkspace?.accessRole,
-    ttydActiveId,
-    retainedSessions: retainedSessionIdsRef,
-    selectSession: selectTtydSession,
-    spawnSession: spawnTtydSession,
-  });
   const retargetPreviewTab = useCallback((tabId: number, path: string | undefined) => {
     setWorkspaceTabs((current) => {
       if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
@@ -1581,7 +1584,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
         ? railSessions
         : []}
-      activeSessionId={ttydActiveId ?? ''}
+      activeSessionId={railActiveSessionId ?? ''}
       onSelectSession={selectTtydSession}
       onOpenDrive={() => navigateTo(drivePath())}
       onOpenTemplates={() => navigateTo(templatesPath())}
@@ -2102,7 +2105,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                             };
                           });
                         }}
-                        onSignIn={signInToTerminal}
                         readOnly={activeWorkspace?.accessRole === 'viewer'}
                       />
                     </div>
