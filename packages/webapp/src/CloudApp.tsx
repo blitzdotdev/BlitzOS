@@ -30,6 +30,7 @@ import { SessionShareDialog } from './SessionShareDialog';
 import { caughtErrorMessage } from './error-message';
 import { presenceViewForTabs } from './presence';
 import { membersOnSession, otherPresenceMembers } from './OrgPresence';
+import { SESSION_KIND_LABELS } from './session-labels';
 import {
   WebAppLoadingPane,
   WebAppLoadingShell,
@@ -1172,6 +1173,33 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const ttydActiveSession = ttydSessions.find(
     (session) => String(session.id) === ttydActiveId,
   ) ?? null;
+  const sharedRailSessions = useMemo<DriveRailSession[]>(() => (
+    activeSharedSessions?.map((session) => ({
+      id: session.id,
+      label: session.title?.trim() || SESSION_KIND_LABELS[session.kind],
+      agent: session.kind,
+      presence: membersOnSession(presenceMembers, session.workspaceId, session.id),
+    })) ?? []
+  ), [activeSharedSessions, presenceMembers]);
+  const sharedRailActiveSessionId = (() => {
+    const railIds = new Set(sharedRailSessions.map(({ id }) => id));
+    const sharedIdOf = (tabId: number | null): string | null => {
+      if (tabId === null) return null;
+      const tab = ttydSessions.find((entry) => entry.id === tabId);
+      const sessionId = tab !== undefined && 'sessionId' in tab ? tab.sessionId : undefined;
+      return sessionId !== undefined && railIds.has(sessionId) ? sessionId : null;
+    };
+    const focused = sharedIdOf(ttydActiveId === null ? null : Number(ttydActiveId));
+    if (focused !== null) return focused;
+    const fallback = focusedRegion === 'side'
+      ? [mainActiveId, sideActiveId]
+      : [sideActiveId, mainActiveId];
+    for (const id of fallback) {
+      const sessionId = sharedIdOf(id);
+      if (sessionId !== null) return sessionId;
+    }
+    return null;
+  })();
   const ttydActiveType = ttydActiveSession?.type ?? null;
   const ttydActiveTerminalType = ttydActiveType === 'claude'
     || ttydActiveType === 'codex'
@@ -1726,9 +1754,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       presenceStale={presenceStale}
       presenceWorkspaceId={presenceView.workspaceId}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
-        ? railSessions
+        ? sharedRailSessions
         : []}
-      activeSessionId={railActiveSessionId ?? ''}
+      activeSessionId={sharedRailActiveSessionId ?? ''}
       livePorts={orderedLivePorts}
       previewLinks={orderedPreviewLinks}
       drawerOpen={drawerOpen}
@@ -1754,7 +1782,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onOpenDrive={() => navigateTo(drivePath())}
       onOpenPresenceActivity={openPresenceActivity}
       onOpenSettings={() => navigateToSettings('profile')}
-      onSelectSession={selectTtydSession}
+      onSelectSession={openSharedSession}
       onSpawnSession={spawnTtydSession}
       onOpenPreview={(port) => { openPreviewPort(port); }}
       onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}

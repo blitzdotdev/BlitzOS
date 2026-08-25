@@ -15,6 +15,8 @@ import {
 } from './storage.js';
 import { sharedSessionTab, type WorkspaceMemberViewResponse } from './workspace-sessions.js';
 
+const WORKSPACE_SESSION_POLL_INTERVAL_MS = 5_000;
+
 export type PersistedWorkspaceTabs = {
   workspaceId: string;
   value: WorkspaceTabs;
@@ -91,6 +93,13 @@ function hydratedWorkspaceView(
       tabs,
     }),
   };
+}
+
+function sameSessionRegistry(
+  left: readonly WorkspaceSessionView[],
+  right: readonly WorkspaceSessionView[],
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export function useWorkspacePersistence(
@@ -186,6 +195,53 @@ export function useWorkspacePersistence(
       active = false;
     };
   }, [activeWorkspaceId, api, canCreateSessions, enabled, onError]);
+
+  useEffect(() => {
+    if (
+      !enabled
+      || !activeWorkspaceId
+      || !workspaceTabs.loaded
+      || serverSeededId !== activeWorkspaceId
+    ) return;
+    let active = true;
+    let inFlight = false;
+    let pending = false;
+    const refresh = async (): Promise<void> => {
+      if (!active) return;
+      if (inFlight) {
+        pending = true;
+        return;
+      }
+      inFlight = true;
+      try {
+        const { sessions } = await api.listWorkspaceSessions(activeWorkspaceId);
+        if (!active) return;
+        setWorkspaceSessions((current) => {
+          if (current.workspaceId !== activeWorkspaceId) return current;
+          return sameSessionRegistry(current.value, sessions)
+            ? current
+            : { workspaceId: activeWorkspaceId, value: sessions };
+        });
+      } catch {
+        // Keep the last successful registry while the control plane reconnects.
+      } finally {
+        inFlight = false;
+        if (active && pending) {
+          pending = false;
+          void refresh();
+        }
+      }
+    };
+    const refreshNow = (): void => { void refresh(); };
+    void refresh();
+    const interval = window.setInterval(refreshNow, WORKSPACE_SESSION_POLL_INTERVAL_MS);
+    window.addEventListener('focus', refreshNow);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshNow);
+    };
+  }, [activeWorkspaceId, api, enabled, serverSeededId, workspaceTabs.loaded]);
 
   useEffect(() => {
     if (

@@ -123,6 +123,16 @@ function createWorkspaceModel(
   }, record);
 }
 
+function defaultPreferences(): UiPreferences {
+  return {
+    version: 1,
+    activeWorkspaceId: '',
+    railWidth: 240,
+    order: [],
+    workspaces: {},
+  };
+}
+
 function mapWorkspace(
   state: WorkspaceStoreState,
   workspaceId: string,
@@ -168,13 +178,22 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
     }
     case 'workspace_records_refreshed': {
       const recordsById = new Map(action.records.map((record) => [record.id, record]));
+      const existingIds = new Set(state.workspaces.map(({ id }) => id));
+      const refreshed = state.workspaces.flatMap((workspace) => {
+        const record = recordsById.get(workspace.id);
+        if (!record || !isVisibleWorkspace(record)) return [];
+        return [applyRecord(workspace, record)];
+      });
+      const discovered = action.records
+        .filter((record) => isVisibleWorkspace(record) && !existingIds.has(record.id))
+        .map((record) => createWorkspaceModel(record, defaultPreferences()))
+        .sort((left, right) => right.createdAt - left.createdAt);
       return {
         ...state,
-        workspaces: state.workspaces.flatMap((workspace) => {
-          const record = recordsById.get(workspace.id);
-          if (!record || !isVisibleWorkspace(record)) return [];
-          return [applyRecord(workspace, record)];
-        }),
+        // A workspace created by another member was absent from this member's
+        // saved ordering, so place newly discovered records first just as the
+        // local create path does. Existing custom ordering stays untouched.
+        workspaces: [...discovered, ...refreshed],
       };
     }
     case 'workspace_record_updated':

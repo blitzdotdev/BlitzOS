@@ -42,6 +42,11 @@ Phase 3 review hardening (2026-08-24):
   presence goes away, and an announcement clears after four seconds.
 - "Here" follows the page: nobody is "here" from Drive or settings.
 - Session kinds are named from one `SESSION_KIND_LABELS` map.
+- Background workspace refreshes reconcile newly shared workspaces into the
+  rail instead of only updating records that were present at page load.
+- The active workspace's shared-session registry refreshes every five seconds
+  and on focus. The rail lists that shared registry, while opening a row adds
+  it to the viewer's personal tabs without changing anyone else's layout.
 
 ## Goal
 

@@ -51,9 +51,10 @@ function serverView() {
       server.doc = doc;
       return { doc, revision: server.revision, migratedFromV1: false, sessions: [session] };
     }),
+    listWorkspaceSessions: vi.fn(async () => ({ sessions: [session] })),
     createWorkspaceSession: vi.fn(async () => ({ session })),
   };
-  // SAFETY: The persistence hook reaches only the three members stubbed here;
+  // SAFETY: The persistence hook reaches only the four members stubbed here;
   // the rest of the wire client is never called by it.
   const api = new ApiAdapter(stub as unknown as ControlPlaneClient, () => undefined);
   return { server, stub, api };

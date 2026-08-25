@@ -444,6 +444,27 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("adds a workspace discovered by the background workspace refresh", async () => {
+    const poll = vi.fn()
+      .mockResolvedValueOnce({ workspaces: [running] })
+      .mockResolvedValue({ workspaces: [running, runningTwo] });
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), poll }}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+    expect(view.container.querySelector('[data-workspace-id="workspace-two"]')).toBeNull();
+
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await settle();
+
+    expect(view.container.querySelector('[data-workspace-id="workspace-two"]')).not.toBeNull();
+    await view.unmount();
+  });
+
   it("returns to workspace details when workspace deletion is cancelled", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     const wire = runningClient();
@@ -702,7 +723,139 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("does not re-send the shared doc when the workspace poll re-renders it", async () => {
+  it("renders workspace and shared-session presence and joins from the popover", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [sharedSession(
+      "session-one",
+      "claude",
+      "session-one",
+    )]);
+    saveTabs("workspace-running", [
+      { id: 1, type: "claude", sessionId: "session-one" },
+    ], 1);
+    const presenceSnapshot: PresenceSnapshotResponse = {
+      serverTime: 10,
+      expiresAfterMs: 35_000,
+      truncated: false,
+      members: [
+        {
+          membershipId: "membership-one",
+          userId: "user-one",
+          name: "Person",
+          avatarUrl: null,
+          state: "active",
+          activities: [{ location: "organization", focused: true, visible: true, lastSeenAt: 10 }],
+        },
+        {
+          membershipId: "membership-two",
+          userId: "user-two",
+          name: "Ada",
+          avatarUrl: null,
+          state: "active",
+          activities: [{
+            location: "workspace",
+            workspaceId: "workspace-running",
+            workspaceName: "workspace-running",
+            surfaces: [{
+              kind: "session",
+              sessionId: "session-one",
+              sessionKind: "claude",
+              title: "Pairing",
+            }],
+            focusedSurface: 0,
+            focused: true,
+            visible: true,
+            lastSeenAt: 10,
+          }],
+        },
+      ],
+    };
+    const wire: ControlPlaneClient = {
+      ...runningClient(),
+      getPresence: vi.fn(async () => presenceSnapshot),
+    };
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(wire.getPresence).toHaveBeenCalled();
+    expect(view.container.querySelector(
+      '.shell-wtile[data-workspace-id="workspace-running"] .shell-wtile__presence',
+    )?.textContent).toContain('A');
+    expect(view.container.querySelector(
+      '[data-rail-session-id="session-one"] .webapp-session-presence',
+    )?.textContent).toContain('A');
+    expect(view.container.querySelector('.webapp-tab-presence')?.textContent).toContain('A');
+    const trigger = view.container.querySelector<HTMLButtonElement>('.org-presence-trigger');
+    expect(trigger?.getAttribute('aria-label')).toBe('1 collaborator online: Ada');
+    await act(async () => trigger?.click());
+    const activity = [...view.container.querySelectorAll<HTMLButtonElement>(
+      '.org-presence-member__activities button',
+    )].find((button) => button.textContent?.includes('Pairing'));
+    await act(async () => activity?.click());
+    await settle();
+
+    expect(window.location.pathname).toBe('/workspaces/workspace-running');
+    expect(window.location.search).toBe('');
+    expect(view.container.querySelector('.org-presence-popover')?.hasAttribute('hidden')).toBe(true);
+    await view.unmount();
+  });
+
+  it("discovers a collaborator-created shared session without opening it as a personal tab", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [sharedSession("session-1", "claude")]);
+    saveTabs("workspace-running", [
+      { id: 1, type: "claude", sessionId: "session-1" },
+    ], 1);
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelector('[data-rail-session-id="session-1"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-rail-session-id="session-2"]')).toBeNull();
+    expect(view.container.querySelectorAll(
+      '[aria-label="Workspace sessions"] .webapp-tab-cell',
+    )).toHaveLength(1);
+
+    serverWorkspaceSessions.set("workspace-running", [
+      sharedSession("session-1", "claude"),
+      sharedSession("session-2", "codex"),
+    ]);
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await settle();
+
+    const sharedCodex = view.container.querySelector<HTMLButtonElement>(
+      '[data-rail-session-id="session-2"]',
+    );
+    expect(sharedCodex?.textContent).toContain('Codex');
+    // Discovery does not mutate this member's personal tab layout.
+    expect(view.container.querySelectorAll(
+      '[aria-label="Workspace sessions"] .webapp-tab-cell',
+    )).toHaveLength(1);
+
+    await act(async () => sharedCodex?.click());
+    await settle();
+    expect(view.container.querySelectorAll(
+      '[aria-label="Workspace sessions"] .webapp-tab-cell',
+    )).toHaveLength(2);
+    expect(view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="session-2"]',
+    )?.dataset.active).toBe('true');
+    await view.unmount();
+  });
+
+  it("does not re-send the confirmed personal view when a workspace poll re-renders it", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
     const wire = runningClient();
@@ -732,6 +885,127 @@ describe("webapp shell smoke", () => {
     expect(vi.mocked(wire.putWorkspaceWebAppState).mock.calls.length).toBe(afterLoad);
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
       .toEqual([{ id: 1, type: "terminal" }]);
+
+    await view.unmount();
+  });
+
+  it("attaches a migrated tab to the tmux session it was already running under", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    // A V1 tab with id 7 ran in tmux `claude-7`. The migration gave it a
+    // durable id; the key handed to the box must still be `7`.
+    serverWorkspaceSessions.set("workspace-running", [sharedSession(
+      "legacy-workspace-running-7",
+      "claude",
+      "7",
+    )]);
+    saveTabs("workspace-running", [
+      { id: 7, type: "claude", sessionId: "legacy-workspace-running-7" },
+    ], 7);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const terminal = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]');
+    expect(terminal?.dataset.sessionKey).toBe("7");
+
+    await view.unmount();
+  });
+
+  it("opens a collaborator's shared session from a deep link without touching the shared record", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running?session=session-2");
+    serverWorkspaceSessions.set("workspace-running", [
+      sharedSession("session-1", "claude"),
+      sharedSession("session-2", "terminal"),
+    ]);
+    saveTabs("workspace-running", [{ id: 1, type: "claude", sessionId: "session-1" }], 1);
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+    await settle();
+
+    const terminals = [...view.container.querySelectorAll<HTMLElement>(
+      '[data-testid="terminal-session"]',
+    )];
+    expect(terminals.map((terminal) => terminal.dataset.sessionKey)).toEqual(["session-1", "session-2"]);
+    expect(terminals.map((terminal) => terminal.dataset.active)).toEqual(["false", "true"]);
+    // The link was consumed: a reload must not reopen it, and the shared
+    // session itself was neither created nor modified — only this member's
+    // own view gained a tab.
+    expect(window.location.search).toBe("");
+    expect(wire.createWorkspaceSession).not.toHaveBeenCalled();
+    expect(wire.updateWorkspaceSession).not.toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    const saved = vi.mocked(wire.putWorkspaceWebAppState).mock.calls.at(-1)?.[1];
+    expect(saved?.tabs.tabs.map((tab) => ("sessionId" in tab ? tab.sessionId : null)))
+      .toEqual(["session-1", "session-2"]);
+
+    await view.unmount();
+  });
+
+  it("refreshes the session registry when a deep link names a session created since load", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running?session=session-2");
+    // The view response only knows session-1: session-2 was created by a
+    // collaborator after this client last saved.
+    serverWorkspaceSessions.set("workspace-running", [sharedSession("session-1", "claude")]);
+    saveTabs("workspace-running", [{ id: 1, type: "claude", sessionId: "session-1" }], 1);
+    const wire: ControlPlaneClient = {
+      ...runningClient(),
+      listWorkspaceSessions: vi.fn(async () => ({
+        sessions: [sharedSession("session-1", "claude"), sharedSession("session-2", "terminal")],
+      })),
+    };
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+    await settle();
+    await settle();
+
+    // The active-workspace registry poll may win the race with the deep-link
+    // fallback; either path must discover the collaborator-created session.
+    expect(wire.listWorkspaceSessions).toHaveBeenCalled();
+    const terminals = [...view.container.querySelectorAll<HTMLElement>(
+      '[data-testid="terminal-session"]',
+    )];
+    expect(terminals.map((terminal) => terminal.dataset.sessionKey)).toEqual(["session-1", "session-2"]);
+    expect(window.location.search).toBe("");
+    await view.unmount();
+  });
+
+  it("drops a personal-view tab when its shared session has been archived", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{
+      id: 1,
+      type: "terminal",
+      sessionId: "archived-session",
+    }], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelector('[data-testid="terminal-session"]')).toBeNull();
 
     await view.unmount();
   });
