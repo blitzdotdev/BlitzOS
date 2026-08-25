@@ -2,13 +2,15 @@ import type { FormEvent, RefObject } from 'react';
 import type { FolderAttachmentView } from '@blitzos/schema';
 import { fullDavPath } from './files';
 
+export type FilesContextTarget = { path: string; name: string; kind: 'file' | 'directory' };
+
 export type FilesContextMenuState = {
   x: number;
   y: number;
   directory: string;
-  target?: { path: string; name: string; kind: 'file' | 'directory' };
+  target?: FilesContextTarget;
   createKind?: 'file' | 'folder';
-  renaming?: boolean;
+  action?: 'rename' | 'delete';
 };
 
 /** The files view right-click popup: create actions plus the Drive bridges
@@ -26,6 +28,7 @@ export function FilesContextMenu({
   onNameChange,
   onPickCreateKind,
   onPickRename,
+  onPickDelete,
   onSubmit,
   onClose,
   onOpenDriveFolder,
@@ -43,6 +46,7 @@ export function FilesContextMenu({
   onNameChange: (name: string) => void;
   onPickCreateKind: (kind: 'file' | 'folder') => void;
   onPickRename: () => void;
+  onPickDelete: () => void;
   onSubmit: (event: FormEvent) => void;
   onClose: () => void;
   onOpenDriveFolder: (folderId: string) => void;
@@ -52,24 +56,24 @@ export function FilesContextMenu({
     <div
       className="files-context-menu"
       ref={popupRef}
-      role={menu.createKind || menu.renaming ? 'dialog' : 'menu'}
-      aria-label={menu.renaming
+      role={menu.createKind || menu.action === 'rename' ? 'dialog' : 'menu'}
+      aria-label={menu.action === 'rename'
         ? `Rename ${menu.target?.name ?? 'item'}`
         : menu.createKind
           ? `Create ${menu.createKind}`
         : `Create in ${fullDavPath(menu.directory)}`}
       style={{ left: menu.x, top: menu.y }}
     >
-      {menu.createKind || menu.renaming ? (
+      {menu.createKind || menu.action === 'rename' ? (
         <form onSubmit={onSubmit}>
           <div className="files-context-menu-label">
-            {menu.renaming
+            {menu.action === 'rename'
               ? `Rename ${menu.target?.name ?? 'item'}`
               : `New ${menu.createKind} in ${fullDavPath(menu.directory)}`}
           </div>
           <input
             ref={inputRef}
-            aria-label={menu.renaming
+            aria-label={menu.action === 'rename'
               ? 'New name'
               : `${menu.createKind === 'file' ? 'File' : 'Folder'} name`}
             value={createName}
@@ -82,7 +86,7 @@ export function FilesContextMenu({
               Cancel
             </button>
             <button type="submit" disabled={creating || createName.trim().length === 0}>
-              {creating ? (menu.renaming ? 'Renaming…' : 'Creating…') : (menu.renaming ? 'Rename' : 'Create')}
+              {creating ? (menu.action === 'rename' ? 'Renaming…' : 'Creating…') : (menu.action === 'rename' ? 'Rename' : 'Create')}
             </button>
           </div>
         </form>
@@ -102,10 +106,16 @@ export function FilesContextMenu({
             New folder…
           </button>
           {menu.target !== undefined && (
-            <button type="button" role="menuitem" onClick={onPickRename}>
-              <span className="codicon codicon-edit" aria-hidden="true" />
-              Rename…
-            </button>
+            <>
+              <button type="button" role="menuitem" onClick={onPickRename}>
+                <span className="codicon codicon-edit" aria-hidden="true" />
+                Rename…
+              </button>
+              <button type="button" role="menuitem" onClick={onPickDelete}>
+                <span className="codicon codicon-trash" aria-hidden="true" />
+                Delete…
+              </button>
+            </>
           )}
           {driveFolder !== undefined && (
             <button

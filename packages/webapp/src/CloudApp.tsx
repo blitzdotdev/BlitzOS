@@ -79,6 +79,7 @@ import {
 import {
   appendTab,
   archiveTab,
+  closeFileTabsAtPath,
   closeManagedTabWindow,
   closeTab as closePaneTab,
   filesHostRegion,
@@ -104,7 +105,7 @@ import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { FileEditor } from './FileEditor';
 import { FilesSidebar } from './FilesSidebar';
-import { fullDavPath } from './files';
+import { fullDavPath, isPathAtOrBelow } from './files';
 import { dropPasteText, uploadDroppedFiles } from './file-drop';
 import {
   initialWorkspaceStore,
@@ -1539,6 +1540,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           : current);
       }}
       onOpenFile={openFile}
+      dirtyFilePaths={ttydSessions.flatMap((tab) => (
+        tab.type === 'file' && dirtyFileIds.has(String(tab.id)) ? [tab.filePath] : []
+      ))}
       onPathMoved={(source, destination) => {
         updateWorkspaceTabs((tabs) => ({
           ...tabs,
@@ -1551,6 +1555,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             return tab;
           }),
         }));
+      }}
+      onPathDeleted={(path) => {
+        const affectedIds = ttydSessions.flatMap((tab) => (
+          tab.type === 'file' && isPathAtOrBelow(path, tab.filePath) ? [String(tab.id)] : []
+        ));
+        for (const id of affectedIds) retainedSessionIdsRef.current.ids.delete(id);
+        updateWorkspaceTabs((tabs) => closeFileTabsAtPath(tabs, path));
+        setDirtyFileIds((current) => {
+          if (!affectedIds.some((id) => current.has(id))) return current;
+          const next = new Set(current);
+          for (const id of affectedIds) next.delete(id);
+          return next;
+        });
       }}
       onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
       onShareToDrive={setShareToDrivePath}

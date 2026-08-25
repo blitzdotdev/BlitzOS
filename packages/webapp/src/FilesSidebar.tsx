@@ -4,8 +4,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type FormEvent,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
@@ -15,6 +13,7 @@ import {
 } from 'react-arborist';
 import type { FileStat, WebDAVClient } from 'webdav';
 import type { FolderAttachmentView } from '@blitzos/schema';
+import { FilesActionConfirmation } from './FilesActionConfirmation';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { davErrorStatus } from './files';
 import {
@@ -24,10 +23,11 @@ import {
   statusNode,
   type FileNode,
 } from './files-tree';
-import { FilesContextMenu, type FilesContextMenuState } from './FilesContextMenu';
+import { FilesContextMenu } from './FilesContextMenu';
 import { FilesTreeRow } from './FilesTreeRow';
 import { FinderPins, FinderToolbar, type FinderRoot } from './FinderChrome';
 import { maxDrawerWidth } from './storage';
+import { useFilesActions } from './use-files-actions';
 
 type FilesSidebarProps = {
   client: WebDAVClient | null;
@@ -45,7 +45,9 @@ type FilesSidebarProps = {
   onClose: () => void;
   onExpandedChange: (expanded: string[]) => void;
   onOpenFile: (filePath: string) => void;
+  dirtyFilePaths: string[];
   onPathMoved: (source: string, destination: string) => void;
+  onPathDeleted: (path: string) => void;
   onOpenDriveFolder: (folderId: string) => void;
   onShareToDrive: (path: string) => void;
   onUnauthorized: () => void;
@@ -82,7 +84,9 @@ export function FilesSidebar({
   onClose,
   onExpandedChange,
   onOpenFile,
+  dirtyFilePaths,
   onPathMoved,
+  onPathDeleted,
   onOpenDriveFolder,
   onShareToDrive,
   onUnauthorized,
@@ -97,10 +101,6 @@ export function FilesSidebar({
   const [rootState, setRootState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set());
   const [treeHeight, setTreeHeight] = useState(1);
-  const [contextMenu, setContextMenu] = useState<FilesContextMenuState | null>(null);
-  const [createName, setCreateName] = useState('');
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const tree = useRef<TreeApi<FileNode> | undefined>(undefined);
   const treeBody = useRef<HTMLDivElement>(null);
   const contextPopup = useRef<HTMLDivElement>(null);
@@ -115,25 +115,6 @@ export function FilesSidebar({
   const lastFocusRefresh = useRef(0);
   const lastRefreshVersion = useRef(refreshVersion);
   expandedRef.current = expanded;
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
-      if (!contextPopup.current?.contains(event.target as Node)) setContextMenu(null);
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setContextMenu(null);
-    };
-    window.addEventListener('pointerdown', closeOnPointerDown);
-    window.addEventListener('keydown', closeOnEscape);
-    if (contextMenu.createKind || contextMenu.renaming) createInput.current?.focus();
-    else contextFirstAction.current?.focus();
-    return () => {
-      window.removeEventListener('pointerdown', closeOnPointerDown);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [contextMenu]);
 
   useEffect(() => {
     const element = treeBody.current;
@@ -211,6 +192,40 @@ export function FilesSidebar({
     }
   }, [currentClient, onUnauthorized]);
 
+  const {
+    contextMenu,
+    setContextMenu,
+    createName,
+    setCreateName,
+    createError,
+    setCreateError,
+    creating,
+    confirmation: actionConfirmation,
+    busy: actionBusy,
+    actionError,
+    openContextMenu,
+    chooseCreateKind,
+    chooseRename,
+    chooseDelete,
+    createEntry,
+    cancelConfirmation: cancelActionConfirmation,
+    confirmAction,
+  } = useFilesActions({
+    currentClient,
+    dirtyFilePaths,
+    expandedRef,
+    requestTokens,
+    contextPopup,
+    contextFirstAction,
+    createInput,
+    loadDirectory,
+    setSelectedPath,
+    onExpandedChange,
+    onPathMoved,
+    onPathDeleted,
+    onUnauthorized,
+  });
+
   // Reloads root plus expanded directories without loading placeholders, so
   // files created outside the sidebar (terminal, agents, editor) show up.
   const silentRefresh = useCallback(async () => {
@@ -233,95 +248,6 @@ export function FilesSidebar({
     setData((current) => mergedTree(current, listings));
     setRootState('ready');
   }, [currentClient, onUnauthorized]);
-
-  const openContextMenu = useCallback((
-    event: ReactMouseEvent,
-    directory: string,
-    target?: { path: string; name: string; kind: 'file' | 'directory' },
-  ) => {
-    if (!currentClient()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setCreateName('');
-    setCreateError(null);
-    const menu: FilesContextMenuState = {
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 208)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 196)),
-      directory,
-    };
-    if (target !== undefined) menu.target = target;
-    setContextMenu(menu);
-  }, [currentClient]);
-
-  const chooseCreateKind = (createKind: 'file' | 'folder') => {
-    setCreateName('');
-    setCreateError(null);
-    setContextMenu((current) => current ? { ...current, createKind } : null);
-  };
-
-  const chooseRename = () => {
-    setCreateName(contextMenu?.target?.name ?? '');
-    setCreateError(null);
-    setContextMenu((current) => current?.target ? { ...current, renaming: true } : null);
-  };
-
-  const createEntry = async (event: FormEvent) => {
-    event.preventDefault();
-    const requestClient = currentClient();
-    if (!requestClient || (!contextMenu?.createKind && !contextMenu?.renaming) || creating) return;
-    const name = createName.trim();
-    if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0')) {
-      setCreateError('Enter a name without “/”.');
-      return;
-    }
-    const path = contextMenu.directory ? `${contextMenu.directory}/${name}` : name;
-    setCreating(true);
-    setCreateError(null);
-    try {
-      if (contextMenu.renaming && contextMenu.target) {
-        const source = contextMenu.target.path;
-        const parent = source.split('/').slice(0, -1).join('/');
-        const destination = parent ? `${parent}/${name}` : name;
-        if (destination === source) {
-          setContextMenu(null);
-          return;
-        }
-        await requestClient.moveFile(source, destination, { overwrite: false });
-        const remap = (value: string) => value === source
-          ? destination
-          : value.startsWith(`${source}/`) ? `${destination}${value.slice(source.length)}` : value;
-        onExpandedChange(expandedRef.current.map(remap));
-        setSelectedPath((current) => remap(current));
-        onPathMoved(source, destination);
-      } else if (contextMenu.createKind === 'folder') {
-        await requestClient.createDirectory(path);
-      } else if (!await requestClient.putFileContents(path, '', { overwrite: false })) {
-        setCreateError('A file or folder with that name already exists.');
-        return;
-      }
-      const directory = contextMenu.renaming && contextMenu.target
-        ? contextMenu.target.path.split('/').slice(0, -1).join('/')
-        : contextMenu.directory;
-      setContextMenu(null);
-      await loadDirectory(directory);
-    } catch (createFailure) {
-      const status = davErrorStatus(createFailure);
-      if (status === 401) {
-        setContextMenu(null);
-        onUnauthorized();
-      } else if (status === 405 || status === 409 || status === 412) {
-        setCreateError('A file or folder with that name already exists.');
-      } else if (status === 403) {
-        setCreateError(`You don’t have permission to ${contextMenu.renaming ? 'rename' : 'create'} this item.`);
-      } else {
-        setCreateError(contextMenu.renaming
-          ? 'Couldn’t rename this item. Try again.'
-          : `Couldn’t create ${contextMenu.createKind}. Try again.`);
-      }
-    } finally {
-      setCreating(false);
-    }
-  };
 
   const cancelRootRetry = useCallback(() => {
     rootRetryCycle.current += 1;
@@ -470,7 +396,9 @@ export function FilesSidebar({
     return directory === guestPath || directory.startsWith(`${guestPath}/`);
   });
   const crumbParts = selectedPath === '' ? [] : selectedPath.split('/');
-  const contextDriveFolder = contextMenu === null || contextMenu.createKind !== undefined
+  const contextDriveFolder = contextMenu === null
+    || contextMenu.createKind !== undefined
+    || contextMenu.action !== undefined
     ? undefined
     : driveFolderFor(contextMenu.directory);
   // Publishing is offered on exact top-level workspace directories that are
@@ -478,6 +406,7 @@ export function FilesSidebar({
   const contextShareable = canShare
     && contextMenu !== null
     && contextMenu.createKind === undefined
+    && contextMenu.action === undefined
     && contextMenu.directory !== ''
     && contextMenu.directory !== 'shared'
     && !contextMenu.directory.includes('/')
@@ -663,7 +592,7 @@ export function FilesSidebar({
           );
         })}
       </div>
-      {contextMenu && (
+      {contextMenu && actionConfirmation === null && contextMenu.action !== 'delete' && (
         <FilesContextMenu
           menu={contextMenu}
           popupRef={contextPopup}
@@ -680,10 +609,20 @@ export function FilesSidebar({
           }}
           onPickCreateKind={chooseCreateKind}
           onPickRename={chooseRename}
+          onPickDelete={chooseDelete}
           onSubmit={(event) => { void createEntry(event); }}
           onClose={() => setContextMenu(null)}
           onOpenDriveFolder={onOpenDriveFolder}
           onShareToDrive={onShareToDrive}
+        />
+      )}
+      {actionConfirmation && (
+        <FilesActionConfirmation
+          confirmation={actionConfirmation}
+          busy={actionBusy}
+          error={actionError}
+          onCancel={cancelActionConfirmation}
+          onConfirm={confirmAction}
         />
       )}
     </aside>

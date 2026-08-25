@@ -6,6 +6,8 @@ type ConfirmationDialogProps = {
   description: string;
   confirmLabel: string;
   cancelLabel?: string;
+  busy?: boolean;
+  error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -15,6 +17,8 @@ export function ConfirmationDialog({
   description,
   confirmLabel,
   cancelLabel = 'No',
+  busy = false,
+  error = null,
   onConfirm,
   onCancel,
 }: ConfirmationDialogProps) {
@@ -28,7 +32,7 @@ export function ConfirmationDialog({
   }, []);
 
   return (
-    <ModalOverlay onDismiss={onCancel}>
+    <ModalOverlay onDismiss={onCancel} dismissible={!busy}>
       <section
         className="webapp-confirmation-dialog"
         role="dialog"
@@ -41,12 +45,14 @@ export function ConfirmationDialog({
         </header>
         <div className="webapp-confirmation-body">
           <p id={descriptionId}>{description}</p>
+          {error && <p className="webapp-confirmation-error" role="alert">{error}</p>}
         </div>
         <footer className="webapp-confirmation-actions">
           <button
             ref={cancelButton}
             className="webapp-action"
             type="button"
+            disabled={busy}
             onClick={onCancel}
           >
             {cancelLabel}
@@ -54,9 +60,10 @@ export function ConfirmationDialog({
           <button
             className="webapp-action webapp-confirmation-confirm"
             type="button"
+            disabled={busy}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {busy ? 'Working…' : confirmLabel}
           </button>
         </footer>
       </section>

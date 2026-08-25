@@ -40,7 +40,9 @@ function sidebar(
       onClose={() => undefined}
       onExpandedChange={() => undefined}
       onOpenFile={() => undefined}
+      dirtyFilePaths={[]}
       onPathMoved={() => undefined}
+      onPathDeleted={() => undefined}
       onOpenDriveFolder={() => undefined}
       onShareToDrive={() => undefined}
       onUnauthorized={onUnauthorized}
@@ -230,7 +232,9 @@ describe("FilesSidebar root listing retries", () => {
         onClose={() => undefined}
         onExpandedChange={() => undefined}
         onOpenFile={() => undefined}
+        dirtyFilePaths={[]}
         onPathMoved={() => undefined}
+        onPathDeleted={() => undefined}
         onOpenDriveFolder={onOpenDriveFolder}
         onShareToDrive={onShareToDrive}
         onUnauthorized={() => undefined}
@@ -250,6 +254,7 @@ describe("FilesSidebar root listing retries", () => {
     expect(menuItems().some((item) => item.includes("Share to Drive"))).toBe(true);
     expect(menuItems().some((item) => item.includes("Open in Drive"))).toBe(false);
     expect(menuItems().some((item) => item.includes("Rename"))).toBe(true);
+    expect(menuItems().some((item) => item.includes("Delete"))).toBe(true);
     await act(async () => {
       [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
         .find((item) => item.textContent?.includes("Share to Drive"))?.click();
@@ -269,6 +274,7 @@ describe("FilesSidebar root listing retries", () => {
     expect(menuItems().some((item) => item.includes("Open in Drive"))).toBe(true);
     expect(menuItems().some((item) => item.includes("Share to Drive"))).toBe(false);
     expect(menuItems().some((item) => item.includes("Rename"))).toBe(true);
+    expect(menuItems().some((item) => item.includes("Delete"))).toBe(true);
     await act(async () => {
       [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
         .find((item) => item.textContent?.includes("Open in Drive"))?.click();
@@ -301,7 +307,9 @@ describe("FilesSidebar root listing retries", () => {
         onClose={() => undefined}
         onExpandedChange={() => undefined}
         onOpenFile={() => undefined}
+        dirtyFilePaths={[]}
         onPathMoved={onPathMoved}
+        onPathDeleted={() => undefined}
         onOpenDriveFolder={() => undefined}
         onShareToDrive={() => undefined}
         onUnauthorized={() => undefined}
@@ -331,6 +339,169 @@ describe("FilesSidebar root listing retries", () => {
     expect(moveFile).toHaveBeenCalledWith("notes.txt", "journal.txt", { overwrite: false });
     expect(onPathMoved).toHaveBeenCalledWith("notes.txt", "journal.txt");
     expect(getDirectoryContents).toHaveBeenLastCalledWith("/");
+    await view.unmount();
+  });
+
+  it("requires confirmation before renaming a path with dirty open files", async () => {
+    const getDirectoryContents = vi.fn().mockResolvedValue([
+      { basename: "notes.txt", filename: "/notes.txt", type: "file" },
+    ]);
+    const moveFile = vi.fn().mockResolvedValue(undefined);
+    const client = { getDirectoryContents, moveFile } as unknown as WebDAVClient;
+    const view = await render(
+      <FilesSidebar
+        client={client}
+        expanded={[]}
+        getClient={() => client}
+        mobile={false}
+        open
+        ready
+        refreshVersion={0}
+        visible
+        width={340}
+        sharedFolders={[]}
+        canShare
+        onClose={() => undefined}
+        onExpandedChange={() => undefined}
+        onOpenFile={() => undefined}
+        dirtyFilePaths={["notes.txt"]}
+        onPathMoved={() => undefined}
+        onPathDeleted={() => undefined}
+        onOpenDriveFolder={() => undefined}
+        onShareToDrive={() => undefined}
+        onUnauthorized={() => undefined}
+        onWidthChange={() => undefined}
+      />,
+    );
+    await flushPromises();
+
+    const row = [...view.container.querySelectorAll(".files-tree-row")]
+      .find((entry) => entry.textContent?.includes("notes.txt"));
+    await act(async () => row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]',
+    )].find((item) => item.textContent?.includes("Rename"))?.click());
+
+    expect(document.body.querySelector('[role="dialog"]')?.textContent)
+      .toContain("unsaved changes");
+    expect(document.body.querySelector('[aria-label="New name"]')).toBeNull();
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Rename")?.click());
+    expect(document.body.querySelector<HTMLInputElement>('[aria-label="New name"]')?.value)
+      .toBe("notes.txt");
+    expect(moveFile).not.toHaveBeenCalled();
+
+    await view.unmount();
+  });
+
+  it("deletes a folder after warning about dirty descendants and reconciles paths", async () => {
+    const getDirectoryContents = vi.fn().mockResolvedValue([
+      { basename: "src", filename: "/src", type: "directory" },
+    ]);
+    const deleteFile = vi.fn().mockResolvedValue(undefined);
+    const client = { getDirectoryContents, deleteFile } as unknown as WebDAVClient;
+    const onExpandedChange = vi.fn();
+    const onPathDeleted = vi.fn();
+    const view = await render(
+      <FilesSidebar
+        client={client}
+        expanded={["src", "src/components"]}
+        getClient={() => client}
+        mobile={false}
+        open
+        ready
+        refreshVersion={0}
+        visible
+        width={340}
+        sharedFolders={[]}
+        canShare
+        onClose={() => undefined}
+        onExpandedChange={onExpandedChange}
+        onOpenFile={() => undefined}
+        dirtyFilePaths={["src/components/App.tsx"]}
+        onPathMoved={() => undefined}
+        onPathDeleted={onPathDeleted}
+        onOpenDriveFolder={() => undefined}
+        onShareToDrive={() => undefined}
+        onUnauthorized={() => undefined}
+        onWidthChange={() => undefined}
+      />,
+    );
+    await flushPromises();
+
+    const row = [...view.container.querySelectorAll<HTMLElement>(".files-tree-row")]
+      .find((entry) => entry.textContent?.includes("src"));
+    await act(async () => row?.click());
+    expect(view.container.querySelector('[aria-label="Selected path"]')?.textContent)
+      .toContain("src");
+    const selectedRow = [...view.container.querySelectorAll<HTMLElement>(".files-tree-row")]
+      .find((entry) => entry.title === "~/src");
+    await act(async () => selectedRow?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]',
+    )].find((item) => item.textContent?.includes("Delete"))?.click());
+
+    expect(document.body.querySelector('[role="dialog"]')?.textContent)
+      .toContain("discard unsaved changes in 1 open file");
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Delete")?.click());
+    await flushPromises();
+
+    expect(deleteFile).toHaveBeenCalledWith("src");
+    expect(onPathDeleted).toHaveBeenCalledWith("src");
+    expect(onExpandedChange).toHaveBeenCalledWith([]);
+    expect(view.container.querySelector('[aria-label="Selected path"]')?.textContent)
+      .not.toContain("src");
+    expect(getDirectoryContents).toHaveBeenLastCalledWith("/");
+    await view.unmount();
+  });
+
+  it("keeps delete confirmation open with a recoverable permission error", async () => {
+    const getDirectoryContents = vi.fn().mockResolvedValue([
+      { basename: "notes.txt", filename: "/notes.txt", type: "file" },
+    ]);
+    const deleteFile = vi.fn().mockRejectedValue(Object.assign(new Error("Forbidden"), { status: 403 }));
+    const client = { getDirectoryContents, deleteFile } as unknown as WebDAVClient;
+    const view = await render(
+      <FilesSidebar
+        client={client}
+        expanded={[]}
+        getClient={() => client}
+        mobile={false}
+        open
+        ready
+        refreshVersion={0}
+        visible
+        width={340}
+        sharedFolders={[]}
+        canShare
+        onClose={() => undefined}
+        onExpandedChange={() => undefined}
+        onOpenFile={() => undefined}
+        dirtyFilePaths={[]}
+        onPathMoved={() => undefined}
+        onPathDeleted={() => undefined}
+        onOpenDriveFolder={() => undefined}
+        onShareToDrive={() => undefined}
+        onUnauthorized={() => undefined}
+        onWidthChange={() => undefined}
+      />,
+    );
+    await flushPromises();
+
+    const row = [...view.container.querySelectorAll(".files-tree-row")]
+      .find((entry) => entry.textContent?.includes("notes.txt"));
+    await act(async () => row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]',
+    )].find((item) => item.textContent?.includes("Delete"))?.click());
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Delete")?.click());
+    await flushPromises();
+
+    expect(document.body.querySelector('[role="alert"]')?.textContent)
+      .toBe("You don’t have permission to delete this item.");
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
     await view.unmount();
   });
 

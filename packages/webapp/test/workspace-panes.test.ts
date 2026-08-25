@@ -3,6 +3,7 @@ import type { WorkspaceTabs } from "../src/storage.js";
 import {
   appendTab,
   archiveTab,
+  closeFileTabsAtPath,
   closeManagedTabWindow,
   closeTab,
   filesHostRegion,
@@ -122,6 +123,30 @@ describe("workspace pane model", () => {
     const three = appendTab(tabs(), "main", (id) => ({ id, type: "terminal" }));
     expect(closeTab(three, 3).activeId).toBe(2);
     expect(closeTab({ ...three, activeId: 1 }, 2).activeId).toBe(1);
+  });
+
+  it("closes every file tab at or below a deleted path and preserves pane invariants", () => {
+    const withFiles: WorkspaceTabs = {
+      version: 1,
+      tabs: [
+        { id: 1, type: "chat", chatSessionId: "chat-one" },
+        { id: 2, type: "file", filePath: "src/index.ts" },
+        { id: 3, type: "file", filePath: "src/components/App.tsx", region: "side" },
+        { id: 4, type: "file", filePath: "README.md", region: "side" },
+      ],
+      activeId: 2,
+      sideActiveId: 3,
+      nextId: 5,
+    };
+
+    const closed = closeFileTabsAtPath(withFiles, "src");
+    expect(closed.tabs).toEqual([
+      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 4, type: "file", filePath: "README.md", region: "side" },
+    ]);
+    expect(closed.activeId).toBe(1);
+    expect(closed.sideActiveId).toBe(4);
+    expect(closed.nextId).toBe(5);
   });
 
   it("closes and reopens a managed session window without removing the session", () => {

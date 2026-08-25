@@ -525,6 +525,18 @@
   white-space: nowrap;
 }
 
+.file-editor-banner-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-editor-meta--conflict .file-editor-copy,
+.file-editor-meta--conflict .file-editor-save,
+.file-editor-meta--conflict .file-editor-saved {
+  display: none;
+}
+
 .file-editor-banner button,
 .file-editor-copy,
 .file-editor-save {

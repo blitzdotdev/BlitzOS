@@ -160,11 +160,14 @@ export function FileEditor({
   const cleanContent = useRef('');
   const dirtyRef = useRef(false);
   const targetVersion = useRef<TargetVersion>({ exists: false, etag: null });
+  const targetVersionPath = useRef(filePath);
   const conflictTempRef = useRef<string | null>(null);
   const activatedClient = useRef<WebDAVClient | null>(null);
   const loadAbort = useRef<AbortController | null>(null);
   const saveAbort = useRef<AbortController | null>(null);
+  const pathVersionAbort = useRef<AbortController | null>(null);
   const savedTimer = useRef<number | null>(null);
+  const [adoptingPathVersion, setAdoptingPathVersion] = useState(false);
   const basename = filePath.split('/').at(-1) ?? filePath;
 
   useEffect(() => {
@@ -191,6 +194,7 @@ export function FileEditor({
     return () => {
       loadAbort.current?.abort();
       saveAbort.current?.abort();
+      pathVersionAbort.current?.abort();
       if (savedTimer.current !== null) window.clearTimeout(savedTimer.current);
       const temporary = conflictTempRef.current;
       if (temporary && client) void client.deleteFile(temporary).catch(() => undefined);
@@ -247,6 +251,7 @@ export function FileEditor({
       throwIfAborted(controller.signal);
       const bytes = fileBytes(result);
       targetVersion.current = { exists: true, etag: detailedEtag(result) };
+      targetVersionPath.current = filePath;
       const sample = bytes.slice(0, 8192);
       const controlBytes = sample.filter((byte) => byte < 8 || (byte > 13 && byte < 32)).length;
       let binary = sample.includes(0)
@@ -278,6 +283,7 @@ export function FileEditor({
         contentRef.current = '';
         cleanContent.current = '';
         targetVersion.current = { exists: false, etag: null };
+        targetVersionPath.current = filePath;
         setSize(0);
         setMissing(true);
         setDirty(false);
@@ -303,11 +309,43 @@ export function FileEditor({
     if (!dirtyRef.current) void loadFile();
   }, [active, client, loadFile]);
 
+  useEffect(() => {
+    if (targetVersionPath.current === filePath || !client) return;
+    pathVersionAbort.current?.abort();
+    const controller = new AbortController();
+    pathVersionAbort.current = controller;
+    setAdoptingPathVersion(true);
+    void readTargetVersion(client, filePath, controller.signal).then((version) => {
+      throwIfAborted(controller.signal);
+      targetVersion.current = version;
+      targetVersionPath.current = filePath;
+      setMissing(false);
+    }).catch((pathError) => {
+      if (isAbortError(pathError)) return;
+      const status = davErrorStatus(pathError);
+      if (status === 404) {
+        targetVersion.current = { exists: false, etag: null };
+        targetVersionPath.current = filePath;
+        setMissing(true);
+        onTreeRefresh();
+      } else {
+        handleFailure(pathError, 'Could not follow the renamed file.');
+      }
+    }).finally(() => {
+      if (pathVersionAbort.current === controller) {
+        pathVersionAbort.current = null;
+        setAdoptingPathVersion(false);
+      }
+    });
+    return () => controller.abort();
+  }, [client, filePath, handleFailure, onTreeRefresh]);
+
   const markSaved = useCallback(async (signal: AbortSignal) => {
     if (!client) return;
     let targetMissing = false;
     try {
       targetVersion.current = await readTargetVersion(client, filePath, signal);
+      targetVersionPath.current = filePath;
       throwIfAborted(signal);
       setSize(new TextEncoder().encode(contentRef.current).byteLength);
     } catch (statError) {
@@ -317,6 +355,7 @@ export function FileEditor({
       targetVersion.current = targetMissing
         ? { exists: false, etag: null }
         : { exists: true, etag: null };
+      targetVersionPath.current = filePath;
       setSize(new TextEncoder().encode(contentRef.current).byteLength);
       if (targetMissing) onTreeRefresh();
       else if (status === 401) onUnauthorized();
@@ -367,7 +406,14 @@ export function FileEditor({
   }, [client, filePath, handleFailure, markSaved, onTreeRefresh]);
 
   const saveFile = useCallback(async () => {
-    if (!client || saving || (!dirtyRef.current && !missing) || conflictTempRef.current) return;
+    if (
+      !client
+      || saving
+      || adoptingPathVersion
+      || targetVersionPath.current !== filePath
+      || (!dirtyRef.current && !missing)
+      || conflictTempRef.current
+    ) return;
     const temporary = temporaryPath(filePath);
     saveAbort.current?.abort();
     const controller = new AbortController();
@@ -437,6 +483,7 @@ export function FileEditor({
     onTreeRefresh,
     saving,
     missing,
+    adoptingPathVersion,
   ]);
 
   useEffect(() => {
@@ -531,13 +578,14 @@ export function FileEditor({
 
   return (
     <div className="file-editor">
-      <header className="file-editor-meta">
+      <header className={`file-editor-meta${conflictTemp ? ' file-editor-meta--conflict' : ''}`}>
         <span className="file-editor-path" title={fullDavPath(filePath)}>
           <span>~/{filePath}</span>
         </span>
         {conflictTemp ? (
           <span className="file-editor-banner" role="alert">
-            Changed on disk while you edited ·
+            <span className="file-editor-banner-message">Changed on disk while you edited</span>
+            <span aria-hidden="true">·</span>
             <button type="button" disabled={saving} onClick={() => { void completeMove(conflictTemp); }}>
               Overwrite
             </button>
@@ -557,7 +605,14 @@ export function FileEditor({
         <button
           className={`file-editor-save${dirtyRef.current || missing ? ' file-editor-save--dirty' : ''}`}
           type="button"
-          disabled={(!dirtyRef.current && !missing) || saving || Boolean(conflictTemp) || !client}
+          disabled={
+            (!dirtyRef.current && !missing)
+            || saving
+            || adoptingPathVersion
+            || targetVersionPath.current !== filePath
+            || Boolean(conflictTemp)
+            || !client
+          }
           onClick={() => { void saveFile(); }}
         >
           {saving && <span className="webapp-inline-spinner" />}

@@ -46,6 +46,11 @@
   line-height: 1.7;
 }
 
+.webapp-confirmation-body .webapp-confirmation-error {
+  margin-top: 10px;
+  color: var(--ansi-red);
+}
+
 .webapp-confirmation-actions {
   display: flex;
   justify-content: flex-end;

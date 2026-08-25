@@ -5,11 +5,10 @@ capabilities identified by comparing a previous merged PR from an older repo
 with the current BlitzOS webapp, then complete a dedicated mobile pass and a
 final refinement/bug-polish pass.
 
-Progress: **Phases 1–3 implemented locally** on `feat-ui-changes` (2026-08-25).
+Progress: **Phases 1–4 implemented locally** on `feat-ui-changes` (2026-08-25).
 The work also separates closing a session window from archiving the session,
-adds the Start/Resume empty states, and implements the rename half of Phase 4.
-Finder delete and its dirty-editor protections remain pending; Phases 5–7 have
-not started.
+adds the Start/Resume empty states, and completes the Finder rename/delete
+workflow with dirty-editor protection. Phases 5–7 have not started.
 
 This is not a port of the old bridge. The current control-plane → webapp → box
 actor/ACP architecture stays authoritative. We restore the user-visible
@@ -279,11 +278,11 @@ currently authenticated on that workspace.
 
 ### Phase 4 — Finder rename and delete
 
-Rename is implemented locally, including file/folder targets, WebDAV move,
-path reconciliation for expanded/selected tree state and open descendant file
-tabs, preservation of the existing Drive actions, and control-plane
-normalization of proxied WebDAV `Destination` headers. Delete and its dirty-tab
-confirmation remain pending.
+Implemented locally on `feat-ui-changes` (2026-08-25), including file/folder
+targets, WebDAV move/delete, path reconciliation for expanded/selected tree
+state and open descendant file tabs, dirty-editor confirmation, recoverable
+DAV error states, preservation of the existing Drive actions, and
+control-plane normalization of proxied WebDAV `Destination` headers.
 
 1. Extend `FilesContextMenuState` with the clicked file/directory target and a
    `rename | delete` action state.
