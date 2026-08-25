@@ -590,6 +590,131 @@ describe("control plane security and lifecycle", () => {
     ]);
   });
 
+  it("takes the Hetzner monthly price from the entry for the machine's own location", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        server_types: [
+          {
+            name: "cx23",
+            cores: 2,
+            memory: 4,
+            disk: 40,
+            architecture: "x86",
+            deprecation: null,
+            locations: [
+              { name: "fsn1", available: true, deprecation: null },
+              { name: "hel1", available: true, deprecation: null },
+            ],
+            prices: [
+              // fsn1 comes first and costs less. A first-entry read would
+              // under-price the Helsinki card by 66 cents each month.
+              {
+                location: "fsn1",
+                price_hourly: { gross: "0.0092", net: "0.0077" },
+                price_monthly: { gross: "5.8300", net: "4.9000" },
+              },
+              {
+                location: "hel1",
+                price_hourly: { gross: "0.0104", net: "0.0087" },
+                price_monthly: { gross: "6.4900", net: "5.4538" },
+              },
+            ],
+          },
+        ],
+        meta: { pagination: { next_page: null } },
+      }),
+    );
+    const provider = new HetznerProvider("test-token", {
+      machineTypeCatalog: "cx23@fsn1,cx23@hel1",
+    });
+
+    // Gross, because gross is what the customer pays.
+    expect(
+      (await provider.listMachineTypes()).map(({ id, monthlyPrice }) => ({ id, monthlyPrice })),
+    ).toEqual([
+      { id: "cx23@fsn1", monthlyPrice: { amount: 5.83, currency: "EUR" } },
+      { id: "cx23@hel1", monthlyPrice: { amount: 6.49, currency: "EUR" } },
+    ]);
+  });
+
+  it("leaves the Hetzner price out when the vendor entry is missing or malformed", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        server_types: [
+          {
+            // No prices array at all.
+            name: "cx23",
+            cores: 2,
+            memory: 4,
+            disk: 40,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "hel1", available: true, deprecation: null }],
+          },
+          {
+            // Priced, but only for a location this machine does not sit in.
+            name: "cx33",
+            cores: 4,
+            memory: 8,
+            disk: 80,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "hel1", available: true, deprecation: null }],
+            prices: [{ location: "fsn1", price_monthly: { gross: "9.99", net: "8.39" } }],
+          },
+          {
+            // Blank gross. Number(" ") is 0, and a free machine is a lie.
+            name: "cpx21",
+            cores: 3,
+            memory: 4,
+            disk: 80,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "hil", available: true, deprecation: null }],
+            prices: [{ location: "hil", price_monthly: { gross: " ", net: " " } }],
+          },
+          {
+            // Gross is words, not digits.
+            name: "cpx31",
+            cores: 4,
+            memory: 8,
+            disk: 160,
+            architecture: "x86",
+            deprecation: null,
+            locations: [{ name: "hil", available: true, deprecation: null }],
+            prices: [{ location: "hil", price_monthly: { gross: "on request" } }],
+          },
+          {
+            // Gross is a JSON number. Hetzner documents a string.
+            name: "cax11",
+            cores: 2,
+            memory: 4,
+            disk: 40,
+            architecture: "arm",
+            deprecation: null,
+            locations: [{ name: "fsn1", available: true, deprecation: null }],
+            prices: [{ location: "fsn1", price_monthly: { gross: 3.79 } }],
+          },
+        ],
+        meta: { pagination: { next_page: null } },
+      }),
+    );
+    const provider = new HetznerProvider("test-token", {
+      machineTypeCatalog: "cx23@hel1,cx33@hel1,cpx21@hil,cpx31@hil,cax11@fsn1",
+    });
+
+    // Every card still lists. None of them shows a price.
+    expect(
+      (await provider.listMachineTypes()).map(({ id, monthlyPrice }) => ({ id, monthlyPrice })),
+    ).toEqual([
+      { id: "cx23@hel1", monthlyPrice: undefined },
+      { id: "cx33@hel1", monthlyPrice: undefined },
+      { id: "cpx21@hil", monthlyPrice: undefined },
+      { id: "cpx31@hil", monthlyPrice: undefined },
+      { id: "cax11@fsn1", monthlyPrice: undefined },
+    ]);
+  });
+
   it("offers the HETZNER_MACHINE_TYPES catalog instead of the default", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       Response.json({

@@ -17,6 +17,16 @@ const machineType: SharedShape<wire.MachineType, schema.MachineType> = {
   location: "lab",
 };
 
+// The microvm literal above carries no price, so the priced shape needs its
+// own row. Hetzner is the only provider that publishes one.
+const pricedMachineType: SharedShape<wire.MachineType, schema.MachineType> = {
+  ...machineType,
+  id: "cx23@hel1",
+  providerId: "hetzner",
+  location: "hel1",
+  monthlyPrice: { amount: 6.49, currency: "EUR" },
+};
+
 const machineTypeFailure: SharedShape<
   wire.MachineTypeProviderFailure,
   schema.MachineTypeProviderFailure
@@ -444,6 +454,7 @@ const connectionsResponse: SharedShape<
 
 const fullFieldValues = [
   machineType,
+  pricedMachineType,
   machineTypeFailure,
   volume,
   environment,
@@ -504,6 +515,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.Phase>().toEqualTypeOf<schema.Phase>();
     expectTypeOf<wire.RetryAction>().toEqualTypeOf<schema.RetryAction>();
     expectTypeOf<wire.WorkspaceRole>().toEqualTypeOf<schema.WorkspaceRole>();
+    expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
     expectTypeOf<wire.Volume>().toEqualTypeOf<schema.Volume>();

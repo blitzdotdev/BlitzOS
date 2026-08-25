@@ -1,5 +1,5 @@
 import { isNumber, isRecord, isString } from "../http.js";
-import type { CreateVolumeRequest, Volume } from "../wire.js";
+import type { CreateVolumeRequest, MachinePrice, Volume } from "../wire.js";
 import { fetchBoundedJson } from "./json-fetch.js";
 import type {
   CreatedVm,
@@ -23,6 +23,9 @@ const SHUTDOWN_TIMEOUT_MS = 45_000;
 // are lowercase ASCII letters followed by decimal digits, with no dash.
 const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
 const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
+// Hetzner bills every account in euro. The /server_types response names no
+// currency, so the provider states the one it knows.
+const HETZNER_PRICE_CURRENCY = "EUR";
 // Default catalog: two cheap EU types first, then the two US-west types.
 // Gross price each month in EUR, measured 2026-08-25: cx23@hel1 6.49,
 // cx33@hel1 9.99, cpx21@hil 37.49, cpx31@hil 73.49.
@@ -354,10 +357,23 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
             .filter(isRecord)
             .filter((location) => location.available === true && !isDeprecated(location))
         : [];
+      // Hetzner prices each location on its own, in one row per location.
+      const prices = Array.isArray(type.prices) ? type.prices.filter(isRecord) : [];
       return locations.map((location) => {
         const name = stringField(type, "name");
         const architecture = type.architecture;
         const locationName = stringField(location, "name");
+        // Gross is what the customer pays. Hetzner sends it as a decimal
+        // string, so it becomes a number here and the browser never parses a
+        // price. Number(" ") is 0, so a blank string must not sell a machine
+        // for nothing. A malformed row leaves the price out, because a wrong
+        // number costs the customer more than a blank card corner does.
+        const monthly = prices.find((price) => price.location === locationName)?.price_monthly;
+        const gross = isRecord(monthly) && isString(monthly.gross) ? monthly.gross.trim() : "";
+        const amount = gross === "" ? Number.NaN : Number(gross);
+        const monthlyPrice: MachinePrice | undefined = Number.isFinite(amount)
+          ? { amount, currency: HETZNER_PRICE_CURRENCY }
+          : undefined;
         return {
           id: `${name}@${locationName}`,
           name,
@@ -366,6 +382,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
           diskGb: numberField(type, "disk"),
           arch: architecture === "arm" ? "arm64" : "x86",
           location: locationName,
+          monthlyPrice,
         } satisfies ProviderMachineType;
       });
     }).filter((machineType) => this.machineTypeAllowlist.has(machineType.id));
