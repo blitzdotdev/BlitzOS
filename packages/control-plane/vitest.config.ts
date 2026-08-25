@@ -37,6 +37,7 @@ export default defineConfig(async () => {
         "test/bootstrap-python.test.mjs",
         "test/publish-box-image.test.mjs",
         "test/set-box-image-ref.test.mjs",
+        "test/deploy-tooling.test.mjs",
       ],
       setupFiles: ["./test/apply-migrations.ts"],
     },

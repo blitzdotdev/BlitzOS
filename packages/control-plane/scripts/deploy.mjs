@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +14,7 @@ import {
   deployControlPlane,
 } from "./deploy-helpers.mjs";
 import { assertPublishedAssets } from "../../webapp/scripts/check-published-assets.mjs";
+import { assertConfigMatchesExample } from "./config-drift.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../../..");
@@ -61,9 +62,23 @@ if (!existsSync(configAbsolute)) {
 // Checking now means a failure costs nothing: no migration has been applied.
 try {
   assertPublishedAssets();
+  // wrangler.toml is per-deployment and gitignored, so a config generated
+  // before the example gained a key keeps the old shape and the deploy
+  // succeeds with a route that 404s. Compare key paths, never values.
+  assertConfigMatchesExample(configAbsolute);
 } catch (error) {
-  process.stderr.write(`${error instanceof Error ? error.message : "published asset check failed"}\n`);
+  process.stderr.write(`${error instanceof Error ? error.message : "pre-deploy check failed"}\n`);
   process.exit(1);
+}
+
+// The commit the deploy ships, reported afterwards by GET /version. A shallow
+// CI checkout still answers rev-parse; only a tarball without .git does not.
+function checkedOutCommit() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT, encoding: "utf8" }).trim();
+  } catch {
+    return process.env.GITHUB_SHA ?? "";
+  }
 }
 
 const rawConfig = readRawWranglerConfig({ config: configAbsolute }).rawConfig;
@@ -72,6 +87,7 @@ deployControlPlane({
   configPath: CONFIG_PATH,
   rawConfig,
   run,
+  gitCommitSha: checkedOutCommit(),
   patchConfig(patch) {
     try {
       patchWranglerConfig(configAbsolute, patch, false);

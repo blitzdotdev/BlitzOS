@@ -26,6 +26,11 @@ compatibility_flags = ["nodejs_compat"]
 # Public origin of this Worker (workers.dev URL or custom domain). Empty until step 4 of docs/SELF-HOST.md prints your origin; set it and redeploy.
 APP_URL = ""
 # Box image source: a registry reference, or this Worker's /box-image URL for R2-hosted archives. Empty until step 9; workspaces cannot become ready without it. Modes and values in docs/BOX-IMAGE.md.
+# Set by the deploy, never by hand: scripts/deploy.mjs passes the checked-out
+# commit as --var GIT_COMMIT_SHA. GET /version reports it, so an operator can
+# ask a running deployment which commit it is, instead of guessing from a
+# bundle hash (which identifies the webapp build only).
+GIT_COMMIT_SHA = ""
 BOX_IMAGE_REF = ""
 # Image tag inside the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
 BOX_IMAGE_TAG = ""
@@ -102,6 +107,7 @@ run_worker_first = [
   "/oauth/*",
   "/boxes/*",
   "/box-image*",
+  "/version",
   "/api/*"
 ]
 

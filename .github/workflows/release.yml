@@ -78,6 +78,11 @@ jobs:
     name: Deploy control plane with the released box image
     needs: images
     runs-on: ubuntu-latest
+    # Client prod. Add a required reviewer to this environment in repository
+    # settings and the tag still triggers the release, but a person approves
+    # the deploy. The images above are already built and pushed by then, so an
+    # approval that never comes costs nothing but an unused image tag.
+    environment: production
     steps:
       - name: Check for deploy configuration
         id: gate
@@ -135,6 +140,25 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm run deploy -w packages/control-plane
+
+      # A green deploy command proves upload, not content. Ask the deployment
+      # which commit it is, and fail when it disagrees.
+      - name: Verify the deployment reports this commit
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          origin="$(node -e 'const fs=require("node:fs");import("smol-toml").then(({parse})=>{const v=parse(fs.readFileSync("packages/control-plane/wrangler.toml","utf8")).vars||{};process.stdout.write(v.APP_URL||"")})')"
+          if [ -z "$origin" ]; then
+            echo "::warning::PROD_WRANGLER_TOML sets no APP_URL, so the deploy cannot be verified from here."
+            exit 0
+          fi
+          for attempt in 1 2 3 4 5; do
+            reported="$(curl -fsS "$origin/version" | jq -r '.commit // empty' || true)"
+            [ "$reported" = "$GITHUB_SHA" ] && echo "$origin reports $reported" && exit 0
+            echo "attempt $attempt: reported '${reported:-none}', expected $GITHUB_SHA"
+            sleep 6
+          done
+          echo "::error::$origin/version reports '${reported:-none}', not $GITHUB_SHA."
+          exit 1
 
   release-notes:
     name: Add image digests to GitHub Release

@@ -244,6 +244,7 @@ export async function deployControlPlane({
   run,
   patchConfig,
   secretValues = process.env,
+  gitCommitSha = "",
 } = {}) {
   if (!isRecord(rawConfig)) throw new Error("raw Wrangler config is required");
   if (typeof run !== "function") throw new Error("deploy command runner is required");
@@ -306,6 +307,17 @@ export async function deployControlPlane({
     );
   }
 
+  // Name what is about to change before it changes. The apply below is
+  // silent about scope, and a deployment many versions behind can carry a
+  // migration nobody remembers writing.
+  try {
+    console.log("Pending D1 migrations:");
+    await wrangler(["d1", "migrations", "list", DB_BINDING, "--remote"]);
+  } catch {
+    // A preview is not a gate. Wrangler versions differ on this subcommand,
+    // and failing the deploy over a listing would be worse than not knowing.
+    console.log("  (could not list migrations; the apply below still runs)");
+  }
   await wrangler(["d1", "migrations", "apply", DB_BINDING, "--remote"]);
 
   const listedBuckets = await wrangler(["r2", "bucket", "list"], true);
@@ -324,5 +336,9 @@ export async function deployControlPlane({
   if (missing.length > 0) throw new Error(missingSecretsMessage(missing));
 
   await invoke("npm", ["run", "build", "-w", "@blitzos/webapp"]);
-  await wrangler(["deploy"]);
+  // --var overrides the single key and leaves every other var from the config
+  // in place. The version travels with the Worker version, so a rollback
+  // restores the old commit string along with the old code.
+  const deployArgs = gitCommitSha === "" ? ["deploy"] : ["deploy", "--var", `GIT_COMMIT_SHA:${gitCommitSha}`];
+  await wrangler(deployArgs);
 }

@@ -252,6 +252,69 @@ In the webapp, create a workspace. Success looks like:
 
 If all of that works, the deployment is complete.
 
+## Operating the deployment
+
+Four commands answer the questions that come up after the first deploy. Run
+each one from the repository root.
+
+### Ask a deployment what it runs
+
+```sh
+curl -s https://<your-origin>/version
+```
+
+```json
+{ "commit": "0bd4a8b...", "boxImageRef": "ghcr.io/...@sha256:...", "migration": "0028_drop_generic_connections.sql" }
+```
+
+The deploy records the commit it shipped, so you never have to guess. Do not
+identify a deployment by its `/assets/index-*.js` bundle hash: that hash is
+derived from the webapp source only, and a change to a route, a provider, or
+`core/bootstrap.ts` leaves it identical.
+
+### Check the config against the template
+
+```sh
+npm run config:check -w packages/control-plane
+```
+
+`wrangler.toml` is per-deployment and gitignored, and `npm run config` writes it
+only once. When `wrangler.toml.example` gains a var or a route, your config
+keeps the old shape and the next deploy succeeds with a route that 404s. This
+command compares key paths, never values, and the deploy runs it for you.
+
+### See migrations before they apply
+
+```sh
+npm run migrations:pending -w packages/control-plane
+```
+
+The deploy applies migrations automatically and now prints this list first.
+
+### Decide whether the box image needs a rebuild
+
+```sh
+npm run box-image:check -w packages/control-plane -- --url https://<your-origin>
+```
+
+Box and broker changes ride the image, and a box never upgrades in place, so
+they reach new workspaces only. Everything else rides the Worker. Exit code 2
+means a rebuild is due.
+
+### Roll back
+
+```sh
+npm run rollback -w packages/control-plane          # prints the plan
+npm run rollback -w packages/control-plane -- --yes # runs it
+```
+
+A Worker version carries its own vars, so the rollback restores the previous
+`BOX_IMAGE_REF` with the previous code.
+
+**D1 does not roll back.** Migrations are forward-only. If a migration since the
+target version dropped a column, the restored code will write to a column that
+no longer exists. Check the migration list before you answer.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

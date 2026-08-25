@@ -63,6 +63,10 @@ export interface RuntimeVariables {
    * declares. Returning undefined is the supported answer: an instance that
    * never registered an app simply has no Connect button for that provider. */
   connectSecret(name: string): string | undefined;
+  /** Git commit the deploy shipped, from GIT_COMMIT_SHA. Absent on a
+   * deployment whose config predates the var, and on the managed worker
+   * source; GET /version reports "unknown" for it. */
+  gitCommitSha?: string;
   /** Signup gate mode parsed from SIGNUP_MODE. Runtimes that predate the
    * var (the managed worker source) omit it; absent means "open", which is
    * the pre-gate behavior. */

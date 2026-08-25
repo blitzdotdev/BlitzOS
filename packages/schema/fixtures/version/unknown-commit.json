@@ -1,0 +1,5 @@
+{
+  "commit": "unknown",
+  "boxImageRef": "ghcr.io/blitzdotdev/blitz-box@sha256:8f0f227dc468f4a9ac3000000000000000000000000000000000000000000000",
+  "migration": "0028_drop_generic_connections.sql"
+}
