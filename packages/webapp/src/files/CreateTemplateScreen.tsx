@@ -30,6 +30,7 @@ import {
 } from './drive-model';
 import { collectDropped, DropLimitError } from './drop-upload';
 import { TemplateRepoPicker } from './TemplateRepoPicker';
+import { TemplateRepoUrls } from './TemplateRepoUrls';
 import { useTemplateUploads } from './use-template-uploads';
 import { orgCredentialFor } from '../connections/ProviderAdminForm';
 
@@ -622,6 +623,11 @@ export function CreateTemplateScreen({
                 client={client}
                 admin={admin}
                 githubConfigured={orgCredentialFor(orgConnections, 'github')}
+                value={repos}
+                onChange={setRepos}
+              />
+              <TemplateRepoUrls
+                client={client}
                 value={repos}
                 onChange={setRepos}
               />

@@ -12,8 +12,7 @@ export interface TemplateRepoApi {
  * screen. Disabled with a pointer at the Connections section on this same
  * page until the org GitHub App credential exists (the listing route answers
  * 409 until then); saving the credential inline flips githubConfigured, which
- * refetches, so the picker lights up without a reload. Selections the
- * installation no longer reaches stay listed so they can be removed. */
+ * refetches, so the picker lights up without a reload. */
 export function TemplateRepoPicker({
   client,
   admin,
@@ -74,8 +73,6 @@ export function TemplateRepoPicker({
     return <p className="tplf-repos-hint" role="status">Loading repositories…</p>;
   }
 
-  const known = new Set(repositories.map(({ fullName }) => fullName));
-  const stale = value.filter((repo) => !known.has(repo));
   const needle = filter.trim().toLowerCase();
   const shown = needle === ''
     ? repositories
@@ -96,13 +93,6 @@ export function TemplateRepoPicker({
         </p>
       )}
       <div className="tplf-repos-list" role="listbox" aria-label="GitHub repositories">
-        {stale.map((repo) => (
-          <label className="tplf-repo" key={`stale-${repo}`}>
-            <input type="checkbox" checked onChange={() => toggle(repo)} />
-            <span>{repo}</span>
-            <em className="tplf-chip">no longer reachable</em>
-          </label>
-        ))}
         {shown.map((repository) => {
           const selected = value.includes(repository.fullName);
           return (
@@ -118,7 +108,7 @@ export function TemplateRepoPicker({
             </label>
           );
         })}
-        {shown.length === 0 && stale.length === 0 && (
+        {shown.length === 0 && (
           <p className="tplf-repos-hint">
             {repositories.length === 0
               ? 'The GitHub App installation reaches no repositories yet.'

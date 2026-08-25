@@ -72,6 +72,7 @@ const expected = [
   "core/connections/mint.ts",
   "core/connections/proxy.ts",
   "core/connections/github-repos.ts",
+  "core/connections/github-repo-check.ts",
   "core/http.ts",
   "core/files/access.ts",
   "core/files/attachments.ts",
@@ -134,7 +135,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(92);
+    expect(first.files).toHaveLength(93);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

@@ -76,6 +76,28 @@ export interface ListGithubRepositoriesResponse {
   repositories: GithubRepositoryView[];
 }
 
+/** POST /connections/github/repositories/check: why one repo failed the
+ * anonymous clone probe. */
+export type GithubRepositoryCheckFailure = "not-public" | "unreachable";
+
+/** One requested repo and the anonymous clone verdict GitHub returned. */
+export interface GithubRepositoryCheckView {
+  repo: string;
+  reachable: boolean;
+  /** Absent when `reachable` is true. */
+  failure?: GithubRepositoryCheckFailure;
+}
+
+/** Repos ("owner/name") to prove clonable without credentials. */
+export interface CheckGithubRepositoriesRequest {
+  repos: string[];
+}
+
+/** Probe verdicts in the same order as the request, after deduplication. */
+export interface CheckGithubRepositoriesResponse {
+  results: GithubRepositoryCheckView[];
+}
+
 export interface WorkspaceTemplateView {
   id: string;
   name: string;

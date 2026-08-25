@@ -8,6 +8,7 @@ import type {
   CredentialEventView,
   ListCredentialRequestsResponse,
   ListCatalogResponse,
+  CheckGithubRepositoriesResponse,
   ListConnectionsResponse,
   ListGithubRepositoriesResponse,
   ListProviderHealthResponse,
@@ -189,6 +190,7 @@ export interface ControlPlaneClient extends FileLibraryClient {
   /** Repos the org's GitHub App installation reaches, for the template repo
    * picker. 409 until an admin configures the github connection. */
   listGithubRepositories(signal?: AbortSignal): Promise<ListGithubRepositoriesResponse>;
+  checkGithubRepositories(repos: string[]): Promise<CheckGithubRepositoriesResponse>;
   putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
   deleteConnectionGrant(provider: string): Promise<void>;
   listProviderHealth(signal?: AbortSignal): Promise<ListProviderHealthResponse>;
@@ -698,6 +700,12 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<ListUserGrantsResponse>("/connections/grants", { signal }),
     listGithubRepositories: (signal) =>
       request<ListGithubRepositoriesResponse>("/connections/github/repositories", { signal }),
+    checkGithubRepositories: (repos) =>
+      request<CheckGithubRepositoriesResponse>("/connections/github/repositories/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repos }),
+      }),
     putConnectionGrant: (provider, input) =>
       request<void>(`/connections/grants/${encodeURIComponent(provider)}`, {
         method: "PUT",
