@@ -126,6 +126,41 @@ describe("UI protocol and persistence object contracts", () => {
     })).toThrow("webApp state response has invalid doc");
   });
 
+  it("round-trips closed session windows and rejects selecting one as active", () => {
+    const decode = (tabs: object) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs,
+        drawer: { version: 1, width: 264, expanded: [] },
+      },
+      updatedAt: 1,
+    })).doc?.tabs;
+    expect(decode({
+      version: 1,
+      tabs: [{ id: 1, type: "chat", chatSessionId: "chat-one", windowOpen: false }],
+      activeId: null,
+      nextId: 2,
+    })).toEqual({
+      version: 1,
+      tabs: [{ id: 1, type: "chat", chatSessionId: "chat-one", windowOpen: false }],
+      activeId: null,
+      nextId: 2,
+    });
+    expect(() => decode({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", windowOpen: false }],
+      activeId: 1,
+      nextId: 2,
+    })).toThrow("webApp state response has invalid doc");
+    expect(() => decode({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", windowOpen: "no" }],
+      activeId: null,
+      nextId: 2,
+    })).toThrow("webApp state response has invalid doc");
+  });
+
   it("accepts wide drawer widths to the server cap and rejects beyond it", () => {
     const doc = (width: number) => JSON.stringify({
       doc: {

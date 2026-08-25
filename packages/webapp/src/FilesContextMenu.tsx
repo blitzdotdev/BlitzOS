@@ -6,7 +6,9 @@ export type FilesContextMenuState = {
   x: number;
   y: number;
   directory: string;
+  target?: { path: string; name: string; kind: 'file' | 'directory' };
   createKind?: 'file' | 'folder';
+  renaming?: boolean;
 };
 
 /** The files view right-click popup: create actions plus the Drive bridges
@@ -23,6 +25,7 @@ export function FilesContextMenu({
   shareablePath,
   onNameChange,
   onPickCreateKind,
+  onPickRename,
   onSubmit,
   onClose,
   onOpenDriveFolder,
@@ -39,6 +42,7 @@ export function FilesContextMenu({
   shareablePath: string;
   onNameChange: (name: string) => void;
   onPickCreateKind: (kind: 'file' | 'folder') => void;
+  onPickRename: () => void;
   onSubmit: (event: FormEvent) => void;
   onClose: () => void;
   onOpenDriveFolder: (folderId: string) => void;
@@ -48,20 +52,26 @@ export function FilesContextMenu({
     <div
       className="files-context-menu"
       ref={popupRef}
-      role={menu.createKind ? 'dialog' : 'menu'}
-      aria-label={menu.createKind
-        ? `Create ${menu.createKind}`
+      role={menu.createKind || menu.renaming ? 'dialog' : 'menu'}
+      aria-label={menu.renaming
+        ? `Rename ${menu.target?.name ?? 'item'}`
+        : menu.createKind
+          ? `Create ${menu.createKind}`
         : `Create in ${fullDavPath(menu.directory)}`}
       style={{ left: menu.x, top: menu.y }}
     >
-      {menu.createKind ? (
+      {menu.createKind || menu.renaming ? (
         <form onSubmit={onSubmit}>
           <div className="files-context-menu-label">
-            New {menu.createKind} in {fullDavPath(menu.directory)}
+            {menu.renaming
+              ? `Rename ${menu.target?.name ?? 'item'}`
+              : `New ${menu.createKind} in ${fullDavPath(menu.directory)}`}
           </div>
           <input
             ref={inputRef}
-            aria-label={`${menu.createKind === 'file' ? 'File' : 'Folder'} name`}
+            aria-label={menu.renaming
+              ? 'New name'
+              : `${menu.createKind === 'file' ? 'File' : 'Folder'} name`}
             value={createName}
             disabled={creating}
             onChange={(event) => onNameChange(event.target.value)}
@@ -72,7 +82,7 @@ export function FilesContextMenu({
               Cancel
             </button>
             <button type="submit" disabled={creating || createName.trim().length === 0}>
-              {creating ? 'Creating…' : 'Create'}
+              {creating ? (menu.renaming ? 'Renaming…' : 'Creating…') : (menu.renaming ? 'Rename' : 'Create')}
             </button>
           </div>
         </form>
@@ -91,6 +101,12 @@ export function FilesContextMenu({
             <span className="codicon codicon-new-folder" aria-hidden="true" />
             New folder…
           </button>
+          {menu.target !== undefined && (
+            <button type="button" role="menuitem" onClick={onPickRename}>
+              <span className="codicon codicon-edit" aria-hidden="true" />
+              Rename…
+            </button>
+          )}
           {driveFolder !== undefined && (
             <button
               type="button"

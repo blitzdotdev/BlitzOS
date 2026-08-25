@@ -45,6 +45,7 @@ type FilesSidebarProps = {
   onClose: () => void;
   onExpandedChange: (expanded: string[]) => void;
   onOpenFile: (filePath: string) => void;
+  onPathMoved: (source: string, destination: string) => void;
   onOpenDriveFolder: (folderId: string) => void;
   onShareToDrive: (path: string) => void;
   onUnauthorized: () => void;
@@ -81,6 +82,7 @@ export function FilesSidebar({
   onClose,
   onExpandedChange,
   onOpenFile,
+  onPathMoved,
   onOpenDriveFolder,
   onShareToDrive,
   onUnauthorized,
@@ -125,7 +127,7 @@ export function FilesSidebar({
     };
     window.addEventListener('pointerdown', closeOnPointerDown);
     window.addEventListener('keydown', closeOnEscape);
-    if (contextMenu.createKind) createInput.current?.focus();
+    if (contextMenu.createKind || contextMenu.renaming) createInput.current?.focus();
     else contextFirstAction.current?.focus();
     return () => {
       window.removeEventListener('pointerdown', closeOnPointerDown);
@@ -232,17 +234,23 @@ export function FilesSidebar({
     setRootState('ready');
   }, [currentClient, onUnauthorized]);
 
-  const openContextMenu = useCallback((event: ReactMouseEvent, directory: string) => {
+  const openContextMenu = useCallback((
+    event: ReactMouseEvent,
+    directory: string,
+    target?: { path: string; name: string; kind: 'file' | 'directory' },
+  ) => {
     if (!currentClient()) return;
     event.preventDefault();
     event.stopPropagation();
     setCreateName('');
     setCreateError(null);
-    setContextMenu({
+    const menu: FilesContextMenuState = {
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - 208)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 164)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 196)),
       directory,
-    });
+    };
+    if (target !== undefined) menu.target = target;
+    setContextMenu(menu);
   }, [currentClient]);
 
   const chooseCreateKind = (createKind: 'file' | 'folder') => {
@@ -251,10 +259,16 @@ export function FilesSidebar({
     setContextMenu((current) => current ? { ...current, createKind } : null);
   };
 
+  const chooseRename = () => {
+    setCreateName(contextMenu?.target?.name ?? '');
+    setCreateError(null);
+    setContextMenu((current) => current?.target ? { ...current, renaming: true } : null);
+  };
+
   const createEntry = async (event: FormEvent) => {
     event.preventDefault();
     const requestClient = currentClient();
-    if (!requestClient || !contextMenu?.createKind || creating) return;
+    if (!requestClient || (!contextMenu?.createKind && !contextMenu?.renaming) || creating) return;
     const name = createName.trim();
     if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\0')) {
       setCreateError('Enter a name without “/”.');
@@ -264,13 +278,30 @@ export function FilesSidebar({
     setCreating(true);
     setCreateError(null);
     try {
-      if (contextMenu.createKind === 'folder') {
+      if (contextMenu.renaming && contextMenu.target) {
+        const source = contextMenu.target.path;
+        const parent = source.split('/').slice(0, -1).join('/');
+        const destination = parent ? `${parent}/${name}` : name;
+        if (destination === source) {
+          setContextMenu(null);
+          return;
+        }
+        await requestClient.moveFile(source, destination, { overwrite: false });
+        const remap = (value: string) => value === source
+          ? destination
+          : value.startsWith(`${source}/`) ? `${destination}${value.slice(source.length)}` : value;
+        onExpandedChange(expandedRef.current.map(remap));
+        setSelectedPath((current) => remap(current));
+        onPathMoved(source, destination);
+      } else if (contextMenu.createKind === 'folder') {
         await requestClient.createDirectory(path);
       } else if (!await requestClient.putFileContents(path, '', { overwrite: false })) {
         setCreateError('A file or folder with that name already exists.');
         return;
       }
-      const directory = contextMenu.directory;
+      const directory = contextMenu.renaming && contextMenu.target
+        ? contextMenu.target.path.split('/').slice(0, -1).join('/')
+        : contextMenu.directory;
       setContextMenu(null);
       await loadDirectory(directory);
     } catch (createFailure) {
@@ -281,9 +312,11 @@ export function FilesSidebar({
       } else if (status === 405 || status === 409 || status === 412) {
         setCreateError('A file or folder with that name already exists.');
       } else if (status === 403) {
-        setCreateError('You don’t have permission to create items here.');
+        setCreateError(`You don’t have permission to ${contextMenu.renaming ? 'rename' : 'create'} this item.`);
       } else {
-        setCreateError(`Couldn’t create ${contextMenu.createKind}. Try again.`);
+        setCreateError(contextMenu.renaming
+          ? 'Couldn’t rename this item. Try again.'
+          : `Couldn’t create ${contextMenu.createKind}. Try again.`);
       }
     } finally {
       setCreating(false);
@@ -646,6 +679,7 @@ export function FilesSidebar({
             setCreateError(null);
           }}
           onPickCreateKind={chooseCreateKind}
+          onPickRename={chooseRename}
           onSubmit={(event) => { void createEntry(event); }}
           onClose={() => setContextMenu(null)}
           onOpenDriveFolder={onOpenDriveFolder}

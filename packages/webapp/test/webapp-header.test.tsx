@@ -10,6 +10,31 @@ function changeInput(input: HTMLInputElement, value: string): void {
 }
 
 describe("workspace session header actions", () => {
+  it("opens an inactive tab context menu without selecting the tab", async () => {
+    const onSelect = vi.fn();
+    const view = await render(<WebAppHeader
+      tabs={[
+        { id: "one", label: "Chat", agent: "chat", pending: false, renameable: true },
+        { id: "two", label: "Terminal", agent: "terminal", pending: false, renameable: true },
+      ]}
+      activeSessionId="one"
+      sessionBusy={false}
+      terminalDisabled={false}
+      onSelect={onSelect}
+      onClose={() => undefined}
+      onRename={() => undefined}
+      onSpawn={() => undefined}
+    />);
+
+    await act(async () => view.container.querySelector("[data-session-id='two']")?.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    ));
+
+    expect(view.container.querySelector(".webapp-session-menu")).not.toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+
   it("renames, archives, and permanently removes a managed session from its context menu", async () => {
     const onRename = vi.fn();
     const onArchive = vi.fn();

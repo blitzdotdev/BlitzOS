@@ -145,6 +145,22 @@ describe("server-side webApp state", () => {
       activeId: 1,
       nextId: 2,
     })).status).toBe(400);
+    const closed = {
+      version: 1,
+      tabs: [{ id: 1, type: "chat", chatSessionId: "chat-one", windowOpen: false }],
+      activeId: null,
+      nextId: 5,
+    };
+    const storedClosed = await sendTabs(closed);
+    expect(storedClosed.status).toBe(200);
+    await expect(storedClosed.json()).resolves.toMatchObject({
+      doc: { tabs: closed },
+    });
+    expect((await sendTabs({ ...closed, activeId: 1 })).status).toBe(400);
+    expect((await sendTabs({
+      ...closed,
+      tabs: [{ id: 1, type: "chat", windowOpen: "no" }],
+    })).status).toBe(400);
   });
 
   it("shares one workspace doc between the owner and org-wide editors", async () => {

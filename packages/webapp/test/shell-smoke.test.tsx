@@ -353,7 +353,7 @@ function saveTabs(
       // SAFETY: Each caller below supplies complete tab objects accepted by the state decoder.
       tabs: tabs as WorkspaceWebAppStateV1["tabs"]["tabs"],
       activeId,
-      nextId: Math.max(...tabs.map((tab) => Number(tab.id))) + 1,
+      nextId: tabs.reduce((highest, tab) => Math.max(highest, Number(tab.id)), 0) + 1,
       ...(sideActiveId === undefined ? {} : { sideActiveId }),
     },
     drawer: defaultWorkspaceFiles(),
@@ -969,7 +969,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("reuses retained terminal instances and unmounts a visited tab when closed", async () => {
+  it("closes only the active session window and reopens it from the workspace rail", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
@@ -1007,7 +1007,102 @@ describe("webapp shell smoke", () => {
     expect(first.isConnected).toBe(false);
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
+    expect(view.container.querySelector('[data-rail-session-id="1"]')).not.toBeNull();
 
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-rail-session-id="1"]',
+    )?.click());
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).not.toBeNull();
+    expect(view.container.querySelector(
+      '[data-testid="terminal-session"][data-session-key="1"]',
+    )).not.toBeNull();
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.archivedTabs).toBeUndefined();
+
+    await view.unmount();
+  });
+
+  it("shows resume after the last session window closes and reopens that session", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 2, type: "panel", panel: "files", region: "side" },
+    ], 1, 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close Chat"]',
+    )?.click());
+    expect(view.container.textContent).toContain("Resume your session");
+    expect(view.container.textContent).toContain(
+      "Your session is still running. Open it from the workspace rail to continue.",
+    );
+    expect(view.container.querySelector('[data-rail-session-id="1"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-testid="chat-session"]')).toBeNull();
+    expect(view.container.querySelector(".webapp-panes--split")).not.toBeNull();
+
+    expect([...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .some(({ textContent }) => textContent === "Resume session")).toBe(false);
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-rail-session-id="1"]',
+    )?.click());
+    expect(view.container.textContent).not.toContain("Resume your session");
+    expect(view.container.querySelector('[data-testid="chat-session"]')).not.toBeNull();
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs[0]).toMatchObject({
+      id: 1,
+      type: "chat",
+      chatSessionId: "chat-one",
+    });
+    await view.unmount();
+  });
+
+  it("shows the start state when a workspace has no sessions", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [], null);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.textContent).toContain("Start a session");
+    expect(view.container.textContent).toContain(
+      "Create a session to start working in this workspace.",
+    );
+    expect([...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .some(({ textContent }) => textContent === "New Chat")).toBe(false);
+    await view.unmount();
+  });
+
+  it("uses plural resume copy when several session windows are closed", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", windowOpen: false },
+      { id: 2, type: "terminal", windowOpen: false },
+    ], null);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.textContent).toContain("Resume your session");
+    expect(view.container.textContent).toContain(
+      "Your sessions are still running. Open one from the workspace rail to continue.",
+    );
     await view.unmount();
   });
 

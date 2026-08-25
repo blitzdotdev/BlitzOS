@@ -245,7 +245,6 @@ export function WebAppHeader({
       || (!onArchive && !onDelete && (!tab.renameable || !onRename))
     ) return;
     event.preventDefault();
-    onSelect(tab.id);
     setMenuOpen(false);
     setArchiveMenuOpen(false);
     setContextMenu({
@@ -360,8 +359,8 @@ export function WebAppHeader({
                       type="button"
                       aria-label={`Close ${tab.label}`}
                       title={tab.pending
-                        ? 'Archiving session…'
-                        : isManagedSessionTab(tab) ? 'Archive session' : `Close ${tab.agent}`}
+                        ? 'Closing window…'
+                        : isManagedSessionTab(tab) ? 'Close session window' : `Close ${tab.agent}`}
                       disabled={tab.pending}
                       onClick={() => onClose(tab.id)}
                     >×</button>

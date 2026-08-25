@@ -64,6 +64,7 @@ import {
 import {
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
+  isWorkspaceTabOpen,
   maxDrawerWidth,
   removeDismissedChatAuthProviders,
   tabRegion,
@@ -77,9 +78,11 @@ import {
 import {
   appendTab,
   archiveTab,
+  closeManagedTabWindow,
   closeTab as closePaneTab,
   filesHostRegion,
   moveTab,
+  openManagedTabWindow,
   paneRegions,
   panelTab,
   regionActiveId,
@@ -1116,6 +1119,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     (tab, index) => {
       const session = ttydSessions[index];
       if (session === undefined) return false;
+      if (!isWorkspaceTabOpen(session)) return false;
       if (!splitEnabled && session.type === 'panel') return false;
       return surfaceRegion(session) === region;
     },
@@ -1157,7 +1161,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         : current
     ));
     setFocusedRegion(surfaceRegion(session));
-    updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
+    updateWorkspaceTabs((tabs) => isManagedWorkspaceTab(session) && !isWorkspaceTabOpen(session)
+      ? openManagedTabWindow(tabs, session.id)
+      : withRegionActiveId(tabs, tabRegion(session), session.id));
   }, [activeWorkspaceId, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
@@ -1253,8 +1259,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       const tab = tabs.tabs.find((entry) => String(entry.id) === id);
       if (tab === undefined) return tabs;
       return isManagedWorkspaceTab(tab)
-        ? archiveTab(tabs, tab.id)
+        ? closeManagedTabWindow(tabs, tab.id)
         : closePaneTab(tabs, tab.id);
+    });
+    retainedSessionIdsRef.current.ids.delete(id);
+    setChatSessionStatuses((current) => {
+      if (current.workspaceId !== activeWorkspaceId || current.byTabId[id] === undefined) return current;
+      const byTabId = { ...current.byTabId };
+      delete byTabId[id];
+      return { ...current, byTabId };
     });
     setDirtyFileIds((current) => {
       if (!current.has(id)) return current;
@@ -1390,6 +1403,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // changes column changes a grid placement, not a parent — so a visited
   // terminal survives the move, and an unvisited one still never mounts.
   const renderedSessions = ttydSessions.filter((session) => {
+    if (!isWorkspaceTabOpen(session)) return false;
     if (!splitEnabled && session.type === 'panel') return false;
     const needsBox = session.type !== 'panel'
       && session.type !== 'file'
@@ -1457,9 +1471,23 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!tabsLoaded) {
       return <WebAppLoadingPane ariaLabel="Loading workspace" stage="loading · local tabs" />;
     }
-    return session === null
-      ? <p className="webapp-pane-empty">Empty pane</p>
-      : null;
+    if (session !== null) return null;
+    if (region !== 'main') return <p className="webapp-pane-empty">Empty pane</p>;
+    const resumable = ttydSessions.filter(
+      (tab) => isManagedWorkspaceTab(tab) && !isWorkspaceTabOpen(tab),
+    );
+    const resumableCount = resumable.length;
+    return (
+      <div className="webapp-empty webapp-session-empty">
+        <TerminalIcon />
+        <h1>{resumableCount > 0 ? 'Resume your session' : 'Start a session'}</h1>
+        <p>{resumableCount > 0
+          ? resumableCount === 1
+            ? 'Your session is still running. Open it from the workspace rail to continue.'
+            : 'Your sessions are still running. Open one from the workspace rail to continue.'
+          : 'Create a session to start working in this workspace.'}</p>
+      </div>
+    );
   };
   const filesSidebar = activeWorkspace === undefined ? null : (
     <FilesSidebar
@@ -1491,6 +1519,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           : current);
       }}
       onOpenFile={openFile}
+      onPathMoved={(source, destination) => {
+        updateWorkspaceTabs((tabs) => ({
+          ...tabs,
+          tabs: tabs.tabs.map((tab) => {
+            if (tab.type !== 'file') return tab;
+            if (tab.filePath === source) return { ...tab, filePath: destination };
+            if (tab.filePath.startsWith(`${source}/`)) {
+              return { ...tab, filePath: `${destination}${tab.filePath.slice(source.length)}` };
+            }
+            return tab;
+          }),
+        }));
+      }}
       onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
       onShareToDrive={setShareToDrivePath}
       onUnauthorized={handleUnauthorized}

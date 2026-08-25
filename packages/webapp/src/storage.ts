@@ -40,6 +40,8 @@ export type ManagedWorkspaceTab = {
   id: number;
   type: TerminalAgent | 'terminal';
   title?: string;
+  /** Missing means open; false keeps the session while closing its window. */
+  windowOpen?: false;
   region?: WorkspaceRegion;
 } | {
   id: number;
@@ -47,6 +49,7 @@ export type ManagedWorkspaceTab = {
   chatSessionId?: string;
   chatProvider?: Agent;
   title?: string;
+  windowOpen?: false;
   region?: WorkspaceRegion;
 };
 
@@ -125,6 +128,7 @@ interface RestoredSessionTab {
   chatSessionId?: string;
   chatProvider?: Agent;
   title?: string;
+  windowOpen?: false;
 }
 
 export const SESSION_TITLE_MAX_LENGTH = 64;
@@ -138,6 +142,10 @@ export function isManagedWorkspaceTab(tab: WorkspaceTab): tab is ManagedWorkspac
     || tab.type === 'pi'
     || tab.type === 'kimi'
     || tab.type === 'prime';
+}
+
+export function isWorkspaceTabOpen(tab: WorkspaceTab): boolean {
+  return !isManagedWorkspaceTab(tab) || tab.windowOpen !== false;
 }
 
 export function createStorageNamespace(orgId: string, membershipId: string): StorageNamespace {
@@ -290,16 +298,22 @@ function clampedTab(tab: WorkspaceTab): WorkspaceTab {
 }
 
 /** Keeps the two panes coherent: a side pane only exists while it holds tabs,
- * a pane's active id always names one of its own tabs, and the side pane never
- * outlives an emptied main pane — the split collapses left instead. */
+ * and a pane's active id always names one of its own open tabs. A retained,
+ * closed main session keeps the main empty state beside an open side pane. */
 export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
   const archivedTabs = tabs.archivedTabs ?? [];
-  const collapse = tabs.tabs.length > 0 && tabs.tabs.every((tab) => tabRegion(tab) === 'side');
+  const openTabs = tabs.tabs.filter(isWorkspaceTabOpen);
+  const closedMainSession = tabs.tabs.some((tab) => isManagedWorkspaceTab(tab)
+    && !isWorkspaceTabOpen(tab)
+    && tabRegion(tab) === 'main');
+  const collapse = !closedMainSession
+    && openTabs.length > 0
+    && openTabs.every((tab) => tabRegion(tab) === 'side');
   const entries = collapse
     ? tabs.tabs.map((tab) => withRegion(tab, 'main'))
     : tabs.tabs;
-  const main = entries.filter((tab) => tabRegion(tab) === 'main');
-  const side = entries.filter((tab) => tabRegion(tab) === 'side');
+  const main = entries.filter((tab) => isWorkspaceTabOpen(tab) && tabRegion(tab) === 'main');
+  const side = entries.filter((tab) => isWorkspaceTabOpen(tab) && tabRegion(tab) === 'side');
   const requestedActive = collapse ? tabs.sideActiveId ?? tabs.activeId : tabs.activeId;
   const activeId = main.some(({ id }) => id === requestedActive)
     ? requestedActive ?? null
@@ -446,6 +460,8 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
   }
   if (object.type === 'chat') {
     const tab: RestoredSessionTab = { id, type: 'chat' };
+    if (object.windowOpen !== undefined && !isBoolean(object.windowOpen)) return null;
+    if (object.windowOpen === false) tab.windowOpen = false;
     if (object.title !== undefined) {
       if (!isString(object.title) || object.title.length > SESSION_TITLE_MAX_LENGTH) return null;
       const title = object.title.trim();
@@ -467,6 +483,7 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
     || object.type === 'kimi'
     || object.type === 'prime'
   ) {
+    if (object.windowOpen !== undefined && !isBoolean(object.windowOpen)) return null;
     if (object.title !== undefined && (
       !isString(object.title) || object.title.length > SESSION_TITLE_MAX_LENGTH
     )) return null;
@@ -477,6 +494,7 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
       type: object.type as TerminalAgent | 'terminal',
     };
     if (title !== '') tab.title = title;
+    if (object.windowOpen === false) tab.windowOpen = false;
     // SAFETY: The branch checks every TerminalAgent literal plus terminal.
     return withRegion(tab as WorkspaceTab, region);
   }
@@ -510,7 +528,7 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
       ? object.activeId
       : -1;
   const mainTabs = tabs.filter((tab) => tabRegion(tab) === 'main');
-  if (activeId !== null && !mainTabs.some(({ id }) => id === activeId)) return null;
+  if (activeId !== null && !mainTabs.some((tab) => tab.id === activeId && isWorkspaceTabOpen(tab))) return null;
   const minimumNextId = [...tabs, ...archivedTabs]
     .reduce((highest, { id }) => Math.max(highest, id), 0) + 1;
   if (
@@ -526,7 +544,9 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     if (
       !isNumber(object.sideActiveId)
       || !Number.isSafeInteger(object.sideActiveId)
-      || !tabs.some((tab) => tab.id === object.sideActiveId && tabRegion(tab) === 'side')
+      || !tabs.some((tab) => tab.id === object.sideActiveId
+        && isWorkspaceTabOpen(tab)
+        && tabRegion(tab) === 'side')
     ) return null;
     restored.sideActiveId = object.sideActiveId;
   }

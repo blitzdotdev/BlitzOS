@@ -3,9 +3,11 @@ import type { WorkspaceTabs } from "../src/storage.js";
 import {
   appendTab,
   archiveTab,
+  closeManagedTabWindow,
   closeTab,
   filesHostRegion,
   moveTab,
+  openManagedTabWindow,
   paneRegions,
   regionTabs,
   removeTabPermanently,
@@ -120,6 +122,61 @@ describe("workspace pane model", () => {
     const three = appendTab(tabs(), "main", (id) => ({ id, type: "terminal" }));
     expect(closeTab(three, 3).activeId).toBe(2);
     expect(closeTab({ ...three, activeId: 1 }, 2).activeId).toBe(1);
+  });
+
+  it("closes and reopens a managed session window without removing the session", () => {
+    const closed = closeManagedTabWindow(tabs(), 1);
+    expect(closed.tabs).toEqual([
+      { id: 1, type: "claude", windowOpen: false },
+      { id: 2, type: "terminal" },
+    ]);
+    expect(closed.activeId).toBe(2);
+    expect(regionTabs(closed, "main").map(({ id }) => id)).toEqual([2]);
+    expect(closed.archivedTabs).toBeUndefined();
+
+    const reopened = openManagedTabWindow(closed, 1);
+    expect(reopened.tabs).toEqual(tabs().tabs);
+    expect(reopened.activeId).toBe(1);
+  });
+
+  it("keeps the last session after its window closes and leaves the pane empty", () => {
+    const only: WorkspaceTabs = {
+      version: 1,
+      tabs: [{ id: 1, type: "chat", chatSessionId: "chat-one" }],
+      activeId: 1,
+      nextId: 2,
+    };
+    const closed = closeManagedTabWindow(only, 1);
+    expect(closed.tabs).toEqual([{
+      id: 1,
+      type: "chat",
+      chatSessionId: "chat-one",
+      windowOpen: false,
+    }]);
+    expect(closed.activeId).toBeNull();
+    expect(paneRegions(closed)).toEqual(["main"]);
+    expect(regionTabs(closed, "main")).toEqual([]);
+  });
+
+  it("keeps a side panel beside the resume state when the main session window closes", () => {
+    const split: WorkspaceTabs = {
+      version: 1,
+      tabs: [
+        { id: 1, type: "chat", chatSessionId: "chat-one" },
+        { id: 2, type: "panel", panel: "files", region: "side" },
+      ],
+      activeId: 1,
+      sideActiveId: 2,
+      nextId: 3,
+    };
+    const closed = closeManagedTabWindow(split, 1);
+    expect(closed.activeId).toBeNull();
+    expect(closed.sideActiveId).toBe(2);
+    expect(paneRegions(closed)).toEqual(["main", "side"]);
+    expect(regionTabs(closed, "main")).toEqual([]);
+    expect(regionTabs(closed, "side")).toEqual([
+      { id: 2, type: "panel", panel: "files", region: "side" },
+    ]);
   });
 
   it("archives and restores a managed tab with its title, id, and pane", () => {

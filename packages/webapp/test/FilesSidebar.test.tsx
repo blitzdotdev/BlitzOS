@@ -40,6 +40,7 @@ function sidebar(
       onClose={() => undefined}
       onExpandedChange={() => undefined}
       onOpenFile={() => undefined}
+      onPathMoved={() => undefined}
       onOpenDriveFolder={() => undefined}
       onShareToDrive={() => undefined}
       onUnauthorized={onUnauthorized}
@@ -57,6 +58,12 @@ async function flushPromises(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function changeInput(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 beforeEach(() => {
@@ -223,6 +230,7 @@ describe("FilesSidebar root listing retries", () => {
         onClose={() => undefined}
         onExpandedChange={() => undefined}
         onOpenFile={() => undefined}
+        onPathMoved={() => undefined}
         onOpenDriveFolder={onOpenDriveFolder}
         onShareToDrive={onShareToDrive}
         onUnauthorized={() => undefined}
@@ -241,6 +249,7 @@ describe("FilesSidebar root listing retries", () => {
     });
     expect(menuItems().some((item) => item.includes("Share to Drive"))).toBe(true);
     expect(menuItems().some((item) => item.includes("Open in Drive"))).toBe(false);
+    expect(menuItems().some((item) => item.includes("Rename"))).toBe(true);
     await act(async () => {
       [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
         .find((item) => item.textContent?.includes("Share to Drive"))?.click();
@@ -259,12 +268,69 @@ describe("FilesSidebar root listing retries", () => {
     });
     expect(menuItems().some((item) => item.includes("Open in Drive"))).toBe(true);
     expect(menuItems().some((item) => item.includes("Share to Drive"))).toBe(false);
+    expect(menuItems().some((item) => item.includes("Rename"))).toBe(true);
     await act(async () => {
       [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
         .find((item) => item.textContent?.includes("Open in Drive"))?.click();
     });
     expect(onOpenDriveFolder).toHaveBeenCalledWith("folder-1");
 
+    await view.unmount();
+  });
+
+  it("renames a file in place and reports the path move", async () => {
+    const getDirectoryContents = vi.fn().mockResolvedValue([
+      { basename: "notes.txt", filename: "/notes.txt", type: "file" },
+    ]);
+    const moveFile = vi.fn().mockResolvedValue(undefined);
+    const client = { getDirectoryContents, moveFile } as unknown as WebDAVClient;
+    const onPathMoved = vi.fn();
+    const view = await render(
+      <FilesSidebar
+        client={client}
+        expanded={[]}
+        getClient={() => client}
+        mobile={false}
+        open
+        ready
+        refreshVersion={0}
+        visible
+        width={340}
+        sharedFolders={[]}
+        canShare
+        onClose={() => undefined}
+        onExpandedChange={() => undefined}
+        onOpenFile={() => undefined}
+        onPathMoved={onPathMoved}
+        onOpenDriveFolder={() => undefined}
+        onShareToDrive={() => undefined}
+        onUnauthorized={() => undefined}
+        onWidthChange={() => undefined}
+      />,
+    );
+    await flushPromises();
+
+    const row = [...view.container.querySelectorAll(".files-tree-row")]
+      .find((entry) => entry.textContent?.includes("notes.txt"));
+    await act(async () => row?.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    ));
+    await act(async () => [...document.body.querySelectorAll<HTMLButtonElement>(
+      '[role="menuitem"]',
+    )].find((item) => item.textContent?.includes("Rename"))?.click());
+
+    const input = document.body.querySelector<HTMLInputElement>('[aria-label="New name"]')!;
+    expect(input.value).toBe("notes.txt");
+    await act(async () => {
+      changeInput(input, "journal.txt");
+      input.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    await flushPromises();
+
+    expect(moveFile).toHaveBeenCalledWith("notes.txt", "journal.txt", { overwrite: false });
+    expect(onPathMoved).toHaveBeenCalledWith("notes.txt", "journal.txt");
+    expect(getDirectoryContents).toHaveBeenLastCalledWith("/");
     await view.unmount();
   });
 

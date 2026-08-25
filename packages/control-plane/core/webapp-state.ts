@@ -3,6 +3,7 @@ import { first, rows, transaction } from "./db.js";
 import {
   HttpError,
   type JsonValue,
+  isBoolean,
   isNumber,
   isRecord,
   isString,
@@ -43,6 +44,7 @@ interface WebAppTabV1 {
   panel?: WebAppDrawerSegment;
   region?: WebAppRegion;
   path?: string;
+  windowOpen?: false;
 }
 
 interface WebAppTabsV1 {
@@ -119,6 +121,12 @@ function parseManagedTitle(value: OptionalJsonValue, field: string): string | un
   if (value === undefined) return undefined;
   const title = boundedString(value, field, SESSION_TITLE_MAX_LENGTH).trim();
   return title === "" ? undefined : title;
+}
+
+function parseWindowOpen(value: OptionalJsonValue, field: string): false | undefined {
+  if (value === undefined || value === true) return undefined;
+  if (!isBoolean(value)) throw new HttpError(400, `${field} must be a boolean`);
+  return false;
 }
 
 function boundedString(value: OptionalJsonValue, field: string, maxLength: number): string {
@@ -232,6 +240,8 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
     const tab: WebAppTabV1 = { id, type };
     if (title !== undefined) tab.title = title;
+    const windowOpen = parseWindowOpen(value.windowOpen, `tabs.tabs[${index}].windowOpen`);
+    if (windowOpen === false) tab.windowOpen = false;
     return withRegion(tab, region);
   }
   const tab: WebAppTabV1 = { id, type };
@@ -247,6 +257,8 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   if (value.chatProvider !== undefined) {
     tab.chatProvider = parseAgent(value.chatProvider, `tabs.tabs[${index}].chatProvider`);
   }
+  const windowOpen = parseWindowOpen(value.windowOpen, `tabs.tabs[${index}].windowOpen`);
+  if (windowOpen === false) tab.windowOpen = false;
   return withRegion(tab, region);
 }
 
@@ -273,7 +285,9 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   const activeId = value.activeId === null
     ? null
     : positiveId(value.activeId, "tabs.activeId");
-  if (activeId !== null && !tabs.some((tab) => tab.id === activeId && tab.region !== "side")) {
+  if (activeId !== null && !tabs.some((tab) => tab.id === activeId
+    && tab.windowOpen !== false
+    && tab.region !== "side")) {
     throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
   }
   const nextId = positiveId(value.nextId, "tabs.nextId");
@@ -284,7 +298,9 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   if (archivedTabs.length > 0) parsed.archivedTabs = archivedTabs;
   if (value.sideActiveId !== undefined) {
     const sideActiveId = positiveId(value.sideActiveId, "tabs.sideActiveId");
-    if (!tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {
+    if (!tabs.some((tab) => tab.id === sideActiveId
+      && tab.windowOpen !== false
+      && tab.region === "side")) {
       throw new HttpError(400, "tabs.sideActiveId must identify a side-pane tab");
     }
     parsed.sideActiveId = sideActiveId;

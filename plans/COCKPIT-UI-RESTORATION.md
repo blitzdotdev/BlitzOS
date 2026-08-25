@@ -6,7 +6,9 @@ with the current BlitzOS webapp. P2 mobile/accessibility polish is explicitly
 out of scope for this plan.
 
 Progress: **Phases 1–2 implemented locally** on `feat-ui-changes` (2026-08-24).
-Phases 3–5 remain pending.
+A follow-up also separates closing a session window from archiving the session,
+adds the Start/Resume empty states, and implements the rename half of Phase 4.
+Phases 3 and 5, plus Finder delete, remain pending.
 
 This is not a port of the old bridge. The current control-plane → webapp → box
 actor/ACP architecture stays authoritative. We restore the user-visible
@@ -68,6 +70,7 @@ type WorkspaceTabs = {
 
 type ManagedTabFields = {
   title?: string;
+  windowOpen?: false;
 };
 
 type ChatTabFields = ManagedTabFields & {
@@ -91,6 +94,8 @@ type ChatTabFields = ManagedTabFields & {
 - Titles remain bounded by the existing 64-character UI limit and a matching
   server-side limit.
 - File, preview, and panel tabs continue to close rather than archive.
+- A managed tab with missing `windowOpen` is open. `windowOpen: false` keeps the
+  session in the workspace rail while removing its window from the tab strips.
 - The server parser must preserve every accepted optional field instead of
   silently stripping it during a round trip.
 
@@ -98,7 +103,13 @@ Do not put model/effort UI preferences in `chat_session.db`. That database is
 scope-fenced to session list, replay, and resume. The preferences belong to
 the shared cockpit document and are reapplied through ACP when the tab loads.
 
-### 2. “Archive” is a layout operation
+### 2. Closing a window and archiving a session are distinct layout operations
+
+The X button closes only the managed session's window. The session remains in
+the workspace rail and selecting it reopens the same tab/session. When no
+managed sessions exist, the main surface explains how to create one. When
+sessions exist but every session window is closed, it directs the user to
+resume one from the workspace rail. These empty states have no action button.
 
 Archive removes a managed tab from the active strips while preserving all tab
 metadata, including its ACP session ID. Restore puts the same tab back with
@@ -174,8 +185,8 @@ The webapp owns the visible queue:
    `WebAppHeader`, and persist trimmed titles. Empty input resets to the
    generated label.
 5. Restore the managed-session context menu: Rename, Archive, and Remove
-   permanently. Keep the active-tab close button for file/preview/panel tabs;
-   for managed sessions it archives.
+   permanently. The active-tab X closes the window only; Archive remains an
+   explicit context-menu action.
 6. Restore the Archived sessions menu with bounded height, long-name
    truncation, Restore, and Remove permanently.
 7. Make archive/restore work from either pane. Restoring selects the tab in
@@ -235,6 +246,12 @@ chat selections plus thinking visibility survive a browser reload and actor
 reconnect.
 
 ### Phase 4 — Finder rename and delete
+
+Rename is implemented locally, including file/folder targets, WebDAV move,
+path reconciliation for expanded/selected tree state and open descendant file
+tabs, preservation of the existing Drive actions, and control-plane
+normalization of proxied WebDAV `Destination` headers. Delete and its dirty-tab
+confirmation remain pending.
 
 1. Extend `FilesContextMenuState` with the clicked file/directory target and a
    `rename | delete` action state.
