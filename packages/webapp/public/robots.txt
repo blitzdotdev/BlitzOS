@@ -1,0 +1,33 @@
+User-agent: *
+
+# The control plane serves the SPA shell for any unmatched path, so the app
+# routes below are crawl traps: they return 200 HTML with no indexable content.
+# This list mirrors assets.run_worker_first in packages/control-plane/wrangler.toml.
+Disallow: /api/
+Disallow: /agent-rules
+Disallow: /auth/
+Disallow: /box-image
+Disallow: /boxes/
+Disallow: /connect/
+Disallow: /connections
+Disallow: /folders
+Disallow: /hosts
+Disallow: /integrations
+Disallow: /invite/
+Disallow: /invites
+Disallow: /leases
+Disallow: /machine-types
+Disallow: /me
+Disallow: /members
+Disallow: /oauth/
+Disallow: /orgs
+Disallow: /proxy
+Disallow: /requests
+Disallow: /sessions
+Disallow: /volumes
+Disallow: /webapp-state
+Disallow: /workspace-recipes
+Disallow: /workspace-templates
+Disallow: /workspaces
+
+Sitemap: https://blitzos.com/sitemap.xml
