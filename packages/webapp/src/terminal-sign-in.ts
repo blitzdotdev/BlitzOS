@@ -1,8 +1,8 @@
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
 
-/** claude and codex tabs run the agent TUI as the tmux session's root process
- * (see blitz-term), so the login flow is the TUI's own slash command. A shell
- * line such as `claude /login` would just be typed into the running TUI. */
+/** Claude tabs run the agent TUI as the tmux session's root process (see
+ * blitz-term), so the login flow is the TUI's own slash command. Codex uses
+ * device authentication in blitz-codex-session instead. */
 export const TERMINAL_SIGN_IN_COMMAND = '/login';
 
 /** Ink folds a submit that arrives in the same write as the text into the

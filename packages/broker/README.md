@@ -9,8 +9,8 @@ every workspace its owner spawns, over forced-command SSH, before each agent
 turn. The control plane's registry holds public keys and routing only — never
 a credential. The no-broker alternative is documented in the
 [box README](../box/README.md): sign in once inside each workspace with
-`claude login` or `codex login` over SSH; agent HOME persists on the state
-volume.
+`claude login` or `codex login --device-auth` over SSH; agent HOME persists on
+the state volume.
 
 ## Run and enroll
 

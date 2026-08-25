@@ -78,6 +78,11 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
             data-testid="chat-sign-in"
             onClick={() => onSignIn?.("claude")}
           >Sign in to Claude</button>
+          <button
+            type="button"
+            data-testid="chat-sign-in-codex"
+            onClick={() => onSignIn?.("codex")}
+          >Sign in to Codex</button>
         </div>
       );
     },
@@ -855,6 +860,42 @@ describe("webapp shell smoke", () => {
       { data: "/login", enters: 0, sessionKey: "2" },
       { data: "\r", enters: 0, sessionKey: "2" },
     ]);
+
+    await view.unmount();
+  });
+
+  it("opens a fresh codex device-auth tab without typing the localhost login command", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatProvider: "codex", chatSessionId: "chat-one" },
+      { id: 2, type: "codex" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const recorder = recordTerminalSubmits();
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '[data-testid="chat-sign-in-codex"]',
+    )?.click());
+
+    expect(selectedSessionId(view.container)).toBe("3");
+    const terminal = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="3"]',
+    );
+    expect(terminal?.textContent).toBe("codex");
+    expect(terminal?.dataset.active).toBe("true");
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_800));
+    });
+    recorder.stop();
+    expect(recorder.submits).toEqual([]);
 
     await view.unmount();
   });
