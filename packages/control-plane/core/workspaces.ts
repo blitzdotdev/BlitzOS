@@ -1,4 +1,4 @@
-import type { RecipeBootstrap } from "./bootstrap.js";
+import { boxHostname, type RecipeBootstrap } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
@@ -439,6 +439,14 @@ export async function performWorkspaceCreate(
   const capability = randomToken();
   const now = Date.now();
   const phoneHomeUrl = `${requestOrigin}/workspaces/${id}/phone-home/${capability}`;
+  const name = input.name ?? (template === null
+    ? randomWorkspaceName()
+    : await templateWorkspaceName(runtime.db, orgId, template.name));
+  // Claude's Remote Control names its target after the box hostname. Give the
+  // box the workspace name. Without it every workspace shows the same hex
+  // container id in claude.ai/code, and a person cannot pick one. The boot
+  // script renders once, here. A later rename does not reach the box.
+  shaping.boxHostname = boxHostname(name, id);
 
   const inserted = await rows(runtime.db, {
     q: `INSERT INTO workspaces
@@ -453,9 +461,7 @@ export async function performWorkspaceCreate(
         RETURNING id`,
     v: [
       id,
-      input.name ?? (template === null
-        ? randomWorkspaceName()
-        : await templateWorkspaceName(runtime.db, orgId, template.name)),
+      name,
       principal.id,
       orgId,
       membershipId,
