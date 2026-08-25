@@ -13,6 +13,7 @@ import {
   commandFailureMessage,
   deployControlPlane,
 } from "./deploy-helpers.mjs";
+import { assertPublishedAssets } from "../../webapp/scripts/check-published-assets.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../../..");
@@ -51,6 +52,17 @@ if (!existsSync(configAbsolute)) {
   process.stderr.write(
     `${CONFIG_PATH} not found — generate it with \`npm run config -w packages/control-plane\` and fill in your values.\n`,
   );
+  process.exit(1);
+}
+
+// Before anything reaches Cloudflare. The build copies packages/webapp/public/
+// into the assets the Worker serves, so a file missing here un-publishes a
+// live page — and nothing imports those files, so no other step would notice.
+// Checking now means a failure costs nothing: no migration has been applied.
+try {
+  assertPublishedAssets();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : "published asset check failed"}\n`);
   process.exit(1);
 }
 

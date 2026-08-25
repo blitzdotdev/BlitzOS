@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>BlitzOS — Building blocks for your agent workforce</title>
+<meta name="description" content="BlitzOS is infrastructure to build your agent workforce. Each agent gets a workspace: its own VM, credentials, and data."/>
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32"/>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
+<link rel="canonical" href="https://blitzos.com/landing"/>
+<meta property="og:title" content="BlitzOS"/>
+<meta property="og:site_name" content="BlitzOS"/>
+<meta property="og:description" content="BlitzOS is infrastructure to build your agent workforce. Each agent gets a workspace: its own VM, credentials, and data."/>
+<meta property="og:image" content="https://blitzos.com/og.png"/>
+<meta property="og:url" content="https://blitzos.com/landing"/>
+<meta property="og:type" content="website"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+ {"@type":"Organization","name":"BlitzOS","url":"https://blitzos.com","logo":"https://blitzos.com/og.png"},
+ {"@type":"SoftwareApplication","name":"BlitzOS","applicationCategory":"DeveloperApplication","operatingSystem":"Web"}
+]}
+</script>
+<style>
+*,*:before,*:after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:#000;color:#f2f2f2;
+  font:16px/1.65 system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:680px;margin:0 auto;padding:0 20px;position:relative;z-index:1}
+/* starfield — same 28-star field and twinkle variants as the / route.
+   Fixed at z:0 behind the content column (source layering: stars low,
+   copy stack above), pointer-events none. */
+.stars{position:fixed;top:0;right:0;bottom:0;left:0;z-index:0;pointer-events:none;overflow:hidden}
+.star{position:absolute;border-radius:50%;background:#fff;animation:twinkle 5s ease-in-out infinite}
+.star:nth-child(2n){animation-duration:7s;animation-delay:-1.5s}
+.star:nth-child(3n){animation-duration:6s;animation-delay:-3s}
+.star:nth-child(5n){animation-duration:8s;animation-delay:-2s}
+.star--pin{width:1.4px;height:1.4px;margin:-.7px 0 0 -.7px;box-shadow:0 0 1px #fff,0 0 3px rgba(255,255,255,.55),0 0 6px rgba(255,255,255,.18)}
+.star--dot{width:2.4px;height:2.4px;margin:-1.2px 0 0 -1.2px;box-shadow:0 0 2px rgba(255,255,255,.95),0 0 5px rgba(255,255,255,.45),0 0 10px rgba(255,255,255,.18)}
+.star--glow{width:3px;height:3px;margin:-1.5px 0 0 -1.5px;box-shadow:0 0 3px #fff,0 0 8px rgba(255,255,255,.5),0 0 16px rgba(255,255,255,.2),0 0 28px rgba(255,255,255,.08)}
+.star--cross{width:2.5px;height:2.5px;margin:-1.25px 0 0 -1.25px;box-shadow:0 0 2px #fff,0 0 6px rgba(255,255,255,.45),0 0 12px rgba(255,255,255,.18)}
+.star--cross:before,.star--cross:after{content:"";position:absolute;left:50%;top:50%;pointer-events:none;filter:blur(.4px)}
+.star--cross:before{width:24px;height:1px;transform:translate(-50%,-50%);
+  background:linear-gradient(to right,transparent 0%,rgba(255,255,255,0) 12%,rgba(255,255,255,.85) 50%,rgba(255,255,255,0) 88%,transparent 100%)}
+.star--cross:after{width:1px;height:24px;transform:translate(-50%,-50%);
+  background:linear-gradient(to bottom,transparent 0%,rgba(255,255,255,0) 12%,rgba(255,255,255,.85) 50%,rgba(255,255,255,0) 88%,transparent 100%)}
+@keyframes twinkle{0%,100%{opacity:.95}50%{opacity:.45}}
+a{color:#f2f2f2;text-decoration:underline;text-underline-offset:2px}
+a:hover{color:rgba(242,242,242,.55)}
+.top{display:flex;align-items:baseline;justify-content:space-between;padding:26px 0 0}
+.brand{font-weight:650;text-decoration:none;font-size:17px}
+.top a.signin{font-size:14px}
+h1{font-size:clamp(30px,5vw,42px);line-height:1.15;font-weight:650;
+  letter-spacing:-.015em;margin:56px 0 16px;text-wrap:balance}
+.sub{font-size:18px;color:#aab5c4;margin:0}
+/* orbital as page background: a full-viewport layer behind all content.
+   The flare canvas fades out at its own edges via masks, so its glow never
+   shows a rectangular boundary anywhere. */
+.orbbg{position:absolute;top:0;left:0;right:0;height:120vh;overflow:hidden;
+  z-index:0;display:flex;align-items:flex-start;justify-content:flex-start;
+  padding-top:clamp(400px,48vh,580px);
+  padding-left:max(6px,calc(50vw - 339px));pointer-events:none}
+.orbbg canvas{
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 18%,#000 82%,transparent 100%),
+    linear-gradient(90deg,#000 80%,transparent 99%);
+  -webkit-mask-composite:source-in;
+  mask-image:linear-gradient(180deg,transparent 0,#000 18%,#000 82%,transparent 100%),
+    linear-gradient(90deg,#000 80%,transparent 99%);
+  mask-composite:intersect}
+.herospace{height:max(200px,calc(100vh - 500px))}
+@media (max-width:700px){
+  .orbbg{padding-top:clamp(500px,60vh,660px)}
+  .herospace{height:max(300px,calc(100vh - 400px))}
+}
+/* numbered sections with accent ticks */
+.secno{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px;letter-spacing:.18em;color:rgba(242,242,242,.35);margin:0 0 8px}
+.h2acc{position:relative;padding-bottom:10px;margin-bottom:10px}
+.h2acc:after{content:"";position:absolute;left:0;bottom:0;width:30px;height:1px;
+  background:var(--sacc);box-shadow:0 0 4px var(--sacc)}
+/* spawn diagram (Agent API) */
+.spawn{margin:28px 0 6px}
+.spawn__main{width:min(250px,84%);margin:0 auto}
+.spawn__code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:12px;color:#aab5c4}
+.spawn__row{display:flex;justify-content:space-between;gap:12px;
+  max-width:430px;margin:0 auto}
+.spawn__ws{flex:0 1 96px;min-width:72px}
+.spawn__ws svg{width:100%;height:auto;display:block;overflow:visible}
+.gm{stroke:#c2d9ff;fill:none;stroke-width:1;filter:drop-shadow(0 0 2px #c2d9ff)}
+.gd{stroke:#b395df;fill:none;stroke-width:1;filter:drop-shadow(0 0 2px #b395df)}
+.gi{stroke:rgba(242,242,242,.55);fill:none;stroke-width:1}
+.gw{stroke:rgba(242,242,242,.4);fill:none;stroke-width:1}
+.gp{stroke:#b395df;fill:none;stroke-width:1;filter:drop-shadow(0 0 2px #b395df)}
+.gt circle{fill:rgba(242,242,242,.5);stroke:none}
+.spawn__cap{text-align:center;margin-top:10px;font-size:11.5px;
+  letter-spacing:.06em;color:rgba(242,242,242,.45)}
+/* figure blocks: apps, sessions */
+.appsfig,.sesfig{display:flex;justify-content:center}
+.appsfig{margin:26px 0 4px}
+.sesfig{margin:22px 0 0}
+.appsfig svg,.sesfig svg{width:min(400px,100%);height:auto;overflow:visible}
+.appsfig text,.sesfig text{stroke:none;font-family:inherit}
+.tb{fill:#c2d9ff;font-size:10px}
+.tp{fill:#b395df;font-size:9px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.td{fill:rgba(242,242,242,.5);font-size:10px}
+.tc{fill:rgba(242,242,242,.45);font-size:9px;letter-spacing:.06em}
+.tpm{fill:#b395df;font-size:9px;letter-spacing:.06em}
+.tpr{fill:rgba(242,242,242,.6);font-size:9px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.tps{fill:#b395df;font-size:9.5px;letter-spacing:.08em}
+.mask{fill:#000;stroke:none}
+section{margin:64px 0}
+.wrap>section:first-of-type{margin-top:56px}
+h2{font-size:20px;font-weight:650;margin:0 0 8px;letter-spacing:-.01em}
+h3{font-size:15px;font-weight:650;color:#f2f2f2;margin:22px 0 6px}
+.lead{margin:0 0 10px}
+/* workspace diagram — LinkBreakdown style vocabulary: underlined accent
+   segments, 1px glowing elbow connectors, chamfered cards on black,
+   dash rules, bracketed labels as characters. */
+.wsd{margin:30px 0 36px}
+.wsd__subject{display:flex;justify-content:center;align-items:baseline;
+  font-size:22px;line-height:1.1;white-space:nowrap;
+  text-shadow:0 0 6px rgba(242,242,242,.45)}
+.wsd__dim{color:rgba(242,242,242,.55)}
+.wsd__seg{position:relative;display:inline-block;padding-bottom:6px;color:var(--acc)}
+.wsd__seg:after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:var(--acc);box-shadow:0 0 4px var(--acc)}
+.wsd__conn{display:block;width:100%;overflow:visible}
+.wsd__row{display:flex;justify-content:space-between;align-items:stretch;width:100%}
+.wsd__gap{flex:1 1 auto;position:relative;display:flex;align-items:center;
+  justify-content:center;min-width:40px}
+.wsd__gapline{position:absolute;left:6px;right:6px;top:50%;height:1px;
+  background:rgba(242,242,242,.35);box-shadow:0 0 3px rgba(242,242,242,.35)}
+.wsd__lbl{position:relative;z-index:2;background:#000;padding:2px 7px;
+  font-size:11px;letter-spacing:.08em;color:rgba(242,242,242,.55);white-space:nowrap}
+.wsd__band{position:relative}
+.wsd__band .wsd__lbl{position:absolute;bottom:0;transform:translateX(-50%)}
+.wsd__card{position:relative;background:#000;flex:0 1 176px;min-width:128px}
+.wsd__e,.wsd__b{position:absolute;background:var(--acc);
+  box-shadow:0 0 4px var(--acc);pointer-events:none;z-index:1}
+.wsd__e--t,.wsd__e--b{left:8px;right:8px;height:1px}
+.wsd__e--t{top:0}.wsd__e--b{bottom:0}
+.wsd__e--l,.wsd__e--r{top:8px;bottom:8px;width:1px}
+.wsd__e--l{left:0}.wsd__e--r{right:0}
+.wsd__b{width:11.31px;height:1px;transform-origin:center}
+.wsd__b--tl{top:4px;left:4px;transform:translate(-50%,-50%) rotate(-45deg)}
+.wsd__b--tr{top:4px;right:4px;transform:translate(50%,-50%) rotate(45deg)}
+.wsd__b--bl{bottom:4px;left:4px;transform:translate(-50%,50%) rotate(45deg)}
+.wsd__b--br{bottom:4px;right:4px;transform:translate(50%,50%) rotate(-45deg)}
+.wsd__in{position:relative;z-index:2;padding:12px;display:flex;
+  flex-direction:column;gap:8px;overflow-wrap:break-word}
+.wsd__t{font-size:14px;color:#f2f2f2;text-shadow:0 0 6px rgba(242,242,242,.45)}
+.wsd__r{color:#8a8a8a;font-size:12px;line-height:1;letter-spacing:0;
+  overflow:hidden;white-space:nowrap;user-select:none;
+  text-shadow:0 0 4px rgba(138,138,138,.35)}
+.wsd__l{color:#aab5c4;font-size:13px;line-height:1.45}
+@media (max-width:560px){
+  .wsd__subject{font-size:16px}
+  .wsd__lbl{font-size:9.5px;padding:2px 4px}
+  .wsd__l{font-size:12px}
+  .wsd__card{flex-basis:150px}
+}
+/* diagram variants — one visible at a time, cycled by the dev panel */
+.wsdv{display:none}
+.wsdv--on{display:block}
+/* analog line-art icons: stroke follows the card accent, with the same glow */
+.wsd__ic{vertical-align:-2px;margin-right:8px;filter:drop-shadow(0 0 2px var(--acc))}
+.wsd__ic line,.wsd__ic circle,.wsd__ic path{stroke:var(--acc);fill:none;stroke-width:1}
+.wsd__ic .led{fill:var(--acc);stroke:none}
+.wsd__cap{color:rgba(242,242,242,.45);font-size:12px;letter-spacing:.04em}
+/* A — cartridge: pictorial. A classic compact Mac (the machine) above a 3.5"
+   floppy (the drive), shutter facing the slot. All text lives in two
+   explanation cards on the right; thin measured callout lines (no arrows)
+   point at the graphic each card describes. */
+.wsdA{position:relative;display:flex;gap:22px;justify-content:center;
+  align-items:stretch}
+.wsdA__fig{flex:0 0 auto;width:min(230px,44%)}
+.wsdA__fig svg{width:100%;height:auto;overflow:visible;display:block}
+.wsdA__boxes{flex:0 1 320px;display:flex;flex-direction:column;
+  justify-content:space-between;gap:18px;padding:24px 0 44px;min-width:0}
+.wsdA__box{flex:none;width:100%}
+.wsdA .mg,.wsdA .wg,.wsdA .dg{fill:none;stroke-width:1}
+.wsdA .mg{stroke:#c2d9ff;filter:drop-shadow(0 0 2px #c2d9ff)}
+.wsdA .wg,.wsdA .dg{stroke:#b395df;filter:drop-shadow(0 0 2px #b395df)}
+.wsdA text{stroke:none;filter:none;font-family:inherit}
+.wsdA .ledb{fill:#c2d9ff;stroke:none}
+.wsdA .faint{stroke-opacity:.45}
+.wsdA .slott{fill:rgba(179,149,223,.75);font-size:8.5px;letter-spacing:.14em;
+  text-transform:uppercase}
+.wsdA__wires{position:absolute;inset:0;pointer-events:none;overflow:visible}
+.wsdA__wires path{fill:none;stroke-width:1}
+@media (max-width:640px){
+  .wsdA{flex-direction:column;align-items:center;gap:14px}
+  .wsdA__fig{width:min(230px,70%)}
+  .wsdA__boxes{flex:none;flex-direction:row;justify-content:center;
+    align-items:stretch;padding:0;gap:10px;width:100%}
+  .wsdA__box{flex:1 1 0;min-width:0}
+  .wsdA__wires{display:none}
+}
+/* B — chassis: dashed workspace frame containing both cards */
+.wsdB{position:relative;padding:26px 18px 18px;margin-top:14px}
+.wsdB__fe,.wsdB__fb{position:absolute;pointer-events:none}
+.wsdB__fe--t{top:0;left:14px;right:14px;height:1px;
+  background:repeating-linear-gradient(90deg,rgba(242,242,242,.45) 0 5px,transparent 5px 10px)}
+.wsdB__fe--b{bottom:0;left:14px;right:14px;height:1px;
+  background:repeating-linear-gradient(90deg,rgba(242,242,242,.45) 0 5px,transparent 5px 10px)}
+.wsdB__fe--l{left:0;top:14px;bottom:14px;width:1px;
+  background:repeating-linear-gradient(0deg,rgba(242,242,242,.45) 0 5px,transparent 5px 10px)}
+.wsdB__fe--r{right:0;top:14px;bottom:14px;width:1px;
+  background:repeating-linear-gradient(0deg,rgba(242,242,242,.45) 0 5px,transparent 5px 10px)}
+.wsdB__fb{width:19.8px;height:1px;background:rgba(242,242,242,.45);transform-origin:center}
+.wsdB__fb--tl{top:7px;left:7px;transform:translate(-50%,-50%) rotate(-45deg)}
+.wsdB__fb--tr{top:7px;right:7px;transform:translate(50%,-50%) rotate(45deg)}
+.wsdB__fb--bl{bottom:7px;left:7px;transform:translate(-50%,50%) rotate(45deg)}
+.wsdB__fb--br{bottom:7px;right:7px;transform:translate(50%,50%) rotate(-45deg)}
+.wsdB__tag{position:absolute;top:-7px;left:50%;transform:translateX(-50%);background:#000;
+  padding:2px 9px;font-size:10px;letter-spacing:.16em;color:rgba(242,242,242,.55)}
+.wsdB__ledger{border:1px solid rgba(179,149,223,.45)}
+.wsdB__ledger>div{padding:5px 9px;border-top:1px solid rgba(179,149,223,.28)}
+.wsdB__ledger>div:first-child{border-top:0}
+.wsdB__ledger .m{color:var(--acc);font-size:11px;letter-spacing:.1em;
+  text-shadow:0 0 4px var(--acc)}
+/* C — patch panel: attach wires between units, member rows wire out */
+.wsdC{position:relative;display:flex;align-items:flex-start;margin-top:8px}
+.wsdC__col{flex:0 1 208px;min-width:150px}
+.wsdC__gap{flex:1 1 auto;min-width:44px;display:flex;flex-direction:column;
+  justify-content:center;gap:14px;align-self:stretch}
+.wsdC__wrow{position:relative;height:18px;display:flex;align-items:center;
+  justify-content:center}
+.wsdC__wrow .wsd__gapline{left:2px;right:2px}
+.wsdC__cap{margin-top:7px;text-align:center;font-size:11px;letter-spacing:.1em;
+  color:rgba(242,242,242,.4)}
+.wsdC__rowln{padding:5px 9px;border-top:1px solid rgba(179,149,223,.28)}
+.wsdC__tray{border:1px solid rgba(179,149,223,.45)}
+.wsdC__tray>div:first-child{border-top:0}
+.wsdC__tray .m{color:var(--acc);font-size:11px;letter-spacing:.1em;
+  text-shadow:0 0 4px var(--acc)}
+.wsdC__rail{position:relative;flex:0 0 118px;align-self:stretch}
+.wsdC__out{position:absolute;left:14px;font-size:11px;line-height:1.25;
+  color:rgba(179,149,223,.85);text-shadow:0 0 4px rgba(179,149,223,.4)}
+.wsdC__wires{position:absolute;inset:0;overflow:visible;pointer-events:none}
+.wsdC__wires path{stroke:#b395df;stroke-width:1;fill:none;
+  filter:drop-shadow(0 0 2px #b395df)}
+.wsdC__mnote{display:none;margin-top:8px;font-size:12px;color:rgba(179,149,223,.85)}
+@media (max-width:640px){
+  .wsdC{flex-direction:column;align-items:center;gap:12px}
+  .wsdC__col{flex:none;width:min(320px,100%)}
+  .wsdC__gap{align-self:auto;min-height:0;gap:6px}
+  .wsdC__wrow .wsd__gapline{display:none}
+  .wsdC__rail,.wsdC__wires{display:none}
+  .wsdC__mnote{display:block}
+}
+ul{margin:0;padding-left:1.25em;color:#aab5c4}
+li{margin:6px 0}
+.price{margin:12px 0 14px}
+.btn{display:inline-block;border:1px solid rgba(242,242,242,.65);border-radius:6px;
+  padding:8px 18px;font-weight:500;text-decoration:none;margin:14px 0 4px}
+.btn:hover{background:rgba(255,255,255,.08);color:#f2f2f2}
+.swarm{margin:14px 0 0;color:#aab5c4}
+footer{margin-top:60px;border-top:1px solid rgba(242,242,242,.25);padding:22px 0 40px;
+  display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  font-size:14px;color:rgba(242,242,242,.35)}
+footer a{color:rgba(242,242,242,.35)}
+.flinks{display:flex;gap:14px;flex-wrap:wrap}
+footer a:hover{color:#f2f2f2}
+</style>
+</head><body>
+<div class="stars" id="starfield" aria-hidden="true"></div>
+<div class="orbbg" id="orbbg" aria-hidden="true"><div id="orbital"></div></div>
+<div class="wrap">
+  <nav class="top">
+    <a class="brand" href="/">BlitzOS</a>
+    <a class="signin" href="/auth/google/start">Sign in with Google</a>
+  </nav>
+
+  <h1>Building blocks for your agent workforce.</h1>
+  <p class="sub">BlitzOS is infrastructure to build your agent workforce. Each agent gets a workspace: its own VM, credentials, and data. Agents can also spawn workspaces for their subagents. Create and manage them all from our open-source web and mobile apps. BYO agents and machines.</p>
+
+  <div class="herospace" aria-hidden="true"></div>
+
+
+  <section>
+    <div class="secno">01</div>
+    <h2 class="h2acc" style="--sacc:#c2d9ff">Agent Workspaces</h2>
+    <p class="lead">Agent workspaces are the core primitive of BlitzOS. A workspace is a Linux VM with an attached drive, running any number of agents. Run it on our cloud machines, your machines, or a third-party provider.</p>
+    <div class="wsd" id="wsd" aria-hidden="true">
+      <div class="wsdv wsdv--on" id="wsdvA">
+        <div class="wsdA" id="wsdAWrap">
+          <div class="wsdA__fig">
+            <svg id="wsdAFig" viewBox="0 0 200 440" aria-hidden="true">
+              <g class="mg">
+                <rect x="25" y="8" width="150" height="176" rx="10"/>
+                <rect x="46" y="26" width="108" height="82" rx="4"/>
+                <line x1="56" y1="44" x2="98" y2="44"/>
+                <line x1="56" y1="54" x2="82" y2="54"/>
+                <rect class="ledb" x="86" y="49" width="6" height="9"/>
+                <rect x="38" y="184" width="124" height="13" rx="3"/>
+              </g>
+              <g class="dg">
+                <rect x="64" y="128" width="72" height="8" rx="2" stroke-dasharray="4 3"/>
+              </g>
+              <text class="slott" x="100" y="151" text-anchor="middle">drive slot</text>
+              <g class="wg">
+                <line x1="100" y1="276" x2="100" y2="220"/>
+                <path d="M 94 228 L 100 220 L 106 228"/>
+              </g>
+              <g class="dg">
+                <rect x="35" y="300" width="130" height="130" rx="6"/>
+                <rect x="62" y="306" width="76" height="36" rx="2"/>
+                <rect x="76" y="311" width="20" height="26"/>
+                <rect x="47" y="350" width="106" height="62" rx="3"/>
+                <line class="faint" x1="57" y1="366" x2="133" y2="366"/>
+                <line class="faint" x1="57" y1="378" x2="105" y2="378"/>
+                <rect x="41" y="416" width="9" height="9"/>
+              </g>
+            </svg>
+          </div>
+          <div class="wsdA__boxes">
+            <div class="wsd__card wsdA__box" id="wsdABoxM" style="--acc:#c2d9ff">
+              <div class="wsd__in">
+                <div class="wsd__t">The machine <span class="wsd__cap">&middot; disposable</span></div>
+                <div class="wsd__l">Agents run here. Our cloud, yours, or any provider's.</div>
+              </div>
+            </div>
+            <div class="wsd__card wsdA__box" id="wsdABoxD" style="--acc:#b395df">
+              <div class="wsd__in">
+                <div class="wsd__t">The drive <span class="wsd__cap">&middot; durable</span></div>
+                <div class="wsd__l">Repos, files, secrets, and sessions live here.</div>
+                <div class="wsd__l">Attach / re-attach to any machine.</div>
+              </div>
+            </div>
+          </div>
+          <svg class="wsdA__wires" id="wsdAWires" aria-hidden="true"></svg>
+        </div>
+      </div>
+    </div>
+    <h3>The machine</h3>
+    <ul>
+      <li>Any provider's VM, or your own box. Claude Code, Codex, OpenCode, Pi, and Kimi Code preinstalled.</li>
+    </ul>
+    <h3>The drive</h3>
+    <ul>
+      <li>Your repos, files, secrets, agent sessions in a durable drive with encrypted backups. Attach to any workspace to give agents in it necessary context and secrets.</li>
+      <li>Workspace state backs up into the drive automatically. Port the drive across providers, or copy it into many workspaces so agents can run parallel experiments.</li>
+    </ul>
+    <h3>Secrets</h3>
+    <ul>
+      <li>Put secrets in any file in the drive and mark it secret. BlitzOS' secret broker enforces agent access controls. If any agent requests escalated access, you can approve it.</li>
+      <li>The secret broker logs every agent request and approval for you to audit.</li>
+    </ul>
+    <h3>Sessions</h3>
+    <ul>
+      <li>Agent sessions are persisted on the drive like a regular file. Sessions survive tab closes and machine death, always-on in the Blitz app from any device.</li>
+    </ul>
+    <div class="sesfig" aria-hidden="true">
+      <svg viewBox="0 0 360 112">
+        <g class="gi">
+          <rect x="16" y="12" width="78" height="48" rx="4"/>
+          <path d="M 8 66 L 102 66 L 96 60 L 14 60 Z"/>
+          <rect x="158" y="8" width="34" height="62" rx="6"/>
+          <line x1="170" y1="64" x2="180" y2="64"/>
+          <rect x="252" y="10" width="72" height="46" rx="4"/>
+          <line x1="288" y1="56" x2="288" y2="64"/>
+          <line x1="274" y1="66" x2="302" y2="66"/>
+        </g>
+        <text class="tpr" x="24" y="30">&#9656;_</text>
+        <text class="tpr" x="164" y="26">&#9656;_</text>
+        <text class="tpr" x="260" y="28">&#9656;_</text>
+        <text class="tc" x="55" y="84" text-anchor="middle">laptop</text>
+        <text class="tc" x="175" y="84" text-anchor="middle">phone</text>
+        <text class="tc" x="288" y="84" text-anchor="middle">any device</text>
+        <g class="gp"><line x1="55" y1="100" x2="288" y2="100"/></g>
+        <rect class="mask" x="141" y="94" width="84" height="12"/>
+        <text class="tps" x="183" y="103" text-anchor="middle">same session</text>
+      </svg>
+    </div>
+  </section>
+
+
+  <section>
+    <div class="secno">02</div>
+    <h2 class="h2acc" style="--sacc:#c2d9ff">Working with agent workspaces</h2>
+    <ul>
+      <li>The Blitz app: manage agent workspaces from the web or mobile app, or self-host it. The Blitz app is open-source and designed to be modified.</li>
+      <li>Agent API: agents can create agent workspaces through our API. For example, any agent can spawn subagents with their own workspace, giving them the required machine, secrets, and data in one POST call.</li>
+    </ul>
+    <div class="spawn" id="spawn" aria-hidden="true">
+      <div class="wsd__card spawn__main" id="spawnMain" style="--acc:#c2d9ff">
+        <div class="wsd__in">
+          <div class="wsd__t">main agent</div>
+          <div class="spawn__code">POST /api/v1/workspaces &times; 3</div>
+        </div>
+      </div>
+      <svg class="wsd__conn" id="spawnConn" height="44" aria-hidden="true"></svg>
+      <div class="spawn__row">
+        <div class="spawn__ws" id="spawnWs0"><svg viewBox="0 0 84 48" aria-hidden="true"><g class="gm"><rect x="2" y="4" width="36" height="40" rx="4"/><rect x="7" y="9" width="26" height="18" rx="2"/><line x1="12" y1="32" x2="28" y2="32"/></g><g class="gd"><rect x="48" y="8" width="32" height="32" rx="3"/><rect x="55" y="11" width="18" height="9" rx="1"/><line x1="53" y1="26" x2="75" y2="26"/><line x1="53" y1="31" x2="70" y2="31"/></g></svg></div>
+        <div class="spawn__ws" id="spawnWs1"><svg viewBox="0 0 84 48" aria-hidden="true"><g class="gm"><rect x="2" y="4" width="36" height="40" rx="4"/><rect x="7" y="9" width="26" height="18" rx="2"/><line x1="12" y1="32" x2="28" y2="32"/></g><g class="gd"><rect x="48" y="8" width="32" height="32" rx="3"/><rect x="55" y="11" width="18" height="9" rx="1"/><line x1="53" y1="26" x2="75" y2="26"/><line x1="53" y1="31" x2="70" y2="31"/></g></svg></div>
+        <div class="spawn__ws" id="spawnWs2"><svg viewBox="0 0 84 48" aria-hidden="true"><g class="gm"><rect x="2" y="4" width="36" height="40" rx="4"/><rect x="7" y="9" width="26" height="18" rx="2"/><line x1="12" y1="32" x2="28" y2="32"/></g><g class="gd"><rect x="48" y="8" width="32" height="32" rx="3"/><rect x="55" y="11" width="18" height="9" rx="1"/><line x1="53" y1="26" x2="75" y2="26"/><line x1="53" y1="31" x2="70" y2="31"/></g></svg></div>
+      </div>
+      <div class="spawn__cap">the right machine &middot; secrets &middot; data &mdash; per subagent</div>
+    </div>
+  </section>
+
+
+  <section>
+    <div class="secno">03</div>
+    <h2 class="h2acc" style="--sacc:#b395df">Vibe-coded apps</h2>
+    <p class="lead">Using our API, agents can create and deploy full-stack web apps. Backed with a real database &amp; file storage and served on Cloudflare edge, these apps can replace entire SaaS subscriptions, and can be shared with your team just like a google doc.</p>
+    <div class="appsfig" aria-hidden="true">
+      <svg viewBox="0 0 360 190">
+        <g class="ga gm"><rect x="6" y="70" width="56" height="34" rx="4"/>
+          <line x1="14" y1="81" x2="34" y2="81"/>
+          <line x1="14" y1="91" x2="26" y2="91"/></g>
+        <text class="tb" x="34" y="118" text-anchor="middle">agent</text>
+        <g class="gw"><line x1="62" y1="87" x2="92" y2="87"/></g>
+        <g class="gi">
+          <rect x="92" y="24" width="212" height="122" rx="6"/>
+          <line x1="92" y1="44" x2="304" y2="44"/>
+          <circle cx="102" cy="34" r="2"/>
+          <circle cx="111" cy="34" r="2"/>
+          <circle cx="120" cy="34" r="2"/>
+          <rect x="106" y="58" width="88" height="52" rx="2"/>
+          <line x1="106" y1="71" x2="194" y2="71"/>
+          <line x1="106" y1="84" x2="194" y2="84"/>
+          <line x1="106" y1="97" x2="194" y2="97"/>
+          <line x1="132" y1="58" x2="132" y2="110"/>
+          <rect x="210" y="88" width="8" height="22"/>
+          <rect x="224" y="72" width="8" height="38"/>
+          <rect x="238" y="80" width="8" height="30"/>
+          <rect x="252" y="62" width="8" height="48"/>
+          <line x1="210" y1="122" x2="260" y2="122"/>
+          <line x1="210" y1="132" x2="244" y2="132"/>
+        </g>
+        <text class="tp" x="198" y="38" text-anchor="middle">yourapp.app.blitz.dev</text>
+        <g class="gp"><line x1="141" y1="41" x2="255" y2="41"/></g>
+        <g class="gw"><line x1="198" y1="146" x2="198" y2="166"/></g>
+        <text class="td" x="206" y="160">share like a doc</text>
+        <g class="gt"><circle cx="186" cy="176" r="4"/>
+          <circle cx="198" cy="176" r="4"/>
+          <circle cx="210" cy="176" r="4"/></g>
+      </svg>
+    </div>
+  </section>
+
+
+  <section>
+    <div class="secno">04</div>
+    <h2 class="h2acc" style="--sacc:rgba(242,242,242,.4)">What you get.</h2>
+    <ul>
+      <li>Hosted workspaces: 3 vCPU &middot; 4 GB RAM &middot; 80 GB disk &middot; Ubuntu 24.04 LTS</li>
+      <li>Claude Code, Codex, OpenCode, Pi &amp; Kimi Code preinstalled</li>
+      <li>Create and manage agents from our web app or mobile app</li>
+      <li>50 GB drive portable across any provider</li>
+    </ul>
+    <a class="btn" href="/auth/google/start">Start now</a>
+    <p class="swarm">Running a swarm? <a href="https://discord.gg/VsywH6GNhB">Talk to us</a>.</p>
+  </section>
+
+  <footer>
+    <span>&copy; 2026 BlitzOS</span>
+    <span class="flinks"><a href="/security">Security</a> <a href="/terms">Terms</a> <a href="/privacy">Privacy</a> <a href="https://discord.gg/VsywH6GNhB" target="_blank" rel="noreferrer">Discord</a></span>
+  </footer>
+</div>
+<script>
+(function () {
+  'use strict';
+  /* Starfield — same 28-star data as the / route. */
+  var STARS = [
+    [3,6,'pin'],[11,22,'pin'],[18,8,'pin'],[22,44,'dot'],[29,18,'pin'],[33,70,'pin'],
+    [38,4,'glow'],[41,36,'pin'],[45,62,'pin'],[49,12,'pin'],[54,80,'pin'],[58,28,'pin'],
+    [62,54,'cross'],[67,16,'pin'],[71,72,'glow'],[75,40,'pin'],[79,8,'pin'],[83,60,'pin'],
+    [87,30,'pin'],[91,86,'dot'],[94,50,'pin'],[97,14,'pin'],[6,78,'pin'],[14,92,'pin'],
+    [26,88,'cross'],[50,96,'pin'],[72,92,'pin'],[88,76,'pin']
+  ];
+  var sf = document.getElementById('starfield');
+  if (sf) {
+    for (var si = 0; si < STARS.length; si++) {
+      var sp = document.createElement('span');
+      sp.className = 'star star--' + STARS[si][2];
+      sp.style.left = STARS[si][0] + '%';
+      sp.style.top = STARS[si][1] + '%';
+      sf.appendChild(sp);
+    }
+  }
+  /* Orbital diagram — same vanilla port as the / route, restrained:
+     static placement, small fixed width. */
+  var NI = 1300, TS = 600, PA = 200;
+  var CFG = {
+    timeScale: 2.55,
+    extendRight: 2000, extendVertical: 500, orbitStroke: 2.05,
+    orbits: [
+      { cx: 293.5, cy: 500, rx: 236.5, ry: 251.5, fade: 18.5 },
+      { cx: 556.5, cy: 500, rx: 337,   ry: 264,   fade: 44.5 },
+      { cx: 447,   cy: 500, rx: 390.5, ry: 184.5, fade: 44 },
+      { cx: 480.5, cy: 500, rx: 318,   ry: 101.5, fade: 13.5 }
+    ],
+    stars: [
+      { speed: 0.34, phase: 0.5, dir: 1 },
+      { speed: 0.18, phase: 1.4, dir: 1 },
+      { speed: 0.45, phase: 2.7, dir: -1 },
+      { speed: 0,    phase: Math.PI, dir: 1 }
+    ],
+    flare: {
+      angle: 0, length: 2109, nearWidth: 1, farWidth: 349.5, intensity: 1.43,
+      noiseScale: 0.0065, noiseFlow: 1.1, turbulence: 0.16, falloff: 1.05,
+      haloSize: 30, haloIntensity: 0.88, haloOffsetX: 12.5,
+      fishtailStart: -0.05, fishtailAmount: 2.93, fishtailSpread: 0.23,
+      fishtailLobeWidth: 0.078, fishtailBend: 2, outerBloom: 0.63,
+      centerStarRadius: 12, beamShift: 35, flowVelocity: 5,
+      centerStarColor: '#dceeff', beamHotColor: '#99b8d6',
+      beamMidColor: '#f5ebff', beamColdColor: '#f5f5f5'
+    }
+  };
+  var host = document.getElementById('orbital');
+  if (!host) return;
+  host.style.position = 'relative';
+  host.style.pointerEvents = 'none';
+
+  var canvas = document.createElement('canvas');
+  canvas.style.position = 'absolute';
+  canvas.style.left = '0';
+  host.appendChild(canvas);
+
+  var NS = 'http://www.w3.org/2000/svg';
+  var svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('preserveAspectRatio', 'xMinYMid meet');
+  svg.style.position = 'absolute';
+  svg.style.left = '0';
+  svg.style.overflow = 'visible';
+  var defs = document.createElementNS(NS, 'defs');
+  svg.appendChild(defs);
+  var gOrbits = document.createElementNS(NS, 'g');
+  gOrbits.setAttribute('fill', 'none');
+  gOrbits.setAttribute('stroke-width', String(CFG.orbitStroke));
+  gOrbits.setAttribute('opacity', '0.9');
+  svg.appendChild(gOrbits);
+  var gStars = document.createElementNS(NS, 'g');
+  gStars.setAttribute('fill', '#ffffff');
+  svg.appendChild(gStars);
+  var ellipses = [], starDots = [];
+  for (var i = 0; i < 4; i++) {
+    var o = CFG.orbits[i];
+    var grad = document.createElementNS(NS, 'linearGradient');
+    grad.setAttribute('id', 'ofade' + i);
+    grad.setAttribute('gradientUnits', 'userSpaceOnUse');
+    grad.setAttribute('x1', String(o.cx - o.rx));
+    grad.setAttribute('x2', String(o.cx + o.rx));
+    var s1 = document.createElementNS(NS, 'stop');
+    s1.setAttribute('offset', '0');
+    s1.setAttribute('stop-color', '#cfe7ff');
+    s1.setAttribute('stop-opacity', '1');
+    var s2 = document.createElementNS(NS, 'stop');
+    s2.setAttribute('offset', String(Math.max(0, 1 - o.fade / 100)));
+    s2.setAttribute('stop-color', '#cfe7ff');
+    s2.setAttribute('stop-opacity', '0');
+    grad.appendChild(s1); grad.appendChild(s2);
+    defs.appendChild(grad);
+    var el = document.createElementNS(NS, 'ellipse');
+    el.setAttribute('stroke', 'url(#ofade' + i + ')');
+    el.setAttribute('cx', String(o.cx)); el.setAttribute('cy', String(o.cy));
+    el.setAttribute('rx', String(o.rx)); el.setAttribute('ry', String(o.ry));
+    gOrbits.appendChild(el);
+    ellipses.push(el);
+    var ci = document.createElementNS(NS, 'circle');
+    ci.setAttribute('r', i === 3 ? String(CFG.flare.centerStarRadius) : '4');
+    if (i === 3) ci.setAttribute('fill', CFG.flare.centerStarColor);
+    gStars.appendChild(ci);
+    starDots.push(ci);
+  }
+  host.appendChild(svg);
+
+  var VSH = [
+    'attribute vec2 aPos;',
+    'varying vec2 vUv;',
+    'void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }'
+  ].join('\n');
+  var FSH = [
+    'precision highp float;',
+    'uniform float uTime;',
+    'uniform vec2 uSvgSize;',
+    'uniform vec2 uSource;',
+    'uniform float uAngle, uLength, uNearWidth, uFarWidth, uIntensity;',
+    'uniform float uNoiseScale, uNoiseFlow, uTurbulence, uFalloff;',
+    'uniform float uHaloSize, uHaloIntensity, uHaloOffsetX, uBeamShift, uFlowVelocity;',
+    'uniform float uFishtailStart, uFishtailAmount, uFishtailSpread, uFishtailLobeWidth, uFishtailBend;',
+    'uniform float uOuterBloom, uSvgOffsetY;',
+    'uniform vec3 uHotColor, uMidColor, uColdColor, uHaloColor;',
+    'varying vec2 vUv;',
+    'float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }',
+    'float vnoise(vec2 p){',
+    '  vec2 i = floor(p), f = fract(p);',
+    '  vec2 u = f*f*(3.0 - 2.0*f);',
+    '  return mix(mix(hash(i), hash(i + vec2(1.0,0.0)), u.x),',
+    '             mix(hash(i + vec2(0.0,1.0)), hash(i + vec2(1.0,1.0)), u.x), u.y);',
+    '}',
+    'float fbm(vec2 p){',
+    '  float v = 0.0, a = 0.5;',
+    '  for (int i = 0; i < 5; i++){ v += a * vnoise(p); p *= 2.0; a *= 0.5; }',
+    '  return v;',
+    '}',
+    'void main(){',
+    '  vec2 svgCoord = vUv * uSvgSize;',
+    '  svgCoord.y = (uSvgSize.y - svgCoord.y) + uSvgOffsetY;',
+    '  vec2 dir = vec2(cos(uAngle), sin(uAngle));',
+    '  vec2 perp = vec2(-dir.y, dir.x);',
+    '  vec2 coneStart = uSource + vec2(uHaloOffsetX, 0.0) + dir * uBeamShift;',
+    '  vec2 rel = svgCoord - coneStart;',
+    '  float along = dot(rel, dir);',
+    '  float across = dot(rel, perp);',
+    '  float t = along / uLength;',
+    '  float tc = clamp(t, 0.0, 1.0);',
+    '  float behindMask = smoothstep(-0.02, 0.02, t);',
+    '  float width = mix(uNearWidth, uFarWidth, smoothstep(0.0, 1.0, tc));',
+    '  float r = across / max(width, 1.0);',
+    '  float singleProfile = exp(-r * r);',
+    '  float ftMix = smoothstep(uFishtailStart, 1.0, tc) * uFishtailAmount;',
+    '  float spread = uFishtailSpread * (1.0 + uFishtailBend * max(tc - uFishtailStart, 0.0) * 2.0);',
+    '  float r1 = (across - spread * width) / max(width, 1.0);',
+    '  float r2 = (across + spread * width) / max(width, 1.0);',
+    '  float lw = max(uFishtailLobeWidth, 0.05);',
+    '  float bimodal = (exp(-(r1 * r1) / lw) + exp(-(r2 * r2) / lw)) * 0.62;',
+    '  float profile = mix(singleProfile, bimodal, ftMix);',
+    '  float bloomR = across / max(width * 2.2, 1.0);',
+    '  float bloom = exp(-bloomR * bloomR) * uOuterBloom * smoothstep(0.0, 0.6, tc);',
+    '  profile += bloom;',
+    '  float lenFalloff = pow(max(1.0 - tc, 0.0), uFalloff);',
+    '  vec2 nUv = vec2(t * uNoiseScale * uLength, across * uNoiseScale * 0.6);',
+    '  vec2 warp = vec2(',
+    '    fbm(nUv + vec2(0.0,  uTime * uNoiseFlow * 0.3)),',
+    '    fbm(nUv + vec2(7.3, -uTime * uNoiseFlow * 0.2))',
+    '  ) * 1.2;',
+    '  float n = fbm(nUv * 0.7 + warp + vec2(-uTime * uFlowVelocity, 0.0));',
+    '  float wisp = mix(1.0 - uTurbulence * 0.8, 1.0 + uTurbulence * 0.6, n);',
+    '  float coneA = profile * lenFalloff * wisp * uIntensity * behindMask;',
+    '  coneA = clamp(coneA, 0.0, 1.0);',
+    '  vec3 coneCol = mix(mix(uHotColor, uMidColor, smoothstep(0.0, 0.25, tc)),',
+    '                     uColdColor, smoothstep(0.25, 1.0, tc));',
+    '  vec2 haloCenter = uSource + vec2(uHaloOffsetX, 0.0);',
+    '  float dist = length(svgCoord - haloCenter);',
+    '  float halo = exp(-(dist * dist) / max(uHaloSize * uHaloSize, 1.0)) * uHaloIntensity;',
+    '  vec3 outCol = coneCol * coneA + uHaloColor * halo;',
+    '  float outA = clamp(coneA + halo, 0.0, 1.0);',
+    '  gl_FragColor = vec4(outCol, outA);',
+    '}'
+  ].join('\n');
+
+  function srgbToLinear(hex) {
+    var v = [1, 3, 5].map(function (k) { return parseInt(hex.substr(k, 2), 16) / 255; });
+    return v.map(function (c) {
+      return c < 0.04045 ? c * 0.0773993808 : Math.pow(c * 0.9478672986 + 0.0521327014, 2.4);
+    });
+  }
+
+  var gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true, antialias: false });
+  var uni = null;
+  if (gl) {
+    function sh(type, src) {
+      var s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { return null; }
+      return s;
+    }
+    var vs = sh(gl.VERTEX_SHADER, VSH), fs = sh(gl.FRAGMENT_SHADER, FSH);
+    if (vs && fs) {
+      var prog = gl.createProgram();
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+      if (gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        gl.useProgram(prog);
+        var buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+        var loc = gl.getAttribLocation(prog, 'aPos');
+        gl.enableVertexAttribArray(loc);
+        gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+        gl.disable(gl.DEPTH_TEST);
+        gl.enable(gl.BLEND);
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        uni = {};
+        ['uTime','uSvgSize','uSource','uAngle','uLength','uNearWidth','uFarWidth','uIntensity',
+         'uNoiseScale','uNoiseFlow','uTurbulence','uFalloff','uHaloSize','uHaloIntensity',
+         'uHaloOffsetX','uBeamShift','uFlowVelocity','uFishtailStart','uFishtailAmount',
+         'uFishtailSpread','uFishtailLobeWidth','uFishtailBend','uOuterBloom','uSvgOffsetY',
+         'uHotColor','uMidColor','uColdColor','uHaloColor'].forEach(function (n) {
+          uni[n] = gl.getUniformLocation(prog, n);
+        });
+        var F = CFG.flare;
+        gl.uniform2f(uni.uSvgSize, NI + CFG.extendRight, TS + CFG.extendVertical);
+        gl.uniform1f(uni.uSvgOffsetY, PA - CFG.extendVertical / 2);
+        var o3 = CFG.orbits[3];
+        gl.uniform2f(uni.uSource, o3.cx - o3.rx, o3.cy);
+        gl.uniform1f(uni.uAngle, F.angle);
+        gl.uniform1f(uni.uLength, F.length);
+        gl.uniform1f(uni.uNearWidth, F.nearWidth);
+        gl.uniform1f(uni.uFarWidth, F.farWidth);
+        gl.uniform1f(uni.uIntensity, F.intensity);
+        gl.uniform1f(uni.uNoiseScale, F.noiseScale);
+        gl.uniform1f(uni.uNoiseFlow, F.noiseFlow);
+        gl.uniform1f(uni.uTurbulence, F.turbulence);
+        gl.uniform1f(uni.uFalloff, F.falloff);
+        gl.uniform1f(uni.uHaloSize, F.haloSize);
+        gl.uniform1f(uni.uHaloIntensity, F.haloIntensity);
+        gl.uniform1f(uni.uHaloOffsetX, F.haloOffsetX);
+        gl.uniform1f(uni.uBeamShift, F.beamShift);
+        gl.uniform1f(uni.uFlowVelocity, F.flowVelocity);
+        gl.uniform1f(uni.uFishtailStart, F.fishtailStart);
+        gl.uniform1f(uni.uFishtailAmount, F.fishtailAmount);
+        gl.uniform1f(uni.uFishtailSpread, F.fishtailSpread);
+        gl.uniform1f(uni.uFishtailLobeWidth, F.fishtailLobeWidth);
+        gl.uniform1f(uni.uFishtailBend, F.fishtailBend);
+        gl.uniform1f(uni.uOuterBloom, F.outerBloom);
+        gl.uniform3fv(uni.uHotColor, srgbToLinear(F.beamHotColor));
+        gl.uniform3fv(uni.uMidColor, srgbToLinear(F.beamMidColor));
+        gl.uniform3fv(uni.uColdColor, srgbToLinear(F.beamColdColor));
+        gl.uniform3fv(uni.uHaloColor, srgbToLinear(F.centerStarColor));
+      } else { uni = null; }
+    }
+  }
+
+  /* restrained sizing: small fixed cap, centered in the figure band */
+  function layout() {
+    var fig = host.parentNode;
+    var avail = (fig && fig.clientWidth ? fig.clientWidth : window.innerWidth) - 48;
+    var W = Math.max(240, Math.min(440, avail));
+    var H = Math.round(W * TS / NI);
+    var gx = CFG.extendRight * W / NI, gy = CFG.extendVertical * W / NI;
+    host.style.width = W + 'px';
+    host.style.height = H + 'px';
+    var cw = W + gx, chh = H + gy, top = -gy / 2;
+    [canvas, svg].forEach(function (n) {
+      n.style.top = top + 'px';
+      n.style.width = cw + 'px';
+      n.style.height = chh + 'px';
+    });
+    svg.setAttribute('viewBox', '0 ' + (PA - CFG.extendVertical / 2) + ' ' +
+      (NI + CFG.extendRight) + ' ' + (TS + CFG.extendVertical));
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(cw * dpr));
+    canvas.height = Math.max(1, Math.round(chh * dpr));
+  }
+  layout();
+  window.addEventListener('resize', layout);
+
+  var tAcc = 0, last = performance.now();
+  function frame(now) {
+    var dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    tAcc += dt * CFG.timeScale;
+    var F = CFG.flare;
+    for (var k = 0; k < 4; k++) {
+      var ok = CFG.orbits[k], sk = CFG.stars[k], dot = starDots[k];
+      var ang = sk.phase + sk.dir * sk.speed * tAcc;
+      var x = ok.cx + ok.rx * Math.cos(ang);
+      var y = ok.cy + ok.ry * Math.sin(ang);
+      if (k === 3) x += F.haloOffsetX;
+      dot.setAttribute('cx', String(x));
+      dot.setAttribute('cy', String(y));
+      var xs = ok.cx - ok.rx, L = 2 * ok.rx;
+      var fx = xs + L * (1 - ok.fade / 100);
+      var op = 1;
+      if (x >= fx) op = 0;
+      else if (x > xs) op = (fx - x) / Math.max(fx - xs, 1e-6);
+      dot.setAttribute('fill-opacity', String(op));
+    }
+    if (gl && uni) {
+      gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.uniform1f(uni.uTime, tAcc);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+(function () {
+  'use strict';
+  /* Workspace diagram: chamfered card outlines + measured elbow connectors,
+     the LinkBreakdown method (measure centers, draw 1px glowing polylines). */
+  var root = document.getElementById('wsd');
+  if (!root) return;
+  var NS = 'http://www.w3.org/2000/svg';
+  /* chamfered outline: 4 edges + 4 bevel diagonals, on every card, all variants */
+  Array.prototype.forEach.call(document.querySelectorAll('.wsd__card'), function (card) {
+    ['e--t', 'e--r', 'e--b', 'e--l', 'b--tl', 'b--tr', 'b--bl', 'b--br'].forEach(function (m) {
+      var s = document.createElement('span');
+      s.className = 'wsd__' + m.charAt(0) + ' wsd__' + m;
+      card.insertBefore(s, card.firstChild);
+    });
+  });
+  function centerX(el, ref) {
+    var r = el.getBoundingClientRect(), rr = ref.getBoundingClientRect();
+    return (r.left + r.right) / 2 - rr.left;
+  }
+  function elbow(x0, x1, h, dy) {
+    return Math.abs(x1 - x0) < 0.5
+      ? 'M ' + x0 + ' 0 L ' + x0 + ' ' + h
+      : 'M ' + x0 + ' 0 L ' + x0 + ' ' + dy + ' L ' + x1 + ' ' + dy + ' L ' + x1 + ' ' + h;
+  }
+  function setPaths(svg, specs, w, h) {
+    svg.setAttribute('width', String(w));
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    svg.setAttribute('preserveAspectRatio', 'none');
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    specs.forEach(function (sp) {
+      var p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', sp.d);
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke', sp.stroke);
+      p.setAttribute('stroke-width', '1');
+      p.style.filter = 'drop-shadow(0 0 2px ' + sp.stroke + ')';
+      svg.appendChild(p);
+    });
+  }
+  /* A: thin callout lines (no arrows) from each explanation card's left edge
+     to the graphic it describes; anchors are viewBox points scaled to page. */
+  function measureA() {
+    var wrap = document.getElementById('wsdAWrap');
+    var fig = document.getElementById('wsdAFig');
+    var sv = document.getElementById('wsdAWires');
+    if (!wrap || !fig || !sv) return;
+    var wb = wrap.getBoundingClientRect();
+    if (wb.width < 1) return;
+    if (window.getComputedStyle(sv).display === 'none') return;
+    sv.setAttribute('width', String(wb.width));
+    sv.setAttribute('height', String(wb.height));
+    sv.setAttribute('viewBox', '0 0 ' + wb.width + ' ' + wb.height);
+    sv.setAttribute('preserveAspectRatio', 'none');
+    while (sv.firstChild) sv.removeChild(sv.firstChild);
+    var fb = fig.getBoundingClientRect();
+    var sx = fb.width / 200, sy = fb.height / 440;
+    [
+      { box: 'wsdABoxM', vx: 175, vy: 100, c: '#c2d9ff' },
+      { box: 'wsdABoxD', vx: 165, vy: 370, c: '#b395df' }
+    ].forEach(function (a) {
+      var box = document.getElementById(a.box);
+      if (!box) return;
+      var bb = box.getBoundingClientRect();
+      var x0 = fb.left - wb.left + a.vx * sx;
+      var y0 = fb.top - wb.top + a.vy * sy;
+      var x1 = bb.left - wb.left - 2;
+      var y1 = bb.top - wb.top + bb.height / 2;
+      var p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', 'M ' + x0 + ' ' + y0 + ' L ' + x1 + ' ' + y1);
+      p.setAttribute('stroke', a.c);
+      p.setAttribute('stroke-opacity', '0.55');
+      sv.appendChild(p);
+    });
+  }
+  /* spawn diagram: elbows from the main-agent card to each workspace glyph */
+  function measureSpawn() {
+    var sp = document.getElementById('spawn');
+    var main = document.getElementById('spawnMain');
+    var sv = document.getElementById('spawnConn');
+    if (!sp || !main || !sv) return;
+    var w = sp.getBoundingClientRect().width;
+    if (w < 1) return;
+    var x0 = centerX(main, sp);
+    var specs = [];
+    ['spawnWs0', 'spawnWs1', 'spawnWs2'].forEach(function (id) {
+      var g = document.getElementById(id);
+      if (g) specs.push({ d: elbow(x0, centerX(g, sp), 44, 20), stroke: '#c2d9ff' });
+    });
+    setPaths(sv, specs, w, 44);
+  }
+  function measureActive() {
+    measureA();
+    measureSpawn();
+  }
+  requestAnimationFrame(measureActive);
+  window.addEventListener('resize', measureActive);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(measureActive);
+})();
+</script>
+</body></html>

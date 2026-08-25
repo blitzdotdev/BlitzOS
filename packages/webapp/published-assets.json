@@ -1,0 +1,16 @@
+{
+  "comment": "Files that must reach the deployed origin as static assets. Vite copies public/ into dist/, and the control-plane Worker serves dist/ through its ASSETS binding. This list is the contract: test/published-assets.test.ts checks the sources exist, and .github/workflows/release.yml checks them again before a tag deploys. Both sides read THIS file — never hand-edit one side. Add an entry when a page must survive a deploy; removing one is a deliberate un-publishing.",
+  "files": [
+    "terms.html",
+    "privacy.html",
+    "security.html",
+    "landing.html",
+    "landing.css",
+    "robots.txt",
+    "sitemap.xml",
+    "favicon.ico",
+    "apple-touch-icon.png",
+    "og.png",
+    "hero.png"
+  ]
+}
