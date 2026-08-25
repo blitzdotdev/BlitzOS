@@ -97,10 +97,11 @@ ssh -p 2222 \
 ```
 
 The terminal is then at `http://127.0.0.1:7443`, ACP at
-`ws://127.0.0.1:7444`, workspace files at
-`http://127.0.0.1:7445/workspace/`, and agent HOME files at
-`http://127.0.0.1:7445/home/`. Port discovery and preview share the files
-origin, so they need no additional SSH forward or ingress route.
+`ws://127.0.0.1:7444`, and workspace files at
+`http://127.0.0.1:7445/workspace/`. The agent HOME is deliberately not
+published: it holds the agent's OAuth credentials. Port discovery and preview
+share the files origin, so they need no additional SSH forward or ingress
+route.
 
 ### Terminal URL contract
 
