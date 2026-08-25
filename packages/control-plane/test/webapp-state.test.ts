@@ -91,6 +91,62 @@ describe("server-side webApp state", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("preserves managed titles and archived sessions while enforcing shared ids", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    const withArchive = {
+      ...workspaceDoc,
+      tabs: {
+        version: 1,
+        tabs: [{ id: 1, type: "chat", title: "Active", chatSessionId: "chat-one" }],
+        archivedTabs: [{
+          id: 4,
+          type: "chat",
+          title: "Archived",
+          chatSessionId: "chat-four",
+          region: "side",
+        }],
+        activeId: 1,
+        nextId: 5,
+      },
+    };
+    const stored = await appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify(withArchive),
+    });
+    expect(stored.status).toBe(200);
+    await expect(stored.json()).resolves.toMatchObject({ doc: withArchive });
+
+    const sendTabs = (tabs: unknown) => appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...workspaceDoc, tabs }),
+    });
+    expect((await sendTabs({
+      version: 1,
+      tabs: [{ id: 1, type: "chat" }],
+      archivedTabs: [{ id: 1, type: "claude" }],
+      activeId: 1,
+      nextId: 2,
+    })).status).toBe(400);
+    expect((await sendTabs({
+      version: 1,
+      tabs: [],
+      archivedTabs: [{ id: 2, type: "file", filePath: "a.txt" }],
+      activeId: null,
+      nextId: 3,
+    })).status).toBe(400);
+    expect((await sendTabs({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", title: "x".repeat(65) }],
+      activeId: 1,
+      nextId: 2,
+    })).status).toBe(400);
+  });
+
   it("shares one workspace doc between the owner and org-wide editors", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);

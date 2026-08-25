@@ -63,6 +63,7 @@ import {
 } from './sessions-page-state';
 import {
   defaultWorkspaceFiles,
+  isManagedWorkspaceTab,
   maxDrawerWidth,
   removeDismissedChatAuthProviders,
   tabRegion,
@@ -75,12 +76,16 @@ import {
 } from './storage';
 import {
   appendTab,
+  archiveTab,
   closeTab as closePaneTab,
   filesHostRegion,
   moveTab,
   paneRegions,
   panelTab,
   regionActiveId,
+  removeTabPermanently,
+  renameTab,
+  restoreTab,
   showPanelTab,
   splitTab,
   togglePanelTab,
@@ -173,6 +178,11 @@ type WebAppConfirmation = {
 };
 
 type FileCloseConfirmation = {
+  id: string;
+  label: string;
+};
+
+type SessionRemoveConfirmation = {
   id: string;
   label: string;
 };
@@ -271,6 +281,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
   const [fileCloseConfirmation, setFileCloseConfirmation] = useState<FileCloseConfirmation | null>(null);
+  const [sessionRemoveConfirmation, setSessionRemoveConfirmation] = useState<SessionRemoveConfirmation | null>(null);
   const [filesRefreshVersion, setFilesRefreshVersion] = useState(0);
   const [workspaceAttachments, setWorkspaceAttachments] = useState<{
     workspaceId: string;
@@ -296,6 +307,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // Visit once, then retain: tab switches preserve live state without eagerly
   // opening every saved terminal, WebGL surface, and chat SDK connection.
   const retainedSessionIdsRef = useRef<{ workspaceId: string; ids: Set<string> }>({
+    workspaceId: '',
+    ids: new Set(),
+  });
+  // A missing ACP id in persisted state means legacy recovery. Only tabs
+  // created during this browser lifetime carry explicit create intent.
+  const newChatTabIdsRef = useRef<{ workspaceId: string; ids: Set<number> }>({
     workspaceId: '',
     ids: new Set(),
   });
@@ -954,6 +971,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     return () => window.removeEventListener('beforeunload', warnBeforeUnload);
   }, [dirtyFileIds.size]);
   const ttydSessions = activeWorkspaceTabs?.tabs ?? NO_WORKSPACE_TABS;
+  const archivedSessions = activeWorkspaceTabs?.archivedTabs ?? NO_WORKSPACE_TABS;
   // The pane a tab is drawn in. Mobile has one column, so a tab parked in the
   // side pane on a desktop still shows up in the single strip there.
   const surfaceRegion = useCallback((session: WorkspaceTab): WorkspaceRegion => (
@@ -996,6 +1014,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (id !== null) retainedSessionIdsRef.current.ids.add(String(id));
     }
   }, [activeWorkspaceId, mainActiveId, sideActiveId]);
+  if (newChatTabIdsRef.current.workspaceId !== activeWorkspaceId) {
+    newChatTabIdsRef.current = { workspaceId: activeWorkspaceId, ids: new Set() };
+  }
   const tabsLoaded = activeWorkspaceTabs !== null;
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
@@ -1010,7 +1031,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           || session.type === 'claude'
           || session.type === 'codex'
           || session.type === 'terminal'
-            ? SPAWN_SESSION_LABELS[session.type]
+            ? session.title ?? SPAWN_SESSION_LABELS[session.type]
             : session.type
         );
   const ttydTabs = useMemo<WebAppTabModel[]>(() => {
@@ -1031,12 +1052,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         };
       }
       if (session.type !== 'file') {
-        return {
+        const tab: WebAppTabModel = {
           id: String(session.id),
           label: ttydLabel(session),
           agent: session.type,
           pending: false,
         };
+        if (isManagedWorkspaceTab(session)) {
+          tab.customTitle = session.title;
+          tab.renameable = true;
+        }
+        return tab;
       }
       const parts = session.filePath.split('/');
       const basename = parts.at(-1) ?? session.filePath;
@@ -1052,6 +1078,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   }, [dirtyFileIds, ttydSessions]);
+  const archivedTabModels = useMemo<WebAppTabModel[]>(() => archivedSessions
+    .filter(isManagedWorkspaceTab)
+    .map((session) => ({
+      id: String(session.id),
+      label: ttydLabel(session),
+      agent: session.type,
+      pending: false,
+      customTitle: session.title,
+      renameable: true,
+    })), [archivedSessions]);
+  const canEditWorkspaceLayout = activeWorkspace?.accessRole !== 'viewer';
   /** Tab models for one column, in the order that column draws them. */
   const paneTabModels = (region: WorkspaceRegion): WebAppTabModel[] => ttydTabs.filter(
     (tab, index) => {
@@ -1082,9 +1119,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setFocusedRegion(region);
   }, [updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
-    addWorkspaceTab((id) => type === 'chat'
-      ? { id, type, chatProvider: 'claude' }
-      : { id, type });
+    addWorkspaceTab((id) => {
+      if (type !== 'chat') return { id, type };
+      newChatTabIdsRef.current.ids.add(id);
+      return { id, type, chatProvider: 'claude' };
+    });
   };
   const selectTtydSession = useCallback((id: string) => {
     const session = ttydSessions.find((tab) => String(tab.id) === id);
@@ -1183,8 +1222,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const closeTtydSessionNow = (id: string) => {
     updateWorkspaceTabs((tabs) => {
-      const numericId = tabs.tabs.find((tab) => String(tab.id) === id)?.id;
-      return numericId === undefined ? tabs : closePaneTab(tabs, numericId);
+      const tab = tabs.tabs.find((entry) => String(entry.id) === id);
+      if (tab === undefined) return tabs;
+      return isManagedWorkspaceTab(tab)
+        ? archiveTab(tabs, tab.id)
+        : closePaneTab(tabs, tab.id);
     });
     setDirtyFileIds((current) => {
       if (!current.has(id)) return current;
@@ -1192,6 +1234,36 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       next.delete(id);
       return next;
     });
+  };
+  const renameTtydSession = (id: string, title: string | undefined) => {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId)) return;
+    updateWorkspaceTabs((tabs) => renameTab(tabs, numericId, title));
+  };
+  const archiveTtydSession = (id: string) => {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId)) return;
+    updateWorkspaceTabs((tabs) => archiveTab(tabs, numericId));
+  };
+  const restoreTtydSession = (id: string) => {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId)) return;
+    const archived = archivedSessions.find((tab) => tab.id === numericId);
+    if (archived === undefined) return;
+    setFocusedRegion(splitEnabled ? tabRegion(archived) : 'main');
+    updateWorkspaceTabs((tabs) => restoreTab(tabs, numericId));
+  };
+  const removeTtydSessionPermanently = (id: string) => {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId)) return;
+    newChatTabIdsRef.current.ids.delete(numericId);
+    retainedSessionIdsRef.current.ids.delete(id);
+    updateWorkspaceTabs((tabs) => removeTabPermanently(tabs, numericId));
+  };
+  const requestRemoveTtydSession = (id: string) => {
+    const tab = [...ttydTabs, ...archivedTabModels].find((entry) => entry.id === id);
+    if (tab === undefined) return;
+    setSessionRemoveConfirmation({ id, label: tab.label });
   };
   const closeTtydSession = (id: string) => {
     const tab = ttydSessions.find((session) => String(session.id) === id);
@@ -1770,6 +1842,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 <div className="webapp-pane-strip" data-region={region} key={`strip-${region}`}>
                   <WebAppHeader
                     tabs={paneTabModels(region)}
+                    archivedTabs={region === 'main' && canEditWorkspaceLayout ? archivedTabModels : []}
                     activeSessionId={paneActiveId(region) ?? ''}
                     sessionBusy={false}
                     terminalDisabled={workspaceWaking || !tabsLoaded}
@@ -1786,6 +1859,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                     }}
                     onSelect={selectTtydSession}
                     onClose={closeTtydSession}
+                    onRename={canEditWorkspaceLayout ? renameTtydSession : undefined}
+                    onArchive={canEditWorkspaceLayout ? archiveTtydSession : undefined}
+                    onDelete={canEditWorkspaceLayout ? requestRemoveTtydSession : undefined}
+                    onRestore={region === 'main' && canEditWorkspaceLayout
+                      ? restoreTtydSession
+                      : undefined}
                     onSpawn={spawnTtydSession}
                     onTabDragStart={splitEnabled ? beginTabDrag : undefined}
                     onTabDragEnd={clearTabDrag}
@@ -1901,7 +1980,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         url={activeAcpUrl ?? ''}
                         workspaceId={activeWorkspaceId}
                         initialSessionId={session.chatSessionId ?? null}
+                        sessionIntent={session.chatSessionId
+                          ? 'load'
+                          : newChatTabIdsRef.current.ids.has(session.id) ? 'create' : 'recover'}
+                        boundSessionIds={[...ttydSessions, ...archivedSessions]
+                          .flatMap((tab) => tab.id !== session.id
+                            && tab.type === 'chat'
+                            && tab.chatSessionId
+                            ? [tab.chatSessionId]
+                            : [])}
                         onSessionId={(_workspaceId, chatSessionId) => {
+                          newChatTabIdsRef.current.ids.delete(session.id);
                           rememberChatSession(sessionId, chatSessionId, 'claude');
                         }}
                         onOpenPreview={openPreviewPort}
@@ -2217,6 +2306,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           onConfirm={() => {
             closeTtydSessionNow(fileCloseConfirmation.id);
             setFileCloseConfirmation(null);
+          }}
+        />
+      )}
+      {sessionRemoveConfirmation && (
+        <ConfirmationDialog
+          title="Remove session from Blitz?"
+          description={`Remove “${sessionRemoveConfirmation.label}” from the cockpit layout? This does not delete provider-native transcripts or runtime data.`}
+          confirmLabel="Remove permanently"
+          cancelLabel="Cancel"
+          onCancel={() => setSessionRemoveConfirmation(null)}
+          onConfirm={() => {
+            removeTtydSessionPermanently(sessionRemoveConfirmation.id);
+            setSessionRemoveConfirmation(null);
           }}
         />
       )}

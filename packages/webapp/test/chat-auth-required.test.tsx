@@ -80,19 +80,32 @@ class FakeSocket {
 }
 
 /** Waits for the panel to issue one request, then answers it. */
-async function answer(socket: FakeSocket, method: string, result: object): Promise<void> {
+async function requestFor(socket: FakeSocket, method: string): Promise<WireFrame> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const request = socket.sent
       // SAFETY: The panel writes JSON-RPC frames; only the id and method are read back out.
       .map((line) => JSON.parse(line) as WireFrame)
       .find((frame) => frame.method === method);
     if (request !== undefined) {
-      await socket.deliver({ jsonrpc: "2.0", id: request.id, result });
-      return;
+      return request;
     }
     await settle();
   }
   throw new Error(`the panel never sent ${method}; sent=${socket.sent.join(" ")}`);
+}
+
+async function answer(socket: FakeSocket, method: string, result: object): Promise<void> {
+  const request = await requestFor(socket, method);
+  await socket.deliver({ jsonrpc: "2.0", id: request.id, result });
+}
+
+async function answerError(socket: FakeSocket, method: string, message: string): Promise<void> {
+  const request = await requestFor(socket, method);
+  await socket.deliver({
+    jsonrpc: "2.0",
+    id: request.id,
+    error: { code: -32_602, message },
+  });
 }
 
 /** Brings a panel up to the point where it is attached to an existing session. */
@@ -174,5 +187,112 @@ describe("chat sign-in affordance", () => {
     expect(onSignIn).not.toHaveBeenCalled();
 
     await viewer.view.unmount();
+  });
+});
+
+describe("chat session identity", () => {
+  it("creates a distinct session for an explicitly new Chat tab without listing", async () => {
+    const onSessionId = vi.fn();
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId={null}
+        sessionIntent="create"
+        onSessionId={onSessionId}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answer(socket, "session/new", { sessionId: "fresh-session", configOptions: [] });
+    expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/list"))
+      .toBe(false);
+    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "fresh-session");
+    await view.unmount();
+  });
+
+  it("loads an exact stored id and never substitutes a listed session", async () => {
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId="stored-session"
+        sessionIntent="load"
+        onSessionId={() => undefined}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    const load = await requestFor(socket, "session/load");
+    expect(load.params?.sessionId).toBe("stored-session");
+    expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/list"))
+      .toBe(false);
+    await socket.deliver({ jsonrpc: "2.0", id: load.id, result: { configOptions: [] } });
+    await view.unmount();
+  });
+
+  it("recovers the newest session not already bound to another Chat tab", async () => {
+    const onSessionId = vi.fn();
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId={null}
+        sessionIntent="recover"
+        boundSessionIds={["already-bound"]}
+        onSessionId={onSessionId}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answer(socket, "session/list", {
+      sessions: [
+        { sessionId: "already-bound", cwd: "/workspace" },
+        { sessionId: "recover-me", cwd: "/workspace" },
+      ],
+    });
+    const load = await requestFor(socket, "session/load");
+    expect(load.params?.sessionId).toBe("recover-me");
+    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "recover-me");
+    await socket.deliver({ jsonrpc: "2.0", id: load.id, result: { configOptions: [] } });
+    await view.unmount();
+  });
+
+  it("surfaces recovery choices when an exact stored session cannot load", async () => {
+    const view = await render(
+      <ChatPanel
+        url="wss://workspace.test/acp"
+        workspaceId="workspace-one"
+        initialSessionId="missing-session"
+        sessionIntent="load"
+        onSessionId={() => undefined}
+      />,
+    );
+    const socket = sockets[0]!;
+    await answer(socket, "initialize", {
+      protocolVersion: 1,
+      agentCapabilities: { loadSession: true },
+      authMethods: [],
+    });
+    await answerError(socket, "session/load", "unknown session");
+    await settle();
+    expect(view.container.textContent).toContain("saved session could not be loaded");
+    expect([...view.container.querySelectorAll("button")].map(({ textContent }) => textContent))
+      .toEqual(expect.arrayContaining(["Recover existing", "Start new chat"]));
+    expect(socket.sent.some((line) => (JSON.parse(line) as WireFrame).method === "session/new"))
+      .toBe(false);
+    await view.unmount();
   });
 });

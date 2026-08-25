@@ -48,6 +48,7 @@ interface WebAppTabV1 {
 interface WebAppTabsV1 {
   version: 1;
   tabs: WebAppTabV1[];
+  archivedTabs?: WebAppTabV1[];
   activeId: number | null;
   nextId: number;
   sideActiveId?: number;
@@ -101,6 +102,24 @@ const TAB_TYPES: ReadonlySet<string> = new Set([
   "preview",
   "panel",
 ]);
+const SESSION_TITLE_MAX_LENGTH = 64;
+
+function isManagedTab(tab: WebAppTabV1): boolean {
+  return tab.type === "chat"
+    || tab.type === "terminal"
+    || tab.type === "claude"
+    || tab.type === "codex"
+    || tab.type === "opencode"
+    || tab.type === "pi"
+    || tab.type === "kimi"
+    || tab.type === "prime";
+}
+
+function parseManagedTitle(value: OptionalJsonValue, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  const title = boundedString(value, field, SESSION_TITLE_MAX_LENGTH).trim();
+  return title === "" ? undefined : title;
+}
 
 function boundedString(value: OptionalJsonValue, field: string, maxLength: number): string {
   if (!isString(value) || value.length > maxLength) {
@@ -209,8 +228,15 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     const title = boundedString(value.title, `tabs.tabs[${index}].title`, 256);
     return withRegion({ id, type, url, title }, region);
   }
-  if (type !== "chat") return withRegion({ id, type }, region);
+  if (type !== "chat") {
+    const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
+    const tab: WebAppTabV1 = { id, type };
+    if (title !== undefined) tab.title = title;
+    return withRegion(tab, region);
+  }
   const tab: WebAppTabV1 = { id, type };
+  const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
+  if (title !== undefined) tab.title = title;
   if (value.chatSessionId !== undefined) {
     tab.chatSessionId = boundedString(
       value.chatSessionId,
@@ -228,9 +254,20 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.tabs)) {
     throw new HttpError(400, "tabs must be a version 1 tabs document");
   }
-  if (value.tabs.length > 100) throw new HttpError(400, "tabs may contain at most 100 items");
+  const archivedValues = value.archivedTabs === undefined ? [] : value.archivedTabs;
+  if (!Array.isArray(archivedValues)) {
+    throw new HttpError(400, "tabs.archivedTabs must be an array");
+  }
+  if (value.tabs.length + archivedValues.length > 100) {
+    throw new HttpError(400, "tabs may contain at most 100 active and archived items");
+  }
   const tabs = value.tabs.map(parseTab);
-  if (new Set(tabs.map(({ id }) => id)).size !== tabs.length) {
+  const archivedTabs = archivedValues.map(parseTab);
+  if (!archivedTabs.every(isManagedTab)) {
+    throw new HttpError(400, "tabs.archivedTabs may only contain managed sessions");
+  }
+  const allTabs = [...tabs, ...archivedTabs];
+  if (new Set(allTabs.map(({ id }) => id)).size !== allTabs.length) {
     throw new HttpError(400, "tabs must have unique ids");
   }
   const activeId = value.activeId === null
@@ -240,10 +277,11 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
     throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
   }
   const nextId = positiveId(value.nextId, "tabs.nextId");
-  if (tabs.some(({ id }) => id >= nextId)) {
+  if (allTabs.some(({ id }) => id >= nextId)) {
     throw new HttpError(400, "tabs.nextId must be greater than every tab id");
   }
   const parsed: WebAppTabsV1 = { version: 1, tabs, activeId, nextId };
+  if (archivedTabs.length > 0) parsed.archivedTabs = archivedTabs;
   if (value.sideActiveId !== undefined) {
     const sideActiveId = positiveId(value.sideActiveId, "tabs.sideActiveId");
     if (!tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {

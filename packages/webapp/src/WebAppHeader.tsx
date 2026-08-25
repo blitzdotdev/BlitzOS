@@ -1,12 +1,34 @@
-import { Fragment, useEffect, useRef, useState, type DragEvent } from 'react';
-import { CodexIcon, FileIcon, FolderIcon, GenericProviderIcon, ShellIcon } from './WebAppIcons';
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import {
+  ArchiveIcon,
+  CodexIcon,
+  FileIcon,
+  FolderIcon,
+  GenericProviderIcon,
+  RestoreIcon,
+  ShellIcon,
+  TrashIcon,
+} from './WebAppIcons';
 import { FileTypeIcon } from './FileTypeIcon';
 import { previewLinkLabel, type LivePort, type PreviewLink } from './preview';
 import type { TerminalAgent } from './protocol';
+import { SESSION_TITLE_MAX_LENGTH } from './storage';
+
+export { SESSION_TITLE_MAX_LENGTH } from './storage';
 
 export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview' | 'panel';
 export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
-export const SESSION_TITLE_MAX_LENGTH = 64;
+
+function isManagedSessionTab(tab: WebAppTabModel): boolean {
+  return tab.agent !== 'file' && tab.agent !== 'preview' && tab.agent !== 'panel';
+}
 
 export const SPAWN_SESSION_LABELS = {
   chat: 'Chat',
@@ -38,6 +60,7 @@ export type WebAppTabModel = {
 
 type WebAppHeaderProps = {
   tabs: WebAppTabModel[];
+  archivedTabs?: WebAppTabModel[];
   activeSessionId: string;
   sessionBusy: boolean;
   terminalDisabled: boolean;
@@ -48,6 +71,9 @@ type WebAppHeaderProps = {
   onSelect: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
   onRename?: (sessionId: string, title: string | undefined) => void;
+  onArchive?: (sessionId: string) => void;
+  onDelete?: (sessionId: string) => void;
+  onRestore?: (sessionId: string) => void;
   onSpawn: (type: SpawnSessionType) => void;
   livePorts?: LivePort[];
   previewLinks?: PreviewLink[];
@@ -104,6 +130,7 @@ export function SessionTypeIcon({
 
 export function WebAppHeader({
   tabs,
+  archivedTabs = [],
   activeSessionId,
   sessionBusy,
   terminalDisabled,
@@ -114,6 +141,9 @@ export function WebAppHeader({
   onSelect,
   onClose,
   onRename,
+  onArchive,
+  onDelete,
+  onRestore,
   onSpawn,
   livePorts = [],
   previewLinks = [],
@@ -128,25 +158,38 @@ export function WebAppHeader({
   draggingSessionId = null,
 }: WebAppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [archiveMenuOpen, setArchiveMenuOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    tabId: string;
+    left: number;
+    top: number;
+  } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const newTabControl = useRef<HTMLDivElement>(null);
+  const archiveControl = useRef<HTMLDivElement>(null);
+  const contextMenuElement = useRef<HTMLDivElement>(null);
   const newSessionButton = useRef<HTMLButtonElement>(null);
   const tabstrip = useRef<HTMLDivElement>(null);
   const renameInput = useRef<HTMLInputElement>(null);
   const renameFinished = useRef(false);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !archiveMenuOpen && !contextMenu) return;
     const closeOnPointerDown = (event: PointerEvent) => {
       // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
-      if (!newTabControl.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!newTabControl.current?.contains(target)) {
         setMenuOpen(false);
         onMenuOpenChange(false);
       }
+      if (!archiveControl.current?.contains(target)) setArchiveMenuOpen(false);
+      if (!contextMenuElement.current?.contains(target)) setContextMenu(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setMenuOpen(false);
+        setArchiveMenuOpen(false);
+        setContextMenu(null);
         onMenuOpenChange(false);
       }
     };
@@ -156,12 +199,12 @@ export function WebAppHeader({
       window.removeEventListener('pointerdown', closeOnPointerDown);
       window.removeEventListener('keydown', closeOnEscape);
     };
-  }, [menuOpen, onMenuOpenChange]);
+  }, [archiveMenuOpen, contextMenu, menuOpen, onMenuOpenChange]);
 
   useEffect(() => {
     const active = [...(tabstrip.current?.querySelectorAll<HTMLElement>('.webapp-tab-cell') ?? [])]
       .find((cell) => cell.dataset.sessionId === activeSessionId);
-    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [activeSessionId, tabs.length]);
 
   useEffect(() => {
@@ -171,6 +214,7 @@ export function WebAppHeader({
 
   const beginRename = (tab: WebAppTabModel) => {
     if (!tab.renameable || !onRename) return;
+    setContextMenu(null);
     renameFinished.current = false;
     setRenaming({ id: tab.id, value: tab.customTitle ?? tab.label });
   };
@@ -191,6 +235,24 @@ export function WebAppHeader({
     onMenuOpenChange(false);
     onSpawn(agent);
     newSessionButton.current?.focus();
+  };
+  const selectedContextTab = contextMenu
+    ? tabs.find((tab) => tab.id === contextMenu.tabId) ?? null
+    : null;
+  const openContextMenu = (event: ReactMouseEvent, tab: WebAppTabModel) => {
+    if (
+      !isManagedSessionTab(tab)
+      || (!onArchive && !onDelete && (!tab.renameable || !onRename))
+    ) return;
+    event.preventDefault();
+    onSelect(tab.id);
+    setMenuOpen(false);
+    setArchiveMenuOpen(false);
+    setContextMenu({
+      tabId: tab.id,
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)),
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - 140)),
+    });
   };
   const openPreview = (port: number) => {
     setMenuOpen(false);
@@ -232,6 +294,7 @@ export function WebAppHeader({
                   className={`webapp-tab-cell${active ? ' webapp-tab-cell--active' : ''}${
                     draggingSessionId === tab.id ? ' webapp-tab-cell--dragging' : ''}`}
                   data-session-id={tab.id}
+                  onContextMenu={(event) => openContextMenu(event, tab)}
                 >
                   {renaming?.id === tab.id ? (
                     <div className="webapp-tab-select webapp-tab-select--editing">
@@ -288,14 +351,17 @@ export function WebAppHeader({
                       {tab.dirty && <span className="webapp-tab-dirty" aria-label="Unsaved changes">•</span>}
                     </button>
                   )}
-                  {active && renaming?.id !== tab.id && (
+                  {active
+                    && renaming?.id !== tab.id
+                    && (!isManagedSessionTab(tab) || onArchive !== undefined)
+                    && (
                     <button
                       className="webapp-tab-close"
                       type="button"
                       aria-label={`Close ${tab.label}`}
                       title={tab.pending
                         ? 'Archiving session…'
-                        : tab.agent === 'file' ? 'Close file' : 'Archive session'}
+                        : isManagedSessionTab(tab) ? 'Archive session' : `Close ${tab.agent}`}
                       disabled={tab.pending}
                       onClick={() => onClose(tab.id)}
                     >×</button>
@@ -368,10 +434,93 @@ export function WebAppHeader({
                 )}
               </div>
             </div>}
+            {(onRestore || archivedTabs.length > 0) && (
+              <div className="webapp-archive-control" ref={archiveControl}>
+                <button
+                  className="webapp-header-action"
+                  type="button"
+                  aria-label="Archived sessions"
+                  aria-haspopup="menu"
+                  aria-expanded={archiveMenuOpen}
+                  title="Archived sessions"
+                  onClick={() => {
+                    setArchiveMenuOpen((open) => !open);
+                    setMenuOpen(false);
+                    setContextMenu(null);
+                  }}
+                ><ArchiveIcon /></button>
+                <div className="webapp-archive-menu" role="menu" hidden={!archiveMenuOpen}>
+                  <p>Archived sessions</p>
+                  <div className="webapp-archive-list">
+                    {archivedTabs.length === 0 ? (
+                      <span className="webapp-archive-empty">No archived sessions</span>
+                    ) : archivedTabs.map((tab) => (
+                      <div className="webapp-archive-row" key={tab.id}>
+                        <button
+                          className="webapp-archive-restore"
+                          type="button"
+                          role="menuitem"
+                          title={`Restore ${tab.label}`}
+                          onClick={() => {
+                            setArchiveMenuOpen(false);
+                            onRestore?.(tab.id);
+                          }}
+                        >
+                          <SessionTypeIcon type={tab.agent} className="webapp-new-menu-icon" />
+                          <span className="webapp-archive-label">{tab.label}</span>
+                          <RestoreIcon />
+                        </button>
+                        <button
+                          className="webapp-archive-delete"
+                          type="button"
+                          aria-label={`Remove ${tab.label} permanently`}
+                          title={`Remove ${tab.label} permanently`}
+                          onClick={() => {
+                            setArchiveMenuOpen(false);
+                            onDelete?.(tab.id);
+                          }}
+                        ><TrashIcon /></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
 
       </div>
+      {contextMenu && selectedContextTab && (
+        <div
+          ref={contextMenuElement}
+          className="webapp-session-menu"
+          role="menu"
+          style={{ left: contextMenu.left, top: contextMenu.top }}
+        >
+          {selectedContextTab.renameable && onRename && (
+            <button type="button" role="menuitem" onClick={() => beginRename(selectedContextTab)}>
+              Rename
+            </button>
+          )}
+          {onArchive && (
+            <button type="button" role="menuitem" onClick={() => {
+              setContextMenu(null);
+              onArchive(selectedContextTab.id);
+            }}>Archive</button>
+          )}
+          {onDelete && (
+            <button
+              className="webapp-session-menu__delete"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setContextMenu(null);
+                onDelete(selectedContextTab.id);
+              }}
+            >Remove permanently</button>
+          )}
+        </div>
+      )}
     </header>
   );
 }

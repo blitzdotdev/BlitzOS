@@ -74,6 +74,58 @@ describe("UI protocol and persistence object contracts", () => {
     );
   });
 
+  it("round-trips managed titles and archived tabs with shared id invariants", () => {
+    const decode = (tabs: object) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs,
+        drawer: { version: 1, width: 264, expanded: [] },
+      },
+      updatedAt: 1,
+    })).doc?.tabs;
+    const restored = decode({
+      version: 1,
+      tabs: [{ id: 1, type: "chat", title: "Active", chatSessionId: "chat-one" }],
+      archivedTabs: [{
+        id: 4,
+        type: "chat",
+        title: "Archived",
+        chatSessionId: "chat-four",
+        region: "side",
+      }],
+      activeId: 1,
+      nextId: 5,
+    });
+    expect(restored).toEqual({
+      version: 1,
+      tabs: [{ id: 1, type: "chat", title: "Active", chatSessionId: "chat-one" }],
+      archivedTabs: [{
+        id: 4,
+        type: "chat",
+        title: "Archived",
+        chatSessionId: "chat-four",
+        region: "side",
+      }],
+      activeId: 1,
+      nextId: 5,
+    });
+    expect(() => decode({
+      version: 1,
+      tabs: [{ id: 1, type: "chat" }],
+      archivedTabs: [{ id: 1, type: "claude" }],
+      activeId: 1,
+      nextId: 2,
+    })).toThrow("webApp state response has invalid doc");
+    expect(() => decode({
+      version: 1,
+      tabs: [],
+      archivedTabs: [{ id: 2, type: "file", filePath: "a.txt" }],
+      activeId: null,
+      nextId: 3,
+    })).toThrow("webApp state response has invalid doc");
+  });
+
   it("accepts wide drawer widths to the server cap and rejects beyond it", () => {
     const doc = (width: number) => JSON.stringify({
       doc: {

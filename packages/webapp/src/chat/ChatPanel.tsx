@@ -74,11 +74,14 @@ function approvalPayload<Value>(input: Value): string {
 }
 
 const MAX_RECONNECT_ATTEMPTS = 8;
+export type ChatSessionIntent = "create" | "load" | "recover";
 
 export function ChatPanel({
   url,
   workspaceId,
   initialSessionId,
+  sessionIntent = initialSessionId === null ? "recover" : "load",
+  boundSessionIds = [],
   onSessionId,
   onOpenPreview,
   onSignIn,
@@ -87,6 +90,10 @@ export function ChatPanel({
   url: string;
   workspaceId: string;
   initialSessionId: string | null;
+  /** New tabs create; stored ids load exactly; legacy id-less tabs recover. */
+  sessionIntent?: ChatSessionIntent;
+  /** Session ids already owned by other active or archived Chat tabs. */
+  boundSessionIds?: readonly string[];
   onSessionId: (workspaceId: string, sessionId: string) => void;
   onOpenPreview?: (port: number) => boolean;
   /** Drives the harness's terminal tab into its login flow. */
@@ -100,8 +107,13 @@ export function ChatPanel({
   const [authRequired, setAuthRequired] = useState<Agent | null>(null);
   const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
+  const [missingSessionId, setMissingSessionId] = useState<string | null>(null);
+  const [connectionVersion, setConnectionVersion] = useState(0);
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
+  const sessionIntentRef = useRef<ChatSessionIntent>(sessionIntent);
+  const recoverCanCreateRef = useRef(sessionIntent === "recover");
+  const boundSessionIdsRef = useRef<ReadonlySet<string>>(new Set(boundSessionIds));
   const onSessionIdRef = useRef(onSessionId);
   const runningRef = useRef(false);
   const turnRef = useRef(0);
@@ -109,6 +121,7 @@ export function ChatPanel({
   const permissionAnswers = useRef(new Map<string, RequestPermissionResponse>());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   onSessionIdRef.current = onSessionId;
+  boundSessionIdsRef.current = new Set(boundSessionIds);
 
   useEffect(() => {
     runningRef.current = state.running;
@@ -144,6 +157,7 @@ export function ChatPanel({
 
     const run = async (): Promise<void> => {
       while (active) {
+        let haltAfterClose = false;
         setStatus(attempts === 0 ? "Connecting…" : "Reconnecting…");
         const stream = createWebSocketStream(url);
         const app = acp
@@ -191,10 +205,12 @@ export function ChatPanel({
             clientInfo: { name: "BlitzOS webapp", version: "0.0.0" },
           });
           let existingSession = sessionIdRef.current;
-          if (existingSession === null) {
+          if (existingSession === null && sessionIntentRef.current === "recover") {
             try {
               const listed = await context.request(acp.methods.agent.session.list, { cwd: "/workspace" });
-              existingSession = listed.sessions[0]?.sessionId ?? null;
+              existingSession = listed.sessions.find(
+                (session) => !boundSessionIdsRef.current.has(session.sessionId),
+              )?.sessionId ?? null;
             } catch {
               // Compatibility window: an already-pinned actor may predate session/list.
             }
@@ -203,25 +219,40 @@ export function ChatPanel({
               onSessionIdRef.current(workspaceId, existingSession);
             }
           }
-          if (existingSession === null && !readOnly) {
+          const mayCreate = sessionIntentRef.current === "create"
+            || (sessionIntentRef.current === "recover" && recoverCanCreateRef.current);
+          if (existingSession === null && !readOnly && mayCreate) {
             const created = await context.request(acp.methods.agent.session.new, {
               cwd: "/workspace",
               mcpServers: [],
             });
             sessionIdRef.current = created.sessionId;
+            sessionIntentRef.current = "load";
             onSessionIdRef.current(workspaceId, created.sessionId);
             setConfigOptions(created.configOptions ?? []);
           } else if (existingSession !== null) {
             dispatch({ type: "begin-replay" });
-            const loaded = await context.request(acp.methods.agent.session.load, {
-              sessionId: existingSession,
-              cwd: "/workspace",
-              mcpServers: [],
-            });
-            dispatch({ type: "reconcile-running" });
-            runningRef.current = false;
-            setConfigOptions(loaded.configOptions ?? []);
+            try {
+              const loaded = await context.request(acp.methods.agent.session.load, {
+                sessionId: existingSession,
+                cwd: "/workspace",
+                mcpServers: [],
+              });
+              sessionIntentRef.current = "load";
+              dispatch({ type: "reconcile-running" });
+              runningRef.current = false;
+              setConfigOptions(loaded.configOptions ?? []);
+            } catch {
+              setMissingSessionId(existingSession);
+              setStatus("Stored chat session is unavailable");
+              haltAfterClose = true;
+            }
+          } else {
+            setMissingSessionId((current) => current ?? "unavailable");
+            setStatus("No chat session is available to replay");
+            haltAfterClose = true;
           }
+          if (haltAfterClose) throw new Error("chat session selection required");
           if (!active) break;
           attempts = 0;
           connectionRef.current = context;
@@ -234,6 +265,7 @@ export function ChatPanel({
           connection.close();
         }
         if (!active) break;
+        if (haltAfterClose) break;
         attempts += 1;
         // A refused handshake — no access to this workspace, or a box that is
         // gone — never resolves by retrying, and the capped backoff would
@@ -256,7 +288,16 @@ export function ChatPanel({
       connection?.close();
       connectionRef.current = null;
     };
-  }, [readOnly, requestPermission, url, workspaceId]);
+  }, [connectionVersion, readOnly, requestPermission, url, workspaceId]);
+
+  const chooseSessionRecovery = (intent: "create" | "recover"): void => {
+    sessionIdRef.current = null;
+    sessionIntentRef.current = intent;
+    recoverCanCreateRef.current = false;
+    setMissingSessionId(null);
+    setStatus("Connecting…");
+    setConnectionVersion((version) => version + 1);
+  };
 
   const answerPermission = (toolCallId: string, optionId: string): void => {
     if (readOnly) return;
@@ -410,6 +451,24 @@ export function ChatPanel({
       </div>
 
       <div className="chat-dock">
+        {missingSessionId !== null && (
+          <div className="chat-session-recovery" role="alert">
+            <div>
+              <strong>This Chat's saved session could not be loaded.</strong>
+              <span>Choose whether to recover another unbound session or start a new conversation.</span>
+            </div>
+            <div className="chat-session-recovery-actions">
+              <button type="button" onClick={() => chooseSessionRecovery("recover")}>
+                Recover existing
+              </button>
+              {!readOnly && (
+                <button type="button" onClick={() => chooseSessionRecovery("create")}>
+                  Start new chat
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {signInProvider !== null && (
           <div className="chat-auth-required" role="status">
             <span>{SPAWN_SESSION_LABELS[signInProvider]} could not authenticate on this workspace.</span>

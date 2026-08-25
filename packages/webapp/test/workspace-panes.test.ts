@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceTabs } from "../src/storage.js";
 import {
   appendTab,
+  archiveTab,
   closeTab,
   filesHostRegion,
   moveTab,
   paneRegions,
   regionTabs,
+  removeTabPermanently,
+  renameTab,
+  restoreTab,
   showPanelTab,
   splitTab,
   togglePanelTab,
@@ -116,6 +120,60 @@ describe("workspace pane model", () => {
     const three = appendTab(tabs(), "main", (id) => ({ id, type: "terminal" }));
     expect(closeTab(three, 3).activeId).toBe(2);
     expect(closeTab({ ...three, activeId: 1 }, 2).activeId).toBe(1);
+  });
+
+  it("archives and restores a managed tab with its title, id, and pane", () => {
+    const split = appendTab(tabs(), "side", (id) => ({
+      id,
+      type: "chat",
+      title: "Release notes",
+      chatSessionId: "chat-release",
+    }));
+    const archived = archiveTab(split, 3);
+    expect(archived.tabs.map(({ id }) => id)).toEqual([1, 2]);
+    expect(archived.archivedTabs).toEqual([{
+      id: 3,
+      type: "chat",
+      title: "Release notes",
+      chatSessionId: "chat-release",
+      region: "side",
+    }]);
+    expect(archived.nextId).toBe(4);
+
+    const restored = restoreTab(archived, 3);
+    expect(regionTabs(restored, "side")).toEqual([{
+      id: 3,
+      type: "chat",
+      title: "Release notes",
+      chatSessionId: "chat-release",
+      region: "side",
+    }]);
+    expect(restored.sideActiveId).toBe(3);
+    expect(restored.archivedTabs).toBeUndefined();
+    expect(restored.nextId).toBe(4);
+  });
+
+  it("keeps ids monotonic when archived entries are removed", () => {
+    const archived = archiveTab(tabs(), 2);
+    const removed = removeTabPermanently(archived, 2);
+    expect(removed.archivedTabs).toBeUndefined();
+    expect(removed.nextId).toBe(3);
+    expect(appendTab(removed, "main", (id) => ({ id, type: "terminal" })).tabs.at(-1)?.id)
+      .toBe(3);
+  });
+
+  it("renames active and archived sessions and resets empty titles", () => {
+    const active = renameTab(tabs(), 1, "  Deploy shell  ");
+    expect(active.tabs[0]).toEqual({ id: 1, type: "claude", title: "Deploy shell" });
+    const archived = archiveTab(active, 1);
+    expect(renameTab(archived, 1, "   ").archivedTabs).toEqual([
+      { id: 1, type: "claude" },
+    ]);
+  });
+
+  it("does not archive file, preview, or panel tabs", () => {
+    const withFile = appendTab(tabs(), "main", (id) => ({ id, type: "file", filePath: "a.txt" }));
+    expect(archiveTab(withFile, 3)).toBe(withFile);
   });
 });
 

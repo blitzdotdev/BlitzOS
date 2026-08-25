@@ -1,5 +1,7 @@
 import {
   normalizedWorkspaceTabs,
+  isManagedWorkspaceTab,
+  SESSION_TITLE_MAX_LENGTH,
   tabRegion,
   withRegion,
   type WorkspaceDrawerSegment,
@@ -101,6 +103,75 @@ export function closeTab(tabs: WorkspaceTabs, id: number): WorkspaceTabs {
     else next.sideActiveId = successor;
   }
   return normalizedWorkspaceTabs(next);
+}
+
+/** Moves a managed terminal/chat session out of the pane layout without
+ * destroying the underlying runtime session. */
+export function archiveTab(tabs: WorkspaceTabs, id: number): WorkspaceTabs {
+  const tab = findTab(tabs, id);
+  if (tab === null || !isManagedWorkspaceTab(tab)) return tabs;
+  const closed = closeTab(tabs, id);
+  return normalizedWorkspaceTabs({
+    ...closed,
+    archivedTabs: [...(tabs.archivedTabs ?? []), tab],
+  });
+}
+
+/** Restores an archived session into the pane it previously occupied and
+ * selects it. Normalization promotes a lone side-pane tab into main. */
+export function restoreTab(tabs: WorkspaceTabs, id: number): WorkspaceTabs {
+  const archivedTabs = tabs.archivedTabs ?? [];
+  const tab = archivedTabs.find((entry) => entry.id === id);
+  if (tab === undefined) return tabs;
+  const region = tabRegion(tab);
+  const entries = [...tabs.tabs];
+  entries.splice(appendIndex(entries, region), 0, tab);
+  const remaining = archivedTabs.filter((entry) => entry.id !== id);
+  return normalizedWorkspaceTabs({
+    ...tabs,
+    tabs: entries,
+    archivedTabs: remaining,
+    ...(region === 'main' ? { activeId: id } : { sideActiveId: id }),
+  });
+}
+
+/** Removes a cockpit tab record. This does not claim to erase provider-native
+ * transcripts or other runtime artifacts. */
+export function removeTabPermanently(tabs: WorkspaceTabs, id: number): WorkspaceTabs {
+  if (tabs.tabs.some((tab) => tab.id === id)) return closeTab(tabs, id);
+  const archivedTabs = tabs.archivedTabs ?? [];
+  if (!archivedTabs.some((tab) => tab.id === id)) return tabs;
+  return normalizedWorkspaceTabs({
+    ...tabs,
+    archivedTabs: archivedTabs.filter((tab) => tab.id !== id),
+  });
+}
+
+/** Applies a bounded custom label to an active or archived managed session.
+ * An empty label restores the generated provider label. */
+export function renameTab(
+  tabs: WorkspaceTabs,
+  id: number,
+  title: string | undefined,
+): WorkspaceTabs {
+  const normalizedTitle = title?.trim().slice(0, SESSION_TITLE_MAX_LENGTH) || undefined;
+  let changed = false;
+  const rename = (tab: WorkspaceTab): WorkspaceTab => {
+    if (tab.id !== id || !isManagedWorkspaceTab(tab) || tab.title === normalizedTitle) return tab;
+    changed = true;
+    const next = { ...tab };
+    if (normalizedTitle === undefined) delete next.title;
+    else next.title = normalizedTitle;
+    return next;
+  };
+  const active = tabs.tabs.map(rename);
+  const archived = (tabs.archivedTabs ?? []).map(rename);
+  if (!changed) return tabs;
+  return normalizedWorkspaceTabs({
+    ...tabs,
+    tabs: active,
+    archivedTabs: archived,
+  });
 }
 
 /** Brings a panel forward, opening it in the side pane when it is not open at

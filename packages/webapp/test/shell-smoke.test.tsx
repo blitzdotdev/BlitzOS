@@ -58,8 +58,9 @@ vi.mock("../src/TtydTerminal.js", async () => {
 vi.mock("../src/chat/ChatPanel.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatPanel: ({ initialSessionId, onSignIn }: {
+    ChatPanel: ({ initialSessionId, sessionIntent, onSignIn }: {
       initialSessionId: string | null;
+      sessionIntent?: string;
       onSignIn?: (provider: "claude" | "codex") => void;
     }) => {
       const [mountId] = React.useState(() => `chat-${++webAppHarness.nextMountId}`);
@@ -71,6 +72,7 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
         <div
           data-testid="chat-session"
           data-initial-session-id={initialSessionId ?? ""}
+          data-session-intent={sessionIntent ?? ""}
           data-mount-id={mountId}
         >
           <button
@@ -772,6 +774,7 @@ describe("webapp shell smoke", () => {
     )?.click());
     const chat = view.container.querySelector<HTMLElement>('[data-testid="chat-session"]')!;
     expect(chat.dataset.initialSessionId).toBe("chat-two");
+    expect(chat.dataset.sessionIntent).toBe("load");
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
     expect(chat.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
 
@@ -784,6 +787,93 @@ describe("webapp shell smoke", () => {
     expect(chat.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
     expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
 
+    await view.unmount();
+  });
+
+  it("marks a newly spawned Chat for creation and a legacy id-less Chat for recovery", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "chat", chatProvider: "claude" }], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelector<HTMLElement>("[data-testid='chat-session']")
+      ?.dataset.sessionIntent).toBe("recover");
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      ".webapp-new-tab-spawn",
+    )?.click());
+    const chatAction = [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-agent-menu [role='menuitem']",
+    )].find(({ textContent }) => textContent?.trim() === "Chat");
+    await act(async () => chatAction?.click());
+    const chats = [...view.container.querySelectorAll<HTMLElement>("[data-testid='chat-session']")];
+    expect(chats).toHaveLength(2);
+    expect(chats.at(-1)?.dataset.sessionIntent).toBe("create");
+    await view.unmount();
+  });
+
+  it("persists managed-session archive, restore, and permanent removal", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", title: "Release chat", chatSessionId: "chat-one" },
+      { id: 2, type: "terminal" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const chatCell = () => view.container.querySelector<HTMLElement>(
+      ".webapp-tab-cell[data-session-id='1']",
+    );
+    await act(async () => chatCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    const archive = [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-session-menu [role='menuitem']",
+    )].find(({ textContent }) => textContent === "Archive");
+    await act(async () => archive?.click());
+    expect(chatCell()).toBeNull();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      "[aria-label='Archived sessions']",
+    )?.click());
+    expect(view.container.querySelector(".webapp-archive-label")?.textContent).toBe("Release chat");
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      ".webapp-archive-restore",
+    )?.click());
+    expect(chatCell()).not.toBeNull();
+    expect(selectedSessionId(view.container)).toBe("1");
+
+    await act(async () => chatCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-session-menu [role='menuitem']",
+    )].find(({ textContent }) => textContent === "Archive")?.click());
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      "[aria-label='Archived sessions']",
+    )?.click());
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      ".webapp-archive-delete",
+    )?.click());
+    expect(view.container.textContent).toContain("Remove session from Blitz?");
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find(({ textContent }) => textContent === "Remove permanently")?.click());
+    expect(view.container.querySelector(".webapp-archive-row")).toBeNull();
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    const saved = serverWorkspaceStates.get("workspace-running")?.tabs;
+    expect(saved?.tabs.map(({ id }) => id)).toEqual([2]);
+    expect(saved?.archivedTabs).toBeUndefined();
+    expect(saved?.nextId).toBe(3);
     await view.unmount();
   });
 

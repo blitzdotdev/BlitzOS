@@ -5,6 +5,9 @@ capabilities identified by comparing a previous merged PR from an older repo
 with the current BlitzOS webapp. P2 mobile/accessibility polish is explicitly
 out of scope for this plan.
 
+Progress: **Phase 1 implemented locally** on `feat-ui-changes` (2026-08-24).
+Phases 2–5 remain pending.
+
 This is not a port of the old bridge. The current control-plane → webapp → box
 actor/ACP architecture stays authoritative. We restore the user-visible
 behavior over those contracts and leave the retired bridge, completion store,

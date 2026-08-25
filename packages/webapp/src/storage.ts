@@ -36,17 +36,21 @@ export type UiPreferences = {
  * byte-identically. */
 export type WorkspaceRegion = 'main' | 'side';
 
-export type WorkspaceTab = {
+export type ManagedWorkspaceTab = {
   id: number;
   type: TerminalAgent | 'terminal';
+  title?: string;
   region?: WorkspaceRegion;
 } | {
   id: number;
   type: 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
+  title?: string;
   region?: WorkspaceRegion;
-} | {
+};
+
+export type WorkspaceTab = ManagedWorkspaceTab | {
   id: number;
   type: 'file';
   filePath: string;
@@ -76,6 +80,8 @@ export type WorkspaceTab = {
 export type WorkspaceTabs = {
   version: 1;
   tabs: WorkspaceTab[];
+  /** Managed sessions removed from the active pane layout. */
+  archivedTabs?: WorkspaceTab[];
   /** Active tab of the main (left) pane. */
   activeId: number | null;
   nextId: number;
@@ -118,6 +124,20 @@ interface RestoredSessionTab {
   type: TerminalAgent | 'terminal' | 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
+  title?: string;
+}
+
+export const SESSION_TITLE_MAX_LENGTH = 64;
+
+export function isManagedWorkspaceTab(tab: WorkspaceTab): tab is ManagedWorkspaceTab {
+  return tab.type === 'chat'
+    || tab.type === 'terminal'
+    || tab.type === 'claude'
+    || tab.type === 'codex'
+    || tab.type === 'opencode'
+    || tab.type === 'pi'
+    || tab.type === 'kimi'
+    || tab.type === 'prime';
 }
 
 export function createStorageNamespace(orgId: string, membershipId: string): StorageNamespace {
@@ -255,15 +275,25 @@ export function withPreviewTabPath(
  * is the one that can arrive out of range. Losing the route beats losing the
  * document. */
 function clampedTab(tab: WorkspaceTab): WorkspaceTab {
+  if (isManagedWorkspaceTab(tab) && tab.title !== undefined) {
+    const title = tab.title.trim().slice(0, SESSION_TITLE_MAX_LENGTH);
+    if (title !== tab.title) {
+      const next = { ...tab };
+      if (title === '') delete next.title;
+      else next.title = title;
+      return next;
+    }
+  }
   if (tab.type !== 'preview' || !('port' in tab) || tab.path === undefined) return tab;
   if (isPreviewPath(tab.path)) return tab;
-  return { id: tab.id, type: 'preview', port: tab.port };
+  return withRegion({ id: tab.id, type: 'preview', port: tab.port }, tabRegion(tab));
 }
 
 /** Keeps the two panes coherent: a side pane only exists while it holds tabs,
  * a pane's active id always names one of its own tabs, and the side pane never
  * outlives an emptied main pane — the split collapses left instead. */
 export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
+  const archivedTabs = tabs.archivedTabs ?? [];
   const collapse = tabs.tabs.length > 0 && tabs.tabs.every((tab) => tabRegion(tab) === 'side');
   const entries = collapse
     ? tabs.tabs.map((tab) => withRegion(tab, 'main'))
@@ -277,13 +307,15 @@ export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
   const sideActiveId = side.some(({ id }) => id === tabs.sideActiveId)
     ? tabs.sideActiveId
     : side.at(-1)?.id;
-  const highestId = entries.reduce((highest, tab) => Math.max(highest, tab.id), 0);
+  const highestId = [...entries, ...archivedTabs]
+    .reduce((highest, tab) => Math.max(highest, tab.id), 0);
   const next: WorkspaceTabs = {
     version: 1,
     tabs: entries,
     activeId,
     nextId: Math.max(tabs.nextId, highestId + 1),
   };
+  if (archivedTabs.length > 0) next.archivedTabs = archivedTabs;
   if (sideActiveId !== undefined) next.sideActiveId = sideActiveId;
   return next;
 }
@@ -294,9 +326,20 @@ export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
  * limits here rather than letting one field end persistence. Mirror
  * `parseWorkspaceDoc` in the control plane. */
 function clampedDoc(doc: WorkspaceWebAppStateV1): WorkspaceWebAppStateV1 {
+  const activeTabs = doc.tabs.tabs.slice(0, 100).map(clampedTab);
+  const archivedTabs = (doc.tabs.archivedTabs ?? [])
+    .slice(0, Math.max(0, 100 - activeTabs.length))
+    .map(clampedTab);
+  const { archivedTabs: _archivedTabs, ...baseTabs } = doc.tabs;
+  const tabsToNormalize: WorkspaceTabs = {
+    ...baseTabs,
+    tabs: activeTabs,
+  };
+  if (archivedTabs.length > 0) tabsToNormalize.archivedTabs = archivedTabs;
+  const tabs = normalizedWorkspaceTabs(tabsToNormalize);
   return {
     ...doc,
-    tabs: normalizedWorkspaceTabs({ ...doc.tabs, tabs: doc.tabs.tabs.slice(0, 100).map(clampedTab) }),
+    tabs,
     drawer: {
       ...doc.drawer,
       width: Math.min(2000, Math.max(200, Math.round(doc.drawer.width))),
@@ -403,6 +446,11 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
   }
   if (object.type === 'chat') {
     const tab: RestoredSessionTab = { id, type: 'chat' };
+    if (object.title !== undefined) {
+      if (!isString(object.title) || object.title.length > SESSION_TITLE_MAX_LENGTH) return null;
+      const title = object.title.trim();
+      if (title !== '') tab.title = title;
+    }
     if (isString(object.chatSessionId)) tab.chatSessionId = object.chatSessionId;
     if (object.chatProvider === 'claude' || object.chatProvider === 'codex') {
       tab.chatProvider = object.chatProvider;
@@ -419,8 +467,18 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
     || object.type === 'kimi'
     || object.type === 'prime'
   ) {
+    if (object.title !== undefined && (
+      !isString(object.title) || object.title.length > SESSION_TITLE_MAX_LENGTH
+    )) return null;
+    const title = isString(object.title) ? object.title.trim() : '';
     // SAFETY: The branch checks every TerminalAgent literal plus terminal.
-    return withRegion({ id, type: object.type as TerminalAgent | 'terminal' }, region);
+    const tab: RestoredSessionTab = {
+      id,
+      type: object.type as TerminalAgent | 'terminal',
+    };
+    if (title !== '') tab.title = title;
+    // SAFETY: The branch checks every TerminalAgent literal plus terminal.
+    return withRegion(tab as WorkspaceTab, region);
   }
   return null;
 }
@@ -435,7 +493,17 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     const tab = parseTab(entry, seen);
     return tab === null ? [] : [tab];
   });
-  if (tabs.length === 0 || tabs.length !== object.tabs.length) return null;
+  const archivedEntries = object.archivedTabs === undefined ? [] : object.archivedTabs;
+  if (!Array.isArray(archivedEntries)) return null;
+  const archivedTabs = archivedEntries.flatMap((entry) => {
+    const tab = parseTab(entry, seen);
+    return tab === null || !isManagedWorkspaceTab(tab) ? [] : [tab];
+  });
+  if (
+    tabs.length !== object.tabs.length
+    || archivedTabs.length !== archivedEntries.length
+    || tabs.length + archivedTabs.length > 100
+  ) return null;
   const activeId = object.activeId === null
     ? null
     : isNumber(object.activeId) && Number.isSafeInteger(object.activeId)
@@ -443,7 +511,8 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
       : -1;
   const mainTabs = tabs.filter((tab) => tabRegion(tab) === 'main');
   if (activeId !== null && !mainTabs.some(({ id }) => id === activeId)) return null;
-  const minimumNextId = Math.max(...tabs.map(({ id }) => id)) + 1;
+  const minimumNextId = [...tabs, ...archivedTabs]
+    .reduce((highest, { id }) => Math.max(highest, id), 0) + 1;
   if (
     !isNumber(object.nextId)
     || !Number.isSafeInteger(object.nextId)
@@ -452,6 +521,7 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     return null;
   }
   const restored: WorkspaceTabs = { version: 1, tabs, activeId, nextId: object.nextId };
+  if (archivedTabs.length > 0) restored.archivedTabs = archivedTabs;
   if (object.sideActiveId !== undefined) {
     if (
       !isNumber(object.sideActiveId)
@@ -503,13 +573,15 @@ function migratedTabs(
   // client; its tab list wins over the stale drawer fields beside it.
   if (tabs.tabs.some((tab) => tab.type === 'panel')) return tabs;
   const id = tabs.nextId;
-  return {
+  const migrated: WorkspaceTabs = {
     version: 1,
     tabs: [...tabs.tabs, { id, type: 'panel', panel: legacy.segment, region: 'side' }],
     activeId: tabs.activeId,
     nextId: id + 1,
     sideActiveId: id,
   };
+  if (tabs.archivedTabs !== undefined) migrated.archivedTabs = tabs.archivedTabs;
+  return migrated;
 }
 
 function parseGlobalDoc(value: OptionalJsonValue): GlobalWebAppStateV1 | null {
