@@ -200,7 +200,6 @@ export function CreateWorkspaceDialog({
                 onClick={clearTemplate}
               >
                 <strong>No template</strong>
-                <span>Start blank. You pick the machine type.</span>
               </button>
               {templates.map((template) => {
                 const missing = template.folders.filter(({ role }) => role === null).length;

@@ -513,7 +513,6 @@ describe("create workspace dialog", () => {
     // The blank choice leads the grid, before any template.
     const blank = view.container.querySelector<HTMLButtonElement>(".template-grid > button")!;
     expect(blank.textContent).toContain("No template");
-    expect(blank.textContent).toContain("Start blank. You pick the machine type.");
     // The org default is seeded, so the blank tile is not the pressed one yet.
     expect(blank.getAttribute("aria-pressed")).toBe("false");
     expect(view.container.querySelector('input[name="name"]')).toBeNull();
