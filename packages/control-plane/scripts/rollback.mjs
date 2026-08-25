@@ -11,7 +11,7 @@
 // It does NOT roll back D1. Migrations are forward-only here, and rolling the
 // Worker back past a migration that dropped a column breaks the old code's
 // writes, because that code still targets the dropped column. The plan names
-// this every time; read plans/DEPLOY-RUNBOOK.md before you answer it.
+// this every time; read docs/DEPLOY-RUNBOOK.md before you answer it.
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
