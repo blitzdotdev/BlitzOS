@@ -117,6 +117,12 @@ export function CreateWorkspaceDialog({
   const machineFailureItems = machineFailures.map((failure) => (
     <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
   ));
+  // The blank tile and the toggle-off share this, so the two paths cannot drift.
+  const clearTemplate = () => {
+    setSelectedTemplateId(null);
+    setEnvironment(EMPTY_WORKSPACE_ENVIRONMENT);
+    setAgentRuleId(null);
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -184,6 +190,18 @@ export function CreateWorkspaceDialog({
               <p>Start from a shared setup. Its machine type and Drive folders come attached.</p>
             </div>
             <div className="template-grid">
+              {/* The dialog opens on the org default. Before this tile the only
+                * way to a blank workspace was a second click on that default.
+                * Nobody could see that, so the choice gets a tile of its own. */}
+              <button
+                className={`template-tile${selectedTemplateId === null ? ' template-tile--selected' : ''}`}
+                type="button"
+                aria-pressed={selectedTemplateId === null}
+                onClick={clearTemplate}
+              >
+                <strong>No template</strong>
+                <span>Start blank. You pick the machine type.</span>
+              </button>
               {templates.map((template) => {
                 const missing = template.folders.filter(({ role }) => role === null).length;
                 const active = template.id === selectedTemplateId;
@@ -194,11 +212,13 @@ export function CreateWorkspaceDialog({
                     key={template.id}
                     aria-pressed={active}
                     onClick={() => {
-                      setSelectedTemplateId(active ? null : template.id);
-                      setEnvironment(active
-                        ? EMPTY_WORKSPACE_ENVIRONMENT
-                        : template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
-                      setAgentRuleId(active ? null : template.agentRuleId);
+                      if (active) {
+                        clearTemplate();
+                        return;
+                      }
+                      setSelectedTemplateId(template.id);
+                      setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+                      setAgentRuleId(template.agentRuleId);
                     }}
                   >
                     <strong>{template.name}</strong>

@@ -404,6 +404,38 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("closes the create-workspace dialog when it hands off to the template page", async () => {
+    window.history.replaceState({}, "", "/templates");
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Create workspace"]',
+    )?.click());
+    expect(view.container.querySelector('form[aria-label="Create workspace"]')).not.toBeNull();
+
+    const newTemplate = [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".template-grid > button",
+    )].find((tile) => tile.textContent?.includes("New template"))!;
+    await act(async () => newTemplate.click());
+    await settle();
+
+    // Every rail branch draws this dialog since #40, the template page too. It
+    // must leave, or it covers the page it just opened.
+    expect(window.location.pathname).toBe("/templates/new");
+    expect(view.container.querySelector('form[aria-label="Create workspace"]')).toBeNull();
+    expect(view.container.querySelector('form[aria-label="Create workspace template"]'))
+      .not.toBeNull();
+
+    await view.unmount();
+  });
+
   it("opens a workspace with terminal tabs enabled through control-plane surfaces", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
