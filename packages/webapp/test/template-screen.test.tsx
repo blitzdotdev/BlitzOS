@@ -853,6 +853,239 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  it('reports a malformed public repo URL without checking it', async () => {
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ repositories: [] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    const textarea = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Public repository URLs"]',
+    )!;
+    const setTextareaValue = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
+    if (setTextareaValue === undefined) throw new Error('textarea value setter unavailable');
+    await act(async () => {
+      setTextareaValue.call(textarea, 'https://gitlab.com/acme/app');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+
+    expect(view.container.querySelector('[role="alert"]')?.textContent).toContain(
+      'https://gitlab.com/acme/app — only github.com repositories can be cloned',
+    );
+    expect(fetcher.mock.calls.some(([input]) => (
+      new URL(String(input)).pathname === '/connections/github/repositories/check'
+    ))).toBe(false);
+    await view.unmount();
+  });
+
+  it('adds a public repo batch only after every repo is reachable and saves it through PUT', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ repositories: [] });
+      }
+      if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
+        if (String(init.body).includes('acme/private')) {
+          return Response.json({ results: [
+            { repo: 'acme/one', reachable: true },
+            { repo: 'acme/private', reachable: false, failure: 'not-public' },
+          ] });
+        }
+        return Response.json({ results: [
+          { repo: 'acme/one', reachable: true },
+          { repo: 'acme/two', reachable: true },
+        ] });
+      }
+      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
+        return Response.json({ templates: [{
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          isOrgDefault: false,
+          folders: [],
+          connections: [],
+          repos: [],
+        }] });
+      }
+      if (url.pathname === '/workspace-templates/template-1' && init?.method === 'PUT') {
+        return Response.json({ template: {
+          id: 'template-1',
+          name: 'starter',
+          machineTypeId: 'cx23@fsn1',
+          createdAt: 2,
+          createdBy: { name: 'Min Song', avatarUrl: null },
+          folders: [],
+          connections: [],
+          repos: ['acme/one', 'acme/two'],
+        } });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgName="acme"
+        editTemplateId="template-1"
+        onCreated={() => undefined}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+    const textarea = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Public repository URLs"]',
+    )!;
+    const setTextareaValue = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
+    if (setTextareaValue === undefined) throw new Error('textarea value setter unavailable');
+
+    await act(async () => {
+      setTextareaValue.call(textarea, [
+        'https://github.com/acme/one',
+        'https://github.com/acme/private',
+      ].join('\n'));
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+    await settle();
+
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toContain('acme/private — not found, or it is private');
+    expect(view.container.querySelectorAll('.tplf-repo-url-row')).toHaveLength(0);
+
+    await act(async () => {
+      setTextareaValue.call(textarea, [
+        'https://github.com/acme/one',
+        'https://github.com/acme/two',
+      ].join('\n'));
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(view.container.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+    await settle();
+
+    expect([...view.container.querySelectorAll('.tplf-repo-url-row')]
+      .map((repo) => repo.textContent)).toEqual(['acme/oneRemove', 'acme/twoRemove']);
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    const checks = fetcher.mock.calls.filter(([input, init]) => (
+      new URL(String(input)).pathname === '/connections/github/repositories/check'
+      && init?.method === 'POST'
+    ));
+    expect(checks.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+      { repos: ['acme/one', 'acme/private'] },
+      { repos: ['acme/one', 'acme/two'] },
+    ]);
+    const put = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates/template-1' && init?.method === 'PUT'
+    ));
+    expect(JSON.parse(String(put?.[1]?.body ?? '{}')).repos).toEqual(['acme/one', 'acme/two']);
+    await view.unmount();
+  });
+
+  it('reports a picker-selected repo as already added', async () => {
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ repositories: [{ fullName: 'acme/app', private: false }] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    await act(async () => {
+      view.container.querySelector<HTMLInputElement>('.tplf-repo input')?.click();
+    });
+    const textarea = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Public repository URLs"]',
+    )!;
+    const setTextareaValue = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
+    if (setTextareaValue === undefined) throw new Error('textarea value setter unavailable');
+    await act(async () => {
+      setTextareaValue.call(textarea, 'https://github.com/acme/app');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toContain('https://github.com/acme/app — already added');
+    expect(fetcher.mock.calls.some(([input]) => (
+      new URL(String(input)).pathname === '/connections/github/repositories/check'
+    ))).toBe(false);
+    await view.unmount();
+  });
+
+  it('adds, shows, and submits a public repo when GitHub is unconfigured', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
+        return Response.json({ results: [{ repo: 'public/example', reachable: true }] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    expect(view.container.textContent).toContain('Ask an admin to set up GitHub above');
+    const textarea = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Public repository URLs"]',
+    )!;
+    const setTextareaValue = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
+    if (setTextareaValue === undefined) throw new Error('textarea value setter unavailable');
+    await act(async () => {
+      setTextareaValue.call(textarea, 'https://github.com/public/example');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+    await settle();
+
+    expect(view.container.querySelector('.tplf-repo-url-row')?.textContent)
+      .toBe('public/exampleRemove');
+    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(name, 'public starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    const post = fetcher.mock.calls.find(([input, init]) => (
+      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
+    ));
+    expect(JSON.parse(String(post?.[1]?.body ?? '{}')).repos).toEqual(['public/example']);
+    await view.unmount();
+  });
+
   it('warns at the 16-repo cap and disables further picks', async () => {
     const selected = Array.from({ length: 16 }, (_, i) => `acme/repo-${i}`);
     stub((url, init) => {

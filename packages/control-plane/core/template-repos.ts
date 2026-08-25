@@ -7,7 +7,7 @@ export const MAX_TEMPLATE_REPOS = 16;
 /** "owner/name". Also the shell-safety boundary: the bootstrap interpolates
  * each repo into the emitted clone loop, so nothing beyond this alphabet may
  * ever reach the table. */
-const TEMPLATE_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+export const TEMPLATE_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 
 export interface TemplateRepoRow {
   template_id: string;

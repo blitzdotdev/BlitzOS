@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { GithubRepositoryView, ListGithubRepositoriesResponse } from '@blitzos/schema';
 import { ApiRequestError } from '../api';
 
@@ -12,14 +12,14 @@ export interface TemplateRepoApi {
  * screen. Disabled with a pointer at the Connections section on this same
  * page until the org GitHub App credential exists (the listing route answers
  * 409 until then); saving the credential inline flips githubConfigured, which
- * refetches, so the picker lights up without a reload. Selections the
- * installation no longer reaches stay listed so they can be removed. */
+ * refetches, so the picker lights up without a reload. */
 export function TemplateRepoPicker({
   client,
   admin,
   githubConfigured,
   value,
   onChange,
+  onRepositories,
 }: {
   client: TemplateRepoApi;
   /** Picks the hint's audience: admins configure inline, members ask one. */
@@ -29,11 +29,20 @@ export function TemplateRepoPicker({
   githubConfigured: boolean;
   value: string[];
   onChange: (repos: string[]) => void;
+  /** Publishes what the installation covers, so the sibling URL box knows
+   * which selections it owns. Empty on 409 and on error: nothing is covered. */
+  onRepositories: (repositories: GithubRepositoryView[]) => void;
 }) {
   const [repositories, setRepositories] = useState<GithubRepositoryView[] | null>(null);
   const [unconfigured, setUnconfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  // The listing refetches on a credential flip, never on a caller's re-render.
+  // Reading onRepositories through a ref keeps it out of the dependency list:
+  // an inline arrow there would refire the effect on every render, and its own
+  // setState would render again, so the page would spin and stop taking input.
+  const publish = useRef(onRepositories);
+  publish.current = onRepositories;
 
   useEffect(() => {
     let mounted = true;
@@ -41,11 +50,13 @@ export function TemplateRepoPicker({
       .then(({ repositories: loaded }) => {
         if (!mounted) return;
         setRepositories(loaded);
+        publish.current(loaded);
         setUnconfigured(false);
         setError(null);
       })
       .catch((caught: Error) => {
         if (!mounted) return;
+        publish.current([]);
         if (caught instanceof ApiRequestError && caught.status === 409) setUnconfigured(true);
         else setError(caught.message);
       });
@@ -74,8 +85,6 @@ export function TemplateRepoPicker({
     return <p className="tplf-repos-hint" role="status">Loading repositories…</p>;
   }
 
-  const known = new Set(repositories.map(({ fullName }) => fullName));
-  const stale = value.filter((repo) => !known.has(repo));
   const needle = filter.trim().toLowerCase();
   const shown = needle === ''
     ? repositories
@@ -96,13 +105,6 @@ export function TemplateRepoPicker({
         </p>
       )}
       <div className="tplf-repos-list" role="listbox" aria-label="GitHub repositories">
-        {stale.map((repo) => (
-          <label className="tplf-repo" key={`stale-${repo}`}>
-            <input type="checkbox" checked onChange={() => toggle(repo)} />
-            <span>{repo}</span>
-            <em className="tplf-chip">no longer reachable</em>
-          </label>
-        ))}
         {shown.map((repository) => {
           const selected = value.includes(repository.fullName);
           return (
@@ -118,7 +120,7 @@ export function TemplateRepoPicker({
             </label>
           );
         })}
-        {shown.length === 0 && stale.length === 0 && (
+        {shown.length === 0 && (
           <p className="tplf-repos-hint">
             {repositories.length === 0
               ? 'The GitHub App installation reaches no repositories yet.'

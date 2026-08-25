@@ -85,6 +85,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     deleteConnectionGrant: vi.fn(async () => undefined),
     listProviderHealth: vi.fn(async () => ({ providers: [] })),
     listGithubRepositories: vi.fn(async () => ({ repositories: [] })),
+    checkGithubRepositories: vi.fn(async (repos: string[]) => ({
+      results: repos.map((repo) => ({ repo, reachable: true })),
+    })),
     connectStartUrl: (provider: string) => `/connect/${provider}/start`,
     ...overrides,
   };
