@@ -18,6 +18,19 @@ interface ExecStatusFailure {
   code?: string | number;
 }
 
+export type HarnessAuthStatus = "signed-in" | "signed-out" | "unknown";
+
+export interface AuthStatusCommandOptions {
+  timeout: number;
+  env: NodeJS.ProcessEnv;
+}
+
+export type AuthStatusRunner = (
+  file: string,
+  args: string[],
+  options: AuthStatusCommandOptions,
+) => Promise<void>;
+
 function execFailure(error: Error): ExecFailure {
   // SAFETY: promisify(execFile) attaches the child's captured streams to the
   // rejected Error. `stderr` is declared optional and read defensively, so any
@@ -30,6 +43,10 @@ function execStatusFailure(error: Error): ExecStatusFailure {
   // field stays optional and is validated before it affects auth state.
   return error as ExecStatusFailure;
 }
+
+const runAuthStatusCommand: AuthStatusRunner = async (file, args, options) => {
+  await execFileAsync(file, args, options);
+};
 
 /** One short line of the broker's own words, for a log.
  *
@@ -195,39 +212,37 @@ export class CredentialSource {
   private lastEnvironment: Record<string, string> = {};
   private environmentWaited = false;
 
-  public constructor(private readonly stateDir: string) {}
+  public constructor(
+    private readonly stateDir: string,
+    private readonly authStatusRunner: AuthStatusRunner = runAuthStatusCommand,
+  ) {}
 
-  public async authStatus(provider: Provider): Promise<"signed-in" | "signed-out" | "unknown"> {
+  public async authStatus(provider: Provider): Promise<HarnessAuthStatus> {
     try {
       await access(join(this.stateDir, "broker.json"), constants.R_OK);
-      const { stdout } = await execFileAsync("blitz-cred", ["status", provider], {
-        encoding: "utf8",
-        timeout: 10_000,
-        env: { ...process.env, BLITZ_STATE_DIR: this.stateDir },
-      });
-      const status = stdout.trim();
-      return status === "signed-in" || status === "signed-out" ? status : "unknown";
-    } catch {
-      try {
-        await access(join(this.stateDir, "broker.json"), constants.R_OK);
+      // Broker status is deliberately deferred. A stored broker token is not
+      // proof that it is unexpired or refreshable, so do not claim signed in.
+      return "unknown";
+    } catch (brokerError) {
+      if (!(brokerError instanceof Error) || execStatusFailure(brokerError).code !== "ENOENT") {
         return "unknown";
-      } catch {
-        // A standalone/self-hosted box keeps the vendor's own login files, so
-        // the official status commands are authoritative in this mode.
       }
-      const command = provider === "claude"
-        ? { file: "/opt/blitz/npm/bin/claude", args: ["auth", "status"] }
-        : { file: "/opt/blitz/npm/bin/codex", args: ["login", "status"] };
-      try {
-        await execFileAsync(command.file, command.args, {
-          timeout: 10_000,
-          env: { ...process.env, HOME: "/var/lib/blitz/home" },
-        });
-        return "signed-in";
-      } catch (statusError) {
-        if (!(statusError instanceof Error)) return "unknown";
-        return isNumber(execStatusFailure(statusError).code) ? "signed-out" : "unknown";
-      }
+    }
+
+    // A standalone/self-hosted box keeps the vendor's own login files, so the
+    // pinned official status commands are authoritative in this mode.
+    const command = provider === "claude"
+      ? { file: "/opt/blitz/npm/bin/claude", args: ["auth", "status"] }
+      : { file: "/opt/blitz/npm/bin/codex", args: ["login", "status"] };
+    try {
+      await this.authStatusRunner(command.file, command.args, {
+        timeout: 10_000,
+        env: { ...process.env, HOME: "/var/lib/blitz/home" },
+      });
+      return "signed-in";
+    } catch (statusError) {
+      if (!(statusError instanceof Error)) return "unknown";
+      return isNumber(execStatusFailure(statusError).code) ? "signed-out" : "unknown";
     }
   }
 

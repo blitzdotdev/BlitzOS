@@ -228,7 +228,12 @@ describe("ACP actor", () => {
       sessionId: listed?.id,
       cwd: "/workspace",
       updatedAt: listed === undefined ? undefined : new Date(listed.updatedAt).toISOString(),
-      _meta: { id: listed?.id, provider: listed?.provider, createdBy: listed?.createdBy },
+      _meta: {
+        id: listed?.id,
+        provider: listed?.provider,
+        "blitz/provider": listed?.provider,
+        createdBy: listed?.createdBy,
+      },
     }).toMatchObject(fixtureInfo as object);
     store.append("session-attributed", attributed);
     expect(JSON.parse(store.replay("session-attributed", 10)[0]!.frame)).toEqual(attributed);
@@ -352,7 +357,12 @@ describe("ACP actor", () => {
     expect(listed.result).toMatchObject({
       sessions: [{
         sessionId,
-        _meta: { id: sessionId, provider: "claude", createdBy: "editor-user" },
+        _meta: {
+          id: sessionId,
+          provider: "claude",
+          "blitz/provider": "claude",
+          createdBy: "editor-user",
+        },
       }],
     });
     viewer.send({ jsonrpc: "2.0", id: "load", method: "session/load", params: { sessionId, cwd: "/workspace", mcpServers: [] } });

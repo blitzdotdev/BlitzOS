@@ -138,6 +138,7 @@ export class ActorServer {
           _meta: {
             id: session.id,
             provider: session.provider,
+            "blitz/provider": session.provider,
             createdBy: session.createdBy,
           },
         })),

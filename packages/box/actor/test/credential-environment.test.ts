@@ -172,6 +172,52 @@ describe("credential environment layering", () => {
   });
 });
 
+describe("standalone harness authentication status", () => {
+  it("runs the pinned vendor status commands with the persistent agent home", async () => {
+    const directory = stateDir();
+    const calls: Array<{ file: string; args: string[]; options: { timeout: number; env: NodeJS.ProcessEnv } }> = [];
+    const source = new CredentialSource(directory, (file, args, options) => {
+      calls.push({ file, args, options });
+      return Promise.resolve();
+    });
+
+    await expect(source.authStatus("claude")).resolves.toBe("signed-in");
+    await expect(source.authStatus("codex")).resolves.toBe("signed-in");
+    expect(calls.map(({ file, args }) => ({ file, args }))).toEqual([
+      { file: "/opt/blitz/npm/bin/claude", args: ["auth", "status"] },
+      { file: "/opt/blitz/npm/bin/codex", args: ["login", "status"] },
+    ]);
+    expect(calls.every(({ options }) => (
+      options.timeout === 10_000 && options.env.HOME === "/var/lib/blitz/home"
+    ))).toBe(true);
+  });
+
+  it("distinguishes a vendor signed-out exit from an unavailable status check", async () => {
+    const directory = stateDir();
+    const exited = Object.assign(new Error("not logged in"), { code: 1 });
+    const unavailable = Object.assign(new Error("missing binary"), { code: "ENOENT" });
+
+    await expect(new CredentialSource(directory, () => Promise.reject(exited)).authStatus("claude"))
+      .resolves.toBe("signed-out");
+    await expect(new CredentialSource(directory, () => Promise.reject(unavailable)).authStatus("codex"))
+      .resolves.toBe("unknown");
+  });
+
+  it("does not infer broker authentication from stored credential material", async () => {
+    const directory = stateDir();
+    writeFileSync(join(directory, "broker.json"), "{}");
+    let commandCalls = 0;
+    const source = new CredentialSource(directory, () => {
+      commandCalls += 1;
+      return Promise.resolve();
+    });
+
+    await expect(source.authStatus("claude")).resolves.toBe("unknown");
+    await expect(source.authStatus("codex")).resolves.toBe("unknown");
+    expect(commandCalls).toBe(0);
+  });
+});
+
 /** Records the order the turn touches the credential source in. Both calls are
  * overridden rather than spied so the suite never shells out. */
 class OrderedCredentials extends CredentialSource {

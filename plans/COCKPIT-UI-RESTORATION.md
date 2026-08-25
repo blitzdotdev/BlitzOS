@@ -244,6 +244,9 @@ chat selections survive a browser reload and actor reconnect.
 
 1. Add an actor-owned, secret-free authentication-status response for Claude
    and Codex. A failed status check must remain distinct from signed out.
+   Standalone boxes use the pinned vendor CLIs; broker-enrolled boxes report
+   `unknown` until the broker status contract is designed and tested in its own
+   package/PR.
 2. Gate a new Chat before its first prompt when neither provider is signed in,
    with actions to sign in to Claude or Codex.
 3. Show only authenticated providers in Chat's provider/model controls. When

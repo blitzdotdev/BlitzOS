@@ -16,26 +16,6 @@ import (
 
 const liveClaudeCredential = `{"claudeAiOauth":{"accessToken":"live","refreshToken":"refresh","expiresAt":4102444800000}}`
 
-func TestCredentialAvailableDoesNotMintOrExposeTheToken(t *testing.T) {
-	home := t.TempDir()
-	path := filepath.Join(home, filepath.FromSlash(vendor.Claude.CredentialPath))
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(liveClaudeCredential), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if !CredentialAvailable(home, []string{"claude"}, "claude", vendor.Claude) {
-		t.Fatal("the stored Claude credential was reported signed out")
-	}
-	if CredentialAvailable(home, []string{"codex"}, "claude", vendor.Claude) {
-		t.Fatal("a harness outside the member allowlist was reported signed in")
-	}
-	if CredentialAvailable(t.TempDir(), []string{"claude"}, "claude", vendor.Claude) {
-		t.Fatal("a missing credential was reported signed in")
-	}
-}
-
 // TestLockWaitOutlastsTheVendorTrigger is the runtime half of the invariant
 // lock.go proves at compile time. Both halves are cheap and neither subsumes
 // the other: the constant assertion cannot survive someone turning LockWait

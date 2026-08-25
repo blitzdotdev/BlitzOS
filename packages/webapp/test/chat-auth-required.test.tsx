@@ -429,13 +429,17 @@ describe("chat session identity", () => {
     await answer(socket, "session/list", {
       sessions: [
         { sessionId: "already-bound", cwd: "/workspace" },
-        { sessionId: "recover-me", cwd: "/workspace" },
+        { sessionId: "recover-me", cwd: "/workspace", _meta: { provider: "codex" } },
       ],
     });
     const load = await requestFor(socket, "session/load");
     expect(load.params?.sessionId).toBe("recover-me");
-    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "recover-me", "claude");
-    await socket.deliver({ jsonrpc: "2.0", id: load.id, result: { configOptions: [] } });
+    expect(onSessionId).toHaveBeenCalledWith("workspace-one", "recover-me", "codex");
+    await socket.deliver({
+      jsonrpc: "2.0",
+      id: load.id,
+      result: { configOptions: [], _meta: { "blitz/provider": "codex" } },
+    });
     await view.unmount();
   });
 

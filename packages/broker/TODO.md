@@ -167,3 +167,26 @@ Law #9: these stop at a PR. Red-first negative tests are in the full report.
 - MEDIUM: unpinned base image/apt/npm in the Dockerfile. Root pubkey login
   permitted in container sshd. Keypair reuse checked by size only. Dry-run
   leaves a raw token in `/tmp` (closed path).
+
+## Deferred: harness authentication status
+
+Do not add broker-backed Claude or Codex status reporting as part of the
+WebApp authentication gate. Standalone boxes can ask the pinned vendor CLIs
+directly; broker-enrolled boxes should report `unknown` until this contract is
+designed and tested independently.
+
+Before adding a broker status command:
+
+- Define whether `signed-in` means only that credential material is present,
+  or that it is currently usable. The UI needs the latter.
+- Treat expired credentials and credentials that cannot refresh as signed out;
+  a parseable access token alone is insufficient.
+- Keep the status response secret-free. It must never print a token, refresh a
+  credential as a side effect, or interfere with an in-flight turn.
+- Add direct server tests for the complete forced-command SSH path, including
+  `SSH_ORIGINAL_COMMAND`, allowlist enforcement, malformed commands, and both
+  supported providers.
+- Document the compatibility window and deployment order across broker,
+  `blitz-cred`, box image, actor, and WebApp versions.
+- Prove the final protocol against a real broker container and a newly built
+  box image before enabling it in the UI.

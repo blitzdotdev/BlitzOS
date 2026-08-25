@@ -892,7 +892,7 @@ function isHarnessName<Value>(value: Value): value is Value & AuthRequiredProvid
 
 function parseProviderMeta<Value>(value: Value): Agent | null {
   if (!isRecord(value)) return null;
-  const provider = value["blitz/provider"];
+  const provider = value["blitz/provider"] ?? value.provider;
   return provider === "claude" || provider === "codex" ? provider : null;
 }
 

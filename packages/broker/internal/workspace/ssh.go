@@ -32,24 +32,6 @@ func Token(ctx context.Context, stateDir, harness string) ([]byte, error) {
 	return token, nil
 }
 
-func HarnessStatus(ctx context.Context, stateDir, harness string) (bool, error) {
-	if !feed.ValidHarness(harness) {
-		return false, errors.New("invalid status request")
-	}
-	output, err := runSSH(ctx, stateDir, "mint", "status "+harness, nil)
-	if err != nil {
-		return false, err
-	}
-	switch string(output) {
-	case "signed-in\n":
-		return true, nil
-	case "signed-out\n":
-		return false, nil
-	default:
-		return false, errors.New("broker returned an invalid harness status")
-	}
-}
-
 // trimMintedToken strips the mint reply's line terminator, and any other
 // surrounding whitespace, off the bytes the broker wrote to stdout.
 //
