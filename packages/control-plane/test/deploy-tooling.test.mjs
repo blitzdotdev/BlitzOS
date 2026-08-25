@@ -5,12 +5,37 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { boxImageDecision, IMAGE_PATHS } from "../scripts/check-box-image.mjs";
 import { configKeyPaths, missingConfigKeys } from "../scripts/config-drift.mjs";
+import { isNonEmptyString, isTable } from "../scripts/lib/values.mjs";
 import { deploymentVersionIds, rollbackTarget } from "../scripts/rollback.mjs";
 
 const fixturesDirectory = fileURLToPath(
   new URL("../../schema/fixtures/version/", import.meta.url),
 );
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
+
+// --- value decoders ---------------------------------------------------------
+
+test("isTable accepts a table and rejects what typeof gets wrong", () => {
+  assert.equal(isTable({ a: 1 }), true);
+  // The three cases `typeof x === "object"` answers true for, wrongly.
+  assert.equal(isTable(null), false);
+  assert.equal(isTable([1, 2]), false);
+  assert.equal(isTable(new Date(0)), false);
+  assert.equal(isTable(undefined), false);
+  assert.equal(isTable("x"), false);
+  assert.equal(isTable(1), false);
+});
+
+test("isNonEmptyString accepts a primitive string only", () => {
+  assert.equal(isNonEmptyString("abc"), true);
+  assert.equal(isNonEmptyString(""), false);
+  assert.equal(isNonEmptyString(null), false);
+  assert.equal(isNonEmptyString(undefined), false);
+  assert.equal(isNonEmptyString(1), false);
+  assert.equal(isNonEmptyString(["a"]), false);
+  // A boxed String is not a string value, and must not pass as one.
+  assert.equal(isNonEmptyString(new String("abc")), false);
+});
 
 // --- config drift -----------------------------------------------------------
 

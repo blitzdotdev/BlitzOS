@@ -15,11 +15,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
+import { isTable } from "./lib/values.mjs";
 
 const PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * Flattens a parsed TOML tree to dotted key paths.
@@ -34,7 +32,7 @@ const isPlainObject = (value) =>
  */
 export function configKeyPaths(value, prefix = "") {
   const paths = new Set();
-  if (isPlainObject(value)) {
+  if (isTable(value)) {
     for (const [key, child] of Object.entries(value)) {
       const here = prefix === "" ? key : `${prefix}.${key}`;
       paths.add(here);
@@ -44,7 +42,7 @@ export function configKeyPaths(value, prefix = "") {
   }
   if (Array.isArray(value)) {
     for (const element of value) {
-      if (!isPlainObject(element)) continue;
+      if (!isTable(element)) continue;
       for (const nested of configKeyPaths(element, `${prefix}[]`)) paths.add(nested);
     }
   }

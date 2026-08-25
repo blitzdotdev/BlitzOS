@@ -10,6 +10,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isNonEmptyString } from "./lib/values.mjs";
 
 // Everything baked into the image. packages/box holds the actor, the gateway
 // and the rootfs; packages/broker holds the credential broker binary.
@@ -56,7 +57,7 @@ export async function deployedCommit(origin) {
   }
   const body = await response.json();
   const commit = body?.commit;
-  if (typeof commit !== "string" || commit === "") {
+  if (!isNonEmptyString(commit)) {
     throw new Error(`GET ${url} returned no commit field.`);
   }
   return commit;

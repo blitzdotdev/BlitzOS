@@ -15,11 +15,9 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isNonEmptyString, isTable } from "./lib/values.mjs";
 
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
-
-const isPlainObject = (value) =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * Reads the version ids a deployment serves.
@@ -28,10 +26,10 @@ const isPlainObject = (value) =>
  * @returns {string[]} version ids, empty when the shape is unreadable
  */
 export function deploymentVersionIds(deployment) {
-  if (!isPlainObject(deployment) || !Array.isArray(deployment.versions)) return [];
+  if (!isTable(deployment) || !Array.isArray(deployment.versions)) return [];
   return deployment.versions
-    .map((version) => (isPlainObject(version) ? version.version_id ?? version.id : undefined))
-    .filter((id) => typeof id === "string" && id !== "");
+    .map((version) => (isTable(version) ? version.version_id ?? version.id : undefined))
+    .filter((id) => isNonEmptyString(id));
 }
 
 /**
