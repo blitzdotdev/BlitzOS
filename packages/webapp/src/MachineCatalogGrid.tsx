@@ -1,7 +1,20 @@
-import type { MachineType } from '@blitzos/schema';
+import type { MachinePrice, MachineType } from '@blitzos/schema';
 
 export function machineTypeLabel(typeId: string): string {
   return typeId;
+}
+
+/**
+ * Writes the price the way a card corner can hold it, for example "€6.49/mo".
+ * The locale stays pinned to en-US, like the chat date format, because the
+ * whole dialog is English. The provider already made the amount a number.
+ */
+function monthlyPriceLabel(price: MachinePrice): string {
+  const amount = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: price.currency,
+  }).format(price.amount);
+  return `${amount}/mo`;
 }
 
 function machineGroup(machine: MachineType): string {
@@ -76,6 +89,14 @@ export function MachineCatalogGrid({
                       <span className="mi-ubuntu" aria-hidden="true" />
                       {machine.location}
                     </span>
+                    {/* Last in the facts row, so the price lands in the bottom
+                      * right corner. A machine with no price adds no node, so
+                      * the other facts keep their places. */}
+                    {machine.monthlyPrice !== undefined && (
+                      <span className="blueprint-machine-price">
+                        {monthlyPriceLabel(machine.monthlyPrice)}
+                      </span>
+                    )}
                   </span>
                 </label>
               );

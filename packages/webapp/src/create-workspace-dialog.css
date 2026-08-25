@@ -261,6 +261,16 @@
   vertical-align: middle;
 }
 
+/* The facts row is space-between, so the last item holds the bottom right
+ * corner. The price never shrinks and never wraps, because a cut price
+ * misleads the customer. */
+.blueprint-machine-price {
+  flex: none;
+  color: var(--ink);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 .blueprint-machine-context + .webapp-loading-rows {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
