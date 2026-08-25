@@ -205,6 +205,41 @@ describe("create workspace dialog", () => {
       "hetzner: Hetzner API request failed with status 403",
     );
     expect(view.container.textContent).toContain("microvm: no microVM hosts are reachable");
+    expect(view.container.querySelector(".machine-catalog-groups")).toBeNull();
+    expect(view.container.textContent).not.toContain("Some machine types are missing.");
+    await view.unmount();
+  });
+
+  it("names the failed provider beside the machine types that did arrive", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient()}
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({
+          machineTypes: machines,
+          failures: [
+            { providerId: "hetzner", error: "Hetzner API request failed with status 403" },
+          ],
+        })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.querySelector(".machine-catalog-groups")).not.toBeNull();
+    const notice = view.container.querySelector('[role="alert"]');
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toContain("Some machine types are missing.");
+    expect(notice?.textContent).toContain(
+      "hetzner: Hetzner API request failed with status 403",
+    );
+    expect(view.container.textContent).not.toContain("No machine types are available.");
     await view.unmount();
   });
 

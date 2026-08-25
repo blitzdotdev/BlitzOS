@@ -114,6 +114,9 @@ export function CreateWorkspaceDialog({
   }, [listMachineTypes, listVolumes, listTemplates]);
 
   const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId) ?? null;
+  const machineFailureItems = machineFailures.map((failure) => (
+    <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
+  ));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -281,19 +284,26 @@ export function CreateWorkspaceDialog({
             {loading ? (
               <OutlinedLoadingRows count={4} ariaLabel="Loading machine types" />
             ) : machines.length > 0 ? (
-              <MachineCatalogGrid
-                machines={machines}
-                selectedMachineType={selectedMachineType}
-                onSelect={setSelectedMachineType}
-              />
+              <>
+                {machineFailures.length > 0 && (
+                  /* One provider can fail while the others answer. Canary hid a
+                   * dead Hetzner token for an hour: only an empty catalog
+                   * showed the provider error. */
+                  <div className="webapp-form-message" role="alert">
+                    Some machine types are missing. These providers are unavailable:
+                    <ul>{machineFailureItems}</ul>
+                  </div>
+                )}
+                <MachineCatalogGrid
+                  machines={machines}
+                  selectedMachineType={selectedMachineType}
+                  onSelect={setSelectedMachineType}
+                />
+              </>
             ) : machineFailures.length > 0 ? (
               <div className="blueprint-selection__empty" role="alert">
                 <p>No machine types are available.</p>
-                <ul>
-                  {machineFailures.map((failure) => (
-                    <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
-                  ))}
-                </ul>
+                <ul>{machineFailureItems}</ul>
               </div>
             ) : (
               <div className="blueprint-selection__empty">No machine types are available.</div>
