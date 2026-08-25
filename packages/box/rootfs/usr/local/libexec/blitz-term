@@ -33,7 +33,7 @@ mode=${3:-rw}
 case "$session_type" in
   terminal) session_prefix=term; session_cmd=() ;;
   claude) session_prefix=claude; session_cmd=(claude --dangerously-skip-permissions --permission-mode bypassPermissions) ;;
-  codex) session_prefix=codex; session_cmd=(/usr/local/libexec/blitz-codex-session) ;;
+  codex) session_prefix=codex; session_cmd=("$(dirname -- "$0")/blitz-codex-session") ;;
   *) echo "terminal: unsupported session type: $session_type" >&2; exit 2 ;;
 esac
 case "$session_key" in

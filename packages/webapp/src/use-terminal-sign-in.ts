@@ -45,10 +45,13 @@ interface PendingTerminalSignIn {
  * Drives a harness's terminal tab into its login flow on behalf of chat.
  *
  * Chat reported that the box could not authenticate. The returned callback
- * For Claude, this creates or selects its terminal tab and queues the TUI's
+ * takes the reader to wherever that harness's sign-in actually happens.
+ *
+ * For Claude, it creates or selects its terminal tab and queues the TUI's
  * login command. Codex gets a fresh terminal tab instead: the box launcher
- * detects signed-out Codex sessions and starts device authentication, which
- * works when the browser and CLI are on different machines.
+ * decides whether a device-code sign-in is needed and runs it before starting
+ * the Codex TUI, which works when the browser and CLI are on different
+ * machines.
  *
  * The request has to survive a render, which is why it is state rather than a
  * straight call: only the selected pane consumes terminal input, and a pane
@@ -108,7 +111,16 @@ export function useTerminalSignIn(shell: TerminalSignInShell): (provider: Agent)
       // to localhost on the reader's computer, while the CLI listener lives on
       // the remote box. A new tmux session runs blitz-codex-session, which owns
       // the supported device-code flow before starting the Codex TUI.
-      arrivedRef.current = false;
+      //
+      // ALWAYS A FRESH SESSION, deliberately: the launcher decides about
+      // sign-in once, at session start, so selecting a codex tab that is
+      // already past that point would do nothing at all. The cost is that
+      // repeated clicks open repeated tabs; the launcher's own probes mean a
+      // tab only reaches a device prompt on a box that is genuinely signed
+      // out, so the pile-up needs a real failure to trigger.
+      //
+      // Nothing is queued for this provider, so `pending` stays null and the
+      // driving effect never runs — do not add an arrivedRef reset here.
       setPending(null);
       spawnSession(provider);
       return;

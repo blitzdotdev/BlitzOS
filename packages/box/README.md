@@ -54,9 +54,9 @@ can silently create a directory instead.
 webApp endpoints still start and dockerd reports a clean skip.
 
 The box works without BlitzOS accounts or a control plane. Sign in to an agent
-once over SSH with `claude login` or `codex login --device-auth`; HOME persists on the state
-volume. To attach a control plane, add this non-secret setting to the same run
-command:
+once over SSH with `claude login` or `codex login --device-auth`; HOME
+persists on the state volume. To attach a control plane, add this non-secret
+setting to the same run command:
 
 ```sh
 -e BLITZ_CP_ORIGIN=<your-control-plane-origin>

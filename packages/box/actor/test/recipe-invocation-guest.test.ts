@@ -28,6 +28,13 @@ const helperPath = fileURLToPath(
 const blitzTermPath = fileURLToPath(
   new URL("../../rootfs/usr/local/libexec/blitz-term", import.meta.url),
 );
+/** blitz-term resolves its codex launcher as a sibling of itself, the same way
+ * it sources blitz-recipe-invocation, so the argv it builds follows the script
+ * wherever it runs from. Pinning the install path here instead would let the
+ * expectation pass while the argv named a file that does not exist. */
+const codexSessionPath = fileURLToPath(
+  new URL("../../rootfs/usr/local/libexec/blitz-codex-session", import.meta.url),
+);
 const casesDirectory = fileURLToPath(
   new URL("../../../schema/fixtures/recipe-invocation/cases/", import.meta.url),
 );
@@ -223,7 +230,7 @@ function tmuxCreateArgv(session: string): string[] {
 function harnessCommand(harness: TuiHarness): string[] {
   return harness === "claude"
     ? ["claude", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"]
-    : ["/usr/local/libexec/blitz-codex-session"];
+    : [codexSessionPath];
 }
 
 /** The flag mapping blitz-term ships, verified against each CLI's --help:
