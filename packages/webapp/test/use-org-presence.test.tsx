@@ -227,4 +227,24 @@ describe('organization presence lifecycle', () => {
     expect(view.container.textContent).toBe('none');
     await view.unmount();
   });
+
+  it('keeps the last snapshot visible through a reconnect backoff', async () => {
+    const presenceApi = api();
+    vi.mocked(presenceApi.getPresence)
+      .mockResolvedValueOnce(EMPTY_SNAPSHOT)
+      .mockRejectedValueOnce(new Error('offline'));
+    const view = await render(<Probe presenceApi={presenceApi} view={{
+      workspaceId: null,
+      surfaces: [],
+      focusedSurface: null,
+    }} />);
+    await flush();
+    expect(view.container.textContent).toBe('1');
+
+    await act(async () => vi.advanceTimersByTime(5_000));
+    await flush();
+    expect(presenceApi.getPresence).toHaveBeenCalledTimes(2);
+    expect(view.container.textContent).toBe('1');
+    await view.unmount();
+  });
 });

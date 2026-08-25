@@ -1,6 +1,6 @@
 # Organization presence and collaboration safety
 
-Status: Phases 1-2 implemented on `codex/org-presence-plan`; Phases 3-5 are not
+Status: Phases 1-3 implemented on `codex/org-presence-plan`; Phases 4-5 are not
 shipped
 
 Review hardening (2026-08-24), before Phase 3:
@@ -20,8 +20,8 @@ Review hardening (2026-08-24), before Phase 3:
   a janitor after 30 days.
 - `openSharedSession` (and the `?session=` deep link it serves) is the
   operation Phase 3 links and avatars call to join a collaborator's session.
-- Snapshot polling is off (`poll: false`) until the Phase 3 UI mounts;
-  heartbeats are live.
+- Snapshot polling is enabled while the Phase 3 UI is mounted; heartbeats are
+  live and the last good snapshot remains visible through polling backoff.
 - Phase 0 corpus: `packages/schema/fixtures/presence/` with conformance tests
   on both sides.
 
@@ -343,6 +343,8 @@ another workspace**.
 
 ### Phase 3 — Presence UI
 
+Implementation status: complete on `codex/org-presence-plan`.
+
 1. Add the organization avatar stack and presence popover.
 2. Add workspace-row avatars.
 3. Add authorized session-tab/file/preview presence indicators.
@@ -353,6 +355,11 @@ another workspace**.
 
 Exit: a member can tell who is online, who is in the current workspace/session,
 and safely navigate to an authorized collaborator from desktop or mobile.
+
+Implementation note: exact shared-session activity appears on session tabs and
+workspace rows. File and preview activity appears in the authorized presence
+popover, but is not attached to a local tab by basename or local tab id because
+those values are not stable shared resource identities.
 
 ### Phase 4 — Conflict-safe collaboration
 

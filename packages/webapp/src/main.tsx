@@ -19,6 +19,7 @@ import './loading-skeleton.css';
 import './create-workspace-dialog.css';
 import './settings.css';
 import './invite-redeem.css';
+import './presence-ui.css';
 import { StandaloneWebApp } from './StandaloneWebApp';
 import { LODY_DEV_ORIGIN, lodySessionsRequested } from './lody/flag';
 import { FILES_DAV_ROOT } from './resolver';

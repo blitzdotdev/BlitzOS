@@ -6,7 +6,9 @@ import {
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
+import type { PresenceMemberView } from '@blitzos/schema';
 import { NewTabMenu, type SpawnSessionType } from './NewTabMenu';
+import { PresenceFaceStack } from './OrgPresence';
 import { SessionTypeIcon, type WebAppSessionType } from './SessionTypeIcon';
 import type { LivePort, PreviewLink } from './preview';
 import { SESSION_TITLE_MAX_LENGTH } from './storage';
@@ -33,6 +35,8 @@ export type WebAppTabModel = {
   title?: string;
   /** Which panel a `panel` tab shows, so the strip can pick its icon. */
   panel?: 'files' | 'previews' | 'connections';
+  /** Other members currently viewing this normalized shared session. */
+  presence?: PresenceMemberView[];
 };
 
 type WebAppHeaderProps = {
@@ -270,6 +274,11 @@ export function WebAppHeader({
                         className="webapp-tab-label"
                         onDoubleClick={() => beginRename(tab)}
                       >{tab.label}</span>
+                      {tab.presence && tab.presence.length > 0 && (
+                        <span className="webapp-tab-presence">
+                          <PresenceFaceStack members={tab.presence} compact />
+                        </span>
+                      )}
                       {tab.dirty && <span className="webapp-tab-dirty" aria-label="Unsaved changes">•</span>}
                     </button>
                   )}

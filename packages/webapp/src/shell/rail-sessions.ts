@@ -1,3 +1,4 @@
+import type { PresenceMemberView } from '@blitzos/schema';
 import type { WebAppSessionType } from '../WebAppHeader';
 
 /** One managed tab, as the rail draws it. Build 2 swaps the feed for real
@@ -7,4 +8,5 @@ export type DriveRailSession = {
   label: string;
   agent: WebAppSessionType;
   filePath?: string;
+  presence?: PresenceMemberView[];
 };

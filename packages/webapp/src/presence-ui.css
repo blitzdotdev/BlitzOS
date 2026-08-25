@@ -1,0 +1,361 @@
+.org-presence {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  margin-right: 7px;
+}
+
+.org-presence-trigger {
+  display: grid;
+  min-width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0 7px !important;
+  border-radius: 8px !important;
+  color: var(--muted) !important;
+}
+
+.org-presence-trigger:hover,
+.org-presence-trigger:focus-visible,
+.org-presence-trigger[aria-expanded='true'] {
+  color: var(--ink) !important;
+  background: var(--hover) !important;
+}
+
+.org-presence-trigger:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.org-presence-faces {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding-left: 6px;
+}
+
+.org-presence-faces--compact {
+  padding-left: 5px;
+}
+
+.org-presence-face,
+.org-presence-more {
+  position: relative;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  margin-left: -6px;
+  overflow: hidden;
+  border: 2px solid var(--paper);
+  border-radius: 50%;
+  color: var(--paper);
+  background: var(--muted);
+  font: 650 9px/1 var(--font-ui);
+}
+
+.org-presence-face::after {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--paper);
+  border-radius: 50%;
+  background: var(--faint);
+  content: '';
+}
+
+.org-presence-face--active::after {
+  background: var(--ansi-green);
+}
+
+.org-presence-face--online::after {
+  background: var(--accent);
+}
+
+.org-presence-face img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.org-presence-more {
+  color: var(--muted);
+  background: var(--sunken);
+}
+
+.org-presence-faces--compact .org-presence-face,
+.org-presence-faces--compact .org-presence-more {
+  width: 20px;
+  height: 20px;
+}
+
+.org-presence-empty-icon {
+  position: relative;
+  width: 22px;
+  height: 17px;
+}
+
+.org-presence-empty-icon i {
+  position: absolute;
+  top: 2px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+
+.org-presence-empty-icon i:first-child {
+  left: 2px;
+}
+
+.org-presence-empty-icon i:last-child {
+  right: 2px;
+}
+
+.org-presence-empty-icon::after {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
+  left: 1px;
+  height: 6px;
+  border: 1px solid currentColor;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  content: '';
+}
+
+.org-presence-popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% - 4px);
+  right: 0;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(560px, calc(100dvh - var(--headerH) - 12px));
+  overflow-y: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--paper);
+  box-shadow: var(--lift);
+  color: var(--ink);
+  scrollbar-color: var(--rule) transparent;
+  user-select: text;
+}
+
+.org-presence-popover[hidden] {
+  display: none;
+}
+
+.org-presence-popover > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 13px 10px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.org-presence-popover > header strong {
+  font-size: 13px;
+}
+
+.org-presence-popover > header span {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.org-presence-section {
+  padding: 9px 7px 5px;
+}
+
+.org-presence-section + .org-presence-section {
+  border-top: 1px solid var(--rule);
+}
+
+.org-presence-section h2 {
+  margin: 0;
+  padding: 0 6px 5px;
+  color: var(--faint);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.org-presence-section ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.org-presence-member {
+  display: grid;
+  grid-template-columns: 25px minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px 6px;
+  border-radius: 7px;
+}
+
+.org-presence-member:hover {
+  background: var(--hover);
+}
+
+.org-presence-member > .org-presence-face {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  border-width: 1px;
+}
+
+.org-presence-member__copy {
+  min-width: 0;
+}
+
+.org-presence-member__name {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.org-presence-member__name strong {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.org-presence-state {
+  flex: none;
+  color: var(--faint);
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.org-presence-state--active {
+  color: var(--ansi-green);
+}
+
+.org-presence-state--online {
+  color: var(--accent);
+}
+
+.org-presence-member__activities {
+  display: grid;
+  gap: 1px;
+  margin-top: 2px;
+}
+
+.org-presence-member__activities button,
+.org-presence-member__activities span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  color: var(--faint);
+  font: 10.5px/1.55 var(--font-ui);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.org-presence-member__activities button:hover,
+.org-presence-member__activities button:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.org-presence-member__activities button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.org-presence-empty,
+.org-presence-truncated {
+  margin: 0;
+  padding: 15px 13px;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.org-presence-truncated {
+  border-top: 1px solid var(--rule);
+  padding-block: 8px;
+}
+
+.org-presence-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.webapp-workspace-presence {
+  display: inline-flex;
+  margin-left: auto;
+  padding-left: 7px;
+}
+
+.webapp-workspace-presence .org-presence-face,
+.webapp-workspace-presence .org-presence-more,
+.webapp-session-presence .org-presence-face,
+.webapp-session-presence .org-presence-more,
+.webapp-tab-presence .org-presence-face,
+.webapp-tab-presence .org-presence-more {
+  width: 17px;
+  height: 17px;
+  border-width: 1px;
+  font-size: 7px;
+}
+
+.webapp-session-presence,
+.webapp-tab-presence {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
+
+.webapp-tab-presence {
+  padding-left: 4px;
+}
+
+@media (max-width: 899px) {
+  .org-presence-popover {
+    position: fixed;
+    top: calc(var(--mobile-viewport-top, 0px) + var(--headerH) - 4px);
+    right: 8px;
+    left: 8px;
+    width: auto;
+    max-height: calc(var(--mobile-viewport-height, 100dvh) - var(--headerH) - 16px);
+  }
+}
+
+.shell-strip .shell-wtile {
+  position: relative;
+}
+
+.shell-wtile__presence {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+}
+
+.shell-wtile__presence .org-presence-face,
+.shell-wtile__presence .org-presence-more {
+  width: 15px;
+  height: 15px;
+  border-width: 1px;
+  font-size: 6.5px;
+}
+
+.shell-s .webapp-session-presence {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}

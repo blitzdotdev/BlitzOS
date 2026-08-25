@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import type { PresenceSnapshotResponse } from '@blitzos/schema';
 import type { TenantMe } from '../api-adapter';
+import {
+  membersInWorkspace,
+  OrgPresence,
+  otherPresenceMembers,
+  PresenceFaceStack,
+} from '../OrgPresence';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
 import { workspaceTileStyle } from './workspace-tile';
@@ -33,6 +40,10 @@ const TILE_MENU_HEIGHT = 140;
 export type WorkspaceStripProps = {
   workspaces: CloudWorkspaceModel[];
   viewer: TenantMe | null;
+  presenceSnapshot: PresenceSnapshotResponse | null;
+  presenceStale: boolean;
+  presenceWorkspaceId: string | null;
+  onOpenPresenceActivity: (workspaceId: string, sessionId?: string) => void;
   activeWorkspaceId: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
   /** The three verbs the tile's context menu offers. Rename writes the name
@@ -56,6 +67,10 @@ export type WorkspaceStripProps = {
 export function WorkspaceStrip({
   workspaces,
   viewer,
+  presenceSnapshot,
+  presenceStale,
+  presenceWorkspaceId,
+  onOpenPresenceActivity,
   activeWorkspaceId,
   onSelectWorkspace,
   onRenameWorkspace,
@@ -75,6 +90,12 @@ export function WorkspaceStrip({
   >(null);
   const renameInput = useRef<HTMLInputElement>(null);
   const orgLabel = viewer?.org.name || viewer?.org.slug || 'Organization';
+  const presenceMembers = useMemo(
+    () => (presenceStale
+      ? []
+      : otherPresenceMembers(presenceSnapshot, viewer?.membership.id ?? null)),
+    [presenceSnapshot, presenceStale, viewer?.membership.id],
+  );
   const userLabel = viewer?.identity.name || viewer?.identity.email || 'BlitzOS';
 
   useEffect(() => {
@@ -204,6 +225,16 @@ export function WorkspaceStrip({
         </div>
       </div>
 
+      <OrgPresence
+        snapshot={presenceSnapshot}
+        viewerMembershipId={viewer?.membership.id ?? null}
+        activeWorkspaceId={presenceWorkspaceId}
+        onNavigate={onOpenPresenceActivity}
+        onOpenChange={(open) => {
+          if (open) setOrgMenuOpen(false);
+        }}
+      />
+
       <div className="shell-strip__sep" role="presentation" />
 
       <nav className="shell-strip__tiles" aria-label="Workspaces">
@@ -226,7 +257,17 @@ export function WorkspaceStrip({
                 : `${workspace.title} — shared by ${owner}`}
               onClick={() => onSelectWorkspace(workspace.id)}
               onContextMenu={(event) => openTileMenu(event, workspace)}
-            >{workspaceCode(workspace.title)}</button>
+            >
+              {workspaceCode(workspace.title)}
+              {(() => {
+                const tilePresence = membersInWorkspace(presenceMembers, workspace.id);
+                return tilePresence.length > 0 && (
+                  <span className="shell-wtile__presence">
+                    <PresenceFaceStack members={tilePresence} compact />
+                  </span>
+                );
+              })()}
+            </button>
           );
         })}
         <button

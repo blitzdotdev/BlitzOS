@@ -5,6 +5,7 @@ import type { CloudWorkspaceModel } from '../workspace-store';
 // The Drive page's own share icon, so one glyph means "share" everywhere.
 import { BoxGlyph, ShareGlyph } from '../files/DriveIcons';
 import { NewTabControl } from './NewTabControl';
+import { PresenceFaceStack } from '../OrgPresence';
 import type { DriveRailSession } from './rail-sessions';
 
 export type SessionRailProps = {
@@ -182,6 +183,11 @@ export function SessionRail({
                 />
               </span>
               <span className="shell-s__t">{session.label}</span>
+              {session.presence && session.presence.length > 0 && (
+                <span className="webapp-session-presence">
+                  <PresenceFaceStack members={session.presence} compact />
+                </span>
+              )}
               {/* Time is the status at Build 2. Tabs have no clock, so the
                 * slot is drawn and left empty. */}
               <span className="shell-s__a" />

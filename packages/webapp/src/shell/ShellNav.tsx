@@ -1,3 +1,4 @@
+import type { PresenceSnapshotResponse } from '@blitzos/schema';
 import type { TenantMe } from '../api-adapter';
 import type { SpawnSessionType } from '../NewTabMenu';
 import type { LivePort, PreviewLink } from '../preview';
@@ -9,6 +10,10 @@ import { WorkspaceStrip } from './WorkspaceStrip';
 export type ShellNavProps = {
   workspaces: CloudWorkspaceModel[];
   viewer: TenantMe | null;
+  presenceSnapshot: PresenceSnapshotResponse | null;
+  presenceStale: boolean;
+  presenceWorkspaceId: string | null;
+  onOpenPresenceActivity: (workspaceId: string, sessionId?: string) => void;
   activeWorkspaceId: string | null;
   activeWorkspace: CloudWorkspaceModel | undefined;
   /** The rail is column two on a workspace page, and rides in the mobile
@@ -50,6 +55,10 @@ export type ShellNavProps = {
 export function ShellNav({
   workspaces,
   viewer,
+  presenceSnapshot,
+  presenceStale,
+  presenceWorkspaceId,
+  onOpenPresenceActivity,
   activeWorkspaceId,
   activeWorkspace,
   showRail,
@@ -84,6 +93,10 @@ export function ShellNav({
         <WorkspaceStrip
           workspaces={workspaces}
           viewer={viewer}
+          presenceSnapshot={presenceSnapshot}
+          presenceStale={presenceStale}
+          presenceWorkspaceId={presenceWorkspaceId}
+          onOpenPresenceActivity={onOpenPresenceActivity}
           activeWorkspaceId={activeWorkspaceId}
           onSelectWorkspace={onSelectWorkspace}
           onRenameWorkspace={onRenameWorkspace}

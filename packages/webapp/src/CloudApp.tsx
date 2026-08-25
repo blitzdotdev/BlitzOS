@@ -29,6 +29,7 @@ import { ConfirmationDialog } from './ConfirmationDialog';
 import { SessionShareDialog } from './SessionShareDialog';
 import { caughtErrorMessage } from './error-message';
 import { presenceViewForTabs } from './presence';
+import { membersOnSession, otherPresenceMembers } from './OrgPresence';
 import {
   WebAppLoadingPane,
   WebAppLoadingShell,
@@ -770,6 +771,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     navigateToWorkspacePage(workspaceId);
   }, [navigateToWorkspacePage, store.workspaces]);
 
+  const openPresenceActivity = useCallback((workspaceId: string, sessionId?: string) => {
+    if (!store.workspaces.some(({ id, canControl }) => id === workspaceId && canControl)) return;
+    activeWorkspaceIdRef.current = workspaceId;
+    setActiveWorkspaceId(workspaceId);
+    navigateTo(workspacePath(workspaceId, sessionId));
+  }, [navigateTo, store.workspaces]);
+
   // One tail for everything that mints a workspace: the create dialog and
   // recipe launches both adopt the record and navigate to it the same way.
   const adoptCreatedWorkspace = useCallback(async (
@@ -977,7 +985,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     presenceVisibleTabIds,
     presenceFocusedTabId,
   );
-  useOrgPresence(api, store.viewer !== null && !signedOut, presenceView);
+  const presenceSnapshot = useOrgPresence(
+    api,
+    store.viewer !== null && !signedOut,
+    presenceView,
+    { poll: true },
+  );
+  const presenceMembers = useMemo(
+    () => otherPresenceMembers(presenceSnapshot, store.viewer?.membership.id ?? null),
+    [presenceSnapshot, store.viewer?.membership.id],
+  );
   const tabsLoaded = activeWorkspaceTabs !== null;
   // Does this workspace's own MACHINE serve sessions? The build flag cannot
   // answer that — a box on a pre-Lody image has no `/lody/*` door at all — so
@@ -1081,11 +1098,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         };
       }
       if (session.type !== 'file') {
+        const sessionPresence = activeWorkspaceId !== ''
+          && 'sessionId' in session
+          && session.sessionId !== undefined
+          ? membersOnSession(presenceMembers, activeWorkspaceId, session.sessionId)
+          : [];
         const tab: WebAppTabModel = {
           id: String(session.id),
           label: ttydLabel(session),
           agent: session.type,
           pending: false,
+          presence: sessionPresence,
         };
         if (isManagedWorkspaceTab(session)) {
           tab.customTitle = session.title;
@@ -1106,7 +1129,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         title: fullDavPath(session.filePath),
       };
     });
-  }, [dirtyFileIds, ttydSessions]);
+  }, [activeWorkspaceId, dirtyFileIds, presenceMembers, ttydSessions]);
   const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
     .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'file' && tab.agent !== 'preview')
     .map((tab) => {
@@ -1667,6 +1690,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       activeWorkspaceId={railActiveWorkspaceId}
       activeWorkspace={activeWorkspace}
       showRail={railActiveWorkspaceId !== null || (mobileWebApp && activeWorkspace !== undefined)}
+      presenceSnapshot={presenceSnapshot}
+      presenceStale={false}
+      presenceWorkspaceId={presenceView.workspaceId}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
         ? railSessions
         : []}
@@ -1694,6 +1720,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onCreateOrg={() => setShowCreateOrg(true)}
       onOpenDrive={() => navigateTo(drivePath())}
+      onOpenPresenceActivity={openPresenceActivity}
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onSpawnSession={spawnTtydSession}
