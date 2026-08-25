@@ -391,6 +391,8 @@ describe("microVM pool provider", () => {
       fetcher,
     );
 
+    // The pool runs on the operator's own hardware, so it declares no price.
+    // It declares it; it does not stay silent.
     expect(await microvm.listMachineTypes()).toEqual([
       {
         id: "mv-2c2g@lab",
@@ -400,6 +402,7 @@ describe("microVM pool provider", () => {
         diskGb: 8,
         arch: "x86",
         location: "lab",
+        monthlyPrice: null,
       },
       {
         id: "mv-2c4g@lab",
@@ -409,6 +412,7 @@ describe("microVM pool provider", () => {
         diskGb: 8,
         arch: "x86",
         location: "lab",
+        monthlyPrice: null,
       },
       {
         id: "mv-2c2g@edge",
@@ -418,6 +422,7 @@ describe("microVM pool provider", () => {
         diskGb: 8,
         arch: "x86",
         location: "edge",
+        monthlyPrice: null,
       },
     ]);
     expect(fetcher).toHaveBeenCalledTimes(3);

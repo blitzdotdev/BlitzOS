@@ -61,7 +61,8 @@ export const CORE_MANIFEST = Object.freeze([
   "core/workspaces.ts",
   "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
-  "core/compute/aws.ts", "core/compute/aws-sigv4.ts", "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",
+  "core/compute/aws.ts", "core/compute/aws-prices.ts", "core/compute/aws-sigv4.ts",
+  "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",
 ]);
 
 // core/agent-rules.ts imports the box-image rules skeleton as a Text module

@@ -70,6 +70,7 @@ const expected = [
   "principals.ts",
   "recipes.ts",
   "compute/aws.ts",
+  "compute/aws-prices.ts",
   "compute/aws-sigv4.ts",
   "compute/aws-xml.ts",
   "compute/cloudflare-tunnels.ts",

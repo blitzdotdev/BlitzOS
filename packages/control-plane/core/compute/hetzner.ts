@@ -23,12 +23,15 @@ const SHUTDOWN_TIMEOUT_MS = 45_000;
 // are lowercase ASCII letters followed by decimal digits, with no dash.
 const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
 const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
-// Hetzner bills every account in euro. The /server_types response names no
-// currency, so the provider states the one it knows.
-const HETZNER_PRICE_CURRENCY = "EUR";
+// Hetzner bills some accounts in euro and some in dollars, and /v1/pricing
+// says which. A constant here read "EUR" and printed a euro sign over dollar
+// amounts on every card. The account this repo deploys with bills in USD.
+const ISO_4217_PATTERN = /^[A-Z]{3}$/u;
 // Default catalog: two cheap EU types first, then the two US-west types.
-// Gross price each month in EUR, measured 2026-08-25: cx23@hel1 6.49,
-// cx33@hel1 9.99, cpx21@hil 37.49, cpx31@hil 73.49.
+// Gross price each month, read from /v1/pricing on 2026-08-25: cx23@hel1
+// 6.49, cx33@hel1 9.99, cpx21@hil 37.49, cpx31@hil 73.49. That account bills
+// in USD. The figures are the same numbers this comment once called euro,
+// which is how the wrong sign reached the cards.
 // cx33@hel1 gives the same 4 cpu and 8 GB as cpx31@hil. It costs about one
 // seventh as much. That is the reason for the EU entries.
 // Hetzner does not sell cpx21 or cpx31 in any EU location. It sells the cx
@@ -50,7 +53,20 @@ export interface HetznerMachineTypeCatalogWarning {
   reason: string;
 }
 
-export type HetznerCatalogWarningSink = (
+/** Hetzner states the billing currency only in /v1/pricing. When that read
+ * fails, every Hetzner card loses its price. The operator must hear why. */
+export interface HetznerPriceCurrencyWarning {
+  event: "hetzner_price_currency_unavailable";
+  reason: string;
+}
+
+export type HetznerProviderWarning =
+  | HetznerMachineTypeCatalogWarning
+  | HetznerPriceCurrencyWarning;
+
+export type HetznerWarningSink = (warning: HetznerProviderWarning) => void;
+
+type HetznerCatalogWarningSink = (
   warning: HetznerMachineTypeCatalogWarning,
 ) => void;
 
@@ -93,8 +109,9 @@ export interface HetznerProviderOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   /** Raw HETZNER_MACHINE_TYPES Worker var; unset or blank keeps the default catalog. */
   machineTypeCatalog?: string;
-  /** Receives one structured warning per malformed catalog entry. */
-  warn?: HetznerCatalogWarningSink;
+  /** Receives one structured warning per malformed catalog entry, and one
+   * more when Hetzner does not state a usable billing currency. */
+  warn?: HetznerWarningSink;
 }
 
 interface MachineSelection {
@@ -223,6 +240,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly machineTypeAllowlist: ReadonlySet<string>;
+  private readonly warn: HetznerWarningSink;
 
   constructor(
     private readonly token: string,
@@ -230,9 +248,10 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   ) {
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? sleep;
+    this.warn = options.warn ?? (() => {});
     this.machineTypeAllowlist = hetznerMachineTypeAllowlistFromEnv(
       options.machineTypeCatalog,
-      options.warn,
+      this.warn,
     );
   }
 
@@ -338,11 +357,51 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     }
   }
 
+  /**
+   * The ISO 4217 code Hetzner bills this account in, or null when Hetzner
+   * does not state a usable one.
+   *
+   * This costs one extra request. /server_types carries the prices but names
+   * no currency, and /v1/pricing is the only endpoint that names it. The
+   * request runs beside the catalog pages, so it adds no waiting time.
+   *
+   * A failure here leaves the price out; it never empties the catalog. The
+   * response is 41.9 KiB against a 64 KiB cap (measured 2026-08-25) and it
+   * grows as Hetzner adds server types, so one day it may not fit. Losing
+   * every machine because we cannot name a currency is worse than losing a
+   * price label.
+   */
+  private async billingCurrency(): Promise<string | null> {
+    let value: unknown;
+    try {
+      value = await this.request("/pricing");
+    } catch (error) {
+      this.warn({
+        event: "hetzner_price_currency_unavailable",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+    const currency = isRecord(value) && isRecord(value.pricing)
+      ? value.pricing.currency
+      : undefined;
+    if (isString(currency) && ISO_4217_PATTERN.test(currency)) return currency;
+    this.warn({
+      event: "hetzner_price_currency_unavailable",
+      reason: 'expected pricing.currency to be an ISO 4217 code (for example "EUR")',
+    });
+    return null;
+  }
+
   async listMachineTypes(): Promise<ProviderMachineType[]> {
     // Server-type entries carry per-location price tables, so a 50-item page
     // can exceed the bounded JSON fetch cap; smaller pages keep each response
     // under it.
-    const types = await this.list("/server_types", "server_types", 10);
+    // The currency request runs beside the pages, not after them.
+    const [types, currency] = await Promise.all([
+      this.list("/server_types", "server_types", 10),
+      this.billingCurrency(),
+    ]);
     for (const type of types) {
       const id = type.id;
       const name = type.name;
@@ -368,12 +427,14 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
         // price. Number(" ") is 0, so a blank string must not sell a machine
         // for nothing. A malformed row leaves the price out, because a wrong
         // number costs the customer more than a blank card corner does.
+        // An unnamed currency does the same: an amount with the wrong sign in
+        // front of it is the defect this code exists to stop.
         const monthly = prices.find((price) => price.location === locationName)?.price_monthly;
         const gross = isRecord(monthly) && isString(monthly.gross) ? monthly.gross.trim() : "";
         const amount = gross === "" ? Number.NaN : Number(gross);
-        const monthlyPrice: MachinePrice | undefined = Number.isFinite(amount)
-          ? { amount, currency: HETZNER_PRICE_CURRENCY }
-          : undefined;
+        const monthlyPrice: MachinePrice | null = currency !== null && Number.isFinite(amount)
+          ? { amount, currency }
+          : null;
         return {
           id: `${name}@${locationName}`,
           name,

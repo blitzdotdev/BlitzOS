@@ -16,6 +16,7 @@ const machines = [{
   diskGb: 40,
   arch: 'x86',
   location: 'fsn1',
+  monthlyPrice: null,
 }];
 
 const BUILT_IN_RULES = '# Blitz box — agent rules\n\nManaged by Blitz.\n';
