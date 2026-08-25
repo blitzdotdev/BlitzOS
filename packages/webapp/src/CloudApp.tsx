@@ -1438,6 +1438,57 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
+  const createWorkspaceDialog = showCreateWorkspace && (
+    <CreateWorkspaceDialog
+      busy={createWorkspaceBusy}
+      error={createWorkspaceError}
+      orgName={store.viewer?.org.name ?? 'your org'}
+      client={client}
+      listMachineTypes={listMachineTypes}
+      listVolumes={listVolumes}
+      listTemplates={listTemplates}
+      initialTemplateId={orgDefaultTemplateId}
+      onNewTemplate={() => navigateTo(templateNewPath())}
+      onCancel={() => {
+        if (!createWorkspaceBusy) setShowCreateWorkspace(false);
+      }}
+      onSubmit={(input) => { void createWorkspace(input); }}
+    />
+  );
+  const deleteWorkspaceDialog = confirmation && (
+    <ConfirmationDialog
+      title="Delete workspace?"
+      description={`Are you sure you want to delete “${confirmation.label}”? This destroys the workspace and cannot be undone.`}
+      confirmLabel="Yes, delete"
+      cancelLabel="No"
+      onCancel={cancelConfirmation}
+      onConfirm={confirmWebAppAction}
+    />
+  );
+  const shareWorkspaceDialog = shareWorkspaceId && (() => {
+    const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
+    return workspace ? (
+      <ShareWorkspaceDialog
+        client={client}
+        workspaceId={workspace.id}
+        workspaceName={workspace.title}
+        orgName={store.viewer?.org.name ?? 'your org'}
+        orgShareRole={workspace.orgShareRole}
+        owner={workspace.owner ?? (workspace.accessRole === 'owner' && store.viewer
+          ? { name: store.viewer.identity.name || store.viewer.identity.email, avatarUrl: store.viewer.identity.avatarUrl ?? null }
+          : null)}
+        viewerIsOwner={workspace.accessRole === 'owner'}
+        onClose={() => setShareWorkspaceId(null)}
+      />
+    ) : null;
+  })();
+  const railOverlays = (
+    <>
+      {createWorkspaceDialog}
+      {deleteWorkspaceDialog}
+      {shareWorkspaceDialog}
+    </>
+  );
 
   if (signedOut) {
     return <LoginForm loginUrl={api.googleLoginUrl()} />;
@@ -1475,33 +1526,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         )}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
         {updateNotice}
-        {showCreateWorkspace && (
-          <CreateWorkspaceDialog
-            busy={createWorkspaceBusy}
-            error={createWorkspaceError}
-            orgName={store.viewer?.org.name ?? 'your org'}
-            client={client}
-            listMachineTypes={listMachineTypes}
-            listVolumes={listVolumes}
-            listTemplates={listTemplates}
-            initialTemplateId={orgDefaultTemplateId}
-            onNewTemplate={() => navigateTo(templateNewPath())}
-            onCancel={() => {
-              if (!createWorkspaceBusy) setShowCreateWorkspace(false);
-            }}
-            onSubmit={(input) => { void createWorkspace(input); }}
-          />
-        )}
-        {confirmation && (
-          <ConfirmationDialog
-            title="Delete workspace?"
-            description={`Are you sure you want to delete “${confirmation.label}”? This destroys the workspace and cannot be undone.`}
-            confirmLabel="Yes, delete"
-            cancelLabel="No"
-            onCancel={cancelConfirmation}
-            onConfirm={confirmWebAppAction}
-          />
-        )}
+        {railOverlays}
       </main>
     );
   }
@@ -1529,6 +1554,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
         {updateNotice}
+        {railOverlays}
       </main>
     );
   }
@@ -1554,6 +1580,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
         {updateNotice}
+        {railOverlays}
       </main>
     );
   }
@@ -1576,6 +1603,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           </div>
         )}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {railOverlays}
       </main>
     );
   }
@@ -1601,6 +1629,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           </div>
         )}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {railOverlays}
       </main>
     );
   }
@@ -1683,23 +1712,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         </div>
       )}
       {railFor(null, activeWorkspaceId)}
-      {shareWorkspaceId && (() => {
-        const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
-        return workspace ? (
-          <ShareWorkspaceDialog
-            client={client}
-            workspaceId={workspace.id}
-            workspaceName={workspace.title}
-            orgName={store.viewer?.org.name ?? 'your org'}
-            orgShareRole={workspace.orgShareRole}
-            owner={workspace.owner ?? (workspace.accessRole === 'owner' && store.viewer
-              ? { name: store.viewer.identity.name || store.viewer.identity.email, avatarUrl: store.viewer.identity.avatarUrl ?? null }
-              : null)}
-            viewerIsOwner={workspace.accessRole === 'owner'}
-            onClose={() => setShareWorkspaceId(null)}
-          />
-        ) : null;
-      })()}
+      {shareWorkspaceDialog}
 
       <div className="drive-ws-frame">
           <section className="webapp-workspace-view">
@@ -2167,35 +2180,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}
-      {showCreateWorkspace && (
-        <CreateWorkspaceDialog
-          busy={createWorkspaceBusy}
-          error={createWorkspaceError}
-          orgName={store.viewer?.org.name ?? 'your org'}
-          client={client}
-          listMachineTypes={listMachineTypes}
-          listVolumes={listVolumes}
-          listTemplates={listTemplates}
-          initialTemplateId={orgDefaultTemplateId}
-          onNewTemplate={() => navigateTo(templateNewPath())}
-          onCancel={() => {
-            if (!createWorkspaceBusy) {
-              setShowCreateWorkspace(false);
-            }
-          }}
-          onSubmit={(input) => { void createWorkspace(input); }}
-        />
-      )}
-      {confirmation && (
-        <ConfirmationDialog
-          title="Delete workspace?"
-          description={`Are you sure you want to delete “${confirmation.label}”? This destroys the workspace and cannot be undone.`}
-          confirmLabel="Yes, delete"
-          cancelLabel="No"
-          onCancel={cancelConfirmation}
-          onConfirm={confirmWebAppAction}
-        />
-      )}
+      {createWorkspaceDialog}
+      {deleteWorkspaceDialog}
       {fileCloseConfirmation && (
         <ConfirmationDialog
           title="Discard changes?"
