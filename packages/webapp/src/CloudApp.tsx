@@ -98,6 +98,7 @@ import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
 import { useOrgPresence } from './use-org-presence';
+import { openSharedSessionTab, terminalKeyFor } from './workspace-sessions';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { FilesSidebar } from './FilesSidebar';
 import { fullDavPath, isPathAtOrBelow } from './files';
@@ -379,6 +380,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeWorkspaceTabs = workspaceTabs.workspaceId === activeWorkspaceId
     && workspaceTabs.loaded
     ? workspaceTabs.value
+    : null;
+  const activeSharedSessions = workspaceSessions.workspaceId === activeWorkspaceId
+    ? workspaceSessions.value
     : null;
   // Below the mobile breakpoint the panes never split: the workspace keeps one
   // tab strip and the panels stay an off-canvas sheet.
@@ -1226,6 +1230,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
     selectWorkspaceTab(id);
   }, [selectWorkspaceTab, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+  /** Opens a collaborator's shared session in this member's personal view. */
+  const openSharedSession = useCallback((sharedSessionId: string): boolean => {
+    const session = activeSharedSessions?.find((entry) => entry.id === sharedSessionId);
+    if (session === undefined || activeWorkspaceTabs === null) return false;
+    const opened = openSharedSessionTab(activeWorkspaceTabs, session, 'main');
+    updateWorkspaceTabs(() => opened.tabs);
+    setFocusedRegion(opened.region);
+    selectWorkspaceTab(String(opened.tabId));
+    return true;
+  }, [activeSharedSessions, activeWorkspaceTabs, selectWorkspaceTab, updateWorkspaceTabs]);
+  useEffect(() => {
+    if (route.page !== 'webApp' || route.sessionId === undefined) return;
+    if (route.workspaceId !== activeWorkspaceId || activeWorkspaceTabs === null) return;
+    if (activeSharedSessions === null) return;
+    openSharedSession(route.sessionId);
+    window.history.replaceState({}, '', workspacePath(route.workspaceId));
+    setRoute({ workspaceId: route.workspaceId, page: 'webApp', chat: null });
+  }, [activeSharedSessions, activeWorkspaceId, activeWorkspaceTabs, openSharedSession, route]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1589,6 +1611,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     return (
       <SurfaceTabContent
         session={session}
+        terminalKey={terminalKeyFor(session, activeSharedSessions ?? [])}
         active={lodyRail.terminalId === workspaceTabId}
         client={client}
         activeWorkspace={activeWorkspace}
@@ -1883,6 +1906,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             />
             <WorkPanes
               client={client}
+              sharedSessions={activeSharedSessions ?? []}
               panesRef={panesRef}
               visibleRegions={visibleRegions}
               renderedSessions={paneSessions}

@@ -1,0 +1,10 @@
+{
+  "response": {
+    "serverTime": 0, "expiresAfterMs": 35000, "truncated": false,
+    "members": [{
+      "membershipId": "personal", "userId": "operator", "name": "Operator", "avatarUrl": null, "state": "active",
+      "activities": [{ "visible": true, "focused": true, "lastSeenAt": 0, "location": "somewhere" }]
+    }]
+  },
+  "accepts": false
+}

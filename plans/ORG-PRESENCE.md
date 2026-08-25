@@ -3,6 +3,28 @@
 Status: Phases 1-2 implemented on `codex/org-presence-plan`; Phases 3-5 are not
 shipped
 
+Review hardening (2026-08-24), before Phase 3:
+
+- A shared session carries a `terminalKey` — the key the browser hands
+  `blitz-term`, which names the tmux session. Sessions migrated from a V1
+  document keep their old numeric tab id there, so upgrading a running
+  workspace attaches to the live tmux session instead of spawning a second
+  agent beside it.
+- Same-member browsers share one view revision; a 409 re-reads the revision
+  and re-applies the local layout once instead of surfacing a conflict.
+- `GET /presence` truncates (`truncated: true`) instead of failing past 200
+  connections; a membership holds at most 16 live connections; expired rows
+  are swept on writes only; an unparseable stored view degrades to "in the
+  workspace"; presence authorization reuses `workspaceRole()`.
+- Active sessions per workspace are bounded (64); archived rows are purged by
+  a janitor after 30 days.
+- `openSharedSession` (and the `?session=` deep link it serves) is the
+  operation Phase 3 links and avatars call to join a collaborator's session.
+- Snapshot polling is off (`poll: false`) until the Phase 3 UI mounts;
+  heartbeats are live.
+- Phase 0 corpus: `packages/schema/fixtures/presence/` with conformance tests
+  on both sides.
+
 ## Goal
 
 Let an organization member answer three questions without guessing:

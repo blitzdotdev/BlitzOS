@@ -150,6 +150,7 @@ export function decodePresenceSnapshotResponse(json: string): PresenceSnapshotRe
     || !Number.isSafeInteger(object.serverTime)
     || !isNumber(object.expiresAfterMs)
     || !Number.isSafeInteger(object.expiresAfterMs)
+    || !isBoolean(object.truncated)
     || !Array.isArray(object.members)
   ) throw new Error('presence response is invalid');
   const members: PresenceMemberView[] = [];
@@ -161,6 +162,7 @@ export function decodePresenceSnapshotResponse(json: string): PresenceSnapshotRe
   return {
     serverTime: object.serverTime,
     expiresAfterMs: object.expiresAfterMs,
+    truncated: object.truncated,
     members,
   };
 }

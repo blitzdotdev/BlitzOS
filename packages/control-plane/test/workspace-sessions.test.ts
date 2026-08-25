@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { WorkspaceSessionResponse } from "@blitzos/schema";
+import { ARCHIVED_SESSION_RETENTION_MS, runWorkspaceSessionSweep } from "../core/janitors.js";
+import { MAX_ACTIVE_SESSIONS_PER_WORKSPACE } from "../core/workspace-sessions.js";
 import {
   appRequest,
   createWorkspace,
@@ -8,6 +10,7 @@ import {
   operatorSession,
   resetDatabase,
   sameOrgSession,
+  testRuntime,
 } from "./helpers.js";
 
 function workspaceDoc(
@@ -55,6 +58,8 @@ describe("workspace sessions and member views", () => {
     expect(created.status).toBe(201);
     const { session } = await created.json<WorkspaceSessionResponse>();
     expect(session).toMatchObject({ kind: "claude", revision: 1, title: "Pairing" });
+    // A server-created session names its own tmux session.
+    expect(session.terminalKey).toBe(session.id);
 
     const viewPath = `/workspaces/${workspace.id}/view`;
     const putView = (cookie: string, revision: number, title: string) => appRequest(app, viewPath, {
@@ -174,7 +179,12 @@ describe("workspace sessions and member views", () => {
     expect(body).toMatchObject({ revision: 0, migratedFromV1: true });
     const legacySessionId = body.doc.tabs.tabs[0]?.sessionId;
     expect(legacySessionId).toBe(`legacy-${workspace.id}-7`);
-    expect(body.sessions).toEqual([expect.objectContaining({ id: legacySessionId })]);
+    // The V1 tab was attached to tmux `claude-7`. The durable id changes; the
+    // key the browser hands the box must not, or the upgrade spawns a second
+    // agent beside the one still running.
+    expect(body.sessions).toEqual([
+      expect.objectContaining({ id: legacySessionId, terminalKey: "7" }),
+    ]);
 
     const migrated = await appRequest(app, path, {
       method: "PUT",
@@ -195,11 +205,13 @@ describe("workspace sessions and member views", () => {
 
     // The owner still has no personal V2 row, so their fallback remains the
     // untouched legacy document rather than the mate's personal title/layout.
+    // The migrated row carries the same terminal key the synthetic one did.
     await expect(appRequest(app, path, { headers: { Cookie: owner } })
       .then((response) => response.json())).resolves.toMatchObject({
       revision: 0,
       migratedFromV1: true,
       doc: { title: "Legacy shared" },
+      sessions: [{ id: legacySessionId, terminalKey: "7", createdAt: expect.any(Number) }],
     });
 
     expect((await appRequest(
@@ -255,5 +267,62 @@ describe("workspace sessions and member views", () => {
       headers: { Cookie: owner, "Content-Type": "application/json" },
       body: JSON.stringify({ revision: 1, title: "Stale" }),
     })).status).toBe(409);
+  });
+
+  it("treats a legacy document today's parser rejects as absent", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const workspace = await createWorkspace(app, owner);
+    await env.DB.prepare(
+      `INSERT INTO webapp_state (principal_id, workspace_id, doc, updated_at)
+       VALUES ('operator', ?1, '{"version":1,"tabs":"not-a-tab-set"}', ?2)`,
+    ).bind(workspace.id, Date.now()).run();
+    const response = await appRequest(app, `/workspaces/${workspace.id}/view`, {
+      headers: { Cookie: owner },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      doc: null,
+      revision: 0,
+      migratedFromV1: false,
+      sessions: [],
+    });
+  });
+
+  it("bounds active sessions per workspace and purges archived ones after retention", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const workspace = await createWorkspace(app, owner);
+    const now = Date.now();
+    await env.DB.batch(Array.from({ length: MAX_ACTIVE_SESSIONS_PER_WORKSPACE }, (_, index) => (
+      env.DB.prepare(
+        `INSERT INTO workspace_sessions
+         (id, workspace_id, kind, title, metadata_json, created_by_membership_id,
+          revision, created_at, updated_at, archived_at)
+         VALUES (?1, ?2, 'terminal', NULL, '{}', 'personal', 1, ?3, ?3, NULL)`,
+      ).bind(`filler-${index}`, workspace.id, now)
+    )));
+    const create = () => appRequest(app, `/workspaces/${workspace.id}/sessions`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "terminal" }),
+    });
+    expect((await create()).status).toBe(409);
+
+    // Archiving frees a slot immediately; the row itself lingers for the
+    // retention window, then the janitor removes it.
+    expect((await appRequest(app, `/workspaces/${workspace.id}/sessions/filler-0`, {
+      method: "DELETE",
+      headers: { Cookie: owner, "If-Match": "1" },
+    })).status).toBe(204);
+    expect((await create()).status).toBe(201);
+    const runtime = testRuntime(harness().providers);
+    // archived_at is stamped by the route, a few ms after `now`; give the
+    // boundary a minute of slack on both sides.
+    expect(await runWorkspaceSessionSweep(runtime, now + ARCHIVED_SESSION_RETENTION_MS - 60_000)).toBe(0);
+    expect(await runWorkspaceSessionSweep(runtime, now + ARCHIVED_SESSION_RETENTION_MS + 60_000)).toBe(1);
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM workspace_sessions WHERE id = 'filler-0'",
+    ).first<number>("count")).toBe(0);
   });
 });

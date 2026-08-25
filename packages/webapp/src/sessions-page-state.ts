@@ -85,14 +85,17 @@ export function chatSharedFrom(chat: ChatAddress): string | undefined {
 }
 
 export type AppRoute =
-  | { workspaceId: string; page: 'webApp'; chat: ChatAddress }
+  /** `sessionId` is a one-shot request to open that shared session (from a
+   * presence deep link); the shell consumes it and strips it from the URL. */
+  | { workspaceId: string; page: 'webApp'; chat: ChatAddress; sessionId?: string }
   | { workspaceId: null; page: 'drive' }
   | { workspaceId: null; page: 'folder'; folderId: string; folderPath: string[] }
   | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
 
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
 
-export function parseAppRoute(pathname: string): AppRoute {
+export function parseAppRoute(pathname: string, search = ''): AppRoute {
   const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|compute|requests|usage))?\/?$/u);
   if (settings) {
     // '/settings/integrations' is the pre-rename address; old bookmarks
@@ -194,25 +197,31 @@ export function parseAppRoute(pathname: string): AppRoute {
   const match = pathname.match(/^\/workspaces\/([^/]+)(?:\/chat(?:\/([^/]+))?)?\/?$/u);
   if (!match) return HOME;
   try {
-    const sessionId = match[2] === undefined ? null : decodeURIComponent(match[2]);
+    const chatSessionId = match[2] === undefined ? null : decodeURIComponent(match[2]);
     // `/chat` with no id is the landing; `/chat/<id>` is that session. A bare
     // `/workspaces/:id` keeps meaning the panes, so every existing link and
     // every bookmark resolves exactly where it did before.
-    const chat: ChatAddress = sessionId !== null
-      ? { sessionId }
+    const chat: ChatAddress = chatSessionId !== null
+      ? { sessionId: chatSessionId }
       : /\/chat\/?$/u.test(pathname) ? 'landing' : null;
-    return {
+    const route: Extract<AppRoute, { page: 'webApp' }> = {
       workspaceId: decodeURIComponent(match[1]!),
       page: 'webApp',
       chat,
     };
+    const presenceSessionId = new URLSearchParams(search).get('session');
+    if (presenceSessionId !== null && SESSION_ID_PATTERN.test(presenceSessionId)) {
+      route.sessionId = presenceSessionId;
+    }
+    return route;
   } catch {
     return HOME;
   }
 }
 
-export function workspacePath(workspaceId: string): string {
-  return `/workspaces/${encodeURIComponent(workspaceId)}`;
+export function workspacePath(workspaceId: string, sessionId?: string): string {
+  const base = `/workspaces/${encodeURIComponent(workspaceId)}`;
+  return sessionId === undefined ? base : `${base}?session=${encodeURIComponent(sessionId)}`;
 }
 
 /** The chat landing, or one session inside a workspace. See {@link ChatAddress}. */

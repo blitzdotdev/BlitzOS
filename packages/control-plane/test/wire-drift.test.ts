@@ -311,6 +311,7 @@ const workspaceSession: SharedShape<
   workspaceId: workspace.id,
   kind: "chat",
   title: "Planning",
+  terminalKey: "session",
   chatSessionId: "actor-session",
   chatProvider: "claude",
   revision: 2,
@@ -358,6 +359,7 @@ const presenceSnapshot: SharedShape<
 > = {
   serverTime: 10,
   expiresAfterMs: 35_000,
+  truncated: false,
   members: [{
     membershipId: "membership",
     userId: "user",

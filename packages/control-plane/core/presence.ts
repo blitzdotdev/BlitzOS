@@ -12,7 +12,7 @@ import {
 } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
-import { webAppWorkspaceForRequest } from "./workspace-access.js";
+import { webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import type {
   PresenceActivityView,
   PresenceMemberState,
@@ -26,9 +26,17 @@ import type {
 import { PRESENCE_CONNECTION_TTL_MS } from "./wire.js";
 
 const MAX_PRESENCE_BODY_BYTES = 4 * 1024;
-const MAX_SNAPSHOT_CONNECTIONS = 200;
+/** Connections one snapshot carries. Beyond this the least active connections
+ * are dropped and the response says so, rather than failing the whole
+ * organization's presence once it grows past a threshold. */
+export const MAX_SNAPSHOT_CONNECTIONS = 200;
 const MAX_SNAPSHOT_BYTES = 256 * 1024;
 const EXPIRY_SWEEP_LIMIT = 100;
+/** Live connections one membership may hold. A browser with sessionStorage
+ * blocked mints a fresh clientId per load, and a hostile member could mint
+ * them at will; either way one member must not be able to fill the snapshot
+ * on their own. The oldest connections beyond the cap are dropped on PUT. */
+export const MAX_CONNECTIONS_PER_MEMBERSHIP = 16;
 
 interface PresenceViewDocument {
   surfaces: PresenceSurfaceInput[];
@@ -43,6 +51,7 @@ interface PresenceConnectionRow {
   avatar_url: string | null;
   workspace_id: string | null;
   workspace_name: string | null;
+  workspace_org_id: string | null;
   workspace_owner_membership_id: string | null;
   workspace_org_share_role: "editor" | "viewer" | null;
   observer_grant_role: "editor" | "viewer" | null;
@@ -166,17 +175,20 @@ function parsePutRequest(value: JsonValue): PutPresenceConnectionRequest {
   };
 }
 
+/** A stored view that today's parser rejects (only reachable after the
+ * allowlist changes underneath a live row) degrades to "in the workspace"
+ * rather than failing the whole organization's snapshot; the next heartbeat,
+ * at most 15 seconds later, rewrites the row. */
+const WORKSPACE_ONLY_VIEW: PresenceViewDocument = {
+  surfaces: [{ kind: "workspace" }],
+  focusedSurface: 0,
+};
+
 function storedView(raw: string): PresenceViewDocument {
-  let value: JsonValue;
   try {
-    value = JSON.parse(raw);
+    return parseViewDocument(JSON.parse(raw), "stored presence");
   } catch {
-    throw new Error("stored presence view is invalid JSON");
-  }
-  try {
-    return parseViewDocument(value, "stored presence");
-  } catch {
-    throw new Error("stored presence view is invalid");
+    return WORKSPACE_ONLY_VIEW;
   }
 }
 
@@ -190,6 +202,19 @@ async function sweepExpired(db: Db, cutoff: number): Promise<void> {
           LIMIT ?2
         )`,
     v: [cutoff, EXPIRY_SWEEP_LIMIT],
+  });
+}
+
+async function trimMembershipConnections(db: Db, membershipId: string): Promise<void> {
+  await rows(db, {
+    q: `DELETE FROM presence_connections
+        WHERE membership_id = ?1 AND client_id NOT IN (
+          SELECT client_id FROM presence_connections
+          WHERE membership_id = ?1
+          ORDER BY last_seen_at DESC, client_id
+          LIMIT ?2
+        )`,
+    v: [membershipId, MAX_CONNECTIONS_PER_MEMBERSHIP],
   });
 }
 
@@ -220,14 +245,20 @@ function memberState(rowsForMember: readonly PresenceConnectionRow[]): PresenceM
   return "away";
 }
 
+/** The observer sees exact activity only where the ordinary workspace access
+ * rule grants them any role. One rule, shared with every webApp route, so
+ * presence can never disclose a workspace its owner could not open. */
 function canSeeWorkspace(
   principal: Principal,
   row: PresenceConnectionRow,
 ): boolean {
-  return principal.role === "admin"
-    || row.workspace_owner_membership_id === principal.membershipId
-    || row.workspace_org_share_role !== null
-    || row.observer_grant_role !== null;
+  return row.workspace_id !== null && workspaceRole(principal, {
+    id: row.workspace_id,
+    org_id: row.workspace_org_id,
+    owner_membership_id: row.workspace_owner_membership_id,
+    grant_role: row.observer_grant_role,
+    org_share_role: row.workspace_org_share_role,
+  }) !== null;
 }
 
 function sessionSurface(
@@ -304,11 +335,13 @@ async function snapshot(
   if (principal.orgId === null || principal.membershipId === null) {
     throw new HttpError(403, "active membership required");
   }
+  // Expired rows are filtered by the cutoff below and swept on the write
+  // paths, so the org's most frequent request stays a pure read.
   const cutoff = now - PRESENCE_CONNECTION_TTL_MS;
-  await sweepExpired(db, cutoff);
-  const connectionRows = await rows<PresenceConnectionRow>(db, {
+  const queried = await rows<PresenceConnectionRow>(db, {
     q: `SELECT pc.membership_id, m.user_id, u.name AS user_name, u.email AS user_email,
                u.avatar_url, pc.workspace_id, w.name AS workspace_name,
+               w.org_id AS workspace_org_id,
                w.owner_membership_id AS workspace_owner_membership_id,
                w.org_share_role AS workspace_org_share_role,
                observer_grant.role AS observer_grant_role,
@@ -327,9 +360,10 @@ async function snapshot(
         LIMIT ?4`,
     v: [principal.orgId, principal.membershipId, cutoff, MAX_SNAPSHOT_CONNECTIONS + 1],
   });
-  if (connectionRows.length > MAX_SNAPSHOT_CONNECTIONS) {
-    throw new HttpError(503, "presence snapshot is too large");
-  }
+  // The ORDER BY puts focused, then visible, then most recent connections
+  // first, so what a truncated snapshot drops is the least active tail.
+  let truncated = queried.length > MAX_SNAPSHOT_CONNECTIONS;
+  const connectionRows = truncated ? queried.slice(0, MAX_SNAPSHOT_CONNECTIONS) : queried;
 
   const referencedSessionIds = new Set<string>();
   for (const row of connectionRows) {
@@ -374,11 +408,19 @@ async function snapshot(
     || left.name.localeCompare(right.name)
     || left.membershipId.localeCompare(right.membershipId)
   ));
-  const response = { serverTime: now, expiresAfterMs: PRESENCE_CONNECTION_TTL_MS, members };
-  if (new TextEncoder().encode(JSON.stringify(response)).byteLength > MAX_SNAPSHOT_BYTES) {
-    throw new HttpError(503, "presence snapshot is too large");
+  const encoder = new TextEncoder();
+  const encodedBytes = (): number => encoder.encode(JSON.stringify({
+    serverTime: now,
+    expiresAfterMs: PRESENCE_CONNECTION_TTL_MS,
+    truncated,
+    members,
+  })).byteLength;
+  // Members are sorted most active first, so the byte cap also sheds the tail.
+  while (encodedBytes() > MAX_SNAPSHOT_BYTES && members.length > 0) {
+    members.pop();
+    truncated = true;
   }
-  return response;
+  return { serverTime: now, expiresAfterMs: PRESENCE_CONNECTION_TTL_MS, truncated, members };
 }
 
 export function addPresenceRoutes(
@@ -431,6 +473,7 @@ export function addPresenceRoutes(
         now,
       ],
     });
+    await trimMembershipConnections(db, principal.membershipId);
     return context.body(null, 204);
   });
 

@@ -1,6 +1,6 @@
 import type { WorkspaceSessionView } from '@blitzos/schema';
 import { useEffect, useRef, useState } from 'react';
-import { ApiAdapter } from './api-adapter.js';
+import { ApiAdapter, ApiError } from './api-adapter.js';
 import type { Agent } from './protocol.js';
 import {
   defaultWorkspaceFiles,
@@ -13,6 +13,7 @@ import {
   type WorkspaceTabs,
   type WorkspaceWebAppStateV1,
 } from './storage.js';
+import { sharedSessionTab, type WorkspaceMemberViewResponse } from './workspace-sessions.js';
 
 export type PersistedWorkspaceTabs = {
   workspaceId: string;
@@ -34,18 +35,6 @@ interface WorkspacePersistenceMetadata {
   canCreateSessions: boolean;
 }
 
-function sharedTab(session: WorkspaceSessionView, id: number): WorkspaceTab {
-  if (session.kind !== 'chat') return { id, type: session.kind, sessionId: session.id };
-  const tab: Extract<WorkspaceTab, { type: 'chat' }> = {
-    id,
-    type: 'chat',
-    sessionId: session.id,
-  };
-  if (session.chatSessionId !== null) tab.chatSessionId = session.chatSessionId;
-  if (session.chatProvider !== null) tab.chatProvider = session.chatProvider;
-  return tab;
-}
-
 function initialWorkspaceView(sessions: readonly WorkspaceSessionView[]): WorkspaceWebAppStateV1 {
   const state = defaultWorkspaceWebAppState();
   const first = sessions[0];
@@ -54,7 +43,7 @@ function initialWorkspaceView(sessions: readonly WorkspaceSessionView[]): Worksp
       ...state,
       tabs: {
         ...state.tabs,
-        tabs: state.tabs.tabs.map((tab) => tab.id === 1 ? sharedTab(first, tab.id) : tab),
+        tabs: state.tabs.tabs.map((tab) => tab.id === 1 ? sharedSessionTab(first, tab.id) : tab),
       },
     };
   }
@@ -129,6 +118,10 @@ export function useWorkspacePersistence(
   const revision = useRef<{ workspaceId: string; value: number }>({ workspaceId: '', value: 0 });
   const syncedDoc = useRef<{ workspaceId: string; json: string }>({ workspaceId: '', json: '' });
   const queuedDoc = useRef<{ workspaceId: string; json: string }>({ workspaceId: '', json: '' });
+  // The doc whose save the server last refused. Every workspace poll rebuilds
+  // the metadata and re-runs the save effect; without this an unsaveable doc
+  // would be re-sent, and its error re-shown, every tick until the next edit.
+  const failedDoc = useRef<{ workspaceId: string; json: string }>({ workspaceId: '', json: '' });
   const saveChain = useRef<Promise<void>>(Promise.resolve());
   const canCreateSessions = metadata?.canCreateSessions === true;
 
@@ -139,6 +132,7 @@ export function useWorkspacePersistence(
     revision.current = { workspaceId: '', value: 0 };
     syncedDoc.current = { workspaceId: '', json: '' };
     queuedDoc.current = { workspaceId: '', json: '' };
+    failedDoc.current = { workspaceId: '', json: '' };
     if (!enabled || !activeWorkspaceId) {
       setWorkspaceTabs({
         workspaceId: activeWorkspaceId,
@@ -214,25 +208,41 @@ export function useWorkspacePersistence(
     if (
       (syncedDoc.current.workspaceId === activeWorkspaceId && syncedDoc.current.json === json)
       || (queuedDoc.current.workspaceId === activeWorkspaceId && queuedDoc.current.json === json)
+      || (failedDoc.current.workspaceId === activeWorkspaceId && failedDoc.current.json === json)
     ) return;
     const currentGeneration = generation.current;
     const timer = window.setTimeout(() => {
       queuedDoc.current = { workspaceId: activeWorkspaceId, json };
       saveChain.current = saveChain.current.then(async () => {
         if (generation.current !== currentGeneration) return;
+        const knownRevision = (): number => (
+          revision.current.workspaceId === activeWorkspaceId ? revision.current.value : 0
+        );
         try {
-          const response = await api.putWorkspaceWebAppState(
-            activeWorkspaceId,
-            doc,
-            revision.current.workspaceId === activeWorkspaceId ? revision.current.value : 0,
-          );
+          let response: WorkspaceMemberViewResponse;
+          try {
+            response = await api.putWorkspaceWebAppState(activeWorkspaceId, doc, knownRevision());
+          } catch (cause) {
+            if (!(cause instanceof ApiError && cause.status === 409)) throw cause;
+            // The view is per member, not per browser: another tab of this
+            // same person saved first. That is not a conflict to surface —
+            // both layouts are theirs — so adopt the newer revision and apply
+            // this tab's layout on top of it, once. A second refusal means the
+            // other tab is mid-save; the next edit here retries.
+            const latest = await api.getWorkspaceWebAppState(activeWorkspaceId);
+            if (generation.current !== currentGeneration) return;
+            revision.current = { workspaceId: activeWorkspaceId, value: latest.revision };
+            response = await api.putWorkspaceWebAppState(activeWorkspaceId, doc, latest.revision);
+          }
           if (generation.current !== currentGeneration) return;
           revision.current = { workspaceId: activeWorkspaceId, value: response.revision };
           syncedDoc.current = { workspaceId: activeWorkspaceId, json };
+          failedDoc.current = { workspaceId: '', json: '' };
           setWorkspaceSessions({ workspaceId: activeWorkspaceId, value: response.sessions });
         } catch (cause) {
-          const error = cause instanceof Error ? cause : new Error('workspace view save failed');
-          if (generation.current === currentGeneration) onError(error);
+          if (generation.current !== currentGeneration) return;
+          failedDoc.current = { workspaceId: activeWorkspaceId, json };
+          onError(cause instanceof Error ? cause : new Error('workspace view save failed'));
         } finally {
           if (
             generation.current === currentGeneration

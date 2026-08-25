@@ -174,3 +174,21 @@ describe('settings routes', () => {
       .toBe('/workspaces/ws-1/chat/terminal/terminal/9');
   });
 });
+
+describe('shared session deep links', () => {
+  it('carries a one-shot session request only when the id is one the box could name', () => {
+    expect(parseAppRoute('/workspaces/ws-1', '?session=abc-DEF_9')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      sessionId: 'abc-DEF_9',
+    });
+    expect(parseAppRoute('/workspaces/ws-1', '?session=a/b')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+    });
+    expect(parseAppRoute('/workspaces/ws-1', '')).toEqual({ workspaceId: 'ws-1', page: 'webApp' });
+    expect(parseAppRoute('/workspaces/ws-1')).toEqual({ workspaceId: 'ws-1', page: 'webApp' });
+    expect(workspacePath('ws 1', 'session-2')).toBe('/workspaces/ws%201?session=session-2');
+    expect(workspacePath('ws-1')).toBe('/workspaces/ws-1');
+  });
+});

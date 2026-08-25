@@ -12,6 +12,10 @@ import {
 } from "./workspace-volumes.js";
 
 const STUCK_CREATING_MS = 60 * 60 * 1000;
+/** Archived shared sessions stay queryable long enough for a stale browser to
+ * learn the archive happened (its view read drops the tab) and for support to
+ * see what was closed; after that the row is only growth. */
+export const ARCHIVED_SESSION_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 export const LAZY_SWEEP_INTERVAL_MS = 5 * 60_000;
 
 let lastAttemptAt = 0;
@@ -227,6 +231,18 @@ export async function runSessionSweep(
   });
 }
 
+export async function runWorkspaceSessionSweep(
+  runtime: CoreRuntime,
+  now = Date.now(),
+): Promise<number> {
+  return changed(runtime.db, {
+    q: `DELETE FROM workspace_sessions
+        WHERE archived_at IS NOT NULL AND archived_at <= ?1
+        RETURNING id`,
+    v: [now - ARCHIVED_SESSION_RETENTION_MS],
+  });
+}
+
 export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void {
   if (!sweepPath(path)) return;
   if (inFlight !== undefined) {
@@ -244,6 +260,7 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
       await runOrphanSweep(runtime);
       await runWorkspaceTunnelSweep(runtime);
       await runVolumeRetentionSweep(runtime);
+      await runWorkspaceSessionSweep(runtime);
     } catch (error) {
       console.error(
         JSON.stringify({

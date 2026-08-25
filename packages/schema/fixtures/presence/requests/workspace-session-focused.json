@@ -1,0 +1,22 @@
+{
+  "producer": {
+    "workspaceId": "{{workspace}}",
+    "tabs": [
+      { "id": 1, "type": "terminal", "sessionId": "{{session}}" },
+      { "id": 2, "type": "panel", "panel": "files", "region": "side" }
+    ],
+    "visibleTabIds": [1, 2],
+    "focusedTabId": 1
+  },
+  "body": {
+    "workspaceId": "{{workspace}}",
+    "surfaces": [
+      { "kind": "session", "sessionId": "{{session}}" },
+      { "kind": "panel", "panel": "files" }
+    ],
+    "focusedSurface": 0,
+    "visible": true,
+    "focused": true
+  },
+  "status": 204
+}

@@ -30,6 +30,7 @@ export {
   runOrphanSweep,
   runVolumeRetentionSweep,
   runWorkspaceTunnelSweep,
+  runWorkspaceSessionSweep,
   runSessionSweep,
 } from "./janitors.js";
 export { controlPlaneOriginFromEnv } from "./box-config.js";

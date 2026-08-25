@@ -7,6 +7,7 @@ describe('presence wire decoding', () => {
     const decoded = decodePresenceSnapshotResponse(JSON.stringify({
       serverTime: 10,
       expiresAfterMs: 35_000,
+      truncated: false,
       members: [{
         membershipId: 'member',
         userId: 'user',
@@ -47,6 +48,7 @@ describe('presence wire decoding', () => {
     expect(() => decodePresenceSnapshotResponse(JSON.stringify({
       serverTime: 1,
       expiresAfterMs: 35_000,
+      truncated: false,
       members: [{
         membershipId: 'member',
         userId: 'user',
@@ -65,6 +67,16 @@ describe('presence wire decoding', () => {
         }],
       }],
     }))).toThrow('invalid members');
+  });
+});
+
+describe('presence snapshot bounds', () => {
+  it('requires the server to say whether the snapshot was truncated', () => {
+    const complete = { serverTime: 1, expiresAfterMs: 35_000, truncated: true, members: [] };
+    expect(decodePresenceSnapshotResponse(JSON.stringify(complete)).truncated).toBe(true);
+    const { truncated: _dropped, ...withoutFlag } = complete;
+    expect(() => decodePresenceSnapshotResponse(JSON.stringify(withoutFlag)))
+      .toThrow('presence response is invalid');
   });
 });
 

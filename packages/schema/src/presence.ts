@@ -81,5 +81,9 @@ export interface PresenceMemberView {
 export interface PresenceSnapshotResponse {
   serverTime: number;
   expiresAfterMs: number;
+  /** True when the organization had more live connections than one snapshot
+   * carries; the least active connections were dropped, so a member may show
+   * fewer activities than they have, and an idle member may be missing. */
+  truncated: boolean;
   members: PresenceMemberView[];
 }

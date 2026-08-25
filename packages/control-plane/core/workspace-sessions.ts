@@ -27,6 +27,14 @@ import {
 
 type OptionalJsonValue = JsonValue | undefined;
 
+/** Active (unarchived) sessions one workspace may hold. Every session is a
+ * durable row returned on each view read, and the box keeps a tmux session per
+ * key, so the count is bounded here rather than growing with every "+" click.
+ * Two concurrent creates can overshoot by one; the bound is protective, not
+ * exact. */
+export const MAX_ACTIVE_SESSIONS_PER_WORKSPACE = 64;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
+
 interface SessionRow {
   id: string;
   workspace_id: string;
@@ -49,6 +57,9 @@ interface LegacyRow {
 }
 
 interface SessionMetadata {
+  /** Null only in rows written before the key was recorded; readers fall back
+   * to the session id, which is what a server-created session uses anyway. */
+  terminalKey: string | null;
   chatSessionId: string | null;
   chatProvider: "claude" | "codex" | null;
 }
@@ -68,7 +79,7 @@ function boundedString(value: OptionalJsonValue, field: string, maxLength: numbe
 }
 
 function sessionId(value: string, field = "session id"): string {
-  if (value.length === 0 || value.length > 128 || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+  if (value.length === 0 || value.length > 128 || !SESSION_ID_PATTERN.test(value)) {
     throw new HttpError(400, `${field} is invalid`);
   }
   return value;
@@ -150,6 +161,14 @@ function metadataFromJson(value: string): SessionMetadata {
     throw new Error("stored workspace session metadata is invalid JSON");
   }
   if (!isRecord(parsed)) throw new Error("stored workspace session metadata is invalid");
+  const terminalKey = parsed.terminalKey === undefined || parsed.terminalKey === null
+    ? null
+    : isString(parsed.terminalKey)
+      && parsed.terminalKey.length > 0
+      && parsed.terminalKey.length <= 128
+      && SESSION_ID_PATTERN.test(parsed.terminalKey)
+      ? parsed.terminalKey
+      : undefined;
   const chatSessionId = parsed.chatSessionId === undefined || parsed.chatSessionId === null
     ? null
     : isString(parsed.chatSessionId)
@@ -160,10 +179,10 @@ function metadataFromJson(value: string): SessionMetadata {
     : parsed.chatProvider === "claude" || parsed.chatProvider === "codex"
       ? parsed.chatProvider
       : undefined;
-  if (chatSessionId === undefined || chatProvider === undefined) {
+  if (terminalKey === undefined || chatSessionId === undefined || chatProvider === undefined) {
     throw new Error("stored workspace session metadata is invalid");
   }
-  return { chatSessionId, chatProvider };
+  return { terminalKey, chatSessionId, chatProvider };
 }
 
 function sessionView(row: SessionRow): WorkspaceSessionView {
@@ -173,6 +192,7 @@ function sessionView(row: SessionRow): WorkspaceSessionView {
     workspaceId: row.workspace_id,
     kind: row.kind,
     title: row.title,
+    terminalKey: metadata.terminalKey ?? row.id,
     chatSessionId: metadata.chatSessionId,
     chatProvider: metadata.chatProvider,
     revision: row.revision,
@@ -233,7 +253,17 @@ async function legacyWorkspaceDoc(db: Db, workspaceId: string): Promise<Workspac
         ORDER BY updated_at DESC LIMIT 1`,
     v: [workspaceId],
   });
-  return row === null ? null : withLegacySessionIds(workspaceId, parseStoredWorkspaceDoc(row.doc));
+  if (row === null) return null;
+  let doc: WorkspaceWebAppStateV1;
+  try {
+    doc = parseStoredWorkspaceDoc(row.doc);
+  } catch {
+    // A V1 row today's parser rejects is compatibility data, not the member's
+    // view: treat it as absent so the member starts from defaults instead of
+    // every view read failing until someone deletes the row by hand.
+    return null;
+  }
+  return withLegacySessionIds(workspaceId, doc);
 }
 
 function syntheticLegacySessions(
@@ -248,6 +278,8 @@ function syntheticLegacySessions(
       workspaceId,
       kind,
       title: null,
+      // The V1 tab was already attached to tmux `<kind>-<tab id>`.
+      terminalKey: String(tab.id),
       chatSessionId: tab.chatSessionId ?? null,
       chatProvider: tab.chatProvider ?? null,
       revision: 1,
@@ -317,6 +349,7 @@ function legacySessionQueries(
     const kind = sessionKindForTab(tab);
     if (kind === null || tab.sessionId === undefined) return [];
     const metadata: SessionMetadata = {
+      terminalKey: String(tab.id),
       chatSessionId: tab.chatSessionId ?? null,
       chatProvider: tab.chatProvider ?? null,
     };
@@ -468,10 +501,19 @@ export function addWorkspaceSessionRoutes(
     const access = await accessFor(context);
     requireSessionEditor(access);
     const input = parseCreate(await readJson(context.req.raw));
+    const db = runtimeFactory(context).db;
+    const active = await first<{ count: number }>(db, {
+      q: `SELECT COUNT(*) AS count FROM workspace_sessions
+          WHERE workspace_id = ?1 AND archived_at IS NULL`,
+      v: [access.workspace.id],
+    });
+    if ((active?.count ?? 0) >= MAX_ACTIVE_SESSIONS_PER_WORKSPACE) {
+      throw new HttpError(409, "workspace has too many active sessions; archive one first");
+    }
     const now = Date.now();
     const id = crypto.randomUUID();
-    const metadata: SessionMetadata = { chatSessionId: null, chatProvider: null };
-    await rows(runtimeFactory(context).db, {
+    const metadata: SessionMetadata = { terminalKey: id, chatSessionId: null, chatProvider: null };
+    await rows(db, {
       q: `INSERT INTO workspace_sessions
           (id, workspace_id, kind, title, metadata_json, created_by_membership_id,
            revision, created_at, updated_at, archived_at)
@@ -486,7 +528,7 @@ export function addWorkspaceSessionRoutes(
         now,
       ],
     });
-    const row = await sessionById(runtimeFactory(context).db, access.workspace.id, id);
+    const row = await sessionById(db, access.workspace.id, id);
     if (row === null) throw new Error("workspace session disappeared after create");
     return context.json<WorkspaceSessionResponse>({ session: sessionView(row) }, 201);
   });
@@ -507,6 +549,7 @@ export function addWorkspaceSessionRoutes(
     ) throw new HttpError(400, "chat metadata is valid only for chat sessions");
     const metadata = metadataFromJson(current.metadata_json);
     const nextMetadata: SessionMetadata = {
+      terminalKey: metadata.terminalKey,
       chatSessionId: input.chatSessionId === undefined ? metadata.chatSessionId : input.chatSessionId,
       chatProvider: input.chatProvider === undefined ? metadata.chatProvider : input.chatProvider,
     };

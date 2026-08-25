@@ -19,9 +19,9 @@ import {
 import type {
   GlobalWebAppStateV1,
   WebAppStateResponse,
-  WorkspaceMemberViewResponse,
   WorkspaceWebAppStateV1,
 } from "./storage.js";
+import type { WorkspaceMemberViewResponse } from "./workspace-sessions.js";
 import type {
   IdentityRecord,
   MembershipRecord,

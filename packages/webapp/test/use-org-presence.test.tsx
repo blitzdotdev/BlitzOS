@@ -1,12 +1,14 @@
 import type { PresenceSnapshotResponse, PutPresenceConnectionRequest } from '@blitzos/schema';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError } from '../src/api-adapter';
 import { useOrgPresence, type PresenceApi } from '../src/use-org-presence';
 import { render } from './dom';
 
 const EMPTY_SNAPSHOT: PresenceSnapshotResponse = {
   serverTime: 1,
   expiresAfterMs: 35_000,
+  truncated: false,
   members: [],
 };
 
@@ -21,11 +23,13 @@ function api(): PresenceApi {
 function Probe({
   presenceApi,
   view,
+  poll,
 }: {
   presenceApi: PresenceApi;
   view: Pick<PutPresenceConnectionRequest, 'workspaceId' | 'surfaces' | 'focusedSurface'>;
+  poll?: boolean;
 }) {
-  const snapshot = useOrgPresence(presenceApi, true, view);
+  const snapshot = useOrgPresence(presenceApi, true, view, poll === undefined ? {} : { poll });
   return <div data-testid="snapshot">{snapshot?.serverTime ?? 'none'}</div>;
 }
 
@@ -152,6 +156,75 @@ describe('organization presence lifecycle', () => {
     );
     expect(presenceApi.getPresence).toHaveBeenCalledTimes(2);
 
+    await view.unmount();
+  });
+
+  it('reports one step less after an outright rejection instead of retrying it', async () => {
+    const presenceApi = api();
+    vi.mocked(presenceApi.putPresenceConnection)
+      .mockRejectedValueOnce(new ApiError('presence references an invalid session', 400))
+      .mockResolvedValue(undefined);
+    const view = await render(<Probe presenceApi={presenceApi} view={{
+      workspaceId: 'workspace',
+      surfaces: [{ kind: 'session', sessionId: 'archived-by-someone-else' }],
+      focusedSurface: 0,
+    }} />);
+    await flush();
+    // The rejection is answered with a different payload right away, not with
+    // the same one after a backoff: the workspace alone, no surfaces.
+    await act(async () => vi.advanceTimersByTime(0));
+    await flush();
+    expect(presenceApi.putPresenceConnection).toHaveBeenCalledTimes(2);
+    expect(presenceApi.putPresenceConnection).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        workspaceId: 'workspace',
+        surfaces: [{ kind: 'workspace' }],
+        focusedSurface: 0,
+      }),
+    );
+
+    // Losing the workspace itself (403) steps down to organization presence.
+    vi.mocked(presenceApi.putPresenceConnection)
+      .mockRejectedValueOnce(new ApiError('forbidden', 403))
+      .mockResolvedValue(undefined);
+    await act(async () => vi.advanceTimersByTime(15_000));
+    await flush();
+    await act(async () => vi.advanceTimersByTime(0));
+    await flush();
+    expect(presenceApi.putPresenceConnection).toHaveBeenLastCalledWith(
+      expect.any(String),
+      expect.objectContaining({ workspaceId: null, surfaces: [], focusedSurface: null }),
+    );
+
+    // A transport failure still backs off with the same payload.
+    vi.mocked(presenceApi.putPresenceConnection).mockRejectedValueOnce(new Error('offline'));
+    const before = vi.mocked(presenceApi.putPresenceConnection).mock.calls.length;
+    await act(async () => vi.advanceTimersByTime(15_000));
+    await flush();
+    expect(presenceApi.putPresenceConnection).toHaveBeenCalledTimes(before + 1);
+    await act(async () => vi.advanceTimersByTime(999));
+    expect(presenceApi.putPresenceConnection).toHaveBeenCalledTimes(before + 1);
+    await act(async () => vi.advanceTimersByTime(1));
+    await flush();
+    expect(presenceApi.putPresenceConnection).toHaveBeenCalledTimes(before + 2);
+
+    await view.unmount();
+  });
+
+  it('keeps reporting but skips snapshot polling when the shell has no presence UI', async () => {
+    const presenceApi = api();
+    const view = await render(<Probe presenceApi={presenceApi} poll={false} view={{
+      workspaceId: null,
+      surfaces: [],
+      focusedSurface: null,
+    }} />);
+    await flush();
+    await act(async () => vi.advanceTimersByTime(60_000));
+    await flush();
+    expect(presenceApi.putPresenceConnection).toHaveBeenCalled();
+    expect(presenceApi.getPresence).not.toHaveBeenCalled();
+    expect(view.container.textContent).toBe('none');
     await view.unmount();
   });
 });

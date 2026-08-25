@@ -5,7 +5,7 @@ import type {
   ReactNode,
   RefObject,
 } from 'react';
-import type { CredentialRequestView } from '@blitzos/schema';
+import type { CredentialRequestView, WorkspaceSessionView } from '@blitzos/schema';
 import type { WebDAVClient } from 'webdav';
 import type { ControlPlaneClient } from '../api';
 import {
@@ -22,9 +22,11 @@ import type { WorkspaceRegion, WorkspaceTab } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import type { ConnectionsPanelFocus } from '../WorkspaceDrawer';
 import type { TabDrag } from '../use-workspace-tab-drag';
+import { terminalKeyFor } from '../workspace-sessions';
 
 export type WorkPanesProps = {
   client: ControlPlaneClient;
+  sharedSessions: WorkspaceSessionView[];
   panesRef: RefObject<HTMLDivElement | null>;
   visibleRegions: WorkspaceRegion[];
   renderedSessions: WorkspaceTab[];
@@ -94,6 +96,7 @@ export type WorkPanesProps = {
  * tab between panes changes a placement and never a parent. */
 export function WorkPanes({
   client,
+  sharedSessions,
   panesRef,
   visibleRegions,
   renderedSessions,
@@ -214,6 +217,7 @@ export function WorkPanes({
           >
             <SurfaceTabContent
               session={session}
+              terminalKey={terminalKeyFor(session, sharedSessions)}
               active={active}
               client={client}
               activeWorkspace={activeWorkspace}

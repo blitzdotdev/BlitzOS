@@ -1,0 +1,16 @@
+{
+  "producer": {
+    "workspaceId": "{{workspace}}",
+    "tabs": [{ "id": 1, "type": "terminal" }],
+    "visibleTabIds": [1],
+    "focusedTabId": 1
+  },
+  "body": {
+    "workspaceId": "{{workspace}}",
+    "surfaces": [{ "kind": "workspace" }],
+    "focusedSurface": 0,
+    "visible": true,
+    "focused": true
+  },
+  "status": 204
+}

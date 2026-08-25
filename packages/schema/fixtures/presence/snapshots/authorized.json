@@ -1,0 +1,41 @@
+{
+  "response": {
+    "serverTime": 0,
+    "expiresAfterMs": 35000,
+    "truncated": false,
+    "members": [
+      {
+        "membershipId": "personal",
+        "userId": "operator",
+        "name": "Operator",
+        "avatarUrl": null,
+        "state": "active",
+        "activities": [
+          {
+            "visible": true,
+            "focused": true,
+            "lastSeenAt": 0,
+            "location": "workspace",
+            "workspaceId": "{{workspace}}",
+            "workspaceName": "{{workspace-name}}",
+            "surfaces": [
+              { "kind": "session", "sessionId": "{{session}}", "sessionKind": "terminal", "title": "Pairing shell" }
+            ],
+            "focusedSurface": 0
+          }
+        ]
+      },
+      {
+        "membershipId": "mate-membership",
+        "userId": "mate",
+        "name": "mate",
+        "avatarUrl": null,
+        "state": "online",
+        "activities": [
+          { "visible": true, "focused": false, "lastSeenAt": 0, "location": "organization" }
+        ]
+      }
+    ]
+  },
+  "accepts": true
+}

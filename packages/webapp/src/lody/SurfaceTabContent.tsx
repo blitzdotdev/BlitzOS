@@ -30,6 +30,9 @@ import type { ReactNode } from 'react';
 
 export type SurfaceTabContentProps = {
   session: WorkspaceTab;
+  /** The tmux key stored by the shared-session registry. Migrated tabs keep
+   * their old numeric key even after gaining a durable session id. */
+  terminalKey: string;
   /** Drives the terminal's fit/focus and the panel's own visibility gate. */
   active: boolean;
   client: ControlPlaneClient;
@@ -69,6 +72,7 @@ export function surfaceTabPaneClassName(session: WorkspaceTab): string {
 
 export function SurfaceTabContent({
   session,
+  terminalKey,
   active,
   client,
   activeWorkspace,
@@ -148,7 +152,7 @@ export function SurfaceTabContent({
     <TtydTerminal
       url={activeSessionUrl ?? ''}
       sessionType={session.type}
-      sessionKey={sessionId}
+      sessionKey={terminalKey}
       active={active}
       readOnly={activeWorkspace?.accessRole === 'viewer'}
       onSignInUrl={onSignInUrl}

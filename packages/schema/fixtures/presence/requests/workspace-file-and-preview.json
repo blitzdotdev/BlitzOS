@@ -1,0 +1,23 @@
+{
+  "producer": {
+    "workspaceId": "{{workspace}}",
+    "tabs": [
+      { "id": 1, "type": "claude", "sessionId": "{{session}}" },
+      { "id": 2, "type": "file", "filePath": "/workspace/secrets/README.md" },
+      { "id": 3, "type": "preview", "port": 3000, "region": "side" }
+    ],
+    "visibleTabIds": [2, 3],
+    "focusedTabId": 3
+  },
+  "body": {
+    "workspaceId": "{{workspace}}",
+    "surfaces": [
+      { "kind": "file", "surfaceId": "tab-2", "label": "README.md" },
+      { "kind": "preview", "surfaceId": "tab-3", "label": "Preview" }
+    ],
+    "focusedSurface": 1,
+    "visible": true,
+    "focused": false
+  },
+  "status": 204
+}

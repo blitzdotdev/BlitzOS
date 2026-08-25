@@ -21,6 +21,7 @@ import {
   runSessionSweep,
   runVolumeRetentionSweep,
   runWorkspaceTunnelSweep,
+  runWorkspaceSessionSweep,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
   perSessionResponse,
@@ -323,6 +324,7 @@ export default {
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
         await runVolumeRetentionSweep(runtime);
+        await runWorkspaceSessionSweep(runtime);
         // The canary is the one sweep that costs an authenticated call to a
         // third party per provider, so it takes the hourly tick alone. On the
         // daily tick as well it would be counted twice against the same rate

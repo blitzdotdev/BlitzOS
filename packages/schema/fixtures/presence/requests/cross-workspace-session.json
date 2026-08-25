@@ -1,0 +1,11 @@
+{
+  "producer": null,
+  "body": {
+    "workspaceId": "{{other-workspace}}",
+    "surfaces": [{ "kind": "session", "sessionId": "{{session}}" }],
+    "focusedSurface": 0,
+    "visible": true,
+    "focused": true
+  },
+  "status": 400
+}

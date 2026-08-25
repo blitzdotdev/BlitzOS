@@ -1,0 +1,5 @@
+{
+  "producer": null,
+  "body": { "workspaceId": null, "surfaces": [{ "kind": "workspace" }], "focusedSurface": 0, "visible": true, "focused": true },
+  "status": 400
+}

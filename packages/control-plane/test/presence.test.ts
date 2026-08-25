@@ -6,6 +6,10 @@ import type {
   WorkspaceSessionResponse,
 } from "@blitzos/schema";
 import {
+  MAX_CONNECTIONS_PER_MEMBERSHIP,
+  MAX_SNAPSHOT_CONNECTIONS,
+} from "../core/presence.js";
+import {
   appRequest,
   createWorkspace,
   harness,
@@ -79,6 +83,7 @@ describe("organization presence", () => {
 
     const first = await getPresence(app, owner);
     expect(first.expiresAfterMs).toBe(35_000);
+    expect(first.truncated).toBe(false);
     expect(first.members).toEqual(expect.arrayContaining([
       expect.objectContaining({ membershipId: "personal", state: "active" }),
       expect.objectContaining({ membershipId: mate.membershipId, state: "online" }),
@@ -233,7 +238,7 @@ describe("organization presence", () => {
     })).status).toBe(413);
   });
 
-  it("expires leases by server time and lazily sweeps a bounded batch", async () => {
+  it("expires leases by server time, sweeps on writes, and truncates instead of failing", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
     await putPresence(app, owner, "fresh", organizationPresence(true, true));
@@ -242,29 +247,118 @@ describe("organization presence", () => {
       `INSERT INTO presence_connections
        (membership_id, client_id, workspace_id, view_json, focused, visible,
         last_seen_at, created_at)
-       VALUES ('personal', ?1, NULL, '{"surfaces":[],"focusedSurface":null}', 0, 0, ?2, ?2)`,
+       VALUES (?1, ?2, NULL, '{"surfaces":[],"focusedSurface":null}', 0, 0, ?3, ?3)`,
     );
     await env.DB.batch(Array.from({ length: 105 }, (_, index) => (
-      statement.bind(`expired-${index}`, expiredAt)
+      statement.bind("personal", `expired-${index}`, expiredAt)
     )));
+    const expiredCount = async (): Promise<number | null> => env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM presence_connections WHERE last_seen_at < ?1",
+    ).bind(Date.now() - 35_000).first<number>("count");
 
+    // Reads filter by the server cutoff but never write.
     const first = await getPresence(app, owner);
     expect(first.members).toEqual([
       expect.objectContaining({ membershipId: "personal", state: "active" }),
     ]);
-    expect(await env.DB.prepare(
-      "SELECT COUNT(*) AS count FROM presence_connections WHERE last_seen_at < ?1",
-    ).bind(Date.now() - 35_000).first<number>("count")).toBe(5);
-    await getPresence(app, owner);
-    expect(await env.DB.prepare(
-      "SELECT COUNT(*) AS count FROM presence_connections WHERE last_seen_at < ?1",
-    ).bind(Date.now() - 35_000).first<number>("count")).toBe(0);
+    expect(first.truncated).toBe(false);
+    expect(await expiredCount()).toBe(105);
+    // Each write sweeps one bounded batch.
+    await putPresence(app, owner, "fresh", organizationPresence(true, true));
+    expect(await expiredCount()).toBe(5);
+    await putPresence(app, owner, "fresh", organizationPresence(true, true));
+    expect(await expiredCount()).toBe(0);
 
-    const freshAt = Date.now();
-    await env.DB.batch(Array.from({ length: 200 }, (_, index) => (
-      statement.bind(`active-${index}`, freshAt)
+    // An organization past the snapshot bound still gets a snapshot: the
+    // least active tail is dropped and the response says so.
+    const mates = await Promise.all(Array.from({ length: 4 }, (_, index) => (
+      sameOrgSession(`crowd-${index}`)
     )));
-    expect((await appRequest(app, "/presence", { headers: { Cookie: owner } })).status).toBe(503);
+    const freshAt = Date.now();
+    await env.DB.batch(mates.flatMap((mate) => (
+      Array.from({ length: MAX_SNAPSHOT_CONNECTIONS / 4 }, (_, index) => (
+        statement.bind(mate.membershipId, `active-${index}`, freshAt)
+      ))
+    )));
+    const crowded = await getPresence(app, owner);
+    expect(crowded.truncated).toBe(true);
+    expect(crowded.members.length).toBeGreaterThan(1);
+    expect(crowded.members[0]).toMatchObject({ membershipId: "personal", state: "active" });
+  });
+
+  it("caps live connections per membership by dropping the oldest", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    for (let index = 0; index < MAX_CONNECTIONS_PER_MEMBERSHIP + 4; index += 1) {
+      await env.DB.prepare(
+        "UPDATE presence_connections SET last_seen_at = last_seen_at - 1000 WHERE membership_id = 'personal'",
+      ).run();
+      expect((await putPresence(app, owner, `tab-${index}`, organizationPresence(true))).status)
+        .toBe(204);
+    }
+    const remaining = await env.DB.prepare(
+      "SELECT client_id FROM presence_connections WHERE membership_id = 'personal' ORDER BY client_id",
+    ).all<{ client_id: string }>();
+    expect(remaining.results).toHaveLength(MAX_CONNECTIONS_PER_MEMBERSHIP);
+    expect(remaining.results.map(({ client_id }) => client_id)).not.toContain("tab-0");
+    expect(remaining.results.map(({ client_id }) => client_id)).toContain(
+      `tab-${MAX_CONNECTIONS_PER_MEMBERSHIP + 3}`,
+    );
+  });
+
+  it("applies the shared workspace access rule per observer role", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const admin = await sameOrgSession("observer-admin", "admin");
+    const member = await sameOrgSession("observer-member");
+    const workspace = await createWorkspace(app, owner);
+    await putPresence(app, owner, "private", {
+      workspaceId: workspace.id,
+      surfaces: [{ kind: "workspace" }],
+      focusedSurface: 0,
+      visible: true,
+      focused: true,
+    });
+    const ownerActivity = async (cookie: string) => (await getPresence(app, cookie)).members
+      .find(({ membershipId }) => membershipId === "personal")?.activities.map(({ location }) => location);
+
+    // Owner sees their own workspace; an org admin sees every workspace in the
+    // org; a plain member with neither grant nor org share sees only that the
+    // owner is somewhere else.
+    expect(await ownerActivity(owner)).toEqual(["workspace"]);
+    expect(await ownerActivity(admin.cookie)).toEqual(["workspace"]);
+    expect(await ownerActivity(member.cookie)).toEqual(["other-workspace"]);
+
+    // A grant reveals it; revoking the grant mid-connection redacts it again
+    // on the very next snapshot, without waiting for a heartbeat.
+    await env.DB.prepare(
+      `INSERT INTO workspace_grants
+       (id, workspace_id, membership_id, role, granted_by_membership_id, created_at)
+       VALUES ('member-grant', ?1, ?2, 'viewer', 'personal', ?3)`,
+    ).bind(workspace.id, member.membershipId, Date.now()).run();
+    expect(await ownerActivity(member.cookie)).toEqual(["workspace"]);
+    await env.DB.prepare("DELETE FROM workspace_grants WHERE id = 'member-grant'").run();
+    expect(await ownerActivity(member.cookie)).toEqual(["other-workspace"]);
+  });
+
+  it("degrades a stored view today's parser rejects instead of failing the snapshot", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const workspace = await createWorkspace(app, owner);
+    await env.DB.prepare(
+      `INSERT INTO presence_connections
+       (membership_id, client_id, workspace_id, view_json, focused, visible,
+        last_seen_at, created_at)
+       VALUES ('personal', 'stale-schema', ?1, '{"surfaces":[{"kind":"gone"}]}', 1, 1, ?2, ?2)`,
+    ).bind(workspace.id, Date.now()).run();
+    const snapshot = await getPresence(app, owner);
+    expect(snapshot.members.find(({ membershipId }) => membershipId === "personal")?.activities)
+      .toEqual([expect.objectContaining({
+        location: "workspace",
+        workspaceId: workspace.id,
+        surfaces: [{ kind: "workspace" }],
+        focusedSurface: 0,
+      })]);
   });
 
   it("stops returning a member immediately after membership disablement", async () => {

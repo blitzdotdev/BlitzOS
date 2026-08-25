@@ -1,0 +1,13 @@
+{
+  "response": {
+    "serverTime": 0, "expiresAfterMs": 35000, "truncated": false,
+    "members": [{
+      "membershipId": "personal", "userId": "operator", "name": "Operator", "avatarUrl": null, "state": "active",
+      "activities": [{
+        "visible": true, "focused": true, "lastSeenAt": 0, "location": "workspace",
+        "workspaceId": "w", "workspaceName": "n", "surfaces": [], "focusedSurface": 0
+      }]
+    }]
+  },
+  "accepts": false
+}

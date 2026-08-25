@@ -42,7 +42,7 @@ describe("wire API client", () => {
       if (init?.method === "PUT" || init?.method === "DELETE") {
         return new Response(null, { status: 204 });
       }
-      return Response.json({ serverTime: 1, expiresAfterMs: 35_000, members: [] });
+      return Response.json({ serverTime: 1, expiresAfterMs: 35_000, truncated: false, members: [] });
     });
     vi.stubGlobal("fetch", fetcher);
     const client = createControlPlaneClient("https://control.example");
@@ -58,6 +58,7 @@ describe("wire API client", () => {
     await expect(client.getPresence()).resolves.toEqual({
       serverTime: 1,
       expiresAfterMs: 35_000,
+      truncated: false,
       members: [],
     });
     await client.deletePresenceConnection("client-one", true);
@@ -77,6 +78,7 @@ describe("wire API client", () => {
       workspaceId: "workspace-one",
       kind: "claude" as const,
       title: null,
+      terminalKey: "session-one",
       chatSessionId: null,
       chatProvider: null,
       revision: 1,

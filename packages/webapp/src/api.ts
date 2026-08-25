@@ -56,14 +56,16 @@ import type {
 import { decodePresenceSnapshotResponse } from "./presence.js";
 import {
   decodeGlobalWebAppStateResponse,
+  type GlobalWebAppStateV1,
+  type WebAppStateResponse,
+  type WorkspaceWebAppStateV1,
+} from "./storage.js";
+import {
   decodeListWorkspaceSessionsResponse,
   decodeWorkspaceMemberViewResponse,
   decodeWorkspaceSessionResponse,
-  type GlobalWebAppStateV1,
-  type WebAppStateResponse,
   type WorkspaceMemberViewResponse,
-  type WorkspaceWebAppStateV1,
-} from "./storage.js";
+} from "./workspace-sessions.js";
 import {
   asJsonObject,
   isBoolean,

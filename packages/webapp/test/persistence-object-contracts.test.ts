@@ -1,8 +1,8 @@
 import { MAX_PREVIEW_PATH_LENGTH } from "@blitzos/schema";
 import { describe, expect, it } from "vitest";
+import { decodeWorkspaceMemberViewResponse } from "../src/workspace-sessions.js";
 import {
   decodeWorkspaceWebAppStateResponse,
-  decodeWorkspaceMemberViewResponse,
   defaultWorkspaceFiles,
   storedWorkspacePreference,
   withPreviewTabPath,
@@ -35,6 +35,7 @@ describe("UI protocol and persistence object contracts", () => {
         workspaceId: "workspace",
         kind: "claude",
         title: null,
+        terminalKey: "shared-terminal",
         chatSessionId: null,
         chatProvider: null,
         revision: 1,
