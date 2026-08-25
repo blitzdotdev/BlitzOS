@@ -41,6 +41,11 @@ export interface BootstrapOptions {
    * detached best-effort retry loop (TEMPLATES-V2). Absent or empty leaves
    * the emitted bytes untouched for every ordinary create. */
   repos?: string[];
+  /** The resolved VM provider's own apt setup lines, from
+   * `VmProvider.bootstrapAptSetup`. Absent emits a script with no provider
+   * lines at all, so one provider's fault can never reach another provider's
+   * box (plans/PROVIDER-BOOTSTRAP.md). */
+  providerAptSetup?: string;
 }
 
 /** Shell-escapes a value into one single-quoted token. Exported because the
@@ -343,6 +348,10 @@ fi
 docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
 
+  // The resolved provider's own lines. "" for a provider that needs none, so
+  // its boxes never read another provider's setup.
+  const providerAptSetup = options.providerAptSetup ?? "";
+
   // Recipe and usage-capture segments; every one is "" on an ordinary create
   // so the emitted bytes stay identical for the non-recipe path.
   const recipe = options.recipe;
@@ -521,45 +530,34 @@ fail() {
 }
 
 export DEBIAN_FRONTEND=noninteractive
-# Canonical's regional EC2 mirrors (<region>.ec2.archive.ubuntu.com) accept the TCP
-# connection and then never answer. Without a timeout apt blocks forever, retry
-# never sees a failure to act on, and the workspace sits in creating until the
-# caller gives up instead of reporting an error. These timeouts turn that hang
-# into a failure; the probe below then moves off the dead mirror.
+# A mirror can accept the TCP connection and then never answer. Without a
+# timeout apt blocks forever, retry never sees a failure to act on, and the
+# workspace sits in creating until the caller gives up instead of reporting an
+# error. These timeouts turn that hang into a failure. Every provider needs
+# them, so they stay here.
 cat >/etc/apt/apt.conf.d/99blitz-acquire <<'APTCONF'
 Acquire::http::Timeout "15";
 Acquire::https::Timeout "15";
 Acquire::Retries "2";
 APTCONF
-# apt-get update exits 0 even when every component of a source is Ign:, so its exit
-# code cannot gate the fallback. Probe the configured mirror directly instead and
-# rewrite before the first update, or the package lists are silently incomplete and
-# the docker.io install fails later for a reason that looks unrelated.
-ec2_mirror=$(grep -rhoE 'https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com' \
-  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1)
-if [ -n "$ec2_mirror" ] && ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/dists/noble/InRelease"; then
-  echo "blitz: $ec2_mirror is unreachable; falling back to archive.ubuntu.com"
-  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
-fi
-# The probe above catches a dead mirror; a live one can still trickle at
-# hundreds of KB/s, which passes every timeout while turning a 90-second
-# install into a 20-minute hang. Cap each attempt and move to the fallback
-# mirror between attempts — a stall is a failure, not a wait.
-apt_mirror_fallback() {
-  sed -i -E 's|https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com|http://archive.ubuntu.com|g' \
-    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
-}
+# Most boxes reach one mirror and have nothing to move to. The default repair
+# therefore does nothing. A provider with a second mirror replaces this in the
+# lines it contributes below.
+apt_mirror_fallback() { :; }
+${providerAptSetup}# A mirror that answers can still trickle at hundreds of KB/s. That passes
+# every timeout and turns a 90-second install into a 20-minute hang. Cap each
+# attempt and repair the sources between attempts. A stall is a failure, not a
+# wait.
 apt_watchdog() {
   local attempt
   for attempt in 1 2 3; do
     if timeout 360 apt-get "$@"; then return 0; fi
-    echo "blitz: apt-get $1 failed or stalled (attempt $attempt); switching to the fallback mirror"
+    echo "blitz: apt-get $1 failed or stalled (attempt $attempt); repairing the sources and retrying"
     apt_mirror_fallback
     dpkg --configure -a 2>/dev/null || true
     sleep 5
   done
-  fail "apt-get $1 kept failing or stalling after the mirror fallback"
+  fail "apt-get $1 kept failing or stalling after 3 attempts"
 }
 apt_watchdog update
 apt_watchdog install -y docker.io curl

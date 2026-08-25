@@ -33,6 +33,7 @@
     "provider:check": "vitest run test/connections-catalog.test.ts -t",
     "test:shell": "sh test/shell-syntax.sh",
     "test:python": "npm run build --silent && node --test test/bootstrap-python.test.mjs",
+    "test:bash": "npm run build --silent && node --test test/bootstrap-bash.test.mjs",
     "test:scripts": "node --test test/publish-box-image.test.mjs test/set-box-image-ref.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.wire-drift.json",
     "types": "node scripts/ensure-wrangler-config.mjs && wrangler types --include-runtime=false",
@@ -40,7 +41,7 @@
     "pretest": "npm run types",
     "pretest:blitzdev": "npm run types",
     "test:blitzdev": "vitest run test/blitzdev-closure.test.ts test/blitzdev-emitter.test.ts test/blitzdev-schema.test.ts test/managed-api.test.ts test/assets.test.ts test/box-image-files.test.ts test/route-prefixes.test.ts test/error-envelope.test.ts",
-    "test": "vitest run && npm run test:python && npm run test:scripts"
+    "test": "vitest run && npm run test:python && npm run test:bash && npm run test:scripts"
   },
   "dependencies": {
     "hono": "4.13.1",

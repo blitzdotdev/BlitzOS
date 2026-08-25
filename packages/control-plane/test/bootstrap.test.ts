@@ -2,9 +2,12 @@ import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildBootstrapScript } from "../core/bootstrap.js";
 import { buildUserData } from "../core/cloud-init.js";
+import { AwsProvider } from "../core/compute/aws.js";
 import { HetznerProvider } from "../core/compute/hetzner.js";
 import {
   appRequest,
+  appWithProviders,
+  FakeProviders,
   harness,
   operatorSession,
   resetDatabase,
@@ -16,6 +19,11 @@ const PHONE_HOME_URL =
 const BOX_IMAGE_REF = `ghcr.io/blitzdotdev/blitz-box@sha256:${"a".repeat(64)}`;
 const BOX_IMAGE_TAG = "blitz-box:release";
 const BOX_IMAGE_SHA256 = "b".repeat(64);
+const AWS_APT_SETUP = new AwsProvider({
+  accessKeyId: "AKIDEXAMPLE",
+  secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+  region: "us-east-1",
+}).bootstrapAptSetup();
 const phoneHomeFixtureSources = import.meta.glob<string>(
   "../../schema/fixtures/phone-home/**/*.json",
   { eager: true, import: "default", query: "?raw" },
@@ -684,6 +692,140 @@ write_files:
     // owner/name shaped is refused outright, never quoted around.
     expect(() => buildBootstrapScript({ ...base, repos: ["bad'; rm -rf /'"] }))
       .toThrow("template repo is not owner/name shaped");
+  });
+
+  // ---- provider bootstrap seam (plans/PROVIDER-BOOTSTRAP.md) ----
+  // AWS-only mirror lines used to sit in the shared script. On a Hetzner box
+  // the grep matched nothing, exited 1, and `set -Eeuo pipefail` killed the
+  // boot at line 84. Every non-AWS create failed.
+
+  it("emits no other provider's setup lines when the provider contributes none", () => {
+    const script = buildBootstrapScript({
+      boxImageSha256: "",
+      boxImageRef: BOX_IMAGE_REF,
+      boxImageTag: "",
+      phoneHomeUrl: PHONE_HOME_URL,
+      sshPublicKey: SSH_PUBLIC_KEY,
+    });
+
+    expect(script).not.toMatch(/ec2/iu);
+    expect(script).not.toContain("archive.ubuntu.com");
+    // The watchdog calls this between attempts. Undefined would exit 127.
+    expect(script).toContain("apt_mirror_fallback() { :; }");
+    expect(script).toContain("apt_watchdog update");
+    // Hetzner needs nothing extra, so it declares nothing.
+    expect(new HetznerProvider("test-token").bootstrapAptSetup).toBeUndefined();
+  });
+
+  it("splices the provider's setup between the apt tuning and the watchdog", () => {
+    const base = {
+      boxImageSha256: "",
+      boxImageRef: BOX_IMAGE_REF,
+      boxImageTag: "",
+      phoneHomeUrl: PHONE_HOME_URL,
+      sshPublicKey: SSH_PUBLIC_KEY,
+    };
+    const script = buildBootstrapScript({
+      ...base,
+      providerAptSetup: "provider_only_line\n",
+    });
+
+    expect(script).toContain("\nprovider_only_line\n");
+    expect(script.indexOf("provider_only_line")).toBeGreaterThan(
+      script.indexOf("Acquire::Retries"),
+    );
+    expect(script.indexOf("provider_only_line")).toBeLessThan(
+      script.indexOf("apt_watchdog() {"),
+    );
+    // Absent and empty are the same script, so no create grows bytes it does
+    // not use.
+    expect(buildBootstrapScript({ ...base, providerAptSetup: "" })).toBe(
+      buildBootstrapScript(base),
+    );
+  });
+
+  it("carries the AWS mirror probe and its fallback into an AWS box's script", () => {
+    const script = buildBootstrapScript({
+      boxImageSha256: "",
+      boxImageRef: BOX_IMAGE_REF,
+      boxImageTag: "",
+      phoneHomeUrl: PHONE_HOME_URL,
+      sshPublicKey: SSH_PUBLIC_KEY,
+      providerAptSetup: AWS_APT_SETUP,
+    });
+
+    expect(script).toContain(
+      `if ec2_mirror=$(grep -rhoE 'https?://[a-z0-9-]+\\.ec2\\.archive\\.ubuntu\\.com' \\
+  /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | head -1) &&
+  ! curl -fsS -m 10 -o /dev/null "$ec2_mirror/ubuntu/dists/noble/InRelease"; then`,
+    );
+    expect(script).toContain(
+      'echo "blitz: $ec2_mirror is unreachable; falling back to archive.ubuntu.com"',
+    );
+    expect(script).toContain(`apt_mirror_fallback() {
+  sed -i -E 's|https?://[a-z0-9-]+\\.ec2\\.archive\\.ubuntu\\.com|http://archive.ubuntu.com|g' \\
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list 2>/dev/null || true
+}`);
+    // The provider's own definition wins: it is emitted after the default.
+    expect(script.indexOf("apt_mirror_fallback() { :; }")).toBeLessThan(
+      script.indexOf("apt_mirror_fallback() {\n"),
+    );
+  });
+
+  it("asks the provider that owns the machine type for its bootstrap lines", async () => {
+    class ContributingProviders extends FakeProviders {
+      bootstrapAptSetup(): string {
+        return "provider_only_line\n";
+      }
+    }
+    const providers = new ContributingProviders();
+    const app = appWithProviders(providers, providers);
+    const cookie = await operatorSession(app);
+    const response = await app.request(
+      "https://cp.example/workspaces",
+      {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ machineTypeId: "small", sshPublicKey: SSH_PUBLIC_KEY }),
+      },
+      {
+        DB: env.DB,
+        BOX_IMAGES: env.BOX_IMAGES,
+        BOX_IMAGE_REF,
+        BOX_IMAGE_TAG,
+        BOX_IMAGE_SHA256,
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const workspace = await response.json<{ workspace: { id: string } }>();
+    expect(providers.userData.get(workspace.workspace.id)).toContain(
+      "\nprovider_only_line\n",
+    );
+  });
+
+  it("creates a workspace with no EC2 text when the provider contributes none", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    const response = await app.request(
+      "https://cp.example/workspaces",
+      {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ machineTypeId: "small", sshPublicKey: SSH_PUBLIC_KEY }),
+      },
+      {
+        DB: env.DB,
+        BOX_IMAGES: env.BOX_IMAGES,
+        BOX_IMAGE_REF,
+        BOX_IMAGE_TAG,
+        BOX_IMAGE_SHA256,
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const workspace = await response.json<{ workspace: { id: string } }>();
+    expect(providers.userData.get(workspace.workspace.id)).not.toMatch(/ec2/iu);
   });
 
   it("injects the configured image through workspace creation instead of the fake default", async () => {

@@ -197,6 +197,24 @@ describe("AWS provider ownership", () => {
     });
   });
 
+  it("contributes the EC2 mirror probe to the bootstrap, and nothing else", () => {
+    const setup = provider(fakeEc2(() => ok("<Response/>"))).bootstrapAptSetup();
+
+    expect(setup).toContain(String.raw`[a-z0-9-]+\.ec2\.archive\.ubuntu\.com`);
+    expect(setup).toContain("http://archive.ubuntu.com");
+    expect(setup).toContain("apt_mirror_fallback() {");
+    // Complete lines: the emitter splices these straight into the script.
+    expect(setup.endsWith("\n")).toBe(true);
+    // A bare `ec2_mirror=$(grep ...)` under `set -e` killed every box with no
+    // EC2 mirror. The grep's exit 1 must stay inside a condition.
+    expect(setup).not.toMatch(/^ec2_mirror=/mu);
+    expect(setup).toMatch(/^if ec2_mirror=\$\(grep /mu);
+    // The empty case is handled by reading the status, never by `|| true`.
+    expect(setup).not.toContain("head -1) || true");
+    // apt itself stays shared: this provider tunes the mirror, nothing more.
+    expect(setup).not.toContain("apt-get");
+  });
+
   it("lists a curated catalog stamped with the configured region", async () => {
     const machineTypes = await provider(
       fakeEc2(() => ok("<Response/>")),
