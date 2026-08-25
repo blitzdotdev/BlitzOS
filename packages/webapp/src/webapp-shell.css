@@ -313,7 +313,7 @@
   color: var(--ink) !important;
 }
 
-.webapp-workspace-delete {
+.webapp-workspace-menu {
   display: grid;
   grid-column: 4;
   grid-row: 2;
@@ -359,13 +359,12 @@
   background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
-.webapp-workspace-delete .mi-trash {
-  width: 14px;
-  height: 14px;
+.webapp-workspace-menu span {
+  display: block;
 }
 
-.webapp-workspace:hover .webapp-workspace-delete,
-.webapp-workspace:focus-within .webapp-workspace-delete,
+.webapp-workspace:hover .webapp-workspace-menu,
+.webapp-workspace:focus-within .webapp-workspace-menu,
 .webapp-workspace:hover .webapp-workspace-details-button,
 .webapp-workspace:focus-within .webapp-workspace-details-button {
   visibility: visible;
@@ -373,12 +372,12 @@
   pointer-events: auto;
 }
 
-.webapp-workspace-delete:hover:not(:disabled),
-.webapp-workspace-delete:focus-visible:not(:disabled) {
+.webapp-workspace-menu:hover:not(:disabled),
+.webapp-workspace-menu:focus-visible:not(:disabled) {
   color: var(--accent) !important;
 }
 
-.webapp-workspace-delete:disabled {
+.webapp-workspace-menu:disabled {
   cursor: default;
 }
 
@@ -835,7 +834,7 @@
     padding-left: 38px;
   }
 
-  .webapp-workspace--expanded .webapp-workspace-delete,
+  .webapp-workspace--expanded .webapp-workspace-menu,
   .webapp-workspace--expanded .webapp-workspace-details-button {
     min-height: var(--touchTarget);
     visibility: visible;

@@ -78,6 +78,8 @@ export function workspaceView(
     canObserve: canOpen && row.phase === "ready",
     launchable: canOpen && row.phase === "ready",
     revision: row.revision,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
     ssh: canOpen && hasSsh && row.phase !== "destroyed"
       ? {
           host: row.ssh_host ?? "",

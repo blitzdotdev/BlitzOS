@@ -21,6 +21,8 @@ describe("webApp box surface", () => {
     canObserve: true,
     launchable: true,
     revision: 1,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
     ssh: null,
     volumeId: null,
     error: null,

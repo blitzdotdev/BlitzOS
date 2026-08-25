@@ -68,8 +68,8 @@ export function DriveRail({
   onSwitchOrg,
   onCreateOrg,
   onOpenSettings,
+  onOpenWorkspaceShare,
   onOpenWorkspaceDetails,
-  onDeleteWorkspace,
   drawerOpen,
   onCloseDrawer,
 }: {
@@ -90,8 +90,8 @@ export function DriveRail({
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
   onOpenSettings: () => void;
+  onOpenWorkspaceShare: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
   drawerOpen: boolean;
   onCloseDrawer: () => void;
 }) {
@@ -231,6 +231,7 @@ export function DriveRail({
           {workspaces.length === 0 && <div className="webapp-tree-empty">No workspaces yet</div>}
           {workspaces.map((workspace) => {
             const workspaceActive = workspace.canControl && workspace.id === activeWorkspaceId;
+            const canManageWorkspace = workspace.accessRole === 'owner' || workspace.accessRole === 'admin';
             const stateLabel = workspaceStateLabel(workspace);
             const railSessions = workspaceActive ? sessions : [];
             const sessionsId = `workspace-sessions-${workspace.id}`;
@@ -288,13 +289,13 @@ export function DriveRail({
                       {workspaceRow}
                     </div>
                   )}
-                  {workspace.canControl && (
+                  {canManageWorkspace && (
                     <button
                       className="webapp-workspace-details-button"
                       type="button"
                       aria-label={`Share ${workspace.title}`}
                       title={`Share ${workspace.title}`}
-                      onClick={() => onOpenWorkspaceDetails(workspace.id)}
+                      onClick={() => onOpenWorkspaceShare(workspace.id)}
                     ><ShareGlyph /></button>
                   )}
                   {canDiscloseSessions && (
@@ -327,13 +328,13 @@ export function DriveRail({
                   </div>
                   {workspace.canControl && (
                     <button
-                      className="webapp-workspace-delete"
+                      className="webapp-workspace-menu"
                       type="button"
-                      aria-label={`Delete ${workspace.title}`}
-                      title={`Delete ${workspace.title}`}
-                      onClick={() => onDeleteWorkspace(workspace.id)}
+                      aria-label={`Workspace details for ${workspace.title}`}
+                      title={`Workspace details for ${workspace.title}`}
+                      onClick={() => onOpenWorkspaceDetails(workspace.id)}
                     >
-                      <span className="mi-trash" aria-hidden="true" />
+                      <span className="codicon codicon-ellipsis" aria-hidden="true" />
                     </button>
                   )}
                 </div>

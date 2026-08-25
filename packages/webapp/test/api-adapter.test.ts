@@ -17,6 +17,8 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     canObserve: phase === "ready",
     launchable: phase === "ready",
     revision: 7,
+    createdAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_005_000,
     ssh: null,
     volumeId: null,
     error: phase === "error" ? "provider failed" : null,
@@ -137,6 +139,10 @@ describe("webapp API adapter", () => {
       canControl: true,
       ownerMembershipId: "membership-one",
       machineType: "mv-2c2g@lab",
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_005_000,
+      environmentConfigured: false,
+      startupConfigured: false,
     });
     expect(workspaceFromWire(workspace("creating", "poll"))?.status).toBe("creating");
     expect(workspaceFromWire(workspace("error", "destroy"))).toMatchObject({

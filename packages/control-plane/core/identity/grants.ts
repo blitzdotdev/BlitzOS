@@ -2,7 +2,11 @@ import { first, rows } from "../db.js";
 import { HttpError, isRecord, type JsonValue, readJson, requiredString } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "../runtime.js";
-import { canControlWorkspace, type WorkspaceAccessRow } from "../workspace-access.js";
+import {
+  canControlWorkspace,
+  workspaceRole,
+  type WorkspaceAccessRow,
+} from "../workspace-access.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "../webapp-tickets.js";
 
 interface GrantWorkspaceRow extends WorkspaceAccessRow {
@@ -48,6 +52,30 @@ async function controlledWorkspace(
     throw new HttpError(404, "workspace not found");
   }
   if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  return workspace;
+}
+
+async function accessibleWorkspace(
+  runtime: CoreRuntime,
+  id: string,
+  principal: Principal,
+): Promise<GrantWorkspaceRow> {
+  const workspace = await first<GrantWorkspaceRow & {
+    grant_role: "editor" | "viewer" | null;
+    org_share_role: "editor" | "viewer" | null;
+  }>(runtime.db, {
+    q: `SELECT w.id, w.org_id, w.owner_membership_id, w.vm_id,
+               w.tunnel_hostname, w.org_share_role, grant.role AS grant_role
+        FROM workspaces w
+        LEFT JOIN workspace_grants grant
+          ON grant.workspace_id = w.id AND grant.membership_id = ?1
+        WHERE w.id = ?2 AND w.phase != 'destroyed' LIMIT 1`,
+    v: [principal.membershipId, id],
+  });
+  if (workspace === null || workspace.org_id !== principal.orgId) {
+    throw new HttpError(404, "workspace not found");
+  }
+  if (workspaceRole(principal, workspace) === null) throw new HttpError(403, "forbidden");
   return workspace;
 }
 
@@ -130,7 +158,7 @@ export function addGrantRoutes(
   router.get("/workspaces/:id/grants", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
-    const workspace = await controlledWorkspace(runtime, context.req.param("id"), principal);
+    const workspace = await accessibleWorkspace(runtime, context.req.param("id"), principal);
     const grants = await rows<GrantRow>(runtime.db, {
       q: `SELECT grant.id, grant.membership_id, grant.role, grant.created_at,
                  user.name, user.email, user.avatar_url

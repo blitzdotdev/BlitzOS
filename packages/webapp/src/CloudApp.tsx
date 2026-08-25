@@ -43,6 +43,7 @@ import {
 import { machineTypeLabel } from './MachineCatalogGrid';
 import { SettingsHeader, SettingsPage } from './SettingsPage';
 import { ShareWorkspaceDialog } from './ShareWorkspaceDialog';
+import { WorkspaceDetailsDialog } from './WorkspaceDetailsDialog';
 import {
   bindVisualViewportGeometry,
   useMobileWebApp,
@@ -276,6 +277,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
+  const [detailsWorkspaceId, setDetailsWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -948,6 +950,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!confirmation) return;
     const request = confirmation;
     setConfirmation(null);
+    setDetailsWorkspaceId((current) => current === request.workspaceId ? null : current);
     deleteWorkspace(request.workspaceId);
   }, [confirmation, deleteWorkspace]);
 
@@ -1613,8 +1616,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onCreateOrg={() => setShowCreateOrg(true)}
       onOpenSettings={() => navigateToSettings('profile')}
-      onOpenWorkspaceDetails={(workspaceId) => setShareWorkspaceId(workspaceId)}
-      onDeleteWorkspace={requestDeleteWorkspace}
+      onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
+      onOpenWorkspaceDetails={(workspaceId) => setDetailsWorkspaceId(workspaceId)}
       drawerOpen={drawerOpen}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
@@ -1682,12 +1685,30 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCancel={() => setShowCreateOrg(false)}
     />
   );
+  const workspaceDetailsDialog = detailsWorkspaceId && (() => {
+    const workspace = store.workspaces.find(({ id }) => id === detailsWorkspaceId);
+    const canManage = workspace?.accessRole === 'owner' || workspace?.accessRole === 'admin';
+    return workspace?.canControl ? (
+      <WorkspaceDetailsDialog
+        client={client}
+        workspace={workspace}
+        orgName={store.viewer?.org.name ?? 'your org'}
+        listMachineTypes={listMachineTypes}
+        listVolumes={listVolumes}
+        onClose={() => setDetailsWorkspaceId(null)}
+        onDelete={canManage
+          ? () => requestDeleteWorkspace(workspace.id)
+          : null}
+      />
+    ) : null;
+  })();
   const railOverlays = (
     <>
       {createOrgDialog}
       {createWorkspaceDialog}
-      {deleteWorkspaceDialog}
       {shareWorkspaceDialog}
+      {workspaceDetailsDialog}
+      {deleteWorkspaceDialog}
     </>
   );
 
@@ -1916,6 +1937,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       )}
       {railFor(null, activeWorkspaceId)}
       {shareWorkspaceDialog}
+      {workspaceDetailsDialog}
 
       <div className="drive-ws-frame">
           <section className="webapp-workspace-view">

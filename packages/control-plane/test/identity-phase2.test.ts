@@ -154,6 +154,9 @@ describe("identity phase 2", () => {
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
     expect(viewer.status).toBe(201);
+    expect((await appRequest(app, `/workspaces/${workspace.id}/grants`, {
+      headers: { Cookie: editor.cookie },
+    })).status).toBe(200);
     // A viewer reaches the files port with a role-carrying ticket once the VM
     // boots a guest that enforces read-only; the agent port stays closed.
     await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")

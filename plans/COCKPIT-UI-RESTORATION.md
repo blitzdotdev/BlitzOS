@@ -5,10 +5,10 @@ capabilities identified by comparing a previous merged PR from an older repo
 with the current BlitzOS webapp, then complete a dedicated mobile pass and a
 final refinement/bug-polish pass.
 
-Progress: **Phases 1–4 implemented locally** on `feat-ui-changes` (2026-08-25).
+Progress: **Phases 1–5 implemented locally** on `feat-ui-changes` (2026-08-25).
 The work also separates closing a session window from archiving the session,
 adds the Start/Resume empty states, and completes the Finder rename/delete
-workflow with dirty-editor protection. Phases 5–7 have not started.
+workflow with dirty-editor protection. Phases 6–7 have not started.
 
 This is not a port of the old bridge. The current control-plane → webapp → box
 actor/ACP architecture stays authoritative. We restore the user-visible
@@ -305,6 +305,12 @@ deleted tabs disappear, dirty content is protected, and all existing Drive
 context actions continue to work.
 
 ### Phase 5 — workspace details separate from Share
+
+Implemented locally on `feat-ui-changes` (2026-08-25). The workspace rail now
+uses a three-dot Details action instead of a permanent Delete control, Share
+remains separate, Details resolves compute/storage metadata from the catalogs,
+shows owner, organization-wide access, individual grants and their roles, and
+moves destructive deletion behind the dialog and its confirmation.
 
 1. Add `createdAt` and `updatedAt` to the shared `WorkspaceView` wire type and
    populate them from the existing workspace row. Stop treating revision as a

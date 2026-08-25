@@ -149,6 +149,8 @@ const creating: WorkspaceView = {
   canObserve: false,
   launchable: false,
   revision: 1,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_000_000,
   ssh: null,
   volumeId: null,
   error: null,
@@ -169,6 +171,8 @@ const running: WorkspaceView = {
   canObserve: true,
   launchable: true,
   revision: 2,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_005_000,
   ssh: {
     host: "box.example.test",
     port: 2222,
@@ -404,6 +408,40 @@ describe("webapp shell smoke", () => {
 
     expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
     expect(view.container.textContent).toContain("Example");
+    await view.unmount();
+  });
+
+  it("returns to workspace details when workspace deletion is cancelled", async () => {
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const detailsButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Workspace details for workspace-running-name"]',
+    );
+    await act(async () => detailsButton?.click());
+    await settle();
+    expect(view.container.textContent).toContain("Workspace details");
+
+    const deleteButton = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Delete workspace");
+    await act(async () => deleteButton?.click());
+    expect(view.container.textContent).toContain("Delete workspace?");
+
+    const cancelButton = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "No");
+    await act(async () => cancelButton?.click());
+    expect(view.container.textContent).not.toContain("Delete workspace?");
+    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.textContent).toContain("Delete workspace");
+    expect(wire.destroy).not.toHaveBeenCalled();
+
     await view.unmount();
   });
 

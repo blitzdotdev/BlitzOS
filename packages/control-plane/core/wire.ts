@@ -230,6 +230,8 @@ export interface WorkspaceView {
   canObserve: boolean;
   launchable: boolean;
   revision: number;
+  createdAt: number;
+  updatedAt: number;
   ssh: {
     host: string;
     port: number;

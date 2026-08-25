@@ -146,6 +146,8 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   canObserve: true,
   launchable: true,
   revision: 3,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_005_000,
   ssh: {
     host: "203.0.113.10",
     port: 22,
