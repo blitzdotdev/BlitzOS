@@ -68,6 +68,7 @@ const expected = [
   "machines.ts",
   "oauth.ts",
   "operator-tokens.ts",
+  "presence.ts",
   "preview.ts",
   "principals.ts",
   "recipes.ts",
@@ -135,6 +136,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(110);
+    expect(expected).toHaveLength(111);
   });
 });

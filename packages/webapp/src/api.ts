@@ -44,6 +44,8 @@ import type {
   OrgUsageCaptureResponse,
   OrgUsageResponse,
   PollResponse,
+  PresenceSnapshotResponse,
+  PutPresenceConnectionRequest,
   PutConnectionRequest,
   RecipeResponse,
   RetryAction,
@@ -51,6 +53,7 @@ import type {
   UpdateWorkspaceSessionRequest,
   WorkspaceSessionResponse,
 } from "@blitzos/schema";
+import { decodePresenceSnapshotResponse } from "./presence.js";
 import {
   decodeGlobalWebAppStateResponse,
   decodeListWorkspaceSessionsResponse,
@@ -259,6 +262,9 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
     input: UpdateWorkspaceSessionRequest,
   ): Promise<WorkspaceSessionResponse>;
   archiveWorkspaceSession(workspaceId: string, sessionId: string, revision: number): Promise<void>;
+  putPresenceConnection(clientId: string, input: PutPresenceConnectionRequest): Promise<void>;
+  deletePresenceConnection(clientId: string, keepalive?: boolean): Promise<void>;
+  getPresence(): Promise<PresenceSnapshotResponse>;
   poll(signal?: AbortSignal): Promise<PollResponse>;
   create(input: CreateWorkspaceRequest): Promise<CreateWorkspaceResponse>;
   destroy(id: string): Promise<CreateWorkspaceResponse>;
@@ -789,6 +795,23 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         `/workspaces/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
         { method: "DELETE", headers: { "If-Match": String(revision) } },
       ),
+    putPresenceConnection: (clientId, input) => request<void>(
+      `/presence/connections/${encodeURIComponent(clientId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    ),
+    deletePresenceConnection: (clientId, keepalive = false) => request<void>(
+      `/presence/connections/${encodeURIComponent(clientId)}`,
+      { method: "DELETE", keepalive },
+    ),
+    getPresence: () => request<PresenceSnapshotResponse>(
+      "/presence",
+      {},
+      decodePresenceSnapshotResponse,
+    ),
     poll: (signal) => request<PollResponse>("/workspaces", { signal }),
     create: (input) =>
       request<CreateWorkspaceResponse>("/workspaces", {

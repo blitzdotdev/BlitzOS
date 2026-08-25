@@ -9,6 +9,7 @@ export * from "./files.js";
 export * from "./json.js";
 export * from "./machine.js";
 export * from "./preview.js";
+export * from "./presence.js";
 export * from "./provider-name.js";
 export * from "./recipe.js";
 export * from "./volume.js";

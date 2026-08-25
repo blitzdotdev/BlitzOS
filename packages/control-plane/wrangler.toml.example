@@ -149,6 +149,8 @@ run_worker_first = [
   "/operator-tokens/*",
   "/orgs",
   "/orgs/*",
+  "/presence",
+  "/presence/*",
   "/proxy/*",
   "/requests",
   "/requests/*",

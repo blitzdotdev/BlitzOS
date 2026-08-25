@@ -37,6 +37,40 @@ describe("wire API client", () => {
     expect(fetcher.mock.calls[1]?.[1]?.method).toBe("DELETE");
   });
 
+  it("uses the presence heartbeat, snapshot, and keepalive disconnect routes", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT" || init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return Response.json({ serverTime: 1, expiresAfterMs: 35_000, members: [] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const client = createControlPlaneClient("https://control.example");
+    const input = {
+      workspaceId: null,
+      surfaces: [],
+      focusedSurface: null,
+      visible: true,
+      focused: true,
+    };
+
+    await client.putPresenceConnection("client-one", input);
+    await expect(client.getPresence()).resolves.toEqual({
+      serverTime: 1,
+      expiresAfterMs: 35_000,
+      members: [],
+    });
+    await client.deletePresenceConnection("client-one", true);
+
+    expect(fetcher.mock.calls.map(([request]) => String(request))).toEqual([
+      "https://control.example/presence/connections/client-one",
+      "https://control.example/presence",
+      "https://control.example/presence/connections/client-one",
+    ]);
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: "PUT", body: JSON.stringify(input) });
+    expect(fetcher.mock.calls[2]?.[1]).toMatchObject({ method: "DELETE", keepalive: true });
+  });
+
   it("uses revisioned member-view and shared-session routes", async () => {
     const session = {
       id: "session-one",

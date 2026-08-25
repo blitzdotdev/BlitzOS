@@ -33,6 +33,7 @@ const expectedTables = [
   "webapp_state",
   "workspace_sessions",
   "workspace_member_views",
+  "presence_connections",
   "device_authorizations",
   "boxes",
   "box_token_families",
@@ -69,9 +70,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-six domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-seven domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(37);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(38);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -427,6 +428,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_workspace_sessions_workspace",
       "idx_workspace_member_views_identity",
       "idx_workspace_member_views_membership",
+      "idx_presence_connections_identity",
+      "idx_presence_connections_expiry",
+      "idx_presence_connections_workspace",
       "idx_boxes_broker",
       "idx_boxes_principal",
       "idx_broker_keys_machine",

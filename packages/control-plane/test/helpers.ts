@@ -585,6 +585,7 @@ export async function resetDatabase(): Promise<void> {
     "machines",
     "boxes",
     "device_authorizations",
+    "presence_connections",
     "workspace_member_views",
     "workspace_sessions",
     "webapp_state",

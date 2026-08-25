@@ -49,6 +49,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
+  "core/presence.ts",
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
@@ -301,6 +302,25 @@ export const BLITZDEV_CONFIG = Object.freeze({
       indexes: [
         { name: "identity", unique: true, fields: ["workspace_id", "membership_id"] },
         { name: "membership", fields: ["membership_id", "updated_at"] },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      name: "presence_connections",
+      fields: [
+        { name: "membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id", onDelete: "CASCADE" } },
+        { name: "client_id", type: "text", sqlType: "text", notNull: true, check: "length(client_id) BETWEEN 1 AND 128" },
+        { name: "workspace_id", type: "text", sqlType: "text", foreignKey: { table: "workspaces", column: "id", onDelete: "CASCADE" } },
+        { name: "view_json", type: "json", sqlType: "text", notNull: true },
+        { name: "focused", type: "bool", sqlType: "integer", notNull: true, check: "focused IN (0, 1)" },
+        { name: "visible", type: "bool", sqlType: "integer", notNull: true, check: "visible IN (0, 1)" },
+        { name: "last_seen_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+      ],
+      indexes: [
+        { name: "identity", unique: true, fields: ["membership_id", "client_id"] },
+        { name: "expiry", fields: ["last_seen_at", "membership_id", "client_id"] },
+        { name: "workspace", fields: ["workspace_id", "last_seen_at", "membership_id"] },
       ],
       extensions: [DENY_ALL_RULES],
     },

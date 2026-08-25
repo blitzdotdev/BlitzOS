@@ -1,6 +1,6 @@
 # Organization presence and collaboration safety
 
-Status: Phase 1 implemented on `codex/org-presence-plan`; Phases 2-5 are not
+Status: Phases 1-2 implemented on `codex/org-presence-plan`; Phases 3-5 are not
 shipped
 
 ## Goal
@@ -303,6 +303,8 @@ without replacing each other's UI; both can intentionally open the same shared
 terminal or native-chat session.
 
 ### Phase 2 — Presence backend and client lifecycle
+
+Implementation status: complete on `codex/org-presence-plan`.
 
 1. Add the presence migration, strict shared schema, and control-plane routes.
 2. Add membership/workspace/session authorization and response redaction.

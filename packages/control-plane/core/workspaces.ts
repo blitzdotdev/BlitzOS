@@ -1089,6 +1089,7 @@ export function addWorkspaceRoutes(
       await transaction(runtime.db, [
         revokeWorkspaceLeasesQuery(id),
         { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [id] },
+        { q: "DELETE FROM presence_connections WHERE workspace_id = ?1", v: [id] },
         { q: "DELETE FROM workspace_member_views WHERE workspace_id = ?1", v: [id] },
         { q: "DELETE FROM workspace_sessions WHERE workspace_id = ?1", v: [id] },
         {

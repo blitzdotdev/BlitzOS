@@ -3,6 +3,8 @@ import type {
   CreateWorkspaceSessionRequest,
   ListWorkspaceSessionsResponse,
   ListMachineTypesResponse,
+  PresenceSnapshotResponse,
+  PutPresenceConnectionRequest,
   RetryAction,
   Volume,
   WorkspaceView,
@@ -74,6 +76,9 @@ type WebAppWireClient = Pick<
   | "createWorkspaceSession"
   | "updateWorkspaceSession"
   | "archiveWorkspaceSession"
+  | "putPresenceConnection"
+  | "deletePresenceConnection"
+  | "getPresence"
   | "poll"
   | "create"
   | "destroy"
@@ -236,6 +241,21 @@ export class ApiAdapter {
 
   public listWorkspaceSessions(workspaceId: string): Promise<ListWorkspaceSessionsResponse> {
     return this.call(() => this.client.listWorkspaceSessions(workspaceId));
+  }
+
+  public putPresenceConnection(
+    clientId: string,
+    input: PutPresenceConnectionRequest,
+  ): Promise<void> {
+    return this.call(() => this.client.putPresenceConnection(clientId, input));
+  }
+
+  public deletePresenceConnection(clientId: string, keepalive = false): Promise<void> {
+    return this.call(() => this.client.deletePresenceConnection(clientId, keepalive));
+  }
+
+  public getPresence(): Promise<PresenceSnapshotResponse> {
+    return this.call(() => this.client.getPresence());
   }
 
   public createWorkspaceSession(

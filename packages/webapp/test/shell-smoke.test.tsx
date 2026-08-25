@@ -1,11 +1,10 @@
-import type { WorkspaceView } from "@blitzos/schema";
+import type { WorkspaceSessionView, WorkspaceView } from "@blitzos/schema";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CloudApp from "../src/CloudApp.js";
 import { ApiRequestError, type ControlPlaneClient } from "../src/api.js";
 import { standaloneResolver } from "../src/resolver.js";
 import {
-  decodeWorkspaceWebAppStateResponse,
   defaultWorkspaceFiles,
   defaultWorkspaceWebAppState,
   type WorkspaceWebAppStateV1,
@@ -176,6 +175,7 @@ const tenantMe = {
 
 let deviceStorageValues: Map<string, string>;
 let serverWorkspaceStates: Map<string, WorkspaceWebAppStateV1>;
+let serverWorkspaceSessions: Map<string, WorkspaceSessionView[]>;
 
 function client(): ControlPlaneClient {
   return {
@@ -251,18 +251,63 @@ function client(): ControlPlaneClient {
     })),
     getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
     putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
-    // Seeded docs take the production read path: the real client decodes
-    // (and normalizes) every response before the shell sees it.
-    getWorkspaceWebAppState: vi.fn(async (workspaceId) => decodeWorkspaceWebAppStateResponse(
-      JSON.stringify({
-        doc: serverWorkspaceStates.get(workspaceId) ?? null,
-        updatedAt: serverWorkspaceStates.has(workspaceId) ? 1 : null,
-      }),
-    )),
-    putWorkspaceWebAppState: vi.fn(async (workspaceId, doc) => {
+    getWorkspaceWebAppState: vi.fn(async (workspaceId) => ({
+      doc: serverWorkspaceStates.get(workspaceId) ?? null,
+      revision: serverWorkspaceStates.has(workspaceId) ? 1 : 0,
+      migratedFromV1: false,
+      sessions: serverWorkspaceSessions.get(workspaceId) ?? [],
+    })),
+    putWorkspaceWebAppState: vi.fn(async (workspaceId, doc, revision) => {
       serverWorkspaceStates.set(workspaceId, doc);
-      return { doc, updatedAt: 1 };
+      return {
+        doc,
+        revision: revision + 1,
+        migratedFromV1: false,
+        sessions: serverWorkspaceSessions.get(workspaceId) ?? [],
+      };
     }),
+    listWorkspaceSessions: vi.fn(async (workspaceId) => ({
+      sessions: serverWorkspaceSessions.get(workspaceId) ?? [],
+    })),
+    createWorkspaceSession: vi.fn(async (workspaceId, input) => {
+      const current = serverWorkspaceSessions.get(workspaceId) ?? [];
+      const session: WorkspaceSessionView = {
+        id: `session-${current.length + 1}`,
+        workspaceId,
+        kind: input.kind,
+        title: input.title ?? null,
+        chatSessionId: null,
+        chatProvider: null,
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      serverWorkspaceSessions.set(workspaceId, [...current, session]);
+      return { session };
+    }),
+    updateWorkspaceSession: vi.fn(async (workspaceId, sessionId, input) => {
+      const current = serverWorkspaceSessions.get(workspaceId) ?? [];
+      const existing = current.find((session) => session.id === sessionId);
+      if (existing === undefined) throw new Error('missing session');
+      const session: WorkspaceSessionView = {
+        ...existing,
+        revision: existing.revision + 1,
+        title: input.title === undefined ? existing.title : input.title,
+        chatSessionId: input.chatSessionId === undefined
+          ? existing.chatSessionId
+          : input.chatSessionId,
+        chatProvider: input.chatProvider === undefined ? existing.chatProvider : input.chatProvider,
+      };
+      serverWorkspaceSessions.set(
+        workspaceId,
+        current.map((entry) => entry.id === sessionId ? session : entry),
+      );
+      return { session };
+    }),
+    archiveWorkspaceSession: vi.fn(async () => undefined),
+    putPresenceConnection: vi.fn(async () => undefined),
+    deletePresenceConnection: vi.fn(async () => undefined),
+    getPresence: vi.fn(async () => ({ serverTime: 1, expiresAfterMs: 35_000, members: [] })),
     poll: vi.fn(async () => ({ workspaces: [creating] })),
     create: vi.fn(async () => ({ workspace: creating })),
     destroy: vi.fn(async () => ({ workspace: creating })),
@@ -336,6 +381,7 @@ beforeEach(() => {
   window.sessionStorage.clear();
   deviceStorageValues = new Map<string, string>();
   serverWorkspaceStates = new Map<string, WorkspaceWebAppStateV1>();
+  serverWorkspaceSessions = new Map<string, WorkspaceSessionView[]>();
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
     value: {

@@ -28,6 +28,7 @@ import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { SessionShareDialog } from './SessionShareDialog';
 import { caughtErrorMessage } from './error-message';
+import { presenceViewForTabs } from './presence';
 import {
   WebAppLoadingPane,
   WebAppLoadingShell,
@@ -96,6 +97,7 @@ import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
+import { useOrgPresence } from './use-org-presence';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { FilesSidebar } from './FilesSidebar';
 import { fullDavPath, isPathAtOrBelow } from './files';
@@ -953,6 +955,25 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       if (id !== null) retainedSessionIdsRef.current.ids.add(String(id));
     }
   }, [activeWorkspaceId, mainActiveId, sideActiveId]);
+  const presencePanelId = mobileWebApp && filesDrawerOpen ? filesTab?.id ?? null : null;
+  const presenceMainId = splitEnabled
+    ? mainActiveId
+    : focusedSessionId === null ? null : Number(focusedSessionId);
+  const presenceVisibleTabIds = [
+    presenceMainId,
+    splitEnabled ? sideActiveId : null,
+    presencePanelId,
+  ]
+    .filter((id): id is number => id !== null);
+  const presenceFocusedTabId = presencePanelId
+    ?? (focusedSessionId === null ? null : Number(focusedSessionId));
+  const presenceView = presenceViewForTabs(
+    route.page === 'webApp' && activeWorkspace !== undefined ? activeWorkspace.id : null,
+    ttydSessions,
+    presenceVisibleTabIds,
+    presenceFocusedTabId,
+  );
+  useOrgPresence(api, store.viewer !== null && !signedOut, presenceView);
   const tabsLoaded = activeWorkspaceTabs !== null;
   // Does this workspace's own MACHINE serve sessions? The build flag cannot
   // answer that — a box on a pre-Lody image has no `/lody/*` door at all — so

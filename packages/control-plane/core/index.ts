@@ -12,6 +12,9 @@ export { perSessionResponse } from "./http.js";
 export { runLeaseSweep } from "./connections/leases.js";
 export { runProviderCanary } from "./connections/canary.js";
 export {
+  addPresenceRoutes,
+} from "./presence.js";
+export {
   FILE_SYNC_MAX_BYTES_PER_TICK,
   FILE_SYNC_MAX_FILES_PER_TICK,
   runFileSyncSweep,

@@ -11,6 +11,7 @@ import { addMachineStatsRoutes } from "./machine-stats.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
+import { addPresenceRoutes } from "./presence.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addOrgComputeCredentialRoutes } from "./compute/org-credentials.js";
@@ -87,6 +88,7 @@ export function installControlPlaneRoutes(
   addEntitlementsRoutes(router, runtimeFactory, requirePrincipal);
   addOrgComputeCredentialRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addPresenceRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceSessionRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);

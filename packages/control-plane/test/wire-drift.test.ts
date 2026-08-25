@@ -338,6 +338,50 @@ const workspaceSessionsResponse: SharedShape<
   schema.ListWorkspaceSessionsResponse
 > = { sessions: [workspaceSession] };
 
+const putPresenceConnection: SharedShape<
+  wire.PutPresenceConnectionRequest,
+  schema.PutPresenceConnectionRequest
+> = {
+  workspaceId: workspace.id,
+  surfaces: [
+    { kind: "session", sessionId: workspaceSession.id },
+    { kind: "file", surfaceId: "tab-2", label: "README.md" },
+  ],
+  focusedSurface: 0,
+  visible: true,
+  focused: true,
+};
+
+const presenceSnapshot: SharedShape<
+  wire.PresenceSnapshotResponse,
+  schema.PresenceSnapshotResponse
+> = {
+  serverTime: 10,
+  expiresAfterMs: 35_000,
+  members: [{
+    membershipId: "membership",
+    userId: "user",
+    name: "Collaborator",
+    avatarUrl: null,
+    state: "active",
+    activities: [{
+      location: "workspace",
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      surfaces: [{
+        kind: "session",
+        sessionId: workspaceSession.id,
+        sessionKind: workspaceSession.kind,
+        title: workspaceSession.title,
+      }],
+      focusedSurface: 0,
+      visible: true,
+      focused: true,
+      lastSeenAt: 9,
+    }],
+  }],
+};
+
 const templateConnection: SharedShape<
   wire.TemplateConnectionView,
   schema.TemplateConnectionView
@@ -794,6 +838,8 @@ const fullFieldValues = [
   updateWorkspaceSession,
   workspaceSessionResponse,
   workspaceSessionsResponse,
+  putPresenceConnection,
+  presenceSnapshot,
   templateConnection,
   templateRepo,
   addWorkspaceRepoRequest,
@@ -897,6 +943,13 @@ describe("local wire copies", () => {
     expectTypeOf<wire.UpdateWorkspaceSessionRequest>().toEqualTypeOf<schema.UpdateWorkspaceSessionRequest>();
     expectTypeOf<wire.WorkspaceSessionResponse>().toEqualTypeOf<schema.WorkspaceSessionResponse>();
     expectTypeOf<wire.ListWorkspaceSessionsResponse>().toEqualTypeOf<schema.ListWorkspaceSessionsResponse>();
+    expectTypeOf<wire.PresenceSurfaceInput>().toEqualTypeOf<schema.PresenceSurfaceInput>();
+    expectTypeOf<wire.PutPresenceConnectionRequest>().toEqualTypeOf<schema.PutPresenceConnectionRequest>();
+    expectTypeOf<wire.PresenceSurfaceView>().toEqualTypeOf<schema.PresenceSurfaceView>();
+    expectTypeOf<wire.PresenceActivityView>().toEqualTypeOf<schema.PresenceActivityView>();
+    expectTypeOf<wire.PresenceMemberState>().toEqualTypeOf<schema.PresenceMemberState>();
+    expectTypeOf<wire.PresenceMemberView>().toEqualTypeOf<schema.PresenceMemberView>();
+    expectTypeOf<wire.PresenceSnapshotResponse>().toEqualTypeOf<schema.PresenceSnapshotResponse>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
     expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
     expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
@@ -996,6 +1049,10 @@ describe("local wire copies", () => {
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
     expect(wire.WORKSPACE_SESSION_KINDS).toEqual(schema.WORKSPACE_SESSION_KINDS);
+    expect(wire.PRESENCE_CONNECTION_TTL_MS).toBe(schema.PRESENCE_CONNECTION_TTL_MS);
+    expect(wire.PRESENCE_HEARTBEAT_INTERVAL_MS).toBe(schema.PRESENCE_HEARTBEAT_INTERVAL_MS);
+    expect(wire.PRESENCE_VISIBLE_POLL_INTERVAL_MS).toBe(schema.PRESENCE_VISIBLE_POLL_INTERVAL_MS);
+    expect(wire.PRESENCE_HIDDEN_POLL_INTERVAL_MS).toBe(schema.PRESENCE_HIDDEN_POLL_INTERVAL_MS);
     expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);
     expect(wire.FILES_MULTIPART_CHUNK_BYTES).toBe(schema.FILES_MULTIPART_CHUNK_BYTES);
     for (const value of fullFieldValues) {

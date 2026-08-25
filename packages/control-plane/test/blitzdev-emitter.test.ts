@@ -106,6 +106,7 @@ const expected = [
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
+  "core/presence.ts",
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
@@ -161,7 +162,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(113);
+    expect(first.files).toHaveLength(114);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
