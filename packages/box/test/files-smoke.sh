@@ -6,18 +6,20 @@ if [ -z "${FILES_BASE:-}" ]; then
   exit 1
 fi
 
+# Only /workspace is published. The agent HOME route was removed in da54646
+# because it exposed the agent's OAuth credentials over WebDAV.
 test_dir=$(mktemp -d "${TMPDIR:-/tmp}/blitz-files-smoke.XXXXXX")
 name=".blitz-files-smoke-$$.txt"
 
 cleanup() {
-  for webapp in workspace home; do
+  for webapp in workspace; do
     curl -sS -o /dev/null -X DELETE "${FILES_BASE%/}/$webapp/$name" 2>/dev/null || true
   done
   rm -rf "$test_dir"
 }
 trap cleanup EXIT HUP INT TERM
 
-for webapp in workspace home; do
+for webapp in workspace; do
   payload="files-smoke-$webapp"
   printf '%s' "$payload" >"$test_dir/source"
   url="${FILES_BASE%/}/$webapp/$name"

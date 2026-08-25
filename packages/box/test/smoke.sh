@@ -111,8 +111,12 @@ for service in sshd ttyd actor dufs gateway watch dockerd; do
 done
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
 [ "$dufs_version" = 'dufs 0.46.0' ] || fail "unexpected dufs version: $dufs_version"
-home_target=$(docker exec "$container" readlink /srv/blitz-files/home)
-[ "$home_target" = '/var/lib/blitz/home' ] || fail "dufs home route is missing or points to $home_target"
+# dufs must NOT publish the agent HOME. The symlink that used to sit beside
+# /workspace exposed ~/.claude/.credentials.json and ~/.codex/auth.json to
+# anyone the workspace was shared with; da54646 removed it on purpose. Assert
+# the absence so it cannot come back.
+docker exec "$container" test ! -e /srv/blitz-files/home \
+  || fail "dufs publishes the agent HOME again: /srv/blitz-files/home exists"
 echo "PASS s6 graph and longruns"
 
 docker logs "$container" >"$test_dir/container.log" 2>&1
@@ -210,6 +214,13 @@ echo "PASS ttyd URL args, no-arg shell, read-only attach, and tmux persistence (
 # The actor always authenticates WebSocket upgrades, including in standalone
 # mode. Install the per-run sentinel as its temporary static compatibility
 # token, then remove it before the unauthenticated files smoke below.
+#
+# ORDERING CONSTRAINT: do not touch the gateway (7445) between the install and
+# the rm below. currentWebAppAuth latches: the first non-empty token it reads
+# sets authRequired for the life of the process and it keeps serving from
+# lastWebAppToken after the file is gone, so every later unauthenticated
+# gateway assertion in this script would fail with 403. The block below talks
+# to the actor on 7444 directly, which is why this is safe today.
 docker exec "$container" install -o blitz -g blitz -m 0600 \
   /run/blitz/smoke-secret /var/lib/blitz/webapp-token
 docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
