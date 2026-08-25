@@ -1,62 +1,6 @@
-import type { OAuthProviderManifest, SkillRenderInput } from "./types.js";
+import type { OAuthProviderManifest } from "./types.js";
 
 const HOUR_MS = 60 * 60 * 1_000;
-
-function skill(input: SkillRenderInput): string {
-  const base = input.baseUrlEnv === null ? input.baseUrl : `$${input.baseUrlEnv}`;
-  const header = `${input.tokenHeader.name}: ${input.tokenHeader.prefix}$${input.tokenEnv}`;
-  return `---
-name: ${input.connection}
-description: Read and write Linear issues, projects, and comments through the GraphQL API.
----
-
-# ${input.connection}
-
-Linear access for this workspace. Everything the agent does renders as
-"you (via the app)" in Linear's activity feed.
-
-## Auth
-
-Send \`${header}\` on every call.
-
-${input.mode === "proxy"
-    ? `\`$${input.tokenEnv}\` is a lease token, not a Linear credential: it only works against \`${base}\`, and the control plane swaps in the real key on the way out. Nothing on this disk is a Linear credential.`
-    : `\`$${input.tokenEnv}\` is the Linear credential itself. Do not echo it, and do not send it anywhere but api.linear.app.`}
-
-Linear has exactly one endpoint. There is no REST API.
-
-## Canonical calls
-
-\`\`\`sh
-# Who am I
-curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
-  -d '{"query":"{ viewer { id name email } }"}'
-
-# My open issues
-curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
-  -d '{"query":"{ issues(filter:{assignee:{isMe:{eq:true}}}, first:20){ nodes { identifier title state { name } } } }"}'
-
-# Create an issue
-curl -sS -X POST "${base}/graphql" -H '${header}' -H 'Content-Type: application/json' \\
-  -d '{"query":"mutation($t:String!,$team:String!){ issueCreate(input:{title:$t,teamId:$team}){ issue { identifier url } } }","variables":{"t":"...","team":"..."}}'
-\`\`\`
-
-## Reach and limits
-
-- Scopes recorded for this connection: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}. A pasted key carries whatever
-  reach its owner gave it; nothing here narrows that.
-- 5,000 requests per hour on an OAuth token, 2,500 on a personal API key.
-- Webhooks need the \`admin\` scope. Without it, poll instead of subscribing.
-- Official MCP server: \`https://mcp.linear.app/mcp\` (streamable HTTP). It
-  accepts a pre-supplied bearer token, so this connection's value works there.
-
-## When a call fails
-
-Linear answers 200 with an \`errors\` array for most failures — check it, do
-not trust the status alone. A genuine 401 means the lease expired: start a new
-login shell and retry once.
-`;
-}
 
 /** Lightest admin friction of the three: any member may authorize, and the
  * personal API key path needs no app registration at all. */
@@ -108,7 +52,6 @@ export const linearManifest = {
       { name: "LINEAR_TOKEN", fill: "token" },
       { name: "LINEAR_API_URL", fill: "proxy-url" },
     ],
-    skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
   },
   probe: {
     request: (input) => ({

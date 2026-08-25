@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -24,30 +22,14 @@ const registerTimeout = 45 * time.Second
 // wrong reads the same list whichever way it arrived.
 const usageText = `usage: blitz-cred COMMAND [ARGUMENTS]
 
+  list                         providers this workspace may use, one per line
+  get PROVIDER                 print PROVIDER's token on stdout, nothing else
+  env PROVIDER                 print eval-able NAME=VALUE lines for PROVIDER
   enroll --origin URL          claim this box's control-plane credential
   register                     register broker keys and pin the broker config
-  token INTEGRATION            mint INTEGRATION's credential into creds/env.d
-  sync                         refresh every connected credential in creds/env.d
-  list                         show connected providers and the variables they export
+  token claude|codex           print the harness login token
   git-helper get|store|erase   answer git's credential protocol on stdin
   watch                        deposit harness logins to the broker as they change`
-
-// mintSummaryFormat replaces the bare expiry `token` used to print. The epoch
-// number read as the token itself, and nothing on that line said either that
-// the values were already in the environment or that the next call revokes this
-// lease. Values are never printed: they are already placed.
-const mintSummaryFormat = `%s
-env: %s
-expires: %s
-written to creds/env.d, already set in new login shells and agent tabs
-each 'blitz-cred token' call mints a new lease and revokes the one before it, so a token exported into an earlier shell stops working
-`
-
-// exportLine is the exact shape environmentFile writes into creds/env.d:
-// `export NAME='<shell-quoted value>'`. Only the name is captured. Every other
-// line — an `unset`, or a line from inside a value that contains a newline — is
-// skipped, so no part of a value can surface as if it were a name.
-var exportLine = regexp.MustCompile(`^export ([A-Za-z_][A-Za-z0-9_]*)='`)
 
 func main() {
 	if err := runWithInput(os.Args[1:], os.Stdin, os.Stdout); err != nil {
@@ -98,63 +80,51 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		defer cancel()
 		return workspace.Register(ctx, stateDir, nil)
 	case "token":
-		if len(args) != 2 || args[1] == "" {
-			return errors.New("usage: blitz-cred token INTEGRATION")
+		// Harness logins only. A connection credential comes from `get`, which
+		// checks the workspace's allow-list; the two shims below read this one
+		// verbatim off stdout.
+		if len(args) != 2 || (args[1] != "claude" && args[1] != "codex") {
+			return errors.New("usage: blitz-cred token claude|codex")
 		}
-		if args[1] == "claude" || args[1] == "codex" {
-			token, err := workspace.Token(context.Background(), stateDir, args[1])
-			if err != nil {
-				return err
-			}
-			_, err = output.Write(token)
-			return err
-		}
-		result, err := workspace.MintIntegration(context.Background(), stateDir, args[1], nil)
-		if requestID := workspace.AccessRequestID(err); requestID != "" {
-			if errors.Is(err, workspace.ErrCredentialDenied) {
-				return fmt.Errorf("blitz: access to %s requested (%s), awaiting approval", args[1], requestID)
-			}
-			if errors.Is(err, workspace.ErrIntegrationNotConfigured) {
-				return fmt.Errorf("blitz: integration %s requested (%s), not configured yet", args[1], requestID)
-			}
-		}
-		if errors.Is(err, workspace.ErrCredentialDenied) {
-			return fmt.Errorf("blitz: access to %s denied by workspace policy", args[1])
-		}
-		if errors.Is(err, workspace.ErrIntegrationNotConfigured) {
-			return fmt.Errorf("blitz: integration %s is not configured", args[1])
-		}
+		token, err := workspace.Token(context.Background(), stateDir, args[1])
 		if err != nil {
 			return err
 		}
-		return printMintSummary(output, result)
-	case "sync":
-		if len(args) != 1 {
-			return errors.New("sync takes no arguments")
-		}
-		return workspace.Sync(context.Background(), stateDir, nil)
+		_, err = output.Write(token)
+		return err
 	case "list":
 		if len(args) != 1 {
 			return errors.New("list takes no arguments")
 		}
 		return listConnections(stateDir, output)
+	case "get":
+		if len(args) != 2 || args[1] == "" {
+			return errors.New("usage: blitz-cred get PROVIDER")
+		}
+		token, err := workspace.MintConnectionToken(context.Background(), stateDir, args[1], nil)
+		if err != nil {
+			return mintFailure(args[1], err)
+		}
+		_, err = fmt.Fprintln(output, token.Token)
+		return err
+	case "env":
+		if len(args) != 2 || args[1] == "" {
+			return errors.New("usage: blitz-cred env PROVIDER")
+		}
+		token, err := workspace.MintConnectionToken(context.Background(), stateDir, args[1], nil)
+		if err != nil {
+			return mintFailure(args[1], err)
+		}
+		return printEnv(output, token)
 	case "git-helper":
 		if len(args) != 2 {
 			return errors.New("usage: blitz-cred git-helper get|store|erase")
 		}
 		err := workspace.GitHelper(context.Background(), stateDir, args[1], input, output, nil)
-		if requestID := workspace.AccessRequestID(err); requestID != "" {
-			if errors.Is(err, workspace.ErrCredentialDenied) {
-				return fmt.Errorf("blitz: access to github requested (%s), awaiting approval", requestID)
-			}
-			if errors.Is(err, workspace.ErrIntegrationNotConfigured) {
-				return fmt.Errorf("blitz: integration github requested (%s), not configured yet", requestID)
-			}
+		if err == nil {
+			return nil
 		}
-		if errors.Is(err, workspace.ErrCredentialDenied) {
-			return errors.New("blitz: access to github denied by workspace policy")
-		}
-		return err
+		return mintFailure("github", err)
 	case "watch":
 		if len(args) != 1 {
 			return errors.New("watch takes no arguments")
@@ -169,75 +139,77 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 	}
 }
 
-// printMintSummary reports what a mint placed, never what it placed there. The
-// harness verbs (`token claude`, `token codex`) do not come through here: their
-// stdout is consumed verbatim by the PATH shims.
-func printMintSummary(output io.Writer, result workspace.MintResult) error {
-	names := make([]string, 0, len(result.Placements))
-	for _, placement := range result.Placements {
-		if placement.Kind == "env" {
-			names = append(names, placement.Name)
-		}
+// mintFailure turns a refusal into the one sentence that tells the agent what
+// to do next. A bare "403" sent agents into retry loops against a workspace
+// that had not been connected to the provider at all, so both refusals name
+// the command that puts the question in front of a person.
+func mintFailure(provider string, err error) error {
+	requested := ""
+	if id := workspace.AccessRequestID(err); id != "" {
+		requested = fmt.Sprintf(" Request %s is waiting in their connections panel.", id)
 	}
-	expires := time.UnixMilli(result.ExpiresAt).UTC().Format(time.RFC3339)
-	_, err := fmt.Fprintf(output, mintSummaryFormat, result.Integration, joinNames(names), expires)
+	if errors.Is(err, workspace.ErrCredentialDenied) {
+		return fmt.Errorf(
+			"blitz: this workspace is not connected to %s. Ask the user to connect it, then retry: blitz connections open %s.%s",
+			provider, provider, requested,
+		)
+	}
+	if errors.Is(err, workspace.ErrConnectionNotConfigured) {
+		return fmt.Errorf(
+			"blitz: %s has no credential behind it yet. Ask the user to add one: blitz connections open %s.%s",
+			provider, provider, requested,
+		)
+	}
 	return err
 }
 
-// listConnections answers "what am I connected to?" without printing a secret:
-// the provider names are the creds/env.d file names and the variable names come
-// off the export prefix. The workspace's own entry is listed and labelled
-// rather than hidden — an agent asking where a variable came from needs the
-// whole environment in one answer — and it is not counted as a connection.
-func listConnections(stateDir string, output io.Writer) error {
-	envDir := workspace.EnvironmentDir(stateDir)
-	entries, err := os.ReadDir(envDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+// printEnv writes lines a shell can eval. The header comment is one line and
+// exists because the shape is not guessable: Discord wants `Bot `, a Linear
+// personal key wants no prefix at all, and an agent that guesses reads the
+// vendor's 401 as "the credential is broken".
+func printEnv(output io.Writer, token workspace.ConnectionToken) error {
+	first := token.Env
+	if len(first) == 0 {
+		return fmt.Errorf("blitz: %s declares no environment variables", token.Connection)
+	}
+	if _, err := fmt.Fprintf(
+		output,
+		"# send: %s: %s$%s\n",
+		token.Header.Name, token.Header.Prefix, first[0].Name,
+	); err != nil {
 		return err
 	}
-	connections := 0
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".sh" {
-			continue
-		}
-		names, err := exportedNames(filepath.Join(envDir, entry.Name()))
-		if err != nil {
+	for _, entry := range token.Env {
+		if _, err := fmt.Fprintf(output, "%s=%s\n", entry.Name, shellQuote(entry.Value)); err != nil {
 			return err
 		}
-		label := strings.TrimSuffix(entry.Name(), ".sh")
-		if entry.Name() == workspace.WorkspaceEnvironmentFile {
-			label = "workspace variables (not a connection)"
-		} else {
-			connections++
-		}
-		if _, err := fmt.Fprintf(output, "%s: %s\n", label, joinNames(names)); err != nil {
-			return err
-		}
-	}
-	if connections == 0 {
-		_, err := fmt.Fprintln(output, "nothing connected yet")
-		return err
 	}
 	return nil
 }
 
-func exportedNames(path string) ([]string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if match := exportLine.FindStringSubmatch(line); match != nil {
-			names = append(names, match[1])
-		}
-	}
-	return names, nil
+// shellQuote makes one value safe to eval. A provider base URL and a token are
+// both opaque strings from a vendor, so neither may be pasted into a shell
+// word unquoted.
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func joinNames(names []string) string {
-	if len(names) == 0 {
-		return "none"
+// listConnections answers "what may I use here?" with a live read, never a
+// cached file. Nothing is delivered to this box any more, so the only honest
+// source is the control plane's copy of the workspace manifest.
+func listConnections(stateDir string, output io.Writer) error {
+	names, err := workspace.ListConnections(context.Background(), stateDir, nil)
+	if err != nil {
+		return err
 	}
-	return strings.Join(names, ", ")
+	if len(names) == 0 {
+		_, err := fmt.Fprintln(output, "no connections; ask the user to connect one: blitz connections open <provider>")
+		return err
+	}
+	for _, name := range names {
+		if _, err := fmt.Fprintln(output, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }

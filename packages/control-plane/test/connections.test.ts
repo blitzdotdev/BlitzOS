@@ -6,6 +6,7 @@ import type {
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   MintResult,
+  WorkspaceConnectionsResponse,
   WorkspaceTemplateView,
   WorkspaceView,
 } from "@blitzos/schema";
@@ -24,7 +25,6 @@ import {
   createConnectOAuthState,
   verifyConnectOAuthStateCookie,
 } from "../core/oauth-state.js";
-import { BOX_HOME } from "../core/connections/catalog/workspace-delivery.js";
 import {
   importGithubAppPrivateKey,
   normalizeGithubAppPrivateKey,
@@ -98,6 +98,23 @@ async function connectLinearOAuth(
   exchange.mockRestore();
 }
 
+/** The box credential a workspace's phone-home hands back. A pull needs one,
+ * and a workspace created any way at all can be enrolled after the fact. */
+async function enrolledBox(
+  app: Harness["app"],
+  providers: Harness["providers"],
+  workspaceId: string,
+): Promise<{ box: BoxCredential }> {
+  const callback = new URL(phoneHomeUrl(providers, workspaceId));
+  const enrolled = await appRequest(app, callback.pathname, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAC3Nzatest host" }),
+  });
+  expect(enrolled.status).toBe(200);
+  return { box: await enrolled.json<BoxCredential>() };
+}
+
 async function readyWorkspace(
   app: Harness["app"],
   providers: Harness["providers"],
@@ -111,46 +128,46 @@ async function readyWorkspace(
   });
   expect(created.status).toBe(201);
   const { workspace } = await created.json<{ workspace: WorkspaceView }>();
-  const callback = new URL(phoneHomeUrl(providers, workspace.id));
-  const enrolled = await appRequest(app, callback.pathname, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAC3Nzatest host" }),
-  });
-  expect(enrolled.status).toBe(200);
-  return { workspace, box: await enrolled.json<BoxCredential>() };
+  return { workspace, ...(await enrolledBox(app, providers, workspace.id)) };
 }
 
+/** One pull, from inside a box. The agent asks for one connection at the
+ * moment it needs it, and the box names no scopes. */
 async function mint(
   app: Harness["app"],
   accessToken: string,
-  body: Record<string, unknown>,
+  name: string,
 ): Promise<Response> {
-  return appRequest(app, "/workspaces/self/credentials", {
+  return appRequest(app, `/workspaces/self/connections/${name}/token`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
 }
 
+/** What this workspace may pull, read live. */
+async function listBoxConnections(
+  app: Harness["app"],
+  accessToken: string,
+): Promise<string[]> {
+  const response = await appRequest(app, "/workspaces/self/connections", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(response.status).toBe(200);
+  const { connections } = await response.json<WorkspaceConnectionsResponse>();
+  return connections;
+}
+
 function environmentValue(result: MintResult, name: string): string | null {
-  const placement = result.placements.find(
-    (candidate) => candidate.kind === "env" && candidate.name === name,
-  );
-  return placement?.kind === "env" ? placement.value : null;
+  return result.env.find((entry) => entry.name === name)?.value ?? null;
 }
 
-function filePlacement(result: MintResult, path: string): string | null {
-  const placement = result.placements.find(
-    (candidate) => candidate.kind === "file" && candidate.path === path,
-  );
-  return placement?.kind === "file" ? placement.value : null;
-}
-
-const LINEAR_SKILL_PATH = `${BOX_HOME}/.claude/skills/linear/SKILL.md`;
+/** A workspace whose ceiling names linear and nothing else. A workspace made
+ * with no ceiling now allows nothing, so every pull below needs one.
+ *
+ * The ceiling is written out instead of passing `connections: ["linear"]`,
+ * because a create that names connections also mints a lease. The suites below
+ * count lease rows, and that extra row makes every count read wrong. */
+const LINEAR_CEILING = { manifest: { integrations: { linear: {} } } };
 
 describe("connections: per-user grants", () => {
   beforeEach(async () => {
@@ -243,108 +260,27 @@ describe("connections: per-user grants", () => {
     });
   });
 
-  it("mints from the grant with the skill and the proxy lease token", async () => {
+  it("pulls a proxy lease token from the grant, never the personal key", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { box } = await readyWorkspace(app, providers, cookie);
+    const { box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
 
-    const response = await mint(app, box.access_token, { integration: "linear" });
+    const response = await mint(app, box.access_token, "linear");
     expect(response.status).toBe(200);
     const result = await response.json<MintResult>();
-    expect(result.integration).toBe("linear");
+    expect(result.connection).toBe("linear");
     expect(result.mode).toBe("proxy");
 
     // Proxy custody: the box gets a lease token, never the personal key.
-    const leaseToken = environmentValue(result, "LINEAR_API_KEY");
-    expect(leaseToken).not.toBe(LINEAR_KEY);
+    expect(result.token).not.toBe(LINEAR_KEY);
     expect(JSON.stringify(result)).not.toContain(LINEAR_KEY);
+    expect(environmentValue(result, "LINEAR_API_KEY")).toBe(result.token);
     expect(environmentValue(result, "LINEAR_API_URL")).toMatch(/\/proxy\/[0-9a-f-]+$/u);
-
-    const skill = filePlacement(result, LINEAR_SKILL_PATH);
-    expect(skill).toContain("name: linear");
-    expect(skill).toContain("$LINEAR_API_KEY");
-    expect(skill).toContain("read, write");
-  });
-
-  /** FROZEN box wire: the Go broker baked into the shipped box image decodes
-   * POST /workspaces/self/credentials with DisallowUnknownFields. A grant-backed
-   * mint is the default path now, so it is the one that has to be pinned: the
-   * grant minter carries `grantedScopes` for the lease, and letting that reach
-   * the response fails the box's decode and aborts the whole credential sync. */
-  it("keeps the frozen box mint wire on a grant-backed mint", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { box } = await readyWorkspace(app, providers, cookie);
-
-    const response = await mint(app, box.access_token, { integration: "linear" });
-    expect(response.status).toBe(200);
-    const raw: unknown = JSON.parse(await response.text());
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("mint response was not a JSON object");
-    }
-    expect(Object.keys(raw).sort()).toEqual([
-      "expiresAt",
-      "integration",
-      "mode",
-      "placements",
-    ]);
-
-    // The sync-style call is what blitz-cred actually sends; every element of
-    // the array carries the same four keys and nothing else.
-    const sync = await mint(app, box.access_token, {});
-    expect(sync.status).toBe(200);
-    const results: unknown = JSON.parse(await sync.text());
-    if (!Array.isArray(results) || results.length === 0) {
-      throw new Error("sync response was not a non-empty JSON array");
-    }
-    for (const result of results) {
-      expect(Object.keys(result as object).sort()).toEqual([
-        "expiresAt",
-        "integration",
-        "mode",
-        "placements",
-      ]);
-    }
-
-    // Consented scopes are still recorded — on the lease, where the box wire
-    // cannot see them.
-    const lease = await env.DB.prepare(
-      "SELECT scopes FROM credential_leases ORDER BY issued_at DESC, id LIMIT 1",
-    ).first<{ scopes: string }>();
-    expect(JSON.parse(lease?.scopes ?? "null")).toEqual(["read", "write"]);
-  });
-
-  it("keeps the frozen box mint wire on an inject-custody grant", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    // github is the cp-custody pasted key: the credential itself lands in the
-    // box, so the mint body is the inject shape.
-    const granted = await appRequest(app, "/connections/grants/github", {
-      method: "PUT",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        manifestId: "github",
-        token: "github_pat_test-only-key",
-      }),
-    });
-    expect(granted.status).toBe(204);
-    const { box } = await readyWorkspace(app, providers, cookie);
-
-    const response = await mint(app, box.access_token, { integration: "github" });
-    expect(response.status).toBe(200);
-    const raw: unknown = JSON.parse(await response.text());
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("mint response was not a JSON object");
-    }
-    expect((raw as MintResult).mode).toBe("inject");
-    expect(Object.keys(raw).sort()).toEqual([
-      "expiresAt",
-      "integration",
-      "mode",
-      "placements",
-    ]);
+    // Under proxy custody the header is the shape the box sends INTO the
+    // control plane. The proxy re-signs with the grant's own header before the
+    // call leaves, so the personal key's raw shape stays inside.
+    expect(result.header).toEqual({ name: "Authorization", prefix: "Bearer " });
   });
 
   /** The scope checkboxes are gone and so is the narrowing behind them: a
@@ -352,45 +288,15 @@ describe("connections: per-user grants", () => {
    * never sent per-grant scopes, and only an org-app mint could narrow at all
    * (API-only). What the grant records is the provider's vocabulary; what the
    * lease records is the connection's declared default. */
-  it("records the connection's declared scopes on the lease and in the skill", async () => {
+  it("records the connection's declared scopes on the lease", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     // A body that still names scopes is accepted and ignored: the grant is not
     // where reach is decided any more.
     expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
 
-    const response = await mint(app, box.access_token, { integration: "linear" });
-    expect(response.status).toBe(200);
-    const result = await response.json<MintResult>();
-    const skill = filePlacement(result, LINEAR_SKILL_PATH) ?? "";
-    expect(skill).toContain("Scopes recorded for this connection: read, write.");
-    // The copy describes the token's own ceiling instead of implying a narrowing.
-    expect(skill).toContain("nothing here narrows that");
-
-    const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
-      headers: { Cookie: cookie },
-    });
-    const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
-    expect(rows[0]?.scopes).toEqual(["read", "write"]);
-  });
-
-  /** The mint-time consent gate is a pass-through now. It used to compare a
-   * box's requested scopes against a per-grant list the checkboxes wrote, and
-   * refuse the difference — a gate over a choice the person could not really
-   * make, since no provider lets us narrow a key after the fact. The workspace
-   * ceiling is the gate that still means something. */
-  it("hands a box the scopes it names, with no per-grant consent gate", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    expect((await connectLinear(app, cookie, { scopes: ["read"] })).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, cookie);
-
-    const response = await mint(app, box.access_token, {
-      integration: "linear",
-      scopes: ["read", "write"],
-    });
-    expect(response.status).toBe(200);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
 
     const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
@@ -411,13 +317,14 @@ describe("connections: per-user grants", () => {
     const owner = await operatorSession(app);
     expect((await connectLinear(app, owner)).status).toBe(204);
     const { workspace, box } = await readyWorkspace(app, providers, owner, {
+      ...LINEAR_CEILING,
       orgShareRole: "editor",
     });
     // A second member with no grant of their own shares the workspace.
     const editor = await sameOrgSession("editor-one");
     expect(editor.cookie.length).toBeGreaterThan(0);
 
-    const response = await mint(app, box.access_token, { integration: "linear" });
+    const response = await mint(app, box.access_token, "linear");
     expect(response.status).toBe(200);
 
     const lease = await env.DB.prepare(
@@ -430,13 +337,18 @@ describe("connections: per-user grants", () => {
   it("answers a connection with no owner grant as the connect inbox", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    const { box } = await readyWorkspace(app, providers, cookie);
+    // Another member's paste declares the org connection row. The workspace
+    // owner still holds no grant, which is the case this covers.
+    const holder = await sameOrgSession("linear-holder");
+    expect((await connectLinear(app, holder.cookie)).status).toBe(204);
+    const { box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
 
-    const response = await mint(app, box.access_token, { integration: "linear" });
+    const response = await mint(app, box.access_token, "linear");
     // 404 is the status the shipped box turns into "not configured", and it is
     // the only failure shape that carries a request id back.
     expect(response.status).toBe(404);
     const body = await response.json<{ error: string; request_id: string }>();
+    expect(body.error).toBe("connection linear has no grant for the workspace owner");
     expect(body.request_id).toMatch(/^[0-9a-f-]+$/u);
 
     const inbox = await appRequest(app, "/requests?state=pending", {
@@ -455,8 +367,8 @@ describe("connections: per-user grants", () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, cookie);
-    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
     const before = await env.DB.prepare(
       "SELECT id, grant_id FROM credential_leases WHERE workspace_id = ?1",
     ).bind(workspace.id).first<{ id: string; grant_id: string | null }>();
@@ -476,20 +388,20 @@ describe("connections: per-user grants", () => {
     expect(stored?.token_hash).toBeNull();
   });
 
-  /** Every `blitz-cred sync` minted another lease and retired nothing, so a
-   * workspace accumulated one active row per sync and the older proxy token
-   * stayed live for its whole TTL. One connection holds one live lease. */
+  /** Every pull used to mint another lease and retire nothing, so a workspace
+   * accumulated one active row per pull and the older proxy token stayed live
+   * for its whole TTL. One connection holds one live lease. */
   it("supersedes the prior lease when the same connection mints again", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
 
-    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
     const first = await env.DB.prepare(
       "SELECT id FROM credential_leases WHERE workspace_id = ?1",
     ).bind(workspace.id).first<{ id: string }>();
-    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
 
     const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
@@ -506,13 +418,16 @@ describe("connections: per-user grants", () => {
     expect(superseded?.token_hash).toBeNull();
   });
 
-  /** The sync-all loop mints every connection in one pass. Superseding is
-   * scoped to the pair being minted, so linear's new lease must not retire the
-   * one github is holding. */
-  it("supersedes only the connection being minted during a sync", async () => {
+  /** Superseding is scoped to the connection being pulled, so a linear pull
+   * must not retire the lease github is holding. An agent pulls one provider
+   * at a time, and killing the other one's live token is invisible until the
+   * next call through it fails. */
+  it("supersedes only the connection being pulled", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
+    // github is the cp-custody pasted key: the credential itself lands in the
+    // box, so this also covers a grant-backed inject pull.
     const github = await appRequest(app, "/connections/grants/github", {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -522,10 +437,15 @@ describe("connections: per-user grants", () => {
       }),
     });
     expect(github.status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, cookie);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, {
+      manifest: { integrations: { linear: {}, github: {} } },
+    });
 
-    expect((await mint(app, box.access_token, {})).status).toBe(200);
-    expect((await mint(app, box.access_token, {})).status).toBe(200);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
+    const githubPull = await mint(app, box.access_token, "github");
+    expect(githubPull.status).toBe(200);
+    expect((await githubPull.json<MintResult>()).mode).toBe("inject");
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
 
     const leases = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
@@ -533,15 +453,15 @@ describe("connections: per-user grants", () => {
     const { leases: rows } = await leases.json<{ leases: CredentialLeaseView[] }>();
     const live = rows.filter(({ state }) => state === "active");
     expect(live.map(({ connection }) => connection).sort()).toEqual(["github", "linear"]);
-    expect(rows.length).toBe(4);
+    expect(rows.length).toBe(3);
   });
 
-  it("revokes leases with the grant and empties the surfaces on the next sync", async () => {
+  it("revokes the workspace's leases when the grant is revoked", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, cookie);
-    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
 
     const revoked = await appRequest(app, "/connections/grants/linear", {
       method: "DELETE",
@@ -556,24 +476,21 @@ describe("connections: per-user grants", () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every(({ state }) => state === "revoked")).toBe(true);
 
-    // Phase A has no remove-file placement, so the sync overwrites the skill
-    // empty and unsets the names instead of leaving a credential-shaped lie.
-    const sync = await mint(app, box.access_token, {});
-    const results = await sync.json<MintResult[]>();
-    const tombstone = results.find(({ integration }) => integration === "linear");
-    expect(tombstone?.mode).toBe("inject");
-    expect(filePlacement(tombstone ?? { placements: [] } as unknown as MintResult, LINEAR_SKILL_PATH)).toBe("");
-    expect(tombstone?.placements).toContainEqual({ kind: "unset-env", name: "LINEAR_API_KEY" });
-    expect(tombstone?.placements).toContainEqual({ kind: "unset-env", name: "LINEAR_API_URL" });
+    // The next pull refuses instead of handing back a credential the person
+    // just withdrew. Pulling at the moment of use is what makes that immediate.
+    const after = await mint(app, box.access_token, "linear");
+    expect(after.status).toBe(404);
+    await expect(after.json()).resolves.toMatchObject({
+      error: "connection linear has no grant for the workspace owner",
+    });
   });
 
   it("proxies a grant-backed lease with the personal key's raw header", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const { box } = await readyWorkspace(app, providers, cookie);
-    const result = await (await mint(app, box.access_token, { integration: "linear" }))
-      .json<MintResult>();
+    const { box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
+    const result = await (await mint(app, box.access_token, "linear")).json<MintResult>();
     const leaseToken = environmentValue(result, "LINEAR_API_KEY") ?? "";
     const proxyUrl = environmentValue(result, "LINEAR_API_URL") ?? "";
 
@@ -629,10 +546,10 @@ describe("connections: templates and enablement", () => {
   }
 
   /** Creation never blocks on connections: a stipulated provider with no
-   * grant behind it still creates, reads as needs-you in the panel (no live
-   * lease), and lights up when the grant lands. The old 409 gate is gone. */
+   * grant behind it still creates, and the workspace can pull it the moment
+   * the grant lands. The old 409 gate is gone. */
   it("carries provider names on the template and creates without the grant", async () => {
-    const { app } = harness();
+    const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const view = await template(app, cookie);
     expect(view.connections).toEqual([{ provider: "linear" }]);
@@ -659,22 +576,11 @@ describe("connections: templates and enablement", () => {
     const { leases: none } = await bare.json<{ leases: CredentialLeaseView[] }>();
     expect(none).toEqual([]);
 
-    // Connecting afterwards mints on the next create; the first workspace
-    // stays reachable the whole time.
+    // The grant arrives later, and the workspace that already existed can use
+    // it at once: the allow-list is what decides, and it never changed.
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    const second = await appRequest(app, "/workspaces", {
-      method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: view.id }),
-    });
-    expect(second.status).toBe(201);
-    const { workspace: leaseLive } = await second.json<{ workspace: WorkspaceView }>();
-    const minted = await appRequest(app, `/workspaces/${leaseLive.id}/leases`, {
-      headers: { Cookie: cookie },
-    });
-    const { leases } = await minted.json<{ leases: CredentialLeaseView[] }>();
-    expect(leases.map(({ connection, state }) => [connection, state]))
-      .toEqual([["linear", "active"]]);
+    const { box } = await enrolledBox(app, providers, workspace.id);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
   });
 
   it("keeps an explicit ceiling authoritative over the provision list", async () => {
@@ -699,9 +605,11 @@ describe("connections: templates and enablement", () => {
 
   /** A create that names connections promises a workspace that has them, so
    * the lease exists before any box does — the live lease row IS the state, and
-   * the box's first sync supersedes it with an identical one rather than being
+   * the box's first pull supersedes it with an identical one rather than being
    * the thing that creates it. */
-  it("mints the named connections at create and supersedes them on the first sync", async () => {
+  /** Creating a workspace mints nothing. A pre-minted proxy lease was a live
+   * token nobody held, and the box never used it: it pulls its own. */
+  it("names the connections at create and mints only when the box pulls", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
@@ -709,33 +617,31 @@ describe("connections: templates and enablement", () => {
       connections: ["linear"],
     });
 
+    expect(await listBoxConnections(app, box.access_token)).toEqual(["linear"]);
     const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
-    const { leases: created } = await atCreate.json<{ leases: CredentialLeaseView[] }>();
-    expect(created.map(({ connection, state, boxId }) => [connection, state, boxId]))
-      .toEqual([["linear", "active", null]]);
+    await expect(atCreate.json()).resolves.toEqual({ leases: [] });
 
-    expect((await mint(app, box.access_token, {})).status).toBe(200);
-    const afterSync = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
+    const afterPull = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
-    const { leases: rows } = await afterSync.json<{ leases: CredentialLeaseView[] }>();
+    const { leases: rows } = await afterPull.json<{ leases: CredentialLeaseView[] }>();
     expect(rows.filter(({ state }) => state === "active")
       .map(({ connection, boxId }) => [connection, boxId]))
       .toEqual([["linear", box.box_id]]);
-    expect(rows.filter(({ state }) => state === "revoked")
-      .map(({ connection }) => connection)).toEqual(["linear"]);
   });
 
   /** A provider the creator never authorized is not an error at create; the
-   * grid simply shows it with no live lease. */
-  it("skips a named connection the creator never authorized", async () => {
+   * first pull files the connect request. */
+  it("names a connection the creator never authorized", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    const { workspace } = await readyWorkspace(app, providers, cookie, {
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, {
       connections: ["linear"],
     });
+    expect(await listBoxConnections(app, box.access_token)).toEqual(["linear"]);
     const listed = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
     });
@@ -812,8 +718,8 @@ describe("connections: connect flow and canary", () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await connectLinearOAuth(app, cookie, 3_600);
-    const { box } = await readyWorkspace(app, providers, cookie);
-    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    const { box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
 
     // Wind the stored token past its expiry, the way an hour of wall clock
     // does in production.
@@ -831,7 +737,7 @@ describe("connections: connect flow and canary", () => {
       });
     });
 
-    const refreshed = await mint(app, box.access_token, { integration: "linear" });
+    const refreshed = await mint(app, box.access_token, "linear");
     expect(refreshed.status).toBe(200);
     expect(grantTypes).toEqual(["refresh_token"]);
     const result = await refreshed.json<MintResult>();
@@ -845,8 +751,8 @@ describe("connections: connect flow and canary", () => {
     expect(lease?.state).toBe("active");
     expect(lease?.expires_at).toBeGreaterThan(Date.now());
 
-    // And the mint after it is an ordinary fresh-token mint, not a second 409.
-    expect((await mint(app, box.access_token, { integration: "linear" })).status).toBe(200);
+    // And the pull after it is an ordinary fresh-token mint, not a second 409.
+    expect((await mint(app, box.access_token, "linear")).status).toBe(200);
     expect(grantTypes).toEqual(["refresh_token"]);
   });
 
@@ -1042,20 +948,52 @@ describe("connections: connecting from the webApp", () => {
     expect((await connectHere(app, editor.cookie, workspace.id)).status).toBe(403);
   });
 
-  it("stays inside the workspace ceiling", async () => {
+  /** What the box may pull, read live. `blitz-cred list` prints this, and a
+   * Disconnect has to reach the very next pull. */
+  it("lists the manifest to the box, and follows Connect and Disconnect", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await connectLinear(app, cookie)).status).toBe(204);
-    // A ceiling naming no connections allows none of them.
+    const { workspace, box } = await readyWorkspace(app, providers, cookie, {
+      manifest: { integrations: { youtrack: {} } },
+    });
+
+    expect(await listBoxConnections(app, box.access_token)).toEqual(["youtrack"]);
+
+    expect((await connectHere(app, cookie, workspace.id)).status).toBe(200);
+    // Sorted, not in the order the manifest grew: linear was added second.
+    expect(await listBoxConnections(app, box.access_token))
+      .toEqual(["linear", "youtrack"]);
+
+    const disconnected = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/connections/linear`,
+      { method: "DELETE", headers: { Cookie: cookie } },
+    );
+    expect(disconnected.status).toBe(204);
+    expect(await listBoxConnections(app, box.access_token)).toEqual(["youtrack"]);
+  });
+
+  /** Connect writes the provider into the ceiling, but it must not widen one
+   * that is already there: a template that stipulated a narrow scope list
+   * still binds, and the mint behind the click is what refuses. */
+  it("keeps a stipulated narrow ceiling authoritative over Connect", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectLinear(app, cookie)).status).toBe(204);
     const { workspace } = await readyWorkspace(app, providers, cookie, {
-      manifest: { integrations: {} },
+      manifest: { integrations: { linear: { scopes: [] } } },
     });
 
     const response = await connectHere(app, cookie, workspace.id);
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toMatchObject({
-      error: expect.stringContaining("exceeds the workspace manifest"),
+      error: "this workspace is not connected to linear",
     });
+    const row = await env.DB.prepare("SELECT manifest FROM workspaces WHERE id = ?1")
+      .bind(workspace.id).first<{ manifest: string | null }>();
+    expect(JSON.parse(row?.manifest ?? "null"))
+      .toEqual({ integrations: { linear: { scopes: [] } } });
     // A person's own refusal is an answer, not an entry in their own inbox.
     const inbox = await appRequest(app, "/requests", { headers: { Cookie: cookie } });
     await expect(inbox.json()).resolves.toEqual({ requests: [] });
@@ -1433,29 +1371,13 @@ function proxyHandle(result: MintResult): {
   proxyUrl: string;
   token: string;
 } {
-  const tokenPlacement = result.placements.find(
-    (placement) =>
-      placement.kind === "env" && placement.name === "VENDOR_LEASE_TOKEN",
-  );
-  const urlPlacement = result.placements.find(
-    (placement) =>
-      placement.kind === "env" && placement.name === "VENDOR_BASE_URL",
-  );
-  if (
-    tokenPlacement?.kind !== "env" ||
-    urlPlacement?.kind !== "env"
-  ) {
-    throw new Error("proxy placements are missing");
-  }
-  const leaseId = new URL(urlPlacement.value).pathname.split("/").at(-1);
+  const proxyUrl = environmentValue(result, "VENDOR_BASE_URL");
+  if (proxyUrl === null) throw new Error("proxy base URL is missing");
+  const leaseId = new URL(proxyUrl).pathname.split("/").at(-1);
   if (leaseId === undefined || leaseId.length === 0) {
     throw new Error("proxy lease id is missing");
   }
-  return {
-    leaseId,
-    proxyUrl: urlPlacement.value,
-    token: tokenPlacement.value,
-  };
+  return { leaseId, proxyUrl, token: result.token };
 }
 
 async function putGithubConnection(
@@ -1478,22 +1400,6 @@ async function putGithubConnection(
         permissions: { contents: "write" },
       },
     }),
-  });
-}
-
-async function mintFor(
-  app: ReturnType<typeof harness>["app"],
-  workspaceId: string,
-  accessToken: string,
-  body: Record<string, unknown>,
-): Promise<Response> {
-  return appRequest(app, `/workspaces/${workspaceId}/credentials`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
   });
 }
 
@@ -1538,10 +1444,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     );
     const startedAt = Math.floor(Date.now() / 1000);
 
-    const response = await mintFor(app, workspace.id, box.access_token, {
-      integration: "github",
-      scopes: ["requested:scope"],
-    });
+    const response = await mint(app, box.access_token, "github");
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -1549,25 +1452,21 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       repositories: ["requested-repo"],
       permissions: { contents: "write" },
     });
+    // Exact equality, so control-plane bookkeeping cannot ride along: the
+    // minter also carries GitHub's granted-scope truth, and that belongs on
+    // the lease row asserted below, never in the body an agent reads.
     const result = await response.json<MintResult>();
     expect(result).toEqual({
-      integration: "github",
+      connection: "github",
       mode: "inject",
-      placements: [
-        { kind: "env", name: "GH_TOKEN", value: GITHUB_TOKEN },
-        { kind: "env", name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
+      token: GITHUB_TOKEN,
+      env: [
+        { name: "GH_TOKEN", value: GITHUB_TOKEN },
+        { name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
       ],
+      header: { name: "Authorization", prefix: "Bearer " },
       expiresAt: Date.parse(expiresAt),
     });
-    // GitHub's granted-scope truth is lease bookkeeping, not box wire: the
-    // shipped broker decodes with DisallowUnknownFields and a fifth key
-    // fails the decode. It is asserted on the lease row below.
-    expect(Object.keys(result).sort()).toEqual([
-      "expiresAt",
-      "integration",
-      "mode",
-      "placements",
-    ]);
 
     const jwt = authorization.replace(/^Bearer\s+/u, "");
     const parts = jwt.split(".");
@@ -1617,7 +1516,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await putGithubConnection(app, cookie, pkcs1Pem)).status).toBe(204);
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       github: {},
     });
     const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
@@ -1627,9 +1526,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       return Response.json({ token: GITHUB_TOKEN, expires_at: expiresAt });
     });
 
-    const response = await mintFor(app, workspace.id, box.access_token, {
-      integration: "github",
-    });
+    const response = await mint(app, box.access_token, "github");
 
     expect(response.status).toBe(200);
     // The signature proves the wrap: the mint imported the sealed root as
@@ -1725,7 +1622,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       github: {},
     });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -1735,9 +1632,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       ),
     );
 
-    const response = await mintFor(app, workspace.id, box.access_token, {
-      integration: "github",
-    });
+    const response = await mint(app, box.access_token, "github");
 
     expect(response.status).toBe(502);
     const body = await response.json();
@@ -1860,53 +1755,34 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(pageRequests).toBe(25);
   });
 
-  it("stores a static connection and fills inject placement templates at mint", async () => {
+  it("stores a static connection and fills its env templates at pull", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod", {
       scopes: ["servers:read"],
       placements: [
         { kind: "env", name: "HCLOUD_TOKEN" },
-        { kind: "file", path: "/run/credentials/hcloud", mode: 0o600 },
-        { kind: "file", path: "/run/credentials/default" },
-        { kind: "unset-env", name: "OLD_HCLOUD_TOKEN" },
+        { kind: "env", name: "HETZNER_TOKEN" },
       ],
     });
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       "hetzner-prod": { scopes: ["servers:read"] },
     });
 
-    const response = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-    });
+    const response = await mint(app, box.access_token, "hetzner-prod");
 
     expect(response.status).toBe(200);
     const result = await response.json<MintResult>();
     expect(result.mode).toBe("inject");
     expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
-    expect(result.placements).toEqual([
-      { kind: "env", name: "HCLOUD_TOKEN", value: ROOT },
-      {
-        kind: "file",
-        path: "/run/credentials/hcloud",
-        mode: 0o600,
-        value: ROOT,
-      },
-      { kind: "file", path: "/run/credentials/default", value: ROOT },
-      { kind: "unset-env", name: "OLD_HCLOUD_TOKEN" },
+    // cp custody hands the org root itself over; every declared name carries it.
+    expect(result.token).toBe(ROOT);
+    expect(result.env).toEqual([
+      { name: "HCLOUD_TOKEN", value: ROOT },
+      { name: "HETZNER_TOKEN", value: ROOT },
     ]);
-    const explicitMode = result.placements[1];
-    expect(Object.keys(explicitMode ?? {})).toEqual(["kind", "path", "value", "mode"]);
-    expect(explicitMode && "mode" in explicitMode).toBe(true);
-    expect(JSON.stringify(explicitMode)).toBe(
-      `{"kind":"file","path":"/run/credentials/hcloud","value":"${ROOT}","mode":384}`,
-    );
-    const omittedMode = result.placements[2];
-    expect(Object.keys(omittedMode ?? {})).toEqual(["kind", "path", "value"]);
-    expect(omittedMode && "mode" in omittedMode).toBe(false);
-    expect(JSON.stringify(omittedMode)).toBe(
-      `{"kind":"file","path":"/run/credentials/default","value":"${ROOT}"}`,
-    );
+    // A row that declared no header means the vendor's usual one.
+    expect(result.header).toEqual({ name: "Authorization", prefix: "Bearer " });
     const stored = await env.DB
       .prepare("SELECT config, root_ciphertext FROM connections WHERE scoped_name = ?1")
       .bind("hetzner-prod")
@@ -1928,25 +1804,60 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     });
   });
 
+  /** Nothing writes a box file for a connection any more: the agent pulls the
+   * value and scopes it to one command. A stored `file` template would name a
+   * delivery that cannot happen, so the admin route refuses it at write time
+   * rather than failing every later pull. */
+  it("refuses a file placement on the admin route", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+
+    const response = await appRequest(app, "/connections/hetzner-prod", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: "hetzner",
+        kind: "static",
+        custody: "cp",
+        root: ROOT,
+        config: {
+          placements: [{ kind: "file", path: "/run/credentials/hcloud" }],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "placement.kind must be env",
+    });
+    expect(
+      await env.DB
+        .prepare("SELECT COUNT(*) AS count FROM connections")
+        .first<number>("count"),
+    ).toBe(0);
+  });
+
   it("mints a default-custody proxy token and streams a header-swapped call", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putProxyConnection(app, cookie, "static-proxy");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       "static-proxy": {},
     });
 
-    const minted = await mintFor(app, workspace.id, box.access_token, {
-      integration: "static-proxy",
-    });
+    const minted = await mint(app, box.access_token, "static-proxy");
 
     expect(minted.status).toBe(200);
     const result = await minted.json<MintResult>();
     const handle = proxyHandle(result);
-    expect(result).toMatchObject({ integration: "static-proxy", mode: "proxy" });
+    expect(result).toMatchObject({ connection: "static-proxy", mode: "proxy" });
     expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
     expect(handle.proxyUrl).toBe(`https://cp.example/proxy/${handle.leaseId}`);
     expect(handle.token).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    // The row's own env names carry the pair: the lease token, and the URL it
+    // is good against. The org root itself is in neither.
+    expect(environmentValue(result, "VENDOR_LEASE_TOKEN")).toBe(handle.token);
+    expect(JSON.stringify(result)).not.toContain(ROOT);
     const storedLease = await env.DB
       .prepare(
         `SELECT lease.token_hash, connection.custody
@@ -2017,12 +1928,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       tokenHeader: "x-api-key",
       tokenPrefix: "",
     });
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       "x-key-proxy": {},
     });
-    const minted = await mintFor(app, workspace.id, box.access_token, {
-      integration: "x-key-proxy",
-    });
+    const minted = await mint(app, box.access_token, "x-key-proxy");
     const handle = proxyHandle(await minted.json<MintResult>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input, init) => {
@@ -2049,12 +1958,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putProxyConnection(app, cookie, "url-reject-proxy");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       "url-reject-proxy": {},
     });
-    const minted = await mintFor(app, workspace.id, box.access_token, {
-      integration: "url-reject-proxy",
-    });
+    const minted = await mint(app, box.access_token, "url-reject-proxy");
     const handle = proxyHandle(await minted.json<MintResult>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("must not be reached"),
@@ -2090,12 +1997,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putProxyConnection(app, cookie, "named-401-proxy");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       "named-401-proxy": {},
     });
-    const minted = await mintFor(app, workspace.id, box.access_token, {
-      integration: "named-401-proxy",
-    });
+    const minted = await mint(app, box.access_token, "named-401-proxy");
     const handle = proxyHandle(await minted.json<MintResult>());
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("must not be reached"),
@@ -2137,12 +2042,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putProxyConnection(app, cookie, "dead-proxy");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
       "dead-proxy": {},
     });
-    const firstMint = await mintFor(app, workspace.id, box.access_token, {
-      integration: "dead-proxy",
-    });
+    const firstMint = await mint(app, box.access_token, "dead-proxy");
     const revoked = proxyHandle(await firstMint.json<MintResult>());
     expect(
       (
@@ -2159,9 +2062,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         .first(),
     ).toEqual({ state: "revoked", token_hash: null });
 
-    const secondMint = await mintFor(app, workspace.id, box.access_token, {
-      integration: "dead-proxy",
-    });
+    const secondMint = await mint(app, box.access_token, "dead-proxy");
     const expired = proxyHandle(await secondMint.json<MintResult>());
     await env.DB
       .prepare("UPDATE credential_leases SET expires_at = ?1 WHERE id = ?2")
@@ -2192,31 +2093,41 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     // agent that reads it is the one that has to act.
     const expiredBody = await expiredResponse.json<{ error: { code: string; message: string } }>();
     expect(expiredBody.error.code).toBe("lease_expired");
-    expect(expiredBody.error.message).toContain("blitz-cred sync");
+    expect(expiredBody.error.message).toContain("blitz-cred get <provider>");
     // Still value-free: no token, no upstream secret, no vendor detail.
     expect(JSON.stringify(expiredBody)).not.toContain(expired.token);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("denies a mint outside the manifest and allow-list and writes a value-free event", async () => {
+  /** The box names no scopes now: it asks for a connection, and the pull sends
+   * that connection's declared defaults. Both halves of the gate still refuse —
+   * a ceiling narrower than the defaults, and an allow-list that does not name
+   * the workspace owner. */
+  it("denies a pull outside the manifest and allow-list and writes a value-free event", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod", {
       scopes: ["servers:read"],
-      owners: ["operator"],
     });
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": { scopes: ["servers:read"] },
+    await putStaticConnection(app, cookie, "hetzner-fenced", {
+      owners: ["another-member"],
     });
-
-    const response = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-      scopes: ["servers:write"],
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": { scopes: [] },
+      "hetzner-fenced": {},
     });
 
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({
-      error: "credential mint exceeds the workspace manifest or integration allow-list",
+    const overCeiling = await mint(app, box.access_token, "hetzner-prod");
+    const outsideAllowList = await mint(app, box.access_token, "hetzner-fenced");
+
+    expect(overCeiling.status).toBe(403);
+    expect(await overCeiling.json()).toEqual({
+      error: "this workspace is not connected to hetzner-prod",
+      request_id: expect.any(String),
+    });
+    expect(outsideAllowList.status).toBe(403);
+    expect(await outsideAllowList.json()).toEqual({
+      error: "this workspace is not connected to hetzner-fenced",
       request_id: expect.any(String),
     });
     const event = await env.DB
@@ -2234,7 +2145,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     ).toBe(0);
   });
 
-  it("deduplicates denied mints, lists the request shape, and approves an actual retry", async () => {
+  it("deduplicates denied pulls, lists the request shape, and approves an actual retry", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod", {
@@ -2244,14 +2155,8 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       "hetzner-prod": { scopes: [] },
     });
 
-    const firstDenied = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-      scopes: ["servers:read"],
-    });
-    const secondDenied = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-      scopes: ["servers:read"],
-    });
+    const firstDenied = await mint(app, box.access_token, "hetzner-prod");
+    const secondDenied = await mint(app, box.access_token, "hetzner-prod");
     const firstBody = await firstDenied.json<{ request_id: string }>();
     const secondBody = await secondDenied.json<{ request_id: string }>();
 
@@ -2314,29 +2219,25 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       acting_principal: { userId: "operator", membershipId: "personal" },
     });
 
-    const retried = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-      scopes: ["servers:read"],
-    });
+    const retried = await mint(app, box.access_token, "hetzner-prod");
     expect(retried.status).toBe(200);
     expect(await retried.json<MintResult>()).toMatchObject({
-      integration: "hetzner-prod",
+      connection: "hetzner-prod",
       mode: "inject",
-      placements: [{ kind: "env", name: "HCLOUD_TOKEN", value: ROOT }],
+      env: [{ name: "HCLOUD_TOKEN", value: ROOT }],
     });
   });
 
   it("denies a pending request without widening the workspace manifest", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
+    await putStaticConnection(app, cookie, "hetzner-prod", {
+      scopes: ["servers:write"],
+    });
     const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
       "hetzner-prod": { scopes: [] },
     });
-    const deniedMint = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-      scopes: ["servers:write"],
-    });
+    const deniedMint = await mint(app, box.access_token, "hetzner-prod");
     const { request_id: requestId } = await deniedMint.json<{ request_id: string }>();
     const before = await env.DB
       .prepare("SELECT manifest FROM workspaces WHERE id = ?1")
@@ -2383,12 +2284,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         }),
       ]),
     });
-    expect(
-      (await mintFor(app, workspace.id, box.access_token, {
-        integration: "hetzner-prod",
-        scopes: ["servers:write"],
-      })).status,
-    ).toBe(403);
+    expect((await mint(app, box.access_token, "hetzner-prod")).status).toBe(403);
   });
 
   it("does not let a non-owner approve another workspace's request", async () => {
@@ -2399,16 +2295,13 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     await putStaticConnection(app, operatorCookie, "hetzner-prod", {
       owners: ["workspace-owner"],
     });
-    const { workspace, box } = await createReadyWorkspace(
+    const { box } = await createReadyWorkspace(
       app,
       providers,
       ownerCookie,
       { "hetzner-prod": { scopes: [] } },
     );
-    const deniedMint = await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
-      scopes: ["servers:write"],
-    });
+    const deniedMint = await mint(app, box.access_token, "hetzner-prod");
     const { request_id: requestId } = await deniedMint.json<{ request_id: string }>();
 
     const response = await appRequest(app, `/requests/${requestId}/approve`, {
@@ -2429,28 +2322,23 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(await strangerFeed.json()).toEqual({ requests: [] });
   });
 
-  it("files and deduplicates requests for explicitly named missing connections", async () => {
+  it("files and deduplicates requests for a connection nobody configured", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {});
+    const { box } = await createReadyWorkspace(app, providers, cookie, {});
 
-    const first = await mintFor(app, workspace.id, box.access_token, {
-      integration: "future-provider",
-      scopes: ["repo:read"],
-    });
-    const second = await mintFor(app, workspace.id, box.access_token, {
-      integration: "future-provider",
-      scopes: ["repo:read"],
-    });
+    const first = await mint(app, box.access_token, "future-provider");
+    const second = await mint(app, box.access_token, "future-provider");
     const firstBody = await first.json<{ error: string; request_id: string }>();
     const secondBody = await second.json<{ error: string; request_id: string }>();
 
     expect(first.status).toBe(404);
     expect(firstBody).toEqual({
-      error: "integration not found",
+      error: "connection future-provider is not configured",
       request_id: expect.any(String),
     });
     expect(secondBody.request_id).toBe(firstBody.request_id);
+    // No row exists to read default scopes from, so the request names none.
     expect(
       await env.DB
         .prepare(
@@ -2461,7 +2349,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         .first(),
     ).toEqual({
       connection_name: "future-provider",
-      requested_scopes: '["repo:read"]',
+      requested_scopes: "[]",
       state: "pending",
     });
   });
@@ -2470,11 +2358,11 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": {},
+    });
     expect(
-      (await mintFor(app, workspace.id, box.access_token, {
-        integration: "hetzner-prod",
-      })).status,
+      (await mint(app, box.access_token, "hetzner-prod")).status,
     ).toBe(200);
     const lease = await env.DB
       .prepare("SELECT id FROM credential_leases LIMIT 1")
@@ -2503,11 +2391,11 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
+    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": {},
+    });
     expect(
-      (await mintFor(app, workspace.id, box.access_token, {
-        integration: "hetzner-prod",
-      })).status,
+      (await mint(app, box.access_token, "hetzner-prod")).status,
     ).toBe(200);
 
     const response = await appRequest(app, `/workspaces/${workspace.id}`, {
@@ -2542,10 +2430,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
-    await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": {},
     });
+    await mint(app, box.access_token, "hetzner-prod");
     await env.DB
       .prepare(
         "UPDATE credential_leases SET expires_at = 10, token_hash = 'overdue-token-hash'",
@@ -2563,34 +2451,6 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
         .prepare("SELECT COUNT(*) AS count FROM credential_leases")
         .first<number>("count"),
     ).toBe(1);
-  });
-
-  it("returns an array when a sync-style request mints every allowed connection", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod", {
-      placements: [{ kind: "env", name: "HCLOUD_TOKEN" }],
-    });
-    await putStaticConnection(app, cookie, "resend-prod", {
-      root: "test-only-resend-root",
-      placements: [{ kind: "env", name: "RESEND_API_KEY" }],
-    });
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-      "resend-prod": {},
-    });
-
-    void workspace;
-    const response = await mintFor(app, "self", box.access_token, {});
-
-    expect(response.status).toBe(200);
-    const result = await response.json<MintResult[]>();
-    expect(Array.isArray(result)).toBe(true);
-    expect(result).toHaveLength(2);
-    expect(result.map(({ integration, placements }) => [integration, placements[0]])).toEqual([
-      ["hetzner-prod", { kind: "env", name: "HCLOUD_TOKEN", value: ROOT }],
-      ["resend-prod", { kind: "env", name: "RESEND_API_KEY", value: "test-only-resend-root" }],
-    ]);
   });
 
   it("lists connection status without config, plaintext values, or ciphertext", async () => {
@@ -2630,10 +2490,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
-    await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
+    const { box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": {},
     });
+    await mint(app, box.access_token, "hetzner-prod");
 
     const response = await appRequest(app, "/connections/hetzner-prod", {
       method: "DELETE",
@@ -2660,10 +2520,10 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putStaticConnection(app, cookie, "hetzner-prod");
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie);
-    await mintFor(app, workspace.id, box.access_token, {
-      integration: "hetzner-prod",
+    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
+      "hetzner-prod": {},
     });
+    await mint(app, box.access_token, "hetzner-prod");
 
     const response = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: cookie },
@@ -2680,40 +2540,6 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       mode: "inject",
     });
     expect(JSON.stringify(body)).not.toContain(ROOT);
-  });
-
-  /** FROZEN box wire: the Go broker baked into the shipped box image decodes
-   * POST /workspaces/self/credentials with DisallowUnknownFields. This pins
-   * the request body key "integration" and the exact response key set
-   * integration/mode/placements/expiresAt so the connection rename can never
-   * leak into the box-facing route. */
-  it("keeps the frozen box mint wire: body key integration, exact response keys", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    await putStaticConnection(app, cookie, "hetzner-prod");
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      "hetzner-prod": {},
-    });
-
-    const response = await mintFor(app, "self", box.access_token, {
-      integration: "hetzner-prod",
-    });
-
-    expect(response.status).toBe(200);
-    const raw: unknown = JSON.parse(await response.text());
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("mint response was not a JSON object");
-    }
-    expect(Object.keys(raw).sort()).toEqual([
-      "expiresAt",
-      "integration",
-      "mode",
-      "placements",
-    ]);
-    expect((raw as MintResult).integration).toBe("hetzner-prod");
-    const placement = (raw as MintResult).placements[0];
-    expect(placement).toEqual({ kind: "env", name: "HCLOUD_TOKEN", value: ROOT });
-    expect(Object.keys(placement ?? {})).toEqual(["kind", "name", "value"]);
   });
 
   it("keeps /integrations as an alias of the canonical /connections routes", async () => {
@@ -2941,31 +2767,32 @@ describe("connections: admin-configured providers through templates", () => {
       integrations: { github: {} },
     });
 
-    // The create minted the lease before any box existed; the live lease row
-    // is the state the panel shows.
+    // The create minted nothing. The allow-list is the state, and the pull
+    // below is the first time a credential exists at all.
     const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: member.cookie },
     });
-    const { leases: created } = await atCreate.json<{ leases: CredentialLeaseView[] }>();
-    expect(created.map(({ connection, state, boxId }) => [connection, state, boxId]))
-      .toEqual([["github", "active", null]]);
+    await expect(atCreate.json()).resolves.toEqual({ leases: [] });
 
-    // The same mint blitz-cred git-helper performs: {integration: "github"},
-    // answered with an env placement named GH_TOKEN — the exact name the
-    // helper turns into git's username/password pair.
-    const minted = await mint(app, box.access_token, { integration: "github" });
+    // The same pull blitz-cred git-helper performs, answered with GH_TOKEN —
+    // the exact name the helper turns into git's username/password pair.
+    const minted = await mint(app, box.access_token, "github");
     expect(minted.status).toBe(200);
     const result = await minted.json<MintResult>();
     expect(result).toEqual({
-      integration: "github",
+      connection: "github",
       mode: "inject",
-      placements: [
-        { kind: "env", name: "GH_TOKEN", value: GITHUB_TOKEN },
-        { kind: "env", name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
+      token: GITHUB_TOKEN,
+      env: [
+        { name: "GH_TOKEN", value: GITHUB_TOKEN },
+        { name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
       ],
+      header: { name: "Authorization", prefix: "Bearer " },
       expiresAt: Date.parse(expiresAt),
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Once, not twice. Creating the workspace no longer asks GitHub for an
+    // installation token nobody would hold.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("youtrack: a member's pasted token satisfies the template and rides the proxy as them", async () => {
@@ -2987,13 +2814,13 @@ describe("connections: admin-configured providers through templates", () => {
       integrations: { youtrack: {} },
     });
 
-    const synced = await mint(app, box.access_token, {});
-    expect(synced.status).toBe(200);
-    const results = await synced.json<MintResult[]>();
-    expect(results.map(({ integration, mode }) => [integration, mode]))
-      .toEqual([["youtrack", "proxy"]]);
-    const result = results[0];
-    if (result === undefined) throw new Error("youtrack mint result is missing");
+    // The one connection this workspace may pull, as the box reads it.
+    expect(await listBoxConnections(app, box.access_token)).toEqual(["youtrack"]);
+    const pulled = await mint(app, box.access_token, "youtrack");
+    expect(pulled.status).toBe(200);
+    const result = await pulled.json<MintResult>();
+    expect(result.connection).toBe("youtrack");
+    expect(result.mode).toBe("proxy");
 
     // The box holds a lease token and the proxy URL, never the permanent
     // token: that pair is the whole delivery.
@@ -3003,7 +2830,7 @@ describe("connections: admin-configured providers through templates", () => {
     expect(leaseToken).not.toBe(YOUTRACK_PAT);
     const leaseId = new URL(proxyUrl ?? "").pathname.split("/").at(-1) ?? "";
     expect(proxyUrl).toBe(`https://cp.example/proxy/${leaseId}`);
-    expect(JSON.stringify(results)).not.toContain(YOUTRACK_PAT);
+    expect(JSON.stringify(result)).not.toContain(YOUTRACK_PAT);
 
     // A call through the pair reaches the instance carrying the MEMBER's own
     // token: every YouTrack action attributes to the person, not to an org
@@ -3063,9 +2890,9 @@ describe("connections: admin-configured providers through templates", () => {
     const { box } = await readyWorkspace(app, providers, second.cookie, {
       connections: ["youtrack"],
     });
-    const synced = await mint(app, box.access_token, { integration: "youtrack" });
-    expect(synced.status).toBe(200);
-    const result = await synced.json<MintResult>();
+    const pulled = await mint(app, box.access_token, "youtrack");
+    expect(pulled.status).toBe(200);
+    const result = await pulled.json<MintResult>();
     const leaseToken = environmentValue(result, "YOUTRACK_TOKEN");
     const proxyUrl = environmentValue(result, "YOUTRACK_BASE_URL");
     const leaseId = new URL(proxyUrl ?? "").pathname.split("/").at(-1) ?? "";
@@ -3108,35 +2935,35 @@ describe("connections: admin-configured providers through templates", () => {
     const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
       headers: { Cookie: member.cookie },
     });
-    const { leases: created } = await atCreate.json<{ leases: CredentialLeaseView[] }>();
-    expect(created.map(({ connection, state, boxId }) => [connection, state, boxId]))
-      .toEqual([["discord", "active", null]]);
+    await expect(atCreate.json()).resolves.toEqual({ leases: [] });
 
-    const minted = await mint(app, box.access_token, { integration: "discord" });
+    const minted = await mint(app, box.access_token, "discord");
     expect(minted.status).toBe(200);
     const result = await minted.json<MintResult>();
     expect(result).toMatchObject({
-      integration: "discord",
+      connection: "discord",
       mode: "inject",
-      placements: [
-        { kind: "env", name: "DISCORD_BOT_TOKEN", value: DISCORD_ROOT },
+      token: DISCORD_ROOT,
+      env: [
+        { name: "DISCORD_BOT_TOKEN", value: DISCORD_ROOT },
       ],
+      // `Bot `, not `Bearer `. The org row stores no header, so the catalog is
+      // the only thing that knows. An agent told `Bearer` reads Discord's 401
+      // as a broken credential and asks the person to reconnect a connection
+      // that was never broken.
+      header: { name: "Authorization", prefix: "Bot " },
     });
     expect(result.expiresAt).toBeGreaterThan(Date.now() + 59 * 60 * 1000);
-    // The frozen box wire: exactly the four keys the shipped broker decodes.
-    expect(Object.keys(result).sort()).toEqual([
-      "expiresAt",
-      "integration",
-      "mode",
-      "placements",
-    ]);
 
-    // Enablement is a ceiling, not a broadcast: a workspace whose explicit
-    // manifest names nothing gets nothing on a sync-all.
+    // Enablement is a ceiling, not a broadcast: the org root is configured,
+    // but a workspace whose manifest names nothing may not pull it.
     const { box: fencedBox } = await createReadyWorkspace(app, providers, admin, {});
-    const fencedSync = await mint(app, fencedBox.access_token, {});
-    expect(fencedSync.status).toBe(200);
-    await expect(fencedSync.json()).resolves.toEqual([]);
+    expect(await listBoxConnections(app, fencedBox.access_token)).toEqual([]);
+    const fenced = await mint(app, fencedBox.access_token, "discord");
+    expect(fenced.status).toBe(403);
+    await expect(fenced.json()).resolves.toMatchObject({
+      error: "this workspace is not connected to discord",
+    });
   });
 
   it("creates an unbacked stipulated provider as needs-you, never as a 409", async () => {

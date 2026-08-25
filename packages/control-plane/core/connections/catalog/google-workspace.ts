@@ -1,64 +1,6 @@
-import type { OAuthProviderManifest, SkillRenderInput } from "./types.js";
+import type { OAuthProviderManifest } from "./types.js";
 
 const HOUR_MS = 60 * 60 * 1_000;
-
-function skill(input: SkillRenderInput): string {
-  const base = input.baseUrlEnv === null ? input.baseUrl : `$${input.baseUrlEnv}`;
-  const header = `${input.tokenHeader.name}: ${input.tokenHeader.prefix}$${input.tokenEnv}`;
-  return `---
-name: ${input.connection}
-description: Use Google Drive, Calendar, and Gmail send on behalf of the workspace owner.
----
-
-# ${input.connection}
-
-Google Workspace access for this workspace, acting as the person who connected it.
-
-## Auth
-
-Send \`${header}\` on every call, to \`${base}\`. That base URL is this
-workspace's Google connection — **it is the only Google access here.** Do not
-look for a claude.ai connector and do not run \`/mcp\`: neither is wired into a
-workspace session, and reaching for them wastes a turn.
-
-${input.mode === "proxy"
-    ? `\`$${input.tokenEnv}\` is a lease token, not a Google credential: it works only against \`${base}\`, and the control plane swaps in the access token on the way out. The access token is refreshed when the lease is minted, not on every call, so a long turn can still outlive it — a 401 means re-sync, not re-plan.`
-    : `\`$${input.tokenEnv}\` is a Google access token. It lives one hour and is replaced at the next mint.`}
-
-## Canonical calls
-
-\`\`\`sh
-# Drive — only files this app created or the user picked
-curl -sS -H '${header}' "${base}/drive/v3/files?pageSize=10&fields=files(id,name)"
-
-# Calendar — next events
-curl -sS -H '${header}' "${base}/calendar/v3/calendars/primary/events?maxResults=10&singleEvents=true&orderBy=startTime"
-
-# Gmail — send only, never read
-curl -sS -X POST -H '${header}' "${base}/gmail/v1/users/me/messages/send" \\
-  -H 'Content-Type: application/json' \\
-  -d '{"raw":"<base64url RFC 2822 message>"}'
-\`\`\`
-
-## Reach and limits
-
-- Scopes recorded for this connection: ${input.scopes.length === 0 ? "none recorded" : input.scopes.join(", ")}.
-- \`drive.file\` is per-file: the agent sees files it created or the person
-  explicitly picked, not the whole Drive. Listing an unrelated document and
-  finding nothing is the scope working, not a bug.
-- \`gmail.send\` cannot read mail. Do not attempt a mailbox search.
-
-## When a call returns 401 or 403
-
-401 means the credential behind the lease expired — run \`blitz-cred sync\`
-(or start a new login shell) and retry once. 403 with
-\`insufficientPermissions\` means the scope was never granted; report which
-scope is missing instead of retrying. 403 with \`accessNotConfigured\` is a
-different thing entirely: the API itself is switched off on the Google Cloud
-project behind this deployment. No amount of reconnecting fixes it — report
-that the operator must enable that API, and name which one.
-`;
-}
 
 /** Google's cost is paperwork, not protocol: the scope posture below
  * (drive.file + calendar + gmail.send) is the widest set that needs no CASA
@@ -121,7 +63,6 @@ export const googleWorkspaceManifest = {
       { name: "GOOGLE_TOKEN", fill: "token" },
       { name: "GOOGLE_API_BASE_URL", fill: "proxy-url" },
     ],
-    skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
   },
   probe: {
     request: (input) => ({

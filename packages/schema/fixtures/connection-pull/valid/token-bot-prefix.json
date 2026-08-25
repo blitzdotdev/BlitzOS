@@ -1,0 +1,11 @@
+{
+  "connection": "discord",
+  "mode": "inject",
+  "token": "test-only-bot-token",
+  "env": [
+    { "name": "DISCORD_BOT_TOKEN", "value": "test-only-bot-token" },
+    { "name": "DISCORD_TOKEN", "value": "test-only-bot-token" }
+  ],
+  "header": { "name": "Authorization", "prefix": "Bot " },
+  "expiresAt": 1756000000000
+}

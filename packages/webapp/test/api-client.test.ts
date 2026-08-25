@@ -31,6 +31,21 @@ describe("wire API client", () => {
     expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ machineTypeId: "cx23@fsn1" }));
   });
 
+  it("disconnects one workspace connection by name and never touches the lease", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
+      new Response(null, { status: 204 })
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    const client = createControlPlaneClient("https://control.example");
+
+    await client.disconnectWorkspaceConnection("work space/one", "google-workspace");
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe(
+      "https://control.example/workspaces/work%20space%2Fone/connections/google-workspace",
+    );
+    expect(fetcher.mock.calls[0]?.[1]?.method).toBe("DELETE");
+  });
+
   it("chunks large folder uploads with the shared cutoff and completes ordered parts", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

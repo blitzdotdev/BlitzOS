@@ -147,12 +147,20 @@ func (c *Client) RegisterKeys(ctx context.Context, keys []feed.Key) (KeyRegistra
 	return KeyRegistration{Broker: result.Broker, MemberUnixName: result.MemberUnixName}, nil
 }
 
-// PostWorkspaceCredentials makes the box-authenticated credential mint request.
+// GetWorkspaceConnections reads the providers this workspace may pull.
 // The caller owns and must close the returned response body.
-func (c *Client) PostWorkspaceCredentials(ctx context.Context, body []byte) (*http.Response, error) {
+func (c *Client) GetWorkspaceConnections(ctx context.Context) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodGet, func(string) string {
+		return "/workspaces/self/connections"
+	}, nil)
+}
+
+// PostWorkspaceConnectionToken pulls one credential for one provider.
+// The caller owns and must close the returned response body.
+func (c *Client) PostWorkspaceConnectionToken(ctx context.Context, name string) (*http.Response, error) {
 	return c.authenticated(ctx, http.MethodPost, func(string) string {
-		return "/workspaces/self/credentials"
-	}, body)
+		return "/workspaces/self/connections/" + url.PathEscape(name) + "/token"
+	}, nil)
 }
 
 // GetWorkspaceEnvironment fetches this box's immutable workspace environment.

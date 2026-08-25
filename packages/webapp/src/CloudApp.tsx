@@ -1797,7 +1797,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                         files={filesSidebar}
                         pendingRequests={activePendingRequests}
                         pendingRequestsError={pendingRequestsError}
-                        stipulatedConnections={activeWorkspace?.connections ?? []}
+                        workspaceConnections={activeWorkspace?.connections ?? []}
                         connectionsFocus={connectionsFocus}
                         readOnly={activeWorkspace?.accessRole === 'viewer'}
                         onResolveRequest={resolveWorkspaceRequest}
@@ -2112,7 +2112,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           orgName={store.viewer?.org.name ?? 'Organization'}
           pendingRequests={activePendingRequests}
           pendingRequestsError={pendingRequestsError}
-          stipulatedConnections={activeWorkspace.connections}
+          workspaceConnections={activeWorkspace.connections}
           connectionsFocus={connectionsFocus}
           readOnly={activeWorkspace.accessRole === 'viewer'}
           onWidthChange={setSidePaneWidth}

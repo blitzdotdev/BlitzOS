@@ -64,40 +64,16 @@ if [ "$mode" = ro ]; then
   exec tmux -u attach-session -r -t "=$session"
 fi
 
-# An agent reads its skills once, when it starts, and the mint that delivers a
-# skill (.claude/skills/<provider>/SKILL.md) is the same one that fills env.d.
-# A tab opened before the first sync would therefore run a whole session
-# believing the workspace is connected to nothing. Only on the create path: an
-# attach re-enters a harness that already scanned, so syncing for it would buy
-# nothing and stall every reconnect. `command -v` guards the way
-# /etc/profile.d/blitz-creds.sh does, so a stripped image loses a sync and not
-# a terminal, and BLITZ_STATE_DIR is passed explicitly so the sync can never
-# write to a directory other than the one sourced below.
+# The workspace's own variables live in the credential env.d directory, which
+# a login shell sources as a whole glob through /etc/profile.d/blitz-creds.sh.
+# tmux execs the commands below without a login shell, so the same glob is
+# sourced here, in the same order. The chat actor merges the identical files
+# (box/actor/src/credentials.ts) so the two surfaces cannot disagree about what
+# a variable holds.
 #
-# Detached, never waited on. The mint holds one sync lock, and the gateway's
-# POST /credentials/sync can hold it for up to 30 seconds, so waiting here made
-# opening a tab wait on somebody else's refresh. The skills still land within
-# seconds and still race the harness scan, which is exactly what they did
-# before this line existed. `( ... & )` lets the subshell exit at once, so the
-# sync is reparented away and the exec below never has a job to reap.
-case "$session_type" in
-  claude|codex)
-    if ! tmux has-session -t "=$session" 2>/dev/null &&
-        command -v timeout >/dev/null 2>&1 &&
-        command -v blitz-cred >/dev/null 2>&1; then
-      ( BLITZ_STATE_DIR="$state_dir" timeout 10 blitz-cred sync >/dev/null 2>&1 & )
-    fi
-    ;;
-esac
-
-# Everything the workspace has connected lives in the credential env.d
-# directory, which a login shell sources as a whole glob through
-# /etc/profile.d/blitz-creds.sh. tmux execs the commands below without a login
-# shell, so the same glob is sourced here, in the same order — 00-workspace.sh
-# first, a later integration file winning a shared name. An agent tab that
-# cannot read the credential its own workspace connected is the bug; the chat
-# actor merges these identical files (box/actor/src/credentials.ts) so the two
-# surfaces cannot disagree about what a variable holds.
+# No connection secret passes through here. An agent pulls one when it needs
+# one (`blitz-cred get <provider>`), so a tab carries no credential and a
+# Disconnect takes effect without restarting anything.
 #
 # Snapshot the exported environment first, so the delta after the glob names
 # exactly what env.d contributed. Prefixed plain variables rather than an
@@ -117,7 +93,7 @@ unset credential_env_file
 # environment of the client that created it only when that client also STARTS
 # the server; every later session copies the server's snapshot instead. A box
 # boots a detached `blitz-rc` session first, so the server snapshot is
-# whatever bootstrap's `docker exec` held — no LANG, no credential. Tabs then
+# whatever bootstrap's `docker exec` held — no LANG, no workspace variable. Tabs then
 # inherited that bare snapshot and saw none of the env.d glob. `-e NAME=VALUE`
 # writes each variable into the session environment explicitly, so delivery no
 # longer depends on who started the server.

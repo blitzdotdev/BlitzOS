@@ -1,11 +1,10 @@
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { first, rows } from "../db.js";
-import { HttpError, isRecord, isString, readJson, requiredString } from "../http.js";
+import { HttpError, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
 import { providerManifest, providerRedirectPath } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
-import { tombstoneDelivery } from "./catalog/workspace-delivery.js";
 import { addConnectRoutes } from "./connect.js";
 import { addGithubRepositoryRoutes } from "./github-repos.js";
 import { addConnectionHealthRoutes } from "./health.js";
@@ -15,25 +14,35 @@ import {
   listLeases,
   revokeLease,
   revokeWorkspaceConnectionLeasesQuery,
-  staleSurfaceConnections,
 } from "./leases.js";
 import {
   connectionDefaultScopes,
   manifestAllows,
+  manifestConnectionNames,
+  manifestWithConnection,
+  manifestWithoutConnection,
   usableByAllows,
 } from "./manifest.js";
 import { mintFromGrant } from "./minters/grant.js";
 import { refreshedAccessToken } from "./minters/oauth.js";
 import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
+import { mintResultBody, parseMintResult } from "./pull-wire.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
 import {
-  activeConnections,
   addConnectionRoutes,
   connectionByName,
+  connectionManifestId,
   resolveMinter,
 } from "./registry.js";
-import type { Connection, Lease, MinterResult, MintRequest, MintResult } from "./types.js";
+import type {
+  Connection,
+  Lease,
+  MinterResult,
+  MintRequest,
+  MintResult,
+  WorkspaceConnectionsResponse,
+} from "./types.js";
 import type { GrantRow } from "./user-grants.js";
 import {
   addUserGrantRoutes,
@@ -43,10 +52,6 @@ import {
 } from "./user-grants.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
-/** A tombstone carries no credential, so its horizon only has to outlast the
- * sync that applied it without shortening the box's freshness window. */
-const TOMBSTONE_TTL_MS = 60 * 60 * 1_000;
-
 export interface WorkspaceCredentialRow {
   id: string;
   owner_id: string;
@@ -54,37 +59,6 @@ export interface WorkspaceCredentialRow {
   manifest: string | null;
   org_id: string | null;
   owner_membership_id: string | null;
-}
-
-interface ParsedMintBody {
-  integration?: string;
-  scopes?: string[];
-}
-
-function parseScopes(value: unknown): string[] {
-  if (
-    !Array.isArray(value) ||
-    !value.every((scope) => isString(scope) && scope.length > 0)
-  ) {
-    throw new HttpError(400, "scopes must be an array of non-empty strings");
-  }
-  return [...new Set(value)];
-}
-
-/** FROZEN box wire: the shipped box image's blitz-cred sends the request body
- * key "integration" to POST /workspaces/self/credentials. Keep accepting it
- * byte-for-byte; the product noun rename must not touch this route. */
-function parseMintBody(value: unknown): ParsedMintBody {
-  if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
-  const result: ParsedMintBody = {};
-  if (value.integration !== undefined) {
-    result.integration = requiredString(value.integration, "integration", 256);
-  }
-  if (value.scopes !== undefined) result.scopes = parseScopes(value.scopes);
-  if (result.integration === undefined && result.scopes !== undefined) {
-    throw new HttpError(400, "scopes require an integration");
-  }
-  return result;
 }
 
 export function authorize(
@@ -209,8 +183,8 @@ async function grantSecretForMint(
   return { secret: access.accessToken, accessExpiresAt: access.accessExpiresAt };
 }
 
-/** What a mint produced: the frozen wire body for whoever asked, and the row
- * that now says this workspace holds the connection. */
+/** What a mint produced: the credential for whoever asked, and the lease row
+ * that records the workspace held it. */
 export interface MintOutcome {
   result: MintResult;
   lease: Lease;
@@ -260,11 +234,9 @@ async function mintOne(
     throw new HttpError(403, message, requestId);
   };
   if (!authorize(principal, workspace, connection, input.scopes)) {
-    // FROZEN box-route error text (the box CLI classifies by status, but the
-    // string predates the rename and stays byte-identical).
     return deny(
       "outside credential ceiling",
-      "credential mint exceeds the workspace manifest or integration allow-list",
+      `this workspace is not connected to ${connection.name}`,
     );
   }
   const grant = await grantFor(runtime.db, workspace.owner_id, connection.name);
@@ -307,18 +279,17 @@ async function mintOne(
   const minted = grant === null
     ? await legacyRootMint(runtime, connection, request)
     : await ownerGrantMint(runtime, grant, connection, request, scopes);
-  // Everything a minter adds beyond the frozen four keys is stripped here: the
-  // shipped box decodes this body with DisallowUnknownFields, so one extra key
-  // fails the decode and the whole credential sync aborts.
+  // Control-plane bookkeeping is stripped here: `tokenHash` is what the proxy
+  // compares against and must never leave the control plane.
   const { tokenHash = null, grantedScopes, ...result } = minted;
-  // The new lease supersedes the one this pair already held. Every
-  // `blitz-cred sync` used to stack another active row, so the panel showed
-  // duplicates and the older proxy token stayed live for its whole TTL.
-  // Scoped to this connection, so a sync-all never touches another one.
+  // The new lease supersedes the one this pair already held. Minting used to
+  // stack another active row every time, so the panel showed duplicates and
+  // the older proxy token stayed live for its whole TTL. Scoped to this
+  // connection, so one pull never touches another provider.
   //
-  // Accepted tradeoff: a value already exported into a shell that is still
-  // open dies on the next mint. Surfaces are login-fresh by design — a new
-  // shell, a new agent run, and the proxy all read the freshest lease.
+  // Accepted tradeoff: a value an agent exported into a shell that is still
+  // open dies on the next pull. Pulling is cheap and per-use by design, so the
+  // right answer to a dead value is to ask again.
   await rows(runtime.db, revokeWorkspaceConnectionLeasesQuery(workspace.id, connection.id));
   const lease = await createLease(runtime.db, {
     id: leaseId,
@@ -338,13 +309,9 @@ async function mintOne(
 }
 
 /** Connecting a provider inside the webApp: one workspace, one connection, one
- * lease, minted through the same machinery a box sync uses so the ceiling and
- * the owner's consent bound it identically.
- *
- * A proxy lease minted here holds a token nobody has yet — the box learns it on
- * its next sync, which supersedes this row with an identical one. That is the
- * point: the lease row IS the connected state, and the box replaces it
- * invisibly rather than being the thing that creates it. */
+ * lease, minted through the same machinery a box pull uses so the ceiling and
+ * the owner's consent bound it identically. It proves the credential works
+ * while the person is still looking at the panel. */
 export async function mintWorkspaceConnection(
   runtime: ReturnType<RuntimeFactory>,
   input: {
@@ -367,10 +334,13 @@ export async function mintWorkspaceConnection(
   });
 }
 
-/** The tail of an OAuth round trip that began inside a workspace: the grant is
- * stored, so now the workspace gets the lease that makes it connected. Quiet on
- * refusal — the grant stood up either way, and the grid showing the provider
- * unconnected is the honest report of a ceiling that said no.
+/** The tail of an OAuth round trip that began inside a workspace. The round
+ * trip was a Connect, so it does what Connect does: it writes the provider
+ * into this workspace's manifest, then mints once to prove the grant works.
+ *
+ * Only a person who may control the workspace reaches here — `connect.ts`
+ * checks that before the workspace id is signed into the OAuth state — so the
+ * manifest write is the same authorized act the panel's Connect performs.
  *
  * Handed to the connect routes rather than imported by them, so `connect.ts`
  * stays a leaf of this module instead of importing back into it. */
@@ -386,15 +356,21 @@ async function connectAfterGrant(
   const workspace = await workspaceForMint(runtime, input.workspaceId);
   if (workspace === null || workspace.org_id === null
     || workspace.org_id !== input.principal.orgId) return false;
+  if (!canControlWorkspace(input.principal, workspace)) return false;
   const connection = await connectionByName(
     runtime.db,
     input.connectionName,
     workspace.org_id,
   );
   if (connection === null) return false;
+  const manifest = manifestWithConnection(workspace.manifest, connection.name);
+  await rows(runtime.db, {
+    q: "UPDATE workspaces SET manifest = ?1 WHERE id = ?2",
+    v: [manifest, workspace.id],
+  });
   try {
     const outcome = await mintWorkspaceConnection(runtime, {
-      workspace,
+      workspace: { ...workspace, manifest },
       principal: input.principal,
       origin: input.origin,
       connection,
@@ -424,7 +400,12 @@ export async function workspaceForMint(
 
 /** Static org-root minting predates per-user grants. It serves every row that
  * carries a sealed root, which the admin form on the template page still
- * creates: `PUT /connections/:name` is the org-credential path. */
+ * creates: `PUT /connections/:name` is the org-credential path.
+ *
+ * The catalog owns the header shape when it knows the provider. A stored
+ * cp-custody row carries no header, and Discord needs `Bot `, not `Bearer `:
+ * an agent told to send `Bearer` reads Discord's 401 as a broken credential
+ * and asks the person to reconnect a connection that was never broken. */
 async function legacyRootMint(
   runtime: ReturnType<RuntimeFactory>,
   connection: Connection,
@@ -442,68 +423,126 @@ async function legacyRootMint(
           connection.name,
           connection.root_ciphertext,
         );
-  return minter.mint(root, connection, request);
+  const minted = await minter.mint(root, connection, request);
+  const manifest = providerManifest(
+    connectionManifestId(connection) ?? connection.provider,
+  );
+  return manifest === null ? minted : { ...minted, header: manifest.tokenHeader };
 }
 
-/** Tombstone results ride the same wire a live mint does: `inject` mode with
- * `unset-env` names and an empty-valued file. They create no lease, because
- * they carry no credential. */
-async function surfaceTombstones(
+/** The workspace and provider a Connect or Disconnect names, once the caller
+ * has proved they may control that workspace. Both routes need the identical
+ * three checks, and a Disconnect that skipped one would be a way to edit
+ * somebody else's ceiling. */
+async function controllableWorkspaceConnection(
   runtime: ReturnType<RuntimeFactory>,
-  workspaceId: string,
-  mintedConnectionIds: readonly string[],
-  now = Date.now(),
-): Promise<MintResult[]> {
-  const results: MintResult[] = [];
-  for (const stale of await staleSurfaceConnections(
-    runtime.db,
-    workspaceId,
-    mintedConnectionIds,
-    now,
-  )) {
-    const declared = parseConnectionSurfaceConfig(stale.config);
-    if (declared === null) continue;
-    const manifest = providerManifest(declared.manifestId);
-    if (manifest === null) continue;
-    results.push({
-      // FROZEN box wire key: the shipped broker requires "integration".
-      integration: stale.connection_name,
-      mode: "inject",
-      placements: tombstoneDelivery(
-        manifest,
-        stale.connection_name,
-        declared.environmentNames,
-      ),
-      expiresAt: now + TOMBSTONE_TTL_MS,
+  context: CoreContext,
+  principal: Principal,
+): Promise<{ workspace: WorkspaceCredentialRow; name: string }> {
+  const workspaceId = requiredString(context.req.param("id"), "id", 64);
+  const name = requiredString(context.req.param("name"), "name", 256);
+  const workspace = await workspaceForMint(runtime, workspaceId);
+  if (workspace === null || workspace.org_id === null
+    || workspace.org_id !== principal.orgId) {
+    throw new HttpError(404, "workspace not found");
+  }
+  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  return { workspace, name };
+}
+
+/** A box asking on its own behalf. The box holds no person's session, so the
+ * principal is assembled from the workspace's org membership: an agent inside
+ * the box acts as the member who owns the box, and nothing wider. */
+interface BoxCaller {
+  workspace: WorkspaceCredentialRow;
+  boxId: string;
+  principal: Principal;
+}
+
+async function boxCaller(
+  runtime: ReturnType<RuntimeFactory>,
+  request: Request,
+): Promise<BoxCaller> {
+  const box = await authenticateBox(request, runtime.db);
+  if (box === null) throw new HttpError(401, "invalid box access token");
+  if (box.workspaceId === null) throw new HttpError(409, "box has no workspace");
+  const workspace = await first<WorkspaceCredentialRow>(runtime.db, {
+    q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
+        FROM workspaces WHERE id = ?1 LIMIT 1`,
+    v: [box.workspaceId],
+  });
+  if (workspace === null || workspace.phase !== "ready") {
+    throw new HttpError(409, "workspace is not ready for credential minting");
+  }
+  if (workspace.org_id === null) throw new HttpError(409, "workspace has no organization");
+  const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
+    q: `SELECT id, role FROM memberships
+        WHERE user_id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
+    v: [box.principalId, workspace.org_id],
+  });
+  return {
+    workspace,
+    boxId: box.id,
+    principal: {
+      id: box.principalId,
+      unixName: "blitz",
+      harnesses: [],
+      membershipId: membership?.id ?? null,
+      orgId: membership === null ? null : workspace.org_id,
+      role: membership?.role ?? null,
+      platformOperator: box.platformOperator,
+    },
+  };
+}
+
+/** What an agent inside a box may ask for, and how it asks.
+ *
+ * Nothing is delivered ahead of use. The box reads the allow-list to know what
+ * it may ask for, and mints one credential at the moment it needs it. The
+ * manifest is read on every call, so a Disconnect in the panel takes effect on
+ * the very next pull rather than at the next sync cadence. */
+function addBoxConnectionRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+): void {
+  router.get("/workspaces/self/connections", async (context) => {
+    const runtime = runtimeFactory(context);
+    const { workspace } = await boxCaller(runtime, context.req.raw);
+    return context.json<WorkspaceConnectionsResponse>({
+      connections: manifestConnectionNames(workspace.manifest).sort(),
     });
-  }
-  return results;
-}
+  });
 
-interface ConnectionSurfaceConfig {
-  manifestId: string;
-  environmentNames: string[];
-}
-
-/** Catalog connections record which manifest wrote their surfaces and under
- * which names. A legacy static row has neither and needs no tombstone: its
- * environment file is replaced wholesale by the sync, and it wrote no skill. */
-function parseConnectionSurfaceConfig(value: string): ConnectionSurfaceConfig | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed) || !isString(parsed.manifest_id)) return null;
-  const placements = Array.isArray(parsed.placements) ? parsed.placements : [];
-  const environmentNames: string[] = [];
-  for (const placement of placements) {
-    if (isRecord(placement) && placement.kind === "env" && isString(placement.name)) {
-      environmentNames.push(placement.name);
+  // 403 with a request id is the refusal an agent can act on: the id is the
+  // inbox row the member answers, and `blitz connections open <provider>` is
+  // how the agent sends them there.
+  router.post("/workspaces/self/connections/:name/token", async (context) => {
+    const runtime = runtimeFactory(context);
+    const { workspace, boxId, principal } = await boxCaller(runtime, context.req.raw);
+    const name = requiredString(context.req.param("name"), "name", 256);
+    const connection = await connectionByName(runtime.db, name, workspace.org_id ?? "");
+    if (connection === null) {
+      const requestId = await fileRequest(
+        runtime.db,
+        workspace.id,
+        name,
+        [],
+        { boxId, userId: principal.id },
+      );
+      throw new HttpError(404, `connection ${name} is not configured`, requestId);
     }
-  }
-  return { manifestId: parsed.manifest_id, environmentNames };
+    const outcome = await mintOne(runtime, {
+      workspace,
+      boxId,
+      principal,
+      origin: new URL(context.req.url).origin,
+      connection,
+      scopes: connectionDefaultScopes(connection),
+      denied: "error",
+    });
+    if (outcome === null) throw new Error("box credential mint was skipped");
+    return context.json(parseMintResult(mintResultBody(outcome.result)));
+  });
 }
 
 export function addCredentialRoutes(
@@ -519,138 +558,31 @@ export function addCredentialRoutes(
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 
-  // FROZEN box wire: the Go broker in the shipped box image calls this route
-  // and decodes the response with DisallowUnknownFields. The path, the body
-  // key "integration", the response keys integration/mode/placements/
-  // expiresAt, and the error body key request_id may not change.
-  router.post("/workspaces/:id/credentials", async (context) => {
-    const runtime = runtimeFactory(context);
-    const box = await authenticateBox(context.req.raw, runtime.db);
-    if (box === null) throw new HttpError(401, "invalid box access token");
-    const idParam = context.req.param("id");
-    const workspaceId = idParam === "self" ? box.workspaceId : idParam;
-    if (box.workspaceId !== workspaceId) {
-      throw new HttpError(403, "a box may only mint for its own workspace");
-    }
-    const workspace = await first<WorkspaceCredentialRow>(runtime.db, {
-      q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
-          FROM workspaces WHERE id = ?1 LIMIT 1`,
-      v: [workspaceId],
-    });
-    if (workspace === null || workspace.phase !== "ready") {
-      throw new HttpError(409, "workspace is not ready for credential minting");
-    }
-    if (workspace.org_id === null) throw new HttpError(409, "workspace has no organization");
-    const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
-      q: `SELECT id, role FROM memberships
-          WHERE user_id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
-      v: [box.principalId, workspace.org_id],
-    });
-    const boxPrincipal: Principal = {
-      id: box.principalId,
-      unixName: "blitz",
-      harnesses: [],
-      membershipId: membership?.id ?? null,
-      orgId: membership === null ? null : workspace.org_id,
-      role: membership?.role ?? null,
-      platformOperator: box.platformOperator,
-    };
-    const input = parseMintBody(await readJson(context.req.raw));
-    const origin = new URL(context.req.url).origin;
-    if (input.integration !== undefined) {
-      const connection = await connectionByName(runtime.db, input.integration, workspace.org_id);
-      if (connection === null) {
-        const requestId = await fileRequest(
-          runtime.db,
-          workspace.id,
-          input.integration,
-          input.scopes ?? [],
-          { boxId: box.id, userId: boxPrincipal.id },
-        );
-        // FROZEN box-route error text (see the route comment above).
-        throw new HttpError(404, "integration not found", requestId);
-      }
-      const outcome = await mintOne(runtime, {
-        workspace,
-        boxId: box.id,
-        principal: boxPrincipal,
-        origin,
-        connection,
-        scopes: input.scopes ?? connectionDefaultScopes(connection),
-        denied: "error",
-      });
-      if (outcome === null) throw new Error("specific credential mint was skipped");
-      return context.json(outcome.result);
-    }
+  addBoxConnectionRoutes(router, runtimeFactory);
 
-    const results: MintResult[] = [];
-    const minted: string[] = [];
-    for (const connection of await activeConnections(runtime.db, workspace.org_id)) {
-      // One connection may not take the others down with it. A YouTrack row
-      // whose instance stopped answering, or a Google grant whose refresh
-      // token was revoked at the provider, used to throw out of this loop and
-      // abort the whole sync — so a box lost every credential it already had
-      // because one it never needed went bad. The failure is recorded where
-      // credential failures are recorded (the workspace's credential events,
-      // which the connections panel prints under "Recent activity") and the
-      // loop moves on. `denied: "skip"` already swallows the routine
-      // no-grant-here case; this catches the rest.
-      let outcome: MintOutcome | null = null;
-      try {
-        outcome = await mintOne(runtime, {
-          workspace,
-          boxId: box.id,
-          principal: boxPrincipal,
-          origin,
-          connection,
-          scopes: connectionDefaultScopes(connection),
-          denied: "skip",
-        });
-      } catch (caught) {
-        // An HttpError message is our own text and is safe to keep; any other
-        // throw could carry a vendor body, so only its name survives.
-        const detail = caught instanceof HttpError
-          ? caught.message
-          : caught instanceof Error ? caught.name : "unknown error";
-        await recordDenied(
-          runtime,
-          workspace.id,
-          box.id,
-          connection.name,
-          connectionDefaultScopes(connection),
-          Date.now(),
-          boxPrincipal,
-          `sync mint failed: ${detail}`,
-        );
-        continue;
-      }
-      if (outcome === null) continue;
-      results.push(outcome.result);
-      minted.push(connection.id);
-    }
-    results.push(...(await surfaceTombstones(runtime, workspace.id, minted)));
-    return context.json(results);
-  });
-
-  /** Connecting, from the webApp. "Connected" means this workspace holds a live
-   * lease, and this is how a person gives it one without waiting for a box to
-   * sync. Session-authed and owner-or-admin, unlike the frozen box route above,
-   * which stays exactly as the shipped image expects it. */
+  /** Connect, from the webApp. It writes the provider into this workspace's
+   * manifest, then mints once so the person learns straight away whether the
+   * credential behind it actually works. Session-authed and owner-or-admin.
+   *
+   * The manifest write comes first because the mint reads it: minting first
+   * would refuse the very connection this call is authorizing. */
   router.post("/workspaces/:id/connections/:name/lease", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
-    const workspaceId = requiredString(context.req.param("id"), "id", 64);
-    const name = requiredString(context.req.param("name"), "name", 256);
-    const workspace = await workspaceForMint(runtime, workspaceId);
-    if (workspace === null || workspace.org_id === null
-      || workspace.org_id !== principal.orgId) {
-      throw new HttpError(404, "workspace not found");
-    }
-    if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
-    const connection = await connectionByName(runtime.db, name, workspace.org_id);
+    const { workspace, name } = await controllableWorkspaceConnection(
+      runtime,
+      context,
+      principal,
+    );
+    const connection = await connectionByName(runtime.db, name, workspace.org_id ?? "");
     if (connection === null) throw new HttpError(404, `connection ${name} not found`);
+    const manifest = manifestWithConnection(workspace.manifest, name);
+    await rows(runtime.db, {
+      q: "UPDATE workspaces SET manifest = ?1 WHERE id = ?2",
+      v: [manifest, workspace.id],
+    });
     const outcome = await mintWorkspaceConnection(runtime, {
-      workspace,
+      workspace: { ...workspace, manifest },
       principal,
       origin: new URL(context.req.url).origin,
       connection,
@@ -658,6 +590,36 @@ export function addCredentialRoutes(
     });
     if (outcome === null) throw new Error("workspace connect mint was skipped");
     return context.json({ lease: outcome.lease });
+  });
+
+  /** Disconnect, from the webApp. It removes the provider from THIS
+   * workspace's manifest and kills whatever this workspace already holds.
+   *
+   * The member's grant survives, so their other workspaces keep working and
+   * reconnecting here is one click. Revoking everywhere is a different act and
+   * lives in settings. The lease revoke is not optional bookkeeping: a proxy
+   * lease token stays usable until its row dies, and a capability must not
+   * outlive the grant that authorized it. */
+  router.delete("/workspaces/:id/connections/:name", async (context) => {
+    const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
+    const { workspace, name } = await controllableWorkspaceConnection(
+      runtime,
+      context,
+      principal,
+    );
+    await rows(runtime.db, {
+      q: "UPDATE workspaces SET manifest = ?1 WHERE id = ?2",
+      v: [manifestWithoutConnection(workspace.manifest, name), workspace.id],
+    });
+    const connection = await connectionByName(runtime.db, name, workspace.org_id ?? "");
+    if (connection !== null) {
+      await rows(
+        runtime.db,
+        revokeWorkspaceConnectionLeasesQuery(workspace.id, connection.id),
+      );
+    }
+    return context.body(null, 204);
   });
 
   router.get("/workspaces/:id/leases", async (context) => {

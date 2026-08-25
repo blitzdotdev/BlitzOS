@@ -9,14 +9,16 @@ import type { AgentAdapter, Provider } from "../src/types.js";
 import type { ConnectionIdentity } from "../src/auth.js";
 
 /**
- * The credentials a workspace connects arrive as shell export files in
- * `<state>/creds/env.d`, and until this merge existed a chat turn was the one
- * participant in the box that could not read them: login shells source the
- * glob through /etc/profile.d/blitz-creds.sh, the actor read only
- * `env/environment.json`. These pin the decoder against the exact bytes the Go
- * writer emits (`environmentFile`/`shellQuote` in
- * packages/broker/internal/workspace/cp.go) and the layering against the order
- * the shell glob applies.
+ * The workspace's own variables arrive as a shell export file in
+ * `<state>/creds/env.d`, and a chat turn was once the one participant in the
+ * box that could not read them: login shells source the glob through
+ * /etc/profile.d/blitz-creds.sh, the actor read only `env/environment.json`.
+ * These pin the decoder against the exact bytes the Go writer emits
+ * (`environmentFile`/`shellQuote` in
+ * packages/broker/internal/workspace/environment.go) and the layering against
+ * the order the shell glob applies.
+ *
+ * No connection secret is here. An agent pulls one when it needs one.
  */
 
 const directories: string[] = [];
@@ -45,8 +47,7 @@ function exportLine(name: string, value: string): string {
   return `export ${name}=${shellQuote(value)}\n`;
 }
 
-/** Writes one env.d entry the way the broker does: exports first, then the
- * unset tombstones. */
+/** Writes one env.d entry the way the broker does. */
 function writeEnvFile(directory: string, file: string, lines: string[]): void {
   const envDir = join(directory, "creds", "env.d");
   mkdirSync(envDir, { recursive: true });
@@ -63,9 +64,9 @@ function writeWorkspaceEnvironment(directory: string, env: Record<string, string
 
 describe("credential export file decoding", () => {
   it("reads the plain export lines the broker writes", () => {
-    expect(parseCredentialExportFile(exportLine("GH_TOKEN", "ghs_abc123") + exportLine("LINEAR_API_KEY", "lin_x"))).toEqual([
-      { kind: "export", name: "GH_TOKEN", value: "ghs_abc123" },
-      { kind: "export", name: "LINEAR_API_KEY", value: "lin_x" },
+    expect(parseCredentialExportFile(exportLine("PROJECT_MODE", "analysis") + exportLine("REGION", "eu"))).toEqual([
+      { name: "PROJECT_MODE", value: "analysis" },
+      { name: "REGION", value: "eu" },
     ]);
   });
 
@@ -75,19 +76,20 @@ describe("credential export file decoding", () => {
     const source = exportLine("MOTTO", "it's a 'quoted' token");
     expect(source).toBe(`export MOTTO='it'"'"'s a '"'"'quoted'"'"' token'\n`);
     expect(parseCredentialExportFile(source)).toEqual([
-      { kind: "export", name: "MOTTO", value: "it's a 'quoted' token" },
+      { name: "MOTTO", value: "it's a 'quoted' token" },
     ]);
     // A value that is nothing but a quote is the degenerate case: the escape
     // sits flush against both delimiters.
     expect(parseCredentialExportFile(exportLine("ONE", "'"))).toEqual([
-      { kind: "export", name: "ONE", value: "'" },
+      { name: "ONE", value: "'" },
     ]);
   });
 
-  it("keeps an unset line as a removal rather than an absence", () => {
+  it("skips an unset line, which the writer no longer emits", () => {
+    // Tombstones went with the delivery pipeline. A file that still carried
+    // one would have drifted from the writer, so the safe read is to drop it.
     expect(parseCredentialExportFile(`${exportLine("KEPT", "yes")}unset RETRACTED\n`)).toEqual([
-      { kind: "export", name: "KEPT", value: "yes" },
-      { kind: "unset", name: "RETRACTED" },
+      { name: "KEPT", value: "yes" },
     ]);
   });
 
@@ -100,8 +102,8 @@ describe("credential export file decoding", () => {
       exportLine("AFTER", "2"),
     ].join("");
     expect(parseCredentialExportFile(source)).toEqual([
-      { kind: "export", name: "BEFORE", value: "1" },
-      { kind: "export", name: "AFTER", value: "2" },
+      { name: "BEFORE", value: "1" },
+      { name: "AFTER", value: "2" },
     ]);
   });
 
@@ -111,9 +113,9 @@ describe("credential export file decoding", () => {
     expect(parseCredentialExportFile(exportLine("DATABASE_URL", connection)
       + exportLine("GREETING", "  two  words  ")
       + exportLine("SERVICE_KEY", pem))).toEqual([
-      { kind: "export", name: "DATABASE_URL", value: connection },
-      { kind: "export", name: "GREETING", value: "  two  words  " },
-      { kind: "export", name: "SERVICE_KEY", value: pem },
+      { name: "DATABASE_URL", value: connection },
+      { name: "GREETING", value: "  two  words  " },
+      { name: "SERVICE_KEY", value: pem },
     ]);
   });
 });
@@ -121,39 +123,30 @@ describe("credential export file decoding", () => {
 describe("credential environment layering", () => {
   it("applies env.d in glob order over the workspace variables and the process env", async () => {
     const directory = stateDir();
-    writeWorkspaceEnvironment(directory, { PROJECT_MODE: "analysis", GH_TOKEN: "workspace-guess" });
-    // 00-workspace.sh sorts first exactly so a minted credential wins the
-    // collision; github.sh is what the broker names the integration entry.
+    writeWorkspaceEnvironment(directory, { PROJECT_MODE: "analysis", REGION: "eu" });
     writeEnvFile(directory, "00-workspace.sh", [
       exportLine("PROJECT_MODE", "analysis"),
-      exportLine("GH_TOKEN", "workspace-guess"),
+      exportLine("REGION", "eu"),
     ]);
-    writeEnvFile(directory, "github.sh", [exportLine("GH_TOKEN", "ghs_minted")]);
-    writeEnvFile(directory, "linear.sh", [exportLine("LINEAR_API_KEY", "lin_minted")]);
 
     const environment = await new CredentialSource(directory).environment();
-    expect(environment.GH_TOKEN).toBe("ghs_minted");
-    expect(environment.LINEAR_API_KEY).toBe("lin_minted");
     expect(environment.PROJECT_MODE).toBe("analysis");
+    expect(environment.REGION).toBe("eu");
     // The actor's own environment stays underneath both layers.
     expect(environment.PATH).toBe(process.env.PATH);
   });
 
-  it("lets a tombstone retract a name held further down the stack", async () => {
+  it("carries no connection secret, because none is delivered", async () => {
+    // A turn used to inherit every connected provider's token. An agent now
+    // asks for one when it needs one, so a leaked transcript of the turn's
+    // environment holds nothing to rotate.
     const directory = stateDir();
-    process.env.BLITZ_TEST_INHERITED = "from-the-actor";
-    writeWorkspaceEnvironment(directory, { GH_TOKEN: "workspace-guess" });
-    writeEnvFile(directory, "00-workspace.sh", [exportLine("GH_TOKEN", "workspace-guess")]);
-    writeEnvFile(directory, "github.sh", ["unset GH_TOKEN\n", "unset BLITZ_TEST_INHERITED\n"]);
-    try {
-      const environment = await new CredentialSource(directory).environment();
-      // A revoked capability must not survive because some lower layer happens
-      // to hold the same name — that is precisely what the shell would do.
-      expect("GH_TOKEN" in environment).toBe(false);
-      expect("BLITZ_TEST_INHERITED" in environment).toBe(false);
-    } finally {
-      delete process.env.BLITZ_TEST_INHERITED;
-    }
+    writeWorkspaceEnvironment(directory, { PROJECT_MODE: "analysis" });
+    writeEnvFile(directory, "00-workspace.sh", [exportLine("PROJECT_MODE", "analysis")]);
+
+    const environment = await new CredentialSource(directory).environment();
+    expect("GH_TOKEN" in environment).toBe(false);
+    expect("LINEAR_API_KEY" in environment).toBe(false);
   });
 
   it("degrades to the workspace variables alone when env.d is absent", async () => {
@@ -179,43 +172,6 @@ describe("credential environment layering", () => {
   });
 });
 
-/** A `blitz-cred` on PATH that appends its argv and the state directory it was
- * pointed at to a log, then exits with `status`. */
-function credShim(directory: string, status: number): string {
-  const log = join(directory, "cred-calls");
-  const shim = join(directory, "blitz-cred");
-  writeFileSync(shim, `#!/bin/sh\nprintf '%s %s\\n' "$*" "$BLITZ_STATE_DIR" >>'${log}'\nexit ${status}\n`);
-  chmodSync(shim, 0o755);
-  process.env.PATH = `${directory}:${originalPath ?? ""}`;
-  return log;
-}
-
-describe("pre-turn credential sync", () => {
-  it("asks blitz-cred to sync this box's state directory", async () => {
-    const directory = stateDir();
-    const log = credShim(directory, 0);
-    await new CredentialSource(directory).sync();
-    expect(readLog(log)).toEqual([`sync ${directory}`]);
-  });
-
-  it("swallows a refusal so a turn never fails over a sync", async () => {
-    const directory = stateDir();
-    const log = credShim(directory, 1);
-    await expect(new CredentialSource(directory).sync()).resolves.toBeUndefined();
-    expect(readLog(log)).toEqual([`sync ${directory}`]);
-  });
-
-  it("swallows a missing binary, which is every unenrolled box", async () => {
-    const directory = stateDir();
-    process.env.PATH = directory;
-    await expect(new CredentialSource(directory).sync()).resolves.toBeUndefined();
-  });
-});
-
-function readLog(path: string): string[] {
-  return readFileSync(path, "utf8").trim().split("\n");
-}
-
 /** Records the order the turn touches the credential source in. Both calls are
  * overridden rather than spied so the suite never shells out. */
 class OrderedCredentials extends CredentialSource {
@@ -226,10 +182,6 @@ class OrderedCredentials extends CredentialSource {
     return null;
   }
 
-  public override async sync(): Promise<void> {
-    this.calls.push("sync");
-  }
-
   public override async environment(): Promise<NodeJS.ProcessEnv> {
     this.calls.push("environment");
     return {};
@@ -238,8 +190,8 @@ class OrderedCredentials extends CredentialSource {
 
 const owner: ConnectionIdentity = { userId: "u", membershipId: "m", role: "owner" };
 
-describe("the actor syncs before it reads the environment", () => {
-  it("runs one sync per turn, ahead of the env the harness is handed", async () => {
+describe("the turn reads the environment once", () => {
+  it("mints the harness login before it reads the environment", async () => {
     const directory = stateDir();
     const store = new ChatSessionStore(join(directory, "chat-session.db"));
     const credentials = new OrderedCredentials(directory);
@@ -254,8 +206,8 @@ describe("the actor syncs before it reads the environment", () => {
     } finally {
       store.close();
     }
-    // Sync last would deliver the credentials to the turn after the one that
-    // needed them; twice would double the wait a signed-out box pays.
-    expect(credentials.calls).toEqual(["token", "sync", "environment"]);
+    // A turn that abandons ship over the harness login must not pay for the
+    // environment read first.
+    expect(credentials.calls).toEqual(["token", "environment"]);
   });
 });

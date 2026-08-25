@@ -8,16 +8,9 @@ import {
   providerManifest,
   providerRedirectPath,
 } from "../core/connections/catalog/index.js";
-import {
-  BOX_HOME,
-  compileDelivery,
-  skillPath,
-  tombstoneDelivery,
-} from "../core/connections/catalog/workspace-delivery.js";
 import type {
   OAuthProviderManifest,
   ProviderManifest,
-  DeliveryInput,
 } from "../core/connections/catalog/types.js";
 import type { ExchangeFixture } from "./connections-fixtures/index.js";
 import { EXCHANGE_FIXTURES, PROBE_FIXTURES } from "./connections-fixtures/index.js";
@@ -25,7 +18,7 @@ import {
   exchangeForm,
   parseExchangeResponse,
 } from "../core/connections/minters/oauth.js";
-import type { MintResult, Placement } from "../core/connections/types.js";
+
 
 /** The repository's env contract. Worker vars carry no value there — only a
  * documented name and what it is for — and a connect binding missing from it
@@ -43,96 +36,10 @@ const CATALOG_SOURCES = import.meta.glob<string>("../core/connections/catalog/*.
   query: "?raw",
 });
 
-/** The shipped box's Go decoder uses DisallowUnknownFields on both the mint
- * result and every placement, and validates names against this pattern. These
- * constants are the wire, restated here so a catalog entry that would 500 a
- * running box fails in CI instead. */
-const FROZEN_MINT_KEYS = ["expiresAt", "integration", "mode", "placements"];
+/** The box's Go decoder validates every environment name against this
+ * pattern before it prints one, so a catalog entry that would fail a live
+ * `blitz-cred env` fails in CI instead. */
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;
-const PLACEMENT_KEYS = {
-  env: ["kind", "name", "value"],
-  "unset-env": ["kind", "name"],
-  file: ["kind", "path", "value"],
-} as const;
-
-function deliveryInput(
-  manifest: ProviderManifest,
-  overrides: Partial<DeliveryInput> = {},
-): DeliveryInput {
-  return {
-    connection: manifest.id,
-    scopes: [...manifest.defaultScopes],
-    mode: manifest.custody === "proxy" ? "proxy" : "inject",
-    grantKind: "oauth",
-    token: "test-only-lease-token",
-    proxyUrl: "https://cp.example/proxy/lease-one",
-    tokenHeader: manifest.tokenHeader,
-    ...overrides,
-  };
-}
-
-function renderSkill(
-  manifest: ProviderManifest,
-  grantKind: "oauth" | "pat",
-): string {
-  return manifest.delivery.skill.render({
-    connection: "acme",
-    scopes: manifest.defaultScopes,
-    mode: "proxy",
-    grantKind,
-    tokenEnv: "ACME_TOKEN",
-    baseUrlEnv: "ACME_BASE_URL",
-    baseUrl: "https://cp.example/proxy/lease-one",
-    tokenHeader: manifest.tokenHeader,
-  });
-}
-
-/** What packages/box/Dockerfile puts on PATH for an agent. `git` and
- * `blitz-cred` were always there; curl, gh, and python3 arrived with the
- * runtime apt block that this list is the skill-side twin of. */
-const BOX_IMAGE_TOOLS = ["blitz-cred", "curl", "gh", "git", "python3"];
-
-/** The first word of every command in a rendered skill's ```sh blocks.
- * Comments, blank lines, and a wrapped command's continuation lines are not
- * invocations, so they are skipped. */
-function shellCommandsIn(skill: string): string[] {
-  const commands: string[] = [];
-  for (const block of skill.matchAll(/```sh\n([\s\S]*?)```/gu)) {
-    const body = block[1];
-    if (body === undefined) continue;
-    let continued = false;
-    for (const line of body.split("\n")) {
-      const wasContinued = continued;
-      continued = line.endsWith("\\");
-      const trimmed = line.trim();
-      if (wasContinued || trimmed.length === 0 || trimmed.startsWith("#")) continue;
-      const [word] = trimmed.split(/\s+/u);
-      if (word !== undefined) commands.push(word);
-    }
-  }
-  return commands;
-}
-
-function assertPlacementsRideTheFrozenWire(
-  placements: Placement[],
-  label: string,
-): void {
-  expect(placements.length, `${label} produces placements`).toBeGreaterThan(0);
-  for (const placement of placements) {
-    const keys = Object.keys(placement).sort();
-    if (placement.kind === "file") {
-      expect(keys.filter((key) => key !== "mode"), label)
-        .toEqual([...PLACEMENT_KEYS.file].sort());
-      expect(placement.path.startsWith("/"), `${label} file path is absolute`).toBe(true);
-      expect(placement.path).not.toContain("\u0000");
-      expect(placement.mode ?? 0).toBeLessThanOrEqual(0o777);
-      continue;
-    }
-    expect(keys, label).toEqual([...PLACEMENT_KEYS[placement.kind]].sort());
-    expect(placement.name, `${label} environment name`).toMatch(ENVIRONMENT_NAME);
-    if (placement.kind === "env") expect(placement.value).not.toContain("\u0000");
-  }
-}
 
 function replayExchange(
   manifest: OAuthProviderManifest,
@@ -309,17 +216,16 @@ describe("provider catalog conformance", () => {
         }
       });
 
-      it("declares a delivery the box can accept", () => {
-        const tokenDeliveries = manifest.delivery.env.filter(({ fill }) => fill === "token");
-        expect(tokenDeliveries.length, "exactly one variable carries the token").toBeGreaterThan(0);
+      /** `blitz-cred env` prints these names, and its first line names the
+       * header to send with the first one. A provider with no token variable
+       * would print a header line for a name that carries no credential. */
+      it("declares environment names the box can print", () => {
+        const [first] = manifest.delivery.env;
+        expect(first?.fill, "the first variable carries the token").toBe("token");
         for (const delivery of manifest.delivery.env) {
           expect(delivery.name).toMatch(ENVIRONMENT_NAME);
         }
-        expect(manifest.delivery.skill.path).toContain("<provider>");
-        expect(manifest.delivery.skill.path.startsWith("/")).toBe(false);
-        expect(skillPath(manifest, "instance")).toBe(
-          `${BOX_HOME}/${manifest.delivery.skill.path.replace("<provider>", "instance")}`,
-        );
+        expect(manifest.tokenHeader.name).toMatch(/^[A-Za-z][A-Za-z0-9-]*$/u);
       });
 
       /** The admin form submits `PUT /connections/:id` from this view alone,
@@ -359,57 +265,6 @@ describe("provider catalog conformance", () => {
         expect(view.placements).toEqual(
           manifest.delivery.env.map(({ name, fill }) => ({ kind: "env", name, fill })),
         );
-      });
-
-      it("renders a skill that tells an agent how to authenticate", () => {
-        for (const grantKind of ["oauth", "pat"] as const) {
-          const rendered = renderSkill(manifest, grantKind);
-          expect(rendered.startsWith("---\nname: acme\n")).toBe(true);
-          expect(rendered).toContain("description:");
-          expect(rendered).toContain("$ACME_TOKEN");
-          expect(rendered).not.toContain("<provider>");
-          expect(rendered).not.toContain("undefined");
-        }
-      });
-
-      /** The box image installs curl, gh, and python3 (packages/box/Dockerfile),
-       * so a canonical example is a command an agent can paste and run. This
-       * pins that every example invokes a tool the image actually ships — the
-       * bug it guards is a skill full of commands that answer
-       * "command not found", which sends the agent off inventing its own. */
-      it("prints canonical examples the box image can run", () => {
-        for (const grantKind of ["oauth", "pat"] as const) {
-          const commands = shellCommandsIn(renderSkill(manifest, grantKind));
-          expect(commands.length, `${manifest.id} ${grantKind}`).toBeGreaterThan(0);
-          for (const command of commands) {
-            expect(BOX_IMAGE_TOOLS, `${manifest.id} runs ${command}`).toContain(command);
-          }
-        }
-      });
-
-      it("compiles placements inside the frozen box wire", () => {
-        const placements = compileDelivery(manifest, deliveryInput(manifest));
-        assertPlacementsRideTheFrozenWire(placements, `${manifest.id} mint`);
-        const skill = placements.find((placement) => placement.kind === "file");
-        expect(skill?.kind === "file" && skill.value.length > 0).toBe(true);
-
-        const result: MintResult = {
-          integration: manifest.id,
-          mode: manifest.custody === "proxy" ? "proxy" : "inject",
-          placements,
-          expiresAt: 1_700_000_000_000,
-        };
-        expect(Object.keys(JSON.parse(JSON.stringify(result))).sort())
-          .toEqual(FROZEN_MINT_KEYS);
-
-        const tombstone = tombstoneDelivery(
-          manifest,
-          manifest.id,
-          manifest.delivery.env.map(({ name }) => name),
-        );
-        assertPlacementsRideTheFrozenWire(tombstone, `${manifest.id} tombstone`);
-        const emptied = tombstone.find((placement) => placement.kind === "file");
-        expect(emptied?.kind === "file" && emptied.value).toBe("");
       });
 
       it("replays every recorded exchange", () => {
