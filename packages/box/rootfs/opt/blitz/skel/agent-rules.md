@@ -47,54 +47,79 @@ An `https` link opens inline in the workspace when its host is on the
 deployment's embed allowlist, which defaults to `*.blitz.dev` but is
 configurable per deployment. Any other link opens in a new browser tab.
 
+## Using a connected provider
+
+Credentials are **not** in your environment. Nothing is delivered to this box.
+You ask for a token at the moment you need it, and the platform checks this
+workspace's allow-list on every ask.
+
+Three commands, and no others:
+
+```
+blitz-cred list              # providers this workspace may use, one per line
+blitz-cred get <provider>    # print that provider's token, and nothing else
+blitz-cred env <provider>    # print eval-able NAME=VALUE lines for that provider
+```
+
+Scope the secret to the one command that needs it:
+
+```
+GH_TOKEN=$(blitz-cred get github) gh pr list
+```
+
+The variable dies with that command. Use `blitz-cred env` when a tool wants
+several names, or when you need the API base URL as well. Keep it inside a
+subshell so it dies there too:
+
+```
+( eval "$(blitz-cred env linear)"
+  curl -sS -H "Authorization: Bearer $LINEAR_API_KEY" "$LINEAR_API_URL/graphql" )
+```
+
+`blitz-cred env` prints one comment line naming the header to send, because the
+shape is not the same everywhere: Discord wants `Bot `, and some providers want
+a bare `Authorization` value. Read that line rather than guessing.
+
+`curl`, `gh`, and `python3` are installed. Use them directly.
+
 ## When a connection is not authorized
 
-If a tool or API call fails because a provider connection is not authorized —
-a connect-\<provider\> error, a credential mint that reports no grant, or a 401
-that a fresh login shell does not fix — run:
+`blitz-cred get` refuses when this workspace is not connected to the provider,
+or when nobody has supplied a credential for it. The refusal names the reason
+and files a request in the user's connections panel. Then run:
 
 ```
 blitz connections open <provider>
 ```
 
 This opens the workspace connections panel for the user with that provider
-highlighted. Then tell the user you opened the connections panel and ask them
-to authorize the provider. Do not keep retrying: the provider's tools stay
-dark until they authorize it.
+highlighted. Tell the user you opened it and ask them to connect the provider.
+Do not keep retrying: the provider stays refused until they connect it.
 
-### After the user authorizes
-
-A provider's credentials and its skill file arrive on this box by a sync, and
-your session read its skills when it started. So once the user says they
-authorized it, run:
-
-```
-blitz-cred sync
-```
-
-Then start a new session (or a new terminal tab) so the skill is loaded. Until
-you do, the provider's skill will look missing even though the connection is
-live.
+Once the user says they connected it, run `blitz-cred get <provider>` again. It
+works immediately. There is nothing to sync and no session to restart.
 
 ### Do not use `/mcp` here
 
-Workspace sessions have no MCP servers and no claude.ai connectors. Connections
-arrive as environment variables and skill files, nothing else. `/mcp` and a
-"connector" both answer for a different product surface — reaching for them
-here only costs a turn.
+Workspace sessions have no MCP servers and no claude.ai connectors. Ask for a
+token with `blitz-cred`, nothing else. `/mcp` and a "connector" both answer for
+a different product surface — reaching for them here only costs a turn.
 
 ## Never print a credential
 
 Never echo, print, log, or paste the value of a credential — not into a
 message, not into a file, not into a command you show the user. That includes
 every `*_TOKEN`, `*_API_KEY`, and `*_SECRET` variable, and anything
-`blitz-cred` hands back. Use the variable by name (`$GITHUB_TOKEN`), never by
+`blitz-cred` hands back. Use the variable by name (`$GH_TOKEN`), never by
 value. A transcript is not a private place: a token that appears in one has to
 be rotated.
 
-`blitz-cred list` names the connections this workspace holds and the variables
-they set, without printing a single value. Use it instead of dumping the
-environment.
+Never write a token into a file, a shell profile, or a `.env`. Ask again
+instead — asking is cheap, and a stored token outlives the permission that
+granted it.
+
+`blitz-cred list` names the providers this workspace may use, without printing
+a single value. Use it instead of dumping the environment.
 
 ## Installing packages
 

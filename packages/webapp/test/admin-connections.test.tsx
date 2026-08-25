@@ -73,10 +73,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listConnections: vi.fn(async () => ({ connections: [] })),
     putConnection: vi.fn(async () => undefined),
     deleteConnection: vi.fn(async () => undefined),
-    listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
-    revokeLease: vi.fn(async () => undefined),
+    disconnectWorkspaceConnection: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
@@ -630,15 +629,11 @@ describe('settings connections panel (revoke-only)', () => {
 describe('provider connect surface (workspace rows)', () => {
   const rowProps = {
     workspaceId: 'workspace-one',
-    stipulated: [] as string[],
-    leases: [] as CredentialLeaseView[],
-    now: 1_000,
+    connected: [] as readonly string[],
     focusProvider: null,
     focusVersion: 0,
-    revoking: null,
-    onRevokeLease: async () => undefined,
-    onLeaseMinted: () => undefined,
     onConnected: () => undefined,
+    onDisconnected: () => undefined,
   };
 
   function mintedLease(connection: string): CredentialLeaseView {

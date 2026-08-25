@@ -10,7 +10,6 @@ import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import {
   HttpError,
-  isNumber,
   isRecord,
   isString,
   readJson,
@@ -33,28 +32,17 @@ const minters: readonly Minter[] = [githubAppMinter, staticMinter];
 
 type PlacementFill = "token" | "proxy-url";
 
+/** An environment name an org row delivers under, and what fills it. `file`
+ * and `unset-env` kinds went with the delivery pipeline they served: nothing
+ * writes a box file for a connection any more, so a stored template naming one
+ * would name a delivery that cannot happen. */
 interface EnvPlacementTemplate {
   kind: "env";
   name: string;
   fill?: PlacementFill;
 }
 
-interface FilePlacementTemplate {
-  kind: "file";
-  path: string;
-  mode?: number;
-  fill?: PlacementFill;
-}
-
-interface UnsetEnvPlacementTemplate {
-  kind: "unset-env";
-  name: string;
-}
-
-type ParsedPlacementTemplate =
-  | EnvPlacementTemplate
-  | FilePlacementTemplate
-  | UnsetEnvPlacementTemplate;
+type ParsedPlacementTemplate = EnvPlacementTemplate;
 
 interface ParsedProxyConfig {
   base_url: string;
@@ -103,53 +91,18 @@ function placementTemplate(
   allowStaticFill = false,
 ): ParsedPlacementTemplate {
   if (!isRecord(value)) throw new HttpError(400, "each placement must be an object");
-  if (value.kind === "env") {
-    const result: EnvPlacementTemplate = {
-      kind: "env",
-      name: requiredString(value.name, "placement.name", 256),
-    };
-    if (allowStaticFill && value.fill !== undefined) {
-      if (value.fill !== "token" && value.fill !== "proxy-url") {
-        throw new HttpError(400, "placement.fill must be token or proxy-url");
-      }
-      result.fill = value.fill;
+  if (value.kind !== "env") throw new HttpError(400, "placement.kind must be env");
+  const result: EnvPlacementTemplate = {
+    kind: "env",
+    name: requiredString(value.name, "placement.name", 256),
+  };
+  if (allowStaticFill && value.fill !== undefined) {
+    if (value.fill !== "token" && value.fill !== "proxy-url") {
+      throw new HttpError(400, "placement.fill must be token or proxy-url");
     }
-    return result;
+    result.fill = value.fill;
   }
-  if (value.kind === "file") {
-    const result: FilePlacementTemplate = {
-      kind: "file",
-      path: requiredString(value.path, "placement.path", 4_096),
-    };
-    if (value.mode !== undefined) {
-      if (
-        !isNumber(value.mode) ||
-        !Number.isSafeInteger(value.mode) ||
-        value.mode < 0 ||
-        value.mode > 0o777
-      ) {
-        throw new HttpError(400, "placement.mode must be an integer from 0 through 511");
-      }
-      result.mode = value.mode;
-    }
-    if (allowStaticFill && value.fill !== undefined) {
-      if (value.fill !== "token" && value.fill !== "proxy-url") {
-        throw new HttpError(400, "placement.fill must be token or proxy-url");
-      }
-      result.fill = value.fill;
-    }
-    return result;
-  }
-  if (value.kind === "unset-env") {
-    if (allowStaticFill && value.fill !== undefined) {
-      throw new HttpError(400, "unset-env placements cannot declare fill");
-    }
-    return {
-      kind: "unset-env",
-      name: requiredString(value.name, "placement.name", 256),
-    };
-  }
-  throw new HttpError(400, "placement.kind must be env, file, or unset-env");
+  return result;
 }
 
 function proxyConfig(value: unknown): ParsedProxyConfig {

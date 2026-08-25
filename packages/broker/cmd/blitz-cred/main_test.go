@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +13,13 @@ import (
 	"github.com/blitzdotdev/blitz-core/broker/internal/store"
 	"github.com/blitzdotdev/blitz-core/broker/internal/workspace"
 )
+
+// githubTokenBody is what the control plane answers a GitHub pull with. The
+// token and the env value differ from each other on purpose: `get` prints the
+// token, `env` prints the env entries, and a shared string would hide a mix-up.
+const githubTokenBody = `{"connection":"github","mode":"inject","token":"ghs-live",` +
+	`"env":[{"name":"GH_TOKEN","value":"gh-env-value"}],` +
+	`"header":{"name":"Authorization","prefix":"Bearer "},"expiresAt":2000000000000}`
 
 func TestEnrollAcceptsCredentialWithAdditionalFields(t *testing.T) {
 	stateDir := t.TempDir()
@@ -34,46 +40,10 @@ func TestEnrollAcceptsCredentialWithAdditionalFields(t *testing.T) {
 	}
 }
 
-func TestTokenDispatchKeepsHarnessesOnBrokerAndUsesCPForIntegrations(t *testing.T) {
-	stateDir := t.TempDir()
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		calls++
-		var body map[string]string
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
-		}
-		if body["integration"] != "github" {
-			t.Errorf("integration = %q", body["integration"])
-		}
-		io.WriteString(writer, `{"integration":"github","mode":"inject","placements":[],"expiresAt":2000000000000}`)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	for _, harness := range []string{"claude", "codex"} {
-		if err := run([]string{"token", harness}, io.Discard); err == nil {
-			t.Fatalf("token %s unexpectedly succeeded without broker config", harness)
-		}
-	}
-	if calls != 0 {
-		t.Fatalf("broker token routes made %d CP calls", calls)
-	}
-	var output strings.Builder
-	if err := run([]string{"token", "github"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	// The summary's own shape is pinned in TestTokenIntegrationPrintsALabeledSummary;
-	// here it only has to show that the integration went to the control plane.
-	if calls != 1 || !strings.HasPrefix(output.String(), "github\n") {
-		t.Fatalf("CP token calls=%d output=%q", calls, output.String())
-	}
-}
-
 // The verb list an agent reads when it guesses wrong. `--help` used to print
 // "unknown blitz-cred command" and exit 1.
 func TestHelpAndNoArgumentsNameEveryVerb(t *testing.T) {
-	verbs := []string{"enroll", "register", "token", "sync", "list", "git-helper", "watch"}
+	verbs := []string{"enroll", "register", "token", "list", "get", "env", "git-helper", "watch"}
 	// Empty on purpose: help answers before the state check, so it works on a
 	// machine that is not a box.
 	t.Setenv("BLITZ_STATE_DIR", "")
@@ -129,86 +99,92 @@ func TestTokenHarnessOutputStaysRawForTheShims(t *testing.T) {
 	}
 }
 
-func TestTokenIntegrationPrintsALabeledSummary(t *testing.T) {
+// `list` is a live read of the workspace allow-list. One name per line, because
+// an agent pipes this into a loop.
+func TestListPrintsOneProviderPerLine(t *testing.T) {
 	stateDir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		io.WriteString(writer, `{"integration":"linear","mode":"inject","placements":[`+
-			`{"kind":"env","name":"LINEAR_API_KEY","value":"linear-secret-value"},`+
-			`{"kind":"env","name":"LINEAR_WORKSPACE_ID","value":"workspace-secret-value"}`+
-			`],"expiresAt":2000000000000}`)
+		if request.Method != http.MethodGet || request.URL.Path != "/workspaces/self/connections" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		io.WriteString(writer, `{"connections":["github","linear"]}`)
 	}))
 	defer server.Close()
 	prepareCPState(t, stateDir, server.URL)
 
 	var output strings.Builder
-	if err := run([]string{"token", "linear"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	summary := output.String()
-	for _, want := range []string{"linear", "LINEAR_API_KEY", "LINEAR_WORKSPACE_ID", "2033-05-18T03:33:20Z", "creds/env.d", "revokes"} {
-		if !strings.Contains(summary, want) {
-			t.Errorf("token summary is missing %q: %q", want, summary)
-		}
-	}
-	for _, secret := range []string{"linear-secret-value", "workspace-secret-value"} {
-		if strings.Contains(summary, secret) {
-			t.Errorf("token summary printed a value: %q", summary)
-		}
-	}
-	// The old output: a bare epoch that an agent read as the token.
-	for _, line := range strings.Split(summary, "\n") {
-		if line == "2000000000000" {
-			t.Errorf("token summary still prints a bare expiry line: %q", summary)
-		}
-	}
-}
-
-func TestListNamesProvidersAndVariablesButNeverValues(t *testing.T) {
-	stateDir := t.TempDir()
-	envDir := workspace.EnvironmentDir(stateDir)
-	if err := os.MkdirAll(envDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	fragments := map[string]string{
-		workspace.WorkspaceEnvironmentFile: "export WORKSPACE_VAR='workspace-secret-value'\n",
-		"github.sh":                        "export GH_TOKEN='github-secret-value'\n",
-		"linear.sh":                        "export LINEAR_API_KEY='linear-secret-value'\nunset OLD_LINEAR_TOKEN\n",
-	}
-	for name, content := range fragments {
-		if err := os.WriteFile(filepath.Join(envDir, name), []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Setenv("BLITZ_STATE_DIR", stateDir)
-
-	var output strings.Builder
 	if err := run([]string{"list"}, &output); err != nil {
 		t.Fatal(err)
 	}
-	listing := output.String()
-	for _, want := range []string{"github: GH_TOKEN", "linear: LINEAR_API_KEY", "WORKSPACE_VAR", "not a connection"} {
-		if !strings.Contains(listing, want) {
-			t.Errorf("list is missing %q: %q", want, listing)
-		}
-	}
-	for _, secret := range []string{"github-secret-value", "linear-secret-value", "workspace-secret-value"} {
-		if strings.Contains(listing, secret) {
-			t.Errorf("list printed a value: %q", listing)
-		}
-	}
-	if strings.Contains(listing, "nothing connected yet") {
-		t.Errorf("list called two providers nothing: %q", listing)
-	}
-}
-
-func TestListWithoutCredentialsSaysNothingIsConnected(t *testing.T) {
-	t.Setenv("BLITZ_STATE_DIR", t.TempDir())
-	var output strings.Builder
-	if err := run([]string{"list"}, &output); err != nil {
-		t.Fatal(err)
-	}
-	if output.String() != "nothing connected yet\n" {
+	if output.String() != "github\nlinear\n" {
 		t.Fatalf("list output = %q", output.String())
+	}
+}
+
+// An empty allow-list is a workspace nobody has connected yet. Printing nothing
+// reads as a broken command, so the line has to say what to do next.
+func TestListWithNoConnectionsPrintsTheConnectGuidance(t *testing.T) {
+	stateDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		io.WriteString(writer, `{"connections":[]}`)
+	}))
+	defer server.Close()
+	prepareCPState(t, stateDir, server.URL)
+
+	var output strings.Builder
+	if err := run([]string{"list"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "blitz connections open") {
+		t.Fatalf("list output = %q", output.String())
+	}
+}
+
+// `get` feeds a command substitution. Anything else on stdout — a label, a
+// summary — becomes part of the token the caller sends to the vendor.
+func TestGetPrintsOnlyTheToken(t *testing.T) {
+	stateDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/workspaces/self/connections/github/token" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+		}
+		io.WriteString(writer, githubTokenBody)
+	}))
+	defer server.Close()
+	prepareCPState(t, stateDir, server.URL)
+
+	var output strings.Builder
+	if err := run([]string{"get", "github"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "ghs-live\n" {
+		t.Fatalf("get output = %q", output.String())
+	}
+}
+
+// `env` is eval'd by a shell. The header comment states the vendor's header
+// shape, which is not guessable, and every value is quoted because a token is
+// an opaque vendor string.
+func TestEnvPrintsTheHeaderCommentThenQuotedAssignments(t *testing.T) {
+	stateDir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		io.WriteString(writer, `{"connection":"github","mode":"inject","token":"ghs-live","env":[`+
+			`{"name":"GH_TOKEN","value":"ghs-live"},`+
+			`{"name":"GH_HOST","value":"it's-github"}`+
+			`],"header":{"name":"Authorization","prefix":"Bearer "},"expiresAt":2000000000000}`)
+	}))
+	defer server.Close()
+	prepareCPState(t, stateDir, server.URL)
+
+	var output strings.Builder
+	if err := run([]string{"env", "github"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	want := "# send: Authorization: Bearer $GH_TOKEN\n" +
+		"GH_TOKEN='ghs-live'\n" +
+		"GH_HOST='it'\"'\"'s-github'\n"
+	if output.String() != want {
+		t.Fatalf("env output = %q, want %q", output.String(), want)
 	}
 }
 
@@ -217,7 +193,7 @@ func TestGitHelperProtocol(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		calls++
-		io.WriteString(writer, `{"integration":"github","mode":"inject","placements":[{"kind":"env","name":"GH_TOKEN","value":"github-secret"}],"expiresAt":2000000000000}`)
+		io.WriteString(writer, githubTokenBody)
 	}))
 	defer server.Close()
 	prepareCPState(t, stateDir, server.URL)
@@ -227,7 +203,7 @@ func TestGitHelperProtocol(t *testing.T) {
 	if err := runWithInput([]string{"git-helper", "get"}, input, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "username=x-access-token\npassword=github-secret\n\n" {
+	if output.String() != "username=x-access-token\npassword=ghs-live\n\n" {
 		t.Fatalf("git helper output = %q", output.String())
 	}
 	for _, action := range []string{"store", "erase"} {
@@ -261,54 +237,74 @@ func TestGitHelper404IsSilent(t *testing.T) {
 	}
 }
 
-func TestDeniedCommandsUsePolicyMessage(t *testing.T) {
-	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.WriteHeader(http.StatusForbidden)
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	if err := run([]string{"token", "slack"}, io.Discard); err == nil || err.Error() != "blitz: access to slack denied by workspace policy" {
-		t.Fatalf("token denial = %v", err)
+// A bare "403" sent agents into retry loops against a workspace that was never
+// connected. Every refusal names the command that puts the question in front of
+// a person, and quotes the request id when the control plane filed one.
+func TestRefusalsNameTheConnectCommandAndTheFiledRequest(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		body      string
+		requestID string
+	}{
+		{
+			name:      "not connected, request filed",
+			status:    http.StatusForbidden,
+			body:      `{"error":"denied","request_id":"request-403"}`,
+			requestID: "request-403",
+		},
+		{
+			name:      "no credential behind it, request filed",
+			status:    http.StatusNotFound,
+			body:      `{"error":"missing","request_id":"request-404"}`,
+			requestID: "request-404",
+		},
+		{
+			name:   "not connected, no request filed",
+			status: http.StatusForbidden,
+			body:   `{"error":"denied"}`,
+		},
 	}
-	if err := runWithInput([]string{"git-helper", "get"}, strings.NewReader("host=github.com\n\n"), io.Discard); err == nil || err.Error() != "blitz: access to github denied by workspace policy" {
-		t.Fatalf("git denial = %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.WriteHeader(test.status)
+				io.WriteString(writer, test.body)
+			}))
+			defer server.Close()
+			prepareCPState(t, stateDir, server.URL)
+
+			err := run([]string{"get", "github"}, io.Discard)
+			if err == nil {
+				t.Fatal("a refused pull was reported as success")
+			}
+			if !strings.Contains(err.Error(), "blitz connections open github") {
+				t.Errorf("refusal does not name the connect command: %q", err.Error())
+			}
+			if test.requestID != "" && !strings.Contains(err.Error(), test.requestID) {
+				t.Errorf("refusal does not quote the filed request: %q", err.Error())
+			}
+		})
 	}
 }
 
-func TestRequestedCommandsPrintApprovalStatus(t *testing.T) {
-	stateDir := t.TempDir()
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		var body map[string]string
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Error(err)
+// The push model is gone. `sync` delivered credentials into the box, and
+// `token PROVIDER` minted one; both must fail loudly, because an agent that
+// still runs them would otherwise read silence as success.
+func TestRemovedVerbsAreRejected(t *testing.T) {
+	t.Setenv("BLITZ_STATE_DIR", t.TempDir())
+	for _, args := range [][]string{{"sync"}, {"token", "github"}} {
+		if err := run(args, io.Discard); err == nil {
+			t.Errorf("blitz-cred %v returned no error", args)
 		}
-		switch body["integration"] {
-		case "slack":
-			writer.WriteHeader(http.StatusForbidden)
-			io.WriteString(writer, `{"error":"denied","request_id":"request-403"}`)
-		case "future-provider":
-			writer.WriteHeader(http.StatusNotFound)
-			io.WriteString(writer, `{"error":"missing","request_id":"request-404"}`)
-		case "github":
-			writer.WriteHeader(http.StatusForbidden)
-			io.WriteString(writer, `{"error":"denied","request_id":"request-github"}`)
-		default:
-			writer.WriteHeader(http.StatusInternalServerError)
-		}
-	}))
-	defer server.Close()
-	prepareCPState(t, stateDir, server.URL)
-
-	if err := run([]string{"token", "slack"}, io.Discard); err == nil || err.Error() != "blitz: access to slack requested (request-403), awaiting approval" {
-		t.Fatalf("403 request = %v", err)
 	}
-	if err := run([]string{"token", "future-provider"}, io.Discard); err == nil || err.Error() != "blitz: integration future-provider requested (request-404), not configured yet" {
-		t.Fatalf("404 request = %v", err)
+	var help strings.Builder
+	if err := run([]string{"--help"}, &help); err != nil {
+		t.Fatal(err)
 	}
-	if err := runWithInput([]string{"git-helper", "get"}, strings.NewReader("host=github.com\n\n"), io.Discard); err == nil || err.Error() != "blitz: access to github requested (request-github), awaiting approval" {
-		t.Fatalf("git request = %v", err)
+	if strings.Contains(help.String(), "sync") {
+		t.Errorf("help still advertises sync: %q", help.String())
 	}
 }
 

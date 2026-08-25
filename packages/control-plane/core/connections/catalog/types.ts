@@ -1,11 +1,6 @@
-import type { Custody, Placement } from "../types.js";
+import type { Custody, TokenHeader } from "../types.js";
 
-/** Bearer material is not always a Bearer: Linear personal API keys go in a
- * raw `Authorization: <key>` header, so the prefix belongs to the provider. */
-export interface TokenHeader {
-  name: string;
-  prefix: string;
-}
+export type { TokenHeader };
 
 export interface ProviderParam {
   name: string;
@@ -59,41 +54,12 @@ export interface ProviderEnvDelivery {
   fill: PlacementFill;
 }
 
-/** Rendered into the lease as a `file` placement. A skill named `<provider>`
- * is what makes "use @<provider>" resolve in any harness that reads skills. */
-export interface ProviderSkillDelivery {
-  /** Relative to the box HOME; the compiler makes it absolute. */
-  path: string;
-  render(input: SkillRenderInput): string;
-}
-
-/** How the credential behind this lease was obtained. It changes what is true
- * about the token, not just how it was collected: a GitHub App user token
- * expires in eight hours and reaches the App's installations, while a pasted
- * fine-grained PAT never expires on our schedule and reaches only the
- * repositories its own list names. Copy that ignores the difference sends an
- * agent chasing the wrong explanation for a 404. */
-export type GrantKind = "oauth" | "pat";
-
-export interface SkillRenderInput {
-  connection: string;
-  scopes: readonly string[];
-  mode: "inject" | "proxy";
-  grantKind: GrantKind;
-  tokenEnv: string;
-  baseUrlEnv: string | null;
-  baseUrl: string;
-  /** The header the agent must send. In proxy mode that is the lease token's
-   * inbound shape, which need not match what the vendor finally receives. */
-  tokenHeader: TokenHeader;
-}
-
-/** What a live connection lands inside the workspace: one environment name
- * per entry, plus the provider's skill file. `compileDelivery` turns this
- * block into the placements `blitz-cred` writes verbatim. */
+/** The environment names a pulled credential answers to. Nothing writes them
+ * to disk: `blitz-cred env <provider>` prints them, and the agent scopes them
+ * to one command. The names still matter because vendor tooling reads them by
+ * name — `gh` looks for `GH_TOKEN` and nothing else. */
 export interface ProviderDelivery {
   env: readonly ProviderEnvDelivery[];
-  skill: ProviderSkillDelivery;
 }
 
 /** Declares the org-admin path: an admin stores one static root through
@@ -175,17 +141,3 @@ export interface StaticProviderManifest extends ProviderManifestBase {
 }
 
 export type ProviderManifest = OAuthProviderManifest | StaticProviderManifest;
-
-export interface DeliveryInput {
-  connection: string;
-  scopes: readonly string[];
-  mode: "inject" | "proxy";
-  grantKind: GrantKind;
-  /** Real credential for inject custody, lease token for proxy custody. */
-  token: string;
-  proxyUrl: string;
-  /** Header the box-side caller must send with `token`. */
-  tokenHeader: TokenHeader;
-}
-
-export type CompiledDelivery = Placement[];

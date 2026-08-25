@@ -95,8 +95,8 @@ func TestEnvironmentTickStoresConfigAndRunsStartupOnce(t *testing.T) {
 		t.Fatalf("first tick ready=%v err=%v", ready, err)
 	}
 	envDir := filepath.Join(stateDir, workspaceEnvironmentDirectory)
-	// The workspace variables ride the credential env.d pipeline, in the entry
-	// that blitz-creds.sh sources before any integration file.
+	// The workspace variables ride the env.d pipeline, in the one entry that
+	// blitz-creds.sh sources.
 	credsEnvDir := filepath.Join(stateDir, credentialsDirectory, environmentDirectory)
 	fragment, err := os.ReadFile(filepath.Join(credsEnvDir, workspaceEnvironmentEntry))
 	if err != nil {
@@ -201,21 +201,22 @@ func TestStartupScriptNeverBlocksTheWatchLoop(t *testing.T) {
 	}
 }
 
-// A credential sync rebuilds creds/env.d from scratch. The workspace entry has
-// to survive that, and must lose to a credential of the same name.
-func TestCredentialSyncKeepsWorkspaceEnvironmentAndWinsCollisions(t *testing.T) {
+// A variable the workspace dropped must leave the shell fragment. The entry is
+// rewritten whole on every tick, so a name that is gone from the map is gone
+// from the file; a login shell that kept exporting it would hold a value the
+// member deleted in the panel.
+func TestWorkspaceEnvironmentEntryDropsRemovedVariables(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := storeWorkspaceEnvironment(stateDir, WorkspaceEnvironment{
-		Env:        map[string]string{"SHARED": "workspace", "WORKSPACE_ONLY": "yes"},
+		Env:        map[string]string{"KEPT": "yes", "DROPPED": "old"},
 		FilesReady: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := applySync(stateDir, []MintResult{{
-		Integration: "github",
-		ExpiresAt:   900_000,
-		Placements:  []Placement{{Kind: "env", Name: "SHARED", Value: "credential"}},
-	}}, 123_456); err != nil {
+	if err := storeWorkspaceEnvironment(stateDir, WorkspaceEnvironment{
+		Env:        map[string]string{"KEPT": "yes"},
+		FilesReady: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	envDir := filepath.Join(stateDir, credentialsDirectory, environmentDirectory)
@@ -227,17 +228,17 @@ func TestCredentialSyncKeepsWorkspaceEnvironmentAndWinsCollisions(t *testing.T) 
 	for _, entry := range entries {
 		names = append(names, entry.Name())
 	}
-	// Sorted order is the shell glob order, so the credential file is sourced
-	// last and its SHARED export wins.
-	if !slices.Equal(names, []string{workspaceEnvironmentEntry, "github.sh"}) {
+	// Connection secrets are pulled at the moment of use, so the workspace entry
+	// is the only file this directory may hold.
+	if !slices.Equal(names, []string{workspaceEnvironmentEntry}) {
 		t.Fatalf("env.d entries = %q", names)
 	}
-	workspaceEntry, err := os.ReadFile(filepath.Join(envDir, workspaceEnvironmentEntry))
+	fragment, err := os.ReadFile(filepath.Join(envDir, workspaceEnvironmentEntry))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(workspaceEntry) != "export SHARED='workspace'\nexport WORKSPACE_ONLY='yes'\n" {
-		t.Fatalf("workspace entry = %q", workspaceEntry)
+	if string(fragment) != "export KEPT='yes'\n" {
+		t.Fatalf("workspace entry = %q", fragment)
 	}
 }
 

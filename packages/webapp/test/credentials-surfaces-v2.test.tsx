@@ -12,6 +12,7 @@ import {
   WorkspaceConnectionsPanel,
   WorkspaceDrawer,
 } from '../src/WorkspaceDrawer.js';
+import { buildRows } from '../src/connections/WorkspaceProviderRows.js';
 import { WorkspaceRailStrip } from '../src/WorkspaceRailStrip.js';
 import { MembersPanel } from '../src/settings/MembersPanel.js';
 import { render, settle } from './dom.js';
@@ -75,10 +76,9 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listConnections: vi.fn(async () => ({ connections: [] })),
     putConnection: vi.fn(async () => undefined),
     deleteConnection: vi.fn(async () => undefined),
-    listLeases: vi.fn(async () => ({ leases: [] })),
     listCredentialEvents: vi.fn(async () => ({ events: [] })),
     mintWorkspaceConnection: vi.fn(async () => { throw new Error('unused'); }),
-    revokeLease: vi.fn(async () => undefined),
+    disconnectWorkspaceConnection: vi.fn(async () => undefined),
     listCredentialRequests: vi.fn(async () => ({ requests: [] })),
     approveCredentialRequest: vi.fn(async () => undefined),
     denyCredentialRequest: vi.fn(async () => undefined),
@@ -128,28 +128,22 @@ function accountGrant(provider: string): UserGrantView {
   };
 }
 
-/** A live lease the box has already fetched: it carries the box id the box's
- * own mint wrote. */
-function liveLease(connection: string): CredentialLeaseView {
+/** What a mint hands back. The panel ignores it and flips the tile when the
+ * call returns. The client type still promises a lease, so a stub supplies
+ * one. */
+function mintedLease(connection: string): CredentialLeaseView {
   return {
     id: `lease-${connection}`,
     workspaceId: 'workspace-one',
-    boxId: 'box-one',
+    boxId: null,
     connection,
     userId: null,
     scopes: [],
     mode: 'proxy',
-    issuedAt: Date.now() - 1_000,
-    expiresAt: Date.now() + 600_000,
+    issuedAt: 1,
+    expiresAt: 2_000,
     state: 'active',
   };
-}
-
-/** Minted by the webApp, so it carries no box id yet. The panel reads it as
- * connected all the same: whether the box has fetched it is our plumbing, and
- * naming it cost the member a word they could do nothing with. */
-function undeliveredLease(connection: string): CredentialLeaseView {
-  return { ...liveLease(connection), boxId: null };
 }
 
 function rowFor(container: ParentNode, title: string): Element {
@@ -178,14 +172,18 @@ function buttonIn(scope: ParentNode, label: string): HTMLButtonElement {
   return button;
 }
 
-/** The connections panel as the drawer hosts it, with nothing pending. */
-function connectionsPanel(wire: ControlPlaneClient) {
+/** The connections panel as the drawer hosts it, with nothing pending and an
+ * empty allow-list. */
+function connectionsPanel(
+  wire: ControlPlaneClient,
+  workspaceConnections: readonly string[] = [],
+) {
   return (
     <WorkspaceConnectionsPanel
       client={wire}
       workspaceId="workspace-one"
-      visible
       pendingRequests={[]}
+      workspaceConnections={workspaceConnections}
       onResolveRequest={async () => undefined}
     />
   );
@@ -330,7 +328,6 @@ describe('v2 credential surfaces', () => {
       <WorkspaceConnectionsPanel
         client={client()}
         workspaceId="workspace-one"
-        visible
         pendingRequests={[]}
         pendingRequestsError="Connect inbox failed to load."
         onResolveRequest={async () => undefined}
@@ -365,60 +362,57 @@ describe('v2 credential surfaces', () => {
  * grid, a detail card under the grid, and a separate lease list — four places
  * that each told part of the truth about one provider. */
 describe('workspace provider rows', () => {
-  it('lists stipulated providers first, badged, and never draws the old grid', async () => {
+  it('lists the allow-list first and never draws the old grid', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [notion, linear] })),
     });
-    const view = await render(
-      <WorkspaceConnectionsPanel
-        client={wire}
-        workspaceId="workspace-one"
-        visible
-        pendingRequests={[]}
-        stipulatedConnections={['linear']}
-        onResolveRequest={async () => undefined}
-      />,
-    );
+    const view = await render(connectionsPanel(wire, ['linear']));
     await settle();
     const titles = [...view.container.querySelectorAll('.wsc-tile strong')]
       .map((title) => title.textContent);
     expect(titles).toEqual(['Linear', 'Notion']);
-    expect(rowFor(view.container, 'Linear').textContent).toContain('from template');
-    expect(rowFor(view.container, 'Notion').textContent).not.toContain('from template');
-    // The grid and the section heading it sat under are both gone.
+    // The grid and the heading above it are both gone. So is the chip that
+    // named a template. A row now says one thing: may this workspace pull the
+    // provider.
     expect(view.container.querySelector('.connect-grid')).toBeNull();
     expect(view.container.textContent).not.toContain('From the template');
+    expect(view.container.textContent).not.toContain('from template');
     await view.unmount();
   });
 
-  /** Two states, and no third. A live lease is Connected whether or not the
-   * box has fetched it yet; everything else is a row with a Connect button. */
-  it('reads every live lease as Connected and everything else as Connect', async () => {
+  /** The workspace allow-list is the whole answer. An agent in the box pulls a
+   * credential at the moment it asks, so a name on the list is Connected.
+   *
+   * The panel cannot read a lease to decide it: `ControlPlaneClient` carries no
+   * lease reader at all. That is the guarantee, not this test — re-adding a
+   * poll means re-adding the method, which a reviewer sees. */
+  it('prints Connected for the allow-list, Connect where a member can act, and Needs a key otherwise', async () => {
+    const adminOnly: CatalogEntryView = {
+      ...catalogEntry('tracker', 'Acme Tracker'),
+      personalTokenLabel: null,
+    };
     const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
-      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion, adminOnly] })),
     });
-    const view = await render(connectionsPanel(wire));
+    const view = await render(connectionsPanel(wire, ['linear']));
     await settle();
     expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
     expect(stateWord(rowFor(view.container, 'Notion'))).toBe('Connect');
-    // The four shades of not-connected the panel used to print are gone.
-    for (const gone of ['delivering', 'not here yet', 'needs you']) {
-      expect(view.container.textContent).not.toContain(gone);
-    }
+    expect(stateWord(rowFor(view.container, 'Acme Tracker'))).toBe('Needs a key');
     await view.unmount();
   });
 
-  /** A lease the webApp minted carries no box id. It is still live, so it is
-   * still Connected: the delivery hop is ours to run, not the member's. */
-  it('reads a lease the box has not fetched yet as Connected', async () => {
+  /** Two names, not one. The panel keeps the allow-list as a joined key so a
+   * poll cannot undo an optimistic press, and a key that did not split back
+   * left both providers hiding inside one unmatched name. */
+  it('prints Connected for every name in a multi-provider allow-list', async () => {
     const wire = client({
-      listConnectionCatalog: vi.fn(async () => ({ providers: [notion] })),
-      listLeases: vi.fn(async () => ({ leases: [undeliveredLease('notion')] })),
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
     });
-    const view = await render(connectionsPanel(wire));
+    const view = await render(connectionsPanel(wire, ['linear', 'notion']));
     await settle();
-    expect(rowFor(view.container, 'Notion').textContent).toContain('Connected');
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
+    expect(stateWord(rowFor(view.container, 'Notion'))).toBe('Connected');
     await view.unmount();
   });
 
@@ -426,19 +420,18 @@ describe('workspace provider rows', () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
       listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
-      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
     });
-    const view = await render(connectionsPanel(wire));
+    const view = await render(connectionsPanel(wire, ['linear']));
     await settle();
-    // Create-time minting from an existing owner grant is designed behaviour;
-    // provenance is what keeps it from reading as a surprise.
+    // A template can connect a provider the member never touched; provenance
+    // is what keeps that from reading as a surprise.
     expect(rowFor(view.container, 'Linear').textContent).toContain('you signed in');
     await view.unmount();
   });
 
   it('expands inline on Connect and pastes a key without leaving the row', async () => {
     const putConnectionGrant = vi.fn(async () => undefined);
-    const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: mintedLease('linear') }));
     const wire = client({
       putConnectionGrant,
       mintWorkspaceConnection,
@@ -476,7 +469,7 @@ describe('workspace provider rows', () => {
   });
 
   it('connects an already-authorized provider in one call and no form', async () => {
-    const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: mintedLease('linear') }));
     const wire = client({
       mintWorkspaceConnection,
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
@@ -490,15 +483,17 @@ describe('workspace provider rows', () => {
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(view.container.querySelector('.connect-form')).toBeNull();
-    // The mint is silent: the chip flips, and no label reports the hop.
-    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
+    // The allow-list prop is still empty. The workspace poll behind it trails
+    // a press by seconds. The tile flips when the mint returns, so the member
+    // never watches a connected provider read Connect.
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
     await view.unmount();
   });
 
   /** An admin's org credential backs the provider for every member, so Connect
    * mints for them too. The row must not ask for a key nobody has to paste. */
   it('connects on an org credential with no grant and no form', async () => {
-    const mintWorkspaceConnection = vi.fn(async () => ({ lease: undeliveredLease('linear') }));
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: mintedLease('linear') }));
     const wire = client({
       mintWorkspaceConnection,
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
@@ -526,14 +521,15 @@ describe('workspace provider rows', () => {
   });
 
   it('offers a connected row Replace key and a Disconnect that names both meanings', async () => {
-    const revokeLease = vi.fn(async () => undefined);
+    const disconnectWorkspaceConnection = vi.fn(async () => undefined);
+    const deleteConnectionGrant = vi.fn(async () => undefined);
     const wire = client({
-      revokeLease,
+      disconnectWorkspaceConnection,
+      deleteConnectionGrant,
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
       listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
-      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
     });
-    const view = await render(connectionsPanel(wire));
+    const view = await render(connectionsPanel(wire, ['linear']));
     await settle();
     const row = rowFor(view.container, 'Linear');
     // A connected tile rests on one word. Its actions arrive with the press.
@@ -552,13 +548,18 @@ describe('workspace provider rows', () => {
     await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Disconnect')));
     const dialog = document.body.querySelector('[role="dialog"]');
     if (dialog === null) throw new Error('disconnect chooser is missing');
-    // The lease-versus-grant conflation the old panel shipped: one action, two
-    // meanings, and only the narrow one was reachable.
+    // The old panel gave one action two meanings. It reached only the narrow
+    // one. The chooser names both and reaches both.
     expect(dialog.querySelector('a')?.getAttribute('href')).toBe('/settings/connections');
     expect(dialog.textContent).toContain('disconnect everywhere');
     await act(async () => click(buttonIn(dialog, 'disconnect from this workspace')));
     await settle();
-    expect(revokeLease).toHaveBeenCalledWith('lease-linear');
+
+    // One workspace leaves the allow-list. Nothing else moves: the account
+    // authorization stands, so the member's other workspaces keep working.
+    expect(disconnectWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
+    expect(deleteConnectionGrant).not.toHaveBeenCalled();
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
     await view.unmount();
   });
 
@@ -579,40 +580,6 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  it('pushes the credential at the box after a connect', async () => {
-    const calls: string[] = [];
-    const stubFetch = vi.fn(async (input: RequestInfo | URL) => {
-      calls.push(String(input));
-      return new Response('{"synced":true}', { status: 200 });
-    });
-    vi.stubGlobal('fetch', stubFetch);
-    const wire = client({
-      mintWorkspaceConnection: vi.fn(async () => ({ lease: undeliveredLease('linear') })),
-      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
-    });
-    const view = await render(
-      <WorkspaceConnectionsPanel
-        client={wire}
-        workspaceId="workspace-one"
-        visible
-        pendingRequests={[]}
-        filesBase="https://cp.example/workspaces/workspace-one/webapp/7445/workspace/"
-        onResolveRequest={async () => undefined}
-      />,
-    );
-    await settle();
-    await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
-    await settle();
-    // Boxes pull credentials on a throttled cadence, so without this push the
-    // member watches a connected provider stay dark for the whole window.
-    expect(calls).toContain(
-      'https://cp.example/workspaces/workspace-one/webapp/7445/credentials/sync',
-    );
-    vi.unstubAllGlobals();
-    await view.unmount();
-  });
-
   it('opens the focused provider row and re-opens it on a fresh focus', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
@@ -622,9 +589,8 @@ describe('workspace provider rows', () => {
         <WorkspaceConnectionsPanel
           client={wire}
           workspaceId="workspace-one"
-          visible
           pendingRequests={[]}
-          stipulatedConnections={['linear']}
+          workspaceConnections={[]}
           connectionsFocus={{ provider: 'linear', at }}
           onResolveRequest={async () => undefined}
         />
@@ -663,7 +629,6 @@ describe('workspace provider rows', () => {
       <WorkspaceConnectionsPanel
         client={wire}
         workspaceId="workspace-one"
-        visible
         pendingRequests={[{
           id: 'request-one',
           workspace_id: 'workspace-one',
@@ -685,22 +650,39 @@ describe('workspace provider rows', () => {
   it('gives a viewer rows to read and nothing to press', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
-      listLeases: vi.fn(async () => ({ leases: [liveLease('linear')] })),
     });
     const view = await render(
       <WorkspaceConnectionsPanel
         client={wire}
         workspaceId="workspace-one"
-        visible
         readOnly
         pendingRequests={[]}
+        workspaceConnections={['linear']}
         onResolveRequest={async () => undefined}
       />,
     );
     await settle();
-    expect(rowFor(view.container, 'Linear').textContent).toContain('Connected');
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
     expect(view.container.querySelector('.wsc-tile__actions')).toBeNull();
     expect(pressTile(rowFor(view.container, 'Linear')).disabled).toBe(true);
     await view.unmount();
+  });
+});
+
+describe('buildRows', () => {
+  it('puts the allow-list first in its own order and sorts the rest by id', () => {
+    const rows = buildRows(['notion', 'linear'], [linear, notion], []);
+    expect(rows.map((row) => [row.name, row.connected]))
+      .toEqual([['notion', true], ['linear', true]]);
+
+    const mixed = buildRows(['notion'], [linear, notion], []);
+    expect(mixed.map((row) => row.name)).toEqual(['notion', 'linear']);
+  });
+
+  /** An agent asked for a name the catalog never heard of. The row still
+   * prints, because the person needs to see what the agent asked for. */
+  it('keeps an allow-list name the catalog does not know', () => {
+    const [row] = buildRows(['ghost'], [linear], []);
+    expect(row).toMatchObject({ name: 'ghost', title: 'ghost', entry: null, connected: true });
   });
 });

@@ -18,17 +18,13 @@ import { FolderIcon, GenericProviderIcon } from './WebAppIcons';
 // The connections machinery lives in its own module; these re-exports keep
 // the drawer the one import site its hosts and tests already use.
 export {
-  CREDENTIAL_POLL_INTERVAL_MS,
-  newestPerConnection,
   portAge,
   useWorkspaceCredentialEvents,
-  useWorkspaceLeases,
   WorkspaceConnectionsPanel,
   WorkspaceEventsPanel,
   WorkspaceRequestsPanel,
   type ConnectionsPanelFocus,
   type WorkspaceEventFeed,
-  type WorkspaceLeaseFeed,
 } from './WorkspaceConnectionsPanel';
 
 export type WorkspacePanelProps = {
@@ -39,10 +35,11 @@ export type WorkspacePanelProps = {
   files: ReactNode;
   pendingRequests: CredentialRequestView[];
   pendingRequestsError?: string | null;
-  stipulatedConnections?: readonly string[];
+  /** Provider names this workspace's allow-list holds. */
+  workspaceConnections?: readonly string[];
   connectionsFocus?: ConnectionsPanelFocus | null;
   /** Workspace sharing, not an org role: a viewer sees the panel but cannot
-   * revoke a lease or connect on this workspace's behalf. */
+   * connect or disconnect on this workspace's behalf. */
   readOnly?: boolean;
   onResolveRequest: (
     request: CredentialRequestView,
@@ -67,7 +64,7 @@ export function WorkspacePanelContent({
   files,
   pendingRequests,
   pendingRequestsError,
-  stipulatedConnections,
+  workspaceConnections,
   connectionsFocus,
   readOnly,
   onResolveRequest,
@@ -97,13 +94,11 @@ export function WorkspacePanelContent({
     <WorkspaceConnectionsPanel
       client={client}
       workspaceId={workspaceId}
-      visible={visible}
       readOnly={readOnly}
       pendingRequests={pendingRequests}
       pendingRequestsError={pendingRequestsError}
-      stipulatedConnections={stipulatedConnections}
+      workspaceConnections={workspaceConnections}
       connectionsFocus={connectionsFocus}
-      filesBase={filesBase}
       onResolveRequest={onResolveRequest}
     />
   );

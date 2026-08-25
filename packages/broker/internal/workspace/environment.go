@@ -118,20 +118,24 @@ func fetchWorkspaceEnvironment(ctx context.Context, stateDir string, httpClient 
 	return decodeWorkspaceEnvironment(data)
 }
 
-// workspaceEnvironmentPlacements reuses the credential placement shape so the
-// workspace's variables are rendered by the one environment-file writer the
-// box already has, rather than a second export format.
-func workspaceEnvironmentPlacements(environment map[string]string) []Placement {
+// environmentFile renders the workspace's configured variables as the shell
+// statements /etc/profile.d/blitz-creds.sh sources. Sorted by name so the
+// bytes are a pure function of the map, which is what lets a test pin them.
+func environmentFile(environment map[string]string) []byte {
 	names := make([]string, 0, len(environment))
 	for name := range environment {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	placements := make([]Placement, 0, len(names))
+	var content strings.Builder
 	for _, name := range names {
-		placements = append(placements, Placement{Kind: "env", Name: name, Value: environment[name]})
+		fmt.Fprintf(&content, "export %s=%s\n", name, shellQuote(environment[name]))
 	}
-	return placements
+	return []byte(content.String())
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 // loadWorkspaceEnvironment reads the stored state. A missing or unreadable
@@ -148,20 +152,9 @@ func loadWorkspaceEnvironment(stateDir string) (WorkspaceEnvironment, error) {
 	return decodeWorkspaceEnvironment(data)
 }
 
-// stageWorkspaceEnvironment writes the workspace entry into an env.d directory
-// being built. A credential sync rebuilds env.d from scratch, so it calls this
-// to carry the workspace variables across the replacement.
-func stageWorkspaceEnvironment(stateDir, envDir string) error {
-	environment, err := loadWorkspaceEnvironment(stateDir)
-	if err != nil {
-		return err
-	}
-	return writeWorkspaceEnvironmentEntry(envDir, environment.Env)
-}
-
 func writeWorkspaceEnvironmentEntry(envDir string, configured map[string]string) error {
 	path := filepath.Join(envDir, workspaceEnvironmentEntry)
-	content := environmentFile(workspaceEnvironmentPlacements(configured))
+	content := environmentFile(configured)
 	if len(content) == 0 {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

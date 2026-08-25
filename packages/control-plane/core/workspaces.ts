@@ -343,46 +343,6 @@ async function readPhoneHome(context: CoreContext): Promise<PhoneHomeRequest> {
   );
 }
 
-/** A create that names connections promises a workspace that has them, so it
- * mints their leases from the creator's grants before the box exists.
- *
- * Minting at create was removed once as useless, back when only a box sync
- * could make a credential real. Under the model where the live lease row IS
- * the state it is the opposite of useless, and supersede keeps it clean:
- * the box's first sync replaces each row with an identical one.
- *
- * Silent per connection. A provider the creator never authorized, or one the
- * workspace ceiling refuses, simply shows no live lease in the grid. */
-async function connectRequested(
-  runtime: ReturnType<RuntimeFactory>,
-  workspaceId: string,
-  principal: Principal,
-  origin: string,
-  connectionNames: readonly string[],
-): Promise<void> {
-  if (connectionNames.length === 0) return;
-  const workspace = await workspaceForMint(runtime, workspaceId);
-  if (workspace === null || workspace.org_id === null) return;
-  for (const name of connectionNames) {
-    const connection = await connectionByName(runtime.db, name, workspace.org_id);
-    if (connection === null) continue;
-    try {
-      await mintWorkspaceConnection(runtime, {
-        workspace,
-        principal,
-        origin,
-        connection,
-        denied: "skip",
-      });
-    } catch (caught) {
-      // A grant needing re-authorization, or a provider unconfigured on this
-      // instance, answers 409 from inside the minter. Creating a workspace is
-      // not the moment to fail on that.
-      if (!(caught instanceof HttpError)) throw caught;
-    }
-  }
-}
-
 export interface RecipeLaunch {
   recipeId: string;
   bootstrap: RecipeBootstrap;
@@ -430,12 +390,11 @@ export async function performWorkspaceCreate(
   const templateConnectionList = template === null
     ? []
     : await templateConnections(runtime.db, template.id);
-  // Creation never blocks on connections. A stipulated provider with no
-  // grant behind it still creates: the name lands in the ceiling below, the
-  // connections panel shows it as "needs you" until its lease goes live, and
-  // the first mint attempt files a connect request. The old 409 gate here
-  // made template connections a create-time wall; the `required` flag that
-  // drove it is deleted.
+  // Creation never blocks on connections, and never mints one either. The
+  // names land in the allow-list below, and an agent pulls a credential when
+  // it needs one. Minting here used to leave a live proxy lease token nobody
+  // held, which is a capability with no holder. A stipulated provider with no
+  // grant behind it still creates: the first pull files a connect request.
   const requested = [...new Set([
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
@@ -515,8 +474,6 @@ export async function performWorkspaceCreate(
   if (template !== null) {
     await attachTemplateFolders(runtime.db, template.id, id, principal, now);
   }
-  await connectRequested(runtime, id, principal, requestOrigin, requested);
-
   try {
     // The size check runs on a tunnel-less build so a 413 always fires
     // before any Cloudflare resource exists (the deleted row then owes

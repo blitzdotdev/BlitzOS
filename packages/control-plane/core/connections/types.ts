@@ -5,21 +5,38 @@ export type MintKind = "app-jwt" | "oauth" | "static";
  * lease token instead. */
 export type Custody = "cp" | "proxy";
 
-export type Placement =
-  | { kind: "env"; name: string; value: string }
-  | { kind: "file"; path: string; value: string; mode?: number }
-  | { kind: "unset-env"; name: string };
+/** Bearer material is not always a Bearer: Linear personal API keys go in a
+ * raw `Authorization: <key>` header, so the prefix belongs to the provider. */
+export interface TokenHeader {
+  name: string;
+  prefix: string;
+}
 
-/** FROZEN box wire: the Go broker baked into the shipped box image decodes
- * POST /workspaces/self/credentials with DisallowUnknownFields, so the
- * `integration` key (and mode/placements/expiresAt) must keep these exact
- * names even though the product noun is now "connection". Nothing else may
- * appear here: an extra key fails the box's decode and aborts the whole sync. */
+/** One environment name a provider's own tooling reads, already filled. `gh`
+ * reads `GH_TOKEN` and no other name, so the box has to be told the name to
+ * print. The box prints these and stores none of them. */
+export interface ConnectionEnv {
+  name: string;
+  value: string;
+}
+
+/** What one pull answers with. The agent asks at the moment of use, so this
+ * body is read once and never written to disk: `blitz-cred get` prints
+ * `token`, and `blitz-cred env` prints `env`. */
 export interface MintResult {
-  integration: string;
+  connection: string;
   mode: "inject" | "proxy";
-  placements: Placement[];
+  /** The value the agent presents to the vendor. */
+  token: string;
+  env: ConnectionEnv[];
+  header: TokenHeader;
   expiresAt: number;
+}
+
+/** The providers one workspace may pull. This is the workspace manifest, read
+ * live: `blitz-cred list` prints one name per line. */
+export interface WorkspaceConnectionsResponse {
+  connections: string[];
 }
 
 /** What a minter hands back. Everything beyond `MintResult` is control-plane
@@ -103,8 +120,8 @@ export interface ListConnectionsResponse {
 }
 
 /** An env entry for `config.placements` on `PUT /connections/:id`, sent by
- * the admin form verbatim. Distinct from `Placement`: this is a template with
- * a fill, not a filled value. */
+ * the admin form verbatim. Distinct from `ConnectionEnv`: this is a template
+ * with a fill, not a filled value. */
 export interface CatalogAdminPlacement {
   kind: "env";
   name: string;

@@ -419,11 +419,13 @@ const credentialLease: SharedShape<
   state: "active",
 };
 
-/** FROZEN box wire: exactly these four keys, on both sides. */
+/** The box pull wire: exactly these keys, on both sides. */
 const mintResult: SharedShape<connections.MintResult, schema.MintResult> = {
-  integration: "linear",
+  connection: "linear",
   mode: "proxy",
-  placements: [{ kind: "env", name: "LINEAR_API_KEY", value: "lease-token" }],
+  token: "lease-token",
+  env: [{ name: "LINEAR_API_KEY", value: "lease-token" }],
+  header: { name: "Authorization", prefix: "Bearer " },
   expiresAt: 4,
 };
 
@@ -552,8 +554,11 @@ describe("local wire copies", () => {
   it("keeps the credential module's copies exactly equal to @blitzos/schema", () => {
     expectTypeOf<connections.MintKind>().toEqualTypeOf<schema.MintKind>();
     expectTypeOf<connections.Custody>().toEqualTypeOf<schema.Custody>();
-    expectTypeOf<connections.Placement>().toEqualTypeOf<schema.Placement>();
+    expectTypeOf<connections.TokenHeader>().toEqualTypeOf<schema.TokenHeader>();
+    expectTypeOf<connections.ConnectionEnv>().toEqualTypeOf<schema.ConnectionEnv>();
     expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
+    expectTypeOf<connections.WorkspaceConnectionsResponse>()
+      .toEqualTypeOf<schema.WorkspaceConnectionsResponse>();
     expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
     expectTypeOf<connections.CatalogAdminPlacement>().toEqualTypeOf<schema.CatalogAdminPlacement>();
     expectTypeOf<connections.CatalogAdminFormView>().toEqualTypeOf<schema.CatalogAdminFormView>();

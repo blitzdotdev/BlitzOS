@@ -1,64 +1,4 @@
-import type { SkillRenderInput, StaticProviderManifest } from "./types.js";
-
-function skill(input: SkillRenderInput): string {
-  const base = input.baseUrlEnv === null ? input.baseUrl : `$${input.baseUrlEnv}`;
-  const header = `${input.tokenHeader.name}: ${input.tokenHeader.prefix}$${input.tokenEnv}`;
-  return `---
-name: ${input.connection}
-description: Read and write YouTrack issues, comments, and work items through the REST API.
----
-
-# ${input.connection}
-
-YouTrack access for this workspace. The credential is the workspace owner's
-own permanent token: every action attributes to that member, and their
-YouTrack account's permissions are the boundary of what the agent can reach.
-
-## Auth
-
-Send \`${header}\` on every call.
-
-${input.mode === "proxy"
-    ? `\`$${input.tokenEnv}\` is a lease token, not a YouTrack credential: it only works against \`${base}\`, and the control plane swaps in the member's real permanent token on the way out. The token itself stays in the control plane and never lands on this disk.`
-    : `\`$${input.tokenEnv}\` is the member's permanent token itself. Do not echo it, and do not send it anywhere but the instance in \`${base}\`.`}
-
-## Canonical calls
-
-\`\`\`sh
-# Who does the token act as
-curl -sS -H '${header}' -H 'Accept: application/json' \\
-  "${base}/api/users/me?fields=id,login,name"
-
-# Unresolved issues assigned to the token's user
-curl -sS -H '${header}' -H 'Accept: application/json' \\
-  "${base}/api/issues?query=for:%20me%20%23Unresolved&fields=idReadable,summary,project(shortName)"
-
-# Create an issue (project id from /api/admin/projects?fields=id,shortName)
-curl -sS -X POST -H '${header}' -H 'Content-Type: application/json' \\
-  "${base}/api/issues?fields=idReadable" \\
-  -d '{"project":{"id":"..."},"summary":"...","description":"..."}'
-
-# Comment on an issue
-curl -sS -X POST -H '${header}' -H 'Content-Type: application/json' \\
-  "${base}/api/issues/DEMO-1/comments?fields=id" \\
-  -d '{"text":"..."}'
-\`\`\`
-
-## Reach and limits
-
-- Scopes recorded for this connection: ${input.scopes.length === 0 ? "none — the member's own YouTrack permissions are the boundary" : input.scopes.join(", ")}.
-- Actions render as the member who connected the token in YouTrack's
-  activity feed.
-- Always pass \`fields=\` — YouTrack returns only ids without it.
-
-## When a call fails
-
-A 401 means the lease expired: start a new login shell (or run
-\`blitz-cred sync\`) and retry once. If it still fails, the member's token was
-revoked in YouTrack — say so instead of retrying. A 404 on an issue is
-usually a project the member cannot see, not a missing issue.
-`;
-}
+import type { StaticProviderManifest } from "./types.js";
 
 /** Per-member permanent tokens, linear-style: each member pastes their own
  * token and every action attributes to them, bounded by their YouTrack
@@ -95,7 +35,6 @@ export const youtrackManifest = {
       { name: "YOUTRACK_TOKEN", fill: "token" },
       { name: "YOUTRACK_BASE_URL", fill: "proxy-url" },
     ],
-    skill: { path: ".claude/skills/<provider>/SKILL.md", render: skill },
   },
   probe: {
     // fields= is mandatory: without it YouTrack answers with ids only and the

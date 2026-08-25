@@ -42,7 +42,7 @@ case "$verb" in
   new-session|attach-session)
     printf '%s\\0' "$@" >"$TMUX_STUB_STATE/$verb-argv"
     printf '%s\\n' "GH_TOKEN=\${GH_TOKEN-<unset>}" "PROJECT_MODE=\${PROJECT_MODE-<unset>}" \\
-      "RETRACTED=\${RETRACTED-<unset>}" >"$TMUX_STUB_STATE/$verb-env"
+      "REGION=\${REGION-<unset>}" >"$TMUX_STUB_STATE/$verb-env"
     ;;
   *)
     exit 9
@@ -80,9 +80,9 @@ function makeTermBox(): TermBox {
   mkdirSync(binDir);
   stub(binDir, "tmux", TMUX_STUB);
   stub(binDir, "timeout", TIMEOUT_STUB);
-  // Logs its argv, so the create-path-only rule stays observable. It writes
-  // nothing into env.d: the sync now runs detached, so a stub that raced the
-  // sourcing loop would only make these tests flaky.
+  // Logs its argv. blitz-term must never call it: an agent asks for a
+  // credential itself, and a tab that pulled one would put a secret in the
+  // tmux session environment where it outlives its grant.
   stub(
     binDir,
     "blitz-cred",
@@ -143,41 +143,42 @@ function writeEnvFile(box: TermBox, file: string, body: string): void {
   writeFileSync(join(box.envDir, file), body);
 }
 
-function connectedBox(): TermBox {
+/** A box whose workspace declares variables. Only the workspace entry lives in
+ * env.d now: connection secrets are pulled at the moment of use. */
+function configuredBox(): TermBox {
   const box = makeTermBox();
-  writeEnvFile(box, "00-workspace.sh", "export PROJECT_MODE='analysis'\nexport GH_TOKEN='workspace-guess'\n");
-  writeEnvFile(box, "github.sh", "export GH_TOKEN='ghs_minted'\n");
+  writeEnvFile(box, "00-workspace.sh", "export PROJECT_MODE='analysis'\nexport REGION='eu'\n");
   return box;
 }
 
 describe("blitz-term credential delivery", () => {
-  it("gives an agent tab the whole env.d glob, later files winning", async () => {
-    const box = connectedBox();
+  it("gives an agent tab the whole env.d glob", async () => {
+    const box = configuredBox();
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
     expect(deliveredEnv(box, "new-session")).toMatchObject({
-      // The bug this closes: without the glob this read `workspace-guess`, the
-      // placeholder the member typed, never the credential the broker minted.
-      GH_TOKEN: "ghs_minted",
       PROJECT_MODE: "analysis",
+      REGION: "eu",
     });
   });
 
   it("gives a plain terminal tab the same environment", async () => {
-    const box = connectedBox();
+    const box = configuredBox();
     expect(await runTerm(box, ["terminal", "shell"])).toBe(0);
-    expect(deliveredEnv(box, "new-session").GH_TOKEN).toBe("ghs_minted");
+    expect(deliveredEnv(box, "new-session").PROJECT_MODE).toBe("analysis");
   });
 
-  it("honours an unset tombstone the same way the login shell does", async () => {
-    const box = makeTermBox();
-    writeEnvFile(box, "00-workspace.sh", "export RETRACTED='stale'\n");
-    writeEnvFile(box, "github.sh", "unset RETRACTED\n");
+  it("carries no connection secret into the tmux session", async () => {
+    // A tab used to inherit every connected provider's token, and a tmux
+    // session environment outlives the grant that authorized it. An agent now
+    // asks for a credential when it needs one.
+    const box = configuredBox();
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    expect(deliveredEnv(box, "new-session").RETRACTED).toBe("<unset>");
+    expect(deliveredEnv(box, "new-session").GH_TOKEN).toBe("<unset>");
+    expect(credCalls(box)).toEqual([]);
   });
 
   it("starts the tab anyway when an entry cannot be read", async () => {
-    const box = connectedBox();
+    const box = configuredBox();
     // env.d entries are mode 0600 and a stripped or half-migrated box can leave
     // one unreadable. Under `set -euo pipefail` a careless source here would
     // take the whole terminal down instead of one variable.
@@ -185,30 +186,30 @@ describe("blitz-term credential delivery", () => {
     chmodSync(join(box.envDir, "mm-locked.sh"), 0o000);
     try {
       expect(await runTerm(box, ["claude", "run"])).toBe(0);
-      expect(deliveredEnv(box, "new-session").GH_TOKEN).toBe("ghs_minted");
+      expect(deliveredEnv(box, "new-session").PROJECT_MODE).toBe("analysis");
     } finally {
       chmodSync(join(box.envDir, "mm-locked.sh"), 0o600);
     }
   });
 
-  it("starts the tab when nothing is connected at all", async () => {
+  it("starts the tab when the workspace declares nothing", async () => {
     const box = makeTermBox();
     rmSync(join(box.stateDir, "creds"), { recursive: true, force: true });
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    expect(deliveredEnv(box, "new-session").GH_TOKEN).toBe("<unset>");
+    expect(deliveredEnv(box, "new-session").PROJECT_MODE).toBe("<unset>");
   });
 });
 
 describe("blitz-term tmux session environment", () => {
   it("names every sourced variable in a tmux -e flag", async () => {
-    const box = connectedBox();
+    const box = configuredBox();
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
     const flags = sessionEnvFlags(deliveredArgv(box, "new-session"));
     // Exporting alone reaches the agent only when this client also starts the
     // tmux server. Bootstrap's blitz-rc session usually starts it first, so
     // the tab has to state its environment rather than inherit it.
-    expect(flags).toContain("GH_TOKEN=ghs_minted");
     expect(flags).toContain("PROJECT_MODE=analysis");
+    expect(flags).toContain("REGION=eu");
     expect(flags).toContain("LANG=C.UTF-8");
     expect(flags).toContain("LC_ALL=C.UTF-8");
   });
@@ -216,7 +217,7 @@ describe("blitz-term tmux session environment", () => {
   it("names only what env.d changed, not the whole inherited environment", async () => {
     // PATH and BLITZ_STATE_DIR reach blitz-term from ttyd, unchanged by the
     // glob. Restating them would let a stale tab pin an old PATH.
-    const box = connectedBox();
+    const box = configuredBox();
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
     const names = sessionEnvFlags(deliveredArgv(box, "new-session"))
       .map((flag) => flag.slice(0, flag.indexOf("=")));
@@ -225,7 +226,7 @@ describe("blitz-term tmux session environment", () => {
   });
 
   it("passes no -e on the read-only attach path", async () => {
-    const box = connectedBox();
+    const box = configuredBox();
     writeFileSync(join(box.stateDir, "session-claude-obs"), "");
     expect(await runTerm(box, ["claude", "obs", "ro"])).toBe(0);
     // `-e` applies on create only, and an observer never creates.
@@ -237,7 +238,7 @@ describe("blitz-term tmux session environment", () => {
     // forceReadOnlyTerminalArgs) appends "ro" only to a two-argument request
     // and refuses any other shape. The -e flags are tmux argv, never
     // blitz-term argv, so that contract must stay exactly `<type> <key> [ro]`.
-    const box = connectedBox();
+    const box = configuredBox();
     expect(await runTerm(box, ["claude", "run", "ro", "extra"])).toBe(2);
   });
 });
@@ -312,52 +313,3 @@ describe.skipIf(tmuxBinary === "")("blitz-term against a foreign tmux server", (
   });
 });
 
-describe("blitz-term pre-session credential sync", () => {
-  it("starts the sync without waiting for it", async () => {
-    const box = makeTermBox();
-    // The mint holds ONE sync lock and the gateway's POST /credentials/sync
-    // may hold it for 30 seconds, so a tab that waited here waited on
-    // somebody else's refresh. This stub blocks until the test releases it:
-    // if blitz-term still waited, the run would never return.
-    const gate = join(box.stateDir, "sync-gate");
-    stub(
-      box.binDir,
-      "blitz-cred",
-      "#!/bin/sh\n"
-        + `until [ -e '${gate}' ]; do sleep 0.05; done\n`
-        + `printf '%s\\n' "$*" >>'${join(box.stateDir, "cred-calls")}'\n`,
-    );
-    expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    expect(credCalls(box)).toEqual([]);
-
-    // Skills ride the same mint and still land within seconds, racing the
-    // harness scan exactly as they did before the sync moved in front of it.
-    writeFileSync(gate, "");
-    for (let attempt = 0; attempt < 100 && credCalls(box).length === 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    expect(credCalls(box)).toEqual(["sync"]);
-  });
-
-  it("never syncs for a plain terminal tab", async () => {
-    const box = connectedBox();
-    expect(await runTerm(box, ["terminal", "shell"])).toBe(0);
-    expect(credCalls(box)).toEqual([]);
-  });
-
-  it("never syncs when re-attaching to a live agent session", async () => {
-    const box = connectedBox();
-    // The harness in there scanned its skills when it started; a sync now buys
-    // that session nothing and would stall every single reconnect.
-    writeFileSync(join(box.stateDir, "session-claude-run"), "");
-    expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    expect(credCalls(box)).toEqual([]);
-  });
-
-  it("never syncs on the read-only observer path", async () => {
-    const box = connectedBox();
-    writeFileSync(join(box.stateDir, "session-claude-obs"), "");
-    expect(await runTerm(box, ["claude", "obs", "ro"])).toBe(0);
-    expect(credCalls(box)).toEqual([]);
-  });
-});

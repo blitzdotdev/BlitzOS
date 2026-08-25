@@ -3,7 +3,6 @@ import type {
   ListAgentRulesResponse,
   PutAgentRuleRequest,
   PutAgentRuleResponse,
-  ListCredentialLeasesResponse,
   MintWorkspaceConnectionResponse,
   ListCredentialEventsResponse,
   CredentialEventView,
@@ -198,15 +197,19 @@ export interface ControlPlaneClient extends FileLibraryClient {
    * already minted; without one it is an account authorization and lands in
    * settings. */
   connectStartUrl(provider: string, workspaceId?: string): string;
-  listLeases(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialLeasesResponse>;
-  /** Connects a provider in one workspace: mints the lease that makes the
-   * workspace hold it, from the grant the account already carries. */
+  /** Connects a provider in one workspace: adds it to that workspace's
+   * allow-list, then mints once so a broken credential says so now. */
   mintWorkspaceConnection(
     workspaceId: string,
     connectionName: string,
   ): Promise<MintWorkspaceConnectionResponse>;
+  /** Disconnects a provider from one workspace. The account's authorization
+   * survives, so the member's other workspaces keep working. */
+  disconnectWorkspaceConnection(
+    workspaceId: string,
+    connectionName: string,
+  ): Promise<void>;
   listCredentialEvents(workspaceId: string, signal?: AbortSignal): Promise<ListCredentialEventsResponse>;
-  revokeLease(id: string): Promise<void>;
   listCredentialRequests(
     signal?: AbortSignal,
     state?: CredentialRequestState,
@@ -713,11 +716,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
           ? ""
           : `?workspaceId=${encodeURIComponent(workspaceId)}`
       }`,
-    listLeases: (workspaceId, signal) =>
-      request<ListCredentialLeasesResponse>(
-        `/workspaces/${encodeURIComponent(workspaceId)}/leases`,
-        { signal },
-      ),
     listCredentialEvents: (workspaceId, signal) =>
       request<ListCredentialEventsResponse>(
         `/workspaces/${encodeURIComponent(workspaceId)}/credential-events`,
@@ -729,8 +727,11 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         `/workspaces/${encodeURIComponent(workspaceId)}/connections/${encodeURIComponent(connectionName)}/lease`,
         { method: "POST" },
       ),
-    revokeLease: (id) =>
-      request<void>(`/leases/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    disconnectWorkspaceConnection: (workspaceId, connectionName) =>
+      request<void>(
+        `/workspaces/${encodeURIComponent(workspaceId)}/connections/${encodeURIComponent(connectionName)}`,
+        { method: "DELETE" },
+      ),
     listCredentialRequests: (signal, state = "pending") =>
       request<ListCredentialRequestsResponse>(`/requests?state=${state}`, { signal }),
     approveCredentialRequest: (id) =>

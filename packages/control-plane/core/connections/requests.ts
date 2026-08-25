@@ -3,7 +3,11 @@ import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, isString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { parseManifest, usableByAllows } from "./manifest.js";
+import {
+  type CredentialManifest,
+  parseManifest,
+  usableByAllows,
+} from "./manifest.js";
 import { connectionByName } from "./registry.js";
 import { canControlWorkspace } from "../workspace-access.js";
 
@@ -129,17 +133,25 @@ async function requireGrantableConnection(
   }
 }
 
+/** Approving a request is the person saying yes to this workspace holding this
+ * connection, so it writes the name into the ceiling.
+ *
+ * A NULL column is a workspace created before the column existed. It now
+ * denies everything, so approving has to build a real document rather than
+ * write NULL back — that write used to be a silent no-op, and the agent that
+ * filed the request was refused again on its next pull. */
 function widenedManifest(
   storedManifest: string | null,
   connectionName: string,
   requestedScopes: readonly string[],
-): string | null {
-  if (storedManifest === null) return null;
-  let manifest: ReturnType<typeof parseManifest>;
-  try {
-    manifest = parseManifest(JSON.parse(storedManifest));
-  } catch {
-    throw new HttpError(409, "workspace credential manifest is invalid");
+): string {
+  let manifest: CredentialManifest = { integrations: {} };
+  if (storedManifest !== null) {
+    try {
+      manifest = parseManifest(JSON.parse(storedManifest));
+    } catch {
+      throw new HttpError(409, "workspace credential manifest is invalid");
+    }
   }
   const current = manifest.integrations[connectionName];
   if (current === undefined) {

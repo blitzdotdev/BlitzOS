@@ -1,75 +1,78 @@
 import { hashSecret, randomToken } from "../../crypto.js";
-import { HttpError, isNumber, isRecord, isString } from "../../http.js";
+import { HttpError, isRecord, isString } from "../../http.js";
 import type {
   Connection,
+  ConnectionEnv,
   Minter,
   MintRequest,
   MinterResult,
-  Placement,
+  TokenHeader,
 } from "../types.js";
 
 const STATIC_LEASE_MS = 60 * 60 * 1000;
 
-function staticPlacements(
-  configText: string,
-  token: string,
-  proxyUrl: string,
-): Placement[] {
+/** What an org row that never declared a header sends. Every admin form in the
+ * catalog compiles to this pair, so it is the shape a stored row means when it
+ * says nothing. */
+const DEFAULT_HEADER: TokenHeader = { name: "Authorization", prefix: "Bearer " };
+
+/** An org row's stored config, parsed. The row is D1 text an admin wrote
+ * through `PUT /connections/:name`, so it is external data and gets a named
+ * type here rather than being read field by field at each use. */
+interface StaticConfig {
+  /** One environment name per entry, and what fills it. */
+  env: readonly { name: string; fill: "token" | "proxy-url" }[];
+  header: TokenHeader;
+}
+
+function staticConfig(configText: string): StaticConfig {
   let value: unknown;
   try {
     value = JSON.parse(configText);
   } catch {
     throw new Error("static connection config is invalid");
   }
-  if (!isRecord(value) || !Array.isArray(value.placements)) {
+  if (!isRecord(value)) throw new Error("static connection config is invalid");
+  if (!Array.isArray(value.placements)) {
     throw new Error("static connection config requires placements");
   }
-  return value.placements.map((placement) => {
-    if (!isRecord(placement)) throw new Error("static placement is invalid");
-    if (
-      placement.kind === "env" &&
-      isString(placement.name) &&
-      placement.name.length > 0 &&
-      (placement.fill === undefined ||
-        placement.fill === "token" ||
-        placement.fill === "proxy-url")
-    ) {
-      return {
-        kind: "env",
-        name: placement.name,
-        value: placement.fill === "proxy-url" ? proxyUrl : token,
-      };
+  const env = value.placements.map((placement) => {
+    if (!isRecord(placement) || placement.kind !== "env" || !isString(placement.name)
+      || placement.name.length === 0) {
+      throw new Error("static placement is invalid");
     }
-    if (
-      placement.kind === "file" &&
-      isString(placement.path) &&
-      placement.path.length > 0 &&
-      (placement.mode === undefined ||
-        (Number.isSafeInteger(placement.mode) &&
-          isNumber(placement.mode) &&
-          placement.mode >= 0 &&
-          placement.mode <= 0o777)) &&
-      (placement.fill === undefined ||
-        placement.fill === "token" ||
-        placement.fill === "proxy-url")
-    ) {
-      const result: Placement = {
-        kind: "file",
-        path: placement.path,
-        value: placement.fill === "proxy-url" ? proxyUrl : token,
-      };
-      if (placement.mode !== undefined) result.mode = placement.mode;
-      return result;
+    // Matched positively, because an inequality against a literal cannot
+    // narrow the `string` a stored JSON document may hold.
+    if (placement.fill === "proxy-url") {
+      return { name: placement.name, fill: "proxy-url" as const };
     }
-    if (
-      placement.kind === "unset-env" &&
-      isString(placement.name) &&
-      placement.name.length > 0
-    ) {
-      return { kind: "unset-env", name: placement.name };
+    if (placement.fill !== undefined && placement.fill !== "token") {
+      throw new Error("static placement is invalid");
     }
-    throw new Error("static placement is invalid");
+    return { name: placement.name, fill: "token" as const };
   });
+  return { env, header: staticHeader(value.proxy) };
+}
+
+/** The header a proxy-custody row declares for its own inbound call. A cp row
+ * hands the vendor credential straight over, so its header is the vendor's. */
+function staticHeader(proxy: unknown): TokenHeader {
+  if (!isRecord(proxy)) return DEFAULT_HEADER;
+  return {
+    name: isString(proxy.token_header) ? proxy.token_header : DEFAULT_HEADER.name,
+    prefix: isString(proxy.token_prefix) ? proxy.token_prefix : DEFAULT_HEADER.prefix,
+  };
+}
+
+function staticEnv(
+  config: StaticConfig,
+  token: string,
+  proxyUrl: string,
+): ConnectionEnv[] {
+  return config.env.map(({ name, fill }) => ({
+    name,
+    value: fill === "proxy-url" ? proxyUrl : token,
+  }));
 }
 
 export const staticMinter: Minter = {
@@ -81,17 +84,15 @@ export const staticMinter: Minter = {
   ): Promise<MinterResult> {
     // FROZEN box-route error text: the string predates the connection rename.
     if (root === null) throw new HttpError(409, "integration has no active root");
+    const config = staticConfig(connection.config);
     if (connection.custody === "proxy") {
       const token = randomToken();
       return {
-        // FROZEN box wire key: the shipped broker requires "integration".
-        integration: connection.name,
+        connection: connection.name,
         mode: "proxy",
-        placements: staticPlacements(
-          connection.config,
-          token,
-          `${request.origin}/proxy/${request.leaseId}`,
-        ),
+        token,
+        env: staticEnv(config, token, `${request.origin}/proxy/${request.leaseId}`),
+        header: config.header,
         expiresAt: request.now + STATIC_LEASE_MS,
         tokenHash: await hashSecret(token),
       };
@@ -100,10 +101,11 @@ export const staticMinter: Minter = {
       throw new HttpError(409, "static mint requires cp or proxy custody");
     }
     return {
-      // FROZEN box wire key: the shipped broker requires "integration".
-      integration: connection.name,
+      connection: connection.name,
       mode: "inject",
-      placements: staticPlacements(connection.config, root, root),
+      token: root,
+      env: staticEnv(config, root, root),
+      header: config.header,
       expiresAt: request.now + STATIC_LEASE_MS,
     };
   },

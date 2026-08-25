@@ -1,25 +1,25 @@
 import { HttpError, isRecord, isString } from "../../../http.js";
 import type {
   Connection,
+  ConnectionEnv,
   Minter,
   MintRequest,
   MinterResult,
-  Placement,
 } from "../../types.js";
 
 const JWT_TTL_SECONDS = 9 * 60;
 
-type PlacementTemplate =
-  | { kind: "env"; name: string }
-  | { kind: "file"; path: string; mode?: number }
-  | { kind: "unset-env"; name: string };
+interface EnvTemplate {
+  kind: "env";
+  name: string;
+}
 
 interface GithubAppConfig {
   app_id: string;
   installation_id: string;
   repositories?: string[];
   permissions?: Record<string, string>;
-  placements?: PlacementTemplate[];
+  placements?: EnvTemplate[];
 }
 
 interface GithubTokenRequestBody {
@@ -177,16 +177,14 @@ function parseConfig(value: string): GithubAppConfig {
   return parsed as typeof parsed & GithubAppConfig;
 }
 
-function fillPlacements(config: GithubAppConfig, token: string): Placement[] {
+function fillEnv(config: GithubAppConfig, token: string): ConnectionEnv[] {
   const templates = config.placements ?? [
     { kind: "env" as const, name: "GH_TOKEN" },
     { kind: "env" as const, name: "GITHUB_TOKEN" },
   ];
-  return templates.map((placement) => {
-    if (placement.kind === "env") return { ...placement, value: token };
-    if (placement.kind === "file") return { ...placement, value: token };
-    return placement;
-  });
+  return templates
+    .filter((template) => template.kind === "env")
+    .map((template) => ({ name: template.name, value: token }));
 }
 
 function grantedScopes(value: Record<string, unknown>): string[] {
@@ -257,10 +255,11 @@ export const githubAppMinter: Minter = {
       throw new HttpError(502, "github returned an invalid installation token response");
     }
     return {
-      // FROZEN box wire key: the shipped broker requires "integration".
-      integration: connection.name,
+      connection: connection.name,
       mode: "inject",
-      placements: fillPlacements(config, value.token),
+      token: value.token,
+      env: fillEnv(config, value.token),
+      header: { name: "Authorization", prefix: "Bearer " },
       expiresAt,
       grantedScopes: grantedScopes(value),
     };

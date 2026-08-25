@@ -97,51 +97,37 @@ export function parseWorkspaceEnvironmentVariables(source: string): Record<strin
   return Object.fromEntries(validated);
 }
 
-/** How long a `blitz-cred sync` may hold up a turn. The harness reads the
- * skill files the same mint delivers exactly once, at session start, so a sync
- * that lands after the spawn is a whole turn spent blind to an integration the
- * workspace is connected to — waiting is worth more than the latency. Ten
- * seconds because a box whose control plane is unreachable still has to answer
- * its prompt. */
-const CREDENTIAL_SYNC_TIMEOUT_MS = 10_000;
-
 /** One statement of a broker-written export file, kept in the order the shell
- * would have run it. `unset` is how a retracted credential is tombstoned
- * (`Placement { kind: "unset-env" }`), so it has to survive the parse as a
- * removal rather than collapse into "absent". */
-type CredentialDirective =
-  | { kind: "export"; name: string; value: string }
-  | { kind: "unset"; name: string };
+ * would have run it. */
+interface CredentialDirective {
+  name: string;
+  value: string;
+}
 
 /** What `shellQuote` in packages/broker/internal/workspace/cp.go emits for a
  * literal quote inside a single-quoted word: close, quote a quote, reopen. */
 const SHELL_QUOTE_ESCAPE = "'\"'\"'";
 
 /** Linux caps one `NAME=value` string in an execve environment at
- * MAX_ARG_STRLEN (32 pages, 128 KiB). This is the only length limit applied to
- * a credential: the workspace-variable caps above mirror a control-plane
- * validator that never sees these files, and a 50-key or 8 KiB ceiling here
- * would silently drop real tokens — signed JWTs and service-account blobs are
- * routinely kilobytes. A value over the execve limit cannot be delivered at
- * all, so passing it through would fail the whole spawn instead of one
- * variable. */
+ * MAX_ARG_STRLEN (32 pages, 128 KiB). A value over that limit cannot be
+ * delivered at all, so passing it through would fail the whole spawn instead
+ * of one variable. */
 const CREDENTIAL_MAX_ENTRY_BYTES = 128 * 1024;
 
 /**
  * The statements in one `creds/env.d/*.sh` file, in file order.
  *
  * Written by the Go broker and read by /etc/profile.d/blitz-creds.sh, so this
- * decodes exactly the two forms that writer emits — `export NAME='value'` with
- * every `'` escaped as `'"'"'`, and `unset NAME` — and nothing else. Anything
- * it does not recognise is dropped at the next line boundary rather than
- * guessed at: these bytes become the environment of an agent with the
- * workspace's credentials in it, and a half-understood assignment is a worse
- * answer than a missing one.
+ * decodes exactly the one form that writer emits — `export NAME='value'` with
+ * every `'` escaped as `'"'"'` — and nothing else. Anything it does not
+ * recognise is dropped at the next line boundary rather than guessed at: these
+ * bytes become the environment of an agent, and a half-understood assignment
+ * is a worse answer than a missing one.
  *
  * Skipping is per statement, not per file, because the writer replaces the
  * whole file atomically (`atomicfile.Write`) — a line this cannot read means
  * the two sides have drifted, not that a read was torn, and dropping the file
- * over it would retract every credential in it. A quoted value is consumed
+ * over it would retract every variable in it. A quoted value is consumed
  * whole, newlines included, so a skip resumes on a real statement boundary for
  * every file the broker actually produces.
  */
@@ -169,12 +155,6 @@ function readCredentialDirective(
   source: string,
   start: number,
 ): { directive: CredentialDirective; next: number } | null {
-  if (source.startsWith("unset ", start)) {
-    const newline = source.indexOf("\n", start);
-    const end = newline === -1 ? source.length : newline;
-    const name = source.slice(start + "unset ".length, end);
-    return ENVIRONMENT_KEY.test(name) ? { directive: { kind: "unset", name }, next: end + 1 } : null;
-  }
   if (!source.startsWith("export ", start)) return null;
   const assign = source.indexOf("=", start);
   if (assign === -1 || source[assign + 1] !== "'") return null;
@@ -197,7 +177,7 @@ function readCredentialDirective(
     if (end !== source.length && source[end] !== "\n") return null;
     if (value.includes("\0")) return null;
     if (Buffer.byteLength(name) + 1 + Buffer.byteLength(value) > CREDENTIAL_MAX_ENTRY_BYTES) return null;
-    return { directive: { kind: "export", name, value }, next: end + 1 };
+    return { directive: { name, value }, next: end + 1 };
   }
 }
 
@@ -232,67 +212,40 @@ export class CredentialSource {
     return parseToken(stdout);
   }
 
-  /** Refresh `creds/env.d` and the skill files that ride the same mint, before
-   * anything reads either. Best effort in the strongest sense: no broker, no
-   * binary, an unreachable control plane and a refusal are all the same
-   * outcome — take the turn with whatever is already on disk. */
-  public async sync(): Promise<void> {
-    try {
-      await execFileAsync("blitz-cred", ["sync"], {
-        timeout: CREDENTIAL_SYNC_TIMEOUT_MS,
-        env: { ...process.env, BLITZ_STATE_DIR: this.stateDir },
-      });
-    } catch {
-      // Deliberately silent, and deliberately not routed through brokerReason:
-      // there is no decision downstream that this outcome changes.
-    }
-  }
-
   /** The agent's environment for one turn. Workspace variables are optional
    * configuration, so every failure path here degrades to the actor's own
    * environment: an enrolled box whose broker has not written the file yet, a
    * box with nothing configured, and a torn or corrupt file all still run the
    * prompt. This never rejects — a prompt must not fail over env.
    *
-   * The layering is the login shell's, reproduced: this process's own
-   * environment underneath, then the workspace's configured variables, then
-   * `creds/env.d/*.sh` applied in sorted filename order exactly as the glob in
-   * /etc/profile.d/blitz-creds.sh expands it — so `00-workspace.sh` goes on
-   * first and a later integration file wins a name it shares with a workspace
-   * variable, which is the collision rule cp.go documents. `unset` lands as a
-   * delete against the merged result rather than against the credential layer
-   * alone, again because that is what the shell does: a tombstone retracts the
-   * name outright, and a capability must not outlive its grant just because
-   * the same name happened to exist further down. Chat and a terminal tab read
-   * the identical bytes in the identical order, so they cannot disagree about
-   * what a variable holds. */
+   * No connection secret is here. The agent pulls one when it needs one
+   * (`blitz-cred get <provider>`), so a turn carries only the workspace's own
+   * configured variables. The layering is the login shell's, reproduced: this
+   * process's own environment underneath, then the workspace's configured
+   * variables, then `creds/env.d/*.sh` applied in sorted filename order
+   * exactly as the glob in /etc/profile.d/blitz-creds.sh expands it. Chat and
+   * a terminal tab read the identical bytes in the identical order, so they
+   * cannot disagree about what a variable holds. */
   public async environment(): Promise<NodeJS.ProcessEnv> {
     const configured = await this.workspaceVariables();
     const merged: NodeJS.ProcessEnv = { ...process.env, ...configured };
     for (const directive of await this.credentialDirectives()) {
-      if (directive.kind === "unset") delete merged[directive.name];
-      else merged[directive.name] = directive.value;
+      merged[directive.name] = directive.value;
     }
     return merged;
   }
 
   /** Every statement in `creds/env.d`, concatenated in glob order.
    *
-   * A missing directory is the normal state of a box with nothing connected,
-   * and a vanished entry is the microsecond in which `replaceEnvironmentDirectory`
-   * swaps the directory out from under a reader. Both degrade to "no
-   * credential variables" and neither is retried from a remembered copy: the
-   * whole point of the `unset` tombstone is that a retraction takes effect
-   * immediately, and a cache that re-supplied the last good set on a failed
-   * read would hand a revoked token to exactly the turn that raced the sync
-   * which revoked it. */
+   * A missing directory is the normal state of a box whose broker has not
+   * written the workspace entry yet. It degrades to "no variables" rather than
+   * failing the turn. */
   private async credentialDirectives(): Promise<CredentialDirective[]> {
     const directory = join(this.stateDir, "creds", "env.d");
     const entries = await readdir(directory).catch(() => null);
     if (entries === null) return [];
-    // Node sorts by UTF-16 code unit, which is byte order for the ASCII
-    // integration names `validIntegrationName` admits — the same order the
-    // shell's glob produces.
+    // Node sorts by UTF-16 code unit, which is byte order for the ASCII file
+    // names the broker writes — the same order the shell's glob produces.
     const files = entries.filter((entry) => entry.endsWith(".sh")).sort();
     const directives: CredentialDirective[] = [];
     for (const file of files) {

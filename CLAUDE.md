@@ -30,8 +30,8 @@ npm test              # control-plane, box actor, ui, guest node:test,
 
 ## Known debt (as of 2026-08-18)
 
-- 108 anti-slop findings remain, all Tier C: external-boundary code that
-  needs real parsers (52 no-unknown-parameters, 27 no-runtime-typeof in
+- 107 anti-slop findings remain, all Tier C: external-boundary code that
+  needs real parsers (51 no-unknown-parameters, 27 no-runtime-typeof in
   plain JS, 23 no-unsafe-dictionary-type, 6 no-unknown-returns). Fixing one
   requires characterization tests FIRST — these fixes can change accepted
   inputs. Plan and history: GitHub issue #1.
@@ -39,11 +39,13 @@ npm test              # control-plane, box actor, ui, guest node:test,
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 4 files exceed the 700-line warn: `core/workspaces.ts`,
+- 6 files exceed the 700-line warn: `core/bootstrap.ts`, `core/workspaces.ts`,
   `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
-  `webapp/src/terminal-touch-controller.ts`. Split on touch, never big-bang.
-  (`core/files/sync.ts` left the list 2026-08-21 when its transfer plumbing
-  split into `core/files/dav.ts`.)
+  `webapp/src/api.ts`, `webapp/src/terminal-touch-controller.ts`. Split on
+  touch, never big-bang. (`core/files/sync.ts` left the list 2026-08-21 when
+  its transfer plumbing split into `core/files/dav.ts`. `core/bootstrap.ts`
+  and `webapp/src/api.ts` were already over the line when this list said four;
+  the count is corrected here, not grown.)
 
 ## Cross-runtime contracts (fixtures are the source of truth)
 
@@ -67,6 +69,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/compute/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/actor/test/agent-rules-conformance.test.ts` (box) |
+| connection pull v1 | CP producer `core/connections/pull-wire.ts` (`GET /workspaces/self/connections`, `POST /workspaces/self/connections/:name/token`) ↔ Go consumer `broker/internal/workspace/connections.go`, printed by `blitz-cred list\|get\|env` | `fixtures/connection-pull/` | `test/connection-pull-conformance.test.ts` + `test/pull-credentials.test.ts` (CP), `broker/internal/workspace/connections_test.go` + `broker/cmd/blitz-cred/main_test.go` (box) |
 | recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ guest readers: `blitz-term` through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation`, plus the bootstrap-emitted chat sender's raw `prompt.txt` read (the sender never parses `invocation.env` — model/effort/permission are interpolated into its source at render time) | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/actor/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
 
 Legacy phone-home shapes are accepted ONLY inside
@@ -102,8 +105,8 @@ Do not add aliases anywhere else.
    and both conformance tests present and passing. A new cross-runtime
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
-7. Reference counts for comparison (2026-08-19): anti-slop 108
-   (52/27/23/6), blitz-house 0, max-lines warnings 4. These are the numbers
+7. Reference counts for comparison (2026-08-24): anti-slop 107
+   (51/27/23/6), blitz-house 0, max-lines warnings 6. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 

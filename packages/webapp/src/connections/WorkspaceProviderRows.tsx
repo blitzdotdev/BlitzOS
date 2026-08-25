@@ -1,7 +1,6 @@
 import type {
   CatalogEntryView,
   ConnectionView,
-  CredentialLeaseView,
   UserGrantView,
 } from '@blitzos/schema';
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -24,7 +23,7 @@ export type ProviderRowsClient = Pick<
   | 'putConnectionGrant'
   | 'connectStartUrl'
   | 'mintWorkspaceConnection'
-  | 'revokeLease'
+  | 'disconnectWorkspaceConnection'
 >;
 
 /** One provider, everything this workspace knows about it. */
@@ -34,22 +33,10 @@ type ProviderRow = {
   name: string;
   title: string;
   entry: CatalogEntryView | null;
-  stipulated: boolean;
-  lease: CredentialLeaseView | null;
+  /** The workspace's allow-list names it, so an agent in the box may pull it. */
+  connected: boolean;
   grant: UserGrantView | null;
 };
-
-/** A row has two states, and no third. The workspace holds a live lease, or it
- * does not.
- *
- * The panel used to name four shades of not-connected — delivering…, not here
- * yet, needs a key, needs you. Each was true, and together they asked a member
- * to learn our credential model before they could press one button. */
-function isConnected(row: ProviderRow, now: number): boolean {
-  return row.lease !== null
-    && row.lease.state === 'active'
-    && row.lease.expiresAt > now;
-}
 
 /** A credential already stands behind this provider, so Connect is a mint and
  * not a form: either this member authorized it on their own account, or an
@@ -64,12 +51,11 @@ function isBacked(
     && connection.orgCredential);
 }
 
-/** "you signed in Aug 21". The workspace mints from its owner's grants at
- * create time by design, so a member who never touched this panel can find a
- * provider already connected. This line is the only thing on the tile that
- * answers "why is this on when I never touched it", so it prints on a
- * connected tile and nowhere else — beside Connect it reads as a contradiction
- * rather than an explanation. */
+/** "you signed in Aug 21". A template stipulates providers at create time, so a
+ * member who never touched this panel can find a provider already connected.
+ * This line is the only thing on the tile that answers "why is this on when I
+ * never touched it", so it prints on a connected tile and nowhere else —
+ * beside Connect it reads as a contradiction rather than an explanation. */
 function provenance(grant: UserGrantView): string {
   const when = new Date(grant.createdAt).toLocaleDateString(undefined, {
     month: 'short',
@@ -80,11 +66,12 @@ function provenance(grant: UserGrantView): string {
 
 /** What the tile says, in one word.
  *
- * Three states, and no fourth. `on` means the workspace holds a live lease.
- * `go` means pressing the tile connects it — whether that mints silently from
- * a credential already on file or opens a form is exactly what the press
- * reveals, so the tile does not say. `blocked` means pressing would fail, and
- * clearing it is an admin's job or an operator's. */
+ * Three states, and no fourth. `on` means this workspace's allow-list names the
+ * provider, so an agent in the box can pull it. `go` means pressing the tile
+ * connects it — whether that mints silently from a credential already on file
+ * or opens a form is exactly what the press reveals, so the tile does not say.
+ * `blocked` means pressing would fail, and clearing it is an admin's job or an
+ * operator's. */
 interface TileState {
   kind: 'on' | 'go' | 'blocked';
   word: string;
@@ -92,11 +79,10 @@ interface TileState {
 
 function tileState(
   row: ProviderRow,
-  connected: boolean,
   backed: boolean,
   memberPath: boolean,
 ): TileState {
-  if (connected) return { kind: 'on', word: 'Connected' };
+  if (row.connected) return { kind: 'on', word: 'Connected' };
   // An agent asked for a name the catalog does not know. There is no form to
   // open and nothing to mint.
   if (row.entry === null) return { kind: 'blocked', word: 'Unknown' };
@@ -104,9 +90,10 @@ function tileState(
   return { kind: 'go', word: 'Connect' };
 }
 
-/** Revoking a lease and revoking a grant are different acts with different
- * blast radii, and the old panel offered only the first while describing the
- * second. Naming both, in one place, is the fix. */
+/** Disconnecting one workspace and revoking an account authorization are
+ * different acts with different blast radii, and the old panel offered only
+ * the first while describing the second. Naming both, in one place, is the
+ * fix. */
 function DisconnectChooser({
   row,
   onWorkspace,
@@ -117,11 +104,11 @@ function DisconnectChooser({
   onCancel: () => void;
 }) {
   const name = row.name;
-  // Inject custody hands the box the credential itself, not a lease token.
-  // Revoking the lease unsets our copy; it cannot reach into the vendor and
-  // make a Discord bot token stop working. Saying so is the difference between
-  // a promise we keep and one the vendor would have to keep for us.
-  const injected = row.lease?.mode === 'inject';
+  // `cp` custody hands the agent the vendor's own credential when it asks.
+  // Disconnecting stops this workspace asking; it cannot reach into the vendor
+  // and make a Discord bot token stop working. Saying so is the difference
+  // between a promise we keep and one the vendor would have to keep for us.
+  const vendorCredential = row.entry?.custody === 'cp';
   return (
     <ModalOverlay onDismiss={onCancel}>
       <section
@@ -133,15 +120,16 @@ function DisconnectChooser({
         <header className="webapp-confirmation-header"><h1>{`disconnect ${name}`}</h1></header>
         <div className="webapp-confirmation-body">
           <p>
-            Disconnecting here revokes this workspace's lease immediately. Your
-            account keeps the authorization, so other workspaces keep working and
-            you can reconnect this one in a click.
+            Disconnecting here stops this workspace asking for {row.title}, from
+            the next request onward. Your account keeps the authorization, so
+            other workspaces keep working and you can reconnect this one in a
+            click.
           </p>
-          {injected && (
+          {vendorCredential && (
             <p>
-              This workspace holds the {row.title} credential itself, not a
-              lease token. Revoking the lease removes our copy; the credential
-              stays installed and valid until you rotate it at {row.title}.
+              An agent that already asked holds a real {row.title} credential
+              for as long as the vendor honours it. Rotate it at {row.title} if
+              that matters.
             </p>
           )}
         </div>
@@ -164,40 +152,31 @@ function DisconnectChooser({
  * It replaces a template section, a provider grid, a detail card below the
  * grid, and a separate lease list — four places that each told part of the
  * truth about one provider, and disagreed about the rest. A row is the whole
- * truth about one provider: whether the workspace holds it, who authorized it
- * and when, and the one surface that changes that.
+ * truth about one provider: whether this workspace may pull it, who authorized
+ * it and when, and the one surface that changes that.
  */
 export function WorkspaceProviderRows({
   client,
   workspaceId,
-  stipulated,
-  leases,
-  now,
+  connected,
   focusProvider,
   focusVersion,
   readOnly,
-  revoking,
-  onRevokeLease,
-  onLeaseMinted,
   onConnected,
+  onDisconnected,
 }: {
   client: ProviderRowsClient;
   workspaceId: string;
-  /** Connection names the workspace ceiling enables. Listed first, badged. */
-  stipulated: readonly string[];
-  /** One lease per connection: the live one where there is one. */
-  leases: readonly CredentialLeaseView[];
-  now: number;
+  /** Provider names this workspace's allow-list holds. Listed first. */
+  connected: readonly string[];
   focusProvider: string | null;
   /** Bumped per `blitz connections open`, so the same provider re-expands. */
   focusVersion: number;
   readOnly?: boolean;
-  revoking: string | null;
-  onRevokeLease: (lease: CredentialLeaseView) => Promise<void>;
-  onLeaseMinted: (lease: CredentialLeaseView) => void;
-  /** A provider just became live here: the panel resolves any matching
-   * connect request and pushes the credential at the box. */
+  /** This workspace may now pull the provider. */
   onConnected: (connectionName: string) => void;
+  /** This workspace may no longer pull the provider. */
+  onDisconnected: (connectionName: string) => void;
 }) {
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   const [grants, setGrants] = useState<UserGrantView[]>([]);
@@ -209,6 +188,7 @@ export function WorkspaceProviderRows({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<ProviderRow | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -258,7 +238,7 @@ export function WorkspaceProviderRows({
     setReplacing(null);
   };
 
-  const rows = buildRows(stipulated, catalog, leases, grants);
+  const rows = buildRows(connected, catalog, grants);
 
   // An agent's `blitz connections open <provider>` lands here: the row opens
   // itself. Each focus is a fresh version, so pointing twice at the same
@@ -276,14 +256,27 @@ export function WorkspaceProviderRows({
     setSaving(true);
     setError(null);
     try {
-      const { lease } = await client.mintWorkspaceConnection(workspaceId, row.name);
-      onLeaseMinted(lease);
+      await client.mintWorkspaceConnection(workspaceId, row.name);
       onConnected(row.name);
       close();
     } catch (caught) {
       setError(caughtErrorMessage(caught, 'Connect failed.'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const disconnectNow = async (row: ProviderRow) => {
+    if (removing !== null) return;
+    setRemoving(row.name);
+    setError(null);
+    try {
+      await client.disconnectWorkspaceConnection(workspaceId, row.name);
+      onDisconnected(row.name);
+    } catch (caught) {
+      setError(caughtErrorMessage(caught, 'Disconnect failed.'));
+    } finally {
+      setRemoving(null);
     }
   };
 
@@ -301,9 +294,8 @@ export function WorkspaceProviderRows({
     try {
       await client.putConnectionGrant(provider, grantInput(entry, data));
       // A key pasted inside a workspace was pasted in order to connect it, so
-      // the lease follows the grant without a second click.
-      const { lease } = await client.mintWorkspaceConnection(workspaceId, provider);
-      onLeaseMinted(lease);
+      // the workspace is connected without a second click.
+      await client.mintWorkspaceConnection(workspaceId, provider);
       onConnected(provider);
       form.reset();
       setGrantsVersion((current) => current + 1);
@@ -323,7 +315,6 @@ export function WorkspaceProviderRows({
       {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
       <div className="wsc-list">
         {rows.map((row) => {
-          const connected = isConnected(row, now);
           const backed = isBacked(row, orgConnections);
           const isOpen = expanded === row.name;
           const showForm = replacing === row.name || (!backed && row.entry !== null);
@@ -336,7 +327,7 @@ export function WorkspaceProviderRows({
           const memberPath = row.entry !== null
             && (row.entry.personalTokenLabel !== null
               || (row.entry.oauthAvailable && oauthHref !== null));
-          const state = tileState(row, connected, backed, memberPath);
+          const state = tileState(row, backed, memberPath);
           return (
             <article
               className={`wsc-tile wsc-tile--${state.kind}${
@@ -357,8 +348,8 @@ export function WorkspaceProviderRows({
                     return;
                   }
                   // A credential already stands behind it, so the press is the
-                  // whole act: mint, and let the tile flip.
-                  if (!connected && backed) {
+                  // whole act: connect, and let the tile flip.
+                  if (!row.connected && backed) {
                     void connectNow(row);
                     return;
                   }
@@ -369,9 +360,8 @@ export function WorkspaceProviderRows({
                   <ProviderGlyph className="wsc-tile__glyph" provider={row.name} />
                   <span className="wsc-tile__name">
                     <strong>{row.title}</strong>
-                    {connected && row.grant !== null && <span>{provenance(row.grant)}</span>}
+                    {row.connected && row.grant !== null && <span>{provenance(row.grant)}</span>}
                   </span>
-                  {row.stipulated && <em className="wsc-tile__chip">from template</em>}
                 </span>
                 <span className="wsc-tile__state">{state.word}</span>
               </button>
@@ -395,7 +385,7 @@ export function WorkspaceProviderRows({
                       onSubmit={(event) => { void submit(row, event); }}
                       onCancel={close}
                     />
-                  ) : connected ? (
+                  ) : row.connected ? (
                     <>
                       <p className="connect-help">
                         Disconnecting stops this workspace only. Your sign-in stays.
@@ -413,9 +403,9 @@ export function WorkspaceProviderRows({
                         <button
                           className="webapp-action"
                           type="button"
-                          disabled={revoking !== null}
+                          disabled={removing !== null}
                           onClick={() => setDisconnecting(row)}
-                        >{revoking === row.lease?.id ? 'Disconnecting…' : 'Disconnect'}</button>
+                        >{removing === row.name ? 'Disconnecting…' : 'Disconnect'}</button>
                       </div>
                     </>
                   ) : (
@@ -441,9 +431,9 @@ export function WorkspaceProviderRows({
           row={disconnecting}
           onCancel={() => setDisconnecting(null)}
           onWorkspace={() => {
-            const lease = disconnecting.lease;
+            const row = disconnecting;
             setDisconnecting(null);
-            if (lease !== null) void onRevokeLease(lease);
+            void disconnectNow(row);
           }}
         />
       )}
@@ -451,40 +441,34 @@ export function WorkspaceProviderRows({
   );
 }
 
-/** Stipulated providers first, in the order the template named them, then
- * every other provider the catalog offers, then anything this workspace
- * already holds that the catalog does not know about. */
+/** Connected providers first, in the order the allow-list holds them, then
+ * every other provider the catalog offers. A name the allow-list holds that the
+ * catalog does not know still gets a row: an agent asked for it, and the person
+ * needs to see what it asked for. */
 export function buildRows(
-  stipulated: readonly string[],
+  connected: readonly string[],
   catalog: readonly CatalogEntryView[],
-  leases: readonly CredentialLeaseView[],
   grants: readonly UserGrantView[],
 ): ProviderRow[] {
   const entryFor = (nameKey: string): CatalogEntryView | null =>
     catalog.find((candidate) => candidate.id === nameKey) ?? null;
-  const make = (nameKey: string, isStipulated: boolean): ProviderRow => {
+  const ordered: ProviderRow[] = [];
+  const seen = new Set<string>();
+  const push = (nameKey: string, isConnected: boolean) => {
+    if (seen.has(nameKey)) return;
+    seen.add(nameKey);
     const entry = entryFor(nameKey);
-    return {
+    ordered.push({
       name: nameKey,
       title: entry?.title ?? nameKey,
       entry,
-      stipulated: isStipulated,
-      lease: leases.find((lease) => lease.connection === nameKey) ?? null,
+      connected: isConnected,
       grant: grants.find((grant) => grant.provider === nameKey) ?? null,
-    };
+    });
   };
-  const ordered: ProviderRow[] = [];
-  const seen = new Set<string>();
-  const push = (nameKey: string, isStipulated: boolean) => {
-    if (seen.has(nameKey)) return;
-    seen.add(nameKey);
-    ordered.push(make(nameKey, isStipulated));
-  };
-  for (const nameKey of stipulated) push(nameKey, true);
-  const rest: string[] = [
-    ...catalog.map((entry) => entry.id),
-    ...leases.map((lease) => lease.connection),
-  ].filter((nameKey) => !seen.has(nameKey));
-  for (const nameKey of [...new Set(rest)].sort()) push(nameKey, false);
+  for (const nameKey of connected) push(nameKey, true);
+  for (const entry of [...catalog].sort((a, b) => a.id.localeCompare(b.id))) {
+    push(entry.id, false);
+  }
   return ordered;
 }
