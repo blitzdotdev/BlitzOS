@@ -20,23 +20,16 @@ export function TemplateRepoUrls({
   client,
   value,
   onChange,
-  installationRepos,
 }: {
   client: TemplateRepoCheckApi;
   /** Every repo on the template, picker-chosen and typed alike. */
   value: string[];
   onChange: (repos: string[]) => void;
-  /** Repos the org's GitHub App installation reaches. null while the picker is still
-   * loading, so rows do not flash in and out. */
-  installationRepos: ReadonlySet<string> | null;
 }) {
   const [text, setText] = useState('');
   const [problems, setProblems] = useState<RepoProblem[]>([]);
   const [checking, setChecking] = useState(false);
   const inputId = useId();
-  const typedRepos = installationRepos === null
-    ? []
-    : value.filter((repo) => !installationRepos.has(repo));
 
   const add = async () => {
     const lines = parseRepoUrlLines(text);
@@ -131,20 +124,24 @@ export function TemplateRepoUrls({
 
   return (
     <div className="tplf-repo-urls">
-      {typedRepos.length > 0 && (
-        <div className="tplf-repo-url-rows">
-          {typedRepos.map((repo) => (
-            <div className="tplf-repo-url-row" key={repo}>
-              <span>{repo}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${repo}`}
-                onClick={() => onChange(value.filter((candidate) => candidate !== repo))}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
+      {/* Both inputs share this value, so picker unchecks remove rows without another sync path. */}
+      {value.length > 0 && (
+        <div className="tplf-attached">
+          <h3 className="tplf-attached-label">Attached</h3>
+          <div className="tplf-attached-list">
+            {value.map((repo) => (
+              <div className="tplf-attached-row" key={repo}>
+                <span>{repo}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${repo}`}
+                  onClick={() => onChange(value.filter((candidate) => candidate !== repo))}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <label className="tplf-repo-urls-label" htmlFor={inputId}>

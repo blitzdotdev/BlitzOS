@@ -2,13 +2,12 @@ import type {
   CatalogEntryView,
   ConnectionView,
   CreateWorkspaceTemplateRequest,
-  GithubRepositoryView,
   MachineType,
   TemplateConnectionView,
   WorkspaceEnvironment,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
 import { TemplateConnectionsSection } from './TemplateConnectionsSection';
 import type { FolderObjectView, FolderView } from '../file-library-api';
@@ -105,7 +104,6 @@ export function CreateTemplateScreen({
   const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
   const [isOrgDefault, setIsOrgDefault] = useState(false);
   const [repos, setRepos] = useState<string[]>([]);
-  const [installationRepos, setInstallationRepos] = useState<ReadonlySet<string> | null>(null);
   const dragDepth = useRef(0);
   const filePickerRef = useRef<HTMLInputElement | null>(null);
   const folderPickerRef = useRef<HTMLInputElement | null>(null);
@@ -126,10 +124,6 @@ export function CreateTemplateScreen({
     onFolders: setFolders,
     onError: setError,
   });
-
-  const storeInstallationRepositories = useCallback((repositories: GithubRepositoryView[]) => {
-    setInstallationRepos(new Set(repositories.map(({ fullName }) => fullName)));
-  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -631,13 +625,11 @@ export function CreateTemplateScreen({
                 githubConfigured={orgCredentialFor(orgConnections, 'github')}
                 value={repos}
                 onChange={setRepos}
-                onRepositories={storeInstallationRepositories}
               />
               <TemplateRepoUrls
                 client={client}
                 value={repos}
                 onChange={setRepos}
-                installationRepos={installationRepos}
               />
             </div>
             <label className="tplf-share">

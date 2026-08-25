@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { GithubRepositoryView, ListGithubRepositoriesResponse } from '@blitzos/schema';
 import { ApiRequestError } from '../api';
 
@@ -19,7 +19,6 @@ export function TemplateRepoPicker({
   githubConfigured,
   value,
   onChange,
-  onRepositories,
 }: {
   client: TemplateRepoApi;
   /** Picks the hint's audience: admins configure inline, members ask one. */
@@ -29,20 +28,11 @@ export function TemplateRepoPicker({
   githubConfigured: boolean;
   value: string[];
   onChange: (repos: string[]) => void;
-  /** Publishes what the installation covers, so the sibling URL box knows
-   * which selections it owns. Empty on 409 and on error: nothing is covered. */
-  onRepositories: (repositories: GithubRepositoryView[]) => void;
 }) {
   const [repositories, setRepositories] = useState<GithubRepositoryView[] | null>(null);
   const [unconfigured, setUnconfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
-  // The listing refetches on a credential flip, never on a caller's re-render.
-  // Reading onRepositories through a ref keeps it out of the dependency list:
-  // an inline arrow there would refire the effect on every render, and its own
-  // setState would render again, so the page would spin and stop taking input.
-  const publish = useRef(onRepositories);
-  publish.current = onRepositories;
 
   useEffect(() => {
     let mounted = true;
@@ -50,13 +40,11 @@ export function TemplateRepoPicker({
       .then(({ repositories: loaded }) => {
         if (!mounted) return;
         setRepositories(loaded);
-        publish.current(loaded);
         setUnconfigured(false);
         setError(null);
       })
       .catch((caught: Error) => {
         if (!mounted) return;
-        publish.current([]);
         if (caught instanceof ApiRequestError && caught.status === 409) setUnconfigured(true);
         else setError(caught.message);
       });

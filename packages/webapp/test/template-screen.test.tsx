@@ -853,6 +853,31 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  it('shows a picker selection as attached and removes it immediately when unchecked', async () => {
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ repositories: [{ fullName: 'acme/app', private: false }] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    const toggle = view.container.querySelector<HTMLInputElement>('.tplf-repo input')!;
+
+    await act(async () => { toggle.click(); });
+
+    expect(view.container.querySelector('.tplf-attached-label')?.textContent).toBe('Attached');
+    expect(view.container.querySelector('.tplf-attached-row')?.textContent).toBe('acme/appRemove');
+    expect(view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove acme/app"]',
+    )?.textContent).toBe('Remove');
+
+    await act(async () => { toggle.click(); });
+
+    expect(view.container.querySelector('.tplf-attached-row')).toBeNull();
+    expect(view.container.querySelector('button[aria-label="Remove acme/app"]')).toBeNull();
+    await view.unmount();
+  });
+
   it('reports a malformed public repo URL without checking it', async () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
@@ -963,7 +988,7 @@ describe('create template screen', () => {
 
     expect(view.container.querySelector('[role="alert"]')?.textContent)
       .toContain('acme/private — not found, or it is private');
-    expect(view.container.querySelectorAll('.tplf-repo-url-row')).toHaveLength(0);
+    expect(view.container.querySelectorAll('.tplf-attached-row')).toHaveLength(0);
 
     await act(async () => {
       setTextareaValue.call(textarea, [
@@ -978,8 +1003,13 @@ describe('create template screen', () => {
     });
     await settle();
 
-    expect([...view.container.querySelectorAll('.tplf-repo-url-row')]
+    expect([...view.container.querySelectorAll('.tplf-attached-row')]
       .map((repo) => repo.textContent)).toEqual(['acme/oneRemove', 'acme/twoRemove']);
+    expect([...view.container.querySelectorAll('.tplf-attached-row button')]
+      .map((button) => button.getAttribute('aria-label'))).toEqual([
+      'Remove acme/one',
+      'Remove acme/two',
+    ]);
     await act(async () => {
       view.container.querySelector('form')?.dispatchEvent(
         new Event('submit', { bubbles: true, cancelable: true }),
@@ -1063,8 +1093,9 @@ describe('create template screen', () => {
     });
     await settle();
 
-    expect(view.container.querySelector('.tplf-repo-url-row')?.textContent)
-      .toBe('public/exampleRemove');
+    expect(view.container.querySelector('.tplf-attached-row')?.textContent).toBe('public/exampleRemove');
+    expect(view.container.querySelector('button[aria-label="Remove public/example"]')?.textContent)
+      .toBe('Remove');
     const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     if (setInputValue === undefined) throw new Error('input value setter unavailable');
