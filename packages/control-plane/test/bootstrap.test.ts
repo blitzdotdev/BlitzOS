@@ -396,6 +396,73 @@ describe("production VM bootstrap", () => {
     expect(userData.slice(register, completed)).toMatch(/\|\|[\s\S]*true/u);
   });
 
+  // ---- box update path (blitz-box-run + host updater) ----
+  // The docker run for the box container is emitted as /usr/local/bin/
+  // blitz-box-run so create and update share one code path; the host-side
+  // updater and its 5-minute timer poll GET /workspaces/self/box-config with
+  // the box credential. See core/box-config.ts and the box-config fixtures.
+
+  it("extracts the box container start into blitz-box-run and boots through it", () => {
+    const userData = registryUserData();
+
+    const write = userData.indexOf("cat >/usr/local/bin/blitz-box-run <<'BOX_RUN'");
+    const run = userData.indexOf("docker run --detach", write);
+    const mode = userData.indexOf("chmod 0755 /usr/local/bin/blitz-box-run", run);
+    const start = userData.indexOf('/usr/local/bin/blitz-box-run "$box_image"', mode);
+    const health = userData.indexOf("health_deadline=", start);
+    expect(write).toBeGreaterThan(-1);
+    expect(run).toBeGreaterThan(write);
+    expect(mode).toBeGreaterThan(run);
+    expect(start).toBeGreaterThan(mode);
+    expect(health).toBeGreaterThan(start);
+    // The script takes the image as its one argument; nothing else varies
+    // between the initial start and an update.
+    expect(userData).toContain("box_image=${1:?usage: blitz-box-run <image-ref>}");
+  });
+
+  it("installs the host-side updater with its timer after enrollment lands", () => {
+    const userData = registryUserData();
+
+    const originInstall = userData.indexOf(
+      `printf '%s\\n' "$CONTROL_PLANE_ORIGIN" >/var/lib/blitz/origin`,
+    );
+    const updater = userData.indexOf("cat >/usr/local/sbin/blitz-box-update <<'BOX_UPDATER'");
+    const service = userData.indexOf("cat >/etc/systemd/system/blitz-box-update.service", updater);
+    const timer = userData.indexOf("cat >/etc/systemd/system/blitz-box-update.timer", service);
+    const enable = userData.indexOf("systemctl enable --now blitz-box-update.timer", timer);
+    const poke = userData.indexOf("credential registration poke start", enable);
+    expect(originInstall).toBeGreaterThan(-1);
+    expect(updater).toBeGreaterThan(originInstall);
+    expect(service).toBeGreaterThan(updater);
+    expect(timer).toBeGreaterThan(service);
+    expect(enable).toBeGreaterThan(timer);
+    expect(poke).toBeGreaterThan(enable);
+    expect(userData).toContain("OnUnitActiveSec=5min");
+    expect(userData).toContain('"$current_origin/workspaces/self/box-config"');
+    expect(userData).toContain("/workspaces/self/box-update-result");
+    // The log path resolves to /var/lib/blitz/box-update.log at run time.
+    expect(userData).toContain("readonly STATE_DIR=/var/lib/blitz");
+    expect(userData).toContain('UPDATE_LOG="$STATE_DIR/box-update.log"');
+  });
+
+  it("orders the updater's swap pull-first with a rollback start", () => {
+    const userData = registryUserData();
+
+    // Origin refresh happens on every poll, before the update gate.
+    const refresh = userData.indexOf('mv "$origin_tmp" "$ORIGIN_PATH"');
+    const gate = userData.indexOf('[ "$update_requested" = true ] || exit 0');
+    const pull = userData.indexOf('docker pull "$next_ref"', gate);
+    const remove = userData.indexOf("docker rm -f blitz-box", pull);
+    const startNew = userData.indexOf('if start_box "$next_ref"; then', remove);
+    const rollback = userData.indexOf('start_box "$current_image"', startNew);
+    expect(refresh).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(refresh);
+    expect(pull).toBeGreaterThan(gate);
+    expect(remove).toBeGreaterThan(pull);
+    expect(startNew).toBeGreaterThan(remove);
+    expect(rollback).toBeGreaterThan(startNew);
+  });
+
   it("reports bootstrap failures to the capability with only a bounded bootstrap_error field", () => {
     const userData = registryUserData();
     const fixture = phoneHomeFixture("requests/valid/form-failure.json");

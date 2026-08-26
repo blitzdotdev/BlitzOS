@@ -62,6 +62,20 @@ const agentRulesResponse: SharedShape<
   schema.AgentRulesResponse
 > = { version: "292a5824fd833548", content: "# Blitz box — agent rules\n" };
 
+const boxConfigResponse: SharedShape<
+  wire.BoxConfigResponse,
+  schema.BoxConfigResponse
+> = {
+  boxImageRef: "ghcr.io/blitzdotdev/blitz-box:v2",
+  controlPlaneOrigin: "https://cp.example",
+  updateRequested: true,
+};
+
+const boxUpdateResult: SharedShape<
+  wire.BoxUpdateResultRequest,
+  schema.BoxUpdateResultRequest
+> = { ref: boxConfigResponse.boxImageRef, outcome: "rolled-back" };
+
 const agentRule: SharedShape<wire.AgentRuleView, schema.AgentRuleView> = {
   id: "rule",
   name: "House rules",
@@ -475,6 +489,8 @@ const fullFieldValues = [
   environment,
   environmentResponse,
   agentRulesResponse,
+  boxConfigResponse,
+  boxUpdateResult,
   agentRule,
   agentRules,
   putAgentRuleRequest,
@@ -540,6 +556,9 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceEnvironment>().toEqualTypeOf<schema.WorkspaceEnvironment>();
     expectTypeOf<wire.WorkspaceEnvironmentResponse>().toEqualTypeOf<schema.WorkspaceEnvironmentResponse>();
     expectTypeOf<wire.AgentRulesResponse>().toEqualTypeOf<schema.AgentRulesResponse>();
+    expectTypeOf<wire.BoxConfigResponse>().toEqualTypeOf<schema.BoxConfigResponse>();
+    expectTypeOf<wire.BoxUpdateOutcome>().toEqualTypeOf<schema.BoxUpdateOutcome>();
+    expectTypeOf<wire.BoxUpdateResultRequest>().toEqualTypeOf<schema.BoxUpdateResultRequest>();
     expectTypeOf<wire.AgentRuleView>().toEqualTypeOf<schema.AgentRuleView>();
     expectTypeOf<wire.ListAgentRulesResponse>().toEqualTypeOf<schema.ListAgentRulesResponse>();
     expectTypeOf<wire.PutAgentRuleRequest>().toEqualTypeOf<schema.PutAgentRuleRequest>();
@@ -621,6 +640,7 @@ describe("local wire copies", () => {
           .toEqual(schema.agentEffortsForModel(provider, model));
       }
     }
+    expect(wire.BOX_UPDATE_OUTCOMES).toEqual(schema.BOX_UPDATE_OUTCOMES);
     expect(wire.PHASES).toEqual(schema.PHASES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
