@@ -148,9 +148,8 @@ describe("operator tokens", () => {
     expect((await tokenRow(minted.id)).last_used_at).not.toBeNull();
   });
 
-  it("refuses every mutation and the agent port, and records neither as a use", async () => {
-    const proxied: string[] = [];
-    const app = tunnelledApp(proxied);
+  it("refuses a mutation carrying a valid operator token", async () => {
+    const app = tunnelledApp([]);
     const cookie = await operatorSession(app);
     const workspace = await workspaceFor(app, cookie);
     const minted = await (await mint(app, cookie)).json<MintedToken>();
@@ -173,25 +172,44 @@ describe("operator tokens", () => {
     });
     expect(destroyed.status).toBe(403);
 
-    // The agent port is the one that can drive the harness. It is refused
-    // before the proxy is reached, on a GET the surface list would allow.
+    // A refused request is not a use of the credential.
+    expect((await tokenRow(minted.id)).last_used_at).toBeNull();
+  });
+
+  it("refuses the agent port so an operator token cannot drive an agent", async () => {
+    const proxied: string[] = [];
+    const app = tunnelledApp(proxied);
+    const cookie = await operatorSession(app);
+    const workspace = await workspaceFor(app, cookie);
+    const minted = await (await mint(app, cookie)).json<MintedToken>();
+    const headers = { Authorization: `Bearer ${minted.token}` };
+
+    // A GET the box surface list would otherwise allow: the operator token is
+    // refused on port 7444 before the proxy is reached.
     const agent = await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers });
     expect(agent.status).toBe(403);
+    expect(proxied).toEqual([]);
 
     const mutatedSurface = await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, {
       method: "POST",
       headers,
     });
     expect(mutatedSurface.status).toBe(403);
+    expect(proxied).toEqual([]);
+  });
 
-    // Out of scope even though it is a GET: the scope is an allowlist, so a
-    // route the token was not minted for stays unreachable.
+  it("refuses a read outside the three paths it was minted for", async () => {
+    const app = tunnelledApp([]);
+    const cookie = await operatorSession(app);
+    const workspace = await workspaceFor(app, cookie);
+    const minted = await (await mint(app, cookie)).json<MintedToken>();
+    const headers = { Authorization: `Bearer ${minted.token}` };
+
+    // Both are GETs the session cookie may make. The scope is an allowlist,
+    // so a route the token was not minted for stays unreachable.
     expect((await appRequest(app, "/me", { headers })).status).toBe(403);
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp-state`, { headers })).status)
       .toBe(403);
-
-    expect(proxied).toEqual([]);
-    expect((await tokenRow(minted.id)).last_used_at).toBeNull();
   });
 
   it("stops working once revoked, and revoking is platform-operator only", async () => {
