@@ -503,28 +503,16 @@ func (g *gateway) serveDiag(response http.ResponseWriter, request *http.Request,
 	}
 }
 
-// diagServices probes the three addresses this gateway proxies to. It reports
-// the address the gateway would actually dial, so an unset target falls back
-// to the same constant serveACP and serveTerminal fall back to, and every box
-// answers for all three.
+// diagServices probes the three addresses this gateway proxies to, and always
+// all three: a box that reports two services is not a diagnosis anyone can act
+// on. main is the only place a gateway is built and it sets all three, so the
+// addresses are read straight off the struct.
 func (g *gateway) diagServices() []diagService {
-	actor := actorAddress
-	if g.actor != nil {
-		actor = g.actor.Host
-	}
-	terminal := terminalAddress
-	if g.terminal != nil {
-		terminal = g.terminal.Host
-	}
-	files := dufsAddress
-	if g.dufsAddress != "" {
-		files = g.dufsAddress
-	}
 	services := make([]diagService, 0, 3)
 	for _, service := range []diagService{
-		{Name: "actor", Address: actor},
-		{Name: "terminal", Address: terminal},
-		{Name: "dufs", Address: files},
+		{Name: "actor", Address: g.actor.Host},
+		{Name: "terminal", Address: g.terminal.Host},
+		{Name: "dufs", Address: g.dufsAddress},
 	} {
 		connection, err := net.DialTimeout("tcp", service.Address, diagDialTimeout)
 		if err == nil {
