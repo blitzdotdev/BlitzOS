@@ -123,12 +123,15 @@ function PresenceFace({ member }: { member: PresenceMemberView }) {
 export function PresenceFaceStack({
   members,
   compact = false,
+  maxFaces = MAX_STACK_FACES,
 }: {
   members: readonly PresenceMemberView[];
   compact?: boolean;
+  /** Visual density only; the accessible label still names the group. */
+  maxFaces?: number;
 }) {
   if (members.length === 0) return null;
-  const visible = members.slice(0, MAX_STACK_FACES);
+  const visible = members.slice(0, Math.max(1, maxFaces));
   const hidden = members.length - visible.length;
   return (
     <span
@@ -332,7 +335,7 @@ export function OrgPresence({
       >
         {members.length > 0
           ? <span aria-hidden="true"><PresenceFaceStack members={members} compact /></span>
-          : <span className="org-presence-empty-icon" aria-hidden="true"><i /><i /></span>}
+          : <span className="org-presence-empty-icon codicon codicon-person" aria-hidden="true" />}
       </button>
       <div
         className="org-presence-popover"
@@ -344,8 +347,8 @@ export function OrgPresence({
         ref={popover}
       >
         <header>
-          <strong>Organization</strong>
-          <span>{stale ? 'Reconnecting…' : `${members.length} online`}</span>
+          <strong>{stale ? 'Reconnecting…' : `${members.length} online`}</strong>
+          {stale && <span>{members.length} last known</span>}
         </header>
         {members.length === 0 ? (
           <p className="org-presence-empty">No other collaborators are online.</p>

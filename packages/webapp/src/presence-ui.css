@@ -103,38 +103,9 @@
 }
 
 .org-presence-empty-icon {
-  position: relative;
-  width: 22px;
-  height: 17px;
-}
-
-.org-presence-empty-icon i {
-  position: absolute;
-  top: 2px;
-  width: 8px;
-  height: 8px;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-}
-
-.org-presence-empty-icon i:first-child {
-  left: 2px;
-}
-
-.org-presence-empty-icon i:last-child {
-  right: 2px;
-}
-
-.org-presence-empty-icon::after {
-  position: absolute;
-  right: 1px;
-  bottom: 0;
-  left: 1px;
-  height: 6px;
-  border: 1px solid currentColor;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
-  content: '';
+  color: var(--faint);
+  font-size: 15px;
+  line-height: 1;
 }
 
 /* Anchored to the rail header (.webapp-org-wrap is the positioned ancestor),
@@ -148,12 +119,14 @@
   width: min(320px, calc(100vw - 16px));
   max-height: min(560px, calc(100dvh - var(--headerH) - 12px));
   overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
   background: var(--paper);
   box-shadow: var(--lift);
   color: var(--ink);
   scrollbar-color: var(--rule) transparent;
+  scrollbar-gutter: stable;
   user-select: text;
 }
 

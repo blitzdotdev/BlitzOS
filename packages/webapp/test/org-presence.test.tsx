@@ -6,6 +6,7 @@ import {
   membersOnSession,
   OrgPresence,
   otherPresenceMembers,
+  PresenceFaceStack,
   presenceSections,
 } from '../src/OrgPresence';
 import { render } from './dom';
@@ -103,6 +104,8 @@ describe('organization presence UI', () => {
 
     const dialog = view.container.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog?.hidden).toBe(false);
+    expect(dialog?.querySelector('header strong')?.textContent).toBe('3 online');
+    expect(dialog?.querySelector('header')?.textContent).not.toContain('Organization');
     expect(dialog?.textContent).toContain('Here');
     expect(dialog?.textContent).toContain('Prototype · Pairing');
     expect(dialog?.textContent).toContain('In another workspace');
@@ -215,6 +218,7 @@ describe('organization presence UI', () => {
     expect(view.container.querySelector('.org-presence--stale')).not.toBeNull();
     await act(async () => trigger?.click());
     expect(view.container.querySelector('.org-presence-popover header')?.textContent).toContain('Reconnecting…');
+    expect(view.container.querySelector('.org-presence-popover header')?.textContent).toContain('1 last known');
     await view.unmount();
   });
 
@@ -228,7 +232,9 @@ describe('organization presence UI', () => {
         onNavigate={() => undefined}
       />,
     );
+    expect(empty.container.querySelector('.org-presence-empty-icon.codicon-person')).not.toBeNull();
     await act(async () => empty.container.querySelector<HTMLButtonElement>('.org-presence-trigger')?.click());
+    expect(empty.container.querySelector('.org-presence-popover header strong')?.textContent).toBe('0 online');
     expect(empty.container.textContent).toContain('No other collaborators are online.');
     await empty.unmount();
 
@@ -250,5 +256,12 @@ describe('organization presence UI', () => {
     expect(large.container.querySelectorAll('.org-presence-trigger .org-presence-face')).toHaveLength(3);
     expect(large.container.querySelector('.org-presence-trigger .org-presence-more')?.textContent).toBe('+4');
     await large.unmount();
+
+    const tabDensity = await render(<PresenceFaceStack members={crowd} compact maxFaces={1} />);
+    expect(tabDensity.container.querySelectorAll('.org-presence-face')).toHaveLength(1);
+    expect(tabDensity.container.querySelector('.org-presence-more')?.textContent).toBe('+6');
+    expect(tabDensity.container.querySelector('[role="img"]')?.getAttribute('aria-label'))
+      .toContain('7 collaborators online');
+    await tabDensity.unmount();
   });
 });

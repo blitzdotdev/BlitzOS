@@ -185,7 +185,7 @@ export function SessionRail({
               <span className="shell-s__t">{session.label}</span>
               {session.presence && session.presence.length > 0 && (
                 <span className="webapp-session-presence">
-                  <PresenceFaceStack members={session.presence} compact />
+                  <PresenceFaceStack members={session.presence} compact maxFaces={2} />
                 </span>
               )}
               {/* Time is the status at Build 2. Tabs have no clock, so the

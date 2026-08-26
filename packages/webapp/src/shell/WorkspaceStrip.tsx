@@ -249,6 +249,7 @@ export function WorkspaceStrip({
                 offline ? ' shell-wtile--off' : ''}`}
               type="button"
               key={workspace.id}
+              data-workspace-id={workspace.id}
               aria-label={workspace.title}
               aria-current={active ? 'page' : undefined}
               disabled={!workspace.canControl}
@@ -264,7 +265,7 @@ export function WorkspaceStrip({
                 const tilePresence = membersInWorkspace(presenceMembers, workspace.id);
                 return tilePresence.length > 0 && (
                   <span className="shell-wtile__presence">
-                    <PresenceFaceStack members={tilePresence} compact />
+                    <PresenceFaceStack members={tilePresence} compact maxFaces={2} />
                   </span>
                 );
               })()}

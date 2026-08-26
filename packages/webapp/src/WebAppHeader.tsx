@@ -276,7 +276,7 @@ export function WebAppHeader({
                       >{tab.label}</span>
                       {tab.presence && tab.presence.length > 0 && (
                         <span className="webapp-tab-presence">
-                          <PresenceFaceStack members={tab.presence} compact />
+                          <PresenceFaceStack members={tab.presence} compact maxFaces={1} />
                         </span>
                       )}
                       {tab.dirty && <span className="webapp-tab-dirty" aria-label="Unsaved changes">•</span>}
