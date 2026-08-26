@@ -492,6 +492,7 @@ export async function resetDatabase(): Promise<void> {
     "recipes",
     "workspace_templates",
     "agent_rules",
+    "operator_tokens",
     "sessions",
     "invites",
     "memberships",

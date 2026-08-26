@@ -43,6 +43,7 @@ const expectedTables = [
   "credential_events",
   "credential_requests",
   "microvm_hosts",
+  "operator_tokens",
   "blitz_files",
 ] as const;
 
@@ -64,9 +65,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-one domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-two domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(32);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(33);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
