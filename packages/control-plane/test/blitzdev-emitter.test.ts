@@ -145,7 +145,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(96);
+    expect(first.files).toHaveLength(97);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
