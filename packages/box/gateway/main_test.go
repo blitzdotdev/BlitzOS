@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -1763,5 +1767,509 @@ func assertNoAccessControlHeaders(t *testing.T, header http.Header) {
 		if strings.HasPrefix(strings.ToLower(name), "access-control-") {
 			t.Errorf("unexpected %s: %q", name, values)
 		}
+	}
+}
+
+// captureGatewayLog points the package logger at a buffer for one test. Every
+// policy refusal has to be readable from inside the box — that is the whole
+// point of `deny` — so the log line is part of the contract these tests pin,
+// not a side effect they tolerate.
+func captureGatewayLog(t *testing.T) func() string {
+	t.Helper()
+	buffer := &bytes.Buffer{}
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(buffer)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
+	return buffer.String
+}
+
+// TestPolicyRefusalsExplainThemselves walks every refusal the gateway decides
+// from box state. Before `deny`, each one wrote a bare status and logged
+// nothing, so a box that refused everything looked identical to a healthy one.
+// Each case asserts the reason and the deciding detail reach both the operator
+// (the log) and the caller (the body).
+func TestPolicyRefusalsExplainThemselves(t *testing.T) {
+	const secret = "refusal-secret"
+	const workspaceID = "workspace-refusal"
+	const controlPlaneOrigin = "https://cp.example"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{
+		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
+		terminal:               upstreamURL,
+		actor:                  upstreamURL,
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		webAppTokenPath:        tokenPath,
+		workspaceIDPath:        workspacePath,
+		transport:              http.DefaultTransport,
+	}
+	viewer := func() string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID: workspaceID, UserID: "viewer-user", MembershipID: "viewer-member",
+			Role: "viewer", Exp: time.Now().Unix() + 60,
+		})
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		credential string
+		origin     string
+		webSocket  bool
+		status     int
+		reason     string
+		details    []string
+	}{
+		{
+			name: "webApp token missing", method: http.MethodGet, target: "/workspace/file.txt",
+			status: http.StatusForbidden, reason: "webApp token forbidden",
+			details: []string{"no " + webAppTokenHeader + " header"},
+		},
+		{
+			name: "webApp token wrong", method: http.MethodGet, target: "/workspace/file.txt",
+			credential: "not-the-token",
+			status:     http.StatusForbidden, reason: "webApp token forbidden",
+			details: []string{"static webApp token did not match the box token"},
+		},
+		{
+			name: "webApp ticket rejected", method: http.MethodGet, target: "/workspace/file.txt",
+			credential: "v1.bm90LWEtdGlja2V0.bm90LWEtc2ln",
+			status:     http.StatusForbidden, reason: "webApp token forbidden",
+			details: []string{"v1 ticket rejected", workspaceID},
+		},
+		{
+			name: "drain by a viewer", method: http.MethodPost, target: "/admin/drain",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "drain forbidden",
+			details: []string{`role "viewer"`, `user "viewer-user"`},
+		},
+		{
+			name: "diagnostics by a viewer", method: http.MethodGet, target: "/diag",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "diagnostics forbidden",
+			details: []string{`role "viewer"`, `user "viewer-user"`},
+		},
+		{
+			name: "websocket origin", method: http.MethodGet, target: "/terminal/ws",
+			credential: viewer(), origin: "https://evil.example", webSocket: true,
+			status: http.StatusForbidden, reason: "websocket origin forbidden",
+			details: []string{controlPlaneOrigin, "https://evil.example"},
+		},
+		{
+			name: "terminal args", method: http.MethodGet, target: "/terminal/ws?arg=terminal",
+			credential: viewer(),
+			status:     http.StatusBadRequest, reason: "terminal requires a session type and key",
+			details: []string{`role "viewer"`, "got 1 positional arg values, want 2"},
+		},
+		{
+			name: "agent port for a viewer", method: http.MethodGet, target: "/acp",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "viewers cannot drive the workspace agent",
+			details: []string{`role "viewer"`},
+		},
+		{
+			name: "preview write by a viewer", method: http.MethodPost, target: "/preview/3000/api",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "viewer preview access is read-only",
+			details: []string{`role "viewer"`, "method POST"},
+		},
+		{
+			name: "file write by a viewer", method: http.MethodPut, target: "/workspace/file.txt",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "viewer file access is read-only",
+			details: []string{`role "viewer"`, "method PUT"},
+		},
+		{
+			name: "reserved preview port", method: http.MethodGet, target: "/preview/7443/",
+			credential: secret,
+			status:     http.StatusForbidden, reason: "port is reserved by the box",
+			details: []string{"port 7443"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logged := captureGatewayLog(t)
+			request := httptest.NewRequest(test.method, "http://box"+test.target, nil)
+			if test.credential != "" {
+				request.Header.Set(webAppTokenHeader, test.credential)
+			}
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			if test.webSocket {
+				request.Header.Set("Connection", "keep-alive, Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			assertRefusalExplained(t, response, logged(), test.method, test.status, test.reason, test.details)
+		})
+	}
+
+	t.Run("surface authentication unavailable", func(t *testing.T) {
+		// A webApp token file that exists but is empty fails every request
+		// closed. The box that does this is indistinguishable from a healthy
+		// one unless it says which file it could not use.
+		emptyTokenPath := filepath.Join(t.TempDir(), "webapp-token")
+		if err := os.WriteFile(emptyTokenPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		failClosed := &gateway{webAppTokenPath: emptyTokenPath, workspaceIDPath: workspacePath}
+		logged := captureGatewayLog(t)
+		response := httptest.NewRecorder()
+		failClosed.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://box/workspace/file.txt", nil))
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusServiceUnavailable,
+			"surface authentication unavailable", []string{emptyTokenPath, "is empty"})
+	})
+}
+
+// assertRefusalExplained pins the two places a refusal has to be readable: the
+// box's own log, and the body the caller gets back.
+func assertRefusalExplained(t *testing.T, response *httptest.ResponseRecorder, logText, method string, status int, reason string, details []string) {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status = %d, want %d; body = %q", response.Code, status, response.Body.String())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, reason) {
+		t.Errorf("body = %q, want it to carry reason %q", body, reason)
+	}
+	if !strings.Contains(logText, fmt.Sprintf("reason=%q", reason)) {
+		t.Errorf("log = %q, want it to carry reason %q", logText, reason)
+	}
+	if !strings.Contains(logText, fmt.Sprintf("status=%d", status)) {
+		t.Errorf("log = %q, want it to carry status %d", logText, status)
+	}
+	if !strings.Contains(logText, "gateway refused "+method+" ") {
+		t.Errorf("log = %q, want it to name method %s", logText, method)
+	}
+	for _, detail := range details {
+		if !strings.Contains(body, detail) {
+			t.Errorf("body = %q, want it to carry detail %q", body, detail)
+		}
+		if !strings.Contains(logText, detail) {
+			t.Errorf("log = %q, want it to carry detail %q", logText, detail)
+		}
+	}
+}
+
+// TestWebSocketOriginRefusalNamesBothOrigins is the incident, written down. A
+// control-plane domain change left every box pinned to an origin that no
+// longer existed; the gateway refused every websocket and named neither side
+// of the comparison, so the only evidence anywhere was a browser console. Both
+// origins are the deployment's own domains, so both belong in the refusal.
+func TestWebSocketOriginRefusalNamesBothOrigins(t *testing.T) {
+	const bakedOrigin = "https://old-control-plane.example"
+	const arrivingOrigin = "https://new-control-plane.example"
+
+	t.Run("pinned to a domain that moved", func(t *testing.T) {
+		logged := captureGatewayLog(t)
+		handler := &gateway{controlPlaneOriginPath: writeOriginFile(t, bakedOrigin)}
+		request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws", nil)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		request.Header.Set("Origin", arrivingOrigin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusForbidden,
+			"websocket origin forbidden", []string{bakedOrigin, arrivingOrigin})
+	})
+
+	t.Run("no origin file at all", func(t *testing.T) {
+		// The expected origin is empty, which reads as "no expectation" unless
+		// the refusal says which file was missing.
+		missingPath := filepath.Join(t.TempDir(), "origin")
+		logged := captureGatewayLog(t)
+		handler := &gateway{controlPlaneOriginPath: missingPath}
+		request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws", nil)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		request.Header.Set("Origin", arrivingOrigin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusForbidden,
+			"websocket origin forbidden", []string{missingPath, "missing or empty", arrivingOrigin})
+	})
+
+	t.Run("no origin header at all", func(t *testing.T) {
+		logged := captureGatewayLog(t)
+		handler := &gateway{controlPlaneOriginPath: writeOriginFile(t, bakedOrigin)}
+		request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws", nil)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusForbidden,
+			"websocket origin forbidden", []string{`expected "` + bakedOrigin + `" got ""`})
+	})
+}
+
+// diagGateway builds a box whose every diagnosable fact is a fixture: a live
+// actor, a dufs that answers, a terminal address nothing listens on, a real
+// origin, a real workspace id, and an agent credential file holding a value
+// that must never leave the box.
+func diagGateway(t *testing.T, secret, workspaceID, controlPlaneOrigin, credentialContents string) (*gateway, string) {
+	t.Helper()
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	live := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(live.Close)
+	liveURL, err := url.Parse(live.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialPath := filepath.Join(t.TempDir(), ".credentials.json")
+	if credentialContents != "" {
+		if err := os.WriteFile(credentialPath, []byte(credentialContents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &gateway{
+		dufsAddress:            liveURL.Host,
+		terminal:               &url.URL{Scheme: "http", Host: closedLoopbackAddress(t)},
+		actor:                  liveURL,
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		webAppTokenPath:        tokenPath,
+		workspaceIDPath:        workspacePath,
+		agentCredentialPath:    credentialPath,
+		transport:              http.DefaultTransport,
+	}, credentialPath
+}
+
+// closedLoopbackAddress returns a loopback address nothing listens on, by
+// taking one and giving it back. It stands in for a box service that died.
+func closedLoopbackAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return address
+}
+
+func diagRequest(t *testing.T, handler *gateway, credential string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "http://box/diag", nil)
+	if credential != "" {
+		request.Header.Set(webAppTokenHeader, credential)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	return response
+}
+
+// TestDiagIsOwnerAndAdminOnly holds /diag to the guard /admin/drain keeps.
+// The report names the box's internal addresses and the state its policy runs
+// on, which a member of the workspace has no business enumerating.
+func TestDiagIsOwnerAndAdminOnly(t *testing.T) {
+	const secret = "diag-role-secret"
+	const workspaceID = "workspace-diag-role"
+	handler, _ := diagGateway(t, secret, workspaceID, "https://cp.example", `{"accessToken":"x"}`)
+	ticket := func(role string) string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID: workspaceID, UserID: role + "-user", MembershipID: role + "-member",
+			Role: role, Exp: time.Now().Unix() + 60,
+		})
+	}
+	for _, test := range []struct {
+		role   string
+		status int
+	}{
+		{role: "viewer", status: http.StatusForbidden},
+		{role: "editor", status: http.StatusForbidden},
+		{role: "admin", status: http.StatusOK},
+		{role: "owner", status: http.StatusOK},
+	} {
+		t.Run(test.role, func(t *testing.T) {
+			response := diagRequest(t, handler, ticket(test.role))
+			if response.Code != test.status {
+				t.Fatalf("%s /diag status = %d, want %d; body = %q",
+					test.role, response.Code, test.status, response.Body.String())
+			}
+		})
+	}
+
+	t.Run("no credential at all", func(t *testing.T) {
+		response := diagRequest(t, handler, "")
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("anonymous /diag status = %d, want %d", response.Code, http.StatusForbidden)
+		}
+	})
+}
+
+// TestDiagReportsTheStateThatDecidesRefusals pins the answer itself. Each
+// field is a fact an operator had to guess at during the outage: what origin
+// is this box pinned to, which of its services are up, which workspace does it
+// think it is, and does the agent have a credential at all.
+func TestDiagReportsTheStateThatDecidesRefusals(t *testing.T) {
+	const secret = "diag-report-secret"
+	const workspaceID = "workspace-diag-report"
+	const controlPlaneOrigin = "https://old-control-plane.example"
+	handler, credentialPath := diagGateway(t, secret, workspaceID, controlPlaneOrigin, `{"accessToken":"x"}`)
+
+	response := diagRequest(t, handler, secret)
+	if response.Code != http.StatusOK {
+		t.Fatalf("owner /diag status = %d, want %d; body = %q", response.Code, http.StatusOK, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	var report diagReport
+	if err := json.Unmarshal(response.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode /diag: %v; body = %q", err, response.Body.String())
+	}
+	if report.ControlPlaneOrigin != controlPlaneOrigin {
+		t.Errorf("controlPlaneOrigin = %q, want %q", report.ControlPlaneOrigin, controlPlaneOrigin)
+	}
+	if report.WorkspaceID != workspaceID {
+		t.Errorf("workspaceId = %q, want %q", report.WorkspaceID, workspaceID)
+	}
+	if !report.AuthRequired {
+		t.Error("authRequired = false on a box that has a webApp token")
+	}
+	if report.AgentCredentialPath != credentialPath {
+		t.Errorf("agentCredentialPath = %q, want %q", report.AgentCredentialPath, credentialPath)
+	}
+	if !report.AgentCredentialPresent {
+		t.Error("agentCredentialPresent = false while the credential file exists")
+	}
+
+	// A box always answers for all three services, in a fixed order, whether
+	// or not they answer: "the terminal is missing from the list" is not a
+	// diagnosis anyone can act on.
+	wantNames := []string{"actor", "terminal", "dufs"}
+	gotNames := make([]string, 0, len(report.Services))
+	for _, service := range report.Services {
+		gotNames = append(gotNames, service.Name)
+	}
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("services = %v, want %v", gotNames, wantNames)
+	}
+	reachable := map[string]bool{"actor": true, "terminal": false, "dufs": true}
+	for _, service := range report.Services {
+		if service.Reachable != reachable[service.Name] {
+			t.Errorf("%s reachable = %v, want %v (address %s, error %q)",
+				service.Name, service.Reachable, reachable[service.Name], service.Address, service.Error)
+		}
+		if service.Address == "" {
+			t.Errorf("%s reported no address", service.Name)
+		}
+		if service.Reachable && service.Error != "" {
+			t.Errorf("%s is reachable and still reported error %q", service.Name, service.Error)
+		}
+		if !service.Reachable && service.Error == "" {
+			t.Errorf("%s is unreachable and said nothing about why", service.Name)
+		}
+	}
+
+	t.Run("agent credential absent", func(t *testing.T) {
+		if err := os.Remove(credentialPath); err != nil {
+			t.Fatal(err)
+		}
+		absent := diagRequest(t, handler, secret)
+		var report diagReport
+		if err := json.Unmarshal(absent.Body.Bytes(), &report); err != nil {
+			t.Fatal(err)
+		}
+		if report.AgentCredentialPresent {
+			t.Error("agentCredentialPresent = true after the credential file was removed")
+		}
+	})
+}
+
+// TestDiagNeverCarriesSecretMaterial is the guard that lets /diag exist. The
+// gateway sits on a webApp token and an agent OAuth credential, and a
+// diagnostic that hands either one to its caller is worse than no diagnostic.
+// It walks every value in the answer, not the fields this version happens to
+// have, so a field added later is covered the day it is added.
+func TestDiagNeverCarriesSecretMaterial(t *testing.T) {
+	const secret = "sk-webapp-token-must-not-leak"
+	const workspaceID = "workspace-diag-secrets"
+	const credentialContents = `{"claudeAiOauth":{"accessToken":"sk-ant-oat01-must-not-leak"}}`
+	handler, _ := diagGateway(t, secret, workspaceID, "https://cp.example", credentialContents)
+
+	response := diagRequest(t, handler, secret)
+	if response.Code != http.StatusOK {
+		t.Fatalf("owner /diag status = %d, want %d", response.Code, http.StatusOK)
+	}
+	body := response.Body.String()
+	for _, forbidden := range []string{
+		secret,
+		credentialContents,
+		"sk-ant-oat01-must-not-leak",
+		"claudeAiOauth",
+		"accessToken",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("/diag body carries %q: %s", forbidden, body)
+		}
+	}
+
+	// The field set is part of the contract: every one of these is either a
+	// boolean, an address the gateway dials, or a path — never a value read
+	// out of a file that holds a secret.
+	var decoded map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(decoded))
+	for key := range decoded {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	wantKeys := []string{
+		"agentCredentialPath", "agentCredentialPresent", "authRequired",
+		"controlPlaneOrigin", "services", "workspaceId",
+	}
+	if !reflect.DeepEqual(keys, wantKeys) {
+		t.Fatalf("/diag fields = %v, want %v", keys, wantKeys)
+	}
+}
+
+// TestDiagMethods keeps /diag to what the other 7445 surfaces answer: a read,
+// and nothing else.
+func TestDiagMethods(t *testing.T) {
+	const secret = "diag-method-secret"
+	handler, _ := diagGateway(t, secret, "workspace-diag-method", "https://cp.example", "")
+
+	options := httptest.NewRequest(http.MethodOptions, "http://box/diag", nil)
+	options.Header.Set(webAppTokenHeader, secret)
+	optionsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(optionsResponse, options)
+	if optionsResponse.Code != http.StatusNoContent {
+		t.Errorf("OPTIONS /diag status = %d, want %d", optionsResponse.Code, http.StatusNoContent)
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "http://box/diag", strings.NewReader("{}"))
+	post.Header.Set(webAppTokenHeader, secret)
+	postResponse := httptest.NewRecorder()
+	handler.ServeHTTP(postResponse, post)
+	if postResponse.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /diag status = %d, want %d", postResponse.Code, http.StatusMethodNotAllowed)
+	}
+	if got := postResponse.Header().Get("Allow"); got != "GET, OPTIONS" {
+		t.Errorf("Allow = %q, want %q", got, "GET, OPTIONS")
 	}
 }

@@ -21,6 +21,7 @@ describe("webApp surface copies", () => {
       [7444, "/admin/drain"],
       [7444, "/acp"],
       [7445, "/"],
+      [7445, "/diag"],
       [7445, "/ports"],
       [7445, "/previews"],
       [7445, "/preview-focus"],

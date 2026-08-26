@@ -43,6 +43,7 @@ const (
 	previewsPath           = "/var/lib/blitz/previews.json"
 	previewFocusPath       = "/var/lib/blitz/preview-focus.json"
 	connectionsFocusPath   = "/var/lib/blitz/connections-focus.json"
+	agentCredentialPath    = "/var/lib/blitz/home/.claude/.credentials.json"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
@@ -99,6 +100,7 @@ type previewLink struct {
 
 type gateway struct {
 	dufs                   *httputil.ReverseProxy
+	dufsAddress            string
 	terminal               *url.URL
 	actor                  *url.URL
 	controlPlaneOriginPath string
@@ -108,6 +110,7 @@ type gateway struct {
 	previewsPath           string
 	previewFocusPath       string
 	connectionsFocusPath   string
+	agentCredentialPath    string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
@@ -174,6 +177,7 @@ func main() {
 
 	handler := &gateway{
 		dufs:                   dufsProxy,
+		dufsAddress:            dufsAddress,
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
 		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
 		controlPlaneOriginPath: controlPlaneOriginPath,
@@ -183,6 +187,7 @@ func main() {
 		previewsPath:           previewsPath,
 		previewFocusPath:       previewFocusPath,
 		connectionsFocusPath:   connectionsFocusPath,
+		agentCredentialPath:    agentCredentialPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -198,9 +203,9 @@ func main() {
 }
 
 func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request) {
-	webAppToken, workspaceID, authRequired, available := g.currentWebAppAuth()
+	webAppToken, workspaceID, authRequired, available, authDetail := g.currentWebAppAuth()
 	if !available {
-		http.Error(response, "surface authentication unavailable", http.StatusServiceUnavailable)
+		deny(response, request, http.StatusServiceUnavailable, "surface authentication unavailable", authDetail)
 		return
 	}
 	identity := webAppIdentity{UserID: "legacy-owner", MembershipID: "legacy-owner", Role: "owner"}
@@ -208,7 +213,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		var allowed bool
 		identity, allowed = webAppCredential(request, webAppToken, workspaceID, time.Now().Unix())
 		if !allowed {
-			http.Error(response, "webApp token forbidden", http.StatusForbidden)
+			deny(response, request, http.StatusForbidden, "webApp token forbidden", webAppCredentialDetail(request, workspaceID))
 			return
 		}
 	}
@@ -218,7 +223,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		// The control plane calls it with the workspace token, which presents
 		// as the owner.
 		if identity.Role != "owner" && identity.Role != "admin" {
-			http.Error(response, "forbidden", http.StatusForbidden)
+			deny(response, request, http.StatusForbidden, "drain forbidden", roleDetail(identity))
 			return
 		}
 		removeWebAppTokenHeader(request.Header)
@@ -237,12 +242,21 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		response = &trackingResponseWriter{ResponseWriter: response, gateway: g, identity: identity}
 	}
 	if webSocket && !originAllowed(request, controlPlaneOrigin) {
-		http.Error(response, "websocket origin forbidden", http.StatusForbidden)
+		// The refusal that cost hours: after a domain change every box kept
+		// answering, kept looking healthy, and rejected every websocket
+		// because the origin it was pinned to no longer existed. Both
+		// origins are the deployment's own domains, so both go out.
+		deny(response, request, http.StatusForbidden, "websocket origin forbidden", g.originDetail(controlPlaneOrigin, request))
 		return
 	}
 	if !webSocket {
 		origin, allowed := allowedCORSOrigin(request, controlPlaneOrigin)
 		response = &corsResponseWriter{ResponseWriter: response, origin: origin, allowed: allowed}
+	}
+	if request.URL.Path == "/diag" {
+		removeWebAppTokenHeader(request.Header)
+		g.serveDiag(response, request, identity, controlPlaneOrigin, authRequired)
+		return
 	}
 	if request.URL.Path == "/ports" {
 		removeWebAppTokenHeader(request.Header)
@@ -273,7 +287,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		// The actor has no role guard of its own, so an observer reaching it
 		// here would drive the agent.
 		if identity.Role == "viewer" {
-			http.Error(response, "viewers cannot drive the workspace agent", http.StatusForbidden)
+			deny(response, request, http.StatusForbidden, "viewers cannot drive the workspace agent", roleDetail(identity))
 			return
 		}
 		g.serveACP(response, request)
@@ -285,7 +299,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		// so an observer gets to look but not to send.
 		if identity.Role == "viewer" && !filesReadMethod(request.Method) {
 			response.Header().Set("Allow", "GET, HEAD, OPTIONS")
-			http.Error(response, "viewer preview access is read-only", http.StatusForbidden)
+			deny(response, request, http.StatusForbidden, "viewer preview access is read-only", roleDetail(identity)+" method "+request.Method)
 			return
 		}
 		g.servePreview(response, request)
@@ -293,7 +307,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	}
 	if identity.Role == "viewer" && !filesReadMethod(request.Method) {
 		response.Header().Set("Allow", "GET, HEAD, OPTIONS, PROPFIND")
-		http.Error(response, "viewer file access is read-only", http.StatusForbidden)
+		deny(response, request, http.StatusForbidden, "viewer file access is read-only", roleDetail(identity)+" method "+request.Method)
 		return
 	}
 	g.dufs.ServeHTTP(response, request)
@@ -351,7 +365,8 @@ func (g *gateway) serveDrain(response http.ResponseWriter, request *http.Request
 func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Request) {
 	if identity, ok := request.Context().Value(webAppIdentityContextKey{}).(webAppIdentity); ok && identity.Role == "viewer" {
 		if !forceReadOnlyTerminalArgs(request.URL) {
-			http.Error(response, "terminal requires a session type and key", http.StatusBadRequest)
+			deny(response, request, http.StatusBadRequest, "terminal requires a session type and key",
+				fmt.Sprintf("%s got %d positional arg values, want 2", roleDetail(identity), len(request.URL.Query()["arg"])))
 			return
 		}
 	}
@@ -416,6 +431,99 @@ func (g *gateway) servePorts(response http.ResponseWriter, request *http.Request
 	}{Ports: ports}); err != nil {
 		log.Printf("port response failed: %v", err)
 	}
+}
+
+// diagService reports whether one of the box's internal listeners answers a
+// TCP connect. It is a liveness probe, not a health check: the gateway proxies
+// to these addresses, so "nothing is listening" and "something is listening"
+// is the distinction that tells an operator which service died.
+type diagService struct {
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	Reachable bool   `json:"reachable"`
+	Error     string `json:"error,omitempty"`
+}
+
+// diagReport is what `GET /diag` answers: the box state that decides whether a
+// request is refused, and whether the services behind the gateway are up. No
+// field carries a token, a signature, or the contents of any file.
+type diagReport struct {
+	WorkspaceID string `json:"workspaceId"`
+	// ControlPlaneOrigin is the origin baked into the box when it was created,
+	// the one a websocket Origin is compared against. Empty means the file is
+	// missing or blank, which is the state that refused every websocket.
+	ControlPlaneOrigin string `json:"controlPlaneOrigin"`
+	// AuthRequired is false on a box that has no webApp token, where every
+	// caller presents as the owner. It decides the role every guard reads.
+	AuthRequired bool `json:"authRequired"`
+	// AgentCredentialPresent costs one os.Stat and never a read: an agent that
+	// cannot log in and an agent that never had a credential look identical
+	// from the outside, and only the file's existence tells them apart.
+	AgentCredentialPath    string        `json:"agentCredentialPath"`
+	AgentCredentialPresent bool          `json:"agentCredentialPresent"`
+	Services               []diagService `json:"services"`
+}
+
+// diagDialTimeout keeps /diag cheap. Everything it probes is on loopback, so a
+// connect that has not completed by now is not going to.
+const diagDialTimeout = 500 * time.Millisecond
+
+func (g *gateway) serveDiag(response http.ResponseWriter, request *http.Request, identity webAppIdentity, controlPlaneOrigin string, authRequired bool) {
+	// The same guard /admin/drain keeps: this is an operator surface, and a
+	// member of the workspace has no business enumerating its plumbing.
+	if identity.Role != "owner" && identity.Role != "admin" {
+		deny(response, request, http.StatusForbidden, "diagnostics forbidden", roleDetail(identity))
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Stat, never read. The credential is the one file named here that holds a
+	// secret, and the answer an operator needs is only whether it is there.
+	_, credentialErr := os.Stat(g.agentCredentialPath)
+	report := diagReport{
+		WorkspaceID:            strings.TrimSpace(readOptionalFile(g.workspaceIDPath)),
+		ControlPlaneOrigin:     controlPlaneOrigin,
+		AuthRequired:           authRequired,
+		AgentCredentialPath:    g.agentCredentialPath,
+		AgentCredentialPresent: credentialErr == nil,
+		Services:               g.diagServices(),
+	}
+	response.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(response).Encode(report); err != nil {
+		log.Printf("diag response failed: %v", err)
+	}
+}
+
+// diagServices probes the three addresses this gateway proxies to, and always
+// all three: a box that reports two services is not a diagnosis anyone can act
+// on. main is the only place a gateway is built and it sets all three, so the
+// addresses are read straight off the struct.
+func (g *gateway) diagServices() []diagService {
+	services := make([]diagService, 0, 3)
+	for _, service := range []diagService{
+		{Name: "actor", Address: g.actor.Host},
+		{Name: "terminal", Address: g.terminal.Host},
+		{Name: "dufs", Address: g.dufsAddress},
+	} {
+		connection, err := net.DialTimeout("tcp", service.Address, diagDialTimeout)
+		if err == nil {
+			service.Reachable = true
+			_ = connection.Close()
+		} else {
+			service.Error = err.Error()
+		}
+		services = append(services, service)
+	}
+	return services
 }
 
 func parsePreviewLinks(data []byte) []previewLink {
@@ -734,7 +842,7 @@ func (g *gateway) servePreview(response http.ResponseWriter, request *http.Reque
 		return
 	}
 	if _, excluded := excludedPorts[port]; excluded {
-		http.Error(response, "port is reserved by the box", http.StatusForbidden)
+		deny(response, request, http.StatusForbidden, "port is reserved by the box", fmt.Sprintf("port %d", port))
 		return
 	}
 
@@ -786,7 +894,7 @@ func readOptionalFile(path string) string {
 	return string(data)
 }
 
-func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authRequired bool, available bool) {
+func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authRequired bool, available bool, detail string) {
 	g.authMu.Lock()
 	defer g.authMu.Unlock()
 
@@ -795,7 +903,7 @@ func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authReq
 	if err == nil && token != "" {
 		g.authRequired = true
 		g.lastWebAppToken = token
-		return token, strings.TrimSpace(readOptionalFile(g.workspaceIDPath)), true, true
+		return token, strings.TrimSpace(readOptionalFile(g.workspaceIDPath)), true, true, ""
 	}
 
 	if g.authRequired {
@@ -807,19 +915,22 @@ func (g *gateway) currentWebAppAuth() (token string, workspaceID string, authReq
 			}
 			g.authFailureLogged = true
 		}
-		return g.lastWebAppToken, strings.TrimSpace(readOptionalFile(g.workspaceIDPath)), true, true
+		return g.lastWebAppToken, strings.TrimSpace(readOptionalFile(g.workspaceIDPath)), true, true, ""
 	}
 
 	if err == nil || !errors.Is(err, os.ErrNotExist) {
-		return "", "", true, false
+		if err != nil {
+			return "", "", true, false, fmt.Sprintf("%s unreadable: %v", g.webAppTokenPath, err)
+		}
+		return "", "", true, false, fmt.Sprintf("%s is empty", g.webAppTokenPath)
 	}
 	if _, surfaceErr := os.Lstat(g.webAppTokenPath); !errors.Is(surfaceErr, os.ErrNotExist) {
-		return "", "", true, false
+		return "", "", true, false, fmt.Sprintf("%s exists but does not resolve: %v", g.webAppTokenPath, surfaceErr)
 	}
 	if _, tunnelErr := os.Lstat(g.tunnelTokenPath); !errors.Is(tunnelErr, os.ErrNotExist) {
-		return "", "", true, false
+		return "", "", true, false, fmt.Sprintf("%s is present without %s", g.tunnelTokenPath, g.webAppTokenPath)
 	}
-	return "", "", false, true
+	return "", "", false, true, ""
 }
 
 type webAppIdentityContextKey struct{}
@@ -969,6 +1080,74 @@ func parsePreviewPath(path string) (int, string, error) {
 		upstreamPath += parts[1]
 	}
 	return port, upstreamPath, nil
+}
+
+// deny refuses a request and says why, in the log and in the response body.
+//
+// Every policy refusal used to be silent: the gateway wrote a bare status and
+// logged nothing at all. After a control-plane domain change every existing
+// box rejected every websocket, and the only evidence anywhere was one line
+// in a browser console — the box logs, the workspace and the control plane all
+// looked healthy. A refusal that cannot be read from the box is a refusal that
+// costs hours, so an authorization decision that depends on box state goes
+// through here and carries the state that decided it.
+//
+// The detail is required — a refusal with nothing to say does not need this
+// helper — and it is operator-facing, never secret: roles, methods, ports,
+// file paths and the deployment's own origins. Never a token, and never the
+// contents of a credential file.
+func deny(response http.ResponseWriter, request *http.Request, status int, reason, detail string) {
+	// The detail goes in raw and last. It quotes the values inside itself, and
+	// %q here would escape those quotes into a line nobody wants to read at
+	// three in the morning.
+	log.Printf("gateway refused %s %s: status=%d reason=%q detail=%s",
+		request.Method, request.URL.Path, status, reason, detail)
+	http.Error(response, reason+": "+detail, status)
+}
+
+// roleDetail names the caller without naming the credential that proved it.
+func roleDetail(identity webAppIdentity) string {
+	return fmt.Sprintf("role %q user %q", identity.Role, identity.UserID)
+}
+
+// originDetail reports both sides of the origin comparison. Neither is a
+// secret — they are the deployment's own domains — and printing only one of
+// them is what made the outage unreadable.
+func (g *gateway) originDetail(controlPlaneOrigin string, request *http.Request) string {
+	detail := fmt.Sprintf("expected %q got %q", controlPlaneOrigin, requestOrigin(request))
+	if controlPlaneOrigin == "" {
+		detail += fmt.Sprintf(" (%s is missing or empty)", g.controlPlaneOriginPath)
+	}
+	return detail
+}
+
+// requestOrigin renders the Origin header for a human. Zero headers reads as
+// empty, and the several-headers case — itself a refusal reason — is joined
+// rather than hidden behind the first value.
+func requestOrigin(request *http.Request) string {
+	origins := request.Header.Values("Origin")
+	if len(origins) == 0 {
+		return ""
+	}
+	return strings.Join(origins, ", ")
+}
+
+// webAppCredentialDetail says which way the credential failed without
+// repeating any part of it. Which kind arrived — none, several, a static
+// token, a v1 ticket — and the workspace id the box expects are the whole
+// diagnosis; the credential itself never appears.
+func webAppCredentialDetail(request *http.Request, workspaceID string) string {
+	values := request.Header.Values(webAppTokenHeader)
+	switch {
+	case len(values) == 0:
+		return fmt.Sprintf("no %s header", webAppTokenHeader)
+	case len(values) > 1:
+		return fmt.Sprintf("%d %s headers, want 1", len(values), webAppTokenHeader)
+	case strings.HasPrefix(values[0], "v1."):
+		return fmt.Sprintf("v1 ticket rejected (signature, expiry, role, or workspace id); box workspace id %q", workspaceID)
+	default:
+		return "static webApp token did not match the box token"
+	}
 }
 
 func proxyError(response http.ResponseWriter, request *http.Request, err error) {
