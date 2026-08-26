@@ -36,6 +36,7 @@ export default defineConfig(async () => {
         "test/bootstrap-bash.test.mjs",
         "test/bootstrap-python.test.mjs",
         "test/box-update-conformance.test.mjs",
+        "test/box-update-host.test.mjs",
         "test/publish-box-image.test.mjs",
         "test/set-box-image-ref.test.mjs",
         "test/deploy-tooling.test.mjs",

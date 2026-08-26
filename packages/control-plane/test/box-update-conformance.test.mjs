@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildBootstrapScript } from "../dist/core/bootstrap.js";
+import { embeddedSection } from "./emitted-script.mjs";
 
 // Host side of the `box config v1` cross-runtime contract. The updater the
 // bootstrap emits onto the VM host (`blitz-box-update`) parses the box-config
@@ -25,16 +26,6 @@ const bootstrap = buildBootstrapScript({
   phoneHomeUrl: "https://cp.example/workspaces/workspace/phone-home/token",
   sshPublicKey: "ssh-ed25519 AAAAcaller",
 });
-
-function embeddedSection(source, marker) {
-  // The heredoc-start line may carry a redirect after the marker
-  // (`<<'RESULT_WRITER' >"$result_tmp"`), so only the terminator is anchored.
-  const match = bootstrap.match(
-    new RegExp(String.raw`<<'${marker}'[^\n]*\n(?<body>[\s\S]*?)\n${marker}\n`, "u"),
-  );
-  assert.ok(match?.groups?.body, `embedded ${marker} section was not found in ${source}`);
-  return match.groups.body;
-}
 
 function fixtures(prefix) {
   return readdirSync(fixturesDirectory)
@@ -59,7 +50,7 @@ function python3Available() {
 test("the emitted host scripts are valid bash", () => {
   for (const marker of ["BOX_RUN", "BOX_UPDATER"]) {
     const result = spawnSync("bash", ["-n"], {
-      input: embeddedSection("bootstrap", marker),
+      input: embeddedSection(bootstrap, marker),
       encoding: "utf8",
     });
     assert.equal(result.status, 0, `${marker}: ${result.stderr}`);
@@ -67,7 +58,7 @@ test("the emitted host scripts are valid bash", () => {
 });
 
 test("the updater and the initial start share the one blitz-box-run path", () => {
-  const updater = embeddedSection("bootstrap", "BOX_UPDATER");
+  const updater = embeddedSection(bootstrap, "BOX_UPDATER");
   assert.match(updater, /\/usr\/local\/bin\/blitz-box-run "\$1"/u);
   assert.ok(bootstrap.includes('/usr/local/bin/blitz-box-run "$box_image"'));
   // Pull first, remove second: a failed pull must leave the old container
@@ -83,7 +74,7 @@ test("embedded box-config parser matches every config fixture", (context) => {
     context.skip("python3 is missing from PATH");
     return;
   }
-  const parser = embeddedSection("blitz-box-update", "BOX_CONFIG_PARSER");
+  const parser = embeddedSection(bootstrap, "BOX_CONFIG_PARSER");
   const directory = mkdtempSync(path.join(tmpdir(), "blitz-box-config-"));
   const entries = fixtures("config-");
   try {
@@ -117,7 +108,7 @@ test("embedded update-result producer emits bytes the control plane accepts", (c
     context.skip("python3 is missing from PATH");
     return;
   }
-  const writer = embeddedSection("blitz-box-update", "RESULT_WRITER");
+  const writer = embeddedSection(bootstrap, "RESULT_WRITER");
   const accepted = fixtures("result-").filter(([, fixture]) => fixture.accepts);
   assert.ok(accepted.length > 0, "no accepted update-result fixtures");
   for (const [name, fixture] of accepted) {
