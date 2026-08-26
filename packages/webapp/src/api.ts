@@ -48,6 +48,10 @@ import {
   createFileLibraryClient,
   type FileLibraryClient,
 } from "./file-library-api.js";
+import {
+  createComputeCredentialsClient,
+  type ComputeCredentialsClient,
+} from "./compute-credentials-api.js";
 
 export class ApiRequestError extends Error {
   public constructor(
@@ -127,7 +131,7 @@ export interface CreateOrgResponse {
   membership: NonNullable<MeResponse["membership"]>;
 }
 
-export interface ControlPlaneClient extends FileLibraryClient {
+export interface ControlPlaneClient extends FileLibraryClient, ComputeCredentialsClient {
   googleLoginUrl(): string;
   inviteGoogleLoginUrl(code: string): string;
   inviteStatus(code: string): Promise<{ invite: InviteView; ttlDays: number }>;
@@ -534,6 +538,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
 
   return {
     ...createFileLibraryClient(rawRequest),
+    ...createComputeCredentialsClient(request),
     googleLoginUrl: () => `${base}/auth/google/start`,
     inviteGoogleLoginUrl: (code) => `${base}/auth/google/start?invite=${encodeURIComponent(code)}`,
     inviteStatus: (code) => request<{ invite: InviteView; ttlDays: number }>(`/invite/${encodeURIComponent(code)}`, {}, decodeInviteStatus),

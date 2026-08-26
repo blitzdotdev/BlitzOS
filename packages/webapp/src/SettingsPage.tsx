@@ -8,6 +8,7 @@ import { RequestsPanel } from './settings/RequestsPanel';
 import { MembersPanel } from './settings/MembersPanel';
 import { InvitesPanel } from './settings/InvitesPanel';
 import { UsagePanel } from './settings/UsagePanel';
+import { ComputeCredentialsPanel } from './settings/ComputeCredentialsPanel';
 
 function initial(identity: TenantMe['identity']): string {
   return (identity.name || identity.email || 'B').trim().charAt(0).toUpperCase() || 'B';
@@ -153,6 +154,7 @@ export function SettingsPage({
     { id: 'members', label: 'Members' },
     ...(viewer.membership.role === 'admin' ? [{ id: 'invites' as const, label: 'Invites' }] : []),
     { id: 'connections', label: 'Connections' },
+    ...(viewer.membership.role === 'admin' ? [{ id: 'compute' as const, label: 'Compute' }] : []),
     { id: 'requests', label: 'Requests' },
     // The usage-capture routes are admin-only server-side; the tab matches.
     ...(viewer.membership.role === 'admin' ? [{ id: 'usage' as const, label: 'Usage' }] : []),
@@ -196,6 +198,9 @@ export function SettingsPage({
             client={client}
             admin={viewer.membership.role === 'admin'}
           />
+        )}
+        {section === 'compute' && viewer.membership.role === 'admin' && (
+          <ComputeCredentialsPanel client={client} orgId={viewer.org.id} />
         )}
         {section === 'requests' && (
           <RequestsPanel client={client} onOpenWorkspace={onOpenWorkspace} />

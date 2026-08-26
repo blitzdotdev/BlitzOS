@@ -126,6 +126,8 @@ const expected = [
   "core/compute/types.ts",
   "core/compute/hetzner.ts",
   "core/compute/json-fetch.ts",
+  "core/compute/org-credentials.ts",
+  "core/compute/workspace-placement.ts",
   "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts",
   "core/compute/microvm-agent.ts",
@@ -146,7 +148,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(98);
+    expect(first.files).toHaveLength(100);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

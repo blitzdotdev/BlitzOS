@@ -30,6 +30,7 @@ import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from ".
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./compute/types.js";
+import { resolveWorkspacePlacement } from "./compute/workspace-placement.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import { templateRepos } from "./template-repos.js";
@@ -438,22 +439,15 @@ export async function performWorkspaceCreate(
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
   ])];
-  const vmProvider = runtime.providers.vmRegistry.forMachineType(machineTypeId);
+  const vmResolution = await resolveWorkspacePlacement(
+    runtime.db,
+    runtime.providers.vmRegistry,
+    orgId,
+    machineTypeId,
+    input.volumeId,
+  );
+  const vmProvider = vmResolution.provider;
   const providerCapabilities = vmProvider.capabilities();
-  if (input.volumeId !== undefined && !providerCapabilities.volumes) {
-    throw new HttpError(
-      400,
-      `machine type ${machineTypeId} does not support volumes`,
-    );
-  }
-  if (input.volumeId !== undefined) {
-    const owned = await first<{ volume_id: string }>(runtime.db, {
-      q: `SELECT volume_id FROM volume_ownership
-          WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1`,
-      v: [input.volumeId, orgId],
-    });
-    if (owned === null) throw new HttpError(404, "volume not found");
-  }
   // Usage capture is an org switch, not a recipe one: every workspace of a
   // capturing org boots with the transcript mounts so its runs join the
   // corpus (plans/RECIPES.md, decision 4).
@@ -491,8 +485,9 @@ export async function performWorkspaceCreate(
     q: `INSERT INTO workspaces
         (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
          phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
-         environment, agent_rule_id, recipe_id, created_at, updated_at)
-        SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14
+         environment, agent_rule_id, recipe_id, compute_credential_source,
+         created_at, updated_at)
+        SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15
         WHERE (
           SELECT COUNT(*) FROM workspaces
           WHERE org_id = ?4 AND phase IN (${VM_SLOT_PHASES})
@@ -512,6 +507,7 @@ export async function performWorkspaceCreate(
       storedWorkspaceEnvironment(environment ?? undefined),
       agentRuleId,
       recipe?.recipeId ?? null,
+      vmResolution.credentialSource,
       now,
     ],
   });
@@ -586,7 +582,11 @@ export async function performWorkspaceCreate(
       v: [vm.id, Date.now(), id],
     });
     if (input.volumeId !== undefined) {
-      await runtime.providers.volume.attachVolume(input.volumeId, vm.id);
+      const volume = await runtime.providers.volume.forOrg(
+        orgId,
+        vmResolution.credentialSource,
+      );
+      await volume.provider.attachVolume(input.volumeId, vm.id);
     }
     await rows(runtime.db, {
       q: `UPDATE workspaces
@@ -791,6 +791,8 @@ export function addWorkspaceRoutes(
 
   router.delete("/workspaces/:id", async (context) => {
     const principal = await requirePrincipal(context);
+    if (principal.orgId === null) throw new HttpError(403, "active membership required");
+    const orgId = principal.orgId;
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
     let row = await workspaceById(runtime.db, id);
@@ -805,7 +807,14 @@ export function addWorkspaceRoutes(
     }
     const vmProvider = row.vm_id === null
       ? undefined
-      : providerForVmId(runtime, row.vm_id);
+      : (await runtime.providers.vmRegistry.resolveVmId(
+          row.vm_id,
+          orgId,
+          row.compute_credential_source ?? "deployment",
+        ))?.provider;
+    if (row.vm_id !== null && vmProvider === undefined) {
+      throw new HttpError(409, `no VM provider owns VM ID ${row.vm_id}`);
+    }
 
     await rows(runtime.db, {
       q: `UPDATE workspaces
@@ -820,7 +829,11 @@ export function addWorkspaceRoutes(
     if (row.vm_id !== null && vmProvider !== undefined) {
       if (row.volume_id !== null) {
         await vmProvider.shutdown(row.vm_id);
-        await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
+        const volume = await runtime.providers.volume.forOrg(
+          orgId,
+          row.compute_credential_source ?? "deployment",
+        );
+        await volume.provider.detachVolume(row.volume_id, row.vm_id);
       }
       await vmProvider.destroy(row.vm_id);
     }

@@ -4,15 +4,14 @@ import { $Database, teenyHono } from "teenybase/worker";
 import { rawDb } from "./raw-db.js";
 import {
   allowedEmailDomainsFromEnv,
-  awsProviderFromEnv,
   controlPlaneOriginFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
-  HetznerProvider,
   installControlPlaneRoutes,
   isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
+  OrgComputeProviderResolver,
   runInvariantSweep,
   runFileSyncSweep,
   runLeaseSweep,
@@ -89,9 +88,12 @@ function connectSecretFrom(env: WorkerBindings, name: string): string | undefine
   return isString(value) && value.length > 0 ? value : undefined;
 }
 
-function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
-  const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN, {
-    machineTypeCatalog: env.HETZNER_MACHINE_TYPES,
+function providersFor(
+  env: WorkerBindings,
+  db: Db,
+  credentialMasterKey: CryptoKey,
+): CoreRuntime["providers"] {
+  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, env, {
     warn: (warning) => console.warn(JSON.stringify(warning)),
   });
   const microvm = new MicrovmPoolProvider(
@@ -99,16 +101,16 @@ function providersFor(env: WorkerBindings, db: Db): CoreRuntime["providers"] {
     (tokenVar) => dynamicBinding(env, tokenVar),
     { db },
   );
-  // AWS joins the registry only when its variables are configured, so
-  // deployments without AWS keep exactly the providers they had. Volumes still
-  // route to Hetzner: `providers.volume` is single-valued.
-  const aws = awsProviderFromEnv(env);
-  const vmProviders = aws === undefined
-    ? [hetzner, microvm]
-    : [hetzner, microvm, aws];
+  const vmProviders = [...compute.descriptors(), microvm];
   return {
-    vmRegistry: new VmProviderRegistry(vmProviders),
-    volume: hetzner,
+    vmRegistry: new VmProviderRegistry(
+      vmProviders,
+      async (provider, orgId, requiredSource) => compute.handles(provider.id)
+        ? compute.resolve(provider.id, orgId, requiredSource)
+        : null,
+    ),
+    volume: { forOrg: (orgId, requiredSource) => compute.resolveVolume(orgId, requiredSource) },
+    compute,
     microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),
     webAppAuth: workspaceWebAppAuthFromEnv(env),
@@ -146,7 +148,12 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       entitlementsApiKey: env.ENTITLEMENTS_API_KEY,
       paymentUrl: env.PAYMENT_URL,
     },
-    providers: providersFor(env, db),
+    // SAFETY: The credential-key middleware installs the imported CryptoKey before route dispatch.
+    providers: providersFor(
+      env,
+      db,
+      context.get("$credentialMasterKey") as CryptoKey,
+    ),
     principalSource: createSessionPrincipalSource(),
     assets: { fetch: (request) => env.ASSETS.fetch(request) },
     waitUntil: (promise) => context.executionCtx.waitUntil(promise),
@@ -160,7 +167,7 @@ function runtimeForScheduled(
   executionContext: ExecutionContext,
   credentialMasterKey: CryptoKey,
 ): CoreRuntime {
-  const providers = providersFor(env, db);
+  const providers = providersFor(env, db, credentialMasterKey);
   return {
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.

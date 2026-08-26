@@ -43,8 +43,8 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
   let destroyed = 0;
   for (const row of result) {
     if (row.vm_id === null) continue;
-    const provider = runtime.providers.vmRegistry.forVmId(row.vm_id);
-    if (provider === undefined) {
+    const owner = runtime.providers.vmRegistry.forVmId(row.vm_id);
+    if (owner === undefined) {
       // TODO(house-canon): Route structured core logs through the canonical logger.
       console.error(JSON.stringify({
         message: "orphan sweep skipped VM with no owning provider",
@@ -53,12 +53,39 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       }));
       continue;
     }
-    if (row.volume_id !== null) {
-      await provider.shutdown(row.vm_id);
-      await runtime.providers.volume.detachVolume(row.volume_id, row.vm_id);
+    if (row.org_id === null) {
+      runtime.reportError(
+        "orphan_sweep_compute_credential_skipped",
+        new Error(`workspace ${row.id} has no organization for provider ${owner.id}`),
+      );
+      continue;
     }
-    if ((await provider.inspect(row.vm_id)) !== null) {
-      await provider.destroy(row.vm_id);
+    try {
+      const resolved = await runtime.providers.vmRegistry.resolveVmId(
+        row.vm_id,
+        row.org_id,
+        row.compute_credential_source ?? "deployment",
+      );
+      if (resolved === undefined) continue;
+      const provider = resolved.provider;
+      if (row.volume_id !== null) {
+        await provider.shutdown(row.vm_id);
+        const volume = await runtime.providers.volume.forOrg(
+          row.org_id,
+          row.compute_credential_source ?? "deployment",
+        );
+        await volume.provider.detachVolume(row.volume_id, row.vm_id);
+      }
+      if ((await provider.inspect(row.vm_id)) !== null) {
+        await provider.destroy(row.vm_id);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "provider operation failed";
+      runtime.reportError(
+        "orphan_sweep_compute_credential_skipped",
+        new Error(`workspace ${row.id} provider ${owner.id}: ${detail}`),
+      );
+      continue;
     }
     if (row.phase === "destroying") {
       const transition = await transaction(runtime.db, [

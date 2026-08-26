@@ -9,6 +9,7 @@ import {
   createSessionPrincipalSource,
   credentialMasterKeyFor,
   installControlPlaneRoutes,
+  OrgComputeProviderResolver,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
   VmProviderRegistry,
@@ -19,6 +20,7 @@ import {
   type CoreRouter,
   type CoreRuntime,
   type Db,
+  type VolumeProviderResolver,
 } from "../core/index.js";
 import type {
   CreatedVm,
@@ -181,6 +183,8 @@ export function appWithVmProviders(
   vmProviders: readonly VmProvider[],
   volumeProvider: VolumeProvider,
   workspaceTunnels?: WorkspaceTunnels,
+  computeProviderResolver?: OrgComputeProviderResolver,
+  volumeProviderResolver?: VolumeProviderResolver,
 ): TestApp {
   const app = teenyHono<TestEnv>(
     async (context) => {
@@ -190,46 +194,61 @@ export function appWithVmProviders(
     undefined,
     { cors: false, logger: false },
   ) as TestApp;
-  const runtimeFor = (context: CoreContext): CoreRuntime => ({
-    db: context.get("$db") as Db,
-    blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
-    fileObjects: (context.env as TestBindings).BOX_IMAGES,
-    credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
-    vars: {
-      boxImageRef: (context.env as TestBindings).BOX_IMAGE_REF,
-      boxImageSha256: (context.env as TestBindings).BOX_IMAGE_SHA256,
-      boxImageTag: (context.env as TestBindings).BOX_IMAGE_TAG,
-      sessionTtlMs: sessionTtlMsFromEnv(
-        (context.env as TestBindings).SESSION_TTL_DAYS ?? env.SESSION_TTL_DAYS,
-      ),
-      requestRateLimiter: (context.env as TestBindings).REQUEST_RATE_LIMITER,
-      googleClientId: "test-google-client-id",
-      googleClientSecret: "test-google-client-secret",
-      bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
-      controlPlaneOrigin: controlPlaneOriginFromEnv((context.env as TestBindings).APP_URL),
-      connectSecret: (name) => testConnectSecrets.get(name),
-      signupMode: signupModeFromEnv((context.env as TestBindings).SIGNUP_MODE),
-      allowedEmailDomains: allowedEmailDomainsFromEnv(
-        (context.env as TestBindings).ALLOWED_EMAIL_DOMAINS,
-      ),
-      entitlementsApiKey: (context.env as TestBindings).ENTITLEMENTS_API_KEY,
-      paymentUrl: (context.env as TestBindings).PAYMENT_URL,
-    },
-    providers: {
-      vmRegistry: new VmProviderRegistry(vmProviders),
-      volume: volumeProvider,
-      workspaceTunnels,
-      webAppAuth,
-    },
-    principalSource: createSessionPrincipalSource(),
-    assets: {
-      fetch: async () => new Response("<!doctype html><title>webapp shell</title>", {
-        headers: { "Content-Type": "text/html" },
-      }),
-    },
-    waitUntil: (promise) => context.executionCtx.waitUntil(promise),
-    reportError: () => undefined,
-  });
+  const runtimeFor = (context: CoreContext): CoreRuntime => {
+    const db = context.get("$db") as Db;
+    const compute = computeProviderResolver
+      ?? new OrgComputeProviderResolver(db, credentialMasterKey, {});
+    return {
+      db,
+      blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
+      fileObjects: (context.env as TestBindings).BOX_IMAGES,
+      credentialMasterKey: context.get("$credentialMasterKey") as CryptoKey,
+      vars: {
+        boxImageRef: (context.env as TestBindings).BOX_IMAGE_REF,
+        boxImageSha256: (context.env as TestBindings).BOX_IMAGE_SHA256,
+        boxImageTag: (context.env as TestBindings).BOX_IMAGE_TAG,
+        sessionTtlMs: sessionTtlMsFromEnv(
+          (context.env as TestBindings).SESSION_TTL_DAYS ?? env.SESSION_TTL_DAYS,
+        ),
+        requestRateLimiter: (context.env as TestBindings).REQUEST_RATE_LIMITER,
+        googleClientId: "test-google-client-id",
+        googleClientSecret: "test-google-client-secret",
+        bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+        controlPlaneOrigin: controlPlaneOriginFromEnv((context.env as TestBindings).APP_URL),
+        connectSecret: (name) => testConnectSecrets.get(name),
+        signupMode: signupModeFromEnv((context.env as TestBindings).SIGNUP_MODE),
+        allowedEmailDomains: allowedEmailDomainsFromEnv(
+          (context.env as TestBindings).ALLOWED_EMAIL_DOMAINS,
+        ),
+        entitlementsApiKey: (context.env as TestBindings).ENTITLEMENTS_API_KEY,
+        paymentUrl: (context.env as TestBindings).PAYMENT_URL,
+      },
+      providers: {
+        vmRegistry: new VmProviderRegistry(
+          vmProviders,
+          computeProviderResolver === undefined
+            ? undefined
+            : async (provider, orgId, requiredSource) => compute.handles(provider.id)
+              ? compute.resolve(provider.id, orgId, requiredSource)
+              : null,
+        ),
+        volume: volumeProviderResolver ?? {
+          forOrg: async () => ({ provider: volumeProvider, credentialSource: null }),
+        },
+        compute,
+        workspaceTunnels,
+        webAppAuth,
+      },
+      principalSource: createSessionPrincipalSource(),
+      assets: {
+        fetch: async () => new Response("<!doctype html><title>webapp shell</title>", {
+          headers: { "Content-Type": "text/html" },
+        }),
+      },
+      waitUntil: (promise) => context.executionCtx.waitUntil(promise),
+      reportError: () => undefined,
+    };
+  };
   installControlPlaneRoutes(app as unknown as CoreRouter, runtimeFor);
   return app;
 }
@@ -244,8 +263,10 @@ export function testRuntime(
   providers: FakeProviders,
   workspaceTunnels?: WorkspaceTunnels,
 ): CoreRuntime {
+  const db = rawDb(env.DB);
+  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, {});
   return {
-    db: rawDb(env.DB),
+    db,
     blobs: env.BOX_IMAGES as BlobStore,
     fileObjects: env.BOX_IMAGES,
     credentialMasterKey,
@@ -261,7 +282,10 @@ export function testRuntime(
     },
     providers: {
       vmRegistry: new VmProviderRegistry([providers]),
-      volume: providers,
+      volume: {
+        forOrg: async () => ({ provider: providers, credentialSource: null }),
+      },
+      compute,
       workspaceTunnels,
       webAppAuth,
     },

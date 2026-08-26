@@ -42,6 +42,11 @@ export type {
   AwsProviderOptions,
 } from "./compute/aws.js";
 export { VmProviderRegistry } from "./compute/registry.js";
+export {
+  OrgComputeProviderResolver,
+  type ComputeProviderEnvironment,
+  type ResolvedComputeProvider,
+} from "./compute/org-credentials.js";
 export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
 export {
   requireWorkspaceWebAppAuth,
@@ -66,6 +71,7 @@ export type {
   StaticMicrovmHostConfig,
 } from "./compute/microvm.js";
 export type {
+  ComputeCredentialSource,
   CreatedVm,
   CreateVmInput,
   ProviderMachineType,
@@ -74,6 +80,7 @@ export type {
   VmInspection,
   VmProvider,
   VolumeProvider,
+  VolumeProviderResolver,
 } from "./compute/types.js";
 export type {
   CoreContext,

@@ -1,4 +1,11 @@
-export type SettingsSection = 'profile' | 'members' | 'invites' | 'connections' | 'requests' | 'usage';
+export type SettingsSection =
+  | 'profile'
+  | 'members'
+  | 'invites'
+  | 'connections'
+  | 'compute'
+  | 'requests'
+  | 'usage';
 
 export type DriveScope = 'mine' | 'shared';
 
@@ -17,7 +24,7 @@ export type AppRoute =
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
 export function parseAppRoute(pathname: string): AppRoute {
-  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|requests|usage))?\/?$/u);
+  const settings = pathname.match(/^\/settings(?:\/(profile|members|invites|connections|integrations|compute|requests|usage))?\/?$/u);
   if (settings) {
     // '/settings/integrations' is the pre-rename address; old bookmarks
     // canonicalize to the connections section.

@@ -4,6 +4,7 @@ import { isMicrovmProviderId } from "./compute/microvm.js";
 import { manifestConnectionNames } from "./connections/manifest.js";
 import { workspaceEnvironmentFromJson } from "./environment.js";
 import type { Phase, RetryAction, WorkspaceView } from "./wire.js";
+import type { ComputeCredentialSource } from "./compute/types.js";
 
 export interface WorkspaceRow {
   id: string;
@@ -13,6 +14,7 @@ export interface WorkspaceRow {
   phase: Phase;
   revision: number;
   vm_id: string | null;
+  compute_credential_source: ComputeCredentialSource | null;
   volume_id: string | null;
   ssh_host: string | null;
   ssh_port: number | null;

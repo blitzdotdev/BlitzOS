@@ -78,13 +78,13 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed module closure [ven
   });
 
   it("names dead weight when a file stops being reachable", () => {
-    // Dropping aws.ts strands the two modules only it imports.
+    // Credential validation imports SigV4 and XML parsing directly now, so
+    // dropping aws.ts strands only its price catalog.
     const broken = without(entriesOf(managedUploadSet()), "core/compute/aws.ts");
     const report = closureReport(moduleClosure(broken));
 
     expect(report).toContain("MISSING core/compute/aws");
-    expect(report).toContain("UNREACHABLE core/compute/aws-sigv4.ts");
-    expect(report).toContain("UNREACHABLE core/compute/aws-xml.ts");
+    expect(report).toContain("UNREACHABLE core/compute/aws-prices.ts");
   });
 
   it("fails the emitter, not just the suite, on an unclosed graph", () => {

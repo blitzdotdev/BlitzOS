@@ -60,7 +60,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/template-repos.ts",
   "core/workspace-access.ts", "core/workspace-names.ts", "core/workspace-records.ts", "core/workspace-templates.ts", "core/workspace-tunnels.ts",
   "core/workspaces.ts",
-  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/microvm-hosts.js",
+  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/workspace-placement.ts", "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
   "core/compute/aws.ts", "core/compute/aws-prices.ts", "core/compute/aws-sigv4.ts",
   "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",
@@ -175,6 +175,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       ],
       extensions: [DENY_ALL_RULES],
     },
+    { name: "org_compute_credentials", fields: [{ name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "provider", type: "text", sqlType: "text", notNull: true, check: "provider IN ('hetzner', 'aws')" }, { name: "ciphertext", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "validated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "identity", unique: true, fields: ["org_id", "provider"] }], extensions: [DENY_ALL_RULES] },
     {
       name: "sessions",
       fields: [
@@ -199,6 +200,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "phase", type: "text", sqlType: "text", notNull: true, check: "phase IN ('creating', 'ready', 'destroying', 'destroyed', 'error')" },
         { name: "revision", type: "integer", sqlType: "integer", notNull: true, check: "revision > 0" },
         { name: "vm_id", type: "text", sqlType: "text" },
+        { name: "compute_credential_source", type: "text", sqlType: "text", check: "compute_credential_source IN ('org', 'deployment')" },
         { name: "volume_id", type: "text", sqlType: "text" },
         { name: "ssh_host", type: "text", sqlType: "text" },
         { name: "ssh_port", type: "integer", sqlType: "integer" },
@@ -240,7 +242,7 @@ export const BLITZDEV_CONFIG = Object.freeze({
       name: "volume_ownership",
       fields: [
         { name: "volume_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } },
-        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "compute_credential_source", type: "text", sqlType: "text", check: "compute_credential_source IN ('org', 'deployment')" },
       ],
       extensions: [DENY_ALL_RULES],
     },
@@ -520,14 +522,13 @@ export function workerSource(routing) {
   return normalizeSource(`import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase";
 import config from "virtual:teenybase";
 import {
-  awsProviderFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
-  HetznerProvider,
   installControlPlaneRoutes,
   isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
+  OrgComputeProviderResolver,
   runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
   runProviderCanary, runSessionSweep, runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
@@ -609,17 +610,22 @@ function nonEmptyString(value: unknown): string | undefined {
   return isString(value) && value.length > 0 ? value : undefined;
 }
 
-function providersFor(env: ManagedBindings, db: Db): CoreRuntime["providers"] {
-  const hetzner = new HetznerProvider(env.HETZNER_API_TOKEN);
+function providersFor(env: ManagedBindings, db: Db, credentialMasterKey: CryptoKey): CoreRuntime["providers"] {
+  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, env);
   const microvm = new MicrovmPoolProvider(
     env.MICROVM_HOSTS,
     (tokenVar) => dynamicBinding(env, tokenVar),
     { db },
   );
-  const aws = awsProviderFromEnv(env);
   return {
-    vmRegistry: new VmProviderRegistry(aws === undefined ? [hetzner, microvm] : [hetzner, microvm, aws]),
-    volume: hetzner,
+    vmRegistry: new VmProviderRegistry(
+      [...compute.descriptors(), microvm],
+      async (provider, orgId, requiredSource) => compute.handles(provider.id)
+        ? compute.resolve(provider.id, orgId, requiredSource)
+        : null,
+    ),
+    volume: { forOrg: (orgId, requiredSource) => compute.resolveVolume(orgId, requiredSource) },
+    compute,
     microvm,
     workspaceTunnels: workspaceTunnelsFromEnv(env),
     webAppAuth: workspaceWebAppAuthFromEnv(env),
@@ -718,7 +724,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       bootstrapSecret: env.OPERATOR_API_KEY,
       connectSecret: (name) => nonEmptyString(dynamicBinding(env, name)),
     },
-    providers: providersFor(env, db),
+    providers: providersFor(env, db, context.get("$credentialMasterKey") as CryptoKey),
     principalSource: createSessionPrincipalSource(),
     // SAFETY: Both routed context variants satisfy the webApp blob response contract used for the SPA shell.
     assets: { fetch: async () => webAppResponse(context as WebAppContext, "/index.html") },
