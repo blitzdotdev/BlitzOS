@@ -12,7 +12,7 @@ import {
   emptyComputeCredentialFields,
 } from './ComputeCredentialFields';
 import { caughtErrorMessage } from './error-message';
-import { ProviderGlyph } from './connections/ProviderGlyph';
+import { KeyIcon } from './WebAppIcons';
 
 type SaveComputeCredential = ComputeCredentialsClient['putComputeCredential'];
 
@@ -52,7 +52,7 @@ function InlineProviderCredential({
   return (
     <article className="settings-compute-card inline-compute-card">
       <div className="settings-credential-row">
-        <ProviderGlyph className="settings-compute-glyph" provider={provider} />
+        <KeyIcon className="settings-compute-glyph" />
         <div>
           <h3>Add your {computeCredentialProviderTitle(provider)} key</h3>
           <p>{details?.detail}</p>
