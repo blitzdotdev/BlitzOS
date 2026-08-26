@@ -2,7 +2,12 @@ User-agent: *
 
 # The control plane serves the SPA shell for any unmatched path, so the app
 # routes below are crawl traps: they return 200 HTML with no indexable content.
-# This list mirrors assets.run_worker_first in packages/control-plane/wrangler.toml.
+# This list mirrors assets.run_worker_first, which is generated from core's route
+# registrations by packages/control-plane/scripts/lib/worker-first-routes.mjs.
+# It is coarser on purpose — a crawl directive names a path prefix, not a route —
+# and robots.txt is a published static asset with no build step, so it is the one
+# copy still kept by hand. Widening a prefix here is safe; a missing line only
+# lets a crawler waste a request on a page with no indexable content.
 Disallow: /api/
 Disallow: /agent-rules
 Disallow: /auth/

@@ -22,6 +22,7 @@
     "README.md",
     "scripts/deploy-helpers.mjs",
     "scripts/deploy.mjs",
+    "scripts/lib/worker-first-routes.mjs",
     "scripts/ensure-wrangler-config.mjs",
     "wrangler.toml.example"
   ],
@@ -29,6 +30,7 @@
     "build": "node scripts/clean-dist.mjs && tsc -p tsconfig.json",
     "blitzdev:build": "node scripts/build-blitzdev.mjs",
     "config": "node scripts/ensure-wrangler-config.mjs",
+    "routes:sync": "node scripts/sync-worker-first-routes.mjs",
     "deploy": "node scripts/deploy.mjs",
     "provider:check": "vitest run test/connections-catalog.test.ts -t",
     "test:shell": "sh test/shell-syntax.sh",

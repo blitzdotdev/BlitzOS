@@ -5,11 +5,19 @@ import path from "node:path";
 import { env } from "cloudflare:test";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  WORKER_SOURCE,
   createBoxImageAssetSet,
+  managedApiRouting,
   managedFileId,
   validateBoxImageManifest,
+  workerSource,
 } from "../scripts/build-blitzdev.mjs";
+import { coreSources } from "./managed-upload-set.js";
+
+// The emitted entry module. Its routing arrays are derived from the core
+// sources it ships (scripts/lib/worker-first-routes.mjs), so it is built from
+// those sources rather than read as a constant.
+const WORKER_SOURCE = workerSource(managedApiRouting(coreSources()));
+
 
 // The fixture-conformance suite below guards the cross-runtime box-image
 // manifest contract and always runs. Only the blitz.dev managed-upload suite

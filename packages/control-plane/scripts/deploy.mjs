@@ -14,7 +14,7 @@ import {
   deployControlPlane,
 } from "./deploy-helpers.mjs";
 import { assertPublishedAssets } from "../../webapp/scripts/check-published-assets.mjs";
-import { assertConfigMatchesExample } from "./config-drift.mjs";
+import { assertConfigMatchesExample, repairConfigFromExample } from "./config-drift.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "../../..");
@@ -56,6 +56,29 @@ if (!existsSync(configAbsolute)) {
   process.exit(1);
 }
 
+/**
+ * Writes a partial config into wrangler.toml.
+ *
+ * The same door the D1 database_id, the generated route list, and the repaired
+ * keys all go through.
+ *
+ * @param {object} patch a partial wrangler config
+ * @param {string} what named in the failure message
+ * @param {string} recovery what a rerun does, when that is worth saying
+ */
+function patchConfig(patch, what, recovery = "") {
+  try {
+    patchWranglerConfig(configAbsolute, patch, false);
+  } catch (error) {
+    throw new Error(
+      `writing ${what} into ${CONFIG_PATH} failed: ${error instanceof Error ? error.message : "config patch failed"}\n`
+      + (recovery === "" ? "" : `${recovery}\n`)
+      + "wrangler cannot patch a config that holds comments — strip them, or regenerate the config with "
+      + "`npm run config -w packages/control-plane`, then rerun.",
+    );
+  }
+}
+
 // Before anything reaches Cloudflare. The build copies packages/webapp/public/
 // into the assets the Worker serves, so a file missing here un-publishes a
 // live page — and nothing imports those files, so no other step would notice.
@@ -64,7 +87,17 @@ try {
   assertPublishedAssets();
   // wrangler.toml is per-deployment and gitignored, so a config generated
   // before the example gained a key keeps the old shape and the deploy
-  // succeeds with a route that 404s. Compare key paths, never values.
+  // succeeds with a route that 404s. Fill those keys in from the example
+  // rather than refusing: a deployment config that lives in a secret is
+  // otherwise re-pasted by hand for every new var. Only the values a deployer
+  // alone can know stop the deploy, and this reads no value out of the
+  // deployment config — the example is the only file it copies from.
+  for (const { path: key, value } of repairConfigFromExample(configAbsolute, (patch) =>
+    patchConfig(patch, "keys missing from wrangler.toml.example"),
+  )) {
+    console.log(`filled ${key} = ${JSON.stringify(value)} into ${CONFIG_PATH} from wrangler.toml.example`);
+  }
+  // The repair leaves nothing behind. If it did, say so before deploying.
   assertConfigMatchesExample(configAbsolute);
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.message : "pre-deploy check failed"}\n`);
@@ -88,16 +121,12 @@ deployControlPlane({
   rawConfig,
   run,
   gitCommitSha: checkedOutCommit(),
-  patchConfig(patch) {
-    try {
-      patchWranglerConfig(configAbsolute, patch, false);
-    } catch (error) {
-      // The D1 database exists by now, so name the recovery: a rerun reuses it.
-      throw new Error(
-        `writing the D1 database_id into ${CONFIG_PATH} failed: ${error instanceof Error ? error.message : "config patch failed"}\nThe database already exists and rerunning the deploy reuses it. wrangler cannot patch a config that holds comments — strip them, or regenerate the config with \`npm run config -w packages/control-plane\`, then rerun.`,
-      );
-    }
-  },
+  patchConfig: (patch) =>
+    patchConfig(
+      patch,
+      "the D1 database_id and the derived assets.run_worker_first",
+      "The database already exists and rerunning the deploy reuses it.",
+    ),
 }).catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.message : "deployment failed"}\n`);
   process.exitCode = 1;

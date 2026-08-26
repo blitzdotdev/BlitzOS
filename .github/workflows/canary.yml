@@ -60,8 +60,11 @@ jobs:
         if: steps.gate.outputs.configured == 'true'
 
       # wrangler's config patcher rejects a TOML that holds comments, so this
-      # secret must be comment-free. The deploy also checks it against
-      # wrangler.toml.example and stops when a key is missing.
+      # secret must be comment-free — the deploy writes to it on every run.
+      # It does not have to be up to date: the deploy fills in any key
+      # wrangler.toml.example has gained, and generates assets.run_worker_first
+      # from core's route registrations. Only account-specific identifiers
+      # (account_id, database_id, zone ids, APP_URL) have to be set here.
       - name: Write the canary wrangler.toml
         if: steps.gate.outputs.configured == 'true'
         env:

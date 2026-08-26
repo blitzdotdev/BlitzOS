@@ -30,6 +30,13 @@ function commentLines(toml: string): string[] {
 }
 
 describe("control-plane deploy command", () => {
+  // assets.run_worker_first is derived from core/ off disk, and a Worker-pool
+  // test has no disk. The derivation itself is gated by
+  // test/route-prefixes.test.ts and test/deploy-tooling.test.mjs; what these
+  // tests pin is that the deploy writes whatever it derives, in the right
+  // order, before the deploy call.
+  const DERIVED_ROUTES = ["/", "/version", "/workspaces", "/workspaces/*"];
+  const runWorkerFirst = () => DERIVED_ROUTES;
   it("adds MICROVM_HOSTS tokenVar names to required secret metadata without reading values", () => {
     expect(requiredSecretsForConfig({
       vars: {
@@ -182,6 +189,7 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig,
       run,
+      runWorkerFirst,
       async patchConfig() {},
       secretValues: {},
       gitCommitSha: "0bd4a8b1c2d3e4f5",
@@ -197,6 +205,7 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig,
       run,
+      runWorkerFirst,
       async patchConfig() {},
       secretValues: {},
     });
@@ -211,7 +220,7 @@ describe("control-plane deploy command", () => {
       options: { capture: boolean; env: Record<string, string> };
     }> = [];
     let listCalls = 0;
-    let configPatch: unknown;
+    const patches: unknown[] = [];
     const run = async (
       tool: string,
       args: string[],
@@ -268,8 +277,9 @@ describe("control-plane deploy command", () => {
       },
       repoRoot: "/repo",
       run,
+      runWorkerFirst,
       async patchConfig(patch: unknown) {
-        configPatch = patch;
+        patches.push(patch);
       },
       secretValues: {},
     });
@@ -290,11 +300,76 @@ describe("control-plane deploy command", () => {
     ]);
     expect(calls.every(({ options }) => options.env.CI === "1")).toBe(true);
     expect(calls.filter(({ tool, args }) => tool === "wrangler" && args[0] === "d1" && args[1] === "create")).toHaveLength(1);
-    expect(configPatch).toMatchObject({
+    expect(patches[0]).toMatchObject({
       d1_databases: [
         { database_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
       ],
     });
+    // The derived route list is written last, immediately before the deploy,
+    // so a stored deployment config never has to carry it. The key is removed
+    // before it is written: wrangler patches an array element by element and
+    // would otherwise leave a longer old list's tail behind.
+    expect(patches.slice(1)).toEqual([
+      { assets: { run_worker_first: DERIVED_ROUTES } },
+    ]);
+  });
+
+  it("replaces a stale run_worker_first outright instead of writing over its head", async () => {
+    // The array in a stored deployment secret is whatever it was when someone
+    // last pasted it. wrangler patches an array element by element, so writing
+    // a shorter derived list over a longer stale one would leave the stale tail
+    // routing requests. The key is deleted first.
+    const patches: unknown[] = [];
+    const run = async (tool: string, args: string[]) => {
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "cccccccc-cccc-cccc-cccc-cccccccccccc", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:  blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        return {
+          stdout: JSON.stringify(
+            ["HETZNER_API_TOKEN", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "WEBAPP_TOKEN_SECRET", "CRED_MASTER_KEY"]
+              .map((name) => ({ name, type: "secret_text" })),
+          ),
+        };
+      }
+      return { stdout: "" };
+    };
+
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig: {
+        name: "blitz-control-plane",
+        vars: { MICROVM_HOSTS: "[]" },
+        assets: { run_worker_first: ["/stale-one*", "/stale-two*", "/stale-three*"] },
+        r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+        d1_databases: [
+          {
+            binding: "DB",
+            database_name: "blitz-control-plane",
+            database_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          },
+        ],
+      },
+      run,
+      runWorkerFirst,
+      async patchConfig(patch: unknown) {
+        patches.push(patch);
+      },
+      secretValues: {},
+    });
+
+    expect(patches).toEqual([
+      { assets: { run_worker_first: undefined } },
+      { assets: { run_worker_first: DERIVED_ROUTES } },
+    ]);
   });
 
   it("carries captured stderr into the failure a wrangler command reports", () => {
@@ -375,8 +450,11 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig,
       run,
-      async patchConfig() {
-        throw new Error("matching D1 config should not be rewritten");
+      runWorkerFirst,
+      async patchConfig(patch: unknown) {
+        if (Object.hasOwn(Object(patch), "d1_databases")) {
+          throw new Error("matching D1 config should not be rewritten");
+        }
       },
       secretValues: {},
     });
@@ -389,8 +467,11 @@ describe("control-plane deploy command", () => {
       configPath: "packages/control-plane/wrangler.toml",
       rawConfig: { ...rawConfig, account_id: undefined },
       run,
-      async patchConfig() {
-        throw new Error("matching D1 config should not be rewritten");
+      runWorkerFirst,
+      async patchConfig(patch: unknown) {
+        if (Object.hasOwn(Object(patch), "d1_databases")) {
+          throw new Error("matching D1 config should not be rewritten");
+        }
       },
       secretValues: {},
     });

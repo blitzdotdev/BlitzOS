@@ -113,7 +113,15 @@ An environment secret overrides a repository secret of the same name, which is
 how each deployment gets a token for its own account.
 
 **A stored `wrangler.toml` must contain no comments.** Wrangler's config
-patcher refuses to write the D1 `database_id` back into a config that has any.
+patcher refuses to write into a config that has any, and the deploy now writes
+to it on every run, not only on the first.
+
+**You do not edit those two secrets when a route or a var is added.** The deploy
+fills a stale config in from `wrangler.toml.example` before it deploys, and
+names every key it wrote in the log. `assets.run_worker_first` is generated
+outright from core's route registrations. What is left in the secrets is what
+only they can hold: `account_id`, the D1 `database_id`, the zone ids, `APP_URL`.
+Edit them for a new account-specific identifier, and for nothing else.
 
 ### What the deploy token needs
 
@@ -155,9 +163,10 @@ Run from the repository root. Each is documented in
 `config:check` and the migration listing also run inside every deploy, before
 anything contacts Cloudflare.
 
-`config:check` compares key paths and the entries of the lists that route
-requests. It never reads a value, so it can run against a real deployment config
-and disclose nothing.
+`config:check` compares key paths and the entries of `triggers.crons`. It never
+reads a value out of the deployment config, so it can run against a real one and
+disclose nothing. It does not compare `assets.run_worker_first`: that array is
+generated, and the deploy rewrites it on every run.
 
 ## Migrations
 
@@ -199,19 +208,24 @@ There is no traffic ramp. A deploy goes to full traffic at once.
   all ride the image. Webapp and control-plane changes ride the Worker and reach
   everything at once.
 - **A core route absent from `assets.run_worker_first` is served the SPA shell
-  with status 200**, not the route. Nothing errors. `config:check` is the only
-  thing that reports it.
+  with status 200**, not the route. Nothing errors. The list is derived from
+  core's route registrations now, and `packages/control-plane/test/route-prefixes.test.ts`
+  fails on every push if the generator stops covering a route — so this is caught
+  before a deploy rather than by an operator running a check. After adding a
+  route, run `npm run routes:sync -w packages/control-plane` to refresh the
+  generated copy in `wrangler.toml.example`; that same test names the command.
 - **Wrangler 4 auto-loads the repository-root `.env`.** A narrow token there
   hijacks authentication over an interactive login and produces confusing 403s
   on account and D1 calls. Deploying from a scratch worktree avoids it entirely,
   because a worktree has no `.env`.
 - **An interactive login may see more than one account.** Keep `account_id`
   pinned in every config so no call can land on the wrong one.
-- **Adding a file under `core/` touches four hand-maintained lists**: the module
-  manifest, the managed worker's route prefixes, and two module lists with
-  length assertions in the test suite. Run `BLITZDEV_MANAGED=1 npm test` before
-  pushing one; CI sets that variable, so a local run without it skips the gates
-  that catch this.
+- **Adding a file under `core/` touches three hand-maintained lists**: the module
+  manifest, and two module lists with length assertions in the test suite. (The
+  route lists came off that tally: the managed worker's prefixes, the dev proxy
+  and `assets.run_worker_first` are all derived from the route registrations
+  themselves.) Run `BLITZDEV_MANAGED=1 npm test` before pushing one; CI sets that
+  variable, so a local run without it skips the gates that catch this.
 - **A provider-specific line in the shared bootstrap kills every other
   provider's box.** See [../plans/PROVIDER-BOOTSTRAP.md](../plans/PROVIDER-BOOTSTRAP.md);
   an AWS-only mirror probe failed every Hetzner workspace under `pipefail`.
