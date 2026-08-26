@@ -123,7 +123,9 @@ describe("core route asset precedence", () => {
     expect(SPA_PATHS.filter((pathname) =>
       runWorkerFirstEntries(withRoot).some((entry) => matchesEntry(entry, pathname)),
     )).toEqual([]);
-    expect(devProxyPatterns(withRoot)).toContain("^/$");
+    // Not proxied in dev, deliberately: vite serves the SPA at "/" with hot
+    // reload, and proxying it would replace the thing being edited.
+    expect(devProxyPatterns(withRoot)).not.toContain("^/$");
     // The managed Worker prefix-matches, so the root can only ever be an exact
     // path there: startsWith("/") is true of every request in the deployment.
     expect(managedApiExactPaths(withRoot)).toContain("/");
@@ -133,6 +135,8 @@ describe("core route asset precedence", () => {
   it("proxies a request to every route in dev, and nothing that merely looks like one", () => {
     const patterns = devProxyPatterns(routePaths()).map((pattern) => new RegExp(pattern, "u"));
     const unproxied = routePaths()
+      // The root is the one route dev does not proxy — see above.
+      .filter((routePath) => routePath !== "/")
       .map(sampleRequestPath)
       .filter((pathname) => !patterns.some((pattern) => pattern.test(pathname)));
     expect(unproxied, "vite dev would answer these with the SPA shell").toEqual([]);

@@ -96,6 +96,7 @@ not_found_handling = "single-page-application"
 # read the file rather than the generator — `wrangler types` and the vitest
 # Workers pool.
 run_worker_first = [
+  "/",
   "/agent-rules",
   "/agent-rules/*",
   "/api/*",

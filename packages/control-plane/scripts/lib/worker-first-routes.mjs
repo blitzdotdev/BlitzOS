@@ -53,7 +53,11 @@ export const LITERAL_ROUTE_PATH =
 // router.<method> call in core/ names it and the scan cannot see it. It is
 // written as a route path so it flows through exactly the same shaping as a
 // core route instead of being special-cased in three consumers.
-export const FRAMEWORK_ROUTE_PATHS = Object.freeze(["/api/v1"]);
+// "/" is the marketing home. Its handler lives in src/worker.ts, not core/ —
+// a core router.get("/") has no static first segment, and this scanner reads
+// core/ only — so it is declared here the way the framework-mounted /api/v1
+// is. The plan's root flag keeps it exact; it never becomes a prefix.
+export const FRAMEWORK_ROUTE_PATHS = Object.freeze(["/", "/api/v1"]);
 
 /**
  * The static first segment of a route path.
@@ -179,7 +183,11 @@ const REGEXP_METACHARACTER = /[.*+?^${}()|[\]\\]/gu;
  */
 export function devProxyPatterns(routePaths) {
   const plan = routingPlan(routePaths);
-  const patterns = plan.root ? ["^/$"] : [];
+  // The root is deliberately absent, even though production routes it to the
+  // Worker. There it chooses between the marketing page and the app shell by
+  // session. In dev, vite itself must keep serving the SPA at "/" with hot
+  // reload — proxying it would replace the thing the developer is editing.
+  const patterns = [];
   for (const { segment, exact } of plan.segments) {
     const literal = segment.replace(REGEXP_METACHARACTER, "\\$&");
     patterns.push(exact ? `^/${literal}(?:$|[/?])` : `^/${literal}/`);

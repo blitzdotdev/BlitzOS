@@ -236,6 +236,25 @@ const app = teenyHono<WorkerEnv>(
   },
 );
 
+// The exact root, and nothing else: a visitor with no session gets the
+// marketing page, everyone else gets the app shell. Deep links are untouched,
+// because `run_worker_first` matches "/" exactly rather than as a prefix — a
+// prefix there would send every asset request through the Worker.
+//
+// This lives here rather than in core/ on purpose. A core `router.get("/")`
+// has no static first path segment, which route-prefixes.test.ts requires, and
+// the managed worker's API_PREFIXES prefix-matches, so "/" there would claim
+// every path in the deployment. Target B therefore does not serve this page;
+// it is not a live target (plans/BLITZDEV-PLATFORM-ASKS.md).
+app.get("/", async (context) => {
+  const runtime = runtimeFor(context);
+  if (runtime.assets === undefined) return context.notFound();
+  const principal = await runtime.principalSource.authenticate(context.req.raw, runtime.db);
+  if (principal !== null) return runtime.assets.fetch(context.req.raw);
+  const home = new URL("/home.html", context.req.url);
+  return runtime.assets.fetch(new Request(home, { headers: context.req.raw.headers }));
+});
+
 // SAFETY: The Hono app and CoreRouter expose the same route-registration methods consumed by installControlPlaneRoutes.
 installControlPlaneRoutes(app as typeof app & CoreRouter, runtimeFor);
 
