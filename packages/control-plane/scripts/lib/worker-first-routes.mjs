@@ -71,8 +71,8 @@ export function firstSegment(routePath) {
 }
 
 /**
- * @typedef {{ segment: string, exact: boolean, subtree: boolean }} SegmentShape
- * @typedef {{ root: boolean, segments: SegmentShape[] }} RouteShape
+ * @typedef {{ segment: string, exact: boolean, subtree: boolean }} SegmentRouting
+ * @typedef {{ root: boolean, segments: SegmentRouting[] }} RoutingPlan
  * @typedef {{ path: string, source: string }} SourceFile
  */
 
@@ -86,11 +86,11 @@ export function firstSegment(routePath) {
  * fall out of the routes themselves.
  *
  * @param {readonly string[]} routePaths literal route paths
- * @returns {RouteShape} the root flag and one record per first segment, sorted
+ * @returns {RoutingPlan} the root flag and one record per first segment, sorted
  */
-export function routeShape(routePaths) {
+export function routingPlan(routePaths) {
   let root = false;
-  /** @type {Map<string, SegmentShape>} */
+  /** @type {Map<string, SegmentRouting>} */
   const bySegment = new Map();
   for (const routePath of routePaths) {
     if (routePath === ROOT_ROUTE_PATH) {
@@ -98,10 +98,10 @@ export function routeShape(routePaths) {
       continue;
     }
     const segment = firstSegment(routePath);
-    const shape = bySegment.get(segment) ?? { segment, exact: false, subtree: false };
-    if (routePath === `/${segment}`) shape.exact = true;
-    else shape.subtree = true;
-    bySegment.set(segment, shape);
+    const routing = bySegment.get(segment) ?? { segment, exact: false, subtree: false };
+    if (routePath === `/${segment}`) routing.exact = true;
+    else routing.subtree = true;
+    bySegment.set(segment, routing);
   }
   const segments = [...bySegment.values()].sort((left, right) =>
     left.segment < right.segment ? -1 : 1,
@@ -120,9 +120,9 @@ export function routeShape(routePaths) {
  * @returns {string[]} run_worker_first entries, deterministic order
  */
 export function runWorkerFirstEntries(routePaths) {
-  const shape = routeShape(routePaths);
-  const entries = shape.root ? [ROOT_ROUTE_PATH] : [];
-  for (const { segment, exact, subtree } of shape.segments) {
+  const plan = routingPlan(routePaths);
+  const entries = plan.root ? [ROOT_ROUTE_PATH] : [];
+  for (const { segment, exact, subtree } of plan.segments) {
     if (exact) entries.push(`/${segment}`);
     if (subtree) entries.push(`/${segment}/*`);
   }
@@ -141,9 +141,9 @@ export function runWorkerFirstEntries(routePaths) {
  * @returns {string[]} exact pathnames
  */
 export function managedApiExactPaths(routePaths) {
-  const shape = routeShape(routePaths);
-  const paths = shape.root ? [ROOT_ROUTE_PATH] : [];
-  for (const { segment, exact } of shape.segments) if (exact) paths.push(`/${segment}`);
+  const plan = routingPlan(routePaths);
+  const paths = plan.root ? [ROOT_ROUTE_PATH] : [];
+  for (const { segment, exact } of plan.segments) if (exact) paths.push(`/${segment}`);
   return paths;
 }
 
@@ -157,7 +157,7 @@ export function managedApiExactPaths(routePaths) {
  * @returns {string[]} pathname prefixes
  */
 export function managedApiPrefixes(routePaths) {
-  return routeShape(routePaths)
+  return routingPlan(routePaths)
     .segments.filter(({ subtree }) => subtree)
     .map(({ segment }) => `/${segment}/`);
 }
@@ -178,9 +178,9 @@ const REGEXP_METACHARACTER = /[.*+?^${}()|[\]\\]/gu;
  * @returns {string[]} vite proxy keys, deterministic order
  */
 export function devProxyPatterns(routePaths) {
-  const shape = routeShape(routePaths);
-  const patterns = shape.root ? ["^/$"] : [];
-  for (const { segment, exact } of shape.segments) {
+  const plan = routingPlan(routePaths);
+  const patterns = plan.root ? ["^/$"] : [];
+  for (const { segment, exact } of plan.segments) {
     const literal = segment.replace(REGEXP_METACHARACTER, "\\$&");
     patterns.push(exact ? `^/${literal}(?:$|[/?])` : `^/${literal}/`);
   }

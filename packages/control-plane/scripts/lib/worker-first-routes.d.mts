@@ -7,14 +7,14 @@ export declare const FRAMEWORK_ROUTE_PATHS: readonly string[];
 export declare const ROUTE_REGISTRATION: RegExp;
 export declare const LITERAL_ROUTE_PATH: RegExp;
 
-export interface SegmentShape {
+export interface SegmentRouting {
   readonly segment: string;
   readonly exact: boolean;
   readonly subtree: boolean;
 }
-export interface RouteShape {
+export interface RoutingPlan {
   readonly root: boolean;
-  readonly segments: readonly SegmentShape[];
+  readonly segments: readonly SegmentRouting[];
 }
 export interface SourceFile {
   readonly path: string;
@@ -27,7 +27,7 @@ export interface NonLiteralRegistration {
 }
 
 export declare function firstSegment(routePath: string): string;
-export declare function routeShape(routePaths: readonly string[]): RouteShape;
+export declare function routingPlan(routePaths: readonly string[]): RoutingPlan;
 export declare function runWorkerFirstEntries(routePaths: readonly string[]): string[];
 export declare function managedApiExactPaths(routePaths: readonly string[]): string[];
 export declare function managedApiPrefixes(routePaths: readonly string[]): string[];

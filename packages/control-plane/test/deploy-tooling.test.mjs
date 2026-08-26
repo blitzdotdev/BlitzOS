@@ -23,7 +23,7 @@ import {
   devProxyPatterns,
   managedApiExactPaths,
   managedApiPrefixes,
-  routeShape,
+  routingPlan,
   runWorkerFirstEntries,
 } from "../scripts/lib/worker-first-routes.mjs";
 import { withGeneratedRunWorkerFirst } from "../scripts/sync-worker-first-routes.mjs";
@@ -290,8 +290,8 @@ test("the root is an exact entry and never a prefix", () => {
   const entries = runWorkerFirstEntries(["/", "/version"]);
   assert.deepEqual(entries, ["/", "/version"]);
   assert.equal(entries.includes("/*"), false);
-  assert.equal(routeShape(["/"]).root, true);
-  assert.deepEqual(routeShape(["/"]).segments, []);
+  assert.equal(routingPlan(["/"]).root, true);
+  assert.deepEqual(routingPlan(["/"]).segments, []);
 });
 
 test("the managed worker matches the root exactly, because it matches prefixes with startsWith", () => {
