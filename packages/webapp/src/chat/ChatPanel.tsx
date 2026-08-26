@@ -4,7 +4,6 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   SessionConfigOption,
-  StopReason,
 } from "@agentclientprotocol/sdk";
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client";
 import { HARNESSES, type AuthRequiredParams, type AuthRequiredProvider } from "@blitzos/schema";
@@ -35,21 +34,6 @@ interface PermissionAnsweredNotification {
 }
 
 const APPROVAL_PREVIEW_CHARS = 600;
-const LOCAL_PROMPT_QUEUE_LIMIT = 32;
-const CHAT_CONFIG_IDS = ["model", "effort", "permission"] as const;
-
-export type ChatConfigSelections = {
-  model?: string;
-  effort?: string;
-  permission?: string;
-};
-type HarnessAuthStatus = "signed-in" | "signed-out" | "unknown";
-type HarnessAuthStatuses = {
-  claude: HarnessAuthStatus;
-  codex: HarnessAuthStatus;
-};
-
-type QueuedPrompt = { id: number; text: string };
 
 /** The runtime half of {@link AuthRequiredProvider}, from the same list.
  *
@@ -78,27 +62,6 @@ function selectConfigs(options: SessionConfigOption[]): SelectConfig[] {
   });
 }
 
-function configSelections(options: SessionConfigOption[]): ChatConfigSelections {
-  const selections: ChatConfigSelections = {};
-  for (const option of selectConfigs(options)) {
-    if (option.id === "model") selections.model = option.currentValue;
-    else if (option.id === "effort") selections.effort = option.currentValue;
-    else if (option.id === "permission") selections.permission = option.currentValue;
-  }
-  return selections;
-}
-
-function unknownAuthStatuses(): HarnessAuthStatuses {
-  return { claude: "unknown", codex: "unknown" };
-}
-
-function validAuthStatuses(value: HarnessAuthStatuses): boolean {
-  const valid = (status: HarnessAuthStatus) => status === "signed-in"
-    || status === "signed-out"
-    || status === "unknown";
-  return valid(value.claude) && valid(value.codex);
-}
-
 type PermissionResolver = (response: RequestPermissionResponse) => void;
 
 function approvalPayload<Value>(input: Value): string {
@@ -111,141 +74,50 @@ function approvalPayload<Value>(input: Value): string {
 }
 
 const MAX_RECONNECT_ATTEMPTS = 8;
-export type ChatSessionIntent = "create" | "load" | "recover";
-export type ChatSessionStatus = "idle" | "generating" | "needs-attention" | "done" | "error";
-
-function statusForStopReason(stopReason: StopReason): ChatSessionStatus {
-  if (stopReason === "end_turn") return "done";
-  if (stopReason === "cancelled") return "idle";
-  return "error";
-}
 
 export function ChatPanel({
   url,
   workspaceId,
   initialSessionId,
-  initialProvider = "claude",
-  sessionIntent = initialSessionId === null ? "recover" : "load",
-  boundSessionIds = [],
   onSessionId,
   onOpenPreview,
-  onOpenFile,
-  onStatusChange,
-  initialConfig = {},
-  onConfigChange,
-  active = true,
+  onSignIn,
   readOnly = false,
 }: {
   url: string;
   workspaceId: string;
   initialSessionId: string | null;
-  initialProvider?: Agent;
-  /** New tabs create; stored ids load exactly; legacy id-less tabs recover. */
-  sessionIntent?: ChatSessionIntent;
-  /** Session ids already owned by other active or archived Chat tabs. */
-  boundSessionIds?: readonly string[];
-  onSessionId: (workspaceId: string, sessionId: string | null, provider: Agent) => void;
+  onSessionId: (workspaceId: string, sessionId: string) => void;
   onOpenPreview?: (port: number) => boolean;
-  onOpenFile?: (filePath: string) => void;
-  onStatusChange?: (status: ChatSessionStatus) => void;
-  initialConfig?: ChatConfigSelections;
-  onConfigChange?: (config: ChatConfigSelections) => void;
-  active?: boolean;
+  /** Drives the harness's terminal tab into its login flow. */
+  onSignIn?: (provider: Agent) => void;
   readOnly?: boolean;
 }): React.JSX.Element {
   const [state, dispatch] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState("Connecting…");
   const [draft, setDraft] = useState("");
   const [configOptions, setConfigOptions] = useState<SessionConfigOption[]>([]);
-  const [queuedPrompts, setQueuedPrompts] = useState<QueuedPrompt[]>([]);
   const [authRequired, setAuthRequired] = useState<Agent | null>(null);
-  const [authStatuses, setAuthStatuses] = useState<HarnessAuthStatuses | null>(null);
-  const [authGate, setAuthGate] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<Agent>(initialProvider);
   const [approvalExpanded, setApprovalExpanded] = useState(false);
   const [turnStartedAt, setTurnStartedAt] = useState(Date.now());
-  const [missingSessionId, setMissingSessionId] = useState<string | null>(null);
-  const [connectionVersion, setConnectionVersion] = useState(0);
-  const [sessionStatus, setSessionStatus] = useState<ChatSessionStatus>("idle");
-  // Creating the backing ACP session is an implementation detail. A new Chat
-  // remains provider-selectable until its first conversational update arrives.
-  const [providerSelectionOpen, setProviderSelectionOpen] = useState(sessionIntent === "create");
-  const providerLocked = !providerSelectionOpen || state.rows.length > 0 || state.running;
   const connectionRef = useRef<ClientContext | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  const selectedProviderRef = useRef<Agent>(initialProvider);
-  const sessionIntentRef = useRef<ChatSessionIntent>(sessionIntent);
-  const recoverCanCreateRef = useRef(sessionIntent === "recover");
-  const authGateRef = useRef(false);
-  const authRequiredRef = useRef<Agent | null>(null);
-  const wasActiveRef = useRef(active);
-  const boundSessionIdsRef = useRef<ReadonlySet<string>>(new Set(boundSessionIds));
   const onSessionIdRef = useRef(onSessionId);
-  const onStatusChangeRef = useRef(onStatusChange);
-  const onConfigChangeRef = useRef(onConfigChange);
-  const savedConfigRef = useRef(initialConfig);
   const runningRef = useRef(false);
   const turnRef = useRef(0);
-  const queuedPromptIdRef = useRef(0);
   const permissionResolvers = useRef(new Map<string, Set<PermissionResolver>>());
   const permissionAnswers = useRef(new Map<string, RequestPermissionResponse>());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   onSessionIdRef.current = onSessionId;
-  onStatusChangeRef.current = onStatusChange;
-  onConfigChangeRef.current = onConfigChange;
-  boundSessionIdsRef.current = new Set(boundSessionIds);
-  authGateRef.current = authGate;
-  authRequiredRef.current = authRequired;
-
-  const installConfigOptions = useCallback(async (
-    context: ClientContext,
-    sessionId: string,
-    advertised: SessionConfigOption[],
-  ): Promise<void> => {
-    let options = advertised;
-    for (const configId of CHAT_CONFIG_IDS) {
-      const saved = savedConfigRef.current[configId];
-      const select = selectConfigs(options).find((option) => option.id === configId);
-      if (
-        saved === undefined
-        || select === undefined
-        || select.currentValue === saved
-        || !select.choices.some((choice) => choice.value === saved)
-      ) continue;
-      const answer = await context.request(acp.methods.agent.session.setConfigOption, {
-        sessionId,
-        configId,
-        value: saved,
-      });
-      options = answer.configOptions ?? options;
-    }
-    setConfigOptions(options);
-    const current = configSelections(options);
-    savedConfigRef.current = current;
-    onConfigChangeRef.current?.(current);
-  }, []);
-
-  useEffect(() => {
-    onStatusChangeRef.current?.(sessionStatus);
-  }, [sessionStatus]);
 
   useEffect(() => {
     runningRef.current = state.running;
     if (state.running) setTurnStartedAt(Date.now());
   }, [state.running]);
 
-  useEffect(() => {
-    const returnedToChat = active && !wasActiveRef.current;
-    wasActiveRef.current = active;
-    if (returnedToChat && (authGateRef.current || authRequiredRef.current !== null)) {
-      setConnectionVersion((version) => version + 1);
-    }
-  }, [active]);
-
   const requestPermission = useCallback((request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
     if (readOnly) return Promise.resolve({ outcome: { outcome: "cancelled" } });
     dispatch({ type: "permission-request", request });
-    setSessionStatus("needs-attention");
     const id = request.toolCall.toolCallId;
     const answered = permissionAnswers.current.get(id);
     if (answered !== undefined) return Promise.resolve(answered);
@@ -272,7 +144,6 @@ export function ChatPanel({
 
     const run = async (): Promise<void> => {
       while (active) {
-        let haltAfterClose = false;
         setStatus(attempts === 0 ? "Connecting…" : "Reconnecting…");
         const stream = createWebSocketStream(url);
         const app = acp
@@ -319,103 +190,38 @@ export function ChatPanel({
             clientCapabilities: {},
             clientInfo: { name: "BlitzOS webapp", version: "0.0.0" },
           });
-          let latestAuth = unknownAuthStatuses();
-          try {
-            const response = await context.request<HarnessAuthStatuses, Record<string, never>>(
-              "blitz/auth_status",
-              {},
-            );
-            if (validAuthStatuses(response)) latestAuth = response;
-          } catch {
-            // Compatibility window for an older actor. Its reactive
-            // blitz/auth_required signal remains the fallback.
-          }
-          setAuthStatuses(latestAuth);
-          const signedInProviders = (["claude", "codex"] as const)
-            .filter((provider) => latestAuth[provider] === "signed-in");
-          if (
-            signedInProviders.length > 0
-            && !signedInProviders.includes(selectedProviderRef.current)
-          ) {
-            selectedProviderRef.current = signedInProviders[0] ?? selectedProviderRef.current;
-            setSelectedProvider(selectedProviderRef.current);
-          }
-          if (latestAuth[selectedProviderRef.current] === "signed-in") setAuthRequired(null);
           let existingSession = sessionIdRef.current;
-          if (existingSession === null && sessionIntentRef.current === "recover") {
+          if (existingSession === null) {
             try {
               const listed = await context.request(acp.methods.agent.session.list, { cwd: "/workspace" });
-              const recovered = listed.sessions.find(
-                (session) => !boundSessionIdsRef.current.has(session.sessionId),
-              );
-              existingSession = recovered?.sessionId ?? null;
-              const recoveredProvider = parseProviderMeta(recovered?._meta);
-              if (recoveredProvider !== null) {
-                selectedProviderRef.current = recoveredProvider;
-                setSelectedProvider(recoveredProvider);
-              }
+              existingSession = listed.sessions[0]?.sessionId ?? null;
             } catch {
               // Compatibility window: an already-pinned actor may predate session/list.
             }
             if (existingSession !== null) {
-              setProviderSelectionOpen(false);
               sessionIdRef.current = existingSession;
-              onSessionIdRef.current(workspaceId, existingSession, selectedProviderRef.current);
+              onSessionIdRef.current(workspaceId, existingSession);
             }
           }
-          const mayCreate = sessionIntentRef.current === "create"
-            || (sessionIntentRef.current === "recover" && recoverCanCreateRef.current);
-          if (existingSession === null && !readOnly && mayCreate) {
-            if (latestAuth.claude === "signed-out" && latestAuth.codex === "signed-out") {
-              setAuthGate(true);
-            } else {
-              setProviderSelectionOpen(true);
-              const created = await context.request(acp.methods.agent.session.new, {
-                cwd: "/workspace",
-                mcpServers: [],
-                _meta: { "blitz/provider": selectedProviderRef.current },
-              });
-              const createdProvider = parseProviderMeta(created._meta) ?? selectedProviderRef.current;
-              selectedProviderRef.current = createdProvider;
-              setSelectedProvider(createdProvider);
-              sessionIdRef.current = created.sessionId;
-              sessionIntentRef.current = "load";
-              setAuthGate(false);
-              onSessionIdRef.current(workspaceId, created.sessionId, createdProvider);
-              await installConfigOptions(context, created.sessionId, created.configOptions ?? []);
-            }
+          if (existingSession === null && !readOnly) {
+            const created = await context.request(acp.methods.agent.session.new, {
+              cwd: "/workspace",
+              mcpServers: [],
+            });
+            sessionIdRef.current = created.sessionId;
+            onSessionIdRef.current(workspaceId, created.sessionId);
+            setConfigOptions(created.configOptions ?? []);
           } else if (existingSession !== null) {
-            setProviderSelectionOpen(false);
             dispatch({ type: "begin-replay" });
-            try {
-              const loaded = await context.request(acp.methods.agent.session.load, {
-                sessionId: existingSession,
-                cwd: "/workspace",
-                mcpServers: [],
-              });
-              const loadedProvider = parseProviderMeta(loaded._meta);
-              if (loadedProvider !== null) {
-                selectedProviderRef.current = loadedProvider;
-                setSelectedProvider(loadedProvider);
-                onSessionIdRef.current(workspaceId, existingSession, loadedProvider);
-              }
-              sessionIntentRef.current = "load";
-              dispatch({ type: "reconcile-running" });
-              runningRef.current = false;
-              await installConfigOptions(context, existingSession, loaded.configOptions ?? []);
-            } catch {
-              setMissingSessionId(existingSession);
-              setStatus("Stored chat session is unavailable");
-              setSessionStatus("error");
-              haltAfterClose = true;
-            }
-          } else if (!authGateRef.current && !(latestAuth.claude === "signed-out" && latestAuth.codex === "signed-out")) {
-            setMissingSessionId((current) => current ?? "unavailable");
-            setStatus("No chat session is available to replay");
-            setSessionStatus("error");
-            haltAfterClose = true;
+            const loaded = await context.request(acp.methods.agent.session.load, {
+              sessionId: existingSession,
+              cwd: "/workspace",
+              mcpServers: [],
+            });
+            dispatch({ type: "reconcile-running" });
+            runningRef.current = false;
+            setConfigOptions(loaded.configOptions ?? []);
           }
-          if (haltAfterClose) throw new Error("chat session selection required");
           if (!active) break;
           attempts = 0;
           connectionRef.current = context;
@@ -428,7 +234,6 @@ export function ChatPanel({
           connection.close();
         }
         if (!active) break;
-        if (haltAfterClose) break;
         attempts += 1;
         // A refused handshake — no access to this workspace, or a box that is
         // gone — never resolves by retrying, and the capped backoff would
@@ -436,7 +241,6 @@ export function ChatPanel({
         // and let the reader retry deliberately.
         if (attempts >= MAX_RECONNECT_ATTEMPTS) {
           setStatus("Disconnected · reload to reconnect");
-          setSessionStatus("error");
           break;
         }
         setStatus("Disconnected");
@@ -452,35 +256,7 @@ export function ChatPanel({
       connection?.close();
       connectionRef.current = null;
     };
-  }, [connectionVersion, installConfigOptions, readOnly, requestPermission, url, workspaceId]);
-
-  const chooseSessionRecovery = (intent: "create" | "recover"): void => {
-    sessionIdRef.current = null;
-    sessionIntentRef.current = intent;
-    recoverCanCreateRef.current = false;
-    setProviderSelectionOpen(intent === "create");
-    setMissingSessionId(null);
-    setStatus("Connecting…");
-    setSessionStatus("idle");
-    setConnectionVersion((version) => version + 1);
-  };
-
-  const chooseProvider = (provider: Agent): void => {
-    if (provider === selectedProviderRef.current || providerLocked) return;
-    selectedProviderRef.current = provider;
-    setSelectedProvider(provider);
-    sessionIdRef.current = null;
-    sessionIntentRef.current = "create";
-    recoverCanCreateRef.current = false;
-    setProviderSelectionOpen(true);
-    savedConfigRef.current = {};
-    setConfigOptions([]);
-    setMissingSessionId(null);
-    setAuthRequired(null);
-    dispatch({ type: "reset" });
-    onSessionIdRef.current(workspaceId, null, provider);
-    setConnectionVersion((version) => version + 1);
-  };
+  }, [readOnly, requestPermission, url, workspaceId]);
 
   const answerPermission = (toolCallId: string, optionId: string): void => {
     if (readOnly) return;
@@ -490,7 +266,6 @@ export function ChatPanel({
     };
     permissionAnswers.current.set(toolCallId, response);
     dispatch({ type: "permission-answered", toolCallId, optionId });
-    if (runningRef.current) setSessionStatus("generating");
     for (const resolve of permissionResolvers.current.get(toolCallId) ?? []) resolve(response);
     permissionResolvers.current.delete(toolCallId);
   };
@@ -519,7 +294,8 @@ export function ChatPanel({
     setPinned(true);
   };
 
-  const dispatchMessage = useCallback(async (text: string): Promise<void> => {
+  const send = async (): Promise<void> => {
+    const text = draft.trim();
     const context = connectionRef.current;
     const sessionId = sessionIdRef.current;
     if (text.length === 0 || context === null || sessionId === null || runningRef.current) return;
@@ -527,7 +303,7 @@ export function ChatPanel({
     runningRef.current = true;
     setTurnStartedAt(Date.now());
     dispatch({ type: "turn-started", turnId });
-    setSessionStatus("generating");
+    setDraft("");
     try {
       const result = await context.request(acp.methods.agent.session.prompt, {
         sessionId,
@@ -537,43 +313,16 @@ export function ChatPanel({
       // other ending proves the credential works again, so the prompt goes.
       if (result.stopReason !== "refusal") setAuthRequired(null);
       dispatch({ type: "turn-ended", turnId, stopReason: result.stopReason });
-      runningRef.current = false;
-      setSessionStatus(statusForStopReason(result.stopReason));
     } catch {
       dispatch({ type: "generic", label: "The connection closed; the prompt was not resent." });
-      dispatch({ type: "turn-ended", turnId, stopReason: "refusal" });
-      runningRef.current = false;
-      setSessionStatus("error");
     }
-  }, []);
-
-  const send = (): void => {
-    const text = draft.trim();
-    if (text.length === 0) return;
-    setDraft("");
-    if (runningRef.current) {
-      setQueuedPrompts((current) => current.length >= LOCAL_PROMPT_QUEUE_LIMIT
-        ? current
-        : [...current, { id: ++queuedPromptIdRef.current, text }]);
-      return;
-    }
-    void dispatchMessage(text);
   };
-
-  useEffect(() => {
-    if (state.running || runningRef.current || queuedPrompts.length === 0) return;
-    const [next] = queuedPrompts;
-    if (next === undefined) return;
-    setQueuedPrompts((current) => current.filter((prompt) => prompt.id !== next.id));
-    void dispatchMessage(next.text);
-  }, [dispatchMessage, queuedPrompts, state.running]);
 
   const cancel = (): void => {
     const sessionId = sessionIdRef.current;
     if (sessionId !== null) {
       void connectionRef.current?.notify(acp.methods.agent.session.cancel, { sessionId });
     }
-    setSessionStatus("idle");
   };
 
   const chooseConfig = async (configId: string, value: string): Promise<void> => {
@@ -585,11 +334,7 @@ export function ChatPanel({
       configId,
       value,
     });
-    const next = answer.configOptions ?? [];
-    setConfigOptions(next);
-    const current = configSelections(next);
-    savedConfigRef.current = current;
-    onConfigChangeRef.current?.(current);
+    setConfigOptions(answer.configOptions ?? []);
   };
 
   const connected = status.startsWith("Connected");
@@ -597,25 +342,17 @@ export function ChatPanel({
     ? "connected"
     : status === "Disconnected" ? "disconnected" : "connecting";
   const selects = selectConfigs(configOptions);
-  const authenticatedProviders = (["claude", "codex"] as const)
-    .filter((provider) => authStatuses?.[provider] === "signed-in");
-  const providerChoices = authenticatedProviders.length > 0
-    ? authenticatedProviders
-    : authStatuses?.claude === "signed-out" && authStatuses.codex === "signed-out"
-      ? []
-      : [selectedProvider];
+  const model = selects.find((option) => option.id === "model");
+  const runningModel = state.running && model !== undefined && model.currentValue !== "default"
+    ? model.choices.find((choice) => choice.value === model.currentValue)?.name
+    : undefined;
   const derived = useMemo(() => deriveChatItems(state), [state]);
   const transcript = useMemo(
     () => deriveChatTranscript(derived.items, derived.toolResults),
     [derived],
   );
   // Viewers cannot prompt, so they are never the ones who have to sign in.
-  const statusRequiredProvider = authStatuses?.[selectedProvider] === "signed-out"
-    ? selectedProvider
-    : null;
-  const authBlockedProvider = readOnly ? null : authRequired ?? statusRequiredProvider;
-  const showAuthGate = !readOnly && (authGate || authBlockedProvider !== null);
-  const chatBlocked = showAuthGate || sessionIdRef.current === null;
+  const signInProvider = readOnly || onSignIn === undefined ? null : authRequired;
   const approval: ChatPermission | null = readOnly ? null : derived.activePermission;
   const approvalText = approval === null
     ? ""
@@ -646,7 +383,6 @@ export function ChatPanel({
                 toolResults={derived.toolResults}
                 showThinking
                 onOpenPreview={onOpenPreview}
-                onOpenFile={onOpenFile}
                 workingDirectory={workingDirectory}
               />
             ) : (
@@ -656,7 +392,6 @@ export function ChatPanel({
                 toolResults={derived.toolResults}
                 showThinking
                 onOpenPreview={onOpenPreview}
-                onOpenFile={onOpenFile}
                 workingDirectory={workingDirectory}
               />
             ))}
@@ -675,49 +410,19 @@ export function ChatPanel({
       </div>
 
       <div className="chat-dock">
-        {queuedPrompts.length > 0 && (
-          <div className="chat-prompt-queue" aria-label="Queued messages">
-            {queuedPrompts.map((prompt, index) => (
-              <div className="chat-prompt-queue-row" key={prompt.id}>
-                <span className="chat-prompt-queue-position">Queued {index + 1}</span>
-                <span className="chat-prompt-queue-text">{prompt.text}</span>
-                <button
-                  type="button"
-                  onClick={() => setQueuedPrompts((current) => current.filter(({ id }) => id !== prompt.id))}
-                >Remove</button>
-              </div>
-            ))}
+        {signInProvider !== null && (
+          <div className="chat-auth-required" role="status">
+            <span>{SPAWN_SESSION_LABELS[signInProvider]} could not authenticate on this workspace.</span>
+            <button
+              type="button"
+              className="chat-auth-required-action"
+              onClick={() => onSignIn?.(signInProvider)}
+            >
+              Sign in to {SPAWN_SESSION_LABELS[signInProvider]}
+            </button>
           </div>
         )}
-        {showAuthGate && (
-          <div className="chat-auth-gate" role="status">
-            <div>
-              <strong>Sign in to start Chat</strong>
-              <span>Connect Claude or Codex on this workspace.</span>
-            </div>
-            <div className="chat-auth-gate-actions">
-              <button type="button" onClick={() => setConnectionVersion((version) => version + 1)}>Check again</button>
-            </div>
-          </div>
-        )}
-        {missingSessionId !== null && (
-          <div className="chat-session-recovery" role="alert">
-            <div>
-              <strong>This Chat's saved session could not be loaded.</strong>
-              <span>Choose whether to recover another unbound session or start a new conversation.</span>
-            </div>
-            <div className="chat-session-recovery-actions">
-              <button type="button" onClick={() => chooseSessionRecovery("recover")}>
-                Recover existing
-              </button>
-              {!readOnly && (
-                <button type="button" onClick={() => chooseSessionRecovery("create")}>
-                  Start new chat
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+
         {approval !== null && (
           <div className="chat-approval" role="alertdialog" aria-label="Tool approval">
             <div className="chat-approval-title">Allow {approval.title}?</div>
@@ -771,8 +476,8 @@ export function ChatPanel({
                 aria-label="Message"
                 rows={1}
                 value={draft}
-                disabled={!connected || chatBlocked}
-                placeholder={chatBlocked ? "Sign in to start chatting…" : connected ? "message the agent…" : "Connecting…"}
+                disabled={!connected}
+                placeholder={connected ? "message the agent…" : "Connecting…"}
                 onChange={(event) => setDraft(event.currentTarget.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Escape" && state.running) {
@@ -780,7 +485,7 @@ export function ChatPanel({
                     cancel();
                   } else if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
-                    send();
+                    void send();
                   }
                 }}
               />
@@ -794,31 +499,16 @@ export function ChatPanel({
                     type="button"
                     className="chat-send"
                     aria-label="Send message"
-                    onClick={send}
-                    disabled={!connected || chatBlocked || draft.trim().length === 0}
+                    onClick={() => { void send(); }}
+                    disabled={!connected || draft.trim().length === 0}
                   ><ArrowIcon direction="up" /></button>
                 )}
               </div>
             </div>
             <div className="chat-composer-controls">
-              {providerChoices.length > 0 && (
-                <WebAppSelectMenu
-                  className="chat-composer-control"
-                  ariaLabel="Provider"
-                  value={selectedProvider}
-                  options={providerChoices.map((provider) => ({
-                    value: provider,
-                    label: SPAWN_SESSION_LABELS[provider],
-                  }))}
-                  onChange={(value) => {
-                    if (value === "claude" || value === "codex") chooseProvider(value);
-                  }}
-                  disabled={!connected || providerLocked}
-                />
-              )}
               {selects.map((option, index) => (
                 <span key={option.id} style={{ display: "contents" }}>
-                  {(index > 0 || providerChoices.length > 0) && <span aria-hidden="true">·</span>}
+                  {index > 0 && <span aria-hidden="true">·</span>}
                   <WebAppSelectMenu
                     className={`chat-composer-control${option.id === "model" ? " chat-composer-control--model" : ""}`}
                     ariaLabel={option.name}
@@ -829,6 +519,7 @@ export function ChatPanel({
                   />
                 </span>
               ))}
+              {runningModel && <span className="chat-active-model">running {runningModel}</span>}
             </div>
           </div>
         )}
@@ -873,12 +564,6 @@ function parseAuthRequiredNotification<Value>(value: Value): AuthRequiredParams 
 
 function isHarnessName<Value>(value: Value): value is Value & AuthRequiredProvider {
   return isString(value) && HARNESS_NAMES.has(value);
-}
-
-function parseProviderMeta<Value>(value: Value): Agent | null {
-  if (!isRecord(value)) return null;
-  const provider = value["blitz/provider"] ?? value.provider;
-  return provider === "claude" || provider === "codex" ? provider : null;
 }
 
 function parseActor<Value>(value: Value): ChatActor | undefined {

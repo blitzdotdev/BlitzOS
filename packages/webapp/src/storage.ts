@@ -1,5 +1,6 @@
 import type { Agent, TerminalAgent } from './protocol';
 import { isPreviewPath, isPreviewPort } from './preview';
+import { NATIVE_CHAT_ENABLED } from './product-features';
 import {
   asJsonObject,
   isBoolean,
@@ -40,7 +41,7 @@ export type ManagedWorkspaceTab = {
   id: number;
   type: TerminalAgent | 'terminal';
   title?: string;
-  /** Missing means open; false keeps the session while closing its window. */
+  /** @deprecated Compatibility input from the superseded retained-window model. */
   windowOpen?: false;
   region?: WorkspaceRegion;
 } | {
@@ -48,16 +49,10 @@ export type ManagedWorkspaceTab = {
   type: 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
-  chatConfig?: ChatConfig;
   title?: string;
+  /** @deprecated Compatibility input from the superseded retained-window model. */
   windowOpen?: false;
   region?: WorkspaceRegion;
-};
-
-export type ChatConfig = {
-  model?: string;
-  effort?: string;
-  permission?: string;
 };
 
 export type WorkspaceTab = ManagedWorkspaceTab | {
@@ -90,7 +85,7 @@ export type WorkspaceTab = ManagedWorkspaceTab | {
 export type WorkspaceTabs = {
   version: 1;
   tabs: WorkspaceTab[];
-  /** Managed sessions removed from the active pane layout. */
+  /** @deprecated Compatibility input restored into `tabs` during normalization. */
   archivedTabs?: WorkspaceTab[];
   /** Active tab of the main (left) pane. */
   activeId: number | null;
@@ -134,22 +129,8 @@ interface RestoredSessionTab {
   type: TerminalAgent | 'terminal' | 'chat';
   chatSessionId?: string;
   chatProvider?: Agent;
-  chatConfig?: ChatConfig;
   title?: string;
   windowOpen?: false;
-}
-
-function parseChatConfig(value: OptionalJsonValue): ChatConfig | null {
-  const object = asJsonObject(value);
-  if (object === null) return null;
-  const config: ChatConfig = {};
-  for (const key of ['model', 'effort', 'permission'] as const) {
-    const candidate = object[key];
-    if (candidate === undefined) continue;
-    if (!isString(candidate) || candidate.length > 256) return null;
-    config[key] = candidate;
-  }
-  return config;
 }
 
 export const SESSION_TITLE_MAX_LENGTH = 64;
@@ -163,10 +144,6 @@ export function isManagedWorkspaceTab(tab: WorkspaceTab): tab is ManagedWorkspac
     || tab.type === 'pi'
     || tab.type === 'kimi'
     || tab.type === 'prime';
-}
-
-export function isWorkspaceTabOpen(tab: WorkspaceTab): boolean {
-  return !isManagedWorkspaceTab(tab) || tab.windowOpen !== false;
 }
 
 export function createStorageNamespace(orgId: string, membershipId: string): StorageNamespace {
@@ -318,23 +295,28 @@ function clampedTab(tab: WorkspaceTab): WorkspaceTab {
   return withRegion({ id: tab.id, type: 'preview', port: tab.port }, tabRegion(tab));
 }
 
-/** Keeps the two panes coherent: a side pane only exists while it holds tabs,
- * and a pane's active id always names one of its own open tabs. A retained,
- * closed main session keeps the main empty state beside an open side pane. */
+function restoreLegacyTab(tab: WorkspaceTab): WorkspaceTab {
+  if (!isManagedWorkspaceTab(tab) || tab.windowOpen !== false) return tab;
+  const restored: WorkspaceTab = { ...tab };
+  delete restored.windowOpen;
+  return restored;
+}
+
+/** Keeps the two panes coherent and consumes the short-lived archive/window
+ * format written by the superseded UI branch. Archived and retained-window
+ * tabs return as ordinary tabs, while disabled native Chat layout records are
+ * dropped without touching the actor's provider-native session journal. */
 export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
-  const archivedTabs = tabs.archivedTabs ?? [];
-  const openTabs = tabs.tabs.filter(isWorkspaceTabOpen);
-  const closedMainSession = tabs.tabs.some((tab) => isManagedWorkspaceTab(tab)
-    && !isWorkspaceTabOpen(tab)
-    && tabRegion(tab) === 'main');
-  const collapse = !closedMainSession
-    && openTabs.length > 0
-    && openTabs.every((tab) => tabRegion(tab) === 'side');
+  const entriesToRestore = [...tabs.tabs, ...(tabs.archivedTabs ?? [])]
+    .map(restoreLegacyTab)
+    .filter((tab) => NATIVE_CHAT_ENABLED || tab.type !== 'chat');
+  const collapse = entriesToRestore.length > 0
+    && entriesToRestore.every((tab) => tabRegion(tab) === 'side');
   const entries = collapse
-    ? tabs.tabs.map((tab) => withRegion(tab, 'main'))
-    : tabs.tabs;
-  const main = entries.filter((tab) => isWorkspaceTabOpen(tab) && tabRegion(tab) === 'main');
-  const side = entries.filter((tab) => isWorkspaceTabOpen(tab) && tabRegion(tab) === 'side');
+    ? entriesToRestore.map((tab) => withRegion(tab, 'main'))
+    : entriesToRestore;
+  const main = entries.filter((tab) => tabRegion(tab) === 'main');
+  const side = entries.filter((tab) => tabRegion(tab) === 'side');
   const requestedActive = collapse ? tabs.sideActiveId ?? tabs.activeId : tabs.activeId;
   const activeId = main.some(({ id }) => id === requestedActive)
     ? requestedActive ?? null
@@ -342,15 +324,13 @@ export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
   const sideActiveId = side.some(({ id }) => id === tabs.sideActiveId)
     ? tabs.sideActiveId
     : side.at(-1)?.id;
-  const highestId = [...entries, ...archivedTabs]
-    .reduce((highest, tab) => Math.max(highest, tab.id), 0);
+  const highestId = entries.reduce((highest, tab) => Math.max(highest, tab.id), 0);
   const next: WorkspaceTabs = {
     version: 1,
     tabs: entries,
     activeId,
     nextId: Math.max(tabs.nextId, highestId + 1),
   };
-  if (archivedTabs.length > 0) next.archivedTabs = archivedTabs;
   if (sideActiveId !== undefined) next.sideActiveId = sideActiveId;
   return next;
 }
@@ -492,11 +472,6 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
     if (object.chatProvider === 'claude' || object.chatProvider === 'codex') {
       tab.chatProvider = object.chatProvider;
     }
-    if (object.chatConfig !== undefined) {
-      const chatConfig = parseChatConfig(object.chatConfig);
-      if (chatConfig === null) return null;
-      tab.chatConfig = chatConfig;
-    }
     // SAFETY: The chat branch and checked optional fields establish the chat tab variant.
     return withRegion(tab as WorkspaceTab, region);
   }
@@ -554,7 +529,7 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
       ? object.activeId
       : -1;
   const mainTabs = tabs.filter((tab) => tabRegion(tab) === 'main');
-  if (activeId !== null && !mainTabs.some((tab) => tab.id === activeId && isWorkspaceTabOpen(tab))) return null;
+  if (activeId !== null && !mainTabs.some((tab) => tab.id === activeId)) return null;
   const minimumNextId = [...tabs, ...archivedTabs]
     .reduce((highest, { id }) => Math.max(highest, id), 0) + 1;
   if (
@@ -570,9 +545,7 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     if (
       !isNumber(object.sideActiveId)
       || !Number.isSafeInteger(object.sideActiveId)
-      || !tabs.some((tab) => tab.id === object.sideActiveId
-        && isWorkspaceTabOpen(tab)
-        && tabRegion(tab) === 'side')
+      || !tabs.some((tab) => tab.id === object.sideActiveId && tabRegion(tab) === 'side')
     ) return null;
     restored.sideActiveId = object.sideActiveId;
   }
@@ -626,7 +599,6 @@ function migratedTabs(
     nextId: id + 1,
     sideActiveId: id,
   };
-  if (tabs.archivedTabs !== undefined) migrated.archivedTabs = tabs.archivedTabs;
   return migrated;
 }
 

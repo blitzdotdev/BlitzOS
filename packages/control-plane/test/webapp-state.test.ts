@@ -30,7 +30,6 @@ const workspaceDoc = {
         type: "chat",
         chatSessionId: "chat-session-1",
         chatProvider: "claude",
-        chatConfig: { model: "claude-sonnet-5", effort: "high", permission: "acceptEdits" },
       },
     ],
     activeId: 2,
@@ -92,7 +91,7 @@ describe("server-side webApp state", () => {
     expect(invalid.status).toBe(400);
   });
 
-  it("preserves managed titles and archived sessions while enforcing shared ids", async () => {
+  it("restores legacy archived/window records while enforcing shared ids", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
@@ -101,12 +100,11 @@ describe("server-side webApp state", () => {
       ...workspaceDoc,
       tabs: {
         version: 1,
-        tabs: [{ id: 1, type: "chat", title: "Active", chatSessionId: "chat-one" }],
+        tabs: [{ id: 1, type: "claude", title: "Active" }],
         archivedTabs: [{
           id: 4,
-          type: "chat",
+          type: "terminal",
           title: "Archived",
-          chatSessionId: "chat-four",
           region: "side",
         }],
         activeId: 1,
@@ -119,7 +117,19 @@ describe("server-side webApp state", () => {
       body: JSON.stringify(withArchive),
     });
     expect(stored.status).toBe(200);
-    await expect(stored.json()).resolves.toMatchObject({ doc: withArchive });
+    await expect(stored.json()).resolves.toMatchObject({
+      doc: {
+        tabs: {
+          version: 1,
+          tabs: [
+            { id: 1, type: "claude", title: "Active" },
+            { id: 4, type: "terminal", title: "Archived", region: "side" },
+          ],
+          activeId: 1,
+          nextId: 5,
+        },
+      },
+    });
 
     const sendTabs = (tabs: unknown) => appRequest(app, path, {
       method: "PUT",
@@ -148,16 +158,23 @@ describe("server-side webApp state", () => {
     })).status).toBe(400);
     const closed = {
       version: 1,
-      tabs: [{ id: 1, type: "chat", chatSessionId: "chat-one", windowOpen: false }],
+      tabs: [{ id: 1, type: "terminal", title: "Build", windowOpen: false }],
       activeId: null,
       nextId: 5,
     };
     const storedClosed = await sendTabs(closed);
     expect(storedClosed.status).toBe(200);
     await expect(storedClosed.json()).resolves.toMatchObject({
-      doc: { tabs: closed },
+      doc: {
+        tabs: {
+          version: 1,
+          tabs: [{ id: 1, type: "terminal", title: "Build" }],
+          activeId: null,
+          nextId: 5,
+        },
+      },
     });
-    expect((await sendTabs({ ...closed, activeId: 1 })).status).toBe(400);
+    expect((await sendTabs({ ...closed, activeId: 1 })).status).toBe(200);
     expect((await sendTabs({
       ...closed,
       tabs: [{ id: 1, type: "chat", windowOpen: "no" }],

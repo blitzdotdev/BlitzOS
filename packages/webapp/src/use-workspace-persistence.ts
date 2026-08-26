@@ -4,6 +4,7 @@ import {
   defaultWorkspaceFiles,
   defaultWorkspaceTabs,
   defaultWorkspaceWebAppState,
+  normalizedWorkspaceTabs,
   workspaceWebAppState,
   type WorkspaceFiles,
   type WorkspaceTabs,
@@ -70,12 +71,19 @@ export function useWorkspacePersistence(
     void api.getWorkspaceWebAppState(activeWorkspaceId)
       .then((response) => {
         if (!active) return;
-        const state = response.doc ?? defaultWorkspaceWebAppState();
+        const source = response.doc;
+        const state = source === null
+          ? defaultWorkspaceWebAppState()
+          : { ...source, tabs: normalizedWorkspaceTabs(source.tabs) };
         setWorkspaceTabs({ workspaceId: activeWorkspaceId, value: state.tabs, loaded: true });
         setWorkspaceFiles({ workspaceId: activeWorkspaceId, value: state.drawer });
-        // Adopting the server's doc is not an edit, so it must not echo back
-        // as a write that outranks another account's newer save.
-        syncedDoc.current = { workspaceId: activeWorkspaceId, json: JSON.stringify(state) };
+        // Ordinary reads do not echo. A legacy archive/window or disabled-Chat
+        // document intentionally differs after normalization, so it receives
+        // one write that consumes those retired layout fields.
+        syncedDoc.current = {
+          workspaceId: activeWorkspaceId,
+          json: JSON.stringify(source ?? state),
+        };
         setServerSeededId(activeWorkspaceId);
       })
       .catch((cause: Error) => {

@@ -37,6 +37,14 @@
   font: 10.5px/1.3 var(--font-ui);
 }
 
+.chat-active-model {
+  align-self: center;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .chat-permission-control .webapp-select-trigger {
   color: var(--ansi-red);
 }
@@ -900,52 +908,6 @@
   margin: 0 auto 16px;
 }
 
-.chat-prompt-queue {
-  display: grid;
-  overflow: hidden;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--paper) 98%, var(--ink));
-}
-
-.chat-prompt-queue-row {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  font-size: 11px;
-}
-
-.chat-prompt-queue-row + .chat-prompt-queue-row {
-  border-top: 1px solid var(--rule);
-}
-
-.chat-prompt-queue-position {
-  color: var(--faint);
-  white-space: nowrap;
-}
-
-.chat-prompt-queue-text {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.chat-prompt-queue-row button {
-  border: 0;
-  background: transparent;
-  color: var(--faint);
-  cursor: pointer;
-  font: inherit;
-}
-
-.chat-prompt-queue-row button:hover {
-  color: var(--ink);
-}
-
 .chat-composer {
   position: relative;
   flex: none;
@@ -1052,20 +1014,10 @@
   width: auto;
   align-items: center;
   align-self: end;
-  gap: 5px;
-  min-height: 26px;
-  border: 0;
-  border-radius: 4px;
+  gap: 6px;
   background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  padding: 4px 6px;
-  white-space: nowrap;
-}
-
-.chat-input-row .chat-stop:hover {
-  background: var(--hover);
   color: var(--ink);
+  white-space: nowrap;
 }
 
 .chat-input-row .chat-send {
@@ -1085,13 +1037,10 @@
 
 .chat-key {
   border: 1px solid var(--faint);
-  border-radius: 3px;
-  background: var(--paper);
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 9px;
-  line-height: 1.2;
-  padding: 1px 4px;
+  font-size: 10px;
+  padding: 1px 3px;
 }
 
 @media (max-width: 899px) {
@@ -1217,75 +1166,27 @@
   font-size: 12px;
 }
 
-.chat-auth-gate {
+/* The box could not mint a credential: offer the harness login instead of
+ * leaving the reader with a dead prompt. */
+.chat-auth-required {
   display: flex;
   flex: none;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
   border: 1px solid var(--ansi-yellow);
   background: color-mix(in srgb, var(--ansi-yellow) 8%, var(--paper));
-  padding: 10px 12px;
-  font-size: 12px;
+  padding: 8px 12px;
+  font-size: 12.5px;
 }
 
-.chat-auth-gate > div:first-child {
-  display: grid;
-  gap: 3px;
-}
-
-.chat-auth-gate > div:first-child span {
-  color: var(--muted);
-}
-
-.chat-auth-gate-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.chat-auth-gate-actions button {
+.chat-auth-required-action {
   border: 1px solid var(--rule);
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--accent);
+  color: var(--paper);
   cursor: pointer;
-  font: inherit;
-  padding: 5px 9px;
-}
-
-.chat-session-recovery {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  border: 1px solid var(--ansi-yellow);
-  background: color-mix(in srgb, var(--ansi-yellow) 8%, var(--paper));
-  padding: 10px 12px;
+  font-family: var(--font-ui);
   font-size: 12px;
-}
-
-.chat-session-recovery > div:first-child {
-  display: grid;
-  gap: 3px;
-}
-
-.chat-session-recovery > div:first-child span {
-  color: var(--muted);
-}
-
-.chat-session-recovery-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.chat-session-recovery-actions button {
-  border: 1px solid var(--rule);
-  background: var(--paper);
-  color: var(--ink);
-  cursor: pointer;
-  font: 12px/1.3 var(--font-ui);
-  padding: 5px 10px;
+  padding: 4px 14px;
 }

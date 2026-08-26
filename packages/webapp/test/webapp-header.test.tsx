@@ -14,7 +14,7 @@ describe("workspace session header actions", () => {
     const onSelect = vi.fn();
     const view = await render(<WebAppHeader
       tabs={[
-        { id: "one", label: "Chat", agent: "chat", pending: false, renameable: true },
+        { id: "one", label: "Claude", agent: "claude", pending: false, renameable: true },
         { id: "two", label: "Terminal", agent: "terminal", pending: false, renameable: true },
       ]}
       activeSessionId="one"
@@ -35,15 +35,13 @@ describe("workspace session header actions", () => {
     await view.unmount();
   });
 
-  it("renames, archives, and permanently removes a managed session from its context menu", async () => {
+  it("offers Rename as the only managed-session context action", async () => {
     const onRename = vi.fn();
-    const onArchive = vi.fn();
-    const onDelete = vi.fn();
     const view = await render(<WebAppHeader
       tabs={[{
         id: "one",
-        label: "Chat",
-        agent: "chat",
+        label: "Claude",
+        agent: "claude",
         pending: false,
         renameable: true,
       }]}
@@ -53,8 +51,6 @@ describe("workspace session header actions", () => {
       onSelect={() => undefined}
       onClose={() => undefined}
       onRename={onRename}
-      onArchive={onArchive}
-      onDelete={onDelete}
       onSpawn={() => undefined}
     />);
 
@@ -64,11 +60,7 @@ describe("workspace session header actions", () => {
     const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
       ".webapp-session-menu [role='menuitem']",
     )];
-    expect(actions.map(({ textContent }) => textContent)).toEqual([
-      "Rename",
-      "Archive",
-      "Remove permanently",
-    ]);
+    expect(actions.map(({ textContent }) => textContent)).toEqual(["Rename"]);
 
     await act(async () => actions[0]?.click());
     const input = view.container.querySelector<HTMLInputElement>(".webapp-tab-rename")!;
@@ -79,61 +71,6 @@ describe("workspace session header actions", () => {
     });
     expect(onRename).toHaveBeenCalledWith("one", "Release work");
 
-    await act(async () => view.container.querySelector("[data-session-id='one']")?.dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true }),
-    ));
-    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".webapp-session-menu [role='menuitem']",
-    )][1]?.click());
-    expect(onArchive).toHaveBeenCalledWith("one");
-
-    await act(async () => view.container.querySelector("[data-session-id='one']")?.dispatchEvent(
-      new MouseEvent("contextmenu", { bubbles: true }),
-    ));
-    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".webapp-session-menu [role='menuitem']",
-    )][2]?.click());
-    expect(onDelete).toHaveBeenCalledWith("one");
-    await view.unmount();
-  });
-
-  it("restores and permanently removes archived sessions from a bounded menu", async () => {
-    const onRestore = vi.fn();
-    const onDelete = vi.fn();
-    const view = await render(<WebAppHeader
-      tabs={[]}
-      archivedTabs={[{
-        id: "archived",
-        label: "A long archived session name that remains inside the menu",
-        agent: "claude",
-        pending: false,
-      }]}
-      activeSessionId=""
-      sessionBusy={false}
-      terminalDisabled={false}
-      onSelect={() => undefined}
-      onClose={() => undefined}
-      onDelete={onDelete}
-      onRestore={onRestore}
-      onSpawn={() => undefined}
-    />);
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      "[aria-label='Archived sessions']",
-    )?.click());
-    expect(view.container.querySelector<HTMLElement>(".webapp-archive-menu")?.hidden).toBe(false);
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-archive-restore",
-    )?.click());
-    expect(onRestore).toHaveBeenCalledWith("archived");
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      "[aria-label='Archived sessions']",
-    )?.click());
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-archive-delete",
-    )?.click());
-    expect(onDelete).toHaveBeenCalledWith("archived");
     await view.unmount();
   });
 });

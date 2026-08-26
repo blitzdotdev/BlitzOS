@@ -98,17 +98,8 @@ class Client {
     await this.take((frame) => frame.id === id);
   }
 
-  public async newSession(id = "new", provider?: Provider): Promise<string> {
-    this.send({
-      jsonrpc: "2.0",
-      id,
-      method: "session/new",
-      params: {
-        cwd: "/workspace",
-        mcpServers: [],
-        ...(provider === undefined ? {} : { _meta: { "blitz/provider": provider } }),
-      },
-    });
+  public async newSession(id = "new"): Promise<string> {
+    this.send({ jsonrpc: "2.0", id, method: "session/new", params: { cwd: "/workspace", mcpServers: [] } });
     const frame = await this.take((candidate) => candidate.id === id);
     return (frame.result as { sessionId: string }).sessionId;
   }
@@ -121,14 +112,6 @@ class Client {
 class FakeCredentials extends CredentialSource {
   public tokenValue: string | null = null;
   public failure = false;
-  public statuses: Record<Provider, "signed-in" | "signed-out" | "unknown"> = {
-    claude: "signed-out",
-    codex: "signed-out",
-  };
-
-  public override async authStatus(provider: Provider) {
-    return this.statuses[provider];
-  }
 
   public override async token(_provider: Provider): Promise<string | null> {
     if (this.failure) throw new Error("mint failed");
@@ -191,25 +174,6 @@ function fixtureBubbleText(frame: Frame | undefined): string {
 }
 
 describe("ACP actor", () => {
-  test("reports secret-free harness status and honors the provider requested for a new session", async () => {
-    const selected: Provider[] = [];
-    const item = await start({ async runTurn() { return { stopReason: "end_turn" }; } });
-    item.credentials.statuses = { claude: "signed-out", codex: "signed-in" };
-    const client = await Client.open(item.url);
-    await client.initialize();
-
-    client.send({ jsonrpc: "2.0", id: "status", method: "blitz/auth_status", params: {} });
-    const status = await client.take((frame) => frame.id === "status");
-    expect(status.result).toEqual({ claude: "signed-out", codex: "signed-in" });
-
-    const sessionId = await client.newSession("codex-new", "codex");
-    const stored = item.store.session(sessionId);
-    expect(stored?.provider).toBe("codex");
-    selected.push(stored?.provider ?? "claude");
-    expect(selected).toEqual(["codex"]);
-    client.close();
-  });
-
   test("persists the shared attributed-event and session-list fixture shapes", () => {
     const directory = mkdtempSync(join(tmpdir(), "blitz-actor-fixture-"));
     const store = new ChatSessionStore(join(directory, "chat-session.db"));
@@ -228,12 +192,7 @@ describe("ACP actor", () => {
       sessionId: listed?.id,
       cwd: "/workspace",
       updatedAt: listed === undefined ? undefined : new Date(listed.updatedAt).toISOString(),
-      _meta: {
-        id: listed?.id,
-        provider: listed?.provider,
-        "blitz/provider": listed?.provider,
-        createdBy: listed?.createdBy,
-      },
+      _meta: { id: listed?.id, provider: listed?.provider, createdBy: listed?.createdBy },
     }).toMatchObject(fixtureInfo as object);
     store.append("session-attributed", attributed);
     expect(JSON.parse(store.replay("session-attributed", 10)[0]!.frame)).toEqual(attributed);
@@ -357,12 +316,7 @@ describe("ACP actor", () => {
     expect(listed.result).toMatchObject({
       sessions: [{
         sessionId,
-        _meta: {
-          id: sessionId,
-          provider: "claude",
-          "blitz/provider": "claude",
-          createdBy: "editor-user",
-        },
+        _meta: { id: sessionId, provider: "claude", createdBy: "editor-user" },
       }],
     });
     viewer.send({ jsonrpc: "2.0", id: "load", method: "session/load", params: { sessionId, cwd: "/workspace", mcpServers: [] } });

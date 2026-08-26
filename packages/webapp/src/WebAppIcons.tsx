@@ -102,29 +102,3 @@ export function FolderIcon(props: WebAppIconProps) {
     </svg>
   );
 }
-
-export function ArchiveIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M1.5 3.25h9v7h-9Z" />
-      <path d="M1 1.25h10v2H1ZM4.4 5.4h3.2" />
-    </svg>
-  );
-}
-
-export function RestoreIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M2.1 4.1A4.25 4.25 0 1 1 1.8 7" />
-      <path d="M2 1.5v2.8h2.8" />
-    </svg>
-  );
-}
-
-export function TrashIcon(props: WebAppIconProps) {
-  return (
-    <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
-      <path d="M2.5 3.25h7l-.45 7h-6.1ZM1.75 3.25h8.5M4.25 3.25v-1.5h3.5v1.5M4.7 5.2v3.2M7.3 5.2v3.2" />
-    </svg>
-  );
-}

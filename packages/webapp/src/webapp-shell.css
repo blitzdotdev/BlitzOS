@@ -588,8 +588,7 @@
   color: var(--accent);
 }
 
-.webapp-session--active,
-.webapp-session--unread {
+.webapp-session--active {
   font-weight: 650 !important;
 }
 
@@ -605,46 +604,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.webapp-session-state {
-  flex: none;
-  padding: 0 5px;
-  border: 1px solid var(--ansi-magenta);
-  border-radius: 4px;
-  color: var(--ansi-magenta);
-  font-size: 9.5px;
-  font-weight: 400;
-  white-space: nowrap;
-}
-
-.webapp-session-state--attention {
-  border-color: var(--ansi-yellow);
-  color: var(--ansi-yellow);
-}
-
-.webapp-session-state--done {
-  border-color: var(--ansi-green);
-  color: var(--ansi-green);
-}
-
-.webapp-session-state--error {
-  border-color: var(--ansi-red);
-  color: var(--ansi-red);
-}
-
-.webapp-session-spinner {
-  width: 10px;
-  height: 10px;
-  flex: none;
-  border: 1px solid var(--accent);
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: webapp-session-spin 900ms linear infinite;
-}
-
-@keyframes webapp-session-spin {
-  to { transform: rotate(360deg); }
 }
 
 .webapp-support {
@@ -862,9 +821,6 @@
     transition: none;
   }
 
-  .webapp-session-spinner {
-    animation: none;
-  }
 }
 
 /* Drag a screenshot anywhere over the cockpit: the overlay is the only signal

@@ -37,11 +37,6 @@ interface WebAppTabV1 {
   type: WebAppTabType;
   chatSessionId?: string;
   chatProvider?: WebAppAgent;
-  chatConfig?: {
-    model?: string;
-    effort?: string;
-    permission?: string;
-  };
   filePath?: string;
   port?: number;
   url?: string;
@@ -134,6 +129,13 @@ function parseWindowOpen(value: OptionalJsonValue, field: string): false | undef
   return false;
 }
 
+function restoreLegacyWindow(tab: WebAppTabV1): WebAppTabV1 {
+  if (tab.windowOpen !== false) return tab;
+  const restored = { ...tab };
+  delete restored.windowOpen;
+  return restored;
+}
+
 function boundedString(value: OptionalJsonValue, field: string, maxLength: number): string {
   if (!isString(value) || value.length > maxLength) {
     throw new HttpError(400, `${field} must be a string no longer than ${maxLength}`);
@@ -160,15 +162,6 @@ function parseAgent(value: OptionalJsonValue, field: string): WebAppAgent {
     throw new HttpError(400, `${field} must be claude or codex`);
   }
   return value;
-}
-
-function parseChatConfig(value: OptionalJsonValue, field: string): NonNullable<WebAppTabV1["chatConfig"]> {
-  if (!isRecord(value)) throw new HttpError(400, `${field} must be an object`);
-  const config: NonNullable<WebAppTabV1["chatConfig"]> = {};
-  for (const key of ["model", "effort", "permission"] as const) {
-    if (value[key] !== undefined) config[key] = boundedString(value[key], `${field}.${key}`, 256);
-  }
-  return config;
 }
 
 function parseSegment(value: OptionalJsonValue, field: string): WebAppDrawerSegment {
@@ -271,9 +264,6 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   if (value.chatProvider !== undefined) {
     tab.chatProvider = parseAgent(value.chatProvider, `tabs.tabs[${index}].chatProvider`);
   }
-  if (value.chatConfig !== undefined) {
-    tab.chatConfig = parseChatConfig(value.chatConfig, `tabs.tabs[${index}].chatConfig`);
-  }
   const windowOpen = parseWindowOpen(value.windowOpen, `tabs.tabs[${index}].windowOpen`);
   if (windowOpen === false) tab.windowOpen = false;
   return withRegion(tab, region);
@@ -302,22 +292,21 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   const activeId = value.activeId === null
     ? null
     : positiveId(value.activeId, "tabs.activeId");
-  if (activeId !== null && !tabs.some((tab) => tab.id === activeId
-    && tab.windowOpen !== false
-    && tab.region !== "side")) {
+  if (activeId !== null && !tabs.some((tab) => tab.id === activeId && tab.region !== "side")) {
     throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
   }
   const nextId = positiveId(value.nextId, "tabs.nextId");
   if (allTabs.some(({ id }) => id >= nextId)) {
     throw new HttpError(400, "tabs.nextId must be greater than every tab id");
   }
-  const parsed: WebAppTabsV1 = { version: 1, tabs, activeId, nextId };
-  if (archivedTabs.length > 0) parsed.archivedTabs = archivedTabs;
+  // Compatibility with the short-lived archive/window model: accept older
+  // documents, restore every record as an ordinary tab, and stop emitting the
+  // retired fields on the next state write.
+  const restoredTabs = allTabs.map(restoreLegacyWindow);
+  const parsed: WebAppTabsV1 = { version: 1, tabs: restoredTabs, activeId, nextId };
   if (value.sideActiveId !== undefined) {
     const sideActiveId = positiveId(value.sideActiveId, "tabs.sideActiveId");
-    if (!tabs.some((tab) => tab.id === sideActiveId
-      && tab.windowOpen !== false
-      && tab.region === "side")) {
+    if (!tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {
       throw new HttpError(400, "tabs.sideActiveId must identify a side-pane tab");
     }
     parsed.sideActiveId = sideActiveId;

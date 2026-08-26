@@ -1,3 +1,142 @@
+# Cockpit UI restoration — current direction
+
+Status: **active rescope** (2026-08-25). This update supersedes the historical
+plan below without deleting it. The earlier work remains useful product and
+implementation history, but native Chat and Blitz-owned session
+archive/removal are no longer part of the current UI branch.
+
+## Product direction update
+
+The cockpit is a tabbed workspace/window manager. Claude, Codex, terminals,
+files, previews, and utility panels appear as tabs, but Blitz does not own the
+provider-native conversation journal or its archive/delete/resume lifecycle.
+Claude and Codex remain responsible for resuming their own conversations.
+
+The resulting interaction contract is:
+
+- the X closes and removes a tab from the cockpit layout;
+- closing a Claude, Codex, or terminal tab makes no claim about deleting its
+  process, JSONL, transcript, or other provider-native runtime data;
+- the workspace rail lists only agent-like tabs that are currently in the
+  cockpit layout, not files, previews, utility panels, or hidden resumable
+  records;
+- right-clicking a managed-session tab opens its menu without selecting it;
+- Rename is the only managed-session context action;
+- Blitz does not expose archive, restore, or permanent session removal;
+- native Chat is intentionally unavailable for now; and
+- Finder file/folder actions and Workspace Details remain in scope.
+
+Native Chat may return later as a separately owned product surface. Preserve
+its implementation through Git history and a narrow documented availability
+boundary, not large commented-out code blocks. Reintroduction requires an
+explicit decision about native session ownership, authentication, provider
+selection, lifecycle, queueing, recovery, and mobile behavior.
+
+## Active implementation phases
+
+### Phase A — restore standard tab lifecycle
+
+1. Make the X use the normal tab-close operation for Claude, Codex, terminal,
+   file, preview, and panel tabs.
+2. Remove the retained-window model (`windowOpen`), hidden resumable rail rows,
+   and the Resume-session empty state.
+3. Remove archive, restore, Archived sessions, and Remove permanently controls,
+   state transitions, confirmation UI, icons, and dedicated styling.
+4. Keep persisted custom titles and Rename as the only managed-session context
+   action. Right-click must not select the target tab.
+5. Preserve normal pane invariants: closing the active tab selects an adjacent
+   tab, and closing the last side-pane tab collapses the split.
+6. Add compatibility normalization for documents written by the earlier branch:
+   reopen `windowOpen: false` tabs as ordinary tabs, restore `archivedTabs` to
+   the regular tab collection without selecting over an existing active tab,
+   preserve IDs/titles, and drop the retired fields on the next save.
+
+Done when closed tabs disappear from both the tab strip and workspace rail,
+Rename remains available without activating a right-clicked tab, no session
+archive/removal control is rendered, and an earlier branch document loads
+without losing its retained or archived tab records.
+
+### Phase B — disable native Chat
+
+1. Add one centralized, documented native-Chat availability boundary.
+2. Remove Chat from New Session and every other creation entry point while the
+   boundary is disabled.
+3. Do not render native Chat tabs or issue Chat authentication/status requests.
+   Reconcile existing Chat layout records without deleting provider-native ACP
+   journals or transcripts.
+4. Remove the branch-only native Chat lifecycle, queued-message, persistent
+   config, provider-authentication, and rail-status integrations from the
+   active product surface.
+5. Remove Chat-only actor authentication-status protocol work from this UI
+   branch; it can return with the deferred native Chat work.
+6. Keep Claude, Codex, and Terminal launch paths unchanged.
+
+Done when no native Chat entry point or persisted Chat surface is visible,
+Claude/Codex/Terminal tabs still launch normally, and the code contains one
+clear comment explaining why Chat is disabled and what decision is required
+before it returns.
+
+### Phase C — Finder rename and delete
+
+Keep the implemented Finder file/folder rename and delete workflow, including
+dirty-editor protection, WebDAV error handling, open-tab/path reconciliation,
+and the existing Drive actions. These operations manage workspace files, not
+provider-native session records.
+
+### Phase D — Workspace Details
+
+Keep the implemented three-dot Workspace Details action, human-readable
+compute/storage/configuration metadata, access list, separate Share action, and
+workspace deletion inside Details. Workspace deletion is distinct from session
+archive/removal and remains in scope.
+
+### Phase E — mobile responsiveness
+
+Audit global navigation, workspace creation, Templates, Recipes, Drive,
+Settings, the workspace rail, standard tab closing/renaming, Finder, Share, and
+Workspace Details at the supported breakpoints. Remove the historical mobile
+requirements for native Chat, Chat configuration/queues/approvals, and
+archive/restore controls. Preserve the single-pane mobile model, touch access,
+viewport-safe menus/dialogs, focus return, keyboard behavior, and safe areas.
+
+### Phase F — final refinement and polish
+
+Walk fresh and persisted workspaces across desktop and mobile. Verify standard
+close behavior, Rename-only session menus, rail counts/selections, split-pane
+collapse, reload/reconnect, file actions, Share, and Workspace Details. Confirm
+that no native Chat or session archive/removal entry point remains, run the
+required repository gates and self-host walkthrough, and record intentional
+limitations before the PR.
+
+## Deferred native Chat work
+
+The historical Phases 2, 3A, and 3B below are deferred rather than discarded.
+They cover native Chat identity/recovery, ACP lifecycle states, workspace-file
+links, queued prompts, persistent selections, provider authentication, and
+provider locking. They are not current acceptance criteria and should return
+only in a dedicated plan/branch after the product ownership boundary is agreed.
+
+## Current recommended PR sequence
+
+1. Standard tab lifecycle and compatibility normalization.
+2. Native Chat availability boundary and active-surface removal.
+3. Finder actions.
+4. Workspace Details.
+5. Mobile responsiveness.
+6. Final refinement, staging walkthrough, and release notes.
+
+Each PR keeps tests and documentation aligned with its actual shipped surface.
+Do not ship retired archive/window fields or Chat-only runtime contracts merely
+because they remain described in the historical record below.
+
+---
+
+## Historical plan — superseded on 2026-08-25
+
+The following plan is intentionally preserved unchanged as implementation and
+decision history. Its earlier completion labels do not override the active
+direction above.
+
 # Cockpit UI restoration on the ACP runtime
 
 Status: **plan** (2026-08-24). Scope approved: restore the P0 and P1

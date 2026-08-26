@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { access, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { isNumber, isString } from "./type-guards.js";
+import { isString } from "./type-guards.js";
 import type { Provider } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -14,39 +14,12 @@ interface ExecFailure {
   stderr?: Buffer | string;
 }
 
-interface ExecStatusFailure {
-  code?: string | number;
-}
-
-export type HarnessAuthStatus = "signed-in" | "signed-out" | "unknown";
-
-export interface AuthStatusCommandOptions {
-  timeout: number;
-  env: NodeJS.ProcessEnv;
-}
-
-export type AuthStatusRunner = (
-  file: string,
-  args: string[],
-  options: AuthStatusCommandOptions,
-) => Promise<void>;
-
 function execFailure(error: Error): ExecFailure {
   // SAFETY: promisify(execFile) attaches the child's captured streams to the
   // rejected Error. `stderr` is declared optional and read defensively, so any
   // other rejection shape simply yields no reason.
   return error as ExecFailure;
 }
-
-function execStatusFailure(error: Error): ExecStatusFailure {
-  // SAFETY: execFile attaches its process exit code to Error rejections. The
-  // field stays optional and is validated before it affects auth state.
-  return error as ExecStatusFailure;
-}
-
-const runAuthStatusCommand: AuthStatusRunner = async (file, args, options) => {
-  await execFileAsync(file, args, options);
-};
 
 /** One short line of the broker's own words, for a log.
  *
@@ -212,39 +185,7 @@ export class CredentialSource {
   private lastEnvironment: Record<string, string> = {};
   private environmentWaited = false;
 
-  public constructor(
-    private readonly stateDir: string,
-    private readonly authStatusRunner: AuthStatusRunner = runAuthStatusCommand,
-  ) {}
-
-  public async authStatus(provider: Provider): Promise<HarnessAuthStatus> {
-    try {
-      await access(join(this.stateDir, "broker.json"), constants.R_OK);
-      // Broker status is deliberately deferred. A stored broker token is not
-      // proof that it is unexpired or refreshable, so do not claim signed in.
-      return "unknown";
-    } catch (brokerError) {
-      if (!(brokerError instanceof Error) || execStatusFailure(brokerError).code !== "ENOENT") {
-        return "unknown";
-      }
-    }
-
-    // A standalone/self-hosted box keeps the vendor's own login files, so the
-    // pinned official status commands are authoritative in this mode.
-    const command = provider === "claude"
-      ? { file: "/opt/blitz/npm/bin/claude", args: ["auth", "status"] }
-      : { file: "/opt/blitz/npm/bin/codex", args: ["login", "status"] };
-    try {
-      await this.authStatusRunner(command.file, command.args, {
-        timeout: 10_000,
-        env: { ...process.env, HOME: "/var/lib/blitz/home" },
-      });
-      return "signed-in";
-    } catch (statusError) {
-      if (!(statusError instanceof Error)) return "unknown";
-      return isNumber(execStatusFailure(statusError).code) ? "signed-out" : "unknown";
-    }
-  }
+  public constructor(private readonly stateDir: string) {}
 
   public async token(provider: Provider): Promise<string | null> {
     try {

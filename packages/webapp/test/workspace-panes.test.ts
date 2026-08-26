@@ -2,18 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceTabs } from "../src/storage.js";
 import {
   appendTab,
-  archiveTab,
   closeFileTabsAtPath,
-  closeManagedTabWindow,
   closeTab,
   filesHostRegion,
   moveTab,
-  openManagedTabWindow,
   paneRegions,
   regionTabs,
-  removeTabPermanently,
   renameTab,
-  restoreTab,
   showPanelTab,
   splitTab,
   togglePanelTab,
@@ -129,7 +124,7 @@ describe("workspace pane model", () => {
     const withFiles: WorkspaceTabs = {
       version: 1,
       tabs: [
-        { id: 1, type: "chat", chatSessionId: "chat-one" },
+        { id: 1, type: "claude" },
         { id: 2, type: "file", filePath: "src/index.ts" },
         { id: 3, type: "file", filePath: "src/components/App.tsx", region: "side" },
         { id: 4, type: "file", filePath: "README.md", region: "side" },
@@ -141,7 +136,7 @@ describe("workspace pane model", () => {
 
     const closed = closeFileTabsAtPath(withFiles, "src");
     expect(closed.tabs).toEqual([
-      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 1, type: "claude" },
       { id: 4, type: "file", filePath: "README.md", region: "side" },
     ]);
     expect(closed.activeId).toBe(1);
@@ -149,113 +144,10 @@ describe("workspace pane model", () => {
     expect(closed.nextId).toBe(5);
   });
 
-  it("closes and reopens a managed session window without removing the session", () => {
-    const closed = closeManagedTabWindow(tabs(), 1);
-    expect(closed.tabs).toEqual([
-      { id: 1, type: "claude", windowOpen: false },
-      { id: 2, type: "terminal" },
-    ]);
-    expect(closed.activeId).toBe(2);
-    expect(regionTabs(closed, "main").map(({ id }) => id)).toEqual([2]);
-    expect(closed.archivedTabs).toBeUndefined();
-
-    const reopened = openManagedTabWindow(closed, 1);
-    expect(reopened.tabs).toEqual(tabs().tabs);
-    expect(reopened.activeId).toBe(1);
-  });
-
-  it("keeps the last session after its window closes and leaves the pane empty", () => {
-    const only: WorkspaceTabs = {
-      version: 1,
-      tabs: [{ id: 1, type: "chat", chatSessionId: "chat-one" }],
-      activeId: 1,
-      nextId: 2,
-    };
-    const closed = closeManagedTabWindow(only, 1);
-    expect(closed.tabs).toEqual([{
-      id: 1,
-      type: "chat",
-      chatSessionId: "chat-one",
-      windowOpen: false,
-    }]);
-    expect(closed.activeId).toBeNull();
-    expect(paneRegions(closed)).toEqual(["main"]);
-    expect(regionTabs(closed, "main")).toEqual([]);
-  });
-
-  it("keeps a side panel beside the resume state when the main session window closes", () => {
-    const split: WorkspaceTabs = {
-      version: 1,
-      tabs: [
-        { id: 1, type: "chat", chatSessionId: "chat-one" },
-        { id: 2, type: "panel", panel: "files", region: "side" },
-      ],
-      activeId: 1,
-      sideActiveId: 2,
-      nextId: 3,
-    };
-    const closed = closeManagedTabWindow(split, 1);
-    expect(closed.activeId).toBeNull();
-    expect(closed.sideActiveId).toBe(2);
-    expect(paneRegions(closed)).toEqual(["main", "side"]);
-    expect(regionTabs(closed, "main")).toEqual([]);
-    expect(regionTabs(closed, "side")).toEqual([
-      { id: 2, type: "panel", panel: "files", region: "side" },
-    ]);
-  });
-
-  it("archives and restores a managed tab with its title, id, and pane", () => {
-    const split = appendTab(tabs(), "side", (id) => ({
-      id,
-      type: "chat",
-      title: "Release notes",
-      chatSessionId: "chat-release",
-    }));
-    const archived = archiveTab(split, 3);
-    expect(archived.tabs.map(({ id }) => id)).toEqual([1, 2]);
-    expect(archived.archivedTabs).toEqual([{
-      id: 3,
-      type: "chat",
-      title: "Release notes",
-      chatSessionId: "chat-release",
-      region: "side",
-    }]);
-    expect(archived.nextId).toBe(4);
-
-    const restored = restoreTab(archived, 3);
-    expect(regionTabs(restored, "side")).toEqual([{
-      id: 3,
-      type: "chat",
-      title: "Release notes",
-      chatSessionId: "chat-release",
-      region: "side",
-    }]);
-    expect(restored.sideActiveId).toBe(3);
-    expect(restored.archivedTabs).toBeUndefined();
-    expect(restored.nextId).toBe(4);
-  });
-
-  it("keeps ids monotonic when archived entries are removed", () => {
-    const archived = archiveTab(tabs(), 2);
-    const removed = removeTabPermanently(archived, 2);
-    expect(removed.archivedTabs).toBeUndefined();
-    expect(removed.nextId).toBe(3);
-    expect(appendTab(removed, "main", (id) => ({ id, type: "terminal" })).tabs.at(-1)?.id)
-      .toBe(3);
-  });
-
-  it("renames active and archived sessions and resets empty titles", () => {
+  it("renames active sessions and resets empty titles", () => {
     const active = renameTab(tabs(), 1, "  Deploy shell  ");
     expect(active.tabs[0]).toEqual({ id: 1, type: "claude", title: "Deploy shell" });
-    const archived = archiveTab(active, 1);
-    expect(renameTab(archived, 1, "   ").archivedTabs).toEqual([
-      { id: 1, type: "claude" },
-    ]);
-  });
-
-  it("does not archive file, preview, or panel tabs", () => {
-    const withFile = appendTab(tabs(), "main", (id) => ({ id, type: "file", filePath: "a.txt" }));
-    expect(archiveTab(withFile, 3)).toBe(withFile);
+    expect(renameTab(active, 1, "   ").tabs[0]).toEqual({ id: 1, type: "claude" });
   });
 });
 

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IdentityRecord, OrgRecord } from '../protocol';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import type { ChatSessionStatus } from '../chat/ChatPanel';
 import { SessionTypeIcon, type WebAppSessionType } from '../WebAppHeader';
 import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
 import { DriveGlyph, RecipeGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
@@ -16,8 +15,6 @@ export type DriveRailSession = {
   label: string;
   agent: WebAppSessionType;
   filePath?: string;
-  state?: Exclude<ChatSessionStatus, 'idle'>;
-  unread?: boolean;
 };
 
 function workspaceStateLabel(workspace: CloudWorkspaceModel): string {
@@ -351,9 +348,7 @@ export function DriveRail({
                         && (session.id === activeSessionId || (!activeSessionId && index === 0));
                       return (
                         <button
-                          className={`webapp-session${sessionActive ? ' webapp-session--active' : ''}${
-                            session.unread ? ' webapp-session--unread' : ''
-                          }`}
+                          className={`webapp-session${sessionActive ? ' webapp-session--active' : ''}`}
                           type="button"
                           key={session.id}
                           data-rail-session-id={session.id}
@@ -366,20 +361,6 @@ export function DriveRail({
                             filePath={session.filePath}
                           />
                           <span className="webapp-session-label">{session.label}</span>
-                          {session.state === 'needs-attention' && (
-                            <span className="webapp-session-state webapp-session-state--attention">
-                              needs input
-                            </span>
-                          )}
-                          {session.state === 'done' && (
-                            <span className="webapp-session-state webapp-session-state--done">done</span>
-                          )}
-                          {session.state === 'error' && (
-                            <span className="webapp-session-state webapp-session-state--error">error</span>
-                          )}
-                          {session.state === 'generating' && (
-                            <span className="webapp-session-spinner" aria-label="generating" />
-                          )}
                         </button>
                       );
                     })}

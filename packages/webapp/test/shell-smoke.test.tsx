@@ -780,11 +780,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("retains visited terminal and chat panes while hiding inactive panes", async () => {
+  it("retains visited terminal panes while hiding inactive panes", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
-      { id: 2, type: "chat", chatProvider: "claude", chatSessionId: "chat-two" },
+      { id: 2, type: "claude" },
     ], 1);
     const view = await render(
       <CloudApp
@@ -796,60 +796,35 @@ describe("webapp shell smoke", () => {
     await settle();
 
     const terminal = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
-    expect(view.container.querySelector('[data-testid="chat-session"]')).toBeNull();
+    expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
       '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
     )?.click());
-    const chat = view.container.querySelector<HTMLElement>('[data-testid="chat-session"]')!;
-    expect(chat.dataset.initialSessionId).toBe("chat-two");
-    expect(chat.dataset.sessionIntent).toBe("load");
+    const claude = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="2"]',
+    )!;
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
-    expect(chat.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
+    expect(claude.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
       '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
     )?.click());
     expect(view.container.querySelector('[data-testid="terminal-session"]')).toBe(terminal);
-    expect(view.container.querySelector('[data-testid="chat-session"]')).toBe(chat);
+    expect(view.container.querySelector(
+      '[data-testid="terminal-session"][data-session-key="2"]',
+    )).toBe(claude);
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
-    expect(chat.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
+    expect(claude.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
     expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
 
     await view.unmount();
   });
 
-  it("marks a newly spawned Chat for creation and a legacy id-less Chat for recovery", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [{ id: 1, type: "chat", chatProvider: "claude" }], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    expect(view.container.querySelector<HTMLElement>("[data-testid='chat-session']")
-      ?.dataset.sessionIntent).toBe("recover");
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-new-tab-spawn",
-    )?.click());
-    const chatAction = [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".webapp-agent-menu [role='menuitem']",
-    )].find(({ textContent }) => textContent?.trim() === "Chat");
-    await act(async () => chatAction?.click());
-    const chats = [...view.container.querySelectorAll<HTMLElement>("[data-testid='chat-session']")];
-    expect(chats).toHaveLength(2);
-    expect(chats.at(-1)?.dataset.sessionIntent).toBe("create");
-    await view.unmount();
-  });
-
-  it("shows native Chat states in the rail and acknowledges background results", async () => {
+  it("does not expose native Chat or restore its persisted layout records", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
       { id: 2, type: "terminal" },
     ], 1);
     const view = await render(
@@ -861,48 +836,28 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    const railSession = (id: string) => view.container.querySelector<HTMLButtonElement>(
-      `[data-rail-session-id="${id}"]`,
-    );
-    const chatStatus = (status: string) => view.container.querySelector<HTMLButtonElement>(
-      `[data-testid="chat-status-${status}"]`,
-    );
-
-    await act(async () => chatStatus("generating")?.click());
-    expect(railSession("1")?.querySelector('[aria-label="generating"]')).not.toBeNull();
-    await act(async () => chatStatus("needs-attention")?.click());
-    expect(railSession("1")?.textContent).toContain("needs input");
-
+    expect(view.container.querySelector("[data-testid='chat-session']")).toBeNull();
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="2"]')).not.toBeNull();
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
+      ".webapp-new-tab-spawn",
     )?.click());
-    await act(async () => chatStatus("done")?.click());
-    expect(railSession("1")?.textContent).toContain("done");
-    expect(railSession("1")?.classList.contains("webapp-session--unread")).toBe(true);
-    await act(async () => railSession("1")?.click());
-    expect(railSession("1")?.textContent).not.toContain("done");
-    expect(railSession("1")?.classList.contains("webapp-session--unread")).toBe(false);
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
-    )?.click());
-    await act(async () => chatStatus("error")?.click());
-    expect(railSession("1")?.textContent).toContain("error");
-    await act(async () => railSession("1")?.click());
-    expect(railSession("1")?.textContent).not.toContain("error");
-
-    await act(async () => chatStatus("done")?.click());
-    expect(railSession("1")?.textContent).not.toContain("done");
-    expect(railSession("2")?.querySelector(".webapp-session-state, .webapp-session-spinner"))
-      .toBeNull();
-
+    const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-agent-menu [role='menuitem']",
+    )].map(({ textContent }) => textContent?.trim());
+    expect(actions).toEqual(["Claude", "Codex", "Terminal"]);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
+      .toEqual([{ id: 2, type: "terminal" }]);
     await view.unmount();
   });
 
   it("keeps file tabs out of the workspace session rail and collapsed count", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 1, type: "claude" },
       { id: 2, type: "terminal" },
       { id: 3, type: "file", filePath: "getting-started.md" },
     ], 3);
@@ -928,10 +883,10 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps the visible Chat highlighted when a side-pane file has focus", async () => {
+  it("keeps the visible agent session highlighted when a side-pane file has focus", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatSessionId: "chat-one" },
+      { id: 1, type: "claude" },
       { id: 2, type: "file", filePath: "test1.md", region: "side" },
     ], 1, 2);
     const view = await render(
@@ -946,41 +901,17 @@ describe("webapp shell smoke", () => {
     await act(async () => view.container.querySelector<HTMLButtonElement>(
       '.webapp-pane-strip[data-region="side"] .webapp-tab-cell[data-session-id="2"] [role="tab"]',
     )?.click());
-    const railChat = view.container.querySelector<HTMLButtonElement>('[data-rail-session-id="1"]');
-    expect(railChat?.classList.contains("webapp-session--active")).toBe(true);
+    const railAgent = view.container.querySelector<HTMLButtonElement>('[data-rail-session-id="1"]');
+    expect(railAgent?.classList.contains("webapp-session--active")).toBe(true);
     expect(view.container.querySelector('[data-rail-session-id="2"]')).toBeNull();
 
     await view.unmount();
   });
 
-  it("focuses an existing file tab when Chat opens a workspace-file link", async () => {
+  it("keeps Rename as the only managed-session context action", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatSessionId: "chat-one" },
-      { id: 2, type: "file", filePath: "src/app.ts" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-open-file"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("2");
-    expect(view.container.querySelectorAll(".webapp-tab-cell")).toHaveLength(2);
-    await view.unmount();
-  });
-
-  it("persists managed-session archive, restore, and permanent removal", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", title: "Release chat", chatSessionId: "chat-one" },
+      { id: 1, type: "claude", title: "Release work" },
       { id: 2, type: "terminal" },
     ], 1);
     const view = await render(
@@ -992,52 +923,19 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    const chatCell = () => view.container.querySelector<HTMLElement>(
+    const sessionCell = () => view.container.querySelector<HTMLElement>(
       ".webapp-tab-cell[data-session-id='1']",
     );
-    await act(async () => chatCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
-    const archive = [...view.container.querySelectorAll<HTMLButtonElement>(
+    await act(async () => sessionCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
       ".webapp-session-menu [role='menuitem']",
-    )].find(({ textContent }) => textContent === "Archive");
-    await act(async () => archive?.click());
-    expect(chatCell()).toBeNull();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      "[aria-label='Archived sessions']",
-    )?.click());
-    expect(view.container.querySelector(".webapp-archive-label")?.textContent).toBe("Release chat");
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-archive-restore",
-    )?.click());
-    expect(chatCell()).not.toBeNull();
-    expect(selectedSessionId(view.container)).toBe("1");
-
-    await act(async () => chatCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
-    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".webapp-session-menu [role='menuitem']",
-    )].find(({ textContent }) => textContent === "Archive")?.click());
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      "[aria-label='Archived sessions']",
-    )?.click());
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-archive-delete",
-    )?.click());
-    expect(view.container.textContent).toContain("Remove session from Blitz?");
-    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>("button")]
-      .find(({ textContent }) => textContent === "Remove permanently")?.click());
-    expect(view.container.querySelector(".webapp-archive-row")).toBeNull();
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    });
-    const saved = serverWorkspaceStates.get("workspace-running")?.tabs;
-    expect(saved?.tabs.map(({ id }) => id)).toEqual([2]);
-    expect(saved?.archivedTabs).toBeUndefined();
-    expect(saved?.nextId).toBe(3);
+    )].map(({ textContent }) => textContent);
+    expect(actions).toEqual(["Rename"]);
+    expect(view.container.querySelector("[aria-label='Archived sessions']")).toBeNull();
     await view.unmount();
   });
 
-  it("closes only the active session window and reopens it from the workspace rail", async () => {
+  it("closes the active session tab and removes its workspace-rail record", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
@@ -1076,64 +974,19 @@ describe("webapp shell smoke", () => {
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
-    expect(view.container.querySelector('[data-rail-session-id="1"]')).not.toBeNull();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-rail-session-id="1"]',
-    )?.click());
-    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).not.toBeNull();
-    expect(view.container.querySelector(
-      '[data-testid="terminal-session"][data-session-key="1"]',
-    )).not.toBeNull();
-    expect(serverWorkspaceStates.get("workspace-running")?.tabs.archivedTabs).toBeUndefined();
-
-    await view.unmount();
-  });
-
-  it("shows resume after the last session window closes and reopens that session", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatSessionId: "chat-one" },
-      { id: 2, type: "panel", panel: "files", region: "side" },
-    ], 1, 2);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Close Chat"]',
-    )?.click());
-    expect(view.container.textContent).toContain("Resume your session");
-    expect(view.container.textContent).toContain(
-      "Your session is still running. Open it from the workspace rail to continue.",
-    );
-    expect(view.container.querySelector('[data-rail-session-id="1"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-testid="chat-session"]')).toBeNull();
-    expect(view.container.querySelector(".webapp-panes--split")).not.toBeNull();
-
-    expect([...view.container.querySelectorAll<HTMLButtonElement>("button")]
-      .some(({ textContent }) => textContent === "Resume session")).toBe(false);
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-rail-session-id="1"]',
-    )?.click());
-    expect(view.container.textContent).not.toContain("Resume your session");
-    expect(view.container.querySelector('[data-testid="chat-session"]')).not.toBeNull();
-    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs[0]).toMatchObject({
-      id: 1,
-      type: "chat",
-      chatSessionId: "chat-one",
+    expect(view.container.querySelector('[data-rail-session-id="1"]')).toBeNull();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
     });
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
+      .toEqual([{ id: 2, type: "claude" }]);
+
     await view.unmount();
   });
 
-  it("shows the start state when a workspace has no sessions", async () => {
+  it("uses the standard empty pane after every tab is closed", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [], null);
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
     const view = await render(
       <CloudApp
         client={runningClient()}
@@ -1143,34 +996,13 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.textContent).toContain("Start a session");
-    expect(view.container.textContent).toContain(
-      "Create a session to start working in this workspace.",
-    );
-    expect([...view.container.querySelectorAll<HTMLButtonElement>("button")]
-      .some(({ textContent }) => textContent === "New Chat")).toBe(false);
-    await view.unmount();
-  });
-
-  it("uses plural resume copy when several session windows are closed", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", windowOpen: false },
-      { id: 2, type: "terminal", windowOpen: false },
-    ], null);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    expect(view.container.textContent).toContain("Resume your session");
-    expect(view.container.textContent).toContain(
-      "Your sessions are still running. Open one from the workspace rail to continue.",
-    );
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close Terminal"]',
+    )?.click());
+    expect(view.container.textContent).toContain("Empty pane");
+    expect(view.container.textContent).not.toContain("Resume your session");
+    expect(view.container.textContent).not.toContain("Start a session");
+    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(0);
     await view.unmount();
   });
 

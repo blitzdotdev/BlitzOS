@@ -237,33 +237,7 @@
   white-space: nowrap;
 }
 
-.webapp-archive-control {
-  position: relative;
-  display: flex;
-  flex: none;
-}
-
-.webapp-header-action {
-  position: relative;
-  display: grid;
-  width: 40px;
-  place-items: center;
-  border-left: 1px solid var(--rule) !important;
-  color: var(--accent) !important;
-}
-
-.webapp-header-action:hover,
-.webapp-header-action:focus-visible {
-  background: color-mix(in oklab, var(--ink) 5%, var(--paper)) !important;
-}
-
-.webapp-header-action svg {
-  width: 13px;
-  height: 13px;
-}
-
-.webapp-session-menu,
-.webapp-archive-menu {
+.webapp-session-menu {
   z-index: 40;
   border: 1px solid var(--rule);
   border-radius: 5px;
@@ -290,97 +264,9 @@
 }
 
 .webapp-session-menu button:hover,
-.webapp-session-menu button:focus-visible,
-.webapp-archive-row button:hover,
-.webapp-archive-row button:focus-visible {
+.webapp-session-menu button:focus-visible {
   color: var(--ink);
   background: color-mix(in oklab, var(--ink) 6%, var(--paper));
-}
-
-.webapp-session-menu .webapp-session-menu__delete {
-  color: var(--ansi-red);
-}
-
-.webapp-archive-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 4px;
-  display: flex;
-  width: min(300px, calc(100vw - 8px));
-  max-height: min(520px, calc(100dvh - var(--headerH) - 16px));
-  padding: 5px;
-  flex-direction: column;
-}
-
-.webapp-archive-menu[hidden] {
-  display: none;
-}
-
-.webapp-archive-menu > p {
-  margin: 0;
-  padding: 7px 8px 9px;
-  color: var(--faint);
-  font-size: 10px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.webapp-archive-empty {
-  display: block;
-  padding: 12px 8px 14px;
-  color: var(--faint);
-}
-
-.webapp-archive-list {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-color: var(--faint) transparent;
-  scrollbar-width: thin;
-}
-
-.webapp-archive-row {
-  display: flex;
-  min-width: 0;
-  align-items: stretch;
-}
-
-.webapp-archive-row button {
-  min-height: 34px;
-  border-radius: 3px;
-}
-
-.webapp-archive-restore {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  color: var(--muted) !important;
-}
-
-.webapp-archive-label {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.webapp-archive-restore svg:last-child,
-.webapp-archive-delete svg {
-  width: 12px;
-  height: 12px;
-}
-
-.webapp-archive-delete {
-  display: grid;
-  width: 32px;
-  flex: none;
-  place-items: center;
-  color: var(--faint) !important;
 }
 
 .webapp-workspace-view {

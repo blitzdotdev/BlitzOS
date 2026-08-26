@@ -84,7 +84,6 @@ export const initialChatState: ChatState = {
 };
 
 export type ChatAction =
-  | { type: "reset" }
   | { type: "update"; update: unknown; actor?: ChatActor }
   | { type: "begin-replay" }
   | { type: "reconcile-running" }
@@ -96,8 +95,6 @@ export type ChatAction =
 
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
-    case "reset":
-      return initialChatState;
     case "begin-replay":
       return { ...state, streamText: {} };
     case "reconcile-running": {
