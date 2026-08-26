@@ -232,7 +232,6 @@ Both helpers are module-private in `members.ts`, where all their callers are.
 `DriveRail.tsx`, at the end of `.webapp-org-menu`, after the switch buttons:
 
 ```tsx
-<div className="webapp-org-menu-divider" role="presentation" />
 <button
   className="webapp-org-menu-create"
   type="button"
@@ -256,8 +255,10 @@ one validation rule, two frames.
 **CSS.** `.webapp-org-menu-switch` in `DriveRail.tsx:152` has **no rule** in
 `webapp-shell.css` today — the switch buttons render on the browser default
 button box inside a styled menu. That is a live bug this work sits on top of,
-so `webapp-shell.css` gains `.webapp-org-menu-switch`,
-`.webapp-org-menu-create` and `.webapp-org-menu-divider` in the same change.
+so `webapp-shell.css` gains `.webapp-org-menu-switch` and
+`.webapp-org-menu-create` in the same change. The create row separates itself
+with a `border-top`; a separate divider element would have been a second way to
+draw one line.
 
 ### 4.2 Leave organization, in Settings → Members
 
