@@ -5,6 +5,38 @@ import { FILES_MULTIPART_CHUNK_BYTES } from "@blitzos/schema";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("wire API client", () => {
+  it("sends compute credentials to the org provider route and returns metadata only", async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => (
+      init?.method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : Response.json({
+            provider: "hetzner",
+            validated_at: 123,
+            created_by: "membership-one",
+          })
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    const client = createControlPlaneClient("https://control.example");
+
+    const metadata = await client.putComputeCredential(
+      "org/one",
+      "hetzner",
+      { token: "paste-once" },
+    );
+    await client.deleteComputeCredential("org/one", "hetzner");
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe(
+      "https://control.example/orgs/org%2Fone/compute-credentials/hetzner",
+    );
+    expect(fetcher.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ token: "paste-once" }));
+    expect(metadata).toEqual({
+      provider: "hetzner",
+      validated_at: 123,
+      created_by: "membership-one",
+    });
+    expect(fetcher.mock.calls[1]?.[1]?.method).toBe("DELETE");
+  });
+
   it("uses Google login and omits an absent SSH key from create", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       return new Response(JSON.stringify({

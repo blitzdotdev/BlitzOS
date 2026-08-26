@@ -443,6 +443,24 @@
   border-radius: var(--r-card);
 }
 
+.settings-compute-card + .settings-compute-card {
+  border-top: 1px solid var(--rule);
+}
+
+.settings-compute-card .settings-credential-row {
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  border-top: 0;
+}
+
+.settings-compute-glyph {
+  width: 30px;
+  height: 30px;
+}
+
+.settings-compute-form {
+  padding: 0 14px 14px 62px;
+}
+
 .settings-credential-row {
   display: grid;
   min-width: 0;
@@ -621,6 +639,18 @@
 
   .settings-credential-row {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-compute-card .settings-credential-row {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .settings-compute-card .settings-row-actions {
+    grid-column: 1 / -1;
+  }
+
+  .settings-compute-form {
+    padding-left: 14px;
   }
 
   .settings-row-actions {

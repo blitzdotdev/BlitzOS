@@ -470,6 +470,9 @@ const launchedWorkspace: WorkspaceView = {
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
+    getComputeCredential: vi.fn(async () => { throw new Error('unused'); }),
+    putComputeCredential: vi.fn(async () => { throw new Error('unused'); }),
+    deleteComputeCredential: vi.fn(async () => undefined),
     googleLoginUrl: () => '/auth/google/start',
     inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
     inviteStatus: vi.fn(async () => { throw new Error('unused'); }),

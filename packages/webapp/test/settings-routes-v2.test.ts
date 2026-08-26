@@ -32,6 +32,11 @@ describe('settings routes', () => {
       page: 'settings',
       settingsSection: 'requests',
     });
+    expect(parseAppRoute('/settings/compute')).toEqual({
+      workspaceId: null,
+      page: 'settings',
+      settingsSection: 'compute',
+    });
     expect(parseAppRoute('/settings/files')).toEqual({
       workspaceId: null,
       page: 'drive',
@@ -44,6 +49,7 @@ describe('settings routes', () => {
     expect(settingsPath('profile')).toBe('/settings');
     expect(settingsPath('connections')).toBe('/settings/connections');
     expect(settingsPath('requests')).toBe('/settings/requests');
+    expect(settingsPath('compute')).toBe('/settings/compute');
     expect(settingsPath('usage')).toBe('/settings/usage');
   });
 

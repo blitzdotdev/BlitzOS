@@ -11,6 +11,7 @@ import {
   CRED_MASTER_KEY,
   FakeProviders,
   operatorSession,
+  sameOrgSession,
   testRuntime,
 } from "./helpers.js";
 
@@ -219,6 +220,29 @@ describe("organization compute credentials", () => {
     expect(
       await env.DB.prepare("SELECT provider FROM org_compute_credentials LIMIT 1").first(),
     ).toBeNull();
+  });
+
+  it("requires an organization admin for PUT, GET, and DELETE", async () => {
+    const { app, fake } = await appFor({});
+    const adminCookie = await operatorSession(app);
+    expect((await putHetzner(app, adminCookie)).status).toBe(200);
+    const member = await sameOrgSession("compute-member");
+    fake.calls.length = 0;
+
+    const put = await putHetzner(app, member.cookie);
+    const get = await appRequest(app, "/orgs/personal/compute-credentials/hetzner", {
+      headers: { Cookie: member.cookie },
+    });
+    const remove = await appRequest(app, "/orgs/personal/compute-credentials/hetzner", {
+      method: "DELETE",
+      headers: { Cookie: member.cookie },
+    });
+
+    expect([put.status, get.status, remove.status]).toEqual([403, 403, 403]);
+    expect(fake.calls).toEqual([]);
+    expect(
+      await env.DB.prepare("SELECT provider FROM org_compute_credentials LIMIT 1").first(),
+    ).toMatchObject({ provider: "hetzner" });
   });
 
   it("logs and skips an orphan whose org credential was deleted", async () => {
