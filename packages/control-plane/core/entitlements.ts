@@ -1,6 +1,5 @@
 import { bearerToken, safeEqualSecret } from "./crypto.js";
 import { first, transaction } from "./db.js";
-import type { Db } from "./db.js";
 import {
   HttpError,
   isRecord,
@@ -37,8 +36,6 @@ const FREE_SEAT_LIMIT = 1;
 /** How long a checkout handoff token stays valid. */
 const HANDOFF_TOKEN_TTL_SECONDS = 15 * 60;
 
-const SEAT_LIMIT_MESSAGE = "seat limit reached";
-
 /** Workspace phases that hold a VM slot. Written once and read by both the
  * create-path predicate in core/workspaces.ts and the usage report below, so
  * the number a person is shown and the number they are stopped by are the
@@ -58,40 +55,30 @@ export function seatGateEnabled(vars: RuntimeVariables): boolean {
   return billingKey(vars) !== undefined;
 }
 
+/** The seats an organization is using right now. */
+function activeSeatsSql(orgSource: string): string {
+  return `(SELECT COUNT(*) FROM memberships
+             WHERE org_id = ${orgSource} AND status = 'active')`;
+}
+
+/** The seat cap in force: what a billing service wrote, or the free tier. */
+function seatLimitSql(orgSource: string): string {
+  return `COALESCE(
+            (SELECT seat_limit FROM org_entitlements WHERE org_id = ${orgSource}),
+            ${FREE_SEAT_LIMIT})`;
+}
+
 /**
  * SQL that is true while the organization still has an unused seat.
  *
  * A fragment rather than a query, because a seat gate is only sound when it is
  * evaluated inside the statement that grants the seat: two requests that both
- * read "one seat left" would both be granted it. `orgParameter` is a
- * positional placeholder the caller writes ("?4"), never request data.
+ * read "one seat left" would both be granted it. `orgSource` is SQL the caller
+ * writes — a positional placeholder ("?4"), or a column already in scope in
+ * that statement — never request data.
  */
-export function seatAvailable(orgParameter: string): string {
-  return `(SELECT COUNT(*) FROM memberships
-             WHERE org_id = ${orgParameter} AND status = 'active')
-          < COALESCE(
-              (SELECT seat_limit FROM org_entitlements WHERE org_id = ${orgParameter}),
-              ${FREE_SEAT_LIMIT})`;
-}
-
-/** Active memberships: the seats an organization is using right now. */
-async function activeSeats(db: Db, orgId: string): Promise<number> {
-  const row = await first<{ count: number }>(db, {
-    q: `SELECT COUNT(*) AS count FROM memberships
-        WHERE org_id = ?1 AND status = 'active'`,
-    v: [orgId],
-  });
-  return row?.count ?? 0;
-}
-
-/** The seat cap in force, or null where seat gating is off. */
-async function seatLimit(runtime: CoreRuntime, orgId: string): Promise<number | null> {
-  if (!seatGateEnabled(runtime.vars)) return null;
-  const row = await first<{ seat_limit: number }>(runtime.db, {
-    q: "SELECT seat_limit FROM org_entitlements WHERE org_id = ?1 LIMIT 1",
-    v: [orgId],
-  });
-  return row?.seat_limit ?? FREE_SEAT_LIMIT;
+export function seatAvailable(orgSource: string): string {
+  return `${activeSeatsSql(orgSource)} < ${seatLimitSql(orgSource)}`;
 }
 
 /** Whether the organization has no unused seat. Gates read this to name the
@@ -125,7 +112,7 @@ export interface HandoffClaims {
 /** Thrown by a seat gate. Rendered as the 402 deny envelope by core/app.ts. */
 export class SeatLimitReached extends Error {
   public constructor(readonly paymentUrl: string | null) {
-    super(SEAT_LIMIT_MESSAGE);
+    super("seat limit reached");
     this.name = "SeatLimitReached";
   }
 }
@@ -134,10 +121,9 @@ export class SeatLimitReached extends Error {
  * deployment with a billing service but no checkout surface still refuses the
  * seat, it just has nowhere to send the person. */
 export function seatLimitEnvelope(error: SeatLimitReached): JsonObject {
-  if (error.paymentUrl === null) {
-    return { error: SEAT_LIMIT_MESSAGE, retryAction: "upgrade" };
-  }
-  return { error: SEAT_LIMIT_MESSAGE, retryAction: "upgrade", paymentUrl: error.paymentUrl };
+  const body: JsonObject = { error: error.message, retryAction: "upgrade" };
+  if (error.paymentUrl !== null) body.paymentUrl = error.paymentUrl;
+  return body;
 }
 
 const encoder = new TextEncoder();
@@ -245,10 +231,17 @@ export function addEntitlementsRoutes(
     const orgId = context.req.param("id");
     // 404, not 403: a non-member learns nothing about which organizations
     // exist from this route.
-    const org = await first<{ vm_limit: number; vms_used: number }>(runtime.db, {
+    const org = await first<{
+      vm_limit: number;
+      vms_used: number;
+      seats_used: number;
+      seat_limit: number;
+    }>(runtime.db, {
       q: `SELECT o.vm_limit,
                  (SELECT COUNT(*) FROM workspaces
-                  WHERE org_id = o.id AND phase IN (${VM_SLOT_PHASES})) AS vms_used
+                  WHERE org_id = o.id AND phase IN (${VM_SLOT_PHASES})) AS vms_used,
+                 ${activeSeatsSql("o.id")} AS seats_used,
+                 ${seatLimitSql("o.id")} AS seat_limit
           FROM orgs o
           WHERE o.id = ?1 AND EXISTS (
             SELECT 1 FROM memberships
@@ -258,8 +251,10 @@ export function addEntitlementsRoutes(
     });
     if (org === null) throw new HttpError(404, "organization not found");
     return context.json({
-      seatsUsed: await activeSeats(runtime.db, orgId),
-      seatLimit: await seatLimit(runtime, orgId),
+      seatsUsed: org.seats_used,
+      // Null, not the free tier, where no billing service is attached: there
+      // is no cap on that deployment for a person to be shown.
+      seatLimit: seatGateEnabled(runtime.vars) ? org.seat_limit : null,
       vmsUsed: org.vms_used,
       vmLimit: org.vm_limit,
     });

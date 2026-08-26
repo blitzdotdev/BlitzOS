@@ -94,8 +94,8 @@ async function expireInvites(db: Db, now: number, orgId?: string): Promise<void>
 }
 
 /**
- * SQL a redemption statement must satisfy before it may set a membership
- * active, or null where seat gating is off.
+ * The clause a redemption statement must satisfy before it may set a
+ * membership active.
  *
  * "Growth only": a user who already holds an active seat is re-stamping their
  * role, not taking a new seat, so they pass regardless of the limit. Everyone
@@ -111,19 +111,19 @@ async function expireInvites(db: Db, now: number, orgId?: string): Promise<void>
  * as one batch but are not rolled back for each other, and gating only the
  * membership write would spend the code while admitting nobody — which is the
  * same stockpiled code coming back tomorrow.
+ *
+ * Both statements read the invite row, so the organization is `target_org_id`,
+ * a column already in scope. Empty where gating is off, which leaves the
+ * statement and its parameter list exactly as they were before this module.
  */
-function growthAllowed(
-  vars: RuntimeVariables,
-  userParameter: string,
-  orgParameter: string,
-): string | null {
-  if (!seatGateEnabled(vars)) return null;
-  return `(EXISTS (
-             SELECT 1 FROM memberships seated
-             WHERE seated.user_id = ${userParameter}
-               AND seated.org_id = ${orgParameter}
-               AND seated.status = 'active')
-           OR ${seatAvailable(orgParameter)})`;
+function growthAllowed(vars: RuntimeVariables, userParameter: string): string {
+  if (!seatGateEnabled(vars)) return "";
+  return `AND (EXISTS (
+                SELECT 1 FROM memberships seated
+                WHERE seated.user_id = ${userParameter}
+                  AND seated.org_id = target_org_id
+                  AND seated.status = 'active')
+              OR ${seatAvailable("target_org_id")})`;
 }
 
 async function inviteByHash(db: Db, hash: string): Promise<InviteRow | null> {
@@ -164,32 +164,28 @@ export async function redeemInviteSession(
   // The seat gate lives in the statements below, not in a check above them.
   // A revoked-then-restored member holding an old code is exactly the caller
   // a read-then-write gate lets through.
-  const seatGate = growthAllowed(runtime.vars, "?2", "?6");
-  const burnGate = growthAllowed(runtime.vars, "?1", "?5");
+  const seatGate = growthAllowed(runtime.vars, "?2");
+  const burnGate = growthAllowed(runtime.vars, "?1");
   const result = await transaction(db, [
     {
       q: `INSERT INTO memberships (id, user_id, org_id, role, status)
           SELECT ?1, ?2, target_org_id, role, 'active' FROM invites
           WHERE code_hash = ?3 AND state = 'ready' AND expires_at > ?4
             AND (email IS NULL OR email = ?5)
-            ${seatGate === null ? "" : `AND ${seatGate}`}
+            ${seatGate}
           ON CONFLICT(user_id, org_id) DO UPDATE SET
             role = excluded.role, status = 'active'
           RETURNING id`,
-      v: seatGate === null
-        ? [membershipId, userId, hash, now, email]
-        : [membershipId, userId, hash, now, email, invite.target_org_id],
+      v: [membershipId, userId, hash, now, email],
     },
     {
       q: `UPDATE invites SET state = 'redeemed', redeemed_by_user_id = ?1,
               redeemed_at = ?2
           WHERE code_hash = ?3 AND state = 'ready' AND expires_at > ?2
             AND (email IS NULL OR email = ?4)
-            ${burnGate === null ? "" : `AND ${burnGate}`}
+            ${burnGate}
           RETURNING id`,
-      v: burnGate === null
-        ? [userId, now, hash, email]
-        : [userId, now, hash, email, invite.target_org_id],
+      v: [userId, now, hash, email],
     },
     {
       q: `INSERT INTO sessions
