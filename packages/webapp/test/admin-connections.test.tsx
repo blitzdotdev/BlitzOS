@@ -122,7 +122,6 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
         : [{ kind: 'env', name: 'DISCORD_BOT_TOKEN', fill: 'token' }],
       app: null,
     },
-    platformAppInstallUrl: null,
   };
 }
 
@@ -139,7 +138,6 @@ function appEntry(id: string, title: string): CatalogEntryView {
       placements: [{ kind: 'env', name: 'GH_TOKEN', fill: 'token' }],
       app: { appIdLabel: 'App ID', installationIdLabel: 'Installation ID' },
     },
-    platformAppInstallUrl: null,
   };
 }
 
@@ -153,7 +151,6 @@ function patEntry(id: string, title: string): CatalogEntryView {
   return {
     ...adminEntry(id, title, true),
     adminForm: null,
-    platformAppInstallUrl: null,
     personalTokenLabel: 'Permanent token',
     personalTokenBaseUrlLabel: 'Instance URL',
   };

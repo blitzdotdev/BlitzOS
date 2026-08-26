@@ -405,7 +405,6 @@ const catalogEntry: SharedShape<
   personalTokenHelp: "Create it in Linear's own settings.",
   personalTokenBaseUrlLabel: null,
   adminForm: catalogAdminForm,
-  platformAppInstallUrl: null,
 };
 
 const userGrant: SharedShape<connections.UserGrantView, schema.UserGrantView> = {

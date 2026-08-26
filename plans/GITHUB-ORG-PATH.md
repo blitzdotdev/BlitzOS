@@ -1,6 +1,10 @@
 # GitHub org path: install once, commit as the member
 
-Status: plan. App `blitzosauth`, App ID `4334267`, Client ID `Iv23liwiZP2zvQgqlCl5`.
+Status: ABANDONED 2026-08-26. §3 shipped (#71). §1, §2 and §5 shipped as
+#74 and were reverted the same day — see the note below. GitHub is moving to a
+personal-token connector, the same class as YouTrack.
+
+Original status: plan. App `blitzosauth`, App ID `4334267`, Client ID `Iv23liwiZP2zvQgqlCl5`.
 `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` are already set on canary
 and prod.
 
@@ -115,3 +119,21 @@ the PAT path and today's member OAuth.
 - Members whose GitHub account cannot see a repo the install covers — the
   intersection rule silently narrows them.
 - Commit signing. CLI pushes get no Verified badge either way.
+
+
+## Why §1, §2 and §5 were reverted
+
+A GitHub App has **one** Setup URL, not a list like its callback URLs. So every
+install redirect lands on a single host no matter which deployment started it.
+An install begun on canary returned to `blitzos.com`, which had neither the
+route nor the signed-state cookie — the cookie is host-scoped, so even a
+deployed prod could not have verified it.
+
+The workable answers were a second App per deployment, or dropping the redirect
+and matching installations through `GET /app/installations`. Both cost more than
+the org path was worth: the owner's call was that GitHub should be a personal
+token, the same class of connector as YouTrack, and that the org-key path should
+go with it.
+
+§3 stands on its own and stays: it derives a git identity from whatever token is
+in hand, which is a personal token just as readily as an App user token.

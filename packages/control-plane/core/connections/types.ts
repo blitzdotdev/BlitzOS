@@ -157,10 +157,6 @@ export interface CatalogEntryView {
   personalTokenBaseUrlLabel: string | null;
   /** Non-null for providers an org admin configures once, org-wide. */
   adminForm: CatalogAdminFormView | null;
-  /** Where an admin installs the deployment's own app for this provider,
-   * instead of registering one and pasting its private key. Null when the
-   * deployment has not named an app. */
-  platformAppInstallUrl: string | null;
 }
 
 /** One member's authorization of one provider. The token itself never leaves

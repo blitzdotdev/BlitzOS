@@ -14,16 +14,9 @@ interface EnvTemplate {
   name: string;
 }
 
-/** The name of the Worker binding holding the platform App's private key.
- * A connection that sets `platform_key` carries no root of its own: the org
- * installed BlitzOS's GitHub App rather than registering one, so the key
- * belongs to the deployment and must never be copied into an org's row. */
-export const GITHUB_PLATFORM_KEY_VAR = "GITHUB_APP_PRIVATE_KEY";
-
 interface GithubAppConfig {
   app_id: string;
   installation_id: string;
-  platform_key?: boolean;
   repositories?: string[];
   permissions?: Record<string, string>;
   placements?: EnvTemplate[];
@@ -169,18 +162,6 @@ export async function appJwt(
     new TextEncoder().encode(input),
   );
   return `${input}.${encodeBase64Url(new Uint8Array(signature))}`;
-}
-
-/** True when this connection signs with the deployment's key rather than one
- * the org supplied. Reading it here keeps the config shape in the module that
- * defines it; the mint call site needs the answer to pick a root. */
-export function usesPlatformKey(config: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(config);
-    return isRecord(parsed) && parsed.platform_key === true;
-  } catch {
-    return false;
-  }
 }
 
 function parseConfig(value: string): GithubAppConfig {

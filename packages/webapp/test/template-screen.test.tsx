@@ -1572,7 +1572,7 @@ describe('template screen org-credential config', () => {
     // Replacing swaps the one org-wide credential under every template and
     // workspace, so the form opens only after an explicit confirmation.
     const replace = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Replace my Discord app');
+      .find((button) => button.textContent === 'Replace Discord key');
     expect(replace).toBeDefined();
     await act(async () => {
       replace!.click();
@@ -1592,7 +1592,7 @@ describe('template screen org-credential config', () => {
 
     await act(async () => {
       [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Replace my Discord app')!.click();
+        .find((button) => button.textContent === 'Replace Discord key')!.click();
     });
     await act(async () => {
       view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
@@ -1620,7 +1620,7 @@ describe('template screen org-credential config', () => {
     expect(view.container.textContent)
       .toContain('Without an org key, members sign in to GitHub themselves.');
     const configure = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Connect with my app');
+      .find((button) => button.textContent === 'Add GitHub key');
     expect(configure).toBeDefined();
     await act(async () => {
       configure!.click();
@@ -1658,61 +1658,6 @@ describe('template screen org-credential config', () => {
     expect(view.container.querySelector('.tplf-connections')?.textContent)
       .not.toContain('Ask an organization admin');
     expect(view.container.textContent).toContain('Members sign in to GitHub themselves.');
-    await view.unmount();
-  });
-
-  it('offers both org routes on a provider whose deployment named an app', async () => {
-    connectionsStub((url) => (
-      url.pathname === '/connections/catalog'
-        ? Response.json({
-          providers: [
-            discordEntry,
-            youtrackEntry,
-            { ...githubEntry, platformAppInstallUrl: '/connect/github/install' },
-          ],
-        })
-        : null
-    ));
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'GitHub');
-
-    // Both routes, each named for what it is. "Add GitHub key" named neither.
-    const text = view.container.querySelector('.tplf-connections')?.textContent ?? '';
-    expect(text).toContain('Connect with my app');
-    expect(text).toContain('Connect with BlitzOS app');
-    const install = [...view.container.querySelectorAll<HTMLAnchorElement>('.tplf-connections a')]
-      .find((link) => link.textContent === 'Connect with BlitzOS app');
-    expect(install?.getAttribute('href')).toBe('/connect/github/install');
-    await view.unmount();
-  });
-
-  it('hides the platform route where the deployment named no app', async () => {
-    connectionsStub();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'GitHub');
-
-    // A self-hosted deployment keeps the bring-your-own path alone rather than
-    // advertising an app it does not have.
-    expect(view.container.querySelector('.tplf-connections')?.textContent ?? '')
-      .not.toContain('Connect with BlitzOS app');
     await view.unmount();
   });
 
@@ -1780,7 +1725,7 @@ describe('template screen org-credential config', () => {
     await tick(view, 'GitHub');
     await act(async () => {
       [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Connect with my app')!.click();
+        .find((button) => button.textContent === 'Add GitHub key')!.click();
     });
     const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
