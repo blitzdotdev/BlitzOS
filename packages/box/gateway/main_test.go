@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1764,4 +1767,246 @@ func assertNoAccessControlHeaders(t *testing.T, header http.Header) {
 			t.Errorf("unexpected %s: %q", name, values)
 		}
 	}
+}
+
+// captureGatewayLog points the package logger at a buffer for one test. Every
+// policy refusal has to be readable from inside the box — that is the whole
+// point of `deny` — so the log line is part of the contract these tests pin,
+// not a side effect they tolerate.
+func captureGatewayLog(t *testing.T) func() string {
+	t.Helper()
+	buffer := &bytes.Buffer{}
+	previousWriter := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(buffer)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+	})
+	return buffer.String
+}
+
+// TestPolicyRefusalsExplainThemselves walks every refusal the gateway decides
+// from box state. Before `deny`, each one wrote a bare status and logged
+// nothing, so a box that refused everything looked identical to a healthy one.
+// Each case asserts the reason and the deciding detail reach both the operator
+// (the log) and the caller (the body).
+func TestPolicyRefusalsExplainThemselves(t *testing.T) {
+	const secret = "refusal-secret"
+	const workspaceID = "workspace-refusal"
+	const controlPlaneOrigin = "https://cp.example"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	upstreamURL, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := &gateway{
+		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
+		terminal:               upstreamURL,
+		actor:                  upstreamURL,
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		webAppTokenPath:        tokenPath,
+		workspaceIDPath:        workspacePath,
+		transport:              http.DefaultTransport,
+	}
+	viewer := func() string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID: workspaceID, UserID: "viewer-user", MembershipID: "viewer-member",
+			Role: "viewer", Exp: time.Now().Unix() + 60,
+		})
+	}
+
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		credential string
+		origin     string
+		webSocket  bool
+		status     int
+		reason     string
+		details    []string
+	}{
+		{
+			name: "webApp token missing", method: http.MethodGet, target: "/workspace/file.txt",
+			status: http.StatusForbidden, reason: "webApp token forbidden",
+			details: []string{"no " + webAppTokenHeader + " header"},
+		},
+		{
+			name: "webApp token wrong", method: http.MethodGet, target: "/workspace/file.txt",
+			credential: "not-the-token",
+			status:     http.StatusForbidden, reason: "webApp token forbidden",
+			details: []string{"static webApp token did not match the box token"},
+		},
+		{
+			name: "webApp ticket rejected", method: http.MethodGet, target: "/workspace/file.txt",
+			credential: "v1.bm90LWEtdGlja2V0.bm90LWEtc2ln",
+			status:     http.StatusForbidden, reason: "webApp token forbidden",
+			details: []string{"v1 ticket rejected", workspaceID},
+		},
+		{
+			name: "drain by a viewer", method: http.MethodPost, target: "/admin/drain",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "drain forbidden",
+			details: []string{`role "viewer"`, `user "viewer-user"`},
+		},
+		{
+			name: "websocket origin", method: http.MethodGet, target: "/terminal/ws",
+			credential: viewer(), origin: "https://evil.example", webSocket: true,
+			status: http.StatusForbidden, reason: "websocket origin forbidden",
+			details: []string{controlPlaneOrigin, "https://evil.example"},
+		},
+		{
+			name: "terminal args", method: http.MethodGet, target: "/terminal/ws?arg=terminal",
+			credential: viewer(),
+			status:     http.StatusBadRequest, reason: "terminal requires a session type and key",
+			details: []string{`role "viewer"`, "got 1 positional arg values, want 2"},
+		},
+		{
+			name: "agent port for a viewer", method: http.MethodGet, target: "/acp",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "viewers cannot drive the workspace agent",
+			details: []string{`role "viewer"`},
+		},
+		{
+			name: "preview write by a viewer", method: http.MethodPost, target: "/preview/3000/api",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "viewer preview access is read-only",
+			details: []string{`role "viewer"`, "method POST"},
+		},
+		{
+			name: "file write by a viewer", method: http.MethodPut, target: "/workspace/file.txt",
+			credential: viewer(),
+			status:     http.StatusForbidden, reason: "viewer file access is read-only",
+			details: []string{`role "viewer"`, "method PUT"},
+		},
+		{
+			name: "reserved preview port", method: http.MethodGet, target: "/preview/7443/",
+			credential: secret,
+			status:     http.StatusForbidden, reason: "port is reserved by the box",
+			details: []string{"port 7443"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logged := captureGatewayLog(t)
+			request := httptest.NewRequest(test.method, "http://box"+test.target, nil)
+			if test.credential != "" {
+				request.Header.Set(webAppTokenHeader, test.credential)
+			}
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			if test.webSocket {
+				request.Header.Set("Connection", "keep-alive, Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			assertRefusalExplained(t, response, logged(), test.method, test.status, test.reason, test.details)
+		})
+	}
+
+	t.Run("surface authentication unavailable", func(t *testing.T) {
+		// A webApp token file that exists but is empty fails every request
+		// closed. The box that does this is indistinguishable from a healthy
+		// one unless it says which file it could not use.
+		emptyTokenPath := filepath.Join(t.TempDir(), "webapp-token")
+		if err := os.WriteFile(emptyTokenPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		failClosed := &gateway{webAppTokenPath: emptyTokenPath, workspaceIDPath: workspacePath}
+		logged := captureGatewayLog(t)
+		response := httptest.NewRecorder()
+		failClosed.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://box/workspace/file.txt", nil))
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusServiceUnavailable,
+			"surface authentication unavailable", []string{emptyTokenPath, "is empty"})
+	})
+}
+
+// assertRefusalExplained pins the two places a refusal has to be readable: the
+// box's own log, and the body the caller gets back.
+func assertRefusalExplained(t *testing.T, response *httptest.ResponseRecorder, logText, method string, status int, reason string, details []string) {
+	t.Helper()
+	if response.Code != status {
+		t.Fatalf("status = %d, want %d; body = %q", response.Code, status, response.Body.String())
+	}
+	body := response.Body.String()
+	if !strings.Contains(body, reason) {
+		t.Errorf("body = %q, want it to carry reason %q", body, reason)
+	}
+	if !strings.Contains(logText, fmt.Sprintf("reason=%q", reason)) {
+		t.Errorf("log = %q, want it to carry reason %q", logText, reason)
+	}
+	if !strings.Contains(logText, fmt.Sprintf("status=%d", status)) {
+		t.Errorf("log = %q, want it to carry status %d", logText, status)
+	}
+	if !strings.Contains(logText, "gateway refused "+method+" ") {
+		t.Errorf("log = %q, want it to name method %s", logText, method)
+	}
+	for _, detail := range details {
+		if !strings.Contains(body, detail) {
+			t.Errorf("body = %q, want it to carry detail %q", body, detail)
+		}
+		if !strings.Contains(logText, detail) {
+			t.Errorf("log = %q, want it to carry detail %q", logText, detail)
+		}
+	}
+}
+
+// TestWebSocketOriginRefusalNamesBothOrigins is the incident, written down. A
+// control-plane domain change left every box pinned to an origin that no
+// longer existed; the gateway refused every websocket and named neither side
+// of the comparison, so the only evidence anywhere was a browser console. Both
+// origins are the deployment's own domains, so both belong in the refusal.
+func TestWebSocketOriginRefusalNamesBothOrigins(t *testing.T) {
+	const bakedOrigin = "https://old-control-plane.example"
+	const arrivingOrigin = "https://new-control-plane.example"
+
+	t.Run("pinned to a domain that moved", func(t *testing.T) {
+		logged := captureGatewayLog(t)
+		handler := &gateway{controlPlaneOriginPath: writeOriginFile(t, bakedOrigin)}
+		request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws", nil)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		request.Header.Set("Origin", arrivingOrigin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusForbidden,
+			"websocket origin forbidden", []string{bakedOrigin, arrivingOrigin})
+	})
+
+	t.Run("no origin file at all", func(t *testing.T) {
+		// The expected origin is empty, which reads as "no expectation" unless
+		// the refusal says which file was missing.
+		missingPath := filepath.Join(t.TempDir(), "origin")
+		logged := captureGatewayLog(t)
+		handler := &gateway{controlPlaneOriginPath: missingPath}
+		request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws", nil)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		request.Header.Set("Origin", arrivingOrigin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusForbidden,
+			"websocket origin forbidden", []string{missingPath, "missing or empty", arrivingOrigin})
+	})
+
+	t.Run("no origin header at all", func(t *testing.T) {
+		logged := captureGatewayLog(t)
+		handler := &gateway{controlPlaneOriginPath: writeOriginFile(t, bakedOrigin)}
+		request := httptest.NewRequest(http.MethodGet, "http://box/terminal/ws", nil)
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		assertRefusalExplained(t, response, logged(), http.MethodGet, http.StatusForbidden,
+			"websocket origin forbidden", []string{`expected "` + bakedOrigin + `" got ""`})
+	})
 }
