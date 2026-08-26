@@ -103,6 +103,10 @@ func GitHelper(ctx context.Context, stateDir, action string, input io.Reader, ou
 	if err != nil {
 		return err
 	}
+	// Clone and fetch both land here before any commit exists, which is the
+	// moment the identity has to be right. Best effort by construction: see
+	// ApplyGitIdentity.
+	ApplyGitIdentity(ctx, stateDir, token.Connection, token.Token, httpClient)
 	_, err = fmt.Fprintf(output, "username=x-access-token\npassword=%s\n\n", token.Token)
 	return err
 }
