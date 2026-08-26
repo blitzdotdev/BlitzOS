@@ -250,9 +250,10 @@ describe("control plane security and lifecycle", () => {
       headers: { Cookie: cookie },
     });
     expect(response.status).toBe(200);
-    expect(await response.json<ListMachineTypesResponse>()).toEqual(
-      await new VmProviderRegistry([providers]).listMachineTypes(),
-    );
+    expect(await response.json<ListMachineTypesResponse>()).toEqual({
+      ...await new VmProviderRegistry([providers]).listMachineTypes(),
+      providerStatuses: [],
+    });
   });
 
   it("rejects an unknown machine type before inserting a workspace", async () => {

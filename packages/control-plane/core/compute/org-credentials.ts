@@ -80,6 +80,11 @@ export interface ResolvedComputeProvider {
   readonly credentialSource: ComputeCredentialSource;
 }
 
+export interface ComputeProviderStatus {
+  readonly providerId: ComputeCredentialProvider;
+  readonly access: ComputeCredentialSource | "credential-required";
+}
+
 export interface ComputeProviderEnvironment extends AwsProviderEnv {
   HETZNER_API_TOKEN?: string;
   HETZNER_MACHINE_TYPES?: string;
@@ -341,6 +346,63 @@ export class OrgComputeProviderResolver {
     return storedCredential(provider, plaintext);
   }
 
+  /** An org containing an active platform operator belongs to the deployment
+   * owner, so it may use deployment credentials. Every other org is a tenant
+   * and must bring its own key for new cloud workspaces. This is org-scoped:
+   * a hosted operator keeps their own deployment usable without extending
+   * that billing identity to tenant orgs. */
+  private async orgMayUseDeploymentCredential(orgId: string): Promise<boolean> {
+    return await first<{ allowed: number }>(this.db, {
+      q: `SELECT 1 AS allowed
+          FROM memberships membership
+          JOIN users user ON user.id = membership.user_id
+          WHERE membership.org_id = ?1
+            AND membership.status = 'active'
+            AND user.platform_operator = 1
+          LIMIT 1`,
+      v: [orgId],
+    }) !== null;
+  }
+
+  private deployment(
+    provider: ComputeCredentialProvider,
+  ): ResolvedComputeProvider {
+    const deployment = this.deploymentProviders.get(provider);
+    if (deployment !== undefined) {
+      return { provider: deployment, credentialSource: "deployment" };
+    }
+    throw new HttpError(409, `org has no ${provider} credential`);
+  }
+
+  private credentialRequired(
+    provider: ComputeCredentialProvider,
+    orgId: string,
+  ): HttpError {
+    const route = `/orgs/${encodeURIComponent(orgId)}/compute-credentials/${provider}`;
+    return new HttpError(
+      402,
+      `${provider} compute credential required; an organization admin can add one at ${route}`,
+    );
+  }
+
+  async providerStatuses(orgId: string): Promise<ComputeProviderStatus[]> {
+    const configured = new Set((await rows<{ provider: ComputeCredentialProvider }>(this.db, {
+      q: `SELECT provider FROM org_compute_credentials
+          WHERE org_id = ?1 ORDER BY provider`,
+      v: [orgId],
+    })).map(({ provider }) => provider));
+    const deploymentAllowed = await this.orgMayUseDeploymentCredential(orgId);
+    return this.providerDescriptors.flatMap(({ id }) => {
+      if (!this.handles(id)) return [];
+      const access: ComputeProviderStatus["access"] = configured.has(id)
+        ? "org"
+        : deploymentAllowed && this.deploymentProviders.has(id)
+          ? "deployment"
+          : "credential-required";
+      return [{ providerId: id, access }];
+    });
+  }
+
   async resolve(
     provider: ComputeCredentialProvider,
     orgId: string,
@@ -355,18 +417,30 @@ export class OrgComputeProviderResolver {
         throw new HttpError(409, `org has no ${provider} credential`);
       }
     }
-    const deployment = this.deploymentProviders.get(provider);
-    if (deployment !== undefined) {
-      return { provider: deployment, credentialSource: "deployment" };
+    if (
+      requiredSource !== "deployment"
+      && !(await this.orgMayUseDeploymentCredential(orgId))
+    ) {
+      throw this.credentialRequired(provider, orgId);
     }
-    throw new HttpError(409, `org has no ${provider} credential`);
+    return this.deployment(provider);
   }
 
   async resolveVolume(
     orgId: string,
     requiredSource?: ComputeCredentialSource | null,
   ): Promise<ResolvedComputeProvider> {
-    return this.resolve("hetzner", orgId, requiredSource);
+    if (requiredSource === "deployment") return this.deployment("hetzner");
+    const credential = await this.orgCredential(orgId, "hetzner");
+    if (credential !== null) {
+      return { provider: this.providerForCredential(credential), credentialSource: "org" };
+    }
+    if (requiredSource === "org") {
+      throw new HttpError(409, "org has no hetzner credential");
+    }
+    // Volume creation keeps the pre-BYOK fallback. The tenant gate is scoped
+    // to new cloud workspaces; lifecycle calls arrive with their pinned source.
+    return this.deployment("hetzner");
   }
 
   async validate(credential: ComputeCredential): Promise<void> {

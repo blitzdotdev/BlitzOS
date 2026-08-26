@@ -99,9 +99,22 @@ export function installControlPlaneRoutes(
   router.get("/machine-types", async (context) => {
     const principal = await requireMembershipPrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
-    return context.json(
-      await runtimeFactory(context).providers.vmRegistry.listMachineTypes(principal.orgId),
-    );
+    const runtime = runtimeFactory(context);
+    const computeDescriptors = new Set(runtime.providers.compute.descriptors());
+    const registeredComputeProviderIds = new Set(runtime.providers.vmRegistry.all()
+      .filter((provider) => computeDescriptors.has(provider))
+      .map(({ id }) => id));
+    const providerStatuses = (await runtime.providers.compute.providerStatuses(principal.orgId))
+      .filter(({ providerId }) => registeredComputeProviderIds.has(providerId));
+    const excludedProviderIds = new Set(providerStatuses.flatMap((status) =>
+      status.access === "credential-required" ? [status.providerId] : []));
+    return context.json({
+      ...await runtime.providers.vmRegistry.listMachineTypes(
+        principal.orgId,
+        excludedProviderIds,
+      ),
+      providerStatuses,
+    });
   });
 
   router.notFound((context) =>

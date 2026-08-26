@@ -104,9 +104,15 @@ export class VmProviderRegistry {
     return resolved ?? { provider, credentialSource: null };
   }
 
-  async listMachineTypes(orgId?: string): Promise<VmProviderListResult> {
+  async listMachineTypes(
+    orgId?: string,
+    excludedProviderIds: ReadonlySet<string> = new Set(),
+  ): Promise<VmProviderListResult> {
+    const listedProviders = this.providers.filter(
+      ({ id }) => !excludedProviderIds.has(id),
+    );
     const settled = await Promise.allSettled(
-      this.providers.map(async (registered) => {
+      listedProviders.map(async (registered) => {
         const provider = orgId === undefined
           ? registered
           : (await this.resolve(registered, orgId)).provider;
@@ -127,7 +133,7 @@ export class VmProviderRegistry {
     const failures = settled.flatMap((result, index) => {
       if (result.status === "fulfilled") return [];
       return [{
-        providerId: this.providers[index]?.id ?? "unknown",
+        providerId: listedProviders[index]?.id ?? "unknown",
         error: result.reason instanceof Error
           ? result.reason.message
           : String(result.reason),

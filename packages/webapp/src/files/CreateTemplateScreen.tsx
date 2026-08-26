@@ -2,25 +2,26 @@ import type {
   CatalogEntryView,
   ConnectionView,
   CreateWorkspaceTemplateRequest,
+  ListMachineTypesResponse,
   MachineType,
+  MachineTypeProviderStatus,
   TemplateConnectionView,
   WorkspaceEnvironment,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ControlPlaneClient } from '../api';
+import { isComputeCredentialProvider } from '../ComputeCredentialFields';
 import { TemplateConnectionsSection } from './TemplateConnectionsSection';
 import type { FolderObjectView, FolderView } from '../file-library-api';
 import { AgentRulesPicker } from '../AgentRulesPicker';
-import { OutlinedLoadingRows } from '../LoadingSkeleton';
-import { MachineCatalogGrid } from '../MachineCatalogGrid';
 import {
   EMPTY_WORKSPACE_ENVIRONMENT,
   EnvironmentEditor,
   populatedEnvironment,
 } from '../EnvironmentEditor';
 import { DriveAvatar } from './DriveAvatar';
-import { CloseGlyph } from './DriveIcons';
+import { BackGlyph, CloseGlyph } from './DriveIcons';
 import { DocDuoIcon, FolderDuoIcon } from '../files-icons';
 import {
   canManageFolder,
@@ -31,16 +32,9 @@ import {
 import { collectDropped, DropLimitError } from './drop-upload';
 import { TemplateRepoPicker } from './TemplateRepoPicker';
 import { TemplateRepoUrls } from './TemplateRepoUrls';
+import { TemplateMachineTypePicker } from './TemplateMachineTypePicker';
 import { useTemplateUploads } from './use-template-uploads';
 import { orgCredentialFor } from '../connections/ProviderAdminForm';
-
-function BackGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14.5 5.5 8 12l6.5 6.5" />
-    </svg>
-  );
-}
 
 interface BrowseState {
   folderId: string;
@@ -55,6 +49,7 @@ interface BrowseState {
  * strip uploads dropped directories and files alike. */
 export function CreateTemplateScreen({
   client,
+  orgId = '',
   orgName,
   admin = false,
   editTemplateId,
@@ -63,6 +58,7 @@ export function CreateTemplateScreen({
   onCancel,
 }: {
   client: ControlPlaneClient;
+  orgId?: string;
   orgName: string;
   /** Shows the org-credential config forms; the PUT route enforces the same
    * gate server-side. Members see who to ask instead. */
@@ -76,6 +72,7 @@ export function CreateTemplateScreen({
 }) {
   const [name, setName] = useState('');
   const [machines, setMachines] = useState<MachineType[]>([]);
+  const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
   const [machineTypeId, setMachineTypeId] = useState('');
   const [folders, setFolders] = useState<FolderView[]>([]);
   const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
@@ -125,6 +122,19 @@ export function CreateTemplateScreen({
     onError: setError,
   });
 
+  const credentialRequiredProviders = providerStatuses.flatMap(({ providerId, access }) =>
+    access === 'credential-required' && isComputeCredentialProvider(providerId)
+      ? [providerId]
+      : []);
+  const installMachineTypes = useCallback((result: ListMachineTypesResponse) => {
+    setMachines(result.machineTypes);
+    setProviderStatuses(result.providerStatuses ?? []);
+    setMachineTypeId((current) =>
+      result.machineTypes.some(({ id }) => id === current)
+        ? current
+        : result.machineTypes[0]?.id ?? '');
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     void Promise.allSettled([
@@ -141,8 +151,7 @@ export function CreateTemplateScreen({
         setOrgConnections(connectionsResult.value.connections);
       }
       if (machineResult.status === 'fulfilled') {
-        setMachines(machineResult.value.machineTypes);
-        setMachineTypeId((current) => current || machineResult.value.machineTypes[0]?.id || '');
+        installMachineTypes(machineResult.value);
       } else {
         setError(machineResult.reason instanceof Error
           ? machineResult.reason.message
@@ -152,7 +161,7 @@ export function CreateTemplateScreen({
       setLoading(false);
     });
     return () => { mounted = false; };
-  }, [client]);
+  }, [client, installMachineTypes]);
 
   const accessible = folders.filter(({ role }) => role !== null);
   const rows = [...accessible].sort((left, right) => {
@@ -408,23 +417,19 @@ export function CreateTemplateScreen({
             </label>
           </section>
 
-          <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Machine type</h2>
-              <p>Workspaces created from this template run on this machine.</p>
-            </div>
-            {loading ? (
-              <OutlinedLoadingRows count={4} ariaLabel="Loading machine types" />
-            ) : machines.length > 0 ? (
-              <MachineCatalogGrid
-                machines={machines}
-                selectedMachineType={machineTypeId}
-                onSelect={setMachineTypeId}
-              />
-            ) : (
-              <div className="blueprint-selection__empty">No machine types are available.</div>
-            )}
-          </section>
+          <TemplateMachineTypePicker
+            loading={loading}
+            machines={machines}
+            machineTypeId={machineTypeId}
+            credentialRequiredProviders={credentialRequiredProviders}
+            orgId={orgId}
+            admin={admin}
+            saveCredential={client.putComputeCredential}
+            onCredentialSaved={async () => {
+              installMachineTypes(await client.listMachineTypes());
+            }}
+            onSelect={setMachineTypeId}
+          />
 
           <section className="blueprint-selection">
             <div className="blueprint-selection__heading">

@@ -711,4 +711,97 @@ describe("create workspace dialog", () => {
     });
     await overridden.unmount();
   });
+
+  it("validates an admin's cloud key inline and reveals machines without a reload", async () => {
+    let stored = false;
+    const listMachineTypes = vi.fn(async () => stored
+      ? {
+          machineTypes: [machines[0]!],
+          failures: [],
+          providerStatuses: [{ providerId: 'hetzner', access: 'org' as const }],
+        }
+      : {
+          machineTypes: [],
+          failures: [],
+          providerStatuses: [{ providerId: 'hetzner', access: 'credential-required' as const }],
+        });
+    const saveComputeCredential = vi.fn(async () => {
+      stored = true;
+      return { provider: 'hetzner' as const, validated_at: 5, created_by: 'admin' };
+    });
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        orgId="org-one"
+        admin
+        saveComputeCredential={saveComputeCredential}
+        client={rulesClient()}
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={listMachineTypes}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+    expect(view.container.textContent).toContain('Add your Hetzner Cloud key');
+    expect(view.container.textContent).not.toContain('No machine types are available.');
+    const input = view.container.querySelector<HTMLInputElement>('input[name="token"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(input, 'one-use-inline-key');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      [...view.container.querySelectorAll('button')]
+        .find((button) => button.textContent === 'Validate and show machines')!.click();
+    });
+    await settle();
+
+    expect(saveComputeCredential).toHaveBeenCalledWith('org-one', 'hetzner', {
+      token: 'one-use-inline-key',
+    });
+    expect(listMachineTypes).toHaveBeenCalledTimes(2);
+    expect(view.container.querySelector('.machine-catalog-groups')).not.toBeNull();
+    expect(view.container.textContent).toContain('CX23');
+    expect(view.container.textContent).not.toContain('one-use-inline-key');
+    await view.unmount();
+  });
+
+  it("tells a non-admin which cloud key an organization admin must add", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        orgId="org-one"
+        client={rulesClient()}
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({
+          machineTypes: [],
+          failures: [],
+          providerStatuses: [{ providerId: 'aws', access: 'credential-required' }],
+        })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain('Amazon Web Services requires an organization key.');
+    expect(view.container.textContent).toContain(
+      'Ask an organization admin to add the key in Compute settings.',
+    );
+    expect(view.container.querySelector('input[type="password"]')).toBeNull();
+    expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+    await view.unmount();
+  });
 });

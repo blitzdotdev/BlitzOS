@@ -9,9 +9,17 @@ export interface MachineTypeProviderFailure {
   error: string;
 }
 
+export interface MachineTypeProviderStatus {
+  providerId: string;
+  access: "org" | "deployment" | "credential-required";
+}
+
 export interface ListMachineTypesResponse {
   machineTypes: MachineType[];
   failures: MachineTypeProviderFailure[];
+  /** Present on current servers. Optional keeps older API clients and test
+   * doubles source-compatible while they adopt inline credential setup. */
+  providerStatuses?: MachineTypeProviderStatus[];
 }
 
 export interface CreateWorkspaceRequest {

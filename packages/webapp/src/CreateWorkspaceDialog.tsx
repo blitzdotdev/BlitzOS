@@ -3,11 +3,15 @@ import type {
   ListMachineTypesResponse,
   MachineType,
   MachineTypeProviderFailure,
+  MachineTypeProviderStatus,
   Volume,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
+import type { ComputeCredentialsClient } from './compute-credentials-api';
+import { isComputeCredentialProvider } from './ComputeCredentialFields';
+import { InlineComputeCredentialSetup } from './InlineComputeCredentialSetup';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
 import {
@@ -22,6 +26,9 @@ type CreateWorkspaceDialogProps = {
   busy: boolean;
   error: string | null;
   orgName: string;
+  orgId?: string;
+  admin?: boolean;
+  saveComputeCredential?: ComputeCredentialsClient['putComputeCredential'];
   client: AgentRulesApi;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
@@ -39,6 +46,9 @@ export function CreateWorkspaceDialog({
   busy,
   error,
   orgName,
+  orgId = '',
+  admin = false,
+  saveComputeCredential,
   client,
   listMachineTypes,
   listVolumes,
@@ -50,6 +60,7 @@ export function CreateWorkspaceDialog({
 }: CreateWorkspaceDialogProps) {
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
+  const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
@@ -63,6 +74,20 @@ export function CreateWorkspaceDialog({
   const submitted = useRef(false);
   const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
   const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
+  const credentialRequiredProviders = providerStatuses.flatMap(({ providerId, access }) =>
+    access === 'credential-required' && isComputeCredentialProvider(providerId)
+      ? [providerId]
+      : []);
+
+  const installMachineTypes = useCallback((result: ListMachineTypesResponse) => {
+    setMachines(result.machineTypes);
+    setMachineFailures(result.failures);
+    setProviderStatuses(result.providerStatuses ?? []);
+    setSelectedMachineType((current) =>
+      result.machineTypes.some(({ id }) => id === current)
+        ? current
+        : result.machineTypes[0]?.id ?? '');
+  }, []);
 
   useEffect(() => {
     if (!busy) submitted.current = false;
@@ -104,14 +129,12 @@ export function CreateWorkspaceDialog({
         setLoading(false);
         return;
       }
-      setMachines(machineResult.value.machineTypes);
-      setMachineFailures(machineResult.value.failures);
-      setSelectedMachineType((current) => current || machineResult.value.machineTypes[0]?.id || '');
+      installMachineTypes(machineResult.value);
       setVolumes(volumeResult.status === 'fulfilled' ? volumeResult.value : []);
       setLoading(false);
     });
     return () => { mounted = false; };
-  }, [listMachineTypes, listVolumes, listTemplates]);
+  }, [installMachineTypes, listMachineTypes, listVolumes, listTemplates]);
 
   const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId) ?? null;
   const machineFailureItems = machineFailures.map((failure) => (
@@ -302,9 +325,18 @@ export function CreateWorkspaceDialog({
             </div>
             {loading ? (
               <OutlinedLoadingRows count={4} ariaLabel="Loading machine types" />
-            ) : machines.length > 0 ? (
+            ) : (
               <>
-                {machineFailures.length > 0 && (
+                <InlineComputeCredentialSetup
+                  providers={credentialRequiredProviders}
+                  orgId={orgId}
+                  admin={admin}
+                  saveCredential={saveComputeCredential}
+                  onSaved={async () => {
+                    installMachineTypes(await listMachineTypes());
+                  }}
+                />
+                {machines.length > 0 && machineFailures.length > 0 && (
                   /* One provider can fail while the others answer. Canary hid a
                    * dead Hetzner token for an hour: only an empty catalog
                    * showed the provider error. */
@@ -313,19 +345,21 @@ export function CreateWorkspaceDialog({
                     <ul>{machineFailureItems}</ul>
                   </div>
                 )}
-                <MachineCatalogGrid
-                  machines={machines}
-                  selectedMachineType={selectedMachineType}
-                  onSelect={setSelectedMachineType}
-                />
+                {machines.length > 0 ? (
+                  <MachineCatalogGrid
+                    machines={machines}
+                    selectedMachineType={selectedMachineType}
+                    onSelect={setSelectedMachineType}
+                  />
+                ) : credentialRequiredProviders.length === 0 && machineFailures.length > 0 ? (
+                  <div className="blueprint-selection__empty" role="alert">
+                    <p>No machine types are available.</p>
+                    <ul>{machineFailureItems}</ul>
+                  </div>
+                ) : credentialRequiredProviders.length === 0 ? (
+                  <div className="blueprint-selection__empty">No machine types are available.</div>
+                ) : null}
               </>
-            ) : machineFailures.length > 0 ? (
-              <div className="blueprint-selection__empty" role="alert">
-                <p>No machine types are available.</p>
-                <ul>{machineFailureItems}</ul>
-              </div>
-            ) : (
-              <div className="blueprint-selection__empty">No machine types are available.</div>
             )}
           </section>}
 

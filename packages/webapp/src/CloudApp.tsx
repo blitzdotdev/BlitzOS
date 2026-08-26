@@ -1446,6 +1446,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       busy={createWorkspaceBusy}
       error={createWorkspaceError}
       orgName={store.viewer?.org.name ?? 'your org'}
+      orgId={store.viewer?.org.id ?? ''}
+      admin={store.viewer?.membership.role === 'admin'}
+      saveComputeCredential={client.putComputeCredential}
       client={client}
       listMachineTypes={listMachineTypes}
       listVolumes={listVolumes}
@@ -1636,6 +1639,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         {loaded && store.viewer ? (
           <CreateTemplateScreen
             client={client}
+            orgId={store.viewer.org.id}
             orgName={store.viewer.org.name}
             admin={store.viewer.membership.role === 'admin'}
             editTemplateId={route.page === 'template-edit' ? route.templateId : undefined}

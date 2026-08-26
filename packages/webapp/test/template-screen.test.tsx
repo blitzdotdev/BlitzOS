@@ -1746,4 +1746,76 @@ describe('template screen org-credential config', () => {
     expect(view.container.textContent).not.toContain('Configure the GitHub App first');
     await view.unmount();
   });
+
+  it('keeps the template machine grid behind inline validation and refreshes it in place', async () => {
+    let stored = false;
+    let attempts = 0;
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/machine-types') {
+        return Response.json(stored
+          ? {
+              machineTypes: machines,
+              failures: [],
+              providerStatuses: [{ providerId: 'hetzner', access: 'org' }],
+            }
+          : {
+              machineTypes: [],
+              failures: [],
+              providerStatuses: [{ providerId: 'hetzner', access: 'credential-required' }],
+            });
+      }
+      if (
+        url.pathname === '/orgs/org-one/compute-credentials/hetzner'
+        && init?.method === 'PUT'
+      ) {
+        attempts += 1;
+        if (attempts === 1) {
+          return Response.json(
+            { error: 'provider rejected this exact test key', retryAction: null },
+            { status: 400 },
+          );
+        }
+        stored = true;
+        return Response.json({ provider: 'hetzner', validated_at: 5, created_by: 'admin' });
+      }
+      return null;
+    });
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgId="org-one"
+        orgName="acme"
+        admin
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+    expect(view.container.textContent).toContain('Add your Hetzner Cloud key');
+    const input = view.container.querySelector<HTMLInputElement>('input[name="token"]')!;
+    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    if (setInputValue === undefined) throw new Error('input value setter unavailable');
+    await act(async () => {
+      setInputValue.call(input, 'template-inline-key');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const save = () => [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Validate and show machines')!;
+    await act(async () => save().click());
+    await settle();
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('provider rejected this exact test key');
+    expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+
+    await act(async () => save().click());
+    await settle();
+    expect(view.container.querySelector('.machine-catalog-groups')).not.toBeNull();
+    expect(view.container.textContent).toContain('CX23');
+    expect(view.container.textContent).not.toContain('template-inline-key');
+    expect(fetcher.mock.calls.filter(([input]) =>
+      new URL(String(input)).pathname === '/machine-types')).toHaveLength(2);
+    await view.unmount();
+  });
 });
