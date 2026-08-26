@@ -15,6 +15,7 @@ const expectedTables = [
   "principals",
   "users",
   "orgs",
+  "org_entitlements",
   "memberships",
   "sessions",
   "agent_rules",

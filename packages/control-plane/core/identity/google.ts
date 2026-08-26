@@ -452,12 +452,11 @@ export function addGoogleAuthRoutes(
     if (state.inviteCode !== undefined) {
       try {
         await redeemInviteSession(
-          runtime.db,
+          runtime,
           state.inviteCode,
           user.id,
           profile.email,
           await hashSecret(token),
-          runtime.vars.sessionTtlMs,
           now,
         );
       } catch (error) {

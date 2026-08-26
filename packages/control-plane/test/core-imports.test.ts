@@ -41,6 +41,7 @@ const expected = [
   "connections/user-grants.ts",
   "crypto.ts",
   "db.ts",
+  "entitlements.ts",
   "environment.ts",
   "files/access.ts",
   "files/attachments.ts",

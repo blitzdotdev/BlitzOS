@@ -1,5 +1,6 @@
 import type { Query } from "../db.js";
 import { first, rows, transaction } from "../db.js";
+import { seatAvailable, seatGateEnabled, seatLimitReached, seatsExhausted } from "../entitlements.js";
 import { HttpError, isRecord, type JsonValue, readJson } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
@@ -215,6 +216,13 @@ export function addMemberRoutes(
         throw new HttpError(409, "the last active admin cannot be changed");
       }
     }
+    // Re-activation is growth, so it meets the seat gate — and it meets it
+    // inside the statement, next to the last-admin rule that is guarded the
+    // same way. `status` here is the pre-update value, so an already-active
+    // member changing role never has to find a free seat.
+    const seatGate = seatGateEnabled(runtime.vars)
+      ? `AND (?2 != 'active' OR status = 'active' OR ${seatAvailable("?4")})`
+      : "";
     // Disabling a member is the admin-side twin of leaving, so it owes their
     // sessions the same rebind; enabling one hands the restored org back to a
     // session left with none. Both ride the same transaction as the status
@@ -228,6 +236,7 @@ export function addMemberRoutes(
               AND (SELECT COUNT(*) FROM memberships
                    WHERE org_id = ?4 AND role = 'admin' AND status = 'active') <= 1
             )
+            ${seatGate}
           RETURNING id`,
       v: [nextRole, nextStatus, member.id, orgId],
     }];
@@ -239,6 +248,17 @@ export function addMemberRoutes(
     }
     const changed = await transaction<{ id: string }>(runtime.db, statements);
     if (changed[0]?.length !== 1) {
+      if (
+        nextStatus === "active"
+        && member.status !== "active"
+        && await seatsExhausted(runtime, orgId)
+      ) {
+        throw await seatLimitReached(runtime, {
+          org: orgId,
+          user: principal.id,
+          role: "admin",
+        });
+      }
       throw new HttpError(409, "the last active admin cannot be changed");
     }
     const updated = await memberInOrg(runtime.db, member.id, orgId);

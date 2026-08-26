@@ -8,6 +8,7 @@ import { connectionByName } from "./connections/registry.js";
 import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
+import { VM_SLOT_PHASES } from "./entitlements.js";
 import {
   parseWorkspaceEnvironment,
   workspaceEnvironmentFromJson,
@@ -493,7 +494,7 @@ export async function performWorkspaceCreate(
         SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14
         WHERE (
           SELECT COUNT(*) FROM workspaces
-          WHERE org_id = ?4 AND phase IN ('creating', 'ready', 'destroying', 'error')
+          WHERE org_id = ?4 AND phase IN (${VM_SLOT_PHASES})
         ) < (SELECT vm_limit FROM orgs WHERE id = ?4)
         RETURNING id`,
     v: [

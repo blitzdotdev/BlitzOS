@@ -52,6 +52,7 @@ const expected = [
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
+  "core/entitlements.ts",
   "core/environment.ts",
   "core/connections/types.ts",
   "core/connections/pull-wire.ts",

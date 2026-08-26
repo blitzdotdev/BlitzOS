@@ -57,6 +57,18 @@ CLOUDFLARE_ACCOUNT_ID = ""
 CLOUDFLARE_ZONE_ID = ""
 # Domain of that zone, e.g. "workspaces.example.com". Empty = no browser access to cloud-VM workspaces (they boot, but no terminal/chat/files/previews). See docs/TUNNEL.md.
 WORKSPACE_TUNNEL_ZONE = ""
+# Origin of the checkout surface a paid deployment sends people to when they
+# hit a seat limit; the 402 refusal carries "<PAYMENT_URL>/checkout#token=<jwt>".
+# Empty on self-host and the refusal simply carries no link — there is no seat
+# limit there at all unless the ENTITLEMENTS_API_KEY secret is also set.
+# The empty declaration has to stay: `wrangler types` builds the Env interface
+# from this file, and src/worker.ts reads env.PAYMENT_URL.
+PAYMENT_URL = ""
+
+# ENTITLEMENTS_API_KEY is a Worker SECRET, not a var, so it is not listed here
+# (`wrangler secret put ENTITLEMENTS_API_KEY`). Leave it unset unless a billing
+# service writes limits into this deployment: unset means no seat gating
+# anywhere and PUT /orgs/:id/entitlements answers 404.
 
 # Optional vars (uncomment to set):
 # Signup policy: "open" (any Google account) or "invite" (invited emails only). Default "open".

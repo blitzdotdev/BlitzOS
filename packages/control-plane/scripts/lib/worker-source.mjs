@@ -33,6 +33,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
+  "core/entitlements.ts",
   "core/environment.ts",
   "core/connections/types.ts", "core/connections/pull-wire.ts", "core/connections/root-crypto.ts", "core/connections/manifest.ts", "core/connections/leases.ts",
   "core/connections/catalog/types.ts", "core/connections/catalog/github.ts", "core/connections/catalog/google-workspace.ts", "core/connections/catalog/linear.ts", "core/connections/catalog/discord.ts", "core/connections/catalog/youtrack.ts", "core/connections/catalog/index.ts",
@@ -142,6 +143,19 @@ export const BLITZDEV_CONFIG = Object.freeze({
         // No folders foreignKey on purpose (migration 0021): a deleted usage
         // folder may dangle here; the usage-push leg inner-joins folders.
         { name: "usage_folder_id", type: "text", sqlType: "text" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      // Numbers a private billing service writes through
+      // PUT /orgs/:id/entitlements. No plan name, ever. The VM cap is not here
+      // on purpose: it stays orgs.vm_limit, the column core/workspaces.ts
+      // enforces, so one limit never gets two sources of truth.
+      name: "org_entitlements",
+      fields: [
+        { name: "org_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid", foreignKey: { table: "orgs", column: "id" } },
+        { name: "seat_limit", type: "integer", sqlType: "integer", notNull: true, check: "seat_limit >= 1" },
+        { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
       ],
       extensions: [DENY_ALL_RULES],
     },

@@ -74,6 +74,13 @@ export interface RuntimeVariables {
   /** Lowercased bare domains parsed from ALLOWED_EMAIL_DOMAINS. Absent or
    * empty means any email domain may sign in. */
   allowedEmailDomains?: readonly string[];
+  /** Shared secret with the private billing service, from the
+   * ENTITLEMENTS_API_KEY secret. Absent or empty is the self-host default:
+   * no seat gating anywhere, and PUT /orgs/:id/entitlements answers 404. */
+  entitlementsApiKey?: string;
+  /** Origin of the checkout surface, from PAYMENT_URL. Absent or empty means
+   * the 402 deny envelope carries no paymentUrl. */
+  paymentUrl?: string;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
