@@ -99,9 +99,7 @@ Behaviour, in order:
       WHERE id = ?membership AND status = 'active' RETURNING id`, with both
      guards repeated as subqueries so a concurrent request cannot slip past
      the checks above. This mirrors `PATCH /members/:id`.
-   - `UPDATE sessions SET membership_id = ?next WHERE membership_id =
-      ?membership AND principal_id = ?user`, where `?next` is another
-     active membership of the same user, else `NULL`.
+   - `rebindSessionsOffMembership(...)` — see §3.6.
    - Every row must return exactly what is expected, else `409`, matching
      the `POST /orgs` and invite-redeem style already in the file.
 5. Response `204`. The webapp reloads and asks `/me` where it now stands, so
@@ -187,6 +185,46 @@ Unchanged. `DELETE /members/self` answers `204` and `POST /orgs` keeps its
 existing `201 {org, membership}` body, so nothing crosses `packages/schema`
 and `test/wire-drift.test.ts` has nothing new to check.
 
+### 3.6 One rebind statement, shared by leaving and being removed
+
+`PATCH /members/:id` with `{"status":"disabled"}` already removed a member
+before this change, and Settings → Members already rendered it as a **Disable**
+button. What it never did was touch the `sessions` table. Measured:
+
+```
+PATCH /members/<id> {"status":"disabled"}   →  200
+that person's GET /me                       →  401 unauthorized
+```
+
+— a hard 401 even when they belonged to a second org, so being removed logged
+them out of the whole product until they signed in again. `DELETE
+/members/self` would have had the same bug, so both paths take one statement:
+
+```sql
+UPDATE sessions SET membership_id = (
+  SELECT id FROM memberships
+  WHERE user_id = sessions.principal_id AND status = 'active'
+  ORDER BY rowid DESC LIMIT 1
+)
+WHERE membership_id = ?1
+  AND NOT EXISTS (SELECT 1 FROM memberships WHERE id = ?1 AND status = 'active')
+```
+
+`rebindIdentityOnlySessions` is the counterpart on **Enable**: without it a
+re-enabled member sits on the create-org page holding a membership they cannot
+see. It only touches sessions with no membership at all, so being re-enabled in
+one org never drags you out of another.
+
+**The `NOT EXISTS` is the statement's own precondition, not caution.** Both
+helpers ship in the same batch as the status change, and that change carries
+SQL guards a concurrent membership edit can still fail. A batch runs every
+statement it was given, and the route's 409 is thrown afterwards in JS — so
+without the clause, a *refused* leave would still bump the caller out of an org
+they are, in fact, still in. Each statement therefore states its own
+precondition and depends on no ordering.
+
+Both helpers are module-private in `members.ts`, where all their callers are.
+
 ## 4. Webapp design
 
 ### 4.1 Create organization, in the rail menu
@@ -258,7 +296,7 @@ removed. See §3.1 for why that stayed as it is.
 Every test below was seen to fail with the source change reverted and the
 test kept, then seen to pass with the change in place.
 
-### Control plane, `test/identity-phase2.test.ts` (6 new)
+### Control plane, `test/identity-phase2.test.ts` (8 new)
 
 | Test | What it pins |
 |---|---|
@@ -268,6 +306,8 @@ test kept, then seen to pass with the change in place.
 | leaves the only organization into an identity-only session, not a 401 | `/me` returns 200 with `membership: null`, and org routes answer 403 |
 | refuses the last member and the last active admin leaving | both 409s by message, the row stays `active`, and the same request succeeds once a second admin exists |
 | reactivates a left membership when an admin re-invites the person | the invite callback flips the same row back to `active` |
+| moves a disabled member's sessions off the org, and hands them back on enable | after `PATCH {status:"disabled"}` that person's `/me` returns their other org rather than a 401; re-enabling does not drag them back out of it |
+| leaves a disabled member with no other org on onboarding, and restores it on enable | `/me` returns 200 with `membership: null`, and the same session picks the org back up when an admin re-enables them |
 
 ### Control plane, `test/identity.test.ts` (1 rewritten)
 
@@ -293,17 +333,21 @@ real settings route.
 
 | Gate | Result |
 |---|---|
-| `npm run typecheck` | passes |
-| `npm test` | 502 control-plane + 136 box-actor + 291 webapp pass. One pre-existing failure: `files.test.ts > deletes grants, every paginated object page, and the folder row` times out at 5s. It fails identically on a clean `origin/main` checkout in the same sandbox. |
-| `npm run lint:gate` | could not run. `oxlint` aborts with `SIGABRT` inside this sandbox (`oxc_allocator/src/pool/fixed_size.rs:112`), on a clean `origin/main` checkout as well. CI runs it. |
+| `npm run typecheck` | passes, all workspaces |
+| control-plane `vitest` | 504 pass. One pre-existing failure: `files.test.ts > deletes grants, every paginated object page, and the folder row` times out at 5s. It fails identically on a clean `origin/main` checkout in the same sandbox. |
+| webapp `vitest` | 291 pass |
+| `test:scripts`, house-rule tests | 41 and 2 pass |
 | `npm run build -w @blitzos/webapp` | passes |
-
-The change adds no `fetch`, no `console` in core, and no type assertion, so
-it has no new anti-slop or blitz-house surface. `CloudApp.tsx` and `api.ts`
-were already over the 700-line warn; this adds 14 and 2 lines. The warn list
-does not grow.
+| box-actor `vitest` | 136 passed earlier in the same session. Later re-runs are OOM-killed by the dev sandbox. This change touches no file under `packages/box`. |
+| `npm run lint:gate` | could not run. `oxlint` aborts with `SIGABRT` inside this sandbox (`oxc_allocator/src/pool/fixed_size.rs:112`), on a clean `origin/main` checkout as well. CI runs it. |
 
 ### What was not verified
+
+**The `NOT EXISTS` precondition in §3.6 has no test.** It only matters when a
+concurrent membership edit makes a route's SQL guard fail after its JS check
+passed, and both reads happen inside one request, so a single-threaded test
+harness cannot open that window. The clause is one line, is correct when the
+window never opens, and removes the dependency on batch ordering.
 
 No browser click-through. The control plane runs on Cloudflare and the
 sandbox has no local D1 or Google OAuth, and deliberately holds no canary or
@@ -342,7 +386,7 @@ be dropped.
 | `control-plane/migrations/0029_org_created_by.sql` | new, one column |
 | `control-plane/core/identity/orgs.ts` | `MAX_SELF_CREATED_ORGS` |
 | `control-plane/core/identity/routes.ts` | `POST /orgs`: drop the membership guards, add the cap, always rebind |
-| `control-plane/core/identity/members.ts` | `DELETE /members/self` |
+| `control-plane/core/identity/members.ts` | `DELETE /members/self`, the two rebind statements, `PATCH` now transactional |
 | `webapp/src/api.ts` | `leaveOrg()` |
 | `webapp/src/components/OrgNameForm.tsx` | new, the one org-name form |
 | `webapp/src/components/CreateOrgPage.tsx` | reduced to a frame around it |

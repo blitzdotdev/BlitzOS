@@ -616,6 +616,61 @@ describe("identity phase 2", () => {
     })).status).toBe(204);
   });
 
+  it("moves a disabled member's sessions off the org, and hands them back on enable", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const member = await sameOrgSession("removed-person");
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs (id, slug, name, vm_limit, created_at, updated_at) VALUES ('other', 'other', 'Other', 10, ?1, ?1)").bind(now),
+      env.DB.prepare("INSERT INTO memberships (id, user_id, org_id, role, status) VALUES ('other-membership', 'removed-person', 'other', 'admin', 'active')"),
+    ]);
+    const disable = async (status: "active" | "disabled"): Promise<number> => (
+      await appRequest(app, `/members/${member.membershipId}`, {
+        method: "PATCH",
+        headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      })
+    ).status;
+
+    expect(await disable("disabled")).toBe(200);
+    // Not a 401: the person still belongs to another org and lands there.
+    await expect(appRequest(app, "/me", { headers: { Cookie: member.cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({ org: { slug: "other" } });
+
+    // Re-enabling must not drag them back out of the org they are now in.
+    expect(await disable("active")).toBe(200);
+    await expect(appRequest(app, "/me", { headers: { Cookie: member.cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({ org: { slug: "other" } });
+  });
+
+  it("leaves a disabled member with no other org on onboarding, and restores it on enable", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const member = await sameOrgSession("only-org-person");
+    expect((await appRequest(app, `/members/${member.membershipId}`, {
+      method: "PATCH",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "disabled" }),
+    })).status).toBe(200);
+    const removed = await appRequest(app, "/me", { headers: { Cookie: member.cookie } });
+    expect(removed.status).toBe(200);
+    await expect(removed.json()).resolves.toMatchObject({ membership: null, org: null });
+
+    expect((await appRequest(app, `/members/${member.membershipId}`, {
+      method: "PATCH",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    })).status).toBe(200);
+    // The same session picks the org back up, instead of sitting on the
+    // create-org page with a membership it cannot see.
+    await expect(appRequest(app, "/me", { headers: { Cookie: member.cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({
+      org: { slug: "personal" },
+      membership: { role: "member" },
+    });
+  });
+
   it("reactivates a left membership when an admin re-invites the person", async () => {
     const { app } = harness();
     const operatorCookie = await operatorSession(app);

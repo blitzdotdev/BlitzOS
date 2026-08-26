@@ -143,3 +143,4 @@ export function sessionCookie(token: string, ttlMs: number): string {
 export function clearSessionCookie(): string {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
+

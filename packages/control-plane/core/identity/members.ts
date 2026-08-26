@@ -1,3 +1,4 @@
+import type { Query } from "../db.js";
 import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, type JsonValue, readJson } from "../http.js";
 import type { Principal } from "../principals.js";
@@ -8,6 +9,7 @@ type MemberStatus = "active" | "disabled";
 
 interface MemberRow {
   id: string;
+  user_id: string;
   email: string;
   name: string;
   avatar_url: string | null;
@@ -70,12 +72,54 @@ async function memberInOrg(
   orgId: string,
 ): Promise<MemberRow | null> {
   return first<MemberRow>(db, {
-    q: `SELECT m.id, m.role, m.status, u.email, u.name, u.avatar_url
+    q: `SELECT m.id, m.user_id, m.role, m.status, u.email, u.name, u.avatar_url
         FROM memberships m JOIN users u ON u.id = m.user_id
         WHERE m.id = ?1 AND m.org_id = ?2
           AND m.status IN ('active', 'disabled') LIMIT 1`,
     v: [id, orgId],
   });
+}
+
+/** A membership stopped being active — the person left, or an admin disabled
+ * them. Every session bound to it moves to another active membership of the
+ * same user, or to none. Without this the session keeps a membership_id that
+ * findSessionPrincipal refuses, which reads to the person as a hard 401
+ * rather than as "you are not in that org any more".
+ *
+ * The NOT EXISTS is the statement's own precondition, not belt and braces: it
+ * ships in the same batch as the status change, and that change carries SQL
+ * guards of its own that a concurrent membership edit can still fail. A batch
+ * runs every statement it was given, so without this clause a refused leave
+ * would still bump the caller out of an org they are, in fact, still in. */
+function rebindSessionsOffMembership(membershipId: string): Query {
+  return {
+    q: `UPDATE sessions SET membership_id = (
+          SELECT id FROM memberships
+          WHERE user_id = sessions.principal_id AND status = 'active'
+          ORDER BY rowid DESC LIMIT 1
+        )
+        WHERE membership_id = ?1
+          AND NOT EXISTS (
+            SELECT 1 FROM memberships WHERE id = ?1 AND status = 'active'
+          )`,
+    v: [membershipId],
+  };
+}
+
+/** The reverse: a membership became active again. Sessions this user left
+ * holding no membership at all are sitting on the create-org onboarding page,
+ * so they pick the restored org up. Sessions already scoped to another org
+ * stay there — being re-enabled somewhere must not move you. Same precondition
+ * rule as above. */
+function rebindIdentityOnlySessions(userId: string, membershipId: string): Query {
+  return {
+    q: `UPDATE sessions SET membership_id = ?1
+        WHERE principal_id = ?2 AND membership_id IS NULL
+          AND EXISTS (
+            SELECT 1 FROM memberships WHERE id = ?1 AND status = 'active'
+          )`,
+    v: [membershipId, userId],
+  };
 }
 
 export function addMemberRoutes(
@@ -87,7 +131,7 @@ export function addMemberRoutes(
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const members = await rows<MemberRow>(runtimeFactory(context).db, {
-      q: `SELECT m.id, m.role, m.status, u.email, u.name, u.avatar_url
+      q: `SELECT m.id, m.user_id, m.role, m.status, u.email, u.name, u.avatar_url
           FROM memberships m JOIN users u ON u.id = m.user_id
           WHERE m.org_id = ?1 AND m.status IN ('active', 'disabled')
           ORDER BY CASE m.status WHEN 'active' THEN 0 ELSE 1 END,
@@ -128,16 +172,6 @@ export function addMemberRoutes(
     if (principal.role === "admin" && (counts?.admins ?? 0) <= 1) {
       throw new HttpError(409, "the last active admin cannot leave the organization");
     }
-    // Every session of this user that is scoped to the org being left moves to
-    // another active membership, or to none. Without this the sessions keep a
-    // membership_id that no longer resolves, which reads as 401 rather than as
-    // "you are not in that org any more".
-    const next = await first<{ id: string }>(runtime.db, {
-      q: `SELECT id FROM memberships
-          WHERE user_id = ?1 AND status = 'active' AND id != ?2
-          ORDER BY rowid DESC LIMIT 1`,
-      v: [principal.id, principal.membershipId],
-    });
     const result = await transaction(runtime.db, [
       {
         q: `UPDATE memberships SET status = 'disabled'
@@ -152,11 +186,7 @@ export function addMemberRoutes(
             RETURNING id`,
         v: [principal.membershipId, principal.id, principal.orgId],
       },
-      {
-        q: `UPDATE sessions SET membership_id = ?1
-            WHERE principal_id = ?2 AND membership_id = ?3`,
-        v: [next?.id ?? null, principal.id, principal.membershipId],
-      },
+      rebindSessionsOffMembership(principal.membershipId),
     ]);
     if (result[0]?.length !== 1) throw new HttpError(409, "the organization could not be left");
     return context.body(null, 204);
@@ -185,7 +215,11 @@ export function addMemberRoutes(
         throw new HttpError(409, "the last active admin cannot be changed");
       }
     }
-    const changed = await rows<{ id: string }>(runtime.db, {
+    // Disabling a member is the admin-side twin of leaving, so it owes their
+    // sessions the same rebind; enabling one hands the restored org back to a
+    // session left with none. Both ride the same transaction as the status
+    // change, so a session can never point at a membership that moved.
+    const statements: Query[] = [{
       q: `UPDATE memberships SET role = ?1, status = ?2
           WHERE id = ?3 AND org_id = ?4
             AND NOT (
@@ -196,8 +230,15 @@ export function addMemberRoutes(
             )
           RETURNING id`,
       v: [nextRole, nextStatus, member.id, orgId],
-    });
-    if (changed.length !== 1) {
+    }];
+    if (nextStatus === "disabled" && member.status === "active") {
+      statements.push(rebindSessionsOffMembership(member.id));
+    }
+    if (nextStatus === "active" && member.status === "disabled") {
+      statements.push(rebindIdentityOnlySessions(member.user_id, member.id));
+    }
+    const changed = await transaction<{ id: string }>(runtime.db, statements);
+    if (changed[0]?.length !== 1) {
       throw new HttpError(409, "the last active admin cannot be changed");
     }
     const updated = await memberInOrg(runtime.db, member.id, orgId);
