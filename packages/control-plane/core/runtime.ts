@@ -3,8 +3,9 @@ import type { Db } from "./db.js";
 import { HttpError, isNumber } from "./http.js";
 import type { PrincipalSource } from "./principals.js";
 import type { MicrovmPoolProvider } from "./compute/microvm.js";
+import type { OrgComputeProviderResolver } from "./compute/org-credentials.js";
+import type { VolumeProviderResolver } from "./compute/types.js";
 import type { VmProviderRegistry } from "./compute/registry.js";
-import type { VolumeProvider } from "./compute/types.js";
 import type { WorkspaceTunnels } from "./workspace-tunnels.js";
 import type { WorkspaceWebAppAuth } from "./webapp-tickets.js";
 
@@ -120,7 +121,8 @@ export interface CoreRuntime {
   vars: RuntimeVariables;
   providers: {
     vmRegistry: VmProviderRegistry;
-    volume: VolumeProvider;
+    volume: VolumeProviderResolver;
+    compute: OrgComputeProviderResolver;
     microvm?: MicrovmPoolProvider;
     workspaceTunnels?: WorkspaceTunnels;
     webAppAuth?: WorkspaceWebAppAuth;

@@ -17,6 +17,7 @@ const expectedTables = [
   "orgs",
   "org_entitlements",
   "memberships",
+  "org_compute_credentials",
   "sessions",
   "agent_rules",
   "workspaces",
@@ -66,9 +67,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-three domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-four domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(34);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(35);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
@@ -125,7 +126,24 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
           name: "recipe_id",
           foreignKey: { table: "recipes", column: "id" },
         }),
+        expect.objectContaining({
+          name: "compute_credential_source",
+          check: "compute_credential_source IN ('org', 'deployment')",
+        }),
       ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "org_compute_credentials")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "org_id", foreignKey: { table: "orgs", column: "id" } }),
+        expect.objectContaining({ name: "provider", check: "provider IN ('hetzner', 'aws')" }),
+        expect.objectContaining({ name: "ciphertext", notNull: true }),
+        expect.objectContaining({
+          name: "created_by_membership_id",
+          foreignKey: { table: "memberships", column: "id" },
+        }),
+        expect.objectContaining({ name: "validated_at", notNull: true }),
+      ]),
+      indexes: [{ name: "identity", unique: true, fields: ["org_id", "provider"] }],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "orgs")).toMatchObject({
       fields: expect.arrayContaining([

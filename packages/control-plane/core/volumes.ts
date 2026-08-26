@@ -8,6 +8,7 @@ import type {
   DeleteVolumeResponse,
   ListVolumesResponse,
 } from "./wire.js";
+import type { ComputeCredentialSource } from "./compute/types.js";
 
 function createVolumeRequest(value: unknown): CreateVolumeRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
@@ -29,14 +30,22 @@ export function addVolumeRoutes(
       throw new HttpError(403, "active membership required");
     }
     const runtime = runtimeFactory(context);
-    const volume = await runtime.providers.volume.createVolume(
+    const resolved = await runtime.providers.volume.forOrg(principal.orgId);
+    const volume = await resolved.provider.createVolume(
       createVolumeRequest(await readJson(context.req.raw)),
     );
     await rows(runtime.db, {
       q: `INSERT INTO volume_ownership
-          (volume_id, org_id, created_by_membership_id, created_at)
-          VALUES (?1, ?2, ?3, ?4)`,
-      v: [volume.id, principal.orgId, principal.membershipId, Date.now()],
+          (volume_id, org_id, created_by_membership_id, created_at,
+           compute_credential_source)
+          VALUES (?1, ?2, ?3, ?4, ?5)`,
+      v: [
+        volume.id,
+        principal.orgId,
+        principal.membershipId,
+        Date.now(),
+        resolved.credentialSource,
+      ],
     });
     return context.json<CreateVolumeResponse>({ volume }, 201);
   });
@@ -45,13 +54,24 @@ export function addVolumeRoutes(
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const runtime = runtimeFactory(context);
-    const ownership = await rows<{ volume_id: string }>(runtime.db, {
-      q: "SELECT volume_id FROM volume_ownership WHERE org_id = ?1",
+    const ownership = await rows<{
+      volume_id: string;
+      compute_credential_source: ComputeCredentialSource | null;
+    }>(runtime.db, {
+      q: `SELECT volume_id, compute_credential_source
+          FROM volume_ownership WHERE org_id = ?1`,
       v: [principal.orgId],
     });
     const owned = new Set(ownership.map((row) => row.volume_id));
+    const sources = [...new Set(ownership.map(
+      (row): ComputeCredentialSource => row.compute_credential_source ?? "deployment",
+    ))];
+    const catalogs = await Promise.all(sources.map(async (source) => {
+      const resolved = await runtime.providers.volume.forOrg(principal.orgId ?? "", source);
+      return resolved.provider.listVolumes();
+    }));
     return context.json<ListVolumesResponse>({
-      volumes: (await runtime.providers.volume.listVolumes()).filter((volume) => owned.has(volume.id)),
+      volumes: catalogs.flat().filter((volume) => owned.has(volume.id)),
     });
   });
 
@@ -60,12 +80,20 @@ export function addVolumeRoutes(
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
-    const ownership = await first<{ volume_id: string }>(runtime.db, {
-      q: "SELECT volume_id FROM volume_ownership WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1",
+    const ownership = await first<{
+      volume_id: string;
+      compute_credential_source: ComputeCredentialSource | null;
+    }>(runtime.db, {
+      q: `SELECT volume_id, compute_credential_source FROM volume_ownership
+          WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1`,
       v: [id, principal.orgId],
     });
     if (ownership === null) throw new HttpError(404, "volume not found");
-    await runtime.providers.volume.deleteVolume(id);
+    const resolved = await runtime.providers.volume.forOrg(
+      principal.orgId,
+      ownership.compute_credential_source ?? "deployment",
+    );
+    await resolved.provider.deleteVolume(id);
     await rows(runtime.db, {
       q: "DELETE FROM volume_ownership WHERE volume_id = ?1 AND org_id = ?2",
       v: [id, principal.orgId],

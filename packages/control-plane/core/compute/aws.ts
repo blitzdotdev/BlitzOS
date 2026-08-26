@@ -298,6 +298,38 @@ function validated(value: string, pattern: RegExp, label: string): string {
   return value;
 }
 
+/** Builds the EC2 adapter around credentials selected at request time. The
+ * region and placement knobs remain deployment configuration: an org brings
+ * AWS identity, not a second control-plane topology. */
+export function awsProviderForCredentials(
+  env: AwsProviderEnv,
+  credentials: AwsCredentials,
+  options: AwsProviderOptions = {},
+): AwsProvider {
+  const region = env.AWS_REGION ?? "";
+  if (region === "") {
+    throw new Error("AWS_REGION must be configured for AWS compute");
+  }
+  const imageId = env.AWS_IMAGE_ID ?? "";
+  const subnetId = env.AWS_SUBNET_ID ?? "";
+  const settings: AwsProviderSettings = {
+    accessKeyId: credentials.accessKeyId,
+    secretAccessKey: credentials.secretAccessKey,
+    region: validated(region, REGION_PATTERN, "AWS_REGION"),
+    securityGroupIds: (env.AWS_SECURITY_GROUP_IDS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value !== "")
+      .map((value) => validated(value, SECURITY_GROUP_ID_PATTERN, "AWS_SECURITY_GROUP_IDS")),
+  };
+  if (credentials.sessionToken !== undefined && credentials.sessionToken !== "") {
+    settings.sessionToken = credentials.sessionToken;
+  }
+  if (imageId !== "") settings.imageId = validated(imageId, IMAGE_ID_PATTERN, "AWS_IMAGE_ID");
+  if (subnetId !== "") settings.subnetId = validated(subnetId, SUBNET_ID_PATTERN, "AWS_SUBNET_ID");
+  return new AwsProvider(settings, options);
+}
+
 /** Absent, not broken: no AWS variables at all means no provider, and
  * deployments that never configured AWS keep their existing registry. A
  * partially filled configuration throws instead, because silently dropping a
@@ -321,23 +353,13 @@ export function awsProviderFromEnv(
       "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION must be set together",
     );
   }
-  const sessionToken = env.AWS_SESSION_TOKEN ?? "";
-  const imageId = env.AWS_IMAGE_ID ?? "";
-  const subnetId = env.AWS_SUBNET_ID ?? "";
-  const settings: AwsProviderSettings = {
+  const credentials: AwsCredentialSettings = {
     accessKeyId,
     secretAccessKey,
-    region: validated(region, REGION_PATTERN, "AWS_REGION"),
-    securityGroupIds: (env.AWS_SECURITY_GROUP_IDS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value !== "")
-      .map((value) => validated(value, SECURITY_GROUP_ID_PATTERN, "AWS_SECURITY_GROUP_IDS")),
   };
-  if (sessionToken !== "") settings.sessionToken = sessionToken;
-  if (imageId !== "") settings.imageId = validated(imageId, IMAGE_ID_PATTERN, "AWS_IMAGE_ID");
-  if (subnetId !== "") settings.subnetId = validated(subnetId, SUBNET_ID_PATTERN, "AWS_SUBNET_ID");
-  return new AwsProvider(settings, options);
+  const sessionToken = env.AWS_SESSION_TOKEN ?? "";
+  if (sessionToken !== "") credentials.sessionToken = sessionToken;
+  return awsProviderForCredentials(env, credentials, options);
 }
 
 export class AwsProvider implements VmProvider, VolumeProvider {

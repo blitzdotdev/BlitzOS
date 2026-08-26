@@ -81,3 +81,17 @@ export interface VolumeProvider {
   deleteVolume(id: string): Promise<void>;
   listVolumes(): Promise<Volume[]>;
 }
+
+export type ComputeCredentialSource = "org" | "deployment";
+
+export interface ResolvedVolumeProvider {
+  provider: VolumeProvider;
+  credentialSource: ComputeCredentialSource | null;
+}
+
+export interface VolumeProviderResolver {
+  forOrg(
+    orgId: string,
+    requiredSource?: ComputeCredentialSource | null,
+  ): Promise<ResolvedVolumeProvider>;
+}

@@ -11,6 +11,7 @@ import { addOAuthRoutes } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
+import { addOrgComputeCredentialRoutes } from "./compute/org-credentials.js";
 import { addRecipeRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
@@ -76,6 +77,7 @@ export function installControlPlaneRoutes(
   addOperatorTokenRoutes(router, runtimeFactory, requirePrincipal);
   addIdentityRoutes(router, runtimeFactory, requirePrincipal);
   addEntitlementsRoutes(router, runtimeFactory, requirePrincipal);
+  addOrgComputeCredentialRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
@@ -95,9 +97,10 @@ export function installControlPlaneRoutes(
   addRegistryRoutes(router, runtimeFactory);
 
   router.get("/machine-types", async (context) => {
-    await requireMembershipPrincipal(context);
+    const principal = await requireMembershipPrincipal(context);
+    if (principal.orgId === null) throw new HttpError(403, "active membership required");
     return context.json(
-      await runtimeFactory(context).providers.vmRegistry.listMachineTypes(),
+      await runtimeFactory(context).providers.vmRegistry.listMachineTypes(principal.orgId),
     );
   });
 

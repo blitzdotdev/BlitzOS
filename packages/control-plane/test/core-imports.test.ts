@@ -77,6 +77,7 @@ const expected = [
   "compute/cloudflare-tunnels.ts",
   "compute/hetzner.ts",
   "compute/json-fetch.ts",
+  "compute/org-credentials.ts",
   "compute/microvm-agent.ts",
   "compute/microvm-config.ts",
   "compute/microvm-host-registry.ts",
@@ -120,6 +121,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(95);
+    expect(expected).toHaveLength(96);
   });
 });

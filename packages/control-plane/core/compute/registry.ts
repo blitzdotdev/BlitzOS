@@ -3,18 +3,32 @@ import type {
   MachineType,
   MachineTypeProviderFailure,
 } from "../wire.js";
-import type { VmProvider } from "./types.js";
+import type { ComputeCredentialSource, VmProvider } from "./types.js";
 
 export interface VmProviderListResult {
   machineTypes: MachineType[];
   failures: MachineTypeProviderFailure[];
 }
 
+export interface ResolvedVmProvider {
+  provider: VmProvider;
+  credentialSource: ComputeCredentialSource | null;
+}
+
+export type VmProviderResolver = (
+  provider: VmProvider,
+  orgId: string,
+  requiredSource?: ComputeCredentialSource | null,
+) => Promise<ResolvedVmProvider | null>;
+
 export class VmProviderRegistry {
   private readonly providers: readonly VmProvider[];
   private readonly providersById: ReadonlyMap<string, VmProvider>;
 
-  constructor(providers: readonly VmProvider[]) {
+  constructor(
+    providers: readonly VmProvider[],
+    private readonly resolver?: VmProviderResolver,
+  ) {
     const providersById = new Map<string, VmProvider>();
     for (const provider of providers) {
       if (provider.id === "") throw new Error("VM provider id must not be empty");
@@ -35,7 +49,7 @@ export class VmProviderRegistry {
     return this.providers;
   }
 
-  forMachineType(machineTypeId: string): VmProvider {
+  private machineTypeOwner(machineTypeId: string): VmProvider {
     const claimants = this.providers.filter((provider) =>
       provider.ownsMachineType(machineTypeId)
     );
@@ -53,14 +67,49 @@ export class VmProviderRegistry {
     return provider;
   }
 
+  forMachineType(machineTypeId: string): VmProvider;
+  forMachineType(machineTypeId: string, orgId: string): Promise<ResolvedVmProvider>;
+  forMachineType(
+    machineTypeId: string,
+    orgId?: string,
+  ): VmProvider | Promise<ResolvedVmProvider> {
+    const provider = this.machineTypeOwner(machineTypeId);
+    return orgId === undefined
+      ? provider
+      : this.resolve(provider, orgId);
+  }
+
   forVmId(vmId: string): VmProvider | undefined {
     const claimants = this.providers.filter((provider) => provider.ownsVmId(vmId));
     return claimants.length === 1 ? claimants[0] : undefined;
   }
 
-  async listMachineTypes(): Promise<VmProviderListResult> {
+  async resolveVmId(
+    vmId: string,
+    orgId: string,
+    requiredSource?: ComputeCredentialSource | null,
+  ): Promise<ResolvedVmProvider | undefined> {
+    const provider = this.forVmId(vmId);
+    return provider === undefined
+      ? undefined
+      : this.resolve(provider, orgId, requiredSource);
+  }
+
+  private async resolve(
+    provider: VmProvider,
+    orgId: string,
+    requiredSource?: ComputeCredentialSource | null,
+  ): Promise<ResolvedVmProvider> {
+    const resolved = await this.resolver?.(provider, orgId, requiredSource);
+    return resolved ?? { provider, credentialSource: null };
+  }
+
+  async listMachineTypes(orgId?: string): Promise<VmProviderListResult> {
     const settled = await Promise.allSettled(
-      this.providers.map(async (provider) => {
+      this.providers.map(async (registered) => {
+        const provider = orgId === undefined
+          ? registered
+          : (await this.resolve(registered, orgId)).provider;
         const capabilities = provider.capabilities();
         if (capabilities.offersMachineTypes === false) return { machineTypes: [] };
         const supportsVolumes = capabilities.volumes;

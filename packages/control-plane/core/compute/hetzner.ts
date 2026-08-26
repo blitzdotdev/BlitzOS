@@ -1,6 +1,6 @@
 import { isNumber, isRecord, isString } from "../http.js";
 import type { CreateVolumeRequest, MachinePrice, Volume } from "../wire.js";
-import { fetchBoundedJson } from "./json-fetch.js";
+import { fetchBoundedJson, type Fetcher } from "./json-fetch.js";
 import type {
   CreatedVm,
   CreateVmInput,
@@ -105,6 +105,7 @@ export function hetznerMachineTypeAllowlistFromEnv(
 }
 
 export interface HetznerProviderOptions {
+  fetcher?: Fetcher;
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   /** Raw HETZNER_MACHINE_TYPES Worker var; unset or blank keeps the default catalog. */
@@ -237,6 +238,7 @@ function volumeFromHetzner(value: Record<string, unknown>): Volume {
 export class HetznerProvider implements VmProvider, VolumeProvider {
   readonly id = "hetzner";
   private readonly serverTypeNames = new Map<number, string>();
+  private readonly fetcher: Fetcher;
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly machineTypeAllowlist: ReadonlySet<string>;
@@ -246,6 +248,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     private readonly token: string,
     options: HetznerProviderOptions = {},
   ) {
+    this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? sleep;
     this.warn = options.warn ?? (() => {});
@@ -283,7 +286,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       Authorization: `Bearer ${this.token}`,
     };
     if (init?.body !== undefined) headers["Content-Type"] = "application/json";
-    const { response, body } = await fetchBoundedJson(fetch, `${API}${path}`, {
+    const { response, body } = await fetchBoundedJson(this.fetcher, `${API}${path}`, {
       ...init,
       headers,
     }, {
@@ -312,12 +315,18 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       serverTypeIds(message).map(async (id) => {
         if (this.serverTypeNames.has(id)) return;
         try {
-          // TODO(house-canon): Route this legacy raw request through the canonical fetch boundary.
-          const response = await fetch(`${API}/server_types/${id}`, {
-            headers: { Authorization: `Bearer ${this.token}` },
-          });
+          const { response, body } = await fetchBoundedJson(
+            this.fetcher,
+            `${API}/server_types/${id}`,
+            { headers: { Authorization: `Bearer ${this.token}` } },
+            {
+              responseLabel: "Hetzner server type",
+              bodyDisposition: () => "read",
+              invalidJsonDisposition: () => "null",
+            },
+          );
           if (!response.ok) return;
-          const value = await response.json<unknown>();
+          const value = body;
           if (!isRecord(value) || !isRecord(value.server_type)) return;
           const responseId = value.server_type.id;
           const name = value.server_type.name;
