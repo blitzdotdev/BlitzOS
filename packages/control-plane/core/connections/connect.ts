@@ -162,9 +162,9 @@ export function addConnectRoutes(
   });
 
   router.get("/connect/:provider/callback", async (context) => {
-    // No requirePrincipal here: the redirect from the provider is a cross-site
-    // navigation, so the SameSite=Strict session cookie is absent by design.
-    // The principal comes from the signed state created at /start instead.
+    // No requirePrincipal here: the redirect comes from the provider, so the
+    // ambient session is not what authorizes it. The principal comes from the
+    // signed state created at /start instead.
     const runtime = runtimeFactory(context);
     const id = requiredString(context.req.param("provider"), "provider", 64);
     const origin = new URL(context.req.url).origin;

@@ -22,6 +22,7 @@ import {
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
+  perSessionResponse,
   workspaceTunnelsFromEnv,
   workspaceWebAppAuthFromEnv,
   VmProviderRegistry,
@@ -273,9 +274,11 @@ app.get("/", async (context) => {
   const runtime = runtimeFor(context);
   if (runtime.assets === undefined) return context.notFound();
   const principal = await runtime.principalSource.authenticate(context.req.raw, runtime.db);
-  if (principal !== null) return runtime.assets.fetch(context.req.raw);
+  if (principal !== null) return perSessionResponse(await runtime.assets.fetch(context.req.raw));
   const home = new URL("/home.html", context.req.url);
-  return runtime.assets.fetch(new Request(home, { headers: context.req.raw.headers }));
+  return perSessionResponse(
+    await runtime.assets.fetch(new Request(home, { headers: context.req.raw.headers })),
+  );
 });
 
 // SAFETY: The Hono app and CoreRouter expose the same route-registration methods consumed by installControlPlaneRoutes.

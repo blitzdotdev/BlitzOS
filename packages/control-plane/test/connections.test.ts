@@ -93,10 +93,10 @@ async function connectLinearOAuth(
       expires_in: expiresInSeconds,
     }),
   );
-  // The callback is a cross-site navigation: the SameSite=Strict session
-  // cookie is absent in a real browser, so the request carries only the
-  // Lax state cookie. Sending the session here would mask the exact bug
-  // this flow shipped with.
+  // The callback carries only the state cookie on purpose. The flow must
+  // authenticate from its signed state, never from whatever session rode
+  // along with the provider's redirect. Sending the session here would mask
+  // the exact bug this flow shipped with.
   const callback = await appRequest(
     app,
     `/connect/linear/callback?code=auth-code&state=${state}`,
