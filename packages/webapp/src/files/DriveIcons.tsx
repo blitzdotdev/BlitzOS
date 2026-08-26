@@ -119,4 +119,6 @@ export const TrashGlyph = glyph(
 
 export const CloseGlyph = glyph(<path d="m6.4 6.4 11.2 11.2M17.6 6.4 6.4 17.6" />);
 
+export const BackGlyph = glyph(<path d="M14.5 5.5 8 12l6.5 6.5" />);
+
 export const CheckGlyph = glyph(<path d="m5 12.6 4.6 4.6L19 6.8" />);

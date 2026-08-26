@@ -4,6 +4,7 @@ import { $Database, teenyHono } from "teenybase/worker";
 import { rawDb } from "./raw-db.js";
 import {
   allowedEmailDomainsFromEnv,
+  cloudWorkspaceCredentialPolicyFromEnv,
   controlPlaneOriginFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
@@ -49,6 +50,7 @@ type WorkerBindings = Env & {
   ALLOWED_EMAIL_DOMAINS?: string;
   ENTITLEMENTS_API_KEY?: string;
   PAYMENT_URL?: string;
+  CLOUD_WORKSPACE_CREDENTIAL_POLICY?: string;
   CRED_MASTER_KEY: string;
   CLOUDFLARE_API_TOKEN?: string;
   WEBAPP_TOKEN_SECRET?: string;
@@ -92,9 +94,11 @@ function providersFor(
   env: WorkerBindings,
   db: Db,
   credentialMasterKey: CryptoKey,
+  workspaceCredentialPolicy: CoreRuntime["vars"]["cloudWorkspaceCredentialPolicy"],
 ): CoreRuntime["providers"] {
   const compute = new OrgComputeProviderResolver(db, credentialMasterKey, env, {
     warn: (warning) => console.warn(JSON.stringify(warning)),
+    workspaceCredentialPolicy,
   });
   const microvm = new MicrovmPoolProvider(
     env.MICROVM_HOSTS,
@@ -124,6 +128,9 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
   const env = context.env as WorkerBindings;
   // SAFETY: The database middleware installs a Db instance under $db before routed handlers run.
   const db = context.get("$db") as Db;
+  const cloudWorkspaceCredentialPolicy = cloudWorkspaceCredentialPolicyFromEnv(
+    env.CLOUD_WORKSPACE_CREDENTIAL_POLICY,
+  );
   return {
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
@@ -141,6 +148,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       gitCommitSha: env.GIT_COMMIT_SHA,
+      cloudWorkspaceCredentialPolicy,
       controlPlaneOrigin: controlPlaneOriginFromEnv(env.APP_URL),
       connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
@@ -153,6 +161,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       env,
       db,
       context.get("$credentialMasterKey") as CryptoKey,
+      cloudWorkspaceCredentialPolicy,
     ),
     principalSource: createSessionPrincipalSource(),
     assets: { fetch: (request) => env.ASSETS.fetch(request) },
@@ -167,7 +176,10 @@ function runtimeForScheduled(
   executionContext: ExecutionContext,
   credentialMasterKey: CryptoKey,
 ): CoreRuntime {
-  const providers = providersFor(env, db, credentialMasterKey);
+  const cloudWorkspaceCredentialPolicy = cloudWorkspaceCredentialPolicyFromEnv(
+    env.CLOUD_WORKSPACE_CREDENTIAL_POLICY,
+  );
+  const providers = providersFor(env, db, credentialMasterKey, cloudWorkspaceCredentialPolicy);
   return {
     db,
     // SAFETY: WorkerBindings declares BOX_IMAGES as the configured R2 bucket implementing BlobStore.
@@ -184,6 +196,7 @@ function runtimeForScheduled(
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       gitCommitSha: env.GIT_COMMIT_SHA,
+      cloudWorkspaceCredentialPolicy,
       controlPlaneOrigin: controlPlaneOriginFromEnv(env.APP_URL),
       connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),

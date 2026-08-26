@@ -522,6 +522,7 @@ export function workerSource(routing) {
   return normalizeSource(`import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase";
 import config from "virtual:teenybase";
 import {
+  cloudWorkspaceCredentialPolicyFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
   installControlPlaneRoutes,
@@ -560,6 +561,7 @@ type ManagedBindings = {
   BOX_IMAGE_TAG: string;
   SESSION_TTL_DAYS: string;
   MICROVM_HOSTS: string;
+  CLOUD_WORKSPACE_CREDENTIAL_POLICY?: string;
   CRED_MASTER_KEY: string;
   // Workspace tunnels and webApp auth, named exactly as self-host names them
   // (docs/TUNNEL.md, docs/SELF-HOST.md): one documented set for both targets.
@@ -610,8 +612,15 @@ function nonEmptyString(value: unknown): string | undefined {
   return isString(value) && value.length > 0 ? value : undefined;
 }
 
-function providersFor(env: ManagedBindings, db: Db, credentialMasterKey: CryptoKey): CoreRuntime["providers"] {
-  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, env);
+function providersFor(
+  env: ManagedBindings,
+  db: Db,
+  credentialMasterKey: CryptoKey,
+  workspaceCredentialPolicy: CoreRuntime["vars"]["cloudWorkspaceCredentialPolicy"],
+): CoreRuntime["providers"] {
+  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, env, {
+    workspaceCredentialPolicy,
+  });
   const microvm = new MicrovmPoolProvider(
     env.MICROVM_HOSTS,
     (tokenVar) => dynamicBinding(env, tokenVar),
@@ -709,6 +718,9 @@ function runtimeFor(context: ManagedContext): CoreRuntime;
 function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
   const env = context.env as ManagedBindings;
   const db = context.get("$db") as Db;
+  const cloudWorkspaceCredentialPolicy = cloudWorkspaceCredentialPolicyFromEnv(
+    env.CLOUD_WORKSPACE_CREDENTIAL_POLICY,
+  );
   return {
     db,
     blobs: managedBlobStore(context.get("$db") as $Database, "box-image"),
@@ -722,9 +734,15 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      cloudWorkspaceCredentialPolicy,
       connectSecret: (name) => nonEmptyString(dynamicBinding(env, name)),
     },
-    providers: providersFor(env, db, context.get("$credentialMasterKey") as CryptoKey),
+    providers: providersFor(
+      env,
+      db,
+      context.get("$credentialMasterKey") as CryptoKey,
+      cloudWorkspaceCredentialPolicy,
+    ),
     principalSource: createSessionPrincipalSource(),
     // SAFETY: Both routed context variants satisfy the webApp blob response contract used for the SPA shell.
     assets: { fetch: async () => webAppResponse(context as WebAppContext, "/index.html") },

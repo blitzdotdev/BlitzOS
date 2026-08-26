@@ -8,7 +8,12 @@ import {
   requiredString,
 } from "../http.js";
 import type { Principal } from "../principals.js";
-import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import type {
+  CloudWorkspaceCredentialPolicy,
+  CoreContext,
+  CoreRouter,
+  RuntimeFactory,
+} from "../runtime.js";
 import { openRoot, sealRoot } from "../connections/root-crypto.js";
 import {
   awsProviderForCredentials,
@@ -80,6 +85,11 @@ export interface ResolvedComputeProvider {
   readonly credentialSource: ComputeCredentialSource;
 }
 
+export interface ComputeProviderStatus {
+  readonly providerId: ComputeCredentialProvider;
+  readonly access: ComputeCredentialSource | "credential-required";
+}
+
 export interface ComputeProviderEnvironment extends AwsProviderEnv {
   HETZNER_API_TOKEN?: string;
   HETZNER_MACHINE_TYPES?: string;
@@ -90,6 +100,7 @@ export interface OrgComputeProviderResolverOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   warn?: HetznerWarningSink;
+  workspaceCredentialPolicy?: CloudWorkspaceCredentialPolicy;
 }
 
 function computeCredentialProvider(value: string): ComputeCredentialProvider {
@@ -265,6 +276,7 @@ export class OrgComputeProviderResolver {
   private readonly awsProviderOptions: AwsProviderOptions;
   private readonly deploymentProviders = new Map<ComputeCredentialProvider, CloudComputeProvider>();
   private readonly providerDescriptors: readonly VmProvider[];
+  private readonly workspaceCredentialPolicy: CloudWorkspaceCredentialPolicy;
 
   constructor(
     private readonly db: Db,
@@ -274,6 +286,7 @@ export class OrgComputeProviderResolver {
   ) {
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? Date.now;
+    this.workspaceCredentialPolicy = options.workspaceCredentialPolicy ?? "deployment-fallback";
     this.hetznerProviderOptions = hetznerOptions(options);
     if (env.HETZNER_MACHINE_TYPES !== undefined) {
       this.hetznerProviderOptions.machineTypeCatalog = env.HETZNER_MACHINE_TYPES;
@@ -341,6 +354,45 @@ export class OrgComputeProviderResolver {
     return storedCredential(provider, plaintext);
   }
 
+  private deployment(
+    provider: ComputeCredentialProvider,
+  ): ResolvedComputeProvider {
+    const deployment = this.deploymentProviders.get(provider);
+    if (deployment !== undefined) {
+      return { provider: deployment, credentialSource: "deployment" };
+    }
+    throw new HttpError(409, `org has no ${provider} credential`);
+  }
+
+  private credentialRequired(
+    provider: ComputeCredentialProvider,
+    orgId: string,
+  ): HttpError {
+    const route = `/orgs/${encodeURIComponent(orgId)}/compute-credentials/${provider}`;
+    return new HttpError(
+      402,
+      `${provider} compute credential required; an organization admin can add one at ${route}`,
+    );
+  }
+
+  async providerStatuses(orgId: string): Promise<ComputeProviderStatus[]> {
+    const configured = new Set((await rows<{ provider: ComputeCredentialProvider }>(this.db, {
+      q: `SELECT provider FROM org_compute_credentials
+          WHERE org_id = ?1 ORDER BY provider`,
+      v: [orgId],
+    })).map(({ provider }) => provider));
+    return this.providerDescriptors.flatMap(({ id }) => {
+      if (!this.handles(id)) return [];
+      const access: ComputeProviderStatus["access"] = configured.has(id)
+        ? "org"
+        : this.workspaceCredentialPolicy === "deployment-fallback"
+          && this.deploymentProviders.has(id)
+          ? "deployment"
+          : "credential-required";
+      return [{ providerId: id, access }];
+    });
+  }
+
   async resolve(
     provider: ComputeCredentialProvider,
     orgId: string,
@@ -355,18 +407,30 @@ export class OrgComputeProviderResolver {
         throw new HttpError(409, `org has no ${provider} credential`);
       }
     }
-    const deployment = this.deploymentProviders.get(provider);
-    if (deployment !== undefined) {
-      return { provider: deployment, credentialSource: "deployment" };
+    if (
+      requiredSource !== "deployment"
+      && this.workspaceCredentialPolicy === "byok-required"
+    ) {
+      throw this.credentialRequired(provider, orgId);
     }
-    throw new HttpError(409, `org has no ${provider} credential`);
+    return this.deployment(provider);
   }
 
   async resolveVolume(
     orgId: string,
     requiredSource?: ComputeCredentialSource | null,
   ): Promise<ResolvedComputeProvider> {
-    return this.resolve("hetzner", orgId, requiredSource);
+    if (requiredSource === "deployment") return this.deployment("hetzner");
+    const credential = await this.orgCredential(orgId, "hetzner");
+    if (credential !== null) {
+      return { provider: this.providerForCredential(credential), credentialSource: "org" };
+    }
+    if (requiredSource === "org") {
+      throw new HttpError(409, "org has no hetzner credential");
+    }
+    // Volume creation keeps the pre-BYOK fallback. The tenant gate is scoped
+    // to new cloud workspaces; lifecycle calls arrive with their pinned source.
+    return this.deployment("hetzner");
   }
 
   async validate(credential: ComputeCredential): Promise<void> {

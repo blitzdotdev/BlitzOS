@@ -1,6 +1,7 @@
 import { parseMicrovmHosts } from "../core/compute/microvm-hosts.js";
 import {
   allowedEmailDomainsFromEnv,
+  cloudWorkspaceCredentialPolicyFromEnv,
   signupModeFromEnv,
 } from "../core/signup-config.js";
 import { deriveRunWorkerFirst } from "./lib/worker-first-routes.mjs";
@@ -165,17 +166,15 @@ export function placeholderVars(rawConfig) {
   );
 }
 
-// SIGNUP_MODE and ALLOWED_EMAIL_DOMAINS are parsed per request by the Worker
-// and their parsers throw, so a typo ("invite-only" for "invite") turns every
-// request and every cron into a 500 with nothing in the config to hint at it.
-// They are plain [vars], readable here, so reject them before the deploy using
-// the very parsers the Worker will run.
+// These vars are parsed per request by the Worker. A typo turns every request
+// and cron into a 500, so reject it before deploy with the same parser.
 export function configVarProblems(rawConfig) {
   const vars = isRecord(rawConfig) && isRecord(rawConfig.vars) ? rawConfig.vars : {};
   const problems = [];
   for (const [name, parse] of [
     ["SIGNUP_MODE", signupModeFromEnv],
     ["ALLOWED_EMAIL_DOMAINS", allowedEmailDomainsFromEnv],
+    ["CLOUD_WORKSPACE_CREDENTIAL_POLICY", cloudWorkspaceCredentialPolicyFromEnv],
   ]) {
     const value = vars[name];
     if (value === undefined) continue;

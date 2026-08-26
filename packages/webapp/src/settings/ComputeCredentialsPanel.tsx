@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ApiRequestError, type ControlPlaneClient } from '../api';
 import type {
-  ComputeCredentialInput,
   ComputeCredentialMetadata,
   ComputeCredentialProvider,
 } from '../compute-credentials-api';
+import {
+  COMPUTE_CREDENTIAL_PROVIDER_DETAILS,
+  ComputeCredentialFields,
+  computeCredentialFieldsFromForm,
+  computeCredentialInput,
+} from '../ComputeCredentialFields';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
 import { ProviderGlyph } from '../connections/ProviderGlyph';
@@ -13,40 +18,6 @@ type ComputeClient = Pick<
   ControlPlaneClient,
   'getComputeCredential' | 'putComputeCredential' | 'deleteComputeCredential'
 >;
-
-const PROVIDERS: readonly {
-  id: ComputeCredentialProvider;
-  title: string;
-  detail: string;
-}[] = [
-  {
-    id: 'hetzner',
-    title: 'Hetzner Cloud',
-    detail: 'A project API token with read and write access.',
-  },
-  {
-    id: 'aws',
-    title: 'Amazon Web Services',
-    detail: 'An access key allowed to manage this deployment’s EC2 resources.',
-  },
-];
-
-function field(data: FormData, name: string): string {
-  return data.get(name)?.toString() ?? '';
-}
-
-function credentialInput(
-  provider: ComputeCredentialProvider,
-  data: FormData,
-): ComputeCredentialInput {
-  if (provider === 'hetzner') return { token: field(data, 'token') };
-  const accessKeyId = field(data, 'accessKeyId');
-  const secretAccessKey = field(data, 'secretAccessKey');
-  const sessionToken = field(data, 'sessionToken');
-  return sessionToken === ''
-    ? { accessKeyId, secretAccessKey }
-    : { accessKeyId, secretAccessKey, sessionToken };
-}
 
 function validatedTime(value: number) {
   const date = new Date(value);
@@ -75,7 +46,7 @@ export function ComputeCredentialsPanel({
 
   const reload = useCallback(async (signal?: AbortSignal) => {
     try {
-      const loaded = await Promise.all(PROVIDERS.map(async ({ id }) => {
+      const loaded = await Promise.all(COMPUTE_CREDENTIAL_PROVIDER_DETAILS.map(async ({ id }) => {
         try {
           return await client.getComputeCredential(orgId, id, signal);
         } catch (caught) {
@@ -116,7 +87,10 @@ export function ComputeCredentialsPanel({
       const saved = await client.putComputeCredential(
         orgId,
         provider,
-        credentialInput(provider, new FormData(event.currentTarget)),
+        computeCredentialInput(
+          provider,
+          computeCredentialFieldsFromForm(new FormData(event.currentTarget)),
+        ),
       );
       setCredentials((current) => ({ ...current, [provider]: saved }));
       setEditing(null);
@@ -163,7 +137,7 @@ export function ComputeCredentialsPanel({
         <p className="settings-credential-state">Loading compute credentials…</p>
       ) : (
         <div className="settings-credential-list" aria-label="Cloud compute providers">
-          {PROVIDERS.map((provider) => {
+          {COMPUTE_CREDENTIAL_PROVIDER_DETAILS.map((provider) => {
             const stored = credentials[provider.id];
             const validated = stored === undefined ? null : validatedTime(stored.validated_at);
             const open = editing === provider.id;
@@ -205,27 +179,7 @@ export function ComputeCredentialsPanel({
                   <form className="connect-form settings-compute-form" onSubmit={(event) => {
                     void save(provider.id, event);
                   }}>
-                    {provider.id === 'hetzner' ? (
-                      <label className="connect-field connect-field--wide">
-                        <span className="connect-field__label">API token</span>
-                        <input name="token" type="password" required autoComplete="new-password" />
-                      </label>
-                    ) : (
-                      <>
-                        <label className="connect-field">
-                          <span className="connect-field__label">Access key ID</span>
-                          <input name="accessKeyId" required autoComplete="off" />
-                        </label>
-                        <label className="connect-field">
-                          <span className="connect-field__label">Secret access key</span>
-                          <input name="secretAccessKey" type="password" required autoComplete="new-password" />
-                        </label>
-                        <label className="connect-field connect-field--wide">
-                          <span className="connect-field__label">Session token (optional)</span>
-                          <input name="sessionToken" type="password" autoComplete="new-password" />
-                        </label>
-                      </>
-                    )}
+                    <ComputeCredentialFields provider={provider.id} />
                     <div className="connect-actions connect-field--wide">
                       <button
                         className="webapp-action webapp-action--primary"

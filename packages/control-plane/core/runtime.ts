@@ -8,6 +8,7 @@ import type { VolumeProviderResolver } from "./compute/types.js";
 import type { VmProviderRegistry } from "./compute/registry.js";
 import type { WorkspaceTunnels } from "./workspace-tunnels.js";
 import type { WorkspaceWebAppAuth } from "./webapp-tickets.js";
+import { cloudWorkspaceCredentialPolicyFromEnv } from "./signup-config.js";
 
 export interface CoreRequest {
   readonly raw: Request;
@@ -50,6 +51,9 @@ export interface CoreRouter {
 }
 
 export type SignupMode = "open" | "invite";
+export type CloudWorkspaceCredentialPolicy = ReturnType<
+  typeof cloudWorkspaceCredentialPolicyFromEnv
+>;
 
 export interface RuntimeVariables {
   boxImageRef: string;
@@ -68,6 +72,10 @@ export interface RuntimeVariables {
    * deployment whose config predates the var, and on the managed worker
    * source; GET /version reports "unknown" for it. */
   gitCommitSha?: string;
+  /** Credential policy for new cloud workspaces. Unset deployments keep the
+   * self-host behavior: prefer an org credential, then use the deployment
+   * credential. Hosted deployments set this to "byok-required". */
+  cloudWorkspaceCredentialPolicy: CloudWorkspaceCredentialPolicy;
   /** The deployment's public origin, parsed from APP_URL by
    * `controlPlaneOriginFromEnv`. Absent where APP_URL is unset (a fresh
    * self-host) and on the managed worker source; the box-config route then
@@ -109,9 +117,13 @@ export async function enforceRateLimit(
   }
 }
 
-// Re-exported, not reimplemented: scripts/deploy-helpers.mjs imports the same
-// module to reject a bad SIGNUP_MODE or ALLOWED_EMAIL_DOMAINS at deploy time.
-export { allowedEmailDomainsFromEnv, signupModeFromEnv } from "./signup-config.js";
+// Re-exported, not reimplemented: deploy tooling imports these same parsers to
+// reject bad plain-text settings before they can break every request and cron.
+export {
+  allowedEmailDomainsFromEnv,
+  signupModeFromEnv,
+} from "./signup-config.js";
+export { cloudWorkspaceCredentialPolicyFromEnv };
 
 export interface CoreRuntime {
   db: Db;

@@ -222,6 +222,17 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(WORKER_SOURCE).toContain("await runFileSyncSweep(runtime)");
   });
 
+  it("reads the cloud workspace credential policy in the managed runtime", () => {
+    expect(WORKER_SOURCE).toContain("CLOUD_WORKSPACE_CREDENTIAL_POLICY?: string");
+    expect(WORKER_SOURCE).toContain(
+      "cloudWorkspaceCredentialPolicyFromEnv(\n    env.CLOUD_WORKSPACE_CREDENTIAL_POLICY",
+    );
+    expect(WORKER_SOURCE).toContain("workspaceCredentialPolicy,");
+    expect(WORKER_SOURCE).not.toContain(
+      'cloudWorkspaceCredentialPolicy: "deployment-fallback"',
+    );
+  });
+
   // Run-3 report, B2. The emitted worker registered only vmRegistry, volume
   // and microvm, so `/workspaces/:id/webapp/:port` could answer nothing but
   // 503 and the browser terminal was unreachable on Target B. Hetzner has no

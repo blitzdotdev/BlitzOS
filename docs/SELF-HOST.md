@@ -230,6 +230,16 @@ listing or deleting it, so a server or volume this control plane did not
 create is never touched. Workspace servers do carry `blitz-purpose=workspace`
 and `blitz-workspace=<workspace-id>` labels, for your own filtering.
 
+`CLOUD_WORKSPACE_CREDENTIAL_POLICY` defaults to `deployment-fallback`. Every
+organization first uses its validated provider key, then falls back to this
+deployment token. A self-host upgrade therefore needs no config change.
+
+A hosted deployment must set the policy to `byok-required`. Every organization,
+including one that contains a platform operator, must then validate its own
+provider key before its members can see or create new cloud machines. Existing
+workspaces and volumes keep using the credential source stored on their row;
+legacy rows with no source recorded remain pinned to the deployment token.
+
 The machine-type catalog offered in the create dialog defaults to `cx23@hel1`,
 `cx33@hel1`, `cpx21@hil`, and `cpx31@hil`; set the `HETZNER_MACHINE_TYPES` var
 (comma-separated `type@location`) to offer the types and locations your project

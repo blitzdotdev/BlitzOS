@@ -590,8 +590,14 @@ describe("control-plane deploy command", () => {
       .toEqual([expect.stringContaining("SIGNUP_MODE must be 'open' or 'invite'")]);
     expect(configVarProblems({ vars: { ALLOWED_EMAIL_DOMAINS: "alice@example.com" } }))
       .toEqual([expect.stringContaining("bare domains")]);
+    expect(configVarProblems({ vars: { CLOUD_WORKSPACE_CREDENTIAL_POLICY: "hosted" } }))
+      .toEqual([expect.stringContaining("deployment-fallback or byok-required")]);
     expect(configVarProblems({
-      vars: { SIGNUP_MODE: "invite", ALLOWED_EMAIL_DOMAINS: " Example.COM ,corp.test," },
+      vars: {
+        SIGNUP_MODE: "invite",
+        ALLOWED_EMAIL_DOMAINS: " Example.COM ,corp.test,",
+        CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+      },
     })).toEqual([]);
     expect(configVarProblems({ vars: {} })).toEqual([]);
 

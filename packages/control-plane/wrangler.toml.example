@@ -35,6 +35,11 @@ APP_URL = ""
 # deployment config that lacks it is filled in from this line by the deploy, so
 # no stored config ever has to be edited for it.
 GIT_COMMIT_SHA = ""
+# Policy for new cloud workspaces. "deployment-fallback" preserves self-host
+# behavior: prefer an org key, then use this deployment's cloud secrets.
+# Hosted deployments must set "byok-required" so every org supplies its key.
+# Existing workspaces keep their recorded credential source under either value.
+CLOUD_WORKSPACE_CREDENTIAL_POLICY = "deployment-fallback"
 BOX_IMAGE_REF = ""
 # Image tag inside the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
 BOX_IMAGE_TAG = ""
