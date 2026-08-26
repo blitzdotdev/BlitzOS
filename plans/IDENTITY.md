@@ -99,14 +99,20 @@ Newly resolved (previously open questions 1, 3, 4, 5):
 - **Signup is self-serve, through an explicit create-org page.** A first
   Google login with no membership lands on a create-org page — one name
   field and a create button. `POST /orgs` (deliberately absent in v2)
-  exists here, gated to users with no active membership; it creates the
-  org with a default `vm_limit`, an active admin membership, and rebinds
-  the session. Invite-redemption logins skip the page. TODO.md's e2e
-  branch (b) — "types one prompt and sets it up" — requires self-serve.
-  Cut with this decision: untargeted org-creating invites, invite-gated
-  signup, silent auto-created orgs, and v2's paid-claim path. If signup
-  gating is ever needed, it is an allowlist env flag, not an invite
-  machine.
+  exists here; it creates the org with a default `vm_limit`, an active
+  admin membership, and rebinds the session. Invite-redemption logins skip
+  the page. TODO.md's e2e branch (b) — "types one prompt and sets it up" —
+  requires self-serve. Cut with this decision: untargeted org-creating
+  invites, invite-gated signup, silent auto-created orgs, and v2's
+  paid-claim path. If signup gating is ever needed, it is an allowlist env
+  flag, not an invite machine.
+  - **Amended (plans/ORG-SELF-SERVE.md).** This route was originally gated
+    to users with no active membership, so nobody could start a second org.
+    The gate is gone: any signed-in user creates an org and the session
+    rebinds to it. The gate was also, by accident, the only cap on per-user
+    VM quota — each org carries its own `vm_limit` — so
+    `MAX_SELF_CREATED_ORGS` now does that job explicitly, counted through
+    `orgs.created_by_user_id`. Invited orgs are not counted.
 - **Invites always target an org.** `target_org_id NOT NULL`; no
   `created_org_id` column.
 - **No `/choose` flow, no pending-identity cookie.** v2 needed them because
@@ -115,6 +121,12 @@ Newly resolved (previously open questions 1, 3, 4, 5):
   is a plain authenticated endpoint that rebinds the session row. A member
   of two orgs (personal + team — the normal e2e case) switches via the org
   menu.
+  - **Amended (plans/ORG-SELF-SERVE.md).** Leaving is the matching door:
+    `DELETE /members/self` disables the caller's own membership and moves
+    every session of that user to another active membership, or to none.
+    It refuses the last member of an org and the last active admin, so no
+    org is ever left with nobody who can administer it. Deleting an
+    organization is still not built.
 - **API keys land with ICP-GAPS §B**, not here. Schema reserved, nothing
   built.
 - **Org slugs**: slugified display name plus a short random suffix on

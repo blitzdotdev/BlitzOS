@@ -135,6 +135,7 @@ export interface ControlPlaneClient extends FileLibraryClient {
   me(): Promise<MeResponse>;
   createOrg(name: string): Promise<CreateOrgResponse>;
   switchOrg(orgId: string): Promise<void>;
+  leaveOrg(): Promise<void>;
   listMembers(): Promise<{ members: MemberView[] }>;
   updateMember(id: string, input: { role?: "admin" | "member"; status?: "disabled" | "active" }): Promise<{ member: MemberView }>;
   listInvites(): Promise<{ invites: InviteView[]; ttlDays: number }>;
@@ -549,6 +550,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ orgId }),
     }),
+    leaveOrg: () => request<void>("/members/self", { method: "DELETE" }),
     listMembers: () => request<{ members: MemberView[] }>("/members", {}, decodeMembers),
     updateMember: (id, input) => request<{ member: MemberView }>(`/members/${encodeURIComponent(id)}`, {
       method: "PATCH",

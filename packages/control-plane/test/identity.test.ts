@@ -95,7 +95,7 @@ describe("identity phase 1", () => {
     })).status).toBe(404);
   });
 
-  it("gates create-org to an identity-only session and rebinds that session", async () => {
+  it("creates an org from an identity-only session and rebinds that session", async () => {
     const { app } = harness();
     const cookie = await identityOnlySession("new-user");
     const before = await appRequest(app, "/me", { headers: { Cookie: cookie } });
@@ -118,12 +118,6 @@ describe("identity phase 1", () => {
       org: { slug: "acme-tools" },
       membership: { role: "admin", status: "active" },
     });
-    expect((await appRequest(app, "/orgs", {
-      method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Second Org" }),
-    })).status).toBe(409);
-
     const collisionCookie = await identityOnlySession("collision-user");
     const collision = await appRequest(app, "/orgs", {
       method: "POST",
@@ -135,12 +129,6 @@ describe("identity phase 1", () => {
       org: { slug: expect.stringMatching(/^acme-tools-[0-9a-f]{6}$/u) },
     });
 
-    const memberCookie = await operatorSession(app);
-    expect((await appRequest(app, "/orgs", {
-      method: "POST",
-      headers: { Cookie: memberCookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "Not Allowed" }),
-    })).status).toBe(409);
   });
 
   it("keeps bootstrap login ordinary after a platform operator exists", async () => {

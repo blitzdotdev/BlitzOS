@@ -108,6 +108,45 @@ function selectedSessionId(container: HTMLElement): string | undefined {
   )?.closest<HTMLElement>(".webapp-tab-cell")?.dataset.sessionId;
 }
 
+const realLocation = Object.getOwnPropertyDescriptor(window, "location")!;
+
+/** window.location.reload cannot be redefined in place, so the whole object is
+ * swapped for one that forwards the URL to the real location and captures the
+ * reload. beforeEach puts the real one back. */
+function stubReload(): ReturnType<typeof vi.fn> {
+  const reload = vi.fn();
+  const real = window.location;
+  const stub: Record<string, unknown> = { reload };
+  for (const key of ["href", "pathname", "search", "hash", "origin"]) {
+    Object.defineProperty(stub, key, { get: () => Reflect.get(real, key), enumerable: true });
+  }
+  Object.defineProperty(window, "location", { configurable: true, value: stub });
+  return reload;
+}
+
+function leaveButton(container: HTMLElement): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(".settings-danger .webapp-action");
+}
+
+async function click(element: HTMLElement | null | undefined): Promise<void> {
+  if (!element) throw new Error("nothing to click");
+  await act(async () => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
+  const setInputValue = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  if (setInputValue === undefined) throw new Error("input value setter is unavailable");
+  await act(async () => {
+    setInputValue.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 const creating: WorkspaceView = {
   id: "workspace-one",
   name: "workspace-one-name",
@@ -187,6 +226,7 @@ function client(): ControlPlaneClient {
     inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
     inviteStatus: vi.fn(async () => { throw new Error("unused"); }),
     switchOrg: vi.fn(async () => undefined),
+    leaveOrg: vi.fn(async () => undefined),
     listMembers: vi.fn(async () => ({ members: [] })),
     updateMember: vi.fn(async () => { throw new Error("unused"); }),
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
@@ -304,6 +344,7 @@ beforeEach(() => {
   webAppHarness.mounts.mockClear();
   webAppHarness.nextMountId = 0;
   webAppHarness.unmounts.mockClear();
+  Object.defineProperty(window, "location", realLocation);
   window.history.replaceState({}, "", "/");
   deviceStorageValues = new Map<string, string>();
   serverWorkspaceStates = new Map<string, WorkspaceWebAppStateV1>();
@@ -441,6 +482,111 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector('form[aria-label="Create workspace template"]'))
       .not.toBeNull();
 
+    await view.unmount();
+  });
+
+  it("creates a second organization from the rail organization menu", async () => {
+    const createOrg = vi.fn(async () => ({
+      org: { id: "org-two", slug: "side", name: "Side", vmLimit: 10 },
+      membership: { id: "membership-two", role: "admin" as const, status: "active" as const },
+    }));
+    const reload = stubReload();
+    const view = await render(
+      <CloudApp
+        client={{ ...runningClient(), createOrg }}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
+    const create = view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create");
+    expect(create?.textContent).toContain("Create organization");
+    await click(create);
+
+    const dialog = document.querySelector<HTMLElement>('[aria-label="Create organization"]');
+    expect(dialog).not.toBeNull();
+    await typeInto(dialog!.querySelector<HTMLInputElement>('input[name="name"]')!, "Side");
+    await act(async () => {
+      dialog!.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    await settle();
+
+    expect(createOrg).toHaveBeenCalledWith("Side");
+    // POST /orgs rebinds the session, so the shell reloads into the new org.
+    expect(reload).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("leaves the organization from settings, once another member exists", async () => {
+    const leaveOrg = vi.fn(async () => undefined);
+    const reload = stubReload();
+    window.history.replaceState({}, "", "/settings/members");
+    const view = await render(
+      <CloudApp
+        client={{
+          ...runningClient(),
+          leaveOrg,
+          listMembers: vi.fn(async () => ({
+            members: [
+              { id: "membership-one", email: "person@example.com", name: "Person", avatarUrl: null, role: "admin" as const, status: "active" as const },
+              { id: "membership-two", email: "other@example.com", name: "Other", avatarUrl: null, role: "admin" as const, status: "active" as const },
+            ],
+          })),
+        }}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const leave = leaveButton(view.container);
+    expect(leave?.disabled).toBe(false);
+    await click(leave);
+    const confirm = [...document.querySelectorAll<HTMLButtonElement>(".webapp-confirmation-actions button")]
+      .find((button) => button.textContent === "Yes, leave");
+    expect(confirm).not.toBeUndefined();
+    await click(confirm);
+    await settle();
+
+    expect(leaveOrg).toHaveBeenCalledTimes(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+    await view.unmount();
+  });
+
+  it("disables Leave for the only active member of an organization", async () => {
+    const leaveOrg = vi.fn(async () => undefined);
+    stubReload();
+    window.history.replaceState({}, "", "/settings/members");
+    const view = await render(
+      <CloudApp
+        client={{
+          ...runningClient(),
+          leaveOrg,
+          listMembers: vi.fn(async () => ({
+            members: [
+              { id: "membership-one", email: "person@example.com", name: "Person", avatarUrl: null, role: "admin" as const, status: "active" as const },
+              // A disabled row must not count as company.
+              { id: "membership-two", email: "gone@example.com", name: "Gone", avatarUrl: null, role: "member" as const, status: "disabled" as const },
+            ],
+          })),
+        }}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const leave = leaveButton(view.container);
+    expect(leave?.disabled).toBe(true);
+    expect(view.container.querySelector(".settings-danger")?.textContent)
+      .toContain("You are the only member");
+    await click(leave);
+    expect(document.querySelector(".webapp-confirmation-actions")).toBeNull();
+    expect(leaveOrg).not.toHaveBeenCalled();
     await view.unmount();
   });
 

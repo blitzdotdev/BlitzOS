@@ -113,6 +113,7 @@ import {
 } from './preview';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
+import { CreateOrgDialog } from './components/CreateOrgDialog';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
@@ -258,6 +259,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [updateAvailableHash, setUpdateAvailableHash] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
+  const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
@@ -1431,6 +1433,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());
       }}
+      onCreateOrg={() => setShowCreateOrg(true)}
       onOpenSettings={() => navigateToSettings('profile')}
       onOpenWorkspaceDetails={(workspaceId) => setShareWorkspaceId(workspaceId)}
       onDeleteWorkspace={requestDeleteWorkspace}
@@ -1487,8 +1490,20 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       />
     ) : null;
   })();
+  const createOrgDialog = showCreateOrg && (
+    <CreateOrgDialog
+      onCreate={async (name) => {
+        await api.createOrg(name);
+        // POST /orgs rebinds the session to the org it just made, so the
+        // reload lands inside it, exactly as switching does.
+        window.location.reload();
+      }}
+      onCancel={() => setShowCreateOrg(false)}
+    />
+  );
   const railOverlays = (
     <>
+      {createOrgDialog}
       {createWorkspaceDialog}
       {deleteWorkspaceDialog}
       {shareWorkspaceDialog}
@@ -1654,6 +1669,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             onNavigate={navigateToSettings}
             onOpenWorkspace={navigateToWorkspacePage}
             onSignOut={signOut}
+            onLeftOrg={() => window.location.reload()}
           />
         ) : (
           <div className="settings-page-state settings-page-state--loading" role="status">

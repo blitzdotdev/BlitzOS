@@ -1,4 +1,4 @@
-import { first, rows } from "../db.js";
+import { first, rows, transaction } from "../db.js";
 import { HttpError, isRecord, type JsonValue, readJson } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
@@ -95,6 +95,71 @@ export function addMemberRoutes(
       v: [principal.orgId],
     });
     return context.json({ members: members.map(memberView) });
+  });
+
+  /** Leaving is a disable, not a delete. Ten tables hold NOT NULL references
+   * to memberships(id) — invites, both grant tables, folders, folder
+   * attachments, templates, recipes, volume ownership — and foreign keys are
+   * on, so removing the row would either fail the constraint or take other
+   * people's history with it. A disabled membership is already what every
+   * auth path in the codebase means by "out": findSessionPrincipal rejects
+   * the session, activeMembership skips it at login, and the workspace join
+   * requires status = 'active'. Re-inviting the person reactivates the same
+   * row, exactly as enable does after an admin disable.
+   *
+   * What the leaver owned stays in the org. Their workspaces keep pointing at
+   * the disabled membership, so canControlWorkspace matches only on the org
+   * admin branch and the admins inherit them. */
+  router.delete("/members/self", async (context) => {
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    const runtime = runtimeFactory(context);
+    const counts = await first<{ actives: number; admins: number }>(runtime.db, {
+      q: `SELECT COUNT(*) AS actives,
+                 SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) AS admins
+          FROM memberships WHERE org_id = ?1 AND status = 'active'`,
+      v: [principal.orgId],
+    });
+    if ((counts?.actives ?? 0) <= 1) {
+      throw new HttpError(409, "the last member cannot leave the organization");
+    }
+    if (principal.role === "admin" && (counts?.admins ?? 0) <= 1) {
+      throw new HttpError(409, "the last active admin cannot leave the organization");
+    }
+    // Every session of this user that is scoped to the org being left moves to
+    // another active membership, or to none. Without this the sessions keep a
+    // membership_id that no longer resolves, which reads as 401 rather than as
+    // "you are not in that org any more".
+    const next = await first<{ id: string }>(runtime.db, {
+      q: `SELECT id FROM memberships
+          WHERE user_id = ?1 AND status = 'active' AND id != ?2
+          ORDER BY rowid DESC LIMIT 1`,
+      v: [principal.id, principal.membershipId],
+    });
+    const result = await transaction(runtime.db, [
+      {
+        q: `UPDATE memberships SET status = 'disabled'
+            WHERE id = ?1 AND user_id = ?2 AND org_id = ?3 AND status = 'active'
+              AND (SELECT COUNT(*) FROM memberships
+                   WHERE org_id = ?3 AND status = 'active') > 1
+              AND NOT (
+                role = 'admin'
+                AND (SELECT COUNT(*) FROM memberships
+                     WHERE org_id = ?3 AND role = 'admin' AND status = 'active') <= 1
+              )
+            RETURNING id`,
+        v: [principal.membershipId, principal.id, principal.orgId],
+      },
+      {
+        q: `UPDATE sessions SET membership_id = ?1
+            WHERE principal_id = ?2 AND membership_id = ?3`,
+        v: [next?.id ?? null, principal.id, principal.membershipId],
+      },
+    ]);
+    if (result[0]?.length !== 1) throw new HttpError(409, "the organization could not be left");
+    return context.body(null, 204);
   });
 
   router.patch("/members/:id", async (context) => {
