@@ -61,7 +61,7 @@ export function TemplateRepoPicker({
     return (
       <p className="tplf-repos-hint">
         {admin
-          ? 'Set up GitHub above first. Repos show up here when it saves.'
+          ? 'Connect GitHub above first. Repos show up here when it saves.'
           : 'Ask an admin to set up GitHub above. Repos show up here after that.'}
       </p>
     );
