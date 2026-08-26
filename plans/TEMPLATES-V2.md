@@ -1,5 +1,10 @@
 # TEMPLATES V2 — default template, repos, file attachments
 
+> **Amended 2026-08-26.** The GitHub sections below describe an org-level
+> `app-jwt` credential and cite `minters/app-jwt/github-app.ts`. Both are gone:
+> GitHub is a per-member personal token now, the same class as YouTrack. See
+> `plans/GITHUB-ORG-PATH.md` §7.
+
 Written 2026-08-21, grounded against main @ 5eac0ec. One PR, one migration
 (`0026_templates_v2.sql`). Goal: a template is enough to onboard a new team
 member — "log in and all the repos and tools are already there."

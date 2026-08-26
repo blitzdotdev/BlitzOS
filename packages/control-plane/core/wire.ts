@@ -260,8 +260,8 @@ export interface GithubRepositoryView {
   private: boolean;
 }
 
-/** GET /connections/github/repositories: what the org's GitHub App
- * installation can reach, for the template repo picker. Paged out of GitHub
+/** GET /connections/github/repositories: what the caller's own GitHub token
+ * can reach, for the template repo picker. Paged out of GitHub
  * under the bounded-response cap and truncated at 200 entries. */
 export interface ListGithubRepositoriesResponse {
   repositories: GithubRepositoryView[];

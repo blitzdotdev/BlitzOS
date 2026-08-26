@@ -1187,7 +1187,7 @@ describe("connect oauth state", () => {
 });
 
 const ROOT = "test-only-static-root-value";
-const GITHUB_TOKEN = "test-only-github-installation-token";
+const GITHUB_TOKEN = "test-only-github-personal-token";
 
 function encodePem(label: string, value: Uint8Array): string {
   let binary = "";
@@ -1400,7 +1400,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     vi.restoreAllMocks();
   });
 
-  it("answers 409 connect github for the repo listing until an app root is configured", async () => {
+  it("answers 409 connect github for the repo listing until the caller connects github", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
 
@@ -1413,6 +1413,46 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       error: "connect github",
       retryAction: null,
     });
+  });
+
+  it("delivers the env names github tooling reads, and nothing else", async () => {
+    const { app, providers } = harness();
+    const cookie = await operatorSession(app);
+    expect((await connectGithubToken(app, cookie)).status).toBe(204);
+    const { box } = await readyWorkspace(app, providers, cookie, {
+      manifest: { integrations: { github: {} } },
+    });
+
+    const pulled = await mint(app, box.access_token, "github");
+
+    expect(pulled.status).toBe(200);
+    const lease = await pulled.json<{ env: Array<{ name: string; value: string }> }>();
+    // `gh` reads GH_TOKEN and no other name, and the box records the same
+    // three. Nothing else pinned these literals once the app-root test went.
+    expect(lease.env.map(({ name }) => name)).toEqual([
+      "GH_TOKEN",
+      "GITHUB_TOKEN",
+      "GITHUB_PERSONAL_ACCESS_TOKEN",
+    ]);
+    expect(new Set(lease.env.map(({ value }) => value))).toEqual(new Set([GITHUB_TOKEN]));
+  });
+
+  it("keeps one member's repo listing out of another's reach", async () => {
+    const { app } = harness();
+    await operatorSession(app);
+    const connected = await sameOrgSession("has-token");
+    const bare = await sameOrgSession("no-token");
+    expect((await connectGithubToken(app, connected.cookie)).status).toBe(204);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json([]));
+
+    // The whole point of reading the caller's own grant: a colleague's token
+    // is not a shared org credential, so it lists nothing for anyone else.
+    expect((await appRequest(app, "/connections/github/repositories", {
+      headers: { Cookie: bare.cookie },
+    })).status).toBe(409);
+    expect((await appRequest(app, "/connections/github/repositories", {
+      headers: { Cookie: connected.cookie },
+    })).status).toBe(200);
   });
 
   it("pages the caller's own repo listing with small pages and names only", async () => {
@@ -2311,7 +2351,7 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
 
 /** The template path for the two new providers. Discord is admin-configured:
  * one bot token stored by an admin reaches every workspace with no per-user
- * step, like the github app root. YouTrack is per-member PAT (product ruling:
+ * step, like a pasted github token. YouTrack is per-member PAT (product ruling:
  * "youtrack is just PAT"): each member pastes their own permanent token,
  * proxied so it never lands on a box disk, with the instance URL inherited
  * from the org connection row once anyone has named it. */

@@ -93,12 +93,15 @@ export function addGithubRepositoryRoutes(
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const grant = await grantFor(runtime.db, principal.id, "github");
-    if (grant === null) throw new HttpError(409, "connect github");
-    // A pasted token lives in the refresh slot; an authorized one in access.
-    // Both are read the same way, so the picker does not care which the person
-    // used to connect.
-    const token = (await openGrantSecret(runtime.credentialMasterKey, grant, "access"))
-      ?? (await openGrantSecret(runtime.credentialMasterKey, grant, "refresh"));
+    // A pasted token lives in the refresh slot. An `oauth` grant predates the
+    // move to personal tokens: its access token expires in hours and can never
+    // refresh, because the manifest has no authorize endpoint any more. Sending
+    // it would earn a 401 from GitHub and surface as a 502 — the mint path
+    // answers 409 for the same row, so this one does too.
+    if (grant === null || grant.kind !== "pat") {
+      throw new HttpError(409, "connect github");
+    }
+    const token = await openGrantSecret(runtime.credentialMasterKey, grant, "refresh");
     if (token === null) throw new HttpError(409, "connect github");
     return context.json<ListGithubRepositoriesResponse>({
       repositories: await listMemberRepositories(token),

@@ -17,7 +17,7 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { manifestBaseUrl } from "./catalog/index.js";
+import { manifestBaseUrl, providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
@@ -49,18 +49,6 @@ interface ParsedStaticConfig {
   placements: ParsedPlacementTemplate[];
   default_scopes?: string[];
   proxy?: ParsedProxyConfig;
-}
-
-interface ParsedStringMap {
-  [key: string]: string;
-}
-
-interface ParsedAppJwtConfig {
-  app_id: string;
-  installation_id: string;
-  placements?: ParsedPlacementTemplate[];
-  repositories?: string[];
-  permissions?: ParsedStringMap;
 }
 
 function isMintKind(value: unknown): value is MintKind {
@@ -149,36 +137,9 @@ function staticConfigJson(value: unknown, custody: Custody): string {
   return JSON.stringify(config);
 }
 
-function digitString(value: unknown, field: string): string {
-  if (
-    !isString(value) ||
-    value.length === 0 ||
-    value.length > 256 ||
-    !/^\d+$/u.test(value)
-  ) {
-    throw new HttpError(400, `${field} must be a non-empty string of digits`);
-  }
-  return value;
-}
-
-function stringMap(value: unknown, field: string): ParsedStringMap {
-  if (!isRecord(value)) {
-    throw new HttpError(400, `${field} must be an object of non-empty strings`);
-  }
-  const result: ParsedStringMap = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (key.length === 0 || !isString(item) || item.length === 0) {
-      throw new HttpError(400, `${field} must be an object of non-empty strings`);
-    }
-    result[key] = item;
-  }
-  return result;
-}
 
 
-function configJson(kind: MintKind, custody: Custody, value: unknown): string {
-  return staticConfigJson(value, custody);
-}
+
 
 function usableByJson(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -344,6 +305,16 @@ function validateServedConnection(
   if (resolveMinter(candidate) === null) {
     throw new HttpError(400, `credential kind ${kind} is not available`);
   }
+  // A catalog provider that declares no admin form has no org credential at
+  // all. Without this the rule was only in the webApp: staticMinter claims
+  // every provider, so a PUT could still seal an org-wide GitHub root and
+  // serve it to every workspace whose owner has no grant of their own — the
+  // exact thing GitHub stopped having. Providers outside the catalog are
+  // unaffected; they never had a manifest to declare anything.
+  const manifest = providerManifest(provider);
+  if (manifest !== null && manifest.adminForm === null) {
+    throw new HttpError(400, `${provider} has no organization credential`);
+  }
   // A static root can sit behind the proxy or be injected.
   if (kind === "static") return;
   throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
@@ -396,14 +367,14 @@ export function addConnectionRoutes(
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
     const provider = requiredString(value.provider, "provider", 256);
     if (!isMintKind(value.kind)) {
-      throw new HttpError(400, "kind must be oauth or static");
+      throw new HttpError(400, "kind must be static");
     }
     const custodyValue = value.custody ?? (value.kind === "static" ? "proxy" : "cp");
     if (!isCustody(custodyValue)) {
       throw new HttpError(400, "custody must be cp or proxy");
     }
     validateServedConnection(provider, value.kind, custodyValue);
-    const config = configJson(value.kind, custodyValue, value.config);
+    const config = staticConfigJson(value.config, custodyValue);
     const root = requiredString(value.root, "root");
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);

@@ -8,24 +8,16 @@ export interface TemplateRepoApi {
   listGithubRepositories(): Promise<ListGithubRepositoriesResponse>;
 }
 
-/** Multi-select over the org's GitHub App installation for the template
- * screen. Disabled with a pointer at the Connections section on this same
- * page until the org GitHub App credential exists (the listing route answers
- * 409 until then); saving the credential inline flips githubConfigured, which
- * refetches, so the picker lights up without a reload. */
+/** Multi-select over the repositories the person's own GitHub token can
+ * reach. There is no org GitHub credential to wait on any more: the listing
+ * route answers 409 until this member connects GitHub themselves, and the hint
+ * points them at their own connections panel rather than at an admin. */
 export function TemplateRepoPicker({
   client,
-  admin,
-  githubConfigured,
   value,
   onChange,
 }: {
   client: TemplateRepoApi;
-  /** Picks the hint's audience: admins configure inline, members ask one. */
-  admin: boolean;
-  /** True once an active org GitHub credential exists; a false→true flip
-   * (the inline admin-form save) retries the listing. */
-  githubConfigured: boolean;
   value: string[];
   onChange: (repos: string[]) => void;
 }) {
@@ -49,7 +41,7 @@ export function TemplateRepoPicker({
         else setError(caught.message);
       });
     return () => { mounted = false; };
-  }, [client, githubConfigured]);
+  }, [client]);
 
   const toggle = (fullName: string) => {
     onChange(value.includes(fullName)
@@ -60,9 +52,8 @@ export function TemplateRepoPicker({
   if (unconfigured) {
     return (
       <p className="tplf-repos-hint">
-        {admin
-          ? 'Set up GitHub above first. Repos show up here when it saves.'
-          : 'Ask an admin to set up GitHub above. Repos show up here after that.'}
+        Connect your GitHub account first, in Settings → Connections. Your
+        repositories show up here once you have.
       </p>
     );
   }
@@ -111,7 +102,7 @@ export function TemplateRepoPicker({
         {shown.length === 0 && (
           <p className="tplf-repos-hint">
             {repositories.length === 0
-              ? 'The GitHub App installation reaches no repositories yet.'
+              ? 'Your GitHub account reaches no repositories yet.'
               : 'No repositories match that filter.'}
           </p>
         )}

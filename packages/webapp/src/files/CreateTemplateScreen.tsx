@@ -422,8 +422,8 @@ export function CreateTemplateScreen({
             machines={machines}
             machineTypeId={machineTypeId}
             credentialRequiredProviders={credentialRequiredProviders}
-            orgId={orgId}
             admin={admin}
+            orgId={orgId}
             saveCredential={client.putComputeCredential}
             onCredentialSaved={async () => {
               installMachineTypes(await client.listMachineTypes());
@@ -626,8 +626,6 @@ export function CreateTemplateScreen({
               <p>Repos cloned into /workspace at start. Picking one attaches GitHub above.</p>
               <TemplateRepoPicker
                 client={client}
-                admin={admin}
-                githubConfigured={orgCredentialFor(orgConnections, 'github')}
                 value={repos}
                 onChange={setRepos}
               />

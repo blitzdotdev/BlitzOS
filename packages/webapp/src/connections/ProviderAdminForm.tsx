@@ -3,8 +3,8 @@ import type {
   ConnectionView,
   PutConnectionRequest,
 } from '@blitzos/schema';
-import type { DragEvent, KeyboardEvent } from 'react';
-import { useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
+import { useRef } from 'react';
 
 function field(data: FormData, name: string): string {
   return String(data.get(name) ?? '').trim();
