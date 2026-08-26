@@ -111,7 +111,7 @@ export function FilesContextMenu({
                 <span className="codicon codicon-edit" aria-hidden="true" />
                 Rename…
               </button>
-              <button type="button" role="menuitem" onClick={onPickDelete}>
+              <button className="files-context-menu-danger" type="button" role="menuitem" onClick={onPickDelete}>
                 <span className="codicon codicon-trash" aria-hidden="true" />
                 Delete…
               </button>

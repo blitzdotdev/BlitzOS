@@ -27,6 +27,11 @@ describe('PreviewPanel', () => {
     expect(view.container.querySelector('iframe')?.getAttribute('src')).toBe(
       'https://box.example/preview/3000/',
     );
+    const openLink = view.container.querySelector<HTMLAnchorElement>('.preview-panel__open');
+    expect(openLink?.textContent).toContain('Open');
+    expect(openLink?.getAttribute('aria-label')).toBe('Open Preview :3000 in a new tab');
+    expect(openLink?.getAttribute('href')).toBe('https://box.example/preview/3000/');
+    expect(openLink?.getAttribute('target')).toBe('_blank');
     await view.unmount();
   });
 

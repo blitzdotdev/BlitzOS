@@ -136,10 +136,11 @@
   top: calc(100% - 4px);
   right: 16px;
   left: 16px;
+  padding: 6px;
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   background: var(--paper);
-  overflow: hidden;
+  box-shadow: var(--lift);
 }
 
 .webapp-org-menu-label {
@@ -152,11 +153,18 @@
 
 .webapp-org-menu-current {
   display: flex;
+  min-height: 38px;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 12px;
+  padding: 0 12px;
+  border-radius: var(--r-item);
   color: var(--ink);
   font-weight: 650;
+}
+
+.webapp-org-menu-switch:hover,
+.webapp-org-menu-switch:focus-visible {
+  background: var(--hover);
 }
 
 .webapp-org-menu-current span:last-child {

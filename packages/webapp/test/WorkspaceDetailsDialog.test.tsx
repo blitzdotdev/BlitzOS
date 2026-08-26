@@ -80,15 +80,24 @@ describe('WorkspaceDetailsDialog', () => {
     expect(view.container.textContent).toContain('Hetzner');
     expect(view.container.textContent).toContain('2 vCPU');
     expect(view.container.textContent).toContain('80 GB');
-    expect(view.container.textContent).toContain('Ada Owner');
-    expect(view.container.textContent).toContain('Everyone at Acme');
-    expect(view.container.textContent).toContain('Grace Editor');
+    expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Compute');
+    expect(view.container.textContent).not.toContain('Everyone at Acme');
+    expect(view.container.textContent).not.toContain('Grace Editor');
     expect(view.container.textContent).toContain('Environment variablesYes');
     expect(view.container.textContent).toContain('Startup scriptNo');
     expect(view.container.textContent).not.toContain('volume-private-id');
     expect(view.container.textContent).not.toContain('raw-vm-id');
     expect([...view.container.querySelectorAll('button')]
       .some((button) => button.textContent === 'Done')).toBe(false);
+
+    const accessTab = [...view.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === 'Access');
+    await act(async () => accessTab?.click());
+    expect(accessTab?.getAttribute('aria-selected')).toBe('true');
+    expect(view.container.textContent).toContain('Ada Owner');
+    expect(view.container.textContent).toContain('Everyone at Acme');
+    expect(view.container.textContent).toContain('Grace Editor');
+    expect(view.container.textContent).not.toContain('Shared x86');
 
     const deleteButton = [...view.container.querySelectorAll('button')]
       .find((button) => button.textContent === 'Delete workspace');
@@ -126,6 +135,7 @@ describe('WorkspaceDetailsDialog', () => {
     );
 
     expect(view.container.querySelector('button[aria-label="Delete Details test"]')).toBeNull();
+    expect(view.container.textContent).toContain('cx23@fsn1');
     const share = view.container.querySelector<HTMLButtonElement>('button[aria-label="Share Details test"]');
     const details = view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Workspace details for Details test"]',

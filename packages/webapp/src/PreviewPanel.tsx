@@ -43,8 +43,10 @@ export function PreviewPanel({
         href={url}
         target="_blank"
         rel="noopener"
+        aria-label={`Open ${title} in a new tab`}
       >
-        open ↗
+        <span>Open</span>
+        <span className="codicon codicon-link-external" aria-hidden="true" />
       </a>
     </div>
   );

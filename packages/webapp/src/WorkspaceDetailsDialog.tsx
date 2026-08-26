@@ -79,6 +79,7 @@ export function WorkspaceDetailsDialog({
   const [grants, setGrants] = useState<WorkspaceGrantView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'compute' | 'access'>('compute');
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
@@ -115,56 +116,75 @@ export function WorkspaceDetailsDialog({
         aria-label={`Workspace details for ${workspace.title}`}
       >
         <header className="workspace-details-header">
-          <div><span>Workspace details</span><h1>{workspace.title}</h1></div>
+          <h1>Workspace details <em>“{workspace.title}”</em></h1>
           <button ref={closeButton} type="button" aria-label="Close workspace details" onClick={onClose}>×</button>
         </header>
+        <div className="workspace-details-tabs" role="tablist" aria-label="Workspace detail views">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'compute'}
+            aria-controls="workspace-details-compute-panel"
+            onClick={() => setView('compute')}
+          >Compute</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'access'}
+            aria-controls="workspace-details-access-panel"
+            onClick={() => setView('access')}
+          >Access</button>
+        </div>
         <div className="workspace-details-body">
           {loading && <p className="workspace-details-status" role="status">Loading workspace details…</p>}
           {error && <p className="workspace-details-error" role="alert">{error}</p>}
-          <div className="workspace-details-grid">
-            <section><h2>Compute</h2><ComputeDetails machine={machine} fallback={workspace.machineType} /></section>
-            <section><h2>Storage</h2><StorageDetails attached={workspace.volumeId !== null} volume={volume} /></section>
-            <section>
-              <h2>Workspace</h2>
-              <DetailList>
-                <Detail label="Status" value={workspace.lifecycleStatus} />
-                <Detail label="Owner" value={ownerName} />
-                <Detail label="Your access" value={workspace.accessRole ?? 'None'} />
-                <Detail label="Created" value={dateLabel(workspace.createdAt)} />
-                <Detail label="Updated" value={dateLabel(workspace.updatedAt)} />
-              </DetailList>
-            </section>
-            <section>
-              <h2>Configuration</h2>
-              <DetailList>
-                <Detail label="Environment variables" value={yesNo(workspace.environmentConfigured)} />
-                <Detail label="Startup script" value={yesNo(workspace.startupConfigured)} />
-                <Detail label="Connections" value={workspace.connections.length} />
-              </DetailList>
-            </section>
-          </div>
-          <section className="workspace-details-access">
-            <h2>Who has access</h2>
-            <div className="workspace-details-people">
-              <div className="workspace-details-person">
-                <DriveAvatar name={ownerName} avatarUrl={workspace.owner?.avatarUrl ?? null} size="md" />
-                <span><strong>{ownerName}</strong><small>Workspace owner</small></span>
-                <b>Owner</b>
-              </div>
-              <div className="workspace-details-person">
-                <span className="workspace-details-org" aria-hidden="true">{orgName.charAt(0).toUpperCase()}</span>
-                <span><strong>Everyone at {orgName}</strong><small>General workspace access</small></span>
-                <b>{workspace.orgShareRole ?? 'Restricted'}</b>
-              </div>
-              {grants.map((grant) => (
-                <div className="workspace-details-person" key={grant.id}>
-                  <DriveAvatar name={grant.member.name || grant.member.email} avatarUrl={grant.member.avatarUrl} size="md" />
-                  <span><strong>{grant.member.name || grant.member.email}</strong><small>{grant.member.email}</small></span>
-                  <b>{grant.role}</b>
-                </div>
-              ))}
+          {view === 'compute' ? (
+            <div id="workspace-details-compute-panel" role="tabpanel" className="workspace-details-grid">
+              <section><h2>Compute</h2><ComputeDetails machine={machine} fallback={workspace.machineType} /></section>
+              <section><h2>Storage</h2><StorageDetails attached={workspace.volumeId !== null} volume={volume} /></section>
+              <section>
+                <h2>Workspace</h2>
+                <DetailList>
+                  <Detail label="Status" value={workspace.lifecycleStatus} />
+                  <Detail label="Owner" value={ownerName} />
+                  <Detail label="Your access" value={workspace.accessRole ?? 'None'} />
+                  <Detail label="Created" value={dateLabel(workspace.createdAt)} />
+                  <Detail label="Updated" value={dateLabel(workspace.updatedAt)} />
+                </DetailList>
+              </section>
+              <section>
+                <h2>Configuration</h2>
+                <DetailList>
+                  <Detail label="Environment variables" value={yesNo(workspace.environmentConfigured)} />
+                  <Detail label="Startup script" value={yesNo(workspace.startupConfigured)} />
+                  <Detail label="Connections" value={workspace.connections.length} />
+                </DetailList>
+              </section>
             </div>
-          </section>
+          ) : (
+            <section id="workspace-details-access-panel" role="tabpanel" className="workspace-details-access">
+              <h2>Who has access</h2>
+              <div className="workspace-details-people">
+                <div className="workspace-details-person">
+                  <DriveAvatar name={ownerName} avatarUrl={workspace.owner?.avatarUrl ?? null} size="md" />
+                  <span><strong>{ownerName}</strong><small>Workspace owner</small></span>
+                  <b>Owner</b>
+                </div>
+                <div className="workspace-details-person">
+                  <span className="workspace-details-org" aria-hidden="true">{orgName.charAt(0).toUpperCase()}</span>
+                  <span><strong>Everyone at {orgName}</strong><small>General workspace access</small></span>
+                  <b>{workspace.orgShareRole ?? 'Restricted'}</b>
+                </div>
+                {grants.map((grant) => (
+                  <div className="workspace-details-person" key={grant.id}>
+                    <DriveAvatar name={grant.member.name || grant.member.email} avatarUrl={grant.member.avatarUrl} size="md" />
+                    <span><strong>{grant.member.name || grant.member.email}</strong><small>{grant.member.email}</small></span>
+                    <b>{grant.role}</b>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
         {onDelete && (
           <footer className="workspace-details-footer">

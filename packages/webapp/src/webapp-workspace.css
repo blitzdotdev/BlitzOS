@@ -182,8 +182,8 @@
 }
 
 .webapp-new-menu-icon {
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
   flex: none;
 }
 
@@ -197,8 +197,11 @@
   max-height: min(520px, calc(100dvh - var(--headerH) - 8px));
   overflow-y: auto;
   overscroll-behavior: contain;
+  padding: 6px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-card);
   background: var(--paper);
+  box-shadow: var(--lift);
   scrollbar-color: var(--faint) transparent;
   scrollbar-width: thin;
 }
@@ -212,17 +215,17 @@
   width: 100%;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
+  min-height: 38px;
   padding: 0 12px;
-  color: var(--muted);
-  font-size: 12.5px;
+  border-radius: var(--r-item);
+  color: var(--ink);
+  font-size: 13.5px;
   text-align: left;
 }
 
 .webapp-agent-menu button:hover,
 .webapp-agent-menu button:focus-visible {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 6%, var(--paper));
+  background: var(--hover);
 }
 
 .webapp-agent-menu__separator {
@@ -238,35 +241,40 @@
 }
 
 .webapp-session-menu {
-  z-index: 40;
+  z-index: 200;
   border: 1px solid var(--rule);
-  border-radius: 5px;
+  border-radius: var(--r-card);
   background: var(--paper);
   box-shadow: var(--lift);
-  font: 12px/1.3 var(--font-mono);
+  font: 13px/1.3 var(--font-ui);
 }
 
 .webapp-session-menu {
   position: fixed;
   width: 182px;
-  padding: 4px;
+  padding: 6px;
 }
 
 .webapp-session-menu button {
   display: flex;
   width: 100%;
-  min-height: 32px;
+  min-height: 36px;
   align-items: center;
-  padding: 0 9px;
-  border-radius: 3px;
-  color: var(--muted);
+  gap: 10px;
+  padding: 0 11px;
+  border-radius: var(--r-item);
+  color: var(--ink);
   text-align: left;
+}
+
+.webapp-session-menu button .codicon {
+  color: var(--muted);
+  font-size: 15px;
 }
 
 .webapp-session-menu button:hover,
 .webapp-session-menu button:focus-visible {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 6%, var(--paper));
+  background: var(--hover);
 }
 
 .webapp-workspace-view {
@@ -540,23 +548,31 @@
 
 .preview-panel__open {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  z-index: 1;
+  right: 26px;
+  bottom: 16px;
   display: flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 9px;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 13px;
   border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
   color: var(--ink);
-  background: var(--paper);
-  font: 10px/1 var(--font-ui);
+  background: color-mix(in oklab, var(--paper) 92%, transparent);
+  box-shadow: var(--lift);
+  font: 500 11.5px/1 var(--font-ui);
   text-decoration: none;
   cursor: pointer;
+  backdrop-filter: blur(8px);
 }
+
+.preview-panel__open .codicon { color: var(--muted); font-size: 13px; }
 
 .preview-panel__open:hover,
 .preview-panel__open:focus-visible {
-  border-color: var(--faint);
+  border-color: color-mix(in oklab, var(--ink) 24%, var(--paper));
+  background: var(--paper);
 }
 
 .preview-panel__asleep {
@@ -874,6 +890,10 @@
     right: 0;
     left: auto;
     min-width: 172px;
+  }
+
+  .webapp-agent-menu button {
+    min-height: var(--touchTarget);
   }
 
   .webapp-workspace-view {

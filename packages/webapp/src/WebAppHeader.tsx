@@ -425,7 +425,8 @@ export function WebAppHeader({
         >
           {selectedContextTab.renameable && onRename && (
             <button type="button" role="menuitem" onClick={() => beginRename(selectedContextTab)}>
-              Rename
+              <span className="codicon codicon-edit" aria-hidden="true" />
+              <span>Rename</span>
             </button>
           )}
         </div>

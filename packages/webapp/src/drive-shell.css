@@ -28,10 +28,15 @@
 }
 
 .drive-rail-section .webapp-workspace-add {
-  width: 26px;
-  height: 24px;
+  width: 36px;
+  height: 36px;
   margin: 0 0 0 auto;
-  border-radius: 6px;
+  border-radius: var(--r-control);
+}
+
+.drive-rail-section .webapp-workspace-add svg {
+  width: 17px;
+  height: 17px;
 }
 
 .drive-rail {
@@ -65,7 +70,7 @@
   padding: 0 12px;
   border: 0;
   border-radius: var(--r-control);
-  color: var(--muted);
+  color: var(--ink);
   background: transparent;
   font: inherit;
   font-size: 13.5px;
@@ -103,18 +108,17 @@
 
 .drive-rail-section {
   display: flex;
+  min-height: 44px;
   align-items: center;
-  padding: 6px 12px;
-  color: var(--faint);
-  font: 650 10px/1 var(--font-ui);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  padding: 4px 8px 4px 12px;
+  color: var(--ink);
+  font: 500 13.5px/1 var(--font-ui);
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .drive-rail-section button {
   display: grid;
-  width: 22px;
-  height: 22px;
   margin-left: auto;
   place-items: center;
   border: 1px solid transparent;
@@ -129,7 +133,7 @@
   color: var(--ink);
   outline: 0;
 }
-.drive-rail-section button svg { width: 13px; height: 13px; }
+.drive-rail-section button svg { width: 17px; height: 17px; }
 
 /* ----------------------------------------------------------------- topbar */
 .drive-topbar {

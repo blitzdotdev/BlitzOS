@@ -174,8 +174,8 @@ export function ShareWorkspaceDialog({
           </div>
           {error && <p className="drive-dialog-note" role="alert">{error}</p>}
           <p className="drive-dialog-note">
-            Editors can write in terminal, chat, and files. Viewers get a
-            read-only terminal, files, and chat replay.
+            Editors can work in terminals and files. Viewers get read-only
+            terminals and files.
           </p>
         </div>
         <div className="drive-dialog-foot">

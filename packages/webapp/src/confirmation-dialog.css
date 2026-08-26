@@ -4,46 +4,46 @@
    hand-picked number. */
 .webapp-modal-screen {
   position: fixed;
-  z-index: 130;
+  z-index: 300;
   display: grid;
   inset: 0;
-  padding: 16px;
+  padding: 18px;
   place-items: center;
-  background: color-mix(in oklab, var(--paper) 88%, transparent);
+  background: color-mix(in oklab, var(--paper) 78%, transparent);
 }
 
 .webapp-confirmation-dialog {
   width: min(410px, 100%);
   border: 1px solid var(--rule);
+  border-radius: var(--r-card);
   color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 2%, var(--paper));
+  background: var(--paper);
+  box-shadow: var(--lift);
   font-family: var(--font-ui);
 }
 
 .webapp-confirmation-header {
-  min-height: 46px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--rule);
+  padding: 20px 22px 6px;
 }
 
 .webapp-confirmation-header h1 {
   margin: 0;
-  font-size: 12px;
+  font-size: 17px;
   font-weight: 600;
-  text-transform: lowercase;
+  letter-spacing: -0.01em;
 }
 
 .webapp-confirmation-body {
-  padding: 20px 16px 24px;
+  padding: 10px 22px 4px;
 }
 
 .webapp-confirmation-body p {
   margin: 0;
   color: var(--faint);
-  font-size: 11px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .webapp-confirmation-body .webapp-confirmation-error {
@@ -55,34 +55,31 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--rule);
+  padding: 14px 18px 18px;
 }
 
 .webapp-confirmation-confirm {
-  border-color: var(--ansi-red);
-  color: var(--ansi-red);
+  border-color: transparent !important;
+  color: var(--paper) !important;
+  background: var(--ink) !important;
 }
 
 .webapp-confirmation-actions .webapp-action {
-  min-height: 30px;
-  padding: 0 11px;
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: var(--r-pill);
   background: transparent;
-  font: 10.5px/1 var(--font-ui);
-  text-transform: lowercase;
+  font: 500 13.5px/1 var(--font-ui);
 }
 
 .webapp-confirmation-actions .webapp-action:hover,
 .webapp-confirmation-actions .webapp-action:focus-visible {
-  border-color: color-mix(in oklab, var(--ink) 24%, var(--paper));
-  color: var(--ink);
+  background: var(--hover);
 }
 
 .webapp-confirmation-actions .webapp-confirmation-confirm:hover,
 .webapp-confirmation-actions .webapp-confirmation-confirm:focus-visible {
-  border-color: var(--ansi-red);
-  color: var(--paper);
-  background: var(--ansi-red);
+  opacity: .86;
 }
 
 @media (max-width: 520px) {
