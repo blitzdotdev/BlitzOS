@@ -116,6 +116,7 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
     adminForm: null,
+    platformAppInstallUrl: null,
   };
 }
 
