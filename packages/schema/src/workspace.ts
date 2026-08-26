@@ -10,7 +10,11 @@ export const PHASES = [
 
 export type Phase = (typeof PHASES)[number];
 
-export const RETRY_ACTIONS = ["poll", "destroy", "create"] as const;
+// "upgrade" is the odd one out: the first three are what a workspace can do
+// about its own phase, and the fourth is what a person can do about a seat
+// limit. It lives here because it travels in the same envelope field, and
+// leaving it out made that field lie about what the wire already carried.
+export const RETRY_ACTIONS = ["poll", "destroy", "create", "upgrade"] as const;
 
 export type RetryAction = (typeof RETRY_ACTIONS)[number] | null;
 

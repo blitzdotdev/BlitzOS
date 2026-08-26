@@ -365,5 +365,64 @@ describe("entitlements", () => {
         .toBe(404);
       expect((await appRequest(app, "/orgs/personal/usage")).status).toBe(401);
     });
+
+    it("resolves self to the organization the session is scoped to", async () => {
+      const { app } = harness();
+      const admin = await operatorSession(app);
+      const byId = await appRequest(app, "/orgs/personal/usage", { headers: { Cookie: admin } });
+      const bySelf = await appRequest(app, "/orgs/self/usage", { headers: { Cookie: admin } });
+      expect(bySelf.status).toBe(200);
+      expect(await bySelf.json()).toEqual(await byId.json());
+    });
+  });
+
+  describe("the billing links", () => {
+    it("mints one hop an admin can follow to buy or to change what they bought", async () => {
+      const { app } = harness();
+      const admin = await operatorSession(app);
+
+      const response = await appRequest(app, "/orgs/self/billing", {
+        headers: { Cookie: admin, Referer: "https://cp.example/settings/invites" },
+      }, BILLING);
+      expect(response.status).toBe(200);
+      const links = await response.json<{ checkoutUrl: string; portalUrl: string }>();
+
+      // One token, two destinations: a person who lands on the wrong page is
+      // one click from the right one, with the same return path.
+      const token = new URL(links.checkoutUrl).hash.slice("#token=".length);
+      expect(new URL(links.portalUrl).hash.slice("#token=".length)).toBe(token);
+      expect(links.checkoutUrl).toBe(`https://billing.test/checkout#token=${token}`);
+      expect(links.portalUrl).toBe(`https://billing.test/portal#token=${token}`);
+
+      const claims = JSON.parse(
+        atob((token.split(".")[1] ?? "").replaceAll("-", "+").replaceAll("_", "/")),
+      ) as { org: string; role: string; returnTo: string };
+      expect(claims.org).toBe("personal");
+      expect(claims.role).toBe("admin");
+      // The page they left, so Checkout returns them to it.
+      expect(claims.returnTo).toBe("/settings/invites");
+    });
+
+    it("refuses a member, because the billing service would refuse the token", async () => {
+      const { app } = harness();
+      await operatorSession(app);
+      const member = await sameOrgSession("erin", "member");
+      const response = await appRequest(app, "/orgs/self/billing", {
+        headers: { Cookie: member.cookie },
+      }, BILLING);
+      expect(response.status).toBe(403);
+    });
+
+    it("does not exist where no billing service is attached", async () => {
+      const { app } = harness();
+      const admin = await operatorSession(app);
+      expect((await appRequest(app, "/orgs/self/billing", { headers: { Cookie: admin } })).status)
+        .toBe(404);
+      // A key without a checkout surface is the same answer: there is nowhere
+      // to send a person, so there is no link to give them.
+      expect((await appRequest(app, "/orgs/self/billing", {
+        headers: { Cookie: admin },
+      }, { ENTITLEMENTS_API_KEY: KEY })).status).toBe(404);
+    });
   });
 });

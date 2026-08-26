@@ -159,7 +159,11 @@ export const PHASES = [
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
-export const RETRY_ACTIONS = ["poll", "destroy", "create"] as const;
+// "upgrade" is the odd one out: the first three are what a workspace can do
+// about its own phase, and the fourth is what a person can do about a seat
+// limit. It lives here because it travels in the same envelope field, and
+// leaving it out made that field lie about what the wire already carried.
+export const RETRY_ACTIONS = ["poll", "destroy", "create", "upgrade"] as const;
 export type RetryAction = (typeof RETRY_ACTIONS)[number] | null;
 
 export type WorkspaceRole = "owner" | "admin" | "editor" | "viewer";
@@ -482,6 +486,28 @@ export interface RegisterKeysResponse {
 export interface ApiError {
   error: string;
   retryAction: RetryAction;
+  /** Where a person can pay their way past this refusal. Present only on the
+   * 402 a seat gate throws, and only where the deployment has a billing
+   * service with a checkout surface — a refusal with nowhere to go is still a
+   * refusal, it just cannot offer a way out. */
+  paymentUrl?: string;
+}
+
+/** What an organization's limits are and how much of them is in use.
+ * `seatLimit` is null where no billing service is attached: that deployment
+ * has no cap to show, rather than a large one. */
+export interface OrgUsageResponse {
+  seatsUsed: number;
+  seatLimit: number | null;
+  vmsUsed: number;
+  vmLimit: number;
+}
+
+/** The two places an admin can go in the billing service: buy seats, or change
+ * the seats already bought. Both carry the same signed hop. */
+export interface OrgBillingLinksResponse {
+  checkoutUrl: string;
+  portalUrl: string;
 }
 
 export interface CreateVolumeRequest {
