@@ -26,10 +26,6 @@ import {
   verifyConnectOAuthStateCookie,
 } from "../core/oauth-state.js";
 import {
-  importGithubAppPrivateKey,
-  normalizeGithubAppPrivateKey,
-} from "../core/connections/minters/app-jwt/github-app.js";
-import {
   appRequest,
   harness,
   operatorSession,
@@ -59,6 +55,19 @@ async function connectLinear(
       token: LINEAR_KEY,
       ...overrides,
     }),
+  });
+}
+
+/** A pasted GitHub token, which is the only kind of GitHub credential there
+ * is now. */
+async function connectGithubToken(
+  app: Harness["app"],
+  cookie: string,
+): Promise<Response> {
+  return appRequest(app, "/connections/grants/github", {
+    method: "PUT",
+    headers: { Cookie: cookie, "Content-Type": "application/json" },
+    body: JSON.stringify({ manifestId: "github", token: GITHUB_TOKEN }),
   });
 }
 
@@ -1380,28 +1389,6 @@ function proxyHandle(result: MintResult): {
   return { leaseId, proxyUrl, token: result.token };
 }
 
-async function putGithubConnection(
-  app: ReturnType<typeof harness>["app"],
-  cookie: string,
-  root: string,
-): Promise<Response> {
-  return appRequest(app, "/connections/github", {
-    method: "PUT",
-    headers: { Cookie: cookie, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      provider: "github",
-      kind: "app-jwt",
-      custody: "cp",
-      root,
-      config: {
-        app_id: "123456",
-        installation_id: "987654",
-        repositories: ["requested-repo"],
-        permissions: { contents: "write" },
-      },
-    }),
-  });
-}
 
 describe("connections: org-root rows, proxy transport, and the request inbox", () => {
   beforeEach(async () => {
@@ -1411,241 +1398,6 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
 
   afterEach(() => {
     vi.restoreAllMocks();
-  });
-
-  it("signs a bounded RS256 app JWT and records GitHub's granted scope truth", async () => {
-    const { privatePem, publicKey } = await githubKeyPair();
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
-    const { workspace, box } = await createReadyWorkspace(app, providers, cookie, {
-      github: { scopes: ["requested:scope"] },
-    });
-    const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
-    let authorization = "";
-    let requestBody = "";
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (input, init) => {
-        expect(String(input)).toBe(
-          "https://api.github.com/app/installations/987654/access_tokens",
-        );
-        expect(init?.method).toBe("POST");
-        const headers = new Headers(init?.headers);
-        expect(headers.get("accept")).toBe("application/vnd.github+json");
-        authorization = headers.get("authorization") ?? "";
-        requestBody = String(init?.body);
-        return Response.json({
-          token: GITHUB_TOKEN,
-          expires_at: expiresAt,
-          repositories: [{ name: "granted-repo" }],
-          permissions: { contents: "read", issues: "write" },
-        });
-      },
-    );
-    const startedAt = Math.floor(Date.now() / 1000);
-
-    const response = await mint(app, box.access_token, "github");
-
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(JSON.parse(requestBody)).toEqual({
-      repositories: ["requested-repo"],
-      permissions: { contents: "write" },
-    });
-    // Exact equality, so control-plane bookkeeping cannot ride along: the
-    // minter also carries GitHub's granted-scope truth, and that belongs on
-    // the lease row asserted below, never in the body an agent reads.
-    const result = await response.json<MintResult>();
-    expect(result).toEqual({
-      connection: "github",
-      mode: "inject",
-      token: GITHUB_TOKEN,
-      env: [
-        { name: "GH_TOKEN", value: GITHUB_TOKEN },
-        { name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
-      ],
-      header: { name: "Authorization", prefix: "Bearer " },
-      expiresAt: Date.parse(expiresAt),
-    });
-
-    const jwt = authorization.replace(/^Bearer\s+/u, "");
-    const parts = jwt.split(".");
-    expect(parts).toHaveLength(3);
-    const [encodedHeader, encodedPayload, encodedSignature] = parts;
-    if (
-      encodedHeader === undefined ||
-      encodedPayload === undefined ||
-      encodedSignature === undefined
-    ) {
-      throw new Error("github app JWT was malformed");
-    }
-    expect(JSON.parse(new TextDecoder().decode(decodeBase64Url(encodedHeader)))).toEqual({
-      alg: "RS256",
-      typ: "JWT",
-    });
-    const payload = JSON.parse(
-      new TextDecoder().decode(decodeBase64Url(encodedPayload)),
-    ) as { iat: number; exp: number; iss: string };
-    const finishedAt = Math.floor(Date.now() / 1000);
-    expect(payload.iss).toBe("123456");
-    expect(payload.iat).toBeGreaterThanOrEqual(startedAt - 61);
-    expect(payload.iat).toBeLessThanOrEqual(finishedAt - 60);
-    expect(payload.exp - payload.iat).toBeLessThanOrEqual(10 * 60);
-    expect(payload.exp).toBeGreaterThan(finishedAt);
-    expect(
-      await crypto.subtle.verify(
-        "RSASSA-PKCS1-v1_5",
-        publicKey,
-        decodeBase64Url(encodedSignature),
-        new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`),
-      ),
-    ).toBe(true);
-    const lease = await env.DB
-      .prepare("SELECT scopes FROM credential_leases WHERE workspace_id = ?1")
-      .bind(workspace.id)
-      .first<{ scopes: string }>();
-    expect(JSON.parse(lease?.scopes ?? "null")).toEqual([
-      "repo:granted-repo",
-      "contents:read",
-      "issues:write",
-    ]);
-  });
-
-  it("accepts GitHub's PKCS#1 download and seals a key the minter signs with", async () => {
-    const { pkcs1Pem, publicKey } = await githubKeyPair();
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    expect((await putGithubConnection(app, cookie, pkcs1Pem)).status).toBe(204);
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      github: {},
-    });
-    const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
-    let authorization = "";
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      authorization = new Headers(init?.headers).get("authorization") ?? "";
-      return Response.json({ token: GITHUB_TOKEN, expires_at: expiresAt });
-    });
-
-    const response = await mint(app, box.access_token, "github");
-
-    expect(response.status).toBe(200);
-    // The signature proves the wrap: the mint imported the sealed root as
-    // PKCS#8 and signed with the same key GitHub handed out as PKCS#1.
-    const [header, payload, signature] = authorization
-      .replace(/^Bearer\s+/u, "")
-      .split(".");
-    if (header === undefined || payload === undefined || signature === undefined) {
-      throw new Error("github app JWT was malformed");
-    }
-    expect(
-      await crypto.subtle.verify(
-        "RSASSA-PKCS1-v1_5",
-        publicKey,
-        decodeBase64Url(signature),
-        new TextEncoder().encode(`${header}.${payload}`),
-      ),
-    ).toBe(true);
-  });
-
-  it("re-armors PKCS#1 into the exact PKCS#8 bytes WebCrypto exported", async () => {
-    const { privatePem, pkcs1Pem, publicKey } = await githubKeyPair();
-
-    const normalized = normalizeGithubAppPrivateKey(pkcs1Pem);
-
-    expect(normalized.startsWith("-----BEGIN PRIVATE KEY-----")).toBe(true);
-    expect(pemDer(normalized)).toEqual(pemDer(privatePem));
-    // A PKCS#8 root passes through untouched: sealed bytes never churn.
-    expect(normalizeGithubAppPrivateKey(privatePem)).toBe(privatePem);
-    // And the wrapped key signs through the real importer.
-    const data = new TextEncoder().encode("wrap-round-trip");
-    const signature = await crypto.subtle.sign(
-      "RSASSA-PKCS1-v1_5",
-      await importGithubAppPrivateKey(normalized),
-      data,
-    );
-    expect(
-      await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, data),
-    ).toBe(true);
-  });
-
-  it("rejects encrypted keys and garbage without storing a row", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const invalid = {
-      error: "private key must be an RSA private key PEM (the .pem file GitHub generates)",
-      retryAction: null,
-    };
-    const encrypted = {
-      error: "the private key is encrypted; upload the unencrypted .pem file GitHub generated",
-      retryAction: null,
-    };
-
-    const garbage = await putGithubConnection(app, cookie, "not-a-key");
-    expect(garbage.status).toBe(400);
-    expect(await garbage.json()).toEqual(invalid);
-
-    // PKCS#1 armor around bytes that are no RSA key: the wrap succeeds
-    // structurally and the importer is the one that says no.
-    const armoredGarbage = await putGithubConnection(
-      app,
-      cookie,
-      "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----",
-    );
-    expect(armoredGarbage.status).toBe(400);
-    expect(await armoredGarbage.json()).toEqual(invalid);
-
-    const encryptedPkcs8 = await putGithubConnection(
-      app,
-      cookie,
-      "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----",
-    );
-    expect(encryptedPkcs8.status).toBe(400);
-    expect(await encryptedPkcs8.json()).toEqual(encrypted);
-
-    const encryptedPkcs1 = await putGithubConnection(
-      app,
-      cookie,
-      "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00\n\nAAAA\n-----END RSA PRIVATE KEY-----",
-    );
-    expect(encryptedPkcs1.status).toBe(400);
-    expect(await encryptedPkcs1.json()).toEqual(encrypted);
-
-    expect(
-      await env.DB
-        .prepare("SELECT COUNT(*) AS count FROM connections")
-        .first<number>("count"),
-    ).toBe(0);
-  });
-
-  it("maps a GitHub 401 to a value-free 502 and creates no lease", async () => {
-    const { privatePem } = await githubKeyPair();
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
-    const { box } = await createReadyWorkspace(app, providers, cookie, {
-      github: {},
-    });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json(
-        { token: "must-not-escape-vendor-error-body" },
-        { status: 401 },
-      ),
-    );
-
-    const response = await mint(app, box.access_token, "github");
-
-    expect(response.status).toBe(502);
-    const body = await response.json();
-    expect(body).toEqual({
-      error: "github rejected the app JWT (key or clock)",
-      retryAction: null,
-    });
-    expect(JSON.stringify(body)).not.toContain("must-not-escape-vendor-error-body");
-    expect(
-      await env.DB
-        .prepare("SELECT COUNT(*) AS count FROM credential_leases")
-        .first<number>("count"),
-    ).toBe(0);
   });
 
   it("answers 409 connect github for the repo listing until an app root is configured", async () => {
@@ -1663,50 +1415,34 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     });
   });
 
-  it("pages the installation repo listing with small pages and aggregates names only", async () => {
-    const { privatePem } = await githubKeyPair();
+  it("pages the caller's own repo listing with small pages and names only", async () => {
     const { app } = harness();
-    const cookie = await operatorSession(app);
-    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
+    await operatorSession(app);
     const member = await sameOrgSession("browser");
+    expect((await connectGithubToken(app, member.cookie)).status).toBe(204);
 
     const requests: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       requests.push(url);
-      if (url.endsWith("/access_tokens")) {
-        expect(init?.method).toBe("POST");
-        const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toMatch(/^Bearer /u);
-        // The listing token carries the same restrictions the mint path
-        // sends, so the picker shows exactly what a clone token can reach.
-        expect(JSON.parse(String(init?.body))).toEqual({
-          repositories: ["requested-repo"],
-          permissions: { contents: "write" },
-        });
-        return Response.json({
-          token: GITHUB_TOKEN,
-          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        });
-      }
       const parsed = new URL(url);
-      expect(parsed.pathname).toBe("/installation/repositories");
+      // The person's own token against their own repositories: no app JWT,
+      // no installation token, nothing minted on their behalf.
+      expect(parsed.pathname).toBe("/user/repos");
       expect(parsed.searchParams.get("per_page")).toBe("8");
       expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${GITHUB_TOKEN}`);
       const page = Number(parsed.searchParams.get("page"));
       const count = page === 1 ? 8 : 3;
-      return Response.json({
-        total_count: 11,
-        repositories: Array.from({ length: count }, (_, index) => ({
+      return Response.json(
+        Array.from({ length: count }, (_, index) => ({
           id: index,
           full_name: `acme/repo-${String(page)}-${String(index)}`,
           private: index % 2 === 0,
           description: "unrelated fields must not leak through",
         })),
-      });
+      );
     });
 
-    // Reading the list is an active-member act, not an admin one.
     const response = await appRequest(app, "/connections/github/repositories", {
       headers: { Cookie: member.cookie },
     });
@@ -1716,37 +1452,30 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     expect(repositories).toHaveLength(11);
     expect(repositories[0]).toEqual({ fullName: "acme/repo-1-0", private: true });
     expect(repositories.at(-1)).toEqual({ fullName: "acme/repo-2-2", private: true });
-    // One token mint, then exactly two pages: the short second page ends it.
-    expect(requests).toHaveLength(3);
+    // Exactly two pages and no mint: the short second page ends it.
+    expect(requests).toHaveLength(2);
     expect(JSON.stringify(repositories)).not.toContain("unrelated fields");
   });
 
   it("caps the repo listing at 200 entries instead of paging forever", async () => {
-    const { privatePem } = await githubKeyPair();
     const { app } = harness();
-    const cookie = await operatorSession(app);
-    expect((await putGithubConnection(app, cookie, privatePem)).status).toBe(204);
+    await operatorSession(app);
+    const member = await sameOrgSession("browser");
+    expect((await connectGithubToken(app, member.cookie)).status).toBe(204);
 
     let pageRequests = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/access_tokens")) {
-        return Response.json({
-          token: GITHUB_TOKEN,
-          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        });
-      }
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       pageRequests += 1;
-      return Response.json({
-        total_count: 10_000,
-        repositories: Array.from({ length: 8 }, (_, index) => ({
+      return Response.json(
+        Array.from({ length: 8 }, (_, index) => ({
           full_name: `acme/repo-${String(pageRequests)}-${String(index)}`,
           private: false,
         })),
-      });
+      );
     });
 
     const response = await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: cookie },
+      headers: { Cookie: member.cookie },
     });
 
     expect(response.status).toBe(200);
@@ -2736,63 +2465,6 @@ describe("connections: admin-configured providers through templates", () => {
       // org credential, and the admin surfaces must not read it as one.
       orgCredential: false,
     }]);
-  });
-
-  it("github: the app root satisfies a template connection and mints the git-helper shape", async () => {
-    const { privatePem } = await githubKeyPair();
-    const { app, providers } = harness();
-    const admin = await operatorSession(app);
-    expect((await putGithubConnection(app, admin, privatePem)).status).toBe(204);
-    const template = await templateNaming(app, admin, [
-      { provider: "github" },
-    ]);
-
-    const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
-      async (input) => {
-        expect(String(input)).toBe(
-          "https://api.github.com/app/installations/987654/access_tokens",
-        );
-        return Response.json({ token: GITHUB_TOKEN, expires_at: expiresAt });
-      },
-    );
-
-    // The creator is a plain member with no grant of any kind: the admin's
-    // app root is what makes the lease go live.
-    const member = await sameOrgSession("github-template-member");
-    const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
-      templateId: template.id,
-    });
-    expect(await workspaceCeiling(workspace.id)).toEqual({
-      integrations: { github: {} },
-    });
-
-    // The create minted nothing. The allow-list is the state, and the pull
-    // below is the first time a credential exists at all.
-    const atCreate = await appRequest(app, `/workspaces/${workspace.id}/leases`, {
-      headers: { Cookie: member.cookie },
-    });
-    await expect(atCreate.json()).resolves.toEqual({ leases: [] });
-
-    // The same pull blitz-cred git-helper performs, answered with GH_TOKEN —
-    // the exact name the helper turns into git's username/password pair.
-    const minted = await mint(app, box.access_token, "github");
-    expect(minted.status).toBe(200);
-    const result = await minted.json<MintResult>();
-    expect(result).toEqual({
-      connection: "github",
-      mode: "inject",
-      token: GITHUB_TOKEN,
-      env: [
-        { name: "GH_TOKEN", value: GITHUB_TOKEN },
-        { name: "GITHUB_TOKEN", value: GITHUB_TOKEN },
-      ],
-      header: { name: "Authorization", prefix: "Bearer " },
-      expiresAt: Date.parse(expiresAt),
-    });
-    // Once, not twice. Creating the workspace no longer asks GitHub for an
-    // installation token nobody would hold.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("youtrack: a member's pasted token satisfies the template and rides the proxy as them", async () => {

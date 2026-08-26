@@ -1,4 +1,4 @@
-export type MintKind = "app-jwt" | "oauth" | "static";
+export type MintKind = "oauth" | "static";
 
 /** Where the real credential sits while a workspace uses it: `cp` injects
  * it into the box, `proxy` keeps it in the control plane and hands the box a
@@ -134,11 +134,6 @@ export interface CatalogAdminFormView {
   rootLabel: string;
   rootHelp: string;
   placements: CatalogAdminPlacement[];
-  /** The GitHub App shape: non-null when the form collects an app id and an
-   * installation id beside the PEM private key, and the PUT goes out as
-   * kind "app-jwt" instead of a static root. Coexists with member OAuth —
-   * grants win at mint, the app credential is the org fallback. */
-  app: { appIdLabel: string; installationIdLabel: string } | null;
 }
 
 /** What the connect picker renders. Carries no secret and no binding value —

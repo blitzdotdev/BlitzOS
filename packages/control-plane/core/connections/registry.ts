@@ -21,14 +21,9 @@ import { manifestBaseUrl } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
-import {
-  githubAppMinter,
-  importGithubAppPrivateKey,
-  normalizeGithubAppPrivateKey,
-} from "./minters/app-jwt/github-app.js";
 import { staticMinter } from "./minters/static.js";
 
-const minters: readonly Minter[] = [githubAppMinter, staticMinter];
+const minters: readonly Minter[] = [staticMinter];
 
 type PlacementFill = "token" | "proxy-url";
 
@@ -69,7 +64,7 @@ interface ParsedAppJwtConfig {
 }
 
 function isMintKind(value: unknown): value is MintKind {
-  return value === "app-jwt" || value === "oauth" || value === "static";
+  return value === "oauth" || value === "static";
 }
 
 function isCustody(value: unknown): value is Custody {
@@ -180,53 +175,9 @@ function stringMap(value: unknown, field: string): ParsedStringMap {
   return result;
 }
 
-function appJwtConfigJson(value: unknown): string {
-  if (!isRecord(value)) throw new HttpError(400, "config must be an object");
-  const config: ParsedAppJwtConfig = {
-    app_id: digitString(value.app_id, "config.app_id"),
-    installation_id: digitString(value.installation_id, "config.installation_id"),
-  };
-  if (value.placements !== undefined) {
-    if (!Array.isArray(value.placements)) {
-      throw new HttpError(400, "config.placements must be an array");
-    }
-    config.placements = value.placements.map((placement) =>
-      placementTemplate(placement)
-    );
-  }
-  if (value.repositories !== undefined) {
-    config.repositories = stringArray(value.repositories, "config.repositories");
-  }
-  if (value.permissions !== undefined) {
-    config.permissions = stringMap(value.permissions, "config.permissions");
-  }
-  return JSON.stringify(config);
-}
 
 function configJson(kind: MintKind, custody: Custody, value: unknown): string {
-  return kind === "app-jwt"
-    ? appJwtConfigJson(value)
-    : staticConfigJson(value, custody);
-}
-
-/** The exact root string to seal. For app-jwt it rewrites GitHub's PKCS#1
- * download into PKCS#8 and proves the result imports, so a sealed app root
- * is always a key the minter can sign with. Encrypted keys carry their own
- * 400 out of the normalizer; everything else that fails to import is one
- * generic 400. */
-async function validateRoot(kind: MintKind, root: string): Promise<string> {
-  if (kind !== "app-jwt") return root;
-  try {
-    const normalized = normalizeGithubAppPrivateKey(root);
-    await importGithubAppPrivateKey(normalized);
-    return normalized;
-  } catch (caught) {
-    if (caught instanceof HttpError) throw caught;
-    throw new HttpError(
-      400,
-      "private key must be an RSA private key PEM (the .pem file GitHub generates)",
-    );
-  }
+  return staticConfigJson(value, custody);
 }
 
 function usableByJson(value: unknown): string | null {
@@ -393,10 +344,8 @@ function validateServedConnection(
   if (resolveMinter(candidate) === null) {
     throw new HttpError(400, `credential kind ${kind} is not available`);
   }
-  // A static root can sit behind the proxy or be injected; an app-jwt root
-  // mints short-lived tokens the box holds itself, so it is cp only.
+  // A static root can sit behind the proxy or be injected.
   if (kind === "static") return;
-  if (kind === "app-jwt" && custody === "cp") return;
   throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
 }
 
@@ -447,7 +396,7 @@ export function addConnectionRoutes(
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
     const provider = requiredString(value.provider, "provider", 256);
     if (!isMintKind(value.kind)) {
-      throw new HttpError(400, "kind must be app-jwt, oauth, or static");
+      throw new HttpError(400, "kind must be oauth or static");
     }
     const custodyValue = value.custody ?? (value.kind === "static" ? "proxy" : "cp");
     if (!isCustody(custodyValue)) {
@@ -455,7 +404,7 @@ export function addConnectionRoutes(
     }
     validateServedConnection(provider, value.kind, custodyValue);
     const config = configJson(value.kind, custodyValue, value.config);
-    const root = await validateRoot(value.kind, requiredString(value.root, "root"));
+    const root = requiredString(value.root, "root");
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);
     const existing = await connectionByName(runtime.db, name, principal.orgId, false);

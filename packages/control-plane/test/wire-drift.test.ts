@@ -388,7 +388,6 @@ const catalogAdminForm: SharedShape<
     { kind: "env", name: "VENDOR_TOKEN", fill: "token" },
     { kind: "env", name: "VENDOR_BASE_URL", fill: "proxy-url" },
   ],
-  app: { appIdLabel: "App ID", installationIdLabel: "Installation ID" },
 };
 
 const catalogEntry: SharedShape<

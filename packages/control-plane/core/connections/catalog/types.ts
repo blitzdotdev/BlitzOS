@@ -73,12 +73,6 @@ export interface ProviderAdminForm {
   rootLabel: string;
   /** Where the admin creates the credential, shown under the input. */
   rootHelp: string;
-  /** The GitHub App shape: non-null when the admin credential is an app-jwt
-   * root (app id + installation id + private key), not a static token. The
-   * only admin form allowed to coexist with member OAuth — grants win at
-   * mint, the app credential is the org fallback (the conformance suite pins
-   * both rules). */
-  app: { appIdLabel: string; installationIdLabel: string } | null;
 }
 
 export interface ProbeInput {

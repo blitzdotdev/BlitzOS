@@ -53,8 +53,7 @@ export function manifestBaseUrl(
 
 /** The admin form, compiled so the panel can submit `PUT /connections/:id`
  * without knowing anything about manifests: the placements come from the env
- * deliveries. An `app` block flips the PUT to kind app-jwt, whose config
- * carries the ids instead of placements. */
+ * deliveries. */
 function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null {
   const form = manifest.adminForm;
   if (form === null) return null;
@@ -66,7 +65,6 @@ function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null 
       name,
       fill,
     })),
-    app: form.app,
   };
 }
 

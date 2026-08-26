@@ -230,7 +230,7 @@ describe("provider catalog conformance", () => {
 
       /** The admin form submits `PUT /connections/:id` from this view alone,
        * so a manifest that declares one must be one that PUT can actually
-       * serve: kind "static" for a pasted root, kind "app-jwt" for the
+       * serve: kind "static" for a pasted root, which is the only
        * GitHub App shape. */
       it("declares a servable admin form or none", () => {
         const form = manifest.adminForm;
@@ -242,18 +242,11 @@ describe("provider catalog conformance", () => {
         expect(form.rootLabel.length).toBeGreaterThan(0);
         expect(form.rootHelp.length, "help says where the admin creates it")
           .toBeGreaterThan(20);
-        if (form.app === null) {
-          // A static root is pasted, not authorized, so it cannot share a
-          // manifest with an OAuth flow that would fight it at mint.
-          expect(manifest.auth, "a static admin root is pasted, not authorized").toBeNull();
-        } else {
-          // The app-jwt shape: the org credential is the mint fallback, so it
-          // is the one admin form allowed beside member OAuth. The PUT route
-          // serves app-jwt only under cp custody.
-          expect(manifest.custody).toBe("cp");
-          expect(form.app.appIdLabel.length).toBeGreaterThan(0);
-          expect(form.app.installationIdLabel.length).toBeGreaterThan(0);
-        }
+        // A static root is pasted, not authorized, so it cannot share a
+        // manifest with an OAuth flow that would fight it at mint. The app-jwt
+        // shape used to be the exception; GitHub was its only user and is now
+        // a pasted personal token like every other.
+        expect(manifest.auth, "a static admin root is pasted, not authorized").toBeNull();
         // The admin form has never reached a proxy-custody provider, and the
         // form no longer carries a field for one. A manifest that wants both
         // needs the instance-URL input built, not a dead branch waiting.

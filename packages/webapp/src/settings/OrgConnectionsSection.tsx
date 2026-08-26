@@ -89,7 +89,7 @@ export function OrgConnectionsSection({ client }: { client: OrgClient }) {
                   </span>
                 </div>
                 <p>
-                  {connection.kind === 'app-jwt' ? 'App credential' : 'Stored credential'}
+                  Stored credential
                   {connection.proxyBaseUrl !== null && ` · ${connection.proxyBaseUrl}`}
                 </p>
               </div>
