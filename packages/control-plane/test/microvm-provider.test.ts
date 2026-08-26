@@ -950,6 +950,9 @@ describe("microVM pool provider", () => {
       {
         headers: {
           Cookie: cookie,
+          // Every browser sends Origin on a websocket handshake, and the proxy
+          // now requires it: that check is the CSRF gate for box surfaces.
+          Origin: "https://cp.example",
           Connection: "Upgrade",
           Upgrade: "websocket",
           "Sec-WebSocket-Protocol": "acp",

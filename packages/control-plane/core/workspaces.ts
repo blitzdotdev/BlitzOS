@@ -330,9 +330,46 @@ export function createPhoneHomeResponse(
   return response;
 }
 
+/**
+ * The one origin every box gateway accepts, on any image.
+ *
+ * A box writes the control-plane origin into /var/lib/blitz/origin once, at
+ * creation, and never updates it. Its gateway then refuses a websocket whose
+ * Origin does not equal that string exactly. Moving the app to a new domain
+ * therefore broke every workspace created before the move: plain requests kept
+ * working, because the gateway only downgrades CORS headers for those, while
+ * every websocket answered 403. Terminals and chat hung with no server-side
+ * error to find, because the box was behaving correctly.
+ *
+ * The gateway also accepts a localhost origin unconditionally, so the proxy
+ * presents that instead of the browser's. The CSRF protection the box's check
+ * provided is not lost — assertWebSocketOrigin below enforces it here, before
+ * the request is ever forwarded, and it is stricter: it requires an exact
+ * match where the old path accepted anything the box happened to be told.
+ */
+const BOX_ACCEPTED_ORIGIN = "http://localhost";
+
+/**
+ * Rejects a websocket upgrade that did not come from this deployment.
+ *
+ * A websocket carries cookies cross-site and is not subject to CORS, so this
+ * is the CSRF gate for every box surface reached through the proxy. It runs
+ * before any credential is minted.
+ */
+function assertWebSocketOrigin(request: Request, requestURL: URL): void {
+  if (!isWebSocketUpgrade(request)) return;
+  const origin = request.headers.get("origin");
+  if (origin !== requestURL.origin) {
+    throw new HttpError(403, "websocket origin forbidden");
+  }
+}
+
 function requestWithWebAppCredential(request: Request, credential: string): Request {
   const headers = new Headers(request.headers);
   headers.set(WEBAPP_TOKEN_HEADER, credential);
+  // Only for the upgrade: a plain request needs no rewrite, and leaving its
+  // Origin alone keeps the box's CORS answer truthful.
+  if (isWebSocketUpgrade(request)) headers.set("origin", BOX_ACCEPTED_ORIGIN);
   return new Request(request, { headers });
 }
 
@@ -674,6 +711,7 @@ export function addWorkspaceRoutes(
     if (!requestURL.pathname.startsWith(routePrefix)) {
       throw new HttpError(400, "invalid workspace webApp path");
     }
+    assertWebSocketOrigin(context.req.raw, requestURL);
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const path = suffix === "" ? "/" : suffix;
     if (!isWebAppSurfacePath(port, path)) {
