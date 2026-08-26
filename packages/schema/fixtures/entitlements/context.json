@@ -1,0 +1,5 @@
+{
+  "entitlementsApiKey": "entitlements-fixture-key",
+  "paymentUrl": "https://billing.example",
+  "issuedAtSeconds": 1786999100
+}

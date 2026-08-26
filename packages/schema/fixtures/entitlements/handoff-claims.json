@@ -1,0 +1,9 @@
+{
+  "note": "The decoded payload of the HS256 handoff token. A handoff, not an authorization: it says which organization hit the wall and who was standing there. The billing service authenticates the buyer through its own session before it takes money.",
+  "claims": {
+    "org": "org-acme",
+    "user": "user-dana",
+    "role": "admin",
+    "exp": 1787000000
+  }
+}

@@ -96,10 +96,16 @@ async function expireInvites(db: Db, now: number, orgId?: string): Promise<void>
  * role, not taking a new seat, so they pass regardless of the limit. Everyone
  * else needs a free one, counted inside the statement that would take it.
  *
- * Both halves of the upsert take this clause, and so does the statement that
- * burns the invite. The three statements run as one batch but are not rolled
- * back for each other: gating only the insert would spend the code and admit
- * nobody, which is the same stockpiled code coming back tomorrow.
+ * One clause covers both halves of the upsert, because it filters the invite
+ * row the INSERT selects: a candidate that cannot have a seat produces no row,
+ * so neither the insert nor the ON CONFLICT DO UPDATE that re-activates a
+ * disabled member ever runs. A second copy on the DO UPDATE branch would ask
+ * the same question again, in the same statement, one line later.
+ *
+ * The statement that burns the invite takes it too. The three statements run
+ * as one batch but are not rolled back for each other, and gating only the
+ * membership write would spend the code while admitting nobody — which is the
+ * same stockpiled code coming back tomorrow.
  */
 function growthAllowed(
   vars: RuntimeVariables,
@@ -153,7 +159,7 @@ export async function redeemInviteSession(
   // The seat gate lives in the statements below, not in a check above them.
   // A revoked-then-restored member holding an old code is exactly the caller
   // a read-then-write gate lets through.
-  const insertGate = growthAllowed(runtime.vars, "?2", "?6");
+  const seatGate = growthAllowed(runtime.vars, "?2", "?6");
   const burnGate = growthAllowed(runtime.vars, "?1", "?5");
   const result = await transaction(db, [
     {
@@ -161,12 +167,11 @@ export async function redeemInviteSession(
           SELECT ?1, ?2, target_org_id, role, 'active' FROM invites
           WHERE code_hash = ?3 AND state = 'ready' AND expires_at > ?4
             AND (email IS NULL OR email = ?5)
-            ${insertGate === null ? "" : `AND ${insertGate}`}
+            ${seatGate === null ? "" : `AND ${seatGate}`}
           ON CONFLICT(user_id, org_id) DO UPDATE SET
             role = excluded.role, status = 'active'
-            ${insertGate === null ? "" : `WHERE ${insertGate}`}
           RETURNING id`,
-      v: insertGate === null
+      v: seatGate === null
         ? [membershipId, userId, hash, now, email]
         : [membershipId, userId, hash, now, email, invite.target_org_id],
     },
