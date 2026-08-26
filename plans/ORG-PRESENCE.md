@@ -1,7 +1,30 @@
 # Organization presence and collaboration safety
 
-Status: Phases 1-3 implemented on `codex/org-presence-plan`; Phases 4-5 are not
-shipped
+Status: Phases 1-3 implemented on `codex/org-presence-plan` and verified with two
+accounts in one workspace (2026-08-25). Phases 4-5 are deferred.
+
+## Scope decision (2026-08-25)
+
+This release answers the first two questions below — who is online, and which
+workspace and session each person is viewing — and stops there. Conflict
+controls (Phase 4: terminal driver leases, file-presence beside the ETag
+conflict surface, chat participant/queue states) and push transport (Phase 5)
+are deferred; neither is planned for this release.
+
+What that means in practice:
+
+- Presence is advisory. Nothing in the UI claims that a session, file, or
+  terminal is protected, and no copy may start to: **Ada is in this terminal**
+  is what the avatars say, never **Ada is driving this terminal**.
+- The existing guards are unchanged and remain the only guards: files keep
+  optimistic ETag compare-before-save; native chat keeps actor-side prompt
+  serialization; terminals keep tmux's shared input. Two editors can still type
+  into one terminal, exactly as before this feature — presence makes that
+  visible rather than impossible.
+- The foundation Phase 4 would build on is in place and stays: stable shared
+  session ids, the `terminalKey` the box attaches by, the session registry,
+  and the presence deep link. Nothing shipped here would need to be undone to
+  add leases later.
 
 Review hardening (2026-08-24), before Phase 3:
 
@@ -278,6 +301,10 @@ open**.
 
 ### 4. Conflict controls
 
+Deferred with Phase 4 (see the scope decision above). Kept as the design of
+record for when conflict control is picked up; nothing in this section is
+implemented.
+
 **Files**
 
 Keep the existing ETag compare-before-save behavior. Add viewers/editors near the
@@ -386,6 +413,10 @@ those values are not stable shared resource identities.
 
 ### Phase 4 — Conflict-safe collaboration
 
+Implementation status: deferred (2026-08-25), not planned for this release.
+Showing who is online is the shipped scope; conflict prevention is a separate
+decision with its own gateway/box work and box-image compatibility story.
+
 1. Surface file presence alongside the existing ETag conflict protection.
 2. Show native-chat participant and queued-contribution states.
 3. Implement terminal driver leases in the control plane and enforce them at the
@@ -398,6 +429,8 @@ Exit: the UI never claims a conflict is prevented unless the file ETag, actor
 queue, or terminal driver enforcement actually provides that guarantee.
 
 ### Phase 5 — Push and scale only when measured
+
+Implementation status: deferred; conditional on measurement, as written below.
 
 Keep D1 polling while it meets the product budget. If measured latency, read
 volume, or organization size makes it inadequate, place the presence service
@@ -460,7 +493,8 @@ Minimum automated scenarios:
 - membership removal and workspace-role downgrade during an active connection;
 - stale/malformed/oversized surface descriptors;
 - concurrent personal-view revisions and shared-session operations;
-- file ETag conflict, chat queue ordering, terminal lease race and takeover;
+- file ETag conflict, chat queue ordering, terminal lease race and takeover
+  (Phase 4, deferred);
 - self-hosted Worker and generated blitz.dev artifact parity.
 
 Rollout sequence:
@@ -471,8 +505,9 @@ Rollout sequence:
 4. Monitor D1 writes/reads, response bytes, heartbeat errors, expiry delay, and
    redaction failures. Never log raw view payloads.
 5. Enable presence UI broadly.
-6. Enable terminal driver enforcement only after the compatible box image is
-   registered and workspace capability negotiation is tested.
+6. (Phase 4, deferred) Enable terminal driver enforcement only after the
+   compatible box image is registered and workspace capability negotiation is
+   tested.
 7. Remove V1 state reads only after the fallback metric is zero for the agreed
    retention window and rollback no longer requires them.
 
@@ -503,12 +538,22 @@ each phase rather than waiting for the final gate.
   shortcut.
 - A green presence dot alone must never be presented as proof that writes are
   conflict-safe.
+- This release adds no conflict control (Phase 4 deferred). Two editors can
+  still drive one terminal, and a second member's edit to a file is caught by
+  the ETag check, not by presence.
 
 ## Definition of done
 
-The feature is complete when two invited organization members can see each
-other's permitted workspace/session activity, independently navigate without
-state loss, and understand the actual safety level of files, chats, and
-terminals. Unauthorized observers receive only redacted organization-level
-presence; stale clients expire; both deployment targets behave the same; and
-every conflict-prevention claim is backed by server-side behavior and tests.
+For the shipped scope (Phases 1-3), the feature is complete when two invited
+organization members can see each other's permitted workspace/session
+activity, independently navigate without state loss, and join each other's
+shared sessions from the presence UI. Unauthorized observers receive only
+redacted organization-level presence; stale clients expire and a stale
+snapshot is shown as reconnecting, never as live; both deployment targets
+behave the same; and the UI makes no conflict-prevention claim.
+
+Verified 2026-08-25 with two accounts in one workspace.
+
+When Phase 4 is picked up, its own bar applies on top: members understand the
+actual safety level of files, chats, and terminals, and every
+conflict-prevention claim is backed by server-side behavior and tests.
