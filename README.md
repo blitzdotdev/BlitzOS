@@ -14,21 +14,22 @@
 
 # Features
 
-**BYO agent and use self-hosted machines on any cloud** 
+**BYO agent and run them on any cloud** 
 
 - **Agent workspaces** Shareable, sandboxed cloud computers holding only the credentials and data AI agents need.
 - **Workspace templates** Create agent workspace templates defining what repos, credentials, machine environment, etc. are put in the agent workspace. Set up once and share with everyone. 
 - **Recipes** Like skills but on steroids: define the runtime of a successful agent workflow (AI model, machine env, data + credentials) and trigger it with a webhook from Slack, GitHub, etc.
 - **Teenyapps** Mini apps you can vibe-code to build internal tools like dashboards, CRMs, and task managers — each comes with a backend, auth, and a URL.
-- **Automatic Evals** [Experimental] A built-in eval skill that generates evals from aggregated real AI usage data across your company. 
 
-# About 
+# About
 
-A computer OS makes you more productive with computers. An AI OS makes your company more productive using AI. It does this by providing abstractions for managing the AI's level of access, context, and work environment in your company. 
+An operating system turns a bare machine into a standard environment where programs just run. BlitzOS does the same for AI: it turns the context, credentials, and workflows your fast adopters have dialed in into reusable, standardized workspaces that the rest of the company can just use, without learning the agent setup themselves.
 
-An AI OS improves your company's capability to experiment with AI and spread useful AI workflows. Since AI keeps advancing faster, a company's capability to "digest" AI advancements will become very important. 
+When a new AI agent drops, a developer tests it in a fresh "daily driver" workspace from a company template. That template preconfigures the repos, API keys, and agent skill library, and nothing else. The clean boundary keeps the agent safe to run on real work in the cloud, unlike a local machine where every other project's credentials and configs are reachable.
 
-BlitzOS helps companies digest AI advancements as fast as they happen. BlitzOS abstractions like agent workspaces, templates, and recipes help by enabling **faster experimentation** and **workflow sharing**. Also, features like automatic evals can be built on workspaces + templates + recipes to optimize the cost of AI.
+If the agent does something interesting, developers share the workspace like a Google Doc. If it's genuinely better but needs config tweaks, one developer publishes an updated template and everyone rolls it out.
+
+BlitzOS helps companies digest AI advancements as fast as they happen. Workspaces, templates, and recipes enable **faster experimentation** and **workflow sharing**, and features like automatic evals build on them to optimize AI cost.
 
 # Installation
 
