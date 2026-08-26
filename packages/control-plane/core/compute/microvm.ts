@@ -200,6 +200,9 @@ export class MicrovmPoolProvider implements VmProvider {
           diskGb: size.diskGb,
           arch: "x86",
           location: host.name,
+          // The pool runs on hardware the operator already owns and no vendor
+          // sells these by the month. So the pool declares no price.
+          monthlyPrice: null,
         } satisfies ProviderMachineType];
       });
     });

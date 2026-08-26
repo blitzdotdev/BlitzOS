@@ -235,6 +235,9 @@ describe("AWS provider ownership", () => {
       diskGb: 40,
       arch: "x86",
       location: "eu-west-1",
+      // The snapshot in `aws-prices.ts` owns this figure; `test/aws-prices.test.ts`
+      // owns the cases behind it.
+      monthlyPrice: { amount: 36.81, currency: "USD" },
     });
     expect(machineTypes.every((machineType) => machineType.arch === "x86")).toBe(true);
   });

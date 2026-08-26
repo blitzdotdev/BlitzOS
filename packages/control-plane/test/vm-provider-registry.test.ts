@@ -39,6 +39,9 @@ class StubVmProvider implements VmProvider {
       diskGb: 20,
       arch: "x86",
       location: "test",
+      // The stub declares a price so the aggregate proves it carries one
+      // through, in the currency the provider named.
+      monthlyPrice: { amount: 12.34, currency: "USD" },
     }];
   }
 
@@ -124,6 +127,7 @@ describe("VM provider registry", () => {
         diskGb: 20,
         arch: "x86",
         location: "test",
+        monthlyPrice: { amount: 12.34, currency: "USD" },
       }],
       failures: [{ providerId: "microvm", error: "capacity unavailable" }],
     });

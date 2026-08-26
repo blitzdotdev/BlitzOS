@@ -6,7 +6,9 @@ convention here is machine-checkable, and the commands to check it are listed.
 ## Gates (run all three before claiming success)
 
 ```sh
-npm run typecheck     # all workspaces, incl. the wire-drift tsconfig
+npm run typecheck     # all workspaces, incl. the wire-drift and type-tests
+                      # tsconfigs (test/*.type.test.ts holds compile-time
+                      # gates, so a @ts-expect-error there is a real gate)
 npm run lint:gate     # per-rule ratchet vs lint-baseline.json (see below)
 npm test              # control-plane, box actor, ui, guest node:test,
                       # house-rule tests, and Python fixture conformance

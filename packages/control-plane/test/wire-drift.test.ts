@@ -15,16 +15,17 @@ const machineType: SharedShape<wire.MachineType, schema.MachineType> = {
   diskGb: 8,
   arch: "x86",
   location: "lab",
+  monthlyPrice: null,
 };
 
-// The microvm literal above carries no price, so the priced shape needs its
-// own row. Hetzner is the only provider that publishes one.
+// The microvm literal above declares no price, so the priced shape needs its
+// own row: JSON round-tripping null covers a different field than an object.
 const pricedMachineType: SharedShape<wire.MachineType, schema.MachineType> = {
   ...machineType,
   id: "cx23@hel1",
   providerId: "hetzner",
   location: "hel1",
-  monthlyPrice: { amount: 6.49, currency: "EUR" },
+  monthlyPrice: { amount: 6.49, currency: "USD" },
 };
 
 const machineTypeFailure: SharedShape<

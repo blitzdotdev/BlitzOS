@@ -45,6 +45,9 @@ export interface VmProvider {
   ownsMachineType(machineTypeId: string): boolean;
   ownsVmId(vmId: string): boolean;
   capabilities(): ProviderCapabilities;
+  /** Every entry states a monthly price, or states null for no price.
+   * `monthlyPrice` is required, so a new provider cannot compile until it
+   * answers. A provider that stays silent used to ship a blank price. */
   listMachineTypes(): Promise<ProviderMachineType[]>;
   createVm(input: CreateVmInput): Promise<CreatedVm>;
   shutdown(id: string): Promise<void>;

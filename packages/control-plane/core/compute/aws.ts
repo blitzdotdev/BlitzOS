@@ -10,6 +10,7 @@ import {
   type AwsQueryParameters,
 } from "./aws-sigv4.js";
 import { childElement, childText, parseXml, setItems, type XmlElement } from "./aws-xml.js";
+import { awsMonthlyPrice } from "./aws-prices.js";
 import type {
   CreatedVm,
   CreateVmInput,
@@ -73,11 +74,10 @@ interface AwsMachineType {
   readonly diskGb: number;
 }
 
-/** Curated, hardcoded catalog — no live Pricing API call. Specs verified with
- * `ec2 DescribeInstanceTypes` in us-east-1 on 2026-08-18. On-demand Linux
- * prices for us-east-1, same date, are t3.medium $0.0416/h, t3.large
- * $0.0832/h, m6i.large $0.096/h, m6i.xlarge $0.192/h; `diskGb` is the gp3 root
- * volume this provider requests, which is billed separately from the instance.
+/** Curated, hardcoded catalog. Specs verified with `ec2
+ * DescribeInstanceTypes` in us-east-1 on 2026-08-18. `diskGb` is the gp3 root
+ * volume this provider requests. Prices live in `aws-prices.ts`, so the specs
+ * and the money are not copied into each other.
  *
  * x86_64 only, deliberately: the box image published in `wrangler.toml` is an
  * amd64 tag, so an arm64 instance type would boot and then fail to pull it. */
@@ -431,6 +431,7 @@ export class AwsProvider implements VmProvider, VolumeProvider {
   }
 
   async listMachineTypes(): Promise<ProviderMachineType[]> {
+    const nowMs = this.now();
     return MACHINE_TYPES.map((machineType) => ({
       id: `aws-${machineType.instanceType}@${this.config.region}`,
       name: machineType.instanceType,
@@ -439,6 +440,12 @@ export class AwsProvider implements VmProvider, VolumeProvider {
       diskGb: machineType.diskGb,
       arch: "x86",
       location: this.config.region,
+      monthlyPrice: awsMonthlyPrice(
+        this.config.region,
+        machineType.instanceType,
+        machineType.diskGb,
+        nowMs,
+      ),
     } satisfies ProviderMachineType));
   }
 

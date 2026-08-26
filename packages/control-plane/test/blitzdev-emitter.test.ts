@@ -132,6 +132,7 @@ const expected = [
   "core/compute/microvm-host-registry.ts",
   "core/compute/microvm.ts",
   "core/compute/aws.ts",
+  "core/compute/aws-prices.ts",
   "core/compute/aws-sigv4.ts",
   "core/compute/aws-xml.ts",
   "core/compute/cloudflare-tunnels.ts",

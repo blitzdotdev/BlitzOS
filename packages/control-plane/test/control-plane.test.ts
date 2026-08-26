@@ -58,6 +58,23 @@ interface WorkspaceResponse {
 const OPERATOR_BROKER_NAME = "m-06e55b633481";
 const BROKER_NAME_PATTERN = /^m-[0-9a-f]{12}$/u;
 
+/**
+ * Listing the Hetzner catalog reads two endpoints: the paged /server_types,
+ * and /pricing for the billing currency. One canned response cannot serve
+ * both, and a Response body reads once, so the tests answer by URL and build
+ * a fresh Response for every call.
+ */
+function mockHetznerApi(serverTypes: () => Response, pricing: () => Response): void {
+  vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+    Promise.resolve(String(input).includes("/pricing") ? pricing() : serverTypes())
+  );
+}
+
+/** The /v1/pricing answer, cut down to the field the provider reads. */
+function hetznerPricing(currency: string): Response {
+  return Response.json({ pricing: { currency, vat_rate: "0.000000" } });
+}
+
 /** Enrol `box` as a broker box reachable at `host`. */
 async function enrollBroker(
   app: ReturnType<typeof harness>["app"],
@@ -558,7 +575,8 @@ describe("control plane security and lifecycle", () => {
     const provider = new HetznerProvider("test-token");
 
     // cx23@fsn1 is healthy but not allowlisted; only hel1 carries the cx line
-    // in the default catalog.
+    // in the default catalog. This fixture carries no prices, so each entry
+    // states null rather than staying silent.
     expect(await provider.listMachineTypes()).toEqual([
       {
         id: "cx23@hel1",
@@ -568,6 +586,7 @@ describe("control plane security and lifecycle", () => {
         diskGb: 40,
         arch: "x86",
         location: "hel1",
+        monthlyPrice: null,
       },
       {
         id: "cx33@hel1",
@@ -577,6 +596,7 @@ describe("control plane security and lifecycle", () => {
         diskGb: 80,
         arch: "x86",
         location: "hel1",
+        monthlyPrice: null,
       },
       {
         id: "cpx31@hil",
@@ -586,44 +606,48 @@ describe("control plane security and lifecycle", () => {
         diskGb: 160,
         arch: "x86",
         location: "hil",
+        monthlyPrice: null,
       },
     ]);
   });
 
+  /** Two locations, two prices. The fsn1 row comes first and costs less. */
+  function twoPricedLocations(): Response {
+    return Response.json({
+      server_types: [
+        {
+          name: "cx23",
+          cores: 2,
+          memory: 4,
+          disk: 40,
+          architecture: "x86",
+          deprecation: null,
+          locations: [
+            { name: "fsn1", available: true, deprecation: null },
+            { name: "hel1", available: true, deprecation: null },
+          ],
+          prices: [
+            // A first-entry read would under-price the Helsinki card by 66
+            // cents each month.
+            {
+              location: "fsn1",
+              price_hourly: { gross: "0.0092", net: "0.0077" },
+              price_monthly: { gross: "5.8300", net: "4.9000" },
+            },
+            {
+              location: "hel1",
+              price_hourly: { gross: "0.0104", net: "0.0087" },
+              price_monthly: { gross: "6.4900", net: "5.4538" },
+            },
+          ],
+        },
+      ],
+      meta: { pagination: { next_page: null } },
+    });
+  }
+
   it("takes the Hetzner monthly price from the entry for the machine's own location", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({
-        server_types: [
-          {
-            name: "cx23",
-            cores: 2,
-            memory: 4,
-            disk: 40,
-            architecture: "x86",
-            deprecation: null,
-            locations: [
-              { name: "fsn1", available: true, deprecation: null },
-              { name: "hel1", available: true, deprecation: null },
-            ],
-            prices: [
-              // fsn1 comes first and costs less. A first-entry read would
-              // under-price the Helsinki card by 66 cents each month.
-              {
-                location: "fsn1",
-                price_hourly: { gross: "0.0092", net: "0.0077" },
-                price_monthly: { gross: "5.8300", net: "4.9000" },
-              },
-              {
-                location: "hel1",
-                price_hourly: { gross: "0.0104", net: "0.0087" },
-                price_monthly: { gross: "6.4900", net: "5.4538" },
-              },
-            ],
-          },
-        ],
-        meta: { pagination: { next_page: null } },
-      }),
-    );
+    mockHetznerApi(twoPricedLocations, () => hetznerPricing("EUR"));
     const provider = new HetznerProvider("test-token", {
       machineTypeCatalog: "cx23@fsn1,cx23@hel1",
     });
@@ -637,9 +661,78 @@ describe("control plane security and lifecycle", () => {
     ]);
   });
 
+  // Hetzner bills some accounts in euro and some in dollars, and /server_types
+  // names no currency. The provider read a "EUR" constant, so the real account
+  // behind this repo, which Hetzner bills in USD, showed "€6.49/mo".
+  it("takes the Hetzner currency from the vendor, in euro or in dollars", async () => {
+    for (const currency of ["EUR", "USD"]) {
+      mockHetznerApi(twoPricedLocations, () => hetznerPricing(currency));
+      const provider = new HetznerProvider("test-token", {
+        machineTypeCatalog: "cx23@hel1",
+      });
+
+      expect((await provider.listMachineTypes())[0]?.monthlyPrice).toEqual({
+        amount: 6.49,
+        currency,
+      });
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("asks Hetzner for the currency once, beside the catalog pages", async () => {
+    mockHetznerApi(twoPricedLocations, () => hetznerPricing("USD"));
+    const fetchMock = vi.mocked(globalThis.fetch);
+
+    await new HetznerProvider("test-token").listMachineTypes();
+
+    const urls = fetchMock.mock.calls.map(([input]) => String(input));
+    expect(urls.filter((url) => url.includes("/pricing")).length).toBe(1);
+    // The catalog page is asked for first, so the currency never delays it.
+    expect(urls[0]).toContain("/server_types");
+  });
+
+  it("leaves the price out when Hetzner states no usable currency", async () => {
+    const warnings: string[] = [];
+    // Hetzner answers /pricing, but the currency is not an ISO 4217 code.
+    // A price with no currency is worse than no price: the card would have to
+    // guess a sign, and guessing a sign is the defect this test guards.
+    mockHetznerApi(twoPricedLocations, () => Response.json({ pricing: { currency: "euro" } }));
+    const provider = new HetznerProvider("test-token", {
+      machineTypeCatalog: "cx23@hel1",
+      warn: (warning) => warnings.push(warning.event),
+    });
+
+    const machineTypes = await provider.listMachineTypes();
+
+    expect(machineTypes.map(({ id, monthlyPrice }) => ({ id, monthlyPrice }))).toEqual([
+      { id: "cx23@hel1", monthlyPrice: null },
+    ]);
+    expect(warnings).toEqual(["hetzner_price_currency_unavailable"]);
+  });
+
+  it("still lists Hetzner machines when the currency request fails", async () => {
+    const warnings: string[] = [];
+    // The /pricing response was 41.9 KiB against a 64 KiB cap on 2026-08-25
+    // and it grows. Losing every machine over a missing currency would be a
+    // worse outage than losing the price label.
+    mockHetznerApi(
+      twoPricedLocations,
+      () => new Response("{}", { headers: { "Content-Length": "65537" } }),
+    );
+    const provider = new HetznerProvider("test-token", {
+      machineTypeCatalog: "cx23@hel1",
+      warn: (warning) => warnings.push(warning.event),
+    });
+
+    const machineTypes = await provider.listMachineTypes();
+
+    expect(machineTypes.map(({ id }) => id)).toEqual(["cx23@hel1"]);
+    expect(machineTypes[0]?.monthlyPrice).toBeNull();
+    expect(warnings).toEqual(["hetzner_price_currency_unavailable"]);
+  });
+
   it("leaves the Hetzner price out when the vendor entry is missing or malformed", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({
+    mockHetznerApi(() => Response.json({
         server_types: [
           {
             // No prices array at all.
@@ -697,21 +790,21 @@ describe("control plane security and lifecycle", () => {
           },
         ],
         meta: { pagination: { next_page: null } },
-      }),
-    );
+      }), () => hetznerPricing("USD"));
     const provider = new HetznerProvider("test-token", {
       machineTypeCatalog: "cx23@hel1,cx33@hel1,cpx21@hil,cpx31@hil,cax11@fsn1",
     });
 
-    // Every card still lists. None of them shows a price.
+    // Every card still lists. None of them shows a price, and none of them
+    // shows a wrong one.
     expect(
       (await provider.listMachineTypes()).map(({ id, monthlyPrice }) => ({ id, monthlyPrice })),
     ).toEqual([
-      { id: "cx23@hel1", monthlyPrice: undefined },
-      { id: "cx33@hel1", monthlyPrice: undefined },
-      { id: "cpx21@hil", monthlyPrice: undefined },
-      { id: "cpx31@hil", monthlyPrice: undefined },
-      { id: "cax11@fsn1", monthlyPrice: undefined },
+      { id: "cx23@hel1", monthlyPrice: null },
+      { id: "cx33@hel1", monthlyPrice: null },
+      { id: "cpx21@hil", monthlyPrice: null },
+      { id: "cpx31@hil", monthlyPrice: null },
+      { id: "cax11@fsn1", monthlyPrice: null },
     ]);
   });
 
@@ -803,9 +896,14 @@ describe("control plane security and lifecycle", () => {
   });
 
   it("maps numeric Hetzner type IDs back to names in webAppd provider errors", async () => {
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce(
-        Response.json({
+    // Answer by URL, not by call order: the listing asks /server_types and
+    // /pricing, so a counted sequence would hand the create reply to the
+    // currency read.
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url.includes("/pricing")) return Promise.resolve(hetznerPricing("USD"));
+      if (url.includes("/server_types")) {
+        return Promise.resolve(Response.json({
           server_types: [
             {
               id: 104,
@@ -821,14 +919,13 @@ describe("control plane security and lifecycle", () => {
             },
           ],
           meta: { pagination: { next_page: null } },
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json(
-          { error: { code: "invalid_input", message: "server type 104 is deprecated" } },
-          { status: 422 },
-        ),
-      );
+        }));
+      }
+      return Promise.resolve(Response.json(
+        { error: { code: "invalid_input", message: "server type 104 is deprecated" } },
+        { status: 422 },
+      ));
+    });
     const provider = new HetznerProvider("test-token");
     await provider.listMachineTypes();
 
