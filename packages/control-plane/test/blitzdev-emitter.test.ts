@@ -113,6 +113,7 @@ const expected = [
   "core/volumes.ts",
   "core/preview.ts",
   "core/webapp-state.ts",
+  "core/webapp-proxy.ts",
   "core/webapp-surface.ts",
   "core/webapp-tickets.ts",
   "core/template-repos.ts",

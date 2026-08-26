@@ -56,7 +56,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/types.ts",
   "core/volumes.ts",
   "core/preview.ts",
-  "core/webapp-state.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
+  "core/webapp-state.ts", "core/webapp-proxy.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts", "core/workspace-names.ts", "core/workspace-records.ts", "core/workspace-templates.ts", "core/workspace-tunnels.ts",
   "core/workspaces.ts",

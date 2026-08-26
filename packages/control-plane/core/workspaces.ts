@@ -31,6 +31,7 @@ import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-rec
 import { randomWorkspaceName } from "./workspace-names.js";
 import type { WebAppPort, VmProvider } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
+import { rewriteWebDavDestination } from "./webapp-proxy.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import { templateRepos } from "./template-repos.js";
 import {
@@ -366,9 +367,16 @@ function assertWebSocketOrigin(request: Request, requestURL: URL): void {
   }
 }
 
-function requestWithWebAppCredential(request: Request, credential: string): Request {
+function requestWithWebAppCredential(
+  request: Request,
+  requestURL: URL,
+  workspaceId: string,
+  port: WebAppPort,
+  credential: string,
+): Request {
   const headers = new Headers(request.headers);
   headers.set(WEBAPP_TOKEN_HEADER, credential);
+  rewriteWebDavDestination(headers, requestURL, workspaceId, port);
   // Only for the upgrade: a plain request needs no rewrite, and leaving its
   // Origin alone keeps the box's CORS answer truthful.
   if (isWebSocketUpgrade(request)) headers.set("origin", BOX_ACCEPTED_ORIGIN);
@@ -750,7 +758,13 @@ export function addWorkspaceRoutes(
           role: access.role,
         })
       : await webAppAuth.tokenFor(row.id);
-    const authenticatedRequest = requestWithWebAppCredential(context.req.raw, credential);
+    const authenticatedRequest = requestWithWebAppCredential(
+      context.req.raw,
+      requestURL,
+      row.id,
+      port,
+      credential,
+    );
     const workspaceTunnels = runtime.providers.workspaceTunnels;
     let upstream: Response | null;
     try {
