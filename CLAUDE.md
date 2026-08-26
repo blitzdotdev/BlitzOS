@@ -12,6 +12,15 @@ npm test              # control-plane, box actor, ui, guest node:test,
                       # house-rule tests, and Python fixture conformance
 ```
 
+## Deploying
+
+`docs/DEPLOY-RUNBOOK.md` covers the hosted deployments. Do not deploy by hand:
+canary deploys from every push to `main`, and client prod only from a `v*` tag
+after a human approves. Ask a running deployment what it is with
+`curl -s https://<origin>/version` — a webapp bundle hash identifies the webapp
+build only, and is identical across two different commits whenever the change
+was worker-side.
+
 ## Lint policy (two plugins + a ratchet)
 
 - `tools/oxlint/anti-slop/` — vendored generic rules (15, all `error`;
@@ -27,6 +36,24 @@ npm test              # control-plane, box actor, ui, guest node:test,
 - Ratchet: `lint-baseline.json` + `scripts/lint-gate.mjs`. Counts may only
   fall. When you remove findings, lower the baseline in the same change.
   Never raise the baseline to make a change pass.
+
+## Adding a file under `core/`
+
+A new `core/**.ts` file must be added to FOUR hand-maintained lists, or CI
+fails after a green local run:
+
+1. `CORE_MANIFEST` in `packages/control-plane/scripts/lib/worker-source.mjs`
+2. the module list in `test/core-imports.test.ts` — **and** its `toHaveLength(N)`
+3. the module list in `test/blitzdev-emitter.test.ts` — **and** its `toHaveLength(N)`
+4. `API_PREFIXES` in `scripts/lib/worker-source.mjs`, if the route adds a new
+   first path segment — plus `run_worker_first` in `wrangler.toml.example`
+
+Run `BLITZDEV_MANAGED=1 npm test` before pushing one. CI sets that variable; a
+local run without it skips the very gates that catch this.
+
+A core route absent from `run_worker_first` is served the SPA shell with status
+200 instead of the route. Nothing errors, and only `npm run config:check
+-w packages/control-plane` reports it.
 
 ## Known debt (as of 2026-08-18)
 
@@ -65,6 +92,8 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | preview-focus | `blitz teenyapp open` CLI (`blitz preview` stays a silent alias; wire unchanged) ↔ Go gateway (`/preview-focus`) ↔ browser (`webapp/src/preview.ts` consumer, auto-opens the focus) | `fixtures/preview-focus/` | `box/actor/test/preview-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/preview-focus.test.ts` (browser consumer) |
 | connections-focus | `blitz connections open <provider>` CLI ↔ Go gateway (`/connections-focus`) ↔ browser (`webapp/src/connections-focus.ts` consumer via `use-workspace-connections-focus.ts`, opens the workspace connections panel with the provider selected) | `fixtures/connections-focus/` | `box/actor/test/connections-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/connections-focus.test.ts` (browser consumer) |
 | webApp ticket v1 | `core/webapp-tickets.ts` mint/verify ↔ `box/gateway/main.go` ↔ `box/actor/src/auth.ts` | `fixtures/webapp-ticket/` | `test/webapp-ticket-conformance.test.ts`, `gateway/main_test.go` (ticket_conformance_test.go), `actor/test/auth-conformance.test.ts` |
+| preview ports | `schema/src/preview.ts` (browser re-exports) ↔ `box/gateway/main.go` `excludedPorts` ↔ `box/rootfs/usr/local/bin/blitz` `RESERVED_PORTS` ↔ `core/agent-rules.ts` rule doc | `fixtures/preview-ports/` | `gateway/main_test.go`, `webapp/test/preview-v2.test.ts`, `box/actor/test/preview-focus-conformance.test.ts` |
+| deployment version | `core/version.ts` (`GET /version`) ↔ `control-plane/scripts/check-box-image.mjs` consumer | `fixtures/version/` | `test/version.test.ts` (producer), `test/deploy-tooling.test.mjs` (consumer) |
 | schema ↔ wire copy | `packages/schema/src` ↔ `control-plane/core/wire.ts` | n/a | `test/wire-drift.test.ts` (full field coverage) |
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/compute/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
@@ -105,7 +134,8 @@ Do not add aliases anywhere else.
    and both conformance tests present and passing. A new cross-runtime
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
-7. Reference counts for comparison (2026-08-24): anti-slop 107
+7. Reference counts, last actually measured 2026-08-24 (re-measure with
+   `npm run lint:gate` before trusting them): anti-slop 107
    (51/27/23/6), blitz-house 0, max-lines warnings 6. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
