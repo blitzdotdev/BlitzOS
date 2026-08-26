@@ -66,9 +66,9 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(databaseSettingsSchema.parse(BLITZDEV_CONFIG)).toEqual(BLITZDEV_CONFIG);
   });
 
-  it("contains the thirty-two domain tables plus the deny-all file support table", () => {
+  it("contains the thirty-three domain tables plus the deny-all file support table", () => {
     expect(BLITZDEV_CONFIG.tables.map((table) => table.name)).toEqual(expectedTables);
-    expect(BLITZDEV_CONFIG.tables).toHaveLength(33);
+    expect(BLITZDEV_CONFIG.tables).toHaveLength(34);
     for (const table of BLITZDEV_CONFIG.tables) {
       expect(table.extensions).toEqual([DENY_ALL_RULES]);
     }
