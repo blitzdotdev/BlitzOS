@@ -143,8 +143,12 @@ jobs:
           fi
       - name: Deploy
         if: steps.gate.outputs.configured == 'true'
+        # Both hosted deployments require every org to bring its own cloud
+        # credential. A self-hoster runs `npm run deploy` without this and
+        # keeps the example default, deployment-fallback.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: byok-required
         run: npm run deploy -w packages/control-plane
 
       # A green deploy command proves upload, not content. Ask the deployment

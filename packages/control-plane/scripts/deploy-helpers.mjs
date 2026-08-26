@@ -285,6 +285,7 @@ export async function deployControlPlane({
   patchConfig,
   secretValues = process.env,
   gitCommitSha = "",
+  overrideVars = {},
   runWorkerFirst = deriveRunWorkerFirst,
 } = {}) {
   if (!isRecord(rawConfig)) throw new Error("raw Wrangler config is required");
@@ -392,9 +393,18 @@ export async function deployControlPlane({
     `assets.run_worker_first: wrote ${workerFirstEntries.length} derived entries into ${configPath}`,
   );
 
-  // --var overrides the single key and leaves every other var from the config
-  // in place. The version travels with the Worker version, so a rollback
-  // restores the old commit string along with the old code.
-  const deployArgs = gitCommitSha === "" ? ["deploy"] : ["deploy", "--var", `GIT_COMMIT_SHA:${gitCommitSha}`];
+  // --var overrides one key and leaves every other var from the config in
+  // place. The values travel with the Worker version, so a rollback restores
+  // them along with the old code.
+  //
+  // overrideVars carries settings that differ per deployment but are not
+  // secret, so they belong in neither the committed example nor the stored
+  // config. The two hosted deployments set them in their workflow; a
+  // self-hoster passes none and keeps every example default.
+  const deployArgs = ["deploy"];
+  if (gitCommitSha !== "") deployArgs.push("--var", `GIT_COMMIT_SHA:${gitCommitSha}`);
+  for (const [name, value] of Object.entries(overrideVars)) {
+    deployArgs.push("--var", `${name}:${value}`);
+  }
   await wrangler(deployArgs);
 }
