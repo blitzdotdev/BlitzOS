@@ -286,9 +286,9 @@ export function missingSecretsMessage(missing) {
  * hosted workflows export BLITZ_DEPLOY_VAR_<NAME>; a self-hoster exports none
  * and keeps every example default.
  *
- * An empty value is not a value. A workflow reads these from GitHub variables,
- * and an unset variable arrives as the empty string, so skipping it is what
- * lets a workflow name a setting before anyone has decided it. */
+ * An empty value is not a value. A workflow reads these from GitHub secrets or
+ * variables, and an unset one arrives as the empty string, so skipping it is
+ * what lets a workflow name a setting before anyone has decided it. */
 export function overrideVarsFromEnvironment(environment) {
   const prefix = "BLITZ_DEPLOY_VAR_";
   const vars = {};

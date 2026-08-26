@@ -209,8 +209,8 @@ describe("control-plane deploy command", () => {
   });
 
   it("reads override vars from the environment, and treats an unset one as absent", () => {
-    // A workflow names a setting with ${{ vars.NAME }}, which arrives as the
-    // empty string until someone sets it. Skipping it is what lets the
+    // A workflow names a setting with ${{ secrets.NAME }}, which arrives as
+    // the empty string until someone sets it. Skipping it is what lets the
     // workflow carry the line before the value exists, so setting it later
     // needs no commit.
     expect(overrideVarsFromEnvironment({
