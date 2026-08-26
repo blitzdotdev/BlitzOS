@@ -45,18 +45,14 @@ export function installControlPlaneRoutes(
   // Box-authenticated read of the managed agent rules; no session principal.
   addAgentRulesRoutes(router, runtimeFactory);
 
-  // The one place a request becomes a Principal, and therefore the one place
-  // the read-only operator token is honoured.
-  //
-  // That is the whole reason the operator token is resolved here rather than
-  // in a route or in the principal source. Routes never see the credential:
-  // every add*Routes call below is handed this function, or the membership
-  // wrapper that calls it. A route added tomorrow that reaches instead for
-  // runtime.principalSource gets the session-cookie source alone, where an
-  // operator token authenticates nothing — so it fails closed rather than
-  // open. And findOperatorTokenPrincipal refuses everything outside the
-  // token's read-only scope before it hands a principal back, so no route can
-  // be reached with one by being written later or being written carelessly.
+  // The one place a request becomes a Principal, so the one place the
+  // read-only operator token is honoured. Routes never see the credential:
+  // each add*Routes call below is handed this function, or the membership
+  // wrapper that calls it, and findOperatorTokenPrincipal refuses everything
+  // outside the token's scope before it hands a principal back. A route
+  // added later that reaches for runtime.principalSource instead gets the
+  // session-cookie source alone, where an operator token authenticates
+  // nothing — so a new route fails closed rather than open either way.
   async function requirePrincipal(context: CoreContext): Promise<Principal> {
     const runtime = runtimeFactory(context);
     const principal = await runtime.principalSource.authenticate(context.req.raw, runtime.db);

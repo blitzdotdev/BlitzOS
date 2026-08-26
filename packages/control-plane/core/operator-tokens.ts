@@ -9,13 +9,6 @@ import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_TTL_DAYS = 7;
 const MAX_TTL_DAYS = 30;
-const MAX_LABEL_LENGTH = 120;
-
-/** The box port an operator token may reach. 7445 serves files, ports and
- * previews; 7444 is the agent, and an operator token must never be able to
- * drive one. Naming the reachable port rather than excluding the other one
- * keeps a third port, if the box ever grows one, out of scope by default. */
-const FILES_PORT = "7445";
 
 /** The requests an operator token authenticates. Everything else is out of
  * scope, and the token resolves to no principal there at all.
@@ -24,20 +17,22 @@ const FILES_PORT = "7445";
  *
  *  - the method must be safe, which is what makes the credential read-only;
  *  - the path must be one of the three this token exists for — list the
- *    workspaces, read one workspace, read a box surface on the files port.
+ *    workspaces, read one workspace, read a box surface on port 7445, which
+ *    serves files, ports and previews. Port 7444 is the agent, and an
+ *    operator token must never be able to drive one.
  *
- * The path list is an allowlist on purpose. A route added tomorrow is
- * unreachable by an operator token until someone adds it here, so a new route
- * is out of scope by default rather than exposed by default.
+ * Both lists name what is reachable rather than what is not, so a route added
+ * tomorrow — or a third box port, if the box ever grows one — is out of scope
+ * until someone adds it here.
  */
-export function withinOperatorScope(method: string, pathname: string): boolean {
+function withinOperatorScope(method: string, pathname: string): boolean {
   if (method !== "GET" && method !== "HEAD") return false;
   // pathname always starts with "/", so segments[0] is the empty string.
   const segments = pathname.split("/");
   if (segments[1] !== "workspaces") return false;
   // "/workspaces" and "/workspaces/:id".
   if (segments.length <= 3) return true;
-  return segments[3] === "webapp" && segments[4] === FILES_PORT;
+  return segments[3] === "webapp" && segments[4] === "7445";
 }
 
 interface OperatorTokenRow {
@@ -64,10 +59,10 @@ interface OperatorTokenRow {
 export async function findOperatorTokenPrincipal(
   request: Request,
   db: Db,
-  now = Date.now(),
 ): Promise<Principal | null> {
   const token = bearerToken(request);
   if (token === null) return null;
+  const now = Date.now();
   const hash = await hashSecret(token);
   const row = await first<OperatorTokenRow>(db, {
     q: `SELECT t.id, t.token_hash, m.user_id, m.id AS membership_id, m.org_id, m.role
@@ -104,7 +99,7 @@ export async function findOperatorTokenPrincipal(
   };
 }
 
-export interface MintedOperatorToken {
+interface MintedOperatorToken {
   id: string;
   label: string;
   /** The only time the plaintext exists. Only its hash is stored. */
@@ -119,7 +114,7 @@ interface MintRequest {
 
 function parseMintRequest(body: JsonValue): MintRequest {
   if (!isRecord(body)) throw new HttpError(400, "request body must be an object");
-  const label = requiredString(body.label, "label", MAX_LABEL_LENGTH);
+  const label = requiredString(body.label, "label", 120);
   if (body.expiresInDays === undefined) return { label, ttlDays: DEFAULT_TTL_DAYS };
   const ttlDays = positiveInteger(body.expiresInDays, "expiresInDays");
   if (ttlDays > MAX_TTL_DAYS) {
