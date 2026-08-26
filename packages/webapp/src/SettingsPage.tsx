@@ -124,7 +124,16 @@ export function SettingsHeader({
 }) {
   return (
     <header className="settings-header">
-      <button className="settings-back" type="button" onClick={onBack}>← <span>{workspaceLabel || 'WebApp'}</span></button>
+      <button
+        className="settings-back"
+        type="button"
+        aria-label={`Back to ${workspaceLabel || 'WebApp'}`}
+        onClick={onBack}
+      >
+        <span className="codicon codicon-arrow-left" aria-hidden="true" />
+        <span className="settings-back-label">{workspaceLabel || 'WebApp'}</span>
+        <span className="settings-back-mobile-label">Back</span>
+      </button>
       <strong>Settings</strong>
     </header>
   );

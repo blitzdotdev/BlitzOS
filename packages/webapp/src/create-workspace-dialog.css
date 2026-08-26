@@ -621,6 +621,19 @@
     padding: 12px 14px;
   }}
 
+@media (max-width: 700px) {
+  .create-workspace-actions--blueprint {
+    display: flex;
+  }
+
+  .create-workspace-actions--blueprint .blueprint-cancel,
+  .create-workspace-actions--blueprint .create-workspace-primary {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 0;
+  }
+}
+
 /* ============ blitz additions: workspace templates, Brandon's idiom ======= */
 
 .template-grid {

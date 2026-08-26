@@ -1483,3 +1483,21 @@
 .webapp-panes--split .webapp-workspace-session[data-region='side'] .terminal-surface .xterm {
   padding: 8px 10px 16px;
 }
+
+/* Keep mobile tab and terminal controls clear of browser chrome and safe areas. */
+@media (max-width: 899px) {
+  .webapp-new-tab-control {
+    align-items: center;
+  }
+
+  .webapp-statusline {
+    height: calc(56px + env(safe-area-inset-bottom, 0px));
+    min-height: calc(56px + env(safe-area-inset-bottom, 0px));
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .webapp-statusline__files {
+    align-self: center;
+    margin-left: auto;
+  }
+}

@@ -383,6 +383,9 @@
   background: var(--paper);
   box-shadow: var(--lift);
   font: 13px/1.4 var(--font-ui);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .files-context-menu > button {
@@ -489,6 +492,24 @@
 .files-context-menu-actions button:disabled {
   opacity: .5;
   cursor: default;
+}
+
+@media (max-width: 899px) {
+  .files-context-menu {
+    width: min(180px, calc(100vw - 16px));
+    padding: 4px;
+    font-size: 11.5px;
+  }
+
+  .files-context-menu > button {
+    min-height: 32px;
+    gap: 9px;
+    padding: 0 9px;
+  }
+
+  .files-context-menu > button .codicon {
+    font-size: 14px;
+  }
 }
 
 .file-editor {

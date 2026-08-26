@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useState,
   type Dispatch,
   type FormEvent,
@@ -55,6 +56,20 @@ export function useFilesActions({
   const [confirmation, setConfirmation] = useState<FileActionConfirmation | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextPopup.current) return;
+    const popup = contextPopup.current.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
+    const viewportTop = viewport?.offsetTop ?? 0;
+    const viewportRight = viewportLeft + (viewport?.width ?? window.innerWidth);
+    const viewportBottom = viewportTop + (viewport?.height ?? window.innerHeight);
+    const x = Math.max(viewportLeft + 8, Math.min(contextMenu.x, viewportRight - popup.width - 8));
+    const y = Math.max(viewportTop + 8, Math.min(contextMenu.y, viewportBottom - popup.height - 8));
+    if (x === contextMenu.x && y === contextMenu.y) return;
+    setContextMenu((current) => current === contextMenu ? { ...current, x, y } : current);
+  }, [contextMenu, contextPopup]);
 
   useEffect(() => {
     if (!contextMenu) return;

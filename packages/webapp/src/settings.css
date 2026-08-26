@@ -62,6 +62,10 @@
   font-weight: 650;
 }
 
+.settings-back-mobile-label {
+  display: none;
+}
+
 .settings-page {
   display: grid;
   grid-column: 1;
@@ -561,28 +565,27 @@
   .settings-segments {
     display: flex;
     min-width: 0;
+    gap: 4px;
     overflow-x: auto;
+    padding: 7px 12px;
     border-bottom: 1px solid var(--rule);
     scrollbar-width: none;
   }
 
   .settings-segments .settings-nav-button {
     min-width: max-content;
-    min-height: 48px;
-    flex: 1;
-    padding: 0 13px;
-    border-top: 0;
-    border-right: 1px solid var(--rule);
+    min-height: 38px;
+    flex: 0 0 auto;
+    padding: 0 14px;
+    border: 0;
+    border-radius: var(--r-control);
     text-align: center;
   }
 
-  .settings-segments .settings-nav-button:last-child {
-    border-right: 0;
-  }
-
   .settings-segments .settings-nav-button--active {
-    border-bottom: 1px solid var(--accent);
-    border-left: 0;
+    color: var(--ink);
+    background: var(--hover);
+    box-shadow: 0 0 0 1px var(--rule) inset;
   }
 
   .settings-side {
@@ -601,17 +604,32 @@
 
 @media (max-width: 520px) {
   .settings-header button {
-    min-width: 50px;
+    width: 44px;
+    min-width: 44px;
     min-height: 44px;
-    padding: 0 13px;
+    justify-content: center;
+    margin-left: 8px;
+    padding: 0;
+    color: var(--ink);
+    font-weight: 600;
   }
 
-  .settings-header .settings-back span {
+  .settings-header .settings-back-label {
     display: none;
   }
 
+  .settings-header .settings-back-mobile-label {
+    display: none;
+  }
+
+  .settings-header .settings-back > .codicon {
+    display: inline-block;
+    flex: none;
+    font-size: 16px;
+  }
+
   .settings-header > strong {
-    padding: 0 14px;
+    padding: 0 8px;
   }
 
   .settings-panel {

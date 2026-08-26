@@ -1051,6 +1051,41 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("closes mobile workspace navigation before showing workspace details", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const openNavigation = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open workspace navigation"]',
+    );
+    await act(async () => openNavigation?.click());
+    expect(view.container.querySelector('.drive-rail--open')).not.toBeNull();
+
+    const detailsButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Workspace details for workspace-running-name"]',
+    );
+    await act(async () => detailsButton?.click());
+    expect(view.container.querySelector('.drive-rail--open')).toBeNull();
+    expect(view.container.textContent).toContain("Workspace details");
+
+    await view.unmount();
+  });
+
   it("splits the tab area from the right icon strip and collapses it again", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);

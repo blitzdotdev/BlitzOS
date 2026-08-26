@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Tree,
   type NodeRendererProps,
@@ -592,7 +593,7 @@ export function FilesSidebar({
           );
         })}
       </div>
-      {contextMenu && actionConfirmation === null && contextMenu.action !== 'delete' && (
+      {contextMenu && actionConfirmation === null && contextMenu.action !== 'delete' && createPortal(
         <FilesContextMenu
           menu={contextMenu}
           popupRef={contextPopup}
@@ -614,7 +615,8 @@ export function FilesSidebar({
           onClose={() => setContextMenu(null)}
           onOpenDriveFolder={onOpenDriveFolder}
           onShareToDrive={onShareToDrive}
-        />
+        />,
+        document.body,
       )}
       {actionConfirmation && (
         <FilesActionConfirmation

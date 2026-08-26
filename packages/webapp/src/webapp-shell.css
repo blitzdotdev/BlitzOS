@@ -69,8 +69,8 @@
   flex: 1;
   align-items: center;
   gap: 9px;
-  margin: 7px 0 7px 8px;
-  padding: 0 8px;
+  margin: 7px 0;
+  padding: 0 12px;
   border-radius: 8px;
   text-align: left;
 }
@@ -762,7 +762,7 @@
 
   .webapp-org-button {
     min-height: 44px;
-    padding-left: 16px;
+    padding: 0 8px;
   }
 
   .webapp-workspace-add {
@@ -777,40 +777,43 @@
   }
 
   .webapp-workspace {
-    padding-top: 8px;
-    padding-bottom: 8px;
+    padding-top: 3px;
+    padding-bottom: 3px;
   }
 
   .webapp-workspace:first-child {
-    padding-top: 8px;
+    padding-top: 3px;
   }
 
   .webapp-workspace-button {
-    padding: 0 16px;
+    min-height: 36px;
+    padding: 0 10px;
   }
 
   .webapp-workspace-disclosure {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    padding-right: 16px;
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding-right: 10px;
   }
 
   .webapp-workspace-meta {
-    padding-right: 16px;
-    padding-left: 38px;
+    min-height: 18px;
+    padding-right: 10px;
+    padding-left: 32px;
   }
 
   .webapp-workspace--expanded .webapp-workspace-menu,
   .webapp-workspace--expanded .webapp-workspace-details-button {
-    min-height: var(--touchTarget);
+    min-height: 22px;
     visibility: visible;
     opacity: 1;
     pointer-events: auto;
   }
 
   .webapp-session {
-    padding: 0 16px 0 38px;
+    min-height: 30px;
+    padding: 0 10px 0 32px;
   }
 
   .webapp-support {

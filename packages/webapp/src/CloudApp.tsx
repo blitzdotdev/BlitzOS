@@ -1466,7 +1466,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCreateOrg={() => setShowCreateOrg(true)}
       onOpenSettings={() => navigateToSettings('profile')}
       onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
-      onOpenWorkspaceDetails={(workspaceId) => setDetailsWorkspaceId(workspaceId)}
+      onOpenWorkspaceDetails={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetailsWorkspaceId(workspaceId);
+      }}
       drawerOpen={drawerOpen}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
