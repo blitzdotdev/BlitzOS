@@ -141,6 +141,7 @@ async function inviteByHash(db: Db, hash: string): Promise<InviteRow | null> {
 
 export async function redeemInviteSession(
   runtime: CoreRuntime,
+  request: Request,
   code: string,
   userId: string,
   email: string,
@@ -203,7 +204,7 @@ export async function redeemInviteSession(
     // Name the reason the statements refused. They decided it; this only reads
     // it back, and only where taking a seat was what was being asked for.
     if (existing?.status !== "active" && await seatsExhausted(runtime, invite.target_org_id)) {
-      throw await seatLimitReached(runtime, {
+      throw await seatLimitReached(runtime, request, {
         org: invite.target_org_id,
         user: userId,
         role: invite.role,
@@ -268,7 +269,11 @@ export function addInviteRoutes(
     // Soft, and only soft: an invite is not a seat, so this refuses early for
     // the person's sake. The seat itself is granted or refused at redemption.
     if (await seatsExhausted(runtime, orgId)) {
-      throw await seatLimitReached(runtime, { org: orgId, user: principal.id, role: "admin" });
+      throw await seatLimitReached(
+        runtime,
+        context.req.raw,
+        { org: orgId, user: principal.id, role: "admin" },
+      );
     }
     const code = randomToken(32);
     const id = crypto.randomUUID();

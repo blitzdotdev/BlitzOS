@@ -1,5 +1,7 @@
 {
   "entitlementsApiKey": "entitlements-fixture-key",
   "paymentUrl": "https://billing.example",
+  "controlPlaneOrigin": "https://control-plane.example",
+  "returnTo": "/settings/invites",
   "issuedAtSeconds": 1786999100
 }

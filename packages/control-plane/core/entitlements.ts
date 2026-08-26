@@ -97,15 +97,18 @@ export async function seatsExhausted(runtime: CoreRuntime, orgId: string): Promi
 /**
  * Claims of the checkout handoff token.
  *
- * A handoff, not an authorization. It says which organization hit which wall
- * and who was standing there; the billing service authenticates the buyer
- * through its own session before it accepts money. `role` is the role the
- * person holds (or, at invite redemption, is being admitted with).
+ * A handoff, not an authorization. It says which organization hit which wall,
+ * who was standing there, and which control-plane page should receive the
+ * browser after Checkout. `role` is the role the person holds (or, at invite
+ * redemption, is being admitted with). The browser's normal BlitzOS session
+ * authenticates it after the return.
  */
 export interface HandoffClaims {
   org: string;
   user: string;
   role: "admin" | "member";
+  controlPlaneOrigin: string;
+  returnTo: string;
   exp: number;
 }
 
@@ -156,7 +159,8 @@ export async function handoffToken(secret: string, claims: HandoffClaims): Promi
 /** Builds the refusal a seat gate throws, minting the checkout link. */
 export async function seatLimitReached(
   runtime: CoreRuntime,
-  claims: Omit<HandoffClaims, "exp">,
+  request: Request,
+  claims: Pick<HandoffClaims, "org" | "user" | "role">,
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): Promise<SeatLimitReached> {
   const key = billingKey(runtime.vars);
@@ -164,10 +168,26 @@ export async function seatLimitReached(
   // a 404 at the worst possible moment.
   const base = (runtime.vars.paymentUrl ?? "").replace(/\/+$/u, "");
   if (key === undefined || base === "") return new SeatLimitReached(null);
+  const requestUrl = new URL(request.url);
+  let returnTo = requestUrl.pathname;
+  const referer = request.headers.get("Referer");
+  if (referer !== null) {
+    try {
+      // Only the page path crosses from the browser. The origin is always the
+      // deployment's configured origin, with the request origin as the same
+      // fresh-self-host fallback used by the box-config contract.
+      returnTo = new URL(referer).pathname;
+    } catch {
+      // A malformed Referer cannot choose the destination; use the routed
+      // request path and let the billing side validate it independently.
+    }
+  }
   const token = await handoffToken(key, {
     org: claims.org,
     user: claims.user,
     role: claims.role,
+    controlPlaneOrigin: runtime.vars.controlPlaneOrigin ?? requestUrl.origin,
+    returnTo,
     exp: nowSeconds + HANDOFF_TOKEN_TTL_SECONDS,
   });
   return new SeatLimitReached(`${base}/checkout#token=${token}`);

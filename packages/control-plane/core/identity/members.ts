@@ -253,7 +253,7 @@ export function addMemberRoutes(
         && member.status !== "active"
         && await seatsExhausted(runtime, orgId)
       ) {
-        throw await seatLimitReached(runtime, {
+        throw await seatLimitReached(runtime, context.req.raw, {
           org: orgId,
           user: principal.id,
           role: "admin",

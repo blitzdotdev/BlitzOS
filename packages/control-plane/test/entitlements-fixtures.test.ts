@@ -12,6 +12,8 @@ import { appRequest, harness, operatorSession, resetDatabase, userSession } from
 interface FixtureContext {
   entitlementsApiKey: string;
   paymentUrl: string;
+  controlPlaneOrigin: string;
+  returnTo: string;
   issuedAtSeconds: number;
 }
 
@@ -134,9 +136,13 @@ describe("entitlements fixture conformance", () => {
     const admin = await operatorSession(app);
     const response = await appRequest(app, "/invites", {
       method: "POST",
-      headers: { Cookie: admin, "Content-Type": "application/json" },
+      headers: {
+        Cookie: admin,
+        "Content-Type": "application/json",
+        Referer: `${context.controlPlaneOrigin}${context.returnTo}`,
+      },
       body: JSON.stringify({ role: "member" }),
-    }, billing);
+    }, { ...billing, APP_URL: context.controlPlaneOrigin });
     expect(response.status).toBe(denial.status);
     const body = await response.json<JsonObject>();
     expect(Object.keys(body).sort()).toEqual(Object.keys(denial.body).sort());
@@ -145,6 +151,14 @@ describe("entitlements fixture conformance", () => {
     expect(body.paymentUrl).toMatch(
       new RegExp(`^${context.paymentUrl}/checkout#token=[\\w-]+\\.[\\w-]+\\.[\\w-]+$`, "u"),
     );
+    if (typeof body.paymentUrl !== "string") throw new Error("denial omitted paymentUrl");
+    const encodedPayload = new URL(body.paymentUrl).hash.split(".")[1];
+    if (encodedPayload === undefined) throw new Error("handoff token omitted its payload");
+    const payload = encodedPayload.replaceAll("-", "+").replaceAll("_", "/");
+    expect(JSON.parse(atob(payload))).toMatchObject({
+      controlPlaneOrigin: context.controlPlaneOrigin,
+      returnTo: context.returnTo,
+    });
   });
 
   it("drops paymentUrl, and nothing else, when no checkout surface is configured", async () => {
