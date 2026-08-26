@@ -29,26 +29,29 @@ import {
  * can cross the bash boundary unquoted-safe. */
 const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/u;
 
-/** Exactly an origin — scheme, host, optional port, nothing after. The host
- * writes this value verbatim into /var/lib/blitz/origin, where the box
- * gateway compares it against the browser Origin header, so a path or a
- * trailing slash would break every websocket. */
-const HTTP_ORIGIN = /^https?:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?$/u;
-
 /** APP_URL is the deployment's public origin. Absent or unparseable means
  * "not configured yet" (the self-host template ships it empty), and the
- * box-config route then answers with the request origin instead. */
+ * box-config route then answers with the request origin instead. `URL.origin`
+ * is what makes the emitted value safe for the host to write verbatim into
+ * /var/lib/blitz/origin: it is scheme, host and optional port, never a path
+ * or a trailing slash, which the box gateway compares against the browser
+ * Origin header. */
 export function controlPlaneOriginFromEnv(value: string | null | undefined): string | undefined {
-  if (typeof value !== "string" || value.trim() === "") return undefined;
+  const raw = (value ?? "").trim();
+  if (raw === "") return undefined;
   try {
-    return new URL(value).origin;
+    return new URL(raw).origin;
   } catch {
     return undefined;
   }
 }
 
-function isBoxUpdateOutcome(value: unknown): value is BoxUpdateOutcome {
-  return BOX_UPDATE_OUTCOMES.some((outcome) => outcome === value);
+function boxUpdateOutcome(value: string): BoxUpdateOutcome {
+  const outcome = BOX_UPDATE_OUTCOMES.find((known) => known === value);
+  if (outcome === undefined) {
+    throw new HttpError(400, `outcome must be one of ${BOX_UPDATE_OUTCOMES.join(", ")}`);
+  }
+  return outcome;
 }
 
 /** Accepts iff `ref` is one image-reference token and `outcome` is a known
@@ -59,10 +62,7 @@ export function parseBoxUpdateResult(value: JsonValue): BoxUpdateResultRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const ref = requiredString(value.ref, "ref", 512);
   if (!IMAGE_REF.test(ref)) throw new HttpError(400, "ref must be an image reference");
-  if (!isBoxUpdateOutcome(value.outcome)) {
-    throw new HttpError(400, `outcome must be one of ${BOX_UPDATE_OUTCOMES.join(", ")}`);
-  }
-  return { ref, outcome: value.outcome };
+  return { ref, outcome: boxUpdateOutcome(requiredString(value.outcome, "outcome", 64)) };
 }
 
 async function requireWorkspaceBox(

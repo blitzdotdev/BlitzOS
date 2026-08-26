@@ -105,6 +105,7 @@ describe("box-config control-plane conformance", () => {
       "config-valid-update-requested.json",
     ]);
     expect(fixtures<ResultFixture>("result-").map(([name]) => name)).toEqual([
+      "result-missing-outcome.json",
       "result-missing-ref.json",
       "result-ref-with-space.json",
       "result-unknown-outcome.json",
