@@ -175,6 +175,24 @@ describe("identity signup gate", () => {
     expect(await userCount("google-raced@example.com")).toBe(0);
   });
 
+  it("returns a session cookie the browser sends back on the redirect to the root", async () => {
+    const { app } = harness();
+    await seedUser("returning", "returning@example.com");
+    const callback = await signIn(app, "returning@example.com", { sub: "google-returning" });
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe("/");
+    // Sign-in ends in a top-level navigation that google.com started, and a
+    // browser withholds a SameSite=Strict cookie from one. The root reads the
+    // session to choose between the marketing page and the app shell, so under
+    // Strict every person who signed in landed back on marketing.
+    const setCookie = callback.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("SameSite=Lax");
+    expect(setCookie).not.toContain("SameSite=Strict");
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Secure");
+  });
+
   it("invite mode still signs in an existing user without an invite", async () => {
     const { app } = harness();
     await seedUser("veteran", "veteran@example.com");

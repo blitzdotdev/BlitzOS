@@ -7,6 +7,8 @@ export { changed, first, rows, transaction } from "./db.js";
 /** Shared string guard: the Worker entry points narrow catalog-named
  * bindings with the same predicate core parses boundaries with. */
 export { isString } from "./http.js";
+/** The root is the one asset response that depends on who is asking. */
+export { perSessionResponse } from "./http.js";
 export { runLeaseSweep } from "./connections/leases.js";
 export { runProviderCanary } from "./connections/canary.js";
 export {

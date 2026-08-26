@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "smol-toml";
+import { perSessionResponse } from "../core/http.js";
 import example from "../wrangler.toml.example?raw";
 
 // The Worker test pool sandboxes the filesystem, so these load as raw modules
@@ -23,6 +24,22 @@ describe("marketing home", () => {
     expect(routes).toContain("/");
     // "/*" would send every asset request through the Worker and break the SPA.
     expect(routes).not.toContain("/*");
+  });
+
+  it("keeps the root out of every shared cache", () => {
+    // The asset binding answers with the headers of the file it served, and
+    // both files are public. Storing either copy under the bare "/" key hands
+    // one visitor's answer to the next one: marketing to a signed-in person,
+    // or the app shell to a stranger.
+    const asset = new Response("<!doctype html>", {
+      headers: { "Cache-Control": "public, max-age=0, must-revalidate", "Content-Type": "text/html" },
+    });
+
+    const served = perSessionResponse(asset);
+
+    expect(served.headers.get("Cache-Control")).toBe("private, no-store");
+    expect(served.headers.get("Vary")).toBe("Cookie");
+    expect(served.headers.get("Content-Type")).toBe("text/html");
   });
 
   it("offers sign-in beside the primary call to action", () => {

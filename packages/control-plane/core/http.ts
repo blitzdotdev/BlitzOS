@@ -110,6 +110,22 @@ export async function readForm(request: Request): Promise<URLSearchParams> {
   return new URLSearchParams(await readText(request));
 }
 
+/** The root answers differently per visitor: marketing with no session, the
+ * app shell with one. A shared cache holding either copy hands it to the wrong
+ * person, so the answer is never stored and the cookie is named as the thing
+ * it varies on. The asset binding sends `public, max-age=0` with the file it
+ * serves; this replaces those headers rather than adding to them. */
+export function perSessionResponse(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "private, no-store");
+  headers.set("Vary", "Cookie");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export function isRecord<Value>(value: Value): value is Value & JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

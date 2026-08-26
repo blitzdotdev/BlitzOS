@@ -79,12 +79,11 @@ export function createSessionPrincipalSource(): PrincipalSource {
   return { authenticate: findSessionPrincipal };
 }
 
-/** Re-resolves the principal a signed OAuth state names. OAuth callbacks
- * arrive as cross-site navigations, which the SameSite=Strict session cookie
- * deliberately does not accompany, so the connect flow binds the principal
- * into its signed state at /start and loads it fresh here — a user disabled
- * or removed from the org mid-flow resolves to null, exactly like an expired
- * session. */
+/** Re-resolves the principal a signed OAuth state names. A callback must never
+ * trust the ambient session: it arrives from the provider, so the connect flow
+ * binds the principal into its signed state at /start and loads it fresh here —
+ * a user disabled or removed from the org mid-flow resolves to null, exactly
+ * like an expired session. */
 export async function findStatePrincipal(
   db: Db,
   userId: string,
@@ -136,11 +135,21 @@ export async function mintSession(
   return token;
 }
 
+/** Lax, not Strict. A browser withholds a Strict cookie on every top-level
+ * navigation that another site started — the Google sign-in return, a search
+ * result, a link in chat. The root serves the marketing page to a request with
+ * no session, so under Strict a signed-in person landed on marketing every time
+ * they arrived from anywhere but this origin, sign-in included.
+ *
+ * Lax keeps the defense that matters: it still withholds the cookie from
+ * cross-site POST, PUT, and DELETE, and every state change here is one of
+ * those. The two GET callbacks that do change state — sign-in and connect —
+ * authenticate from their own signed state, not from this cookie. */
 export function sessionCookie(token: string, ttlMs: number): string {
-  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(ttlMs / 1000)}`;
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.floor(ttlMs / 1000)}`;
 }
 
 export function clearSessionCookie(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
 }
 

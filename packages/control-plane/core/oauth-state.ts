@@ -216,10 +216,9 @@ export function clearGoogleOAuthStateCookie(): string {
 
 /** The provider is bound into the signed state, so a callback cannot be
  * replayed against a different provider's token endpoint. The signed-in
- * principal is bound too: the callback arrives as a cross-site navigation,
- * which the SameSite=Strict session cookie deliberately does not accompany,
- * so the callback authenticates from this state and re-loads the principal
- * from the database instead of from the ambient session. */
+ * principal is bound too: the callback arrives from the provider, so it
+ * authenticates from this state and re-loads the principal from the database
+ * instead of from whatever session cookie rode along with the redirect. */
 export interface ConnectOAuthExtra {
   provider: string;
   userId: string;
