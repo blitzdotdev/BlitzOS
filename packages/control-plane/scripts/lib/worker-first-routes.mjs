@@ -183,7 +183,11 @@ const REGEXP_METACHARACTER = /[.*+?^${}()|[\]\\]/gu;
  */
 export function devProxyPatterns(routePaths) {
   const plan = routingPlan(routePaths);
-  const patterns = plan.root ? ["^/$"] : [];
+  // The root is deliberately absent, even though production routes it to the
+  // Worker. There it chooses between the marketing page and the app shell by
+  // session. In dev, vite itself must keep serving the SPA at "/" with hot
+  // reload — proxying it would replace the thing the developer is editing.
+  const patterns = [];
   for (const { segment, exact } of plan.segments) {
     const literal = segment.replace(REGEXP_METACHARACTER, "\\$&");
     patterns.push(exact ? `^/${literal}(?:$|[/?])` : `^/${literal}/`);

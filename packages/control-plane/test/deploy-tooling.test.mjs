@@ -301,7 +301,8 @@ test("the managed worker matches the root exactly, because it matches prefixes w
 
 test("dev-proxy patterns are anchored, so a route never claims a name that starts like it", () => {
   const patterns = devProxyPatterns(["/", "/me", "/members/:id"]);
-  assert.deepEqual(patterns, ["^/$", "^/me(?:$|[/?])", "^/members/"]);
+  // The root is absent on purpose: vite serves the SPA at "/" in dev.
+  assert.deepEqual(patterns, ["^/me(?:$|[/?])", "^/members/"]);
   const matches = (url) => patterns.some((pattern) => new RegExp(pattern, "u").test(url));
   assert.equal(matches("/me"), true);
   assert.equal(matches("/me?x=1"), true);
@@ -309,6 +310,7 @@ test("dev-proxy patterns are anchored, so a route never claims a name that start
   assert.equal(matches("/menu"), false);
   assert.equal(matches("/members-directory"), false);
   assert.equal(matches("/index.html"), false);
+  assert.equal(matches("/"), false);
 });
 
 test("a route registered with a computed path is named, not silently dropped", () => {
