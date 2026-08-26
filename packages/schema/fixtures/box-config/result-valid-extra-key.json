@@ -1,0 +1,8 @@
+{
+  "request": {
+    "ref": "ghcr.io/blitzdotdev/blitz-box:v2",
+    "outcome": "pull-failed",
+    "detail": "unknown keys are tolerated for forward compatibility"
+  },
+  "accepts": true
+}

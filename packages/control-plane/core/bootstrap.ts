@@ -717,9 +717,23 @@ done
 
 ${imageSetup}
 install -d -m 0755 /etc/blitz
-docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults
-chmod 0644 /etc/blitz/env.defaults
-${invocationFiles}${usageDirectories}docker run --detach \
+${invocationFiles}${usageDirectories}# The one docker run for the box container, extracted to a host script so
+# the initial start here and the host-side updater (blitz-box-update below)
+# share one code path. Per-workspace values (hostname, env, mounts) are
+# rendered in at create time; only the image ref varies between calls.
+cat >/usr/local/bin/blitz-box-run <<'BOX_RUN'
+#!/bin/bash
+set -Eeuo pipefail
+box_image=${"${1:?usage: blitz-box-run <image-ref>}"}
+# The container env comes from the image about to start, never from the one
+# that ran before it: an update picks up the new image's defaults and a
+# rollback restores the old image's. Staged through a temp file so a failed
+# read cannot truncate a working env file. A failure here is fatal under
+# set -e, because a box image without this file is broken: the caller rolls back.
+docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults.next
+chmod 0644 /etc/blitz/env.defaults.next
+mv /etc/blitz/env.defaults.next /etc/blitz/env.defaults
+docker run --detach \
   --name blitz-box \
 ${hostnameFlag}  --restart unless-stopped \
   --privileged \
@@ -731,6 +745,9 @@ ${agentFlag}  --mount type=bind,src=/var/lib/blitz,dst=/var/lib/blitz \
   --mount type=bind,src=/var/lib/blitz/workspace,dst=/workspace \
 ${usageMounts}  -p 0.0.0.0:22:22 \
   "$box_image"
+BOX_RUN
+chmod 0755 /usr/local/bin/blitz-box-run
+/usr/local/bin/blitz-box-run "$box_image"
 
 health_deadline=$((SECONDS + 180))
 box_healthy=false
@@ -796,6 +813,202 @@ chown 1000:1000 /var/lib/blitz/origin
 chmod 0644 /var/lib/blitz/origin
 rm -f "$credential_tmp"
 trap - EXIT
+
+# ---- host-side box updater (cloud-VM path only) ----
+# The box container never upgrades in place on its own, and nothing inside it
+# can reach the host docker daemon, so the updater has to live here on the VM
+# host. It polls the control plane with the box credential (host root reads
+# /var/lib/blitz/box-credential.json), refreshes /var/lib/blitz/origin on
+# every poll — the gateway re-reads that file per request, so a domain move
+# no longer strands the box — and replaces the container only when the
+# workspace's update flag is set, because a replacement kills every process
+# inside it. The microVM provider (packages/microvm-host/) has its own guest
+# lifecycle and never runs this. The payloads are the box-config contract,
+# pinned by packages/schema/fixtures/box-config/.
+cat >/usr/local/sbin/blitz-box-update <<'BOX_UPDATER'
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly STATE_DIR=/var/lib/blitz
+readonly ORIGIN_PATH="$STATE_DIR/origin"
+readonly CREDENTIAL_PATH="$STATE_DIR/box-credential.json"
+readonly UPDATE_LOG="$STATE_DIR/box-update.log"
+
+log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$UPDATE_LOG"
+}
+
+# A box that has not registered yet has neither file; that is the normal
+# pre-enrollment state, not an error.
+[ -s "$CREDENTIAL_PATH" ] || exit 0
+[ -s "$ORIGIN_PATH" ] || exit 0
+current_origin=$(sed -n '1p' "$ORIGIN_PATH")
+[ -n "$current_origin" ] || exit 0
+
+access_token=$(python3 - "$CREDENTIAL_PATH" <<'CREDENTIAL_READER'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as credential_file:
+    value = json.load(credential_file)
+token = value.get("access_token") if isinstance(value, dict) else None
+if not isinstance(token, str) or token == "":
+    raise SystemExit("box credential has no access_token")
+sys.stdout.write(token)
+CREDENTIAL_READER
+) || { log "skip: box credential is unreadable"; exit 0; }
+
+config_tmp=$(mktemp "$STATE_DIR/.box-config.XXXXXX")
+result_tmp=$(mktemp "$STATE_DIR/.box-update-result.XXXXXX")
+trap 'rm -f "$config_tmp" "$result_tmp"' EXIT
+
+if ! curl --fail --silent --show-error --max-time 30 \
+    --header "Authorization: Bearer $access_token" \
+    --header "Accept: application/json" \
+    --output "$config_tmp" \
+    "$current_origin/workspaces/self/box-config"; then
+  log "poll failed: $current_origin/workspaces/self/box-config did not answer"
+  exit 0
+fi
+
+parsed=$(python3 - "$config_tmp" <<'BOX_CONFIG_PARSER'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as config_file:
+    value = json.load(config_file)
+if not isinstance(value, dict):
+    raise ValueError("box-config must be an object")
+ref = value.get("boxImageRef")
+origin = value.get("controlPlaneOrigin")
+update_requested = value.get("updateRequested")
+if not isinstance(ref, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@-]*", ref) is None:
+    raise ValueError("box-config boxImageRef is invalid")
+if not isinstance(origin, str) or re.fullmatch(r"https?://[A-Za-z0-9.-]+(:[0-9]+)?", origin) is None:
+    raise ValueError("box-config controlPlaneOrigin is not an origin")
+if not isinstance(update_requested, bool):
+    raise ValueError("box-config updateRequested must be a boolean")
+print(f"{ref}\t{origin}\t{'true' if update_requested else 'false'}")
+BOX_CONFIG_PARSER
+) || { log "poll rejected: box-config response failed validation"; exit 0; }
+IFS=$'\t' read -r next_ref next_origin update_requested <<<"$parsed"
+
+# Origin refresh, every poll. Safe with no restart: the gateway re-reads the
+# file per request. This closes the stale-origin outage class for new boxes.
+if [ "$next_origin" != "$current_origin" ]; then
+  origin_tmp=$(mktemp "$STATE_DIR/.origin.XXXXXX")
+  printf '%s\n' "$next_origin" >"$origin_tmp"
+  chown 1000:1000 "$origin_tmp"
+  chmod 0644 "$origin_tmp"
+  mv "$origin_tmp" "$ORIGIN_PATH"
+  log "origin refreshed: the box gateway now trusts $next_origin"
+fi
+
+[ "$update_requested" = true ] || exit 0
+
+report_result() {
+  python3 - "$1" "$2" <<'RESULT_WRITER' >"$result_tmp"
+import json
+import sys
+
+ref, outcome = sys.argv[1:]
+json.dump({"ref": ref, "outcome": outcome}, sys.stdout, separators=(",", ":"))
+RESULT_WRITER
+  if curl --fail --silent --show-error --max-time 30 \
+      --request POST \
+      --header "Authorization: Bearer $access_token" \
+      --header "Content-Type: application/json" \
+      --data-binary @"$result_tmp" \
+      --output /dev/null \
+      "$next_origin/workspaces/self/box-update-result"; then
+    log "reported outcome $2 for $1"
+  else
+    log "outcome report failed for $1 ($2); the update flag stays set until a report lands"
+  fi
+}
+
+start_box() {
+  # blitz-box-run owns the whole start, including refreshing the container env
+  # from the image it is about to run.
+  /usr/local/bin/blitz-box-run "$1" >>"$UPDATE_LOG" 2>&1 || return 1
+  local deadline=$((SECONDS + 60))
+  while (( SECONDS < deadline )); do
+    if [ "$(docker inspect --format '{{.State.Running}}' blitz-box 2>/dev/null || true)" = true ]; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+current_image=$(docker inspect --format '{{.Config.Image}}' blitz-box 2>/dev/null || true)
+if [ "$next_ref" = "$current_image" ]; then
+  log "update requested but the requested ref is already running; clearing the request"
+  report_result "$next_ref" up-to-date
+  exit 0
+fi
+case "$next_ref" in
+  https://*)
+    # Tarball pins ride the bootstrap's manifest download path, which this
+    # updater does not carry. Report it so the flag clears.
+    log "update refused: a tarball ref cannot be pulled in place"
+    report_result "$next_ref" unsupported
+    exit 0
+    ;;
+esac
+
+log "update start: [$current_image] -> [$next_ref]"
+# Pull FIRST: a failed pull must leave the old container running untouched.
+if ! docker pull "$next_ref" >>"$UPDATE_LOG" 2>&1; then
+  log "update failed: pull did not complete; the running container is untouched"
+  report_result "$next_ref" pull-failed
+  exit 0
+fi
+docker rm -f blitz-box >>"$UPDATE_LOG" 2>&1 || true
+if start_box "$next_ref"; then
+  log "update complete: blitz-box now runs [$next_ref]"
+  report_result "$next_ref" updated
+  exit 0
+fi
+log "update failed: the new container never reached running; rolling back to [$current_image]"
+docker rm -f blitz-box >>"$UPDATE_LOG" 2>&1 || true
+if [ -n "$current_image" ] && start_box "$current_image"; then
+  log "rollback complete: blitz-box runs [$current_image] again"
+  report_result "$next_ref" rolled-back
+else
+  log "rollback failed: no blitz-box container is running"
+  report_result "$next_ref" start-failed
+fi
+BOX_UPDATER
+chmod 0755 /usr/local/sbin/blitz-box-update
+
+cat >/etc/systemd/system/blitz-box-update.service <<'BOX_UPDATE_SERVICE'
+[Unit]
+Description=Blitz box config poll and requested image update
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/blitz-box-update
+BOX_UPDATE_SERVICE
+
+cat >/etc/systemd/system/blitz-box-update.timer <<'BOX_UPDATE_TIMER'
+[Unit]
+Description=Poll the Blitz control plane for box config every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target
+BOX_UPDATE_TIMER
+systemctl daemon-reload
+systemctl enable --now blitz-box-update.timer
+# ---- end host-side box updater ----
 
 echo "blitz bootstrap: credential registration poke start outer_timeout_seconds=40 inner_timeout_seconds=30"
 register_status=0

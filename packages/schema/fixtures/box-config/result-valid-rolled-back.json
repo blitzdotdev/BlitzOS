@@ -1,0 +1,7 @@
+{
+  "request": {
+    "ref": "ghcr.io/blitzdotdev/blitz-box@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "outcome": "rolled-back"
+  },
+  "accepts": true
+}

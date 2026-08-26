@@ -1,0 +1,7 @@
+{
+  "request": {
+    "ref": "ghcr.io/blitzdotdev/blitz-box:v2 --privileged",
+    "outcome": "updated"
+  },
+  "accepts": false
+}

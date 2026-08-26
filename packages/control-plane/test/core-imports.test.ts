@@ -11,6 +11,7 @@ const expected = [
   "app.ts",
   "blobs.ts",
   "bootstrap.ts",
+  "box-config.ts",
   "box-images.ts",
   "cloud-init.ts",
   "connections/catalog/discord.ts",
@@ -118,6 +119,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(93);
+    expect(expected).toHaveLength(94);
   });
 });

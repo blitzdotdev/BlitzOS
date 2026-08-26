@@ -30,6 +30,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/wire.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
+  "core/box-config.ts",
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
@@ -214,6 +215,8 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "environment", type: "text", sqlType: "text" },
         { name: "files_ready", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "files_ready IN (0, 1)" },
         { name: "agent_rule_id", type: "text", sqlType: "text", foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" } },
+        { name: "box_update_requested", type: "bool", sqlType: "integer", notNull: true, default: { l: 0 }, check: "box_update_requested IN (0, 1)" },
+        { name: "box_image_reported", type: "text", sqlType: "text" },
         // Forward reference: recipes is created later in this list (it needs
         // workspace_templates first); SQLite defers FK resolution to DML.
         { name: "recipe_id", type: "text", sqlType: "text", foreignKey: { table: "recipes", column: "id" } },

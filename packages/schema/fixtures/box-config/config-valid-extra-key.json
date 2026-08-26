@@ -1,0 +1,9 @@
+{
+  "response": {
+    "boxImageRef": "ghcr.io/blitzdotdev/blitz-box:v2",
+    "controlPlaneOrigin": "https://cp.example",
+    "updateRequested": false,
+    "note": "unknown keys are tolerated for forward compatibility"
+  },
+  "accepts": true
+}
