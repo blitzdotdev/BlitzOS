@@ -717,8 +717,6 @@ done
 
 ${imageSetup}
 install -d -m 0755 /etc/blitz
-docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults
-chmod 0644 /etc/blitz/env.defaults
 ${invocationFiles}${usageDirectories}# The one docker run for the box container, extracted to a host script so
 # the initial start here and the host-side updater (blitz-box-update below)
 # share one code path. Per-workspace values (hostname, env, mounts) are
@@ -727,6 +725,14 @@ cat >/usr/local/bin/blitz-box-run <<'BOX_RUN'
 #!/bin/bash
 set -Eeuo pipefail
 box_image=${"${1:?usage: blitz-box-run <image-ref>}"}
+# The container env comes from the image about to start, never from the one
+# that ran before it: an update picks up the new image's defaults and a
+# rollback restores the old image's. Staged through a temp file so a failed
+# read cannot truncate a working env file. A failure here is fatal under
+# set -e, because a box image without this file is broken: the caller rolls back.
+docker run --rm --entrypoint cat "$box_image" /etc/blitz/env.defaults >/etc/blitz/env.defaults.next
+chmod 0644 /etc/blitz/env.defaults.next
+mv /etc/blitz/env.defaults.next /etc/blitz/env.defaults
 docker run --detach \
   --name blitz-box \
 ${hostnameFlag}  --restart unless-stopped \
@@ -923,15 +929,8 @@ RESULT_WRITER
 }
 
 start_box() {
-  # Refresh the container env from the image about to run, exactly as the
-  # bootstrap did at create; on rollback this restores the old file too.
-  if docker run --rm --entrypoint cat "$1" /etc/blitz/env.defaults >/etc/blitz/env.defaults.next 2>>"$UPDATE_LOG"; then
-    chmod 0644 /etc/blitz/env.defaults.next
-    mv /etc/blitz/env.defaults.next /etc/blitz/env.defaults
-  else
-    rm -f /etc/blitz/env.defaults.next
-    log "warning: could not read env.defaults from the image; keeping the current file"
-  fi
+  # blitz-box-run owns the whole start, including refreshing the container env
+  # from the image it is about to run.
   /usr/local/bin/blitz-box-run "$1" >>"$UPDATE_LOG" 2>&1 || return 1
   local deadline=$((SECONDS + 60))
   while (( SECONDS < deadline )); do

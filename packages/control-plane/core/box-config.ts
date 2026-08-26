@@ -3,7 +3,7 @@ import { HttpError, isRecord, readJson, requiredString, type JsonValue } from ".
 import { authenticateBox } from "./oauth.js";
 import type { BoxIdentity } from "./types.js";
 import type { Principal } from "./principals.js";
-import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import { canControlWorkspace } from "./workspace-access.js";
 import { workspaceById } from "./workspace-records.js";
 import {
@@ -63,6 +63,18 @@ export function parseBoxUpdateResult(value: JsonValue): BoxUpdateResultRequest {
   const ref = requiredString(value.ref, "ref", 512);
   if (!IMAGE_REF.test(ref)) throw new HttpError(400, "ref must be an image reference");
   return { ref, outcome: boxUpdateOutcome(requiredString(value.outcome, "outcome", 64)) };
+}
+
+/** Arm the flag the host's next poll reads. Both request paths — the guest
+ * verb with the box's own token and the session route — write it here, so the
+ * one statement that means "update this box" has one home. */
+async function requestBoxUpdate(db: CoreRuntime["db"], workspaceId: string): Promise<void> {
+  await changed(db, {
+    q: `UPDATE workspaces
+        SET box_update_requested = 1, updated_at = ?1
+        WHERE id = ?2 RETURNING id`,
+    v: [Date.now(), workspaceId],
+  });
 }
 
 async function requireWorkspaceBox(
@@ -125,12 +137,7 @@ export function addBoxConfigRoutes(
   // an agent inside the workspace may ask for its own box to be updated.
   router.post("/workspaces/self/box-update", async (context) => {
     const box = await requireWorkspaceBox(context, runtimeFactory);
-    await changed(runtimeFactory(context).db, {
-      q: `UPDATE workspaces
-          SET box_update_requested = 1, updated_at = ?1
-          WHERE id = ?2 RETURNING id`,
-      v: [Date.now(), box.workspaceId],
-    });
+    await requestBoxUpdate(runtimeFactory(context).db, box.workspaceId);
     return context.body(null, 204);
   });
 
@@ -144,12 +151,7 @@ export function addBoxConfigRoutes(
       throw new HttpError(404, "workspace not found");
     }
     if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
-    await changed(runtime.db, {
-      q: `UPDATE workspaces
-          SET box_update_requested = 1, updated_at = ?1
-          WHERE id = ?2 RETURNING id`,
-      v: [Date.now(), row.id],
-    });
+    await requestBoxUpdate(runtime.db, row.id);
     return context.body(null, 204);
   });
 }
