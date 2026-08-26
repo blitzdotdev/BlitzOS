@@ -88,7 +88,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     denyCredentialRequest: vi.fn(async () => undefined),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
-    listGithubRepositories: vi.fn(async () => ({ repositories: [] })),
     checkGithubRepositories: vi.fn(async (repos: string[]) => ({
       results: repos.map((repo) => ({ repo, reachable: true })),
     })),

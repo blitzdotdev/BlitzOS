@@ -2,7 +2,6 @@ import type {
   ConnectionView,
   CredentialLeaseView,
   ListCatalogResponse,
-  ListGithubRepositoriesResponse,
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   MintResult,
@@ -1400,21 +1399,6 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
     vi.restoreAllMocks();
   });
 
-  it("answers 409 connect github for the repo listing until the caller connects github", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-
-    const response = await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: cookie },
-    });
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      error: "connect github",
-      retryAction: null,
-    });
-  });
-
   it("delivers the env names github tooling reads, and nothing else", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
@@ -1435,93 +1419,6 @@ describe("connections: org-root rows, proxy transport, and the request inbox", (
       "GITHUB_PERSONAL_ACCESS_TOKEN",
     ]);
     expect(new Set(lease.env.map(({ value }) => value))).toEqual(new Set([GITHUB_TOKEN]));
-  });
-
-  it("keeps one member's repo listing out of another's reach", async () => {
-    const { app } = harness();
-    await operatorSession(app);
-    const connected = await sameOrgSession("has-token");
-    const bare = await sameOrgSession("no-token");
-    expect((await connectGithubToken(app, connected.cookie)).status).toBe(204);
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json([]));
-
-    // The whole point of reading the caller's own grant: a colleague's token
-    // is not a shared org credential, so it lists nothing for anyone else.
-    expect((await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: bare.cookie },
-    })).status).toBe(409);
-    expect((await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: connected.cookie },
-    })).status).toBe(200);
-  });
-
-  it("pages the caller's own repo listing with small pages and names only", async () => {
-    const { app } = harness();
-    await operatorSession(app);
-    const member = await sameOrgSession("browser");
-    expect((await connectGithubToken(app, member.cookie)).status).toBe(204);
-
-    const requests: string[] = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      requests.push(url);
-      const parsed = new URL(url);
-      // The person's own token against their own repositories: no app JWT,
-      // no installation token, nothing minted on their behalf.
-      expect(parsed.pathname).toBe("/user/repos");
-      expect(parsed.searchParams.get("per_page")).toBe("8");
-      expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${GITHUB_TOKEN}`);
-      const page = Number(parsed.searchParams.get("page"));
-      const count = page === 1 ? 8 : 3;
-      return Response.json(
-        Array.from({ length: count }, (_, index) => ({
-          id: index,
-          full_name: `acme/repo-${String(page)}-${String(index)}`,
-          private: index % 2 === 0,
-          description: "unrelated fields must not leak through",
-        })),
-      );
-    });
-
-    const response = await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: member.cookie },
-    });
-
-    expect(response.status).toBe(200);
-    const { repositories } = await response.json<ListGithubRepositoriesResponse>();
-    expect(repositories).toHaveLength(11);
-    expect(repositories[0]).toEqual({ fullName: "acme/repo-1-0", private: true });
-    expect(repositories.at(-1)).toEqual({ fullName: "acme/repo-2-2", private: true });
-    // Exactly two pages and no mint: the short second page ends it.
-    expect(requests).toHaveLength(2);
-    expect(JSON.stringify(repositories)).not.toContain("unrelated fields");
-  });
-
-  it("caps the repo listing at 200 entries instead of paging forever", async () => {
-    const { app } = harness();
-    await operatorSession(app);
-    const member = await sameOrgSession("browser");
-    expect((await connectGithubToken(app, member.cookie)).status).toBe(204);
-
-    let pageRequests = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-      pageRequests += 1;
-      return Response.json(
-        Array.from({ length: 8 }, (_, index) => ({
-          full_name: `acme/repo-${String(pageRequests)}-${String(index)}`,
-          private: false,
-        })),
-      );
-    });
-
-    const response = await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: member.cookie },
-    });
-
-    expect(response.status).toBe(200);
-    const { repositories } = await response.json<ListGithubRepositoriesResponse>();
-    expect(repositories).toHaveLength(200);
-    expect(pageRequests).toBe(25);
   });
 
   it("stores a static connection and fills its env templates at pull", async () => {
