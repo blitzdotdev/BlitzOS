@@ -5,6 +5,7 @@ import { rawDb } from "./raw-db.js";
 import {
   allowedEmailDomainsFromEnv,
   awsProviderFromEnv,
+  controlPlaneOriginFromEnv,
   credentialMasterKeyFor,
   createSessionPrincipalSource,
   HetznerProvider,
@@ -142,6 +143,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       gitCommitSha: env.GIT_COMMIT_SHA,
+      controlPlaneOrigin: controlPlaneOriginFromEnv(env.APP_URL),
       connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
@@ -181,6 +183,7 @@ function runtimeForScheduled(
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
       gitCommitSha: env.GIT_COMMIT_SHA,
+      controlPlaneOrigin: controlPlaneOriginFromEnv(env.APP_URL),
       connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),

@@ -26,6 +26,7 @@ export {
   runWorkspaceTunnelSweep,
   runSessionSweep,
 } from "./janitors.js";
+export { controlPlaneOriginFromEnv } from "./box-config.js";
 export { createSessionPrincipalSource } from "./principals.js";
 export type { Principal, PrincipalSource } from "./principals.js";
 export { HetznerProvider } from "./compute/hetzner.js";

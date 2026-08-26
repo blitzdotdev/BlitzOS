@@ -49,6 +49,7 @@ const expected = [
   "core/wire.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
+  "core/box-config.ts",
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",

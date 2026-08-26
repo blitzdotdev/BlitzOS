@@ -1,4 +1,5 @@
 import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js";
+import { addBoxConfigRoutes } from "./box-config.js";
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./connections/mint.js";
 import { addWorkspaceEnvironmentRoutes } from "./environment.js";
@@ -83,6 +84,10 @@ export function installControlPlaneRoutes(
   // Box-authenticated, so it is registered ahead of the session-authenticated
   // /workspaces/:id routes it shares a prefix with.
   addWorkspaceEnvironmentRoutes(router, runtimeFactory);
+  // Mostly box-authenticated (/workspaces/self/*), registered ahead for the
+  // same reason; its one session route (/workspaces/:id/box-update) collides
+  // with nothing.
+  addBoxConfigRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);

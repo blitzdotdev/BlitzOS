@@ -31,6 +31,11 @@ export interface WorkspaceRow {
   tunnel_id: string | null;
   tunnel_hostname: string | null;
   dns_record_id: string | null;
+  /** Host-driven box update flag and the last image ref the VM host reported
+   * (migrations/0030): see core/box-config.ts. Neither reaches WorkspaceView
+   * yet — the reported ref is operator observability, read with SQL. */
+  box_update_requested: number;
+  box_image_reported: string | null;
   org_id: string | null;
   owner_membership_id: string | null;
   org_share_role?: "editor" | "viewer" | null;

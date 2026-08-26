@@ -11,6 +11,7 @@ const expected = [
   "app.ts",
   "blobs.ts",
   "bootstrap.ts",
+  "box-config.ts",
   "box-images.ts",
   "cloud-init.ts",
   "connections/catalog/discord.ts",

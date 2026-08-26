@@ -67,6 +67,11 @@ export interface RuntimeVariables {
    * deployment whose config predates the var, and on the managed worker
    * source; GET /version reports "unknown" for it. */
   gitCommitSha?: string;
+  /** The deployment's public origin, parsed from APP_URL by
+   * `controlPlaneOriginFromEnv`. Absent where APP_URL is unset (a fresh
+   * self-host) and on the managed worker source; the box-config route then
+   * answers with the request origin instead. */
+  controlPlaneOrigin?: string;
   /** Signup gate mode parsed from SIGNUP_MODE. Runtimes that predate the
    * var (the managed worker source) omit it; absent means "open", which is
    * the pre-gate behavior. */

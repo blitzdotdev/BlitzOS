@@ -1,0 +1,8 @@
+{
+  "response": {
+    "boxImageRef": "https://cp.example/box-image/manifest.json",
+    "controlPlaneOrigin": "https://cp.example",
+    "updateRequested": true
+  },
+  "accepts": true
+}

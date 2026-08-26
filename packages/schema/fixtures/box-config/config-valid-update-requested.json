@@ -1,0 +1,8 @@
+{
+  "response": {
+    "boxImageRef": "ghcr.io/blitzdotdev/blitz-box:v2",
+    "controlPlaneOrigin": "https://blitzos.example:8443",
+    "updateRequested": true
+  },
+  "accepts": true
+}

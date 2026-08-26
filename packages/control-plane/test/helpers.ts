@@ -5,6 +5,7 @@ import { rawDb } from "../src/raw-db.js";
 import type { $Env } from "teenybase/worker";
 import {
   allowedEmailDomainsFromEnv,
+  controlPlaneOriginFromEnv,
   createSessionPrincipalSource,
   credentialMasterKeyFor,
   installControlPlaneRoutes,
@@ -206,6 +207,7 @@ export function appWithVmProviders(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+      controlPlaneOrigin: controlPlaneOriginFromEnv((context.env as TestBindings).APP_URL),
       connectSecret: (name) => testConnectSecrets.get(name),
       signupMode: signupModeFromEnv((context.env as TestBindings).SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(
