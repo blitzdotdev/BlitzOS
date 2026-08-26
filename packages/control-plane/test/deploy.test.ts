@@ -141,6 +141,72 @@ describe("control-plane deploy command", () => {
     });
   });
 
+  it("passes deployment-specific vars through to wrangler, and none when unset", async () => {
+    // A setting that differs per deployment and is not secret lives in neither
+    // the committed example nor the stored config: the example is one value for
+    // everyone, and the stored config is repaired from it on every deploy.
+    const calls: { tool: string; args: string[] }[] = [];
+    const run = async (tool: string, args: string[]) => {
+      calls.push({ tool, args });
+      if (tool === "wrangler" && args[0] === "whoami") return { stdout: "{}" };
+      if (tool === "wrangler" && args[0] === "d1" && args[1] === "list") {
+        return {
+          stdout: JSON.stringify([
+            { uuid: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", name: "blitz-control-plane" },
+          ]),
+        };
+      }
+      if (tool === "wrangler" && args[0] === "r2" && args[2] === "list") {
+        return { stdout: "name:           blitz-box-images" };
+      }
+      if (tool === "wrangler" && args[0] === "secret") {
+        return {
+          stdout: JSON.stringify(
+            ["HETZNER_API_TOKEN", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "WEBAPP_TOKEN_SECRET", "CRED_MASTER_KEY"]
+              .map((name) => ({ name, type: "secret_text" })),
+          ),
+        };
+      }
+      return { stdout: "" };
+    };
+    const rawConfig = {
+      name: "blitz-control-plane",
+      vars: { MICROVM_HOSTS: "[]" },
+      r2_buckets: [{ binding: "BOX_IMAGES", bucket_name: "blitz-box-images" }],
+      d1_databases: [{
+        binding: "DB",
+        database_name: "blitz-control-plane",
+        database_id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        migrations_dir: "migrations",
+      }],
+    };
+
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {},
+      secretValues: {},
+      runWorkerFirst: () => DERIVED_ROUTES,
+      overrideVars: { CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required" },
+    });
+    const withVar = calls.find(({ tool, args }) => tool === "wrangler" && args[0] === "deploy");
+    expect(withVar?.args).toContain("CLOUD_WORKSPACE_CREDENTIAL_POLICY:byok-required");
+
+    // A self-hoster passes none and keeps the example default.
+    calls.length = 0;
+    await deployControlPlane({
+      configPath: "packages/control-plane/wrangler.toml",
+      rawConfig,
+      run,
+      async patchConfig() {},
+      secretValues: {},
+      runWorkerFirst: () => DERIVED_ROUTES,
+    });
+    const bare = calls.find(({ tool, args }) => tool === "wrangler" && args[0] === "deploy");
+    expect(bare?.args.join(" ")).not.toContain("CLOUD_WORKSPACE_CREDENTIAL_POLICY");
+  });
+
   it("passes the checked-out commit to the deploy, so GET /version can report it", async () => {
     const calls: { tool: string; args: string[] }[] = [];
     const run = async (tool: string, args: string[]) => {
