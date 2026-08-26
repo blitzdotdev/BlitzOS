@@ -12,7 +12,7 @@ import {
 } from '../ComputeCredentialFields';
 import { ConfirmationDialog } from '../ConfirmationDialog';
 import { caughtErrorMessage } from '../error-message';
-import { ProviderGlyph } from '../connections/ProviderGlyph';
+import { KeyIcon } from '../WebAppIcons';
 
 type ComputeClient = Pick<
   ControlPlaneClient,
@@ -144,7 +144,7 @@ export function ComputeCredentialsPanel({
             return (
               <article className="settings-compute-card" key={provider.id}>
                 <div className="settings-credential-row">
-                  <ProviderGlyph className="settings-compute-glyph" provider={provider.id} />
+                  <KeyIcon className="settings-compute-glyph" />
                   <div>
                     <div className="settings-credential-row__title">
                       <h3>{provider.title}</h3>

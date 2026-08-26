@@ -72,7 +72,7 @@ export function TemplateConnectionsSection({
   return (
     <div className="tplf-connections">
       <h2>Connections</h2>
-      <p>Apps this template needs. Members sign in to each one inside their workspace.</p>
+      <p>Apps this template needs. Members connect each one inside their workspace, with their own token or through OAuth.</p>
       {connectionError && (
         <p className="webapp-form-message" role="alert">{connectionError}</p>
       )}

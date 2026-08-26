@@ -73,6 +73,19 @@ export function GenericProviderIcon(props: WebAppIconProps) {
   );
 }
 
+/** A key, for the bring-your-own-key compute credential cards. Those cards
+ * hold an account key the org pastes, not a connection to a branded app, so a
+ * provider mark would name the wrong thing. */
+export function KeyIcon(props: WebAppIconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <circle cx="6.75" cy="13.25" r="3.25" />
+      <path d="M9.05 10.95 16.5 3.5" />
+      <path d="M13.5 6.5 15.5 8.5M15.5 4.5 17.5 6.5" />
+    </svg>
+  );
+}
+
 export function FileIcon(props: WebAppIconProps) {
   return (
     <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.15" aria-hidden="true" {...props}>
