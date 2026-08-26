@@ -12,6 +12,7 @@ import {
   CONFIG_PATH,
   commandFailureMessage,
   deployControlPlane,
+  overrideVarsFromEnvironment,
 } from "./deploy-helpers.mjs";
 import { assertPublishedAssets } from "../../webapp/scripts/check-published-assets.mjs";
 import { assertConfigMatchesExample, repairConfigFromExample } from "./config-drift.mjs";
@@ -115,23 +116,6 @@ function checkedOutCommit() {
 }
 
 const rawConfig = readRawWranglerConfig({ config: configAbsolute }).rawConfig;
-
-/** Wrangler vars supplied by the deploying environment rather than by config.
- *
- * A setting that differs per deployment and is not secret belongs in neither
- * the committed example nor the stored wrangler.toml: the example is one
- * value for everyone, and the stored config is repaired from it on every
- * deploy. The hosted workflows export BLITZ_DEPLOY_VAR_<NAME>; a self-hoster
- * exports none and keeps every example default. */
-function overrideVarsFromEnvironment(environment) {
-  const prefix = "BLITZ_DEPLOY_VAR_";
-  const vars = {};
-  for (const [key, value] of Object.entries(environment)) {
-    if (!key.startsWith(prefix) || value === undefined || value === "") continue;
-    vars[key.slice(prefix.length)] = value;
-  }
-  return vars;
-}
 
 deployControlPlane({
   configPath: CONFIG_PATH,
