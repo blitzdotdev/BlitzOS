@@ -1818,4 +1818,34 @@ describe('template screen org-credential config', () => {
       new URL(String(input)).pathname === '/machine-types')).toHaveLength(2);
     await view.unmount();
   });
+
+  it('tells a member which cloud key an organization admin must add', async () => {
+    const fetcher = stub((url) => url.pathname === '/machine-types'
+      ? Response.json({
+          machineTypes: [],
+          failures: [],
+          providerStatuses: [{ providerId: 'aws', access: 'credential-required' }],
+        })
+      : null);
+    const view = await render(
+      <CreateTemplateScreen
+        client={createControlPlaneClient('https://cp.example')}
+        orgId="org-one"
+        orgName="acme"
+        onCreated={vi.fn()}
+        onCancel={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain('Amazon Web Services requires an organization key.');
+    expect(view.container.textContent).toContain(
+      'Ask an organization admin to add the key in Compute settings.',
+    );
+    expect(view.container.querySelector('input[type="password"]')).toBeNull();
+    expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+    expect(fetcher.mock.calls.filter(([input]) =>
+      new URL(String(input)).pathname === '/machine-types')).toHaveLength(1);
+    await view.unmount();
+  });
 });

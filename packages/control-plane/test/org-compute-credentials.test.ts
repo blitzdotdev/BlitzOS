@@ -284,6 +284,25 @@ describe("organization compute credentials", () => {
     expect(workspaceSource?.compute_credential_source).toBe("deployment");
   });
 
+  it("keeps deployment fallback for an ordinary self-host org", async () => {
+    const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
+    const cookie = await userSession("self-host-fallback");
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(201);
+    const createCall = fake.calls.find(
+      (call) => call.url.endsWith("/servers") && call.method === "POST",
+    );
+    expect(createCall?.authorization).toBe("Bearer deployment-test-token");
+    expect(await env.DB.prepare(
+      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'self-host-fallback-org'",
+    ).first()).toMatchObject({ compute_credential_source: "deployment" });
+  });
+
   it("requires BYOK from an org containing the platform operator", async () => {
     const { app, fake } = await appFor({
       HETZNER_API_TOKEN: "deployment-test-token",

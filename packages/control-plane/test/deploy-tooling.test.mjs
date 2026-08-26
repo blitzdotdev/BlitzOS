@@ -95,9 +95,13 @@ test("a config generated from the example carries every key", () => {
   assert.deepEqual(missingConfigKeys(example, example), []);
 });
 
-test("the example declares GIT_COMMIT_SHA and routes /version to the worker", () => {
+test("the example declares deployment metadata and routes /version to the worker", () => {
   const example = readFileSync(path.join(packageDirectory, "wrangler.toml.example"), "utf8");
   assert.match(example, /GIT_COMMIT_SHA/u);
+  assert.match(
+    example,
+    /CLOUD_WORKSPACE_CREDENTIAL_POLICY = "deployment-fallback"/u,
+  );
   assert.match(example, /"\/version"/u);
 });
 

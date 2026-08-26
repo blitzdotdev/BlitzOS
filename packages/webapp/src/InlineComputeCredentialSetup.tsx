@@ -8,6 +8,7 @@ import {
   COMPUTE_CREDENTIAL_PROVIDER_DETAILS,
   ComputeCredentialFields,
   computeCredentialInput,
+  computeCredentialProviderTitle,
   emptyComputeCredentialFields,
 } from './ComputeCredentialFields';
 import { caughtErrorMessage } from './error-message';
@@ -53,7 +54,7 @@ function InlineProviderCredential({
       <div className="settings-credential-row">
         <ProviderGlyph className="settings-compute-glyph" provider={provider} />
         <div>
-          <h3>Add your {details?.title ?? provider} key</h3>
+          <h3>Add your {computeCredentialProviderTitle(provider)} key</h3>
           <p>{details?.detail}</p>
         </div>
       </div>
@@ -93,8 +94,7 @@ export function InlineComputeCredentialSetup({
 }) {
   if (providers.length === 0) return null;
   if (!admin || saveCredential === undefined || orgId === '') {
-    const names = providers.map((provider) =>
-      COMPUTE_CREDENTIAL_PROVIDER_DETAILS.find(({ id }) => id === provider)?.title ?? provider);
+    const names = providers.map(computeCredentialProviderTitle);
     return (
       <div className="blueprint-selection__empty" role="status">
         {names.join(' and ')} {names.length === 1 ? 'requires' : 'require'} an organization key.

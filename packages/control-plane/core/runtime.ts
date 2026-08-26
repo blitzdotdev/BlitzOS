@@ -8,6 +8,7 @@ import type { VolumeProviderResolver } from "./compute/types.js";
 import type { VmProviderRegistry } from "./compute/registry.js";
 import type { WorkspaceTunnels } from "./workspace-tunnels.js";
 import type { WorkspaceWebAppAuth } from "./webapp-tickets.js";
+import { cloudWorkspaceCredentialPolicyFromEnv } from "./signup-config.js";
 
 export interface CoreRequest {
   readonly raw: Request;
@@ -50,7 +51,9 @@ export interface CoreRouter {
 }
 
 export type SignupMode = "open" | "invite";
-export type CloudWorkspaceCredentialPolicy = "deployment-fallback" | "byok-required";
+export type CloudWorkspaceCredentialPolicy = ReturnType<
+  typeof cloudWorkspaceCredentialPolicyFromEnv
+>;
 
 export interface RuntimeVariables {
   boxImageRef: string;
@@ -96,19 +99,6 @@ export interface RuntimeVariables {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export function cloudWorkspaceCredentialPolicyFromEnv(
-  value: string | null | undefined,
-): CloudWorkspaceCredentialPolicy {
-  const policy = value?.trim().toLowerCase();
-  if (policy === undefined || policy === "" || policy === "deployment-fallback") {
-    return "deployment-fallback";
-  }
-  if (policy === "byok-required") return policy;
-  throw new Error(
-    "CLOUD_WORKSPACE_CREDENTIAL_POLICY must be deployment-fallback or byok-required",
-  );
-}
-
 export function sessionTtlMsFromEnv(value: string | number | null | undefined): number {
   const days = isNumber(value) ? value : Number(value);
   if (!Number.isSafeInteger(days) || days < 1 || days > 3_650) {
@@ -127,9 +117,13 @@ export async function enforceRateLimit(
   }
 }
 
-// Re-exported, not reimplemented: scripts/deploy-helpers.mjs imports the same
-// module to reject a bad SIGNUP_MODE or ALLOWED_EMAIL_DOMAINS at deploy time.
-export { allowedEmailDomainsFromEnv, signupModeFromEnv } from "./signup-config.js";
+// Re-exported, not reimplemented: deploy tooling imports these same parsers to
+// reject bad plain-text settings before they can break every request and cron.
+export {
+  allowedEmailDomainsFromEnv,
+  signupModeFromEnv,
+} from "./signup-config.js";
+export { cloudWorkspaceCredentialPolicyFromEnv };
 
 export interface CoreRuntime {
   db: Db;
