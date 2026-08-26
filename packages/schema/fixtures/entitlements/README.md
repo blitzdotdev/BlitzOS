@@ -75,17 +75,20 @@ a second key exchange. It expires 15 minutes after it is minted.
 It is a **handoff, not an authorization**. It names the organization that hit
 the wall and the person who was standing there; `role` is that person's role in
 the organization, and at invite redemption it is the role the invite would have
-granted to someone who is not a member yet. The billing service must
-authenticate the buyer through its own session and check its own rules before
-it accepts money. Nothing in it grants anything.
+granted to someone who is not a member yet. `controlPlaneOrigin` is the
+deployment's own configured origin and `returnTo` is the page path that initiated
+the request. The billing service validates both fields and gives Stripe that
+same control-plane URL for success and cancellation. The normal BlitzOS session
+authenticates the browser when it returns; nothing in the token grants anything.
 
 ## Fixtures
 
 | Fixture | What it pins |
 |---|---|
-| `context.json` | The key, checkout origin, and mint time every other fixture is built from |
+| `context.json` | The key, checkout origin, control-plane return location, and mint time every other fixture is built from |
 | `write-request.json` | A body the write route accepts |
 | `write-request-rejected.json` | Bodies it must refuse with 400 |
 | `seat-limit-denial.json` | The 402 body, with and without a configured `PAYMENT_URL` |
 | `handoff-claims.json` | The decoded claims inside that `paymentUrl` |
 | `usage.json` | `GET /orgs/:id/usage`, with seat gating on and off |
+| `corpus.sha256` | SHA-256 of every other fixture's filename and exact bytes, in filename order |

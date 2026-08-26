@@ -4,7 +4,7 @@
   "body": {
     "error": "seat limit reached",
     "retryAction": "upgrade",
-    "paymentUrl": "https://billing.example/checkout#token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJvcmctYWNtZSIsInVzZXIiOiJ1c2VyLWRhbmEiLCJyb2xlIjoiYWRtaW4iLCJleHAiOjE3ODcwMDAwMDB9.q2Wgppxef0KnD1Jf4ZnecRUOGSnDBt08UvWTgdite5c"
+    "paymentUrl": "https://billing.example/checkout#token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJvcmctYWNtZSIsInVzZXIiOiJ1c2VyLWRhbmEiLCJyb2xlIjoiYWRtaW4iLCJjb250cm9sUGxhbmVPcmlnaW4iOiJodHRwczovL2NvbnRyb2wtcGxhbmUuZXhhbXBsZSIsInJldHVyblRvIjoiL3NldHRpbmdzL2ludml0ZXMiLCJleHAiOjE3ODcwMDAwMDB9.tI8J-7objHXHj1btnx7qEbdqaMEIQY4f0HS55O7C6yY"
   },
   "withoutPaymentUrl": {
     "error": "seat limit reached",

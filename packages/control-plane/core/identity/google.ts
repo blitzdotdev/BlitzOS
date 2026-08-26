@@ -457,6 +457,7 @@ export function addGoogleAuthRoutes(
       try {
         await redeemInviteSession(
           runtime,
+          context.req.raw,
           state.inviteCode,
           user.id,
           profile.email,
