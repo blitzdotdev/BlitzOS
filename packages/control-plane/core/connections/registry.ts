@@ -25,6 +25,7 @@ import {
   githubAppMinter,
   importGithubAppPrivateKey,
   normalizeGithubAppPrivateKey,
+  usesPlatformKey,
 } from "./minters/app-jwt/github-app.js";
 import { staticMinter } from "./minters/static.js";
 
@@ -66,6 +67,7 @@ interface ParsedAppJwtConfig {
   placements?: ParsedPlacementTemplate[];
   repositories?: string[];
   permissions?: ParsedStringMap;
+  platform_key?: boolean;
 }
 
 function isMintKind(value: unknown): value is MintKind {
@@ -186,6 +188,10 @@ function appJwtConfigJson(value: unknown): string {
     app_id: digitString(value.app_id, "config.app_id"),
     installation_id: digitString(value.installation_id, "config.installation_id"),
   };
+  // The flag is the whole difference between "the org registered a GitHub App"
+  // and "the org installed ours". Only `true` counts; anything else is the
+  // bring-your-own-App path and still owes a private key.
+  if (value.platform_key === true) config.platform_key = true;
   if (value.placements !== undefined) {
     if (!Array.isArray(value.placements)) {
       throw new HttpError(400, "config.placements must be an array");
@@ -400,6 +406,65 @@ function validateServedConnection(
   throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
 }
 
+/** The one write that creates or replaces an org's connection row. The admin
+ * PUT and the platform-app install redirect both land here, so the two paths
+ * cannot drift on what a stored connection looks like. */
+export interface ConnectionUpsert {
+  name: string;
+  provider: string;
+  kind: MintKind;
+  custody: Custody;
+  config: string;
+  /** Null for a platform-key connection: the deployment holds the key. */
+  root: string | null;
+  usableBy: string | null;
+}
+
+export async function upsertConnection(
+  runtime: ReturnType<RuntimeFactory>,
+  principal: Principal,
+  input: ConnectionUpsert,
+): Promise<void> {
+  if (principal.orgId === null) throw new HttpError(403, "active membership required");
+  const existing = await connectionByName(runtime.db, input.name, principal.orgId, false);
+  const id = existing?.id ?? crypto.randomUUID();
+  const now = Date.now();
+  const rootCiphertext = input.root === null
+    ? null
+    : await sealRoot(runtime.credentialMasterKey, input.name, input.root);
+  await rows(runtime.db, {
+    q: `INSERT INTO connections
+        (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
+         usable_by, created_by, created_at, revoked_at, org_id,
+         created_by_membership_id)
+        VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
+        ON CONFLICT(org_id, scoped_name) DO UPDATE SET
+          provider = excluded.provider,
+          kind = excluded.kind,
+          custody = excluded.custody,
+          config = excluded.config,
+          root_ciphertext = excluded.root_ciphertext,
+          usable_by = excluded.usable_by,
+          created_by = excluded.created_by,
+          created_by_membership_id = excluded.created_by_membership_id,
+          revoked_at = NULL`,
+    v: [
+      id,
+      input.name,
+      input.provider,
+      input.kind,
+      input.custody,
+      input.config,
+      rootCiphertext,
+      input.usableBy,
+      principal.id,
+      now,
+      principal.orgId,
+      principal.membershipId,
+    ],
+  });
+}
+
 export function addConnectionRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -455,43 +520,23 @@ export function addConnectionRoutes(
     }
     validateServedConnection(provider, value.kind, custodyValue);
     const config = configJson(value.kind, custodyValue, value.config);
-    const root = await validateRoot(value.kind, requiredString(value.root, "root"));
+    // A platform-key connection has no root to seal — the deployment holds the
+    // key. Every other shape still requires one, so a missing key stays a 400
+    // rather than becoming a connection that cannot mint.
+    const platformKey = value.kind === "app-jwt" && usesPlatformKey(config);
+    const root = platformKey
+      ? null
+      : await validateRoot(value.kind, requiredString(value.root, "root"));
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);
-    const existing = await connectionByName(runtime.db, name, principal.orgId, false);
-    const id = existing?.id ?? crypto.randomUUID();
-    const now = Date.now();
-    const rootCiphertext = await sealRoot(runtime.credentialMasterKey, name, root);
-    await rows(runtime.db, {
-      q: `INSERT INTO connections
-          (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
-           usable_by, created_by, created_at, revoked_at, org_id,
-           created_by_membership_id)
-          VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
-          ON CONFLICT(org_id, scoped_name) DO UPDATE SET
-            provider = excluded.provider,
-            kind = excluded.kind,
-            custody = excluded.custody,
-            config = excluded.config,
-            root_ciphertext = excluded.root_ciphertext,
-            usable_by = excluded.usable_by,
-            created_by = excluded.created_by,
-            created_by_membership_id = excluded.created_by_membership_id,
-            revoked_at = NULL`,
-      v: [
-        id,
-        name,
-        provider,
-        value.kind,
-        custodyValue,
-        config,
-        rootCiphertext,
-        usableBy,
-        principal.id,
-        now,
-        principal.orgId,
-        principal.membershipId,
-      ],
+    await upsertConnection(runtime, principal, {
+      name,
+      provider,
+      kind: value.kind,
+      custody: custodyValue,
+      config,
+      root,
+      usableBy,
     });
     return context.body(null, 204);
   };

@@ -24,6 +24,10 @@ import {
   manifestWithoutConnection,
   usableByAllows,
 } from "./manifest.js";
+import {
+  GITHUB_PLATFORM_KEY_VAR,
+  usesPlatformKey,
+} from "./minters/app-jwt/github-app.js";
 import { mintFromGrant } from "./minters/grant.js";
 import { refreshedAccessToken } from "./minters/oauth.js";
 import { openRoot } from "./root-crypto.js";
@@ -416,8 +420,12 @@ async function legacyRootMint(
   if (minter === null) {
     throw new HttpError(409, "integration credential mechanism is unavailable");
   }
-  const root =
-    connection.root_ciphertext === null
+  // A platform-key connection stores no root: the org installed BlitzOS's own
+  // GitHub App instead of registering one, so the key stays a deployment
+  // secret and never enters an org's row.
+  const root = usesPlatformKey(connection.config)
+    ? runtime.vars.connectSecret(GITHUB_PLATFORM_KEY_VAR) ?? null
+    : connection.root_ciphertext === null
       ? null
       : await openRoot(
           runtime.credentialMasterKey,

@@ -10,10 +10,14 @@ import {
 import { cookieValue, findStatePrincipal } from "../principals.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { providerManifest, providerRedirectPath } from "./catalog/index.js";
+import {
+  PLATFORM_APP_SLUG_VAR,
+  providerManifest,
+  providerRedirectPath,
+} from "./catalog/index.js";
 import type { OAuthProviderManifest, ProviderManifest } from "./catalog/types.js";
 import { exchangeTokens } from "./minters/oauth.js";
-import { ensureCatalogConnection } from "./registry.js";
+import { ensureCatalogConnection, upsertConnection } from "./registry.js";
 import { storeGrant } from "./user-grants.js";
 import type { GrantConfig } from "./user-grants.js";
 
@@ -159,6 +163,105 @@ export function addConnectRoutes(
     authorize.search = parameters.toString();
     context.header("Set-Cookie", oauth.cookie, { append: true });
     return context.body(null, 302, { Location: authorize.toString() });
+  });
+
+  /** The org half of the platform-app path. An admin installing BlitzOS's own
+   * GitHub App picks the org and its repositories on GitHub, so nothing here
+   * asks for an App ID or a private key — the key is the deployment's.
+   *
+   * State is signed the same way /start signs it, because GitHub's setup
+   * redirect is a cross-site navigation and arrives without the SameSite=Strict
+   * session cookie. */
+  router.get("/connect/:provider/install", async (context) => {
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    if (principal.role !== "admin") {
+      throw new HttpError(403, "organization admin required");
+    }
+    const runtime = runtimeFactory(context);
+    const id = requiredString(context.req.param("provider"), "provider", 64);
+    const manifest = providerManifest(id);
+    if (manifest === null || manifest.adminForm?.app == null) {
+      throw new HttpError(404, "provider has no app install path");
+    }
+    const slug = runtime.vars.connectSecret(PLATFORM_APP_SLUG_VAR) ?? "";
+    if (slug === "") {
+      throw new HttpError(409, "this deployment has no app of its own to install");
+    }
+    const oauth = await createConnectOAuthState(
+      runtime.vars.googleClientSecret,
+      manifest.id,
+      principal.id,
+      principal.membershipId,
+      null,
+    );
+    const install = new URL(`https://github.com/apps/${encodeURIComponent(slug)}/installations/new`);
+    install.searchParams.set("state", oauth.state);
+    context.header("Set-Cookie", oauth.cookie, { append: true });
+    return context.body(null, 302, { Location: install.toString() });
+  });
+
+  /** GitHub's setup redirect. It carries the installation the admin just
+   * created, and the state this deployment signed on the way out. */
+  router.get("/connect/:provider/installed", async (context) => {
+    const runtime = runtimeFactory(context);
+    const id = requiredString(context.req.param("provider"), "provider", 64);
+    const origin = new URL(context.req.url).origin;
+    const manifest = providerManifest(id);
+    const parameters = new URL(context.req.url).searchParams;
+    const state = parameters.get("state") ?? "";
+    const installationId = parameters.get("installation_id") ?? "";
+    const cookie = cookieValue(context.req.raw, CONNECT_OAUTH_COOKIE);
+    const verified = cookie === null
+      ? null
+      : await verifyConnectOAuthStateCookie(
+          cookie,
+          state,
+          manifest?.id ?? id,
+          runtime.vars.googleClientSecret,
+        );
+    context.header("Set-Cookie", clearConnectOAuthStateCookie(), { append: true });
+    if (
+      manifest === null
+      || manifest.adminForm?.app == null
+      || verified === null
+      || !/^[0-9]{1,20}$/u.test(installationId)
+    ) {
+      return context.body(null, 302, { Location: returnUrl(origin, "denied", id) });
+    }
+    const principal = await findStatePrincipal(
+      runtime.db,
+      verified.userId,
+      verified.membershipId,
+    );
+    if (principal === null || principal.orgId === null || principal.role !== "admin") {
+      return context.body(null, 302, { Location: returnUrl(origin, "denied", id) });
+    }
+    // GitHub accepts the App's Client ID as the JWT issuer, so the install
+    // path needs no App ID of its own — the client id binding already names
+    // this deployment's app.
+    const issuer = manifest.auth === null
+      ? ""
+      : runtime.vars.connectSecret(manifest.auth.clientIdVar) ?? "";
+    if (issuer === "") {
+      return context.body(null, 302, { Location: returnUrl(origin, "denied", id) });
+    }
+    await upsertConnection(runtime, principal, {
+      name: manifest.id,
+      provider: manifest.id,
+      kind: "app-jwt",
+      custody: "cp",
+      config: JSON.stringify({
+        app_id: issuer,
+        installation_id: installationId,
+        platform_key: true,
+      }),
+      root: null,
+      usableBy: null,
+    });
+    return context.body(null, 302, { Location: returnUrl(origin, "connected", id) });
   });
 
   router.get("/connect/:provider/callback", async (context) => {
