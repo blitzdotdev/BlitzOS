@@ -1,6 +1,7 @@
 # AI OS loop — save a good workspace as a template
 
-Audit date: 2026-08-25. Source: `origin/main` at `c6902d0`.
+Audit date: 2026-08-26. Source: `origin/main` at `e5f70e1`.
+Every line number in this document refers to that commit. `main` moves often.
 
 A template stores a reusable workspace setup. A workspace starts from a template or starts blank.
 A recipe combines a template, harness, model, optional effort, and prompt. The root `README.md:28` starts an agent from a company template.
@@ -10,15 +11,15 @@ A recipe combines a template, harness, model, optional effort, and prompt. The r
 
 ### Gap 1 — no workspace-to-template path
 
-The create parser accepts `templateId` at `packages/control-plane/core/workspaces.ts:104`. The workspace insert omits it at `packages/control-plane/core/workspaces.ts:489`.
+The create parser accepts `templateId` at `packages/control-plane/core/workspaces.ts:105`. The workspace insert omits it at `packages/control-plane/core/workspaces.ts:490`.
 That insert also omits requested repositories. `WorkspaceView` exposes neither value at `packages/schema/src/workspace.ts:27`.
 The template menu offers Edit and Delete at `packages/webapp/src/files/TemplatesHome.tsx:100`. The card offers New workspace separately at `packages/webapp/src/files/TemplatesHome.tsx:151`.
 Users must rebuild a successful setup from memory.
 
 ### Gap 2 — ready does not mean setup complete
 
-Phone home marks the workspace ready at `packages/control-plane/core/workspaces.ts:921`. The control plane schedules folder sync later at `packages/control-plane/core/workspaces.ts:935`.
-Bootstrap starts repository cloning before phone home at `packages/control-plane/core/bootstrap.ts:748`. Cloning can finish before or after ready.
+Phone home marks the workspace ready at `packages/control-plane/core/workspaces.ts:922`. The control plane schedules folder sync later at `packages/control-plane/core/workspaces.ts:936`.
+Bootstrap starts repository cloning before phone home at `packages/control-plane/core/bootstrap.ts:765`. Cloning can finish before or after ready.
 Users can start work before folders, repositories, environment, or startup work finishes.
 
 ### Gap 3 — setup failures stay hidden
@@ -30,14 +31,19 @@ Backend failures can look like valid empty states.
 
 ### Gap 4 — viewer sharing breaks its promise
 
-The dialog promises chat replay at `packages/webapp/src/ShareWorkspaceDialog.tsx:177`. The control plane blocks viewer port `7444` at `packages/control-plane/core/workspaces.ts:735`.
+The dialog promises chat replay at `packages/webapp/src/ShareWorkspaceDialog.tsx:177`. The control plane blocks viewer port `7444` at `packages/control-plane/core/workspaces.ts:736`.
 The browser also shows one fixed hold message at `packages/webapp/src/CloudApp.tsx:1742`.
 Viewers cannot review the agent chat.
+The read-only terminal gate uses `created_at` as a proxy for box capability.
+Box update landed in `e5f70e1`. A cloud-VM host can now swap the image of a running workspace.
+So `created_at` no longer identifies the running image. A future fix must read reported box state.
 
 ### Gap 5 — workspaces never stop
 
 The server defines five phases at `packages/schema/src/workspace.ts:3`. It defines no stopped or resumed phase.
-The browser carries unused stop states at `packages/webapp/src/protocol.ts:3`. The quota counts non-destroyed workspaces at `packages/control-plane/core/workspaces.ts:495`.
+The browser carries unused stop states at `packages/webapp/src/protocol.ts:3`. The quota counts `VM_SLOT_PHASES` at `packages/control-plane/core/workspaces.ts:496`.
+Those phases are `creating`, `ready`, `destroying`, and `error`. Only `destroyed` frees a slot.
+The cap has one stored source, `orgs.vm_limit`. Entitlements can write that column, but `org_entitlements` holds seat limits only.
 Users must destroy workspaces to stop cost and release quota.
 
 ### Gap 6 — new organizations start empty
@@ -86,7 +92,7 @@ Template creates record `'template'`, the selected template, and requested repos
 The migration leaves existing source fields null. Existing rows never stored these values, so no backfill can recover them.
 The migration marks existing templates private and clears their default status. Shared recipe launches wait for publication.
 This choice prevents silent publication of old secrets and scripts.
-The Worker adds every new field to `BLITZDEV_CONFIG` at `packages/control-plane/scripts/lib/worker-source.mjs:101`.
+The Worker adds every new field to `BLITZDEV_CONFIG` at `packages/control-plane/scripts/lib/worker-source.mjs:103`.
 Each new core file must enter `CORE_MANIFEST` in the same file.
 
 ### Routes and flow
@@ -111,7 +117,7 @@ An administrator uses a separate publication review. Workspace creation continue
 
 The draft route calls `canControlWorkspace`. That helper permits only owners and administrators at `packages/control-plane/core/workspace-access.ts:17`.
 Viewer and editor access never permits draft creation.
-Current workspace views return raw environment data to any opener at `packages/control-plane/core/workspace-records.ts:94`.
+Current workspace views return raw environment data to any opener at `packages/control-plane/core/workspace-records.ts:99`.
 The implementation returns raw environment data only to workspace controllers.
 The draft returns environment key names but no values. It copies no value into `draft.environment.env`.
 The user enters each wanted value again. The browser shows the exact startup script as executable content.
@@ -135,7 +141,7 @@ The publish screen requires accessible organization folders or removes them.
 ### Connection scope ceiling
 
 The current code cannot enforce a saved scope ceiling end to end.
-Parsing overwrites scoped GitHub at `packages/control-plane/core/workspace-templates.ts:123`. Creation keeps provider names at `packages/control-plane/core/workspaces.ts:435`.
+Parsing overwrites scoped GitHub at `packages/control-plane/core/workspace-templates.ts:123`. Creation keeps provider names at `packages/control-plane/core/workspaces.ts:436`.
 Token pulls request provider defaults at `packages/control-plane/core/connections/mint.ts:541`.
 The loop must change the complete path before it exposes scoped template saving.
 
@@ -168,6 +174,7 @@ Existing workspaces keep `sourceTemplateId`. The catalogue hides deleted templat
 The draft uses stored configuration only. It does not inspect the workspace disk.
 It cannot capture manual packages, files, repositories, project rules, Docker state, Git state, or home dotfiles.
 Volumes, SSH keys, box host keys, recipes, and runtime state never enter a template.
+Box update state never enters a template either. That covers `box_update_requested`, `box_image_reported`, and the running image.
 
 ### Type sketches
 
