@@ -9,12 +9,13 @@ import {
 } from "../entitlements.js";
 import { HttpError, isRecord, type JsonValue, readJson, requiredString } from "../http.js";
 import type { Principal } from "../principals.js";
-import type {
-  CoreContext,
-  CoreRouter,
-  CoreRuntime,
-  RuntimeFactory,
-  RuntimeVariables,
+import {
+  enforceRateLimit,
+  type CoreContext,
+  type CoreRouter,
+  type CoreRuntime,
+  type RuntimeFactory,
+  type RuntimeVariables,
 } from "../runtime.js";
 import { INVITE_TTL_DAYS } from "../wire.js";
 
@@ -258,13 +259,14 @@ export function addInviteRoutes(
   router.post("/invites", async (context) => {
     const principal = await requirePrincipal(context);
     const orgId = requireAdmin(principal);
+    const runtime = runtimeFactory(context);
+    await enforceRateLimit(runtime.vars.requestRateLimiter, `create:${principal.id}`);
     const value = await readJson(context.req.raw);
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
     const role = inviteRole(value.role);
     const email = optionalEmail(value.email);
     // Soft, and only soft: an invite is not a seat, so this refuses early for
     // the person's sake. The seat itself is granted or refused at redemption.
-    const runtime = runtimeFactory(context);
     if (await seatsExhausted(runtime, orgId)) {
       throw await seatLimitReached(runtime, { org: orgId, user: principal.id, role: "admin" });
     }

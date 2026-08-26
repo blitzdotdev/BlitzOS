@@ -87,7 +87,7 @@ export type {
 } from "./runtime.js";
 export {
   allowedEmailDomainsFromEnv,
-  maxConcurrentWorkspacesFromEnv,
+  enforceRateLimit,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
 } from "./runtime.js";

@@ -1,6 +1,6 @@
 import type { BlobStore } from "./blobs.js";
 import type { Db } from "./db.js";
-import { isNumber } from "./http.js";
+import { HttpError, isNumber } from "./http.js";
 import type { PrincipalSource } from "./principals.js";
 import type { MicrovmPoolProvider } from "./compute/microvm.js";
 import type { VmProviderRegistry } from "./compute/registry.js";
@@ -55,7 +55,7 @@ export interface RuntimeVariables {
   boxImageSha256: string;
   boxImageTag: string;
   sessionTtlMs: number;
-  maxConcurrentWorkspaces: number;
+  requestRateLimiter?: RateLimit;
   googleClientId: string;
   googleClientSecret: string;
   bootstrapSecret: string;
@@ -98,12 +98,14 @@ export function sessionTtlMsFromEnv(value: string | number | null | undefined): 
   return days * DAY_MS;
 }
 
-export function maxConcurrentWorkspacesFromEnv(value: string | number | null | undefined): number {
-  const limit = isNumber(value) ? value : Number(value);
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
-    throw new Error("MAX_CONCURRENT_WORKSPACES must be an integer from 1 through 1000");
+export async function enforceRateLimit(
+  limiter: RateLimit | undefined,
+  key: string,
+): Promise<void> {
+  if (limiter === undefined) return;
+  if (!(await limiter.limit({ key })).success) {
+    throw new HttpError(429, "request rate limit exceeded");
   }
-  return limit;
 }
 
 // Re-exported, not reimplemented: scripts/deploy-helpers.mjs imports the same

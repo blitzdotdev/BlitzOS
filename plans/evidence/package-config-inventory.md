@@ -69,7 +69,6 @@ Summary: **1 declared env, 4 non-env, 0 obsolete**.
 | `BOX_IMAGE_TAG` | Worker runtime; Wrangler var | declared env | Optional string; empty is meaningful for a local image reference |
 | `CRED_MASTER_KEY` | Worker initialization and scheduled handler | declared env | Required secret binding, no default |
 | `HETZNER_API_TOKEN` | `providersFor` | declared env | Optional secret binding; required only when Hetzner operations are used |
-| `MAX_CONCURRENT_WORKSPACES` | Worker runtime; Wrangler var | declared env | `integer`, default 10, range 1–1000 |
 | `MICROVM_HOSTS` | `providersFor`; Wrangler var | declared env | `json`, default empty array; program code owns the stricter host shape |
 | `MICROVM_LAB_TOKEN` | dynamically resolved from checked-in `MICROVM_HOSTS.tokenVar` | declared env | Optional secret binding, no default; validation checks the referenced name |
 | `OPERATOR_API_KEY` | principal source | declared env | Required secret binding, no default |
@@ -82,7 +81,7 @@ Summary: **1 declared env, 4 non-env, 0 obsolete**.
 | `CI` and ambient `process.env` | deploy script child environment | non-env | Command execution environment, not control-plane runtime configuration |
 | `BLITZ_REPORTER_TEST_DIR`, `BLITZ_REPORTER_OLD_TOKEN`, `BLITZ_REPORTER_NEW_TOKEN`, `CP_URL`, `HOST_NAME`, `TOKEN_FILE`, `PATH`, `TMPDIR` | `test/shell-syntax.sh` | non-env | Test-harness inputs for the microvm-host reporter, not control-plane configuration |
 
-Summary: **14 declared env, 15 non-env, 0 obsolete** (including the ambient
+Summary: **13 declared env, 15 non-env, 0 obsolete** (including the ambient
 deploy passthrough as one intentionally open set).
 
 The checked-in Wrangler D1 database ID and R2 bucket name are deployment

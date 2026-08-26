@@ -1115,56 +1115,24 @@ describe("control plane security and lifecycle", () => {
     ).toBe(1);
   });
 
-  it("scopes the concurrent workspace quota to the authenticated principal", async () => {
+  it("rate limits workspace and invite creation per principal", async () => {
     const { app, providers } = harness();
-    const operatorCookie = await operatorSession(app);
-    expect(
-      (
-        await appRequest(
-          app,
-          "/workspaces",
-          {
-            method: "POST",
-            headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              machineTypeId: "small",
-              sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
-            }),
-          },
-          { MAX_CONCURRENT_WORKSPACES: "1" },
-        )
-      ).status,
-    ).toBe(201);
-
-    const secondCookie = await userSession("second-principal");
-
-    const second = await appRequest(
-      app,
-      "/workspaces",
-      {
-        method: "POST",
-        headers: {
-          Cookie: secondCookie,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          machineTypeId: "small",
-          sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
-        }),
-      },
-      { MAX_CONCURRENT_WORKSPACES: "1" },
+    const cookie = await operatorSession(app);
+    const limit = vi.fn(async () => ({ success: false }));
+    const bindings = { REQUEST_RATE_LIMITER: { limit } };
+    const headers = { Cookie: cookie, "Content-Type": "application/json" };
+    const post = (path: string, body: object) => appRequest(
+      app, path, { method: "POST", headers, body: JSON.stringify(body) }, bindings,
     );
+    const workspace = await post("/workspaces", {
+      machineTypeId: "small", sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+    });
+    const invite = await post("/invites", { role: "member" });
 
-    expect(second.status).toBe(201);
-    expect(providers.createCalls).toBe(2);
-    expect(
-      await env.DB
-        .prepare(
-          `SELECT COUNT(DISTINCT owner_id) AS count FROM workspaces
-           WHERE phase <> 'destroyed'`,
-        )
-        .first<number>("count"),
-    ).toBe(2);
+    expect([workspace.status, invite.status]).toEqual([429, 429]);
+    expect(limit).toHaveBeenNthCalledWith(1, { key: "create:operator" });
+    expect(limit).toHaveBeenNthCalledWith(2, { key: "create:operator" });
+    expect(providers.createCalls).toBe(0);
   });
 
   it("rejects UTF-8 userData over the provider limit before creating a VM", async () => {

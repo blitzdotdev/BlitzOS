@@ -42,8 +42,6 @@ BOX_IMAGE_TAG = ""
 BOX_IMAGE_SHA256 = ""
 # Session cookie lifetime in days (1-3650). Optional, default 30.
 SESSION_TTL_DAYS = "30"
-# Per-principal cap on non-destroyed workspaces (1-1000). Optional, default 10.
-MAX_CONCURRENT_WORKSPACES = "10"
 # JSON array of Firecracker microVM hosts. '[]' disables the microVM provider. Shapes below.
 # WARNING: every configured host requires its MICROVM_<NAME>_TOKEN Worker secret
 # (>=32 chars, no whitespace). A missing or weak token makes EVERY request to
@@ -77,6 +75,14 @@ PAYMENT_URL = ""
 # ALLOWED_EMAIL_DOMAINS = ""
 # Comma-separated Hetzner machine catalog as <type>@<location> entries. Default "cpx21@hil,cpx31@hil".
 # HETZNER_MACHINE_TYPES = "cpx21@hil,cpx31@hil"
+
+# 20 calls/minute per auth IP or workspace/invite-creating principal; namespace_id is account-unique.
+[[ratelimits]]
+name = "REQUEST_RATE_LIMITER"
+namespace_id = "1001"
+[ratelimits.simple]
+limit = 20
+period = 60
 
 # R2 bucket for box images and workspace file sync. The deploy script creates the bucket if it does not exist.
 [[r2_buckets]]

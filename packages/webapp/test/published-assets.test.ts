@@ -27,4 +27,11 @@ describe("published static assets", () => {
     ).toBe(true);
     expect(stats?.size ?? 0).toBeGreaterThan(0);
   });
+
+  it("states the subscription payment terms", () => {
+    const terms = readFileSync(resolve(process.cwd(), "public", "terms.html"), "utf8");
+    for (const promise of ["billed monthly for each active member", "end of the current billing period", "do not refund partial billing periods", "30 days' notice", "taxes may apply"]) {
+      expect(terms).toContain(promise);
+    }
+  });
 });

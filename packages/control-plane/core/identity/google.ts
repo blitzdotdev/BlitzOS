@@ -7,7 +7,7 @@ import {
   sessionCookie,
 } from "../principals.js";
 import { fetchBoundedJson, type JsonValue } from "../compute/json-fetch.js";
-import type { CoreRouter, RuntimeFactory, RuntimeVariables } from "../runtime.js";
+import { enforceRateLimit, type CoreRouter, type RuntimeFactory, type RuntimeVariables } from "../runtime.js";
 import {
   clearGoogleOAuthStateCookie,
   createGoogleOAuthState,
@@ -20,6 +20,7 @@ import { inviteCodeHash, redeemInviteSession } from "./invites.js";
 const GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
+export const CURRENT_TERMS_VERSION = "2026-08-26";
 
 interface GoogleProfile {
   googleUserId: string;
@@ -222,9 +223,10 @@ async function resolveUser(
       throw new HttpError(409, "email belongs to another Google identity");
     }
     await rows(db, {
-      q: `UPDATE users SET email = ?1, name = ?2, avatar_url = ?3, updated_at = ?4
-          WHERE id = ?5`,
-      v: [profile.email, profile.name, profile.avatarUrl, now, user.id],
+      q: `UPDATE users SET email = ?1, name = ?2, avatar_url = ?3,
+            terms_accepted_at = ?4, terms_version = ?5, updated_at = ?4
+          WHERE id = ?6`,
+      v: [profile.email, profile.name, profile.avatarUrl, now, CURRENT_TERMS_VERSION, user.id],
     });
     if (bootstrapEnabled) {
       // The bootstrap secret was already verified at /auth/google/start, so
@@ -261,12 +263,12 @@ async function resolveUser(
     await rows(db, {
       q: `INSERT INTO users
           (id, google_user_id, email, name, avatar_url, platform_operator,
-           created_at, updated_at)
+           terms_accepted_at, terms_version, created_at, updated_at)
           VALUES (?1, ?2, ?3, ?4, ?5,
             CASE WHEN ?6 = 1
                    AND NOT EXISTS (SELECT 1 FROM users WHERE platform_operator = 1)
                  THEN 1 ELSE 0 END,
-            ?7, ?7)`,
+            ?7, ?8, ?7, ?7)`,
       v: [
         id,
         profile.googleUserId,
@@ -275,6 +277,7 @@ async function resolveUser(
         profile.avatarUrl,
         bootstrapEnabled ? 1 : 0,
         now,
+        CURRENT_TERMS_VERSION,
       ],
     });
     user = { id, platform_operator: 0, name: profile.name };
@@ -364,6 +367,8 @@ export function addGoogleAuthRoutes(
 ): void {
   router.get("/auth/google/start", async (context) => {
     const runtime = runtimeFactory(context);
+    await enforceRateLimit(runtime.vars.requestRateLimiter,
+      `auth:${context.req.header("cf-connecting-ip") ?? "unknown"}`);
     const requestUrl = new URL(context.req.url);
     const presentedBootstrap = requestUrl.searchParams.get("bootstrap");
     const inviteCode = requestUrl.searchParams.get("invite") ?? undefined;
@@ -405,6 +410,8 @@ export function addGoogleAuthRoutes(
 
   router.get("/auth/google/callback", async (context) => {
     const runtime = runtimeFactory(context);
+    await enforceRateLimit(runtime.vars.requestRateLimiter,
+      `auth:${context.req.header("cf-connecting-ip") ?? "unknown"}`);
     const requestUrl = new URL(context.req.url);
     const code = requestUrl.searchParams.get("code");
     const returnedState = requestUrl.searchParams.get("state");

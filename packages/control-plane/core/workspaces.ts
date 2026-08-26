@@ -40,11 +40,12 @@ import {
   workspaceTemplateForCreate,
 } from "./workspace-templates.js";
 import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
-import type {
-  CoreContext,
-  CoreRouter,
-  CoreRuntime,
-  RuntimeFactory,
+import {
+  enforceRateLimit,
+  type CoreContext,
+  type CoreRouter,
+  type CoreRuntime,
+  type RuntimeFactory,
 } from "./runtime.js";
 import type {
   CreateWorkspaceRequest,
@@ -628,9 +629,11 @@ export function addWorkspaceRoutes(
     if (principal.orgId === null || principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
+    const runtime = runtimeFactory(context);
+    await enforceRateLimit(runtime.vars.requestRateLimiter, `create:${principal.id}`);
     const input = parseCreateWorkspace(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
     const row = await performWorkspaceCreate(
-      runtimeFactory(context),
+      runtime,
       principal,
       new URL(context.req.url).origin,
       input,

@@ -528,7 +528,6 @@ import {
   isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
-  maxConcurrentWorkspacesFromEnv,
   runFileSyncSweep, runInvariantSweep, runLeaseSweep, runOrphanSweep,
   runProviderCanary, runSessionSweep, runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
@@ -559,7 +558,6 @@ type ManagedBindings = {
   BOX_IMAGE_SHA256: string;
   BOX_IMAGE_TAG: string;
   SESSION_TTL_DAYS: string;
-  MAX_CONCURRENT_WORKSPACES: string;
   MICROVM_HOSTS: string;
   CRED_MASTER_KEY: string;
   // Workspace tunnels and webApp auth, named exactly as self-host names them
@@ -715,7 +713,6 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(env.MAX_CONCURRENT_WORKSPACES),
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
