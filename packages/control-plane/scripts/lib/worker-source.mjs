@@ -60,7 +60,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/template-repos.ts",
   "core/workspace-access.ts", "core/workspace-names.ts", "core/workspace-records.ts", "core/workspace-templates.ts", "core/workspace-tunnels.ts",
   "core/workspaces.ts",
-  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/microvm-hosts.js",
+  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/workspace-placement.ts", "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
   "core/compute/aws.ts", "core/compute/aws-prices.ts", "core/compute/aws-sigv4.ts",
   "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",

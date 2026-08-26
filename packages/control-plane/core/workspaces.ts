@@ -29,11 +29,8 @@ import type { Principal } from "./principals.js";
 import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
-import type {
-  ComputeCredentialSource,
-  WebAppPort,
-  VmProvider,
-} from "./compute/types.js";
+import type { WebAppPort, VmProvider } from "./compute/types.js";
+import { resolveWorkspacePlacement } from "./compute/workspace-placement.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import { templateRepos } from "./template-repos.js";
@@ -442,33 +439,15 @@ export async function performWorkspaceCreate(
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
   ])];
-  const vmResolution = await runtime.providers.vmRegistry.forMachineType(machineTypeId, orgId);
+  const vmResolution = await resolveWorkspacePlacement(
+    runtime.db,
+    runtime.providers.vmRegistry,
+    orgId,
+    machineTypeId,
+    input.volumeId,
+  );
   const vmProvider = vmResolution.provider;
   const providerCapabilities = vmProvider.capabilities();
-  if (input.volumeId !== undefined && !providerCapabilities.volumes) {
-    throw new HttpError(
-      400,
-      `machine type ${machineTypeId} does not support volumes`,
-    );
-  }
-  if (input.volumeId !== undefined) {
-    const owned = await first<{
-      volume_id: string;
-      compute_credential_source: ComputeCredentialSource | null;
-    }>(runtime.db, {
-      q: `SELECT volume_id, compute_credential_source FROM volume_ownership
-          WHERE volume_id = ?1 AND org_id = ?2 LIMIT 1`,
-      v: [input.volumeId, orgId],
-    });
-    if (owned === null) throw new HttpError(404, "volume not found");
-    const volumeSource = owned.compute_credential_source ?? "deployment";
-    if (
-      vmResolution.credentialSource !== null
-      && vmResolution.credentialSource !== volumeSource
-    ) {
-      throw new HttpError(409, "volume and machine use different compute credentials");
-    }
-  }
   // Usage capture is an org switch, not a recipe one: every workspace of a
   // capturing org boots with the transcript mounts so its runs join the
   // corpus (plans/RECIPES.md, decision 4).

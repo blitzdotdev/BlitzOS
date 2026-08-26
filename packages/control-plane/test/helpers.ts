@@ -20,6 +20,7 @@ import {
   type CoreRouter,
   type CoreRuntime,
   type Db,
+  type VolumeProviderResolver,
 } from "../core/index.js";
 import type {
   CreatedVm,
@@ -183,6 +184,7 @@ export function appWithVmProviders(
   volumeProvider: VolumeProvider,
   workspaceTunnels?: WorkspaceTunnels,
   computeProviderResolver?: OrgComputeProviderResolver,
+  volumeProviderResolver?: VolumeProviderResolver,
 ): TestApp {
   const app = teenyHono<TestEnv>(
     async (context) => {
@@ -230,7 +232,7 @@ export function appWithVmProviders(
               ? compute.resolve(provider.id, orgId, requiredSource)
               : null,
         ),
-        volume: {
+        volume: volumeProviderResolver ?? {
           forOrg: async () => ({ provider: volumeProvider, credentialSource: null }),
         },
         compute,

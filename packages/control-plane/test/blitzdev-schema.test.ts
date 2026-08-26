@@ -359,6 +359,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect([...sql.matchAll(/CREATE TABLE\s+([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1])).toEqual(expectedTables);
     expect([...sql.matchAll(/CREATE (?:UNIQUE )?INDEX\s+([A-Za-z_][A-Za-z0-9_]*)/gu)].map((match) => match[1])).toEqual([
       "idx_memberships_identity",
+      "idx_org_compute_credentials_identity",
       "idx_sessions_expires_at",
       "idx_agent_rules_identity",
       "idx_workspaces_owner",

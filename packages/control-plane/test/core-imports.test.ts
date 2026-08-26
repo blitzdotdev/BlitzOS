@@ -78,6 +78,7 @@ const expected = [
   "compute/hetzner.ts",
   "compute/json-fetch.ts",
   "compute/org-credentials.ts",
+  "compute/workspace-placement.ts",
   "compute/microvm-agent.ts",
   "compute/microvm-config.ts",
   "compute/microvm-host-registry.ts",
@@ -121,6 +122,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(96);
+    expect(expected).toHaveLength(97);
   });
 });

@@ -48,6 +48,17 @@ function providerHttp(options: { rejectHetzner?: boolean } = {}) {
         },
       });
     }
+    if (url.endsWith("api.hetzner.cloud/v1/volumes") && init?.method === "POST") {
+      return Response.json({
+        volume: {
+          id: 20_001,
+          name: "org-volume",
+          size: 10,
+          location: { name: "hil" },
+          server: null,
+        },
+      });
+    }
     if (url.includes("api.hetzner.cloud/v1/server_types?")) {
       return Response.json({ server_types: [], meta: { pagination: { next_page: null } } });
     }
@@ -80,7 +91,13 @@ async function appFor(
     fetcher: fake.fetcher,
   });
   const volumes = new FakeProviders();
-  const app = appWithVmProviders(compute.descriptors(), volumes, undefined, compute);
+  const app = appWithVmProviders(
+    compute.descriptors(),
+    volumes,
+    undefined,
+    compute,
+    { forOrg: (orgId, requiredSource) => compute.resolveVolume(orgId, requiredSource) },
+  );
   return { app, compute, fake };
 }
 
@@ -186,6 +203,41 @@ describe("organization compute credentials", () => {
       "Bearer org-test-token",
       "Bearer org-test-token",
     ]);
+  });
+
+  it("pins volume operations to the credential source that created the volume", async () => {
+    const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
+    const cookie = await operatorSession(app);
+    expect((await putHetzner(app, cookie)).status).toBe(200);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/volumes", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "org-volume", sizeGb: 10, location: "hil" }),
+    });
+    expect(created.status).toBe(201);
+    expect(fake.calls[0]?.authorization).toBe("Bearer org-test-token");
+    expect(
+      await env.DB.prepare(
+        "SELECT compute_credential_source FROM volume_ownership WHERE volume_id = '20001'",
+      ).first(),
+    ).toMatchObject({ compute_credential_source: "org" });
+
+    expect((await appRequest(app, "/orgs/personal/compute-credentials/hetzner", {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(204);
+    fake.calls.length = 0;
+    const removed = await appRequest(app, "/volumes/20001", {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(removed.status).toBe(409);
+    expect(fake.calls).toEqual([]);
+    expect(
+      await env.DB.prepare("SELECT volume_id FROM volume_ownership WHERE volume_id = '20001'").first(),
+    ).not.toBeNull();
   });
 
   it("returns 409 at workspace creation when neither credential exists", async () => {
