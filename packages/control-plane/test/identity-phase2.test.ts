@@ -472,4 +472,227 @@ describe("identity phase 2", () => {
       connections: [{ name: "team-token", createdBy: "operator" }],
     });
   });
+
+  it("creates a second organization for an existing member and rebinds the session", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const created = await appRequest(app, "/orgs", {
+      ...json({ name: "Side Project" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    await expect(created.json()).resolves.toMatchObject({
+      org: { slug: "side-project", name: "Side Project", vmLimit: 10 },
+      membership: { role: "admin", status: "active" },
+    });
+    await expect(appRequest(app, "/me", { headers: { Cookie: cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({
+      org: { slug: "side-project" },
+      organizations: expect.arrayContaining([
+        expect.objectContaining({ org: expect.objectContaining({ id: "personal" }) }),
+      ]),
+    });
+  });
+
+  it("caps the organizations one user creates, and never caps invited ones", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    for (let index = 0; index < 5; index += 1) {
+      expect((await appRequest(app, "/orgs", {
+        ...json({ name: `Org ${index}` }),
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+      })).status).toBe(201);
+    }
+    const refused = await appRequest(app, "/orgs", {
+      ...json({ name: "One Too Many" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(refused.status).toBe(409);
+    await expect(refused.json()).resolves.toMatchObject({ error: "organization limit reached" });
+
+    // The cap counts orgs created, not orgs joined: an invite still lands.
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs (id, slug, name, vm_limit, created_at, updated_at) VALUES ('invited', 'invited', 'Invited', 10, ?1, ?1)").bind(now),
+      env.DB.prepare("INSERT INTO memberships (id, user_id, org_id, role, status) VALUES ('invited-membership', 'operator', 'invited', 'member', 'active')"),
+    ]);
+    expect((await appRequest(app, "/sessions/switch-org", {
+      ...json({ orgId: "invited" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(204);
+  });
+
+  it("leaves an organization and lands every session of that user on the next one", async () => {
+    const { app } = harness();
+    await operatorSession(app);
+    const leaver = await sameOrgSession("leaver");
+    const secondCookie = await appRequest(app, "/orgs", {
+      ...json({ name: "Own Org" }),
+      headers: { Cookie: leaver.cookie, "Content-Type": "application/json" },
+    }).then(() => leaver.cookie);
+    // A second browser of the same person, still scoped to the org being left.
+    const staleToken = randomToken();
+    await env.DB.prepare(
+      `INSERT INTO sessions (token_hash, principal_id, created_at, expires_at, membership_id)
+       VALUES (?1, 'leaver', ?2, ?3, ?4)`,
+    ).bind(await hashSecret(staleToken), Date.now(), Date.now() + 60_000, leaver.membershipId).run();
+    expect((await appRequest(app, "/sessions/switch-org", {
+      ...json({ orgId: "personal" }),
+      headers: { Cookie: secondCookie, "Content-Type": "application/json" },
+    })).status).toBe(204);
+
+    expect((await appRequest(app, "/members/self", {
+      method: "DELETE",
+      headers: { Cookie: secondCookie },
+    })).status).toBe(204);
+
+    await expect(appRequest(app, "/me", { headers: { Cookie: secondCookie } })
+      .then((response) => response.json())).resolves.toMatchObject({
+      org: { slug: "own-org" },
+      organizations: [expect.objectContaining({ org: expect.objectContaining({ slug: "own-org" }) })],
+    });
+    expect(await env.DB.prepare("SELECT status FROM memberships WHERE id = ?1")
+      .bind(leaver.membershipId).first<string>("status")).toBe("disabled");
+    // The other browser follows, rather than dying on a 401.
+    await expect(appRequest(app, "/me", { headers: { Cookie: `blitz_session=${staleToken}` } })
+      .then((response) => response.json())).resolves.toMatchObject({ org: { slug: "own-org" } });
+    // The org's own routes are closed to the leaver now.
+    expect((await appRequest(app, "/members", { headers: { Cookie: secondCookie } })
+      .then((response) => response.json<{ members: Array<{ email: string }> }>()))
+      .members.map((member) => member.email)).toEqual(["leaver@example.com"]);
+  });
+
+  it("leaves the only organization into an identity-only session, not a 401", async () => {
+    const { app } = harness();
+    await operatorSession(app);
+    const leaver = await sameOrgSession("solo-leaver");
+    expect((await appRequest(app, "/members/self", {
+      method: "DELETE",
+      headers: { Cookie: leaver.cookie },
+    })).status).toBe(204);
+    const me = await appRequest(app, "/me", { headers: { Cookie: leaver.cookie } });
+    expect(me.status).toBe(200);
+    await expect(me.json()).resolves.toMatchObject({
+      membership: null,
+      org: null,
+      organizations: [],
+    });
+    expect((await appRequest(app, "/members", { headers: { Cookie: leaver.cookie } })).status).toBe(403);
+  });
+
+  it("refuses the last member and the last active admin leaving", async () => {
+    const { app } = harness();
+    const operatorCookie = await operatorSession(app);
+    const soleRefusal = await appRequest(app, "/members/self", {
+      method: "DELETE",
+      headers: { Cookie: operatorCookie },
+    });
+    expect(soleRefusal.status).toBe(409);
+    await expect(soleRefusal.json()).resolves.toMatchObject({
+      error: "the last member cannot leave the organization",
+    });
+
+    const member = await sameOrgSession("second-person");
+    const adminRefusal = await appRequest(app, "/members/self", {
+      method: "DELETE",
+      headers: { Cookie: operatorCookie },
+    });
+    expect(adminRefusal.status).toBe(409);
+    await expect(adminRefusal.json()).resolves.toMatchObject({
+      error: "the last active admin cannot leave the organization",
+    });
+    expect(await env.DB.prepare("SELECT status FROM memberships WHERE id = 'personal'")
+      .first<string>("status")).toBe("active");
+
+    // Promote the other member and the same request goes through.
+    expect((await appRequest(app, `/members/${member.membershipId}`, {
+      method: "PATCH",
+      headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "admin" }),
+    })).status).toBe(200);
+    expect((await appRequest(app, "/members/self", {
+      method: "DELETE",
+      headers: { Cookie: operatorCookie },
+    })).status).toBe(204);
+  });
+
+  it("moves a disabled member's sessions off the org, and hands them back on enable", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const member = await sameOrgSession("removed-person");
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO orgs (id, slug, name, vm_limit, created_at, updated_at) VALUES ('other', 'other', 'Other', 10, ?1, ?1)").bind(now),
+      env.DB.prepare("INSERT INTO memberships (id, user_id, org_id, role, status) VALUES ('other-membership', 'removed-person', 'other', 'admin', 'active')"),
+    ]);
+    const disable = async (status: "active" | "disabled"): Promise<number> => (
+      await appRequest(app, `/members/${member.membershipId}`, {
+        method: "PATCH",
+        headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      })
+    ).status;
+
+    expect(await disable("disabled")).toBe(200);
+    // Not a 401: the person still belongs to another org and lands there.
+    await expect(appRequest(app, "/me", { headers: { Cookie: member.cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({ org: { slug: "other" } });
+
+    // Re-enabling must not drag them back out of the org they are now in.
+    expect(await disable("active")).toBe(200);
+    await expect(appRequest(app, "/me", { headers: { Cookie: member.cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({ org: { slug: "other" } });
+  });
+
+  it("leaves a disabled member with no other org on onboarding, and restores it on enable", async () => {
+    const { app } = harness();
+    const adminCookie = await operatorSession(app);
+    const member = await sameOrgSession("only-org-person");
+    expect((await appRequest(app, `/members/${member.membershipId}`, {
+      method: "PATCH",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "disabled" }),
+    })).status).toBe(200);
+    const removed = await appRequest(app, "/me", { headers: { Cookie: member.cookie } });
+    expect(removed.status).toBe(200);
+    await expect(removed.json()).resolves.toMatchObject({ membership: null, org: null });
+
+    expect((await appRequest(app, `/members/${member.membershipId}`, {
+      method: "PATCH",
+      headers: { Cookie: adminCookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "active" }),
+    })).status).toBe(200);
+    // The same session picks the org back up, instead of sitting on the
+    // create-org page with a membership it cannot see.
+    await expect(appRequest(app, "/me", { headers: { Cookie: member.cookie } })
+      .then((response) => response.json())).resolves.toMatchObject({
+      org: { slug: "personal" },
+      membership: { role: "member" },
+    });
+  });
+
+  it("reactivates a left membership when an admin re-invites the person", async () => {
+    const { app } = harness();
+    const operatorCookie = await operatorSession(app);
+    const member = await sameOrgSession("returning-person");
+    // sameOrgSession mints its own google_user_id; align it with the sub the
+    // fake Google profile returns, so the callback resolves this same user.
+    await env.DB.prepare("UPDATE users SET google_user_id = ?1 WHERE id = 'returning-person'")
+      .bind("sub-returning-person@example.com").run();
+    expect((await appRequest(app, "/members/self", {
+      method: "DELETE",
+      headers: { Cookie: member.cookie },
+    })).status).toBe(204);
+    const invite = await appRequest(app, "/invites", {
+      ...json({ email: "returning-person@example.com", role: "member" }),
+      headers: { Cookie: operatorCookie, "Content-Type": "application/json" },
+    }).then((response) => response.json<{ code: string }>());
+    expect((await googleCallback(
+      app,
+      "returning-person@example.com",
+      `/auth/google/start?invite=${invite.code}`,
+    )).status).toBe(302);
+    expect(await env.DB.prepare("SELECT status FROM memberships WHERE id = ?1")
+      .bind(member.membershipId).first<string>("status")).toBe("active");
+  });
 });

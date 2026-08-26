@@ -8,7 +8,7 @@ import { addGoogleAuthRoutes } from "./google.js";
 import { addGrantRoutes } from "./grants.js";
 import { addInviteRoutes } from "./invites.js";
 import { addMemberRoutes } from "./members.js";
-import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT } from "./orgs.js";
+import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT, MAX_SELF_CREATED_ORGS } from "./orgs.js";
 
 interface MeRow {
   user_id: string;
@@ -158,20 +158,24 @@ export function addIdentityRoutes(
   // a session only exists for accounts that got in through an invite, the
   // bootstrap secret, or before the gate — refusing them here would add a
   // second gate with no additional access control.
+  //
+  // This route serves both onboarding (identity-only session, no membership)
+  // and a member starting a second org from the rail. Either way it rebinds
+  // the calling session to the new org, so the caller lands inside it. The
+  // only limit is MAX_SELF_CREATED_ORGS, which stands in for the "already a
+  // member" 409 this route used to carry as its de-facto quota cap.
   router.post("/orgs", async (context) => {
     const principal = await requirePrincipal(context);
-    if (principal.membershipId !== null) {
-      throw new HttpError(409, "an active membership already exists");
-    }
     const token = cookieValue(context.req.raw, SESSION_COOKIE);
     if (token === null) throw new HttpError(401, "unauthorized");
     const runtime = runtimeFactory(context);
-    const active = await first<{ id: string }>(runtime.db, {
-      q: `SELECT id FROM memberships
-          WHERE user_id = ?1 AND status = 'active' LIMIT 1`,
+    const created = await first<{ count: number }>(runtime.db, {
+      q: "SELECT COUNT(*) AS count FROM orgs WHERE created_by_user_id = ?1",
       v: [principal.id],
     });
-    if (active !== null) throw new HttpError(409, "an active membership already exists");
+    if ((created?.count ?? 0) >= MAX_SELF_CREATED_ORGS) {
+      throw new HttpError(409, "organization limit reached");
+    }
     const name = parseOrgName(await readJson(context.req.raw));
     const id = crypto.randomUUID();
     const membershipId = crypto.randomUUID();
@@ -180,14 +184,11 @@ export function addIdentityRoutes(
     const sessionHash = await hashSecret(token);
     const result = await transaction(runtime.db, [
       {
-        q: `INSERT INTO orgs (id, slug, name, vm_limit, created_at, updated_at)
-            SELECT ?1, ?2, ?3, ?4, ?5, ?5
-            WHERE NOT EXISTS (
-              SELECT 1 FROM memberships
-              WHERE user_id = ?6 AND status = 'active'
-            )
+        q: `INSERT INTO orgs
+            (id, slug, name, vm_limit, created_by_user_id, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
             RETURNING id`,
-        v: [id, slug, name, DEFAULT_ORG_VM_LIMIT, now, principal.id],
+        v: [id, slug, name, DEFAULT_ORG_VM_LIMIT, principal.id, now],
       },
       {
         q: `INSERT INTO memberships (id, user_id, org_id, role, status)
@@ -198,7 +199,7 @@ export function addIdentityRoutes(
       },
       {
         q: `UPDATE sessions SET membership_id = ?1
-            WHERE token_hash = ?2 AND principal_id = ?3 AND membership_id IS NULL
+            WHERE token_hash = ?2 AND principal_id = ?3
             RETURNING token_hash`,
         v: [membershipId, sessionHash, principal.id],
       },

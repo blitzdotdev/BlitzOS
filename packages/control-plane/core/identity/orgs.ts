@@ -3,6 +3,12 @@ import { first } from "../db.js";
 
 export const DEFAULT_ORG_VM_LIMIT = 10;
 
+/** How many orgs one user may create through POST /orgs. Each org carries its
+ * own vm_limit, so an uncapped create route hands out unlimited VM quota to
+ * anyone who can sign in. Invites are not capped: an admin already vouched
+ * for the org a member is joining. */
+export const MAX_SELF_CREATED_ORGS = 5;
+
 function slugBase(name: string): string {
   const normalized = name
     .normalize("NFKD")

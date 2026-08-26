@@ -20,6 +20,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
     inviteStatus: vi.fn(async () => { throw new Error('unused'); }),
     switchOrg: vi.fn(async () => undefined),
+    leaveOrg: vi.fn(async () => undefined),
     listMembers: vi.fn(async () => ({ members: [] })),
     updateMember: vi.fn(async () => { throw new Error('unused'); }),
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),

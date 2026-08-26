@@ -1,9 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient, MemberView } from '../api';
+import { ConfirmationDialog } from '../ConfirmationDialog';
 import { DriveAvatar } from '../files/DriveAvatar';
 
-export function MembersPanel({ client, admin }: { client: ControlPlaneClient; admin: boolean }) {
+export function MembersPanel({
+  client,
+  admin,
+  orgName,
+  onLeft,
+}: {
+  client: ControlPlaneClient;
+  admin: boolean;
+  orgName: string;
+  /** Called after the server has removed the caller from the org. The session
+   * is now bound elsewhere, or to no org at all, so the caller reloads. */
+  onLeft: () => void;
+}) {
   const [members, setMembers] = useState<MemberView[]>([]);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'member'>('member');
   const [oneTimeLink, setOneTimeLink] = useState<string | null>(null);
@@ -17,6 +32,10 @@ export function MembersPanel({ client, admin }: { client: ControlPlaneClient; ad
     }
   }, [client]);
   useEffect(() => { void load(); }, [load]);
+  // The server refuses a last-member leave with a 409. Deriving the same
+  // condition from the list that is already loaded lets the button say why
+  // before it is pressed; the 409 stays the authority.
+  const soleMember = members.filter((member) => member.status === 'active').length <= 1;
 
   return (
     <section className="settings-panel" role="tabpanel" aria-label="Members">
@@ -73,6 +92,37 @@ export function MembersPanel({ client, admin }: { client: ControlPlaneClient; ad
           </div>
         ))}
       </div>
+      <div className="settings-danger">
+        <div className="settings-danger-copy">
+          <strong>Leave {orgName}</strong>
+          <span>{soleMember
+            ? 'You are the only member. Add another member first, or create your own organization and leave this one.'
+            : 'You lose access to this organization\u2019s workspaces, files and connections. An admin can invite you back.'}</span>
+        </div>
+        <button
+          className="webapp-action webapp-action--danger"
+          type="button"
+          disabled={soleMember || leaving}
+          onClick={() => setConfirmLeave(true)}
+        >{leaving ? 'Leaving\u2026' : 'Leave'}</button>
+      </div>
+      {confirmLeave && (
+        <ConfirmationDialog
+          title={`Leave ${orgName}?`}
+          description={`You lose access to everything in ${orgName}. Workspaces you own stay with the organization.`}
+          confirmLabel="Yes, leave"
+          cancelLabel="No"
+          onCancel={() => setConfirmLeave(false)}
+          onConfirm={() => {
+            setConfirmLeave(false);
+            setLeaving(true);
+            void client.leaveOrg().then(onLeft).catch((caught: Error) => {
+              setLeaving(false);
+              setError(caught.message);
+            });
+          }}
+        />
+      )}
     </section>
   );
 }

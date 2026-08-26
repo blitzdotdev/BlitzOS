@@ -23,6 +23,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     inviteGoogleLoginUrl: (code) => `/auth/google/start?invite=${code}`,
     inviteStatus: vi.fn(async () => { throw new Error('unused'); }),
     switchOrg: vi.fn(async () => undefined),
+    leaveOrg: vi.fn(async () => undefined),
     listMembers: vi.fn(async () => ({ members: [] })),
     updateMember: vi.fn(async () => { throw new Error('unused'); }),
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
@@ -207,7 +208,7 @@ describe('v2 credential surfaces', () => {
       code: 'one-time-code',
       ttlDays: 7,
     }));
-    const view = await render(<MembersPanel client={client({ createInvite })} admin />);
+    const view = await render(<MembersPanel client={client({ createInvite })} admin orgName="Example" onLeft={() => undefined} />);
     await settle();
     const input = view.container.querySelector<HTMLInputElement>('input[type="email"]')!;
     const setInputValue = Object.getOwnPropertyDescriptor(

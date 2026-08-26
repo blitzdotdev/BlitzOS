@@ -163,6 +163,40 @@
   color: var(--accent);
 }
 
+/* The switch rows are buttons inside a styled menu, and until now they
+   carried no rule at all — they rendered on the browser default button box.
+   They and the create row share one appearance. */
+.webapp-org-menu-switch,
+.webapp-org-menu-create {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.webapp-org-menu-switch:hover,
+.webapp-org-menu-switch:focus-visible,
+.webapp-org-menu-create:hover,
+.webapp-org-menu-create:focus-visible {
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+}
+
+.webapp-org-menu-create {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--rule);
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.webapp-org-menu-create span:first-child {
+  color: var(--accent);
+}
+
 .webapp-tree {
   min-height: 0;
   flex: 1;

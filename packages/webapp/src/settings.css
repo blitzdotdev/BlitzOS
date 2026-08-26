@@ -798,6 +798,38 @@
   white-space: nowrap;
 }
 
+.settings-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 24px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.settings-danger-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.settings-danger-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-danger-copy span {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.settings-danger .webapp-action[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .settings-person-role {
   flex: none;
   color: var(--muted);

@@ -136,6 +136,7 @@ export function SettingsPage({
   onNavigate,
   onOpenWorkspace,
   onSignOut,
+  onLeftOrg,
 }: {
   client: ControlPlaneClient;
   viewer: TenantMe;
@@ -145,6 +146,7 @@ export function SettingsPage({
    * connecting happens there, not in settings, since the flow inversion. */
   onOpenWorkspace: (workspaceId: string) => void;
   onSignOut: () => Promise<void>;
+  onLeftOrg: () => void;
 }) {
   const sections: Array<{ id: SettingsSection; label: string }> = [
     { id: 'profile', label: 'Profile' },
@@ -180,7 +182,14 @@ export function SettingsPage({
       </aside>
       <div className="settings-content">
         {section === 'profile' && <ProfilePanel viewer={viewer} onSignOut={onSignOut} />}
-        {section === 'members' && <MembersPanel client={client} admin={viewer.membership.role === 'admin'} />}
+        {section === 'members' && (
+          <MembersPanel
+            client={client}
+            admin={viewer.membership.role === 'admin'}
+            orgName={viewer.org.name || viewer.org.slug}
+            onLeft={onLeftOrg}
+          />
+        )}
         {section === 'invites' && viewer.membership.role === 'admin' && <InvitesPanel client={client} />}
         {section === 'connections' && (
           <ConnectionsPanel

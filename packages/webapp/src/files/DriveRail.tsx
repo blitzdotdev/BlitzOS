@@ -57,6 +57,7 @@ export function DriveRail({
   onSelectWorkspace,
   onCreateWorkspace,
   onSwitchOrg,
+  onCreateOrg,
   onOpenSettings,
   onOpenWorkspaceDetails,
   onDeleteWorkspace,
@@ -78,6 +79,7 @@ export function DriveRail({
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
   onSwitchOrg: (orgId: string) => void;
+  onCreateOrg: () => void;
   onOpenSettings: () => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
@@ -162,6 +164,18 @@ export function DriveRail({
                 <span>{candidate.name || candidate.slug}</span>
               </button>
             ))}
+            <button
+              className="webapp-org-menu-create"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOrgMenuOpen(false);
+                onCreateOrg();
+              }}
+            >
+              <span aria-hidden="true">+</span>
+              <span>Create organization</span>
+            </button>
           </div>
         </div>
 
