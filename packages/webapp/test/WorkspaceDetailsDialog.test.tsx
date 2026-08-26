@@ -59,6 +59,7 @@ describe('WorkspaceDetailsDialog', () => {
             diskGb: 40,
             arch: 'x86',
             location: 'fsn1',
+            monthlyPrice: null,
           }],
           failures: [],
         })}
@@ -126,6 +127,7 @@ describe('WorkspaceDetailsDialog', () => {
         onSelectWorkspace={() => undefined}
         onCreateWorkspace={() => undefined}
         onSwitchOrg={() => undefined}
+        onCreateOrg={() => undefined}
         onOpenSettings={() => undefined}
         onOpenWorkspaceShare={onShare}
         onOpenWorkspaceDetails={onDetails}
@@ -164,6 +166,7 @@ describe('WorkspaceDetailsDialog', () => {
         onSelectWorkspace={() => undefined}
         onCreateWorkspace={() => undefined}
         onSwitchOrg={() => undefined}
+        onCreateOrg={() => undefined}
         onOpenSettings={() => undefined}
         onOpenWorkspaceShare={onShare}
         onOpenWorkspaceDetails={onDetails}
