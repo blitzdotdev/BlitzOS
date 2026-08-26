@@ -216,6 +216,17 @@ describe("identity phase 1", () => {
     expect(disabled.status).toBe(401);
   });
 
+  it("rate limits Google auth by Cloudflare client IP", async () => {
+    const { app } = harness();
+    const limit = vi.fn(async () => ({ success: false }));
+    const response = await appRequest(app, "/auth/google/start",
+      { headers: { "cf-connecting-ip": "192.0.2.10" } },
+      { REQUEST_RATE_LIMITER: { limit } });
+
+    expect(response.status).toBe(429);
+    expect(limit).toHaveBeenCalledWith({ key: "auth:192.0.2.10" });
+  });
+
   it("demotes bootstrap auth to the first Google login and backfills operator-owned rows", async () => {
     const { app } = harness();
     const now = Date.now();
@@ -271,6 +282,11 @@ describe("identity phase 1", () => {
       "SELECT id, email, platform_operator FROM users WHERE google_user_id = 'google-user-123'",
     ).first<{ id: string; email: string; platform_operator: number }>();
     expect(user).toMatchObject({ email: "alice@example.com", platform_operator: 1 });
+    const acceptance = await env.DB.prepare(
+      "SELECT created_at, terms_accepted_at, terms_version FROM users WHERE id = ?1",
+    ).bind(user?.id).first<{ created_at: number; terms_accepted_at: number; terms_version: string }>();
+    expect(acceptance?.terms_accepted_at).toBe(acceptance?.created_at);
+    expect(acceptance?.terms_version).toBe("2026-08-26");
     const membership = await env.DB.prepare(
       "SELECT id, org_id, role, status FROM memberships WHERE user_id = ?1",
     ).bind(user?.id).first<{ id: string; org_id: string; role: string; status: string }>();

@@ -13,7 +13,6 @@ import {
   isString,
   MicrovmPoolProvider,
   maybeScheduleLazySweep,
-  maxConcurrentWorkspacesFromEnv,
   runInvariantSweep,
   runFileSyncSweep,
   runLeaseSweep,
@@ -47,7 +46,6 @@ type WorkerBindings = Env & {
   GOOGLE_CLIENT_SECRET: string;
   MICROVM_HOSTS: string;
   SESSION_TTL_DAYS: string;
-  MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
   ENTITLEMENTS_API_KEY?: string;
@@ -136,9 +134,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        env.MAX_CONCURRENT_WORKSPACES,
-      ),
+      requestRateLimiter: env.REQUEST_RATE_LIMITER,
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
@@ -176,9 +172,7 @@ function runtimeForScheduled(
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        env.MAX_CONCURRENT_WORKSPACES,
-      ),
+      requestRateLimiter: env.REQUEST_RATE_LIMITER,
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,

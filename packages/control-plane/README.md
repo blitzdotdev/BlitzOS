@@ -133,10 +133,10 @@ Session cookies expire after 30 days by default. Set `SESSION_TTL_DAYS` to an
 integer from 1 through 3650 to override that lifetime. Expired sessions return
 401 and are deleted by both scheduled and lazy janitors.
 
-Workspace creation defaults to 10 concurrent workspaces per principal;
-`MAX_CONCURRENT_WORKSPACES` accepts an integer from 1 through 1000. Concurrent
-means every non-terminal lifecycle state: `creating`, `ready`, `destroying`,
-and `error`. Only `destroyed` tombstones do not count.
+Workspace creation is capped per organization by `orgs.vm_limit`. New orgs
+start at `DEFAULT_ORG_VM_LIMIT` (currently 10); billing sets it through
+`PUT /orgs/:id/entitlements`, while self-hosters update it in D1. The
+`creating`, `ready`, `destroying`, and `error` phases count; `destroyed` does not.
 
 Hetzner accepts at most 32 KiB (32,768 bytes) of `user_data`. The control plane
 measures UTF-8 bytes and enforces this exact formula before calling the

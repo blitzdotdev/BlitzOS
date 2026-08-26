@@ -21,7 +21,6 @@ export default defineConfig(async () => {
             BOX_IMAGE_TAG: "blitz-box:test-amd64",
             BOX_IMAGE_SHA256: "ad".repeat(32),
             SESSION_TTL_DAYS: "30",
-            MAX_CONCURRENT_WORKSPACES: "10",
             MICROVM_HOSTS: '[{"name":"lab","tokenVar":"MICROVM_LAB_TOKEN","dynamic":true}]',
             // Vendor-only blitz.dev managed-toolchain suites run only when the
             // host environment opts in with BLITZDEV_MANAGED=1.

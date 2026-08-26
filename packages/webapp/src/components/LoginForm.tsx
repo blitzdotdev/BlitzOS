@@ -11,6 +11,9 @@ export function LoginForm({
         <a className="webapp-action webapp-action--primary" href={loginUrl}>
           Continue with Google
         </a>
+        <p className="login-terms">
+          By continuing you agree to the <a href="/terms">Terms</a>.
+        </p>
       </div>
     </main>
   );

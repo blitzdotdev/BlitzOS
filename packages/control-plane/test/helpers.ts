@@ -9,7 +9,6 @@ import {
   createSessionPrincipalSource,
   credentialMasterKeyFor,
   installControlPlaneRoutes,
-  maxConcurrentWorkspacesFromEnv,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
   VmProviderRegistry,
@@ -37,6 +36,9 @@ export const CRED_MASTER_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 const credentialMasterKey = await credentialMasterKeyFor(CRED_MASTER_KEY);
 const webAppAuth = new WorkspaceWebAppAuth("test-webapp-root-secret");
+const allowAllRateLimiter: RateLimit = {
+  limit: () => Promise.resolve({ success: true }),
+};
 
 /** Stands in for the provider OAuth client bindings. Suites that exercise
  * /connect fill it; everything else sees an unconfigured instance. */
@@ -52,7 +54,6 @@ interface TestApp {
 
 type TestBindings = Env & {
   SESSION_TTL_DAYS: string;
-  MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
   ENTITLEMENTS_API_KEY?: string;
@@ -201,10 +202,7 @@ export function appWithVmProviders(
       sessionTtlMs: sessionTtlMsFromEnv(
         (context.env as TestBindings).SESSION_TTL_DAYS ?? env.SESSION_TTL_DAYS,
       ),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        (context.env as TestBindings).MAX_CONCURRENT_WORKSPACES ??
-          env.MAX_CONCURRENT_WORKSPACES,
-      ),
+      requestRateLimiter: (context.env as TestBindings).REQUEST_RATE_LIMITER,
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
@@ -256,9 +254,6 @@ export function testRuntime(
       boxImageSha256: env.BOX_IMAGE_SHA256,
       boxImageTag: env.BOX_IMAGE_TAG,
       sessionTtlMs: sessionTtlMsFromEnv(env.SESSION_TTL_DAYS),
-      maxConcurrentWorkspaces: maxConcurrentWorkspacesFromEnv(
-        env.MAX_CONCURRENT_WORKSPACES,
-      ),
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: OPERATOR_KEY,
@@ -288,7 +283,7 @@ export async function appRequest(
     BOX_IMAGE_SHA256: env.BOX_IMAGE_SHA256,
     BOX_IMAGE_TAG: env.BOX_IMAGE_TAG,
     SESSION_TTL_DAYS: env.SESSION_TTL_DAYS,
-    MAX_CONCURRENT_WORKSPACES: env.MAX_CONCURRENT_WORKSPACES,
+    REQUEST_RATE_LIMITER: allowAllRateLimiter,
     DB: env.DB,
     CRED_MASTER_KEY,
     GOOGLE_CLIENT_ID: "test-google-client-id",

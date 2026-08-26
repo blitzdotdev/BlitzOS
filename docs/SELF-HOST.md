@@ -71,7 +71,6 @@ not "refuse to deploy". So you can run step 4 immediately and come back here.
 | `BOX_IMAGE_TAG` | mode-dependent | Empty for registry mode; the archive's image tag for R2 modes. |
 | `BOX_IMAGE_SHA256` | mode-dependent | Empty for registry mode; the archive's SHA-256 for R2 modes. |
 | `SESSION_TTL_DAYS` | no | Session cookie lifetime in days, 1–3650. Default 30. |
-| `MAX_CONCURRENT_WORKSPACES` | no | Per-principal cap on non-destroyed workspaces, 1–1000. Default 10. |
 | `MICROVM_HOSTS` | yes | JSON array of Firecracker hosts. **Set `'[]'` if you have none** — that cleanly disables the microVM provider and removes its token secret from the required set. Each configured host names a `tokenVar`; that Worker secret must then exist and be at least 32 characters with no whitespace, or **every request to the Worker fails with 500**. |
 | `HETZNER_MACHINE_TYPES` | no | Comma-separated `type@location` entries for the Hetzner machine catalog, e.g. `cpx21@hil,cx32@fsn1`. Unset or blank keeps the default catalog (`cx23@hel1`, `cx33@hel1`, `cpx21@hil`, `cpx31@hil`). Malformed entries are skipped with a logged warning. |
 | `SIGNUP_MODE` | no | `open` (default) or `invite`. In `invite` mode a Google sign-in that would create a new user is refused unless it carries a valid invite (step 7) or the verified bootstrap secret (step 6). Existing users always sign in. |
@@ -83,6 +82,8 @@ not "refuse to deploy". So you can run step 4 immediately and come back here.
 The R2 binding (`BOX_IMAGES` → bucket `blitz-box-images`) and the D1 binding
 stay as they are; the deploy script creates the database and fills in
 `database_id` for you.
+
+Workspace concurrency is capped per organization by `orgs.vm_limit`. New organizations start at 10; self-host operators set the column in D1, while hosted billing writes it through `PUT /orgs/:id/entitlements`.
 
 If your wrangler login can see more than one Cloudflare account, uncomment the
 top-level `account_id` and set it to the account this Worker belongs to. The
