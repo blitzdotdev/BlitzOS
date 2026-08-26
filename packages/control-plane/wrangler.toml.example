@@ -120,6 +120,8 @@ run_worker_first = [
   "/members",
   "/members/*",
   "/oauth/*",
+  "/operator-tokens",
+  "/operator-tokens/*",
   "/orgs",
   "/orgs/*",
   "/proxy/*",

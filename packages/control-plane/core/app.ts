@@ -6,6 +6,7 @@ import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
+import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addRecipeRoutes } from "./recipes.js";
@@ -44,13 +45,27 @@ export function installControlPlaneRoutes(
   // Box-authenticated read of the managed agent rules; no session principal.
   addAgentRulesRoutes(router, runtimeFactory);
 
+  // The one place a request becomes a Principal, and therefore the one place
+  // the read-only operator token is honoured.
+  //
+  // That is the whole reason the operator token is resolved here rather than
+  // in a route or in the principal source. Routes never see the credential:
+  // every add*Routes call below is handed this function, or the membership
+  // wrapper that calls it. A route added tomorrow that reaches instead for
+  // runtime.principalSource gets the session-cookie source alone, where an
+  // operator token authenticates nothing — so it fails closed rather than
+  // open. And findOperatorTokenPrincipal refuses everything outside the
+  // token's read-only scope before it hands a principal back, so no route can
+  // be reached with one by being written later or being written carelessly.
   async function requirePrincipal(context: CoreContext): Promise<Principal> {
     const runtime = runtimeFactory(context);
     const principal = await runtime.principalSource.authenticate(context.req.raw, runtime.db);
-    if (principal === null) throw new HttpError(401, "unauthorized");
     // Login (mintSession) already upserts the principal; re-upserting here
     // added a D1 write to every authenticated request.
-    return principal;
+    if (principal !== null) return principal;
+    const operator = await findOperatorTokenPrincipal(context.req.raw, runtime.db);
+    if (operator === null) throw new HttpError(401, "unauthorized");
+    return operator;
   }
 
   async function requireMembershipPrincipal(context: CoreContext): Promise<Principal> {
@@ -60,6 +75,7 @@ export function installControlPlaneRoutes(
   }
 
   addSessionRoutes(router, runtimeFactory, requirePrincipal);
+  addOperatorTokenRoutes(router, runtimeFactory, requirePrincipal);
   addIdentityRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);

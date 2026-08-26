@@ -44,6 +44,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/janitors.ts",
   "core/oauth-state.ts",
   "core/oauth.ts",
+  "core/operator-tokens.ts",
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
@@ -409,6 +410,22 @@ export const BLITZDEV_CONFIG = Object.freeze({
         { name: "url", type: "text", sqlType: "text" },
         { name: "updated_at", type: "integer", sqlType: "integer" },
         { name: "source", type: "text", sqlType: "text", check: "source IN ('static', 'registered')" },
+      ],
+      extensions: [DENY_ALL_RULES],
+    },
+    {
+      // Mirrors migration 0034. Only the SHA-256 of an operator token is
+      // stored; the plaintext exists once, in the mint response.
+      name: "operator_tokens",
+      fields: [
+        { name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" },
+        { name: "label", type: "text", sqlType: "text", notNull: true },
+        { name: "token_hash", type: "text", sqlType: "text", notNull: true, unique: true },
+        { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } },
+        { name: "created_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "last_used_at", type: "integer", sqlType: "integer" },
+        { name: "expires_at", type: "integer", sqlType: "integer", notNull: true },
+        { name: "revoked_at", type: "integer", sqlType: "integer" },
       ],
       extensions: [DENY_ALL_RULES],
     },
