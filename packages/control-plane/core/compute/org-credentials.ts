@@ -388,10 +388,12 @@ export class OrgComputeProviderResolver {
   }
 }
 
-function requireOrgAdmin(principal: Principal, requestedOrgId: string): {
+interface OrgComputeActor {
   orgId: string;
   membershipId: string;
-} {
+}
+
+function requireOrgAdmin(principal: Principal, requestedOrgId: string): OrgComputeActor {
   if (
     principal.orgId === null
     || principal.membershipId === null

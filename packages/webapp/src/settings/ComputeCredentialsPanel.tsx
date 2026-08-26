@@ -48,7 +48,7 @@ function credentialInput(
     : { accessKeyId, secretAccessKey, sessionToken };
 }
 
-function validatedTime(value: number): { label: string; iso: string } {
+function validatedTime(value: number) {
   const date = new Date(value);
   return {
     label: date.toLocaleString(),

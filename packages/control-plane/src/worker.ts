@@ -148,6 +148,7 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       entitlementsApiKey: env.ENTITLEMENTS_API_KEY,
       paymentUrl: env.PAYMENT_URL,
     },
+    // SAFETY: The credential-key middleware installs the imported CryptoKey before route dispatch.
     providers: providersFor(
       env,
       db,
