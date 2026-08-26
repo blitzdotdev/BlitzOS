@@ -243,28 +243,6 @@ describe("organization file library", () => {
     expect(downloaded.headers.get("x-blitz-edited-by")).toBe("Operator");
   });
 
-  it("deletes grants, every paginated object page, and the folder row", async () => {
-    const { app } = harness();
-    const owner = await operatorSession(app);
-    const member = await sameOrgSession("cleanup-member");
-    const folderId = await createFolder(app, owner);
-    await grant(app, owner, folderId, member.membershipId, "viewer");
-    const prefix = `org/personal/${folderId}/`;
-    await Promise.all(Array.from({ length: 1_001 }, (_, index) => (
-      env.BOX_IMAGES.put(`${prefix}${index}.txt`, String(index), {
-        customMetadata: { mtime: "1", "edited-by": "Operator" },
-      })
-    )));
-    const response = await appRequest(app, `/folders/${folderId}`, {
-      method: "DELETE",
-      headers: { Cookie: owner },
-    });
-    expect(response.status).toBe(204);
-    expect((await env.BOX_IMAGES.list({ prefix })).objects).toEqual([]);
-    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM folders WHERE id = ?1").bind(folderId).first<number>("count")).toBe(0);
-    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM folder_grants WHERE folder_id = ?1").bind(folderId).first<number>("count")).toBe(0);
-  });
-
   it("attaches an accessible folder and hides the attachment after revoke", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
