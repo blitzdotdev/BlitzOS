@@ -43,6 +43,7 @@ const (
 	previewsPath           = "/var/lib/blitz/previews.json"
 	previewFocusPath       = "/var/lib/blitz/preview-focus.json"
 	connectionsFocusPath   = "/var/lib/blitz/connections-focus.json"
+	agentCredentialPath    = "/var/lib/blitz/home/.claude/.credentials.json"
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
@@ -99,6 +100,7 @@ type previewLink struct {
 
 type gateway struct {
 	dufs                   *httputil.ReverseProxy
+	dufsAddress            string
 	terminal               *url.URL
 	actor                  *url.URL
 	controlPlaneOriginPath string
@@ -108,6 +110,7 @@ type gateway struct {
 	previewsPath           string
 	previewFocusPath       string
 	connectionsFocusPath   string
+	agentCredentialPath    string
 	discover               func() ([]portInfo, error)
 	transport              http.RoundTripper
 	authMu                 sync.Mutex
@@ -174,6 +177,7 @@ func main() {
 
 	handler := &gateway{
 		dufs:                   dufsProxy,
+		dufsAddress:            dufsAddress,
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
 		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
 		controlPlaneOriginPath: controlPlaneOriginPath,
@@ -183,6 +187,7 @@ func main() {
 		previewsPath:           previewsPath,
 		previewFocusPath:       previewFocusPath,
 		connectionsFocusPath:   connectionsFocusPath,
+		agentCredentialPath:    agentCredentialPath,
 		discover:               func() ([]portInfo, error) { return discoverPorts("/proc", excludedPorts) },
 		transport:              http.DefaultTransport,
 	}
@@ -247,6 +252,11 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 	if !webSocket {
 		origin, allowed := allowedCORSOrigin(request, controlPlaneOrigin)
 		response = &corsResponseWriter{ResponseWriter: response, origin: origin, allowed: allowed}
+	}
+	if request.URL.Path == "/diag" {
+		removeWebAppTokenHeader(request.Header)
+		g.serveDiag(response, request, identity, controlPlaneOrigin, authRequired)
+		return
 	}
 	if request.URL.Path == "/ports" {
 		removeWebAppTokenHeader(request.Header)
@@ -421,6 +431,111 @@ func (g *gateway) servePorts(response http.ResponseWriter, request *http.Request
 	}{Ports: ports}); err != nil {
 		log.Printf("port response failed: %v", err)
 	}
+}
+
+// diagService reports whether one of the box's internal listeners answers a
+// TCP connect. It is a liveness probe, not a health check: the gateway proxies
+// to these addresses, so "nothing is listening" and "something is listening"
+// is the distinction that tells an operator which service died.
+type diagService struct {
+	Name      string `json:"name"`
+	Address   string `json:"address"`
+	Reachable bool   `json:"reachable"`
+	Error     string `json:"error,omitempty"`
+}
+
+// diagReport is what `GET /diag` answers: the box state that decides whether a
+// request is refused, and whether the services behind the gateway are up. No
+// field carries a token, a signature, or the contents of any file.
+type diagReport struct {
+	WorkspaceID string `json:"workspaceId"`
+	// ControlPlaneOrigin is the origin baked into the box when it was created,
+	// the one a websocket Origin is compared against. Empty means the file is
+	// missing or blank, which is the state that refused every websocket.
+	ControlPlaneOrigin string `json:"controlPlaneOrigin"`
+	// AuthRequired is false on a box that has no webApp token, where every
+	// caller presents as the owner. It decides the role every guard reads.
+	AuthRequired bool `json:"authRequired"`
+	// AgentCredentialPresent costs one os.Stat and never a read: an agent that
+	// cannot log in and an agent that never had a credential look identical
+	// from the outside, and only the file's existence tells them apart.
+	AgentCredentialPath    string        `json:"agentCredentialPath"`
+	AgentCredentialPresent bool          `json:"agentCredentialPresent"`
+	Services               []diagService `json:"services"`
+}
+
+// diagDialTimeout keeps /diag cheap. Everything it probes is on loopback, so a
+// connect that has not completed by now is not going to.
+const diagDialTimeout = 500 * time.Millisecond
+
+func (g *gateway) serveDiag(response http.ResponseWriter, request *http.Request, identity webAppIdentity, controlPlaneOrigin string, authRequired bool) {
+	// The same guard /admin/drain keeps: this is an operator surface, and a
+	// member of the workspace has no business enumerating its plumbing.
+	if identity.Role != "owner" && identity.Role != "admin" {
+		deny(response, request, http.StatusForbidden, "diagnostics forbidden", roleDetail(identity))
+		return
+	}
+	response.Header().Set("Cache-Control", "no-store")
+	if request.Method == http.MethodOptions {
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", "GET, OPTIONS")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Stat, never read. The credential is the one file named here that holds a
+	// secret, and the answer an operator needs is only whether it is there.
+	_, credentialErr := os.Stat(g.agentCredentialPath)
+	report := diagReport{
+		WorkspaceID:            strings.TrimSpace(readOptionalFile(g.workspaceIDPath)),
+		ControlPlaneOrigin:     controlPlaneOrigin,
+		AuthRequired:           authRequired,
+		AgentCredentialPath:    g.agentCredentialPath,
+		AgentCredentialPresent: credentialErr == nil,
+		Services:               g.diagServices(),
+	}
+	response.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(response).Encode(report); err != nil {
+		log.Printf("diag response failed: %v", err)
+	}
+}
+
+// diagServices probes the three addresses this gateway proxies to. It reports
+// the address the gateway would actually dial, so an unset target falls back
+// to the same constant serveACP and serveTerminal fall back to, and every box
+// answers for all three.
+func (g *gateway) diagServices() []diagService {
+	actor := actorAddress
+	if g.actor != nil {
+		actor = g.actor.Host
+	}
+	terminal := terminalAddress
+	if g.terminal != nil {
+		terminal = g.terminal.Host
+	}
+	files := dufsAddress
+	if g.dufsAddress != "" {
+		files = g.dufsAddress
+	}
+	services := make([]diagService, 0, 3)
+	for _, service := range []diagService{
+		{Name: "actor", Address: actor},
+		{Name: "terminal", Address: terminal},
+		{Name: "dufs", Address: files},
+	} {
+		connection, err := net.DialTimeout("tcp", service.Address, diagDialTimeout)
+		if err == nil {
+			service.Reachable = true
+			_ = connection.Close()
+		} else {
+			service.Error = err.Error()
+		}
+		services = append(services, service)
+	}
+	return services
 }
 
 func parsePreviewLinks(data []byte) []previewLink {
