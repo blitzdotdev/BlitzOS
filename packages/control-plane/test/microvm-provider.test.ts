@@ -1004,11 +1004,13 @@ describe("microVM pool provider", () => {
     );
     const registry = new VmProviderRegistry([hetzner, microvm]);
 
+    // microVM is registered but not offered, so the create page sees only the
+    // cloud types. Everything below this line proves the VMs it already owns
+    // still route to it: hiding a provider must not strand its machines.
     expect((await registry.listMachineTypes()).machineTypes.map(({ id }) => id)).toEqual([
       "cx23@fsn1",
-      "mv-2c2g@lab",
-      "mv-2c4g@lab",
     ]);
+    expect(await microvm.listMachineTypes()).not.toEqual([]);
     const cloudVm = await registry
       .forMachineType("cx23@fsn1")
       .createVm(createInput("cx23@fsn1"));
