@@ -277,6 +277,36 @@ const apiError: SharedShape<wire.ApiError, schema.ApiError> = {
   retryAction: "poll",
 };
 
+// The seat refusal is the one error that carries a way out, so the optional
+// field needs a row of its own: an absent field covers different ground than
+// a present one.
+const seatLimitError: SharedShape<wire.ApiError, schema.ApiError> = {
+  error: "seat limit reached",
+  retryAction: "upgrade",
+  paymentUrl: "https://billing.example/checkout#token=header.payload.signature",
+};
+
+const orgUsage: SharedShape<wire.OrgUsageResponse, schema.OrgUsageResponse> = {
+  seatsUsed: 2,
+  seatLimit: 3,
+  vmsUsed: 1,
+  vmLimit: 10,
+};
+
+// No billing service attached: a null cap is a different field than a number.
+const uncappedOrgUsage: SharedShape<wire.OrgUsageResponse, schema.OrgUsageResponse> = {
+  ...orgUsage,
+  seatLimit: null,
+};
+
+const orgBillingLinks: SharedShape<
+  wire.OrgBillingLinksResponse,
+  schema.OrgBillingLinksResponse
+> = {
+  checkoutUrl: "https://billing.example/checkout#token=header.payload.signature",
+  portalUrl: "https://billing.example/portal#token=header.payload.signature",
+};
+
 const createVolumeRequest: SharedShape<
   wire.CreateVolumeRequest,
   schema.CreateVolumeRequest
@@ -506,6 +536,10 @@ const fullFieldValues = [
   pollResponse,
   registerKeysResponse,
   apiError,
+  seatLimitError,
+  orgUsage,
+  uncappedOrgUsage,
+  orgBillingLinks,
   createVolumeRequest,
   createVolumeResponse,
   listVolumesResponse,
@@ -575,6 +609,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PollResponse>().toEqualTypeOf<schema.PollResponse>();
     expectTypeOf<wire.RegisterKeysResponse>().toEqualTypeOf<schema.RegisterKeysResponse>();
     expectTypeOf<wire.ApiError>().toEqualTypeOf<schema.ApiError>();
+    expectTypeOf<wire.OrgUsageResponse>().toEqualTypeOf<schema.OrgUsageResponse>();
+    expectTypeOf<wire.OrgBillingLinksResponse>().toEqualTypeOf<schema.OrgBillingLinksResponse>();
     expectTypeOf<wire.CreateVolumeRequest>().toEqualTypeOf<schema.CreateVolumeRequest>();
     expectTypeOf<wire.CreateVolumeResponse>().toEqualTypeOf<schema.CreateVolumeResponse>();
     expectTypeOf<wire.ListVolumesResponse>().toEqualTypeOf<schema.ListVolumesResponse>();

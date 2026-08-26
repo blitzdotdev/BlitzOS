@@ -22,7 +22,9 @@ import type {
   ListRecipesResponse,
   ListWorkspaceTemplatesResponse,
   ListVolumesResponse,
+  OrgBillingLinksResponse,
   OrgUsageCaptureResponse,
+  OrgUsageResponse,
   PollResponse,
   PutConnectionRequest,
   RecipeResponse,
@@ -57,6 +59,10 @@ export class ApiRequestError extends Error {
     message: string,
     public readonly status: number,
     public readonly retryAction: RetryAction,
+    /** Where a person can pay their way past this refusal, on the 402 a seat
+     * gate throws. Null on every other error, and on a deployment whose
+     * billing service has no checkout surface. */
+    public readonly paymentUrl: string | null = null,
   ) {
     super(message);
   }
@@ -182,6 +188,8 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
    * create, so callers reuse the create-workspace navigation flow. */
   launchRecipe(id: string): Promise<CreateWorkspaceResponse>;
   getUsageCapture(): Promise<OrgUsageCaptureResponse>;
+  orgUsage(): Promise<OrgUsageResponse>;
+  billingLinks(): Promise<OrgBillingLinksResponse>;
   putUsageCapture(enabled: boolean): Promise<OrgUsageCaptureResponse>;
   setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
@@ -249,7 +257,12 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       } catch {
         // The status is still authoritative when an intermediary returns non-JSON.
       }
-      throw new ApiRequestError(error.error, response.status, error.retryAction ?? null);
+      throw new ApiRequestError(
+        error.error,
+        response.status,
+        error.retryAction ?? null,
+        error.paymentUrl ?? null,
+      );
     }
     return response;
   }
@@ -671,6 +684,8 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         method: "POST",
       }),
     getUsageCapture: () => request<OrgUsageCaptureResponse>("/orgs/self/usage-capture"),
+    orgUsage: () => request<OrgUsageResponse>("/orgs/self/usage"),
+    billingLinks: () => request<OrgBillingLinksResponse>("/orgs/self/billing"),
     putUsageCapture: (enabled) =>
       request<OrgUsageCaptureResponse>("/orgs/self/usage-capture", {
         method: "PUT",

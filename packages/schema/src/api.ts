@@ -66,6 +66,28 @@ export interface RegisterKeysResponse {
 export interface ApiError {
   error: string;
   retryAction: RetryAction;
+  /** Where a person can pay their way past this refusal. Present only on the
+   * 402 a seat gate throws, and only where the deployment has a billing
+   * service with a checkout surface — a refusal with nowhere to go is still a
+   * refusal, it just cannot offer a way out. */
+  paymentUrl?: string;
+}
+
+/** What an organization's limits are and how much of them is in use.
+ * `seatLimit` is null where no billing service is attached: that deployment
+ * has no cap to show, rather than a large one. */
+export interface OrgUsageResponse {
+  seatsUsed: number;
+  seatLimit: number | null;
+  vmsUsed: number;
+  vmLimit: number;
+}
+
+/** The two places an admin can go in the billing service: buy seats, or change
+ * the seats already bought. Both carry the same signed hop. */
+export interface OrgBillingLinksResponse {
+  checkoutUrl: string;
+  portalUrl: string;
 }
 
 export interface CreateVolumeRequest {

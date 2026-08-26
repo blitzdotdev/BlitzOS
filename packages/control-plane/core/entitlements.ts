@@ -8,6 +8,7 @@ import {
   type JsonObject,
 } from "./http.js";
 import type { Principal } from "./principals.js";
+import type { OrgBillingLinksResponse, OrgUsageResponse } from "./wire.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -156,18 +157,28 @@ export async function handoffToken(secret: string, claims: HandoffClaims): Promi
   return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
 }
 
-/** Builds the refusal a seat gate throws, minting the checkout link. */
-export async function seatLimitReached(
+/** A signed hop to the billing service, and the base it lands on. Null where
+ * no billing service is attached, or where one is but has no checkout surface
+ * for a person to be sent to. */
+interface BillingHandoff {
+  readonly base: string;
+  readonly token: string;
+}
+
+/** Mints the hop. Every link into the billing service is built from this, so
+ * a refusal and a settings link cannot disagree about where a person lands or
+ * where they come back to. */
+async function billingHandoff(
   runtime: CoreRuntime,
   request: Request,
   claims: Pick<HandoffClaims, "org" | "user" | "role">,
-  nowSeconds = Math.floor(Date.now() / 1_000),
-): Promise<SeatLimitReached> {
+  nowSeconds: number,
+): Promise<BillingHandoff | null> {
   const key = billingKey(runtime.vars);
   // A base URL is routinely configured with a trailing slash; "//checkout" is
   // a 404 at the worst possible moment.
   const base = (runtime.vars.paymentUrl ?? "").replace(/\/+$/u, "");
-  if (key === undefined || base === "") return new SeatLimitReached(null);
+  if (key === undefined || base === "") return null;
   const requestUrl = new URL(request.url);
   let returnTo = requestUrl.pathname;
   const referer = request.headers.get("Referer");
@@ -190,7 +201,20 @@ export async function seatLimitReached(
     returnTo,
     exp: nowSeconds + HANDOFF_TOKEN_TTL_SECONDS,
   });
-  return new SeatLimitReached(`${base}/checkout#token=${token}`);
+  return { base, token };
+}
+
+/** Builds the refusal a seat gate throws, minting the checkout link. */
+export async function seatLimitReached(
+  runtime: CoreRuntime,
+  request: Request,
+  claims: Pick<HandoffClaims, "org" | "user" | "role">,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): Promise<SeatLimitReached> {
+  const handoff = await billingHandoff(runtime, request, claims, nowSeconds);
+  return new SeatLimitReached(
+    handoff === null ? null : `${handoff.base}/checkout#token=${handoff.token}`,
+  );
 }
 
 /** The billing service, or nobody. An unattached deployment answers 404 rather
@@ -202,6 +226,19 @@ async function requireBillingCaller(context: CoreContext, runtime: CoreRuntime):
   if (presented === null || !(await safeEqualSecret(presented, key))) {
     throw new HttpError(401, "unauthorized");
   }
+}
+
+/** The organization a request names. "self" is the one the session is scoped
+ * to — the same alias core/environment.ts gives a box for its own workspace.
+ * A browser holds a session, not an organization id, and asking it to carry
+ * one only invites it to name somebody else's. */
+function requestedOrgId(context: CoreContext, principal: Principal): string {
+  const requested = context.req.param("id");
+  if (requested !== "self") return requested;
+  // 404, not 403, for the same reason the usage route answers 404 to a
+  // non-member: an identity-only session has no organization to report on.
+  if (principal.orgId === null) throw new HttpError(404, "organization not found");
+  return principal.orgId;
 }
 
 export function addEntitlementsRoutes(
@@ -248,7 +285,7 @@ export function addEntitlementsRoutes(
   router.get("/orgs/:id/usage", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
-    const orgId = context.req.param("id");
+    const orgId = requestedOrgId(context, principal);
     // 404, not 403: a non-member learns nothing about which organizations
     // exist from this route.
     const org = await first<{
@@ -270,13 +307,44 @@ export function addEntitlementsRoutes(
       v: [orgId, principal.id],
     });
     if (org === null) throw new HttpError(404, "organization not found");
-    return context.json({
+    return context.json<OrgUsageResponse>({
       seatsUsed: org.seats_used,
       // Null, not the free tier, where no billing service is attached: there
       // is no cap on that deployment for a person to be shown.
       seatLimit: seatGateEnabled(runtime.vars) ? org.seat_limit : null,
       vmsUsed: org.vms_used,
       vmLimit: org.vm_limit,
+    });
+  });
+
+  // The two links an admin can follow into the billing service: one to buy
+  // seats, one to change what they already bought. Both are the same signed
+  // hop, so a person who lands on the wrong one is one click from the other.
+  //
+  // It exists because the checkout link used to be reachable only by being
+  // refused. An admin who wants to add seats before they hit the wall, or to
+  // change a card, had nowhere to go.
+  router.get("/orgs/self/billing", async (context) => {
+    const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
+    // Admin, because the billing service refuses any other role: the token
+    // this mints would verify and then be turned away one hop later.
+    if (principal.orgId === null || principal.role !== "admin") {
+      throw new HttpError(403, "organization admin required");
+    }
+    const handoff = await billingHandoff(
+      runtime,
+      context.req.raw,
+      { org: principal.orgId, user: principal.id, role: "admin" },
+      Math.floor(Date.now() / 1_000),
+    );
+    // 404 rather than an empty body: on a deployment with no billing service
+    // this route does not exist, which is what every other billing-shaped
+    // route on it answers.
+    if (handoff === null) throw new HttpError(404, "not found");
+    return context.json<OrgBillingLinksResponse>({
+      checkoutUrl: `${handoff.base}/checkout#token=${handoff.token}`,
+      portalUrl: `${handoff.base}/portal#token=${handoff.token}`,
     });
   });
 }
