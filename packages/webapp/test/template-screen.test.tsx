@@ -795,11 +795,12 @@ describe('create template screen', () => {
   });
 
   it('hints at the github connection until it is configured, then offers repos', async () => {
-    // The stub's default 409 is the unconfigured state; screenWith renders a
-    // member, so the hint routes them to their admin, not to a form.
+    // The stub's default 409 is the unconfigured state. There is no org
+    // GitHub credential to wait on any more, so the hint routes this person
+    // to their own connections rather than to an admin.
     const unconfigured = await screenWith();
     expect(unconfigured.view.container.textContent)
-      .toContain('Ask an admin to set up GitHub above');
+      .toContain('Connect your GitHub account first');
     expect(unconfigured.view.container.querySelector(
       'input[aria-label="Filter repositories"]',
     )).toBeNull();
@@ -1076,7 +1077,7 @@ describe('create template screen', () => {
       return null;
     });
     const { view } = await screenWith(fetcher);
-    expect(view.container.textContent).toContain('Ask an admin to set up GitHub above');
+    expect(view.container.textContent).toContain('Connect your GitHub account first');
     const textarea = view.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Public repository URLs"]',
     )!;
@@ -1402,8 +1403,7 @@ describe('template screen org-credential config', () => {
     personalTokenLabel: 'Permanent token',
     personalTokenBaseUrlLabel: 'Instance URL',
   };
-  // Both cases are legitimate for github: member OAuth exists, and an admin
-  // may still store the optional org credential.
+  // github is a pasted personal token now: no OAuth, no org credential.
   const githubEntry = {
     ...discordEntry,
     id: 'github',
@@ -1572,7 +1572,7 @@ describe('template screen org-credential config', () => {
     // Replacing swaps the one org-wide credential under every template and
     // workspace, so the form opens only after an explicit confirmation.
     const replace = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Replace my Discord app');
+      .find((button) => button.textContent === 'Replace Discord key');
     expect(replace).toBeDefined();
     await act(async () => {
       replace!.click();
@@ -1592,7 +1592,7 @@ describe('template screen org-credential config', () => {
 
     await act(async () => {
       [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Replace my Discord app')!.click();
+        .find((button) => button.textContent === 'Replace Discord key')!.click();
     });
     await act(async () => {
       view.container.querySelector<HTMLButtonElement>('.webapp-confirmation-confirm')?.click();
@@ -1620,7 +1620,7 @@ describe('template screen org-credential config', () => {
     expect(view.container.textContent)
       .toContain('Without an org key, members sign in to GitHub themselves.');
     const configure = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent === 'Connect with my app');
+      .find((button) => button.textContent === 'Add GitHub key');
     expect(configure).toBeDefined();
     await act(async () => {
       configure!.click();
@@ -1661,61 +1661,6 @@ describe('template screen org-credential config', () => {
     await view.unmount();
   });
 
-  it('offers both org routes on a provider whose deployment named an app', async () => {
-    connectionsStub((url) => (
-      url.pathname === '/connections/catalog'
-        ? Response.json({
-          providers: [
-            discordEntry,
-            youtrackEntry,
-            { ...githubEntry, platformAppInstallUrl: '/connect/github/install' },
-          ],
-        })
-        : null
-    ));
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'GitHub');
-
-    // Both routes, each named for what it is. "Add GitHub key" named neither.
-    const text = view.container.querySelector('.tplf-connections')?.textContent ?? '';
-    expect(text).toContain('Connect with my app');
-    expect(text).toContain('Connect with BlitzOS app');
-    const install = [...view.container.querySelectorAll<HTMLAnchorElement>('.tplf-connections a')]
-      .find((link) => link.textContent === 'Connect with BlitzOS app');
-    expect(install?.getAttribute('href')).toBe('/connect/github/install');
-    await view.unmount();
-  });
-
-  it('hides the platform route where the deployment named no app', async () => {
-    connectionsStub();
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    await tick(view, 'GitHub');
-
-    // A self-hosted deployment keeps the bring-your-own path alone rather than
-    // advertising an app it does not have.
-    expect(view.container.querySelector('.tplf-connections')?.textContent ?? '')
-      .not.toContain('Connect with BlitzOS app');
-    await view.unmount();
-  });
-
   it('keeps per-member providers as plain checkboxes with no admin form', async () => {
     connectionsStub();
     const view = await render(
@@ -1734,71 +1679,6 @@ describe('template screen org-credential config', () => {
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
     expect(view.container.querySelector('.tplf-connections')?.textContent)
       .not.toContain('Ask an organization admin');
-    await view.unmount();
-  });
-
-  it('lights up the repo picker when the admin saves the credential inline', async () => {
-    // One closure flag stands in for the org credential's existence: the
-    // repositories listing 409s and the connections list is empty until the
-    // PUT lands, exactly the server's sequencing.
-    let stored = false;
-    connectionsStub((url, init) => {
-      if (url.pathname === '/connections/github' && init?.method === 'PUT') {
-        stored = true;
-        return new Response(null, { status: 204 });
-      }
-      if (url.pathname === '/connections' && init?.method === undefined && stored) {
-        return Response.json({ connections: [{
-          name: 'github',
-          provider: 'github',
-          kind: 'static',
-          custody: 'cp',
-          status: 'active',
-          createdBy: 'admin',
-          proxyBaseUrl: null,
-          orgCredential: true,
-        }] });
-      }
-      if (url.pathname === '/connections/github/repositories' && stored) {
-        return Response.json({ repositories: [{ fullName: 'acme/app', private: false }] });
-      }
-      return null;
-    });
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        admin
-        onCreated={vi.fn()}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-    expect(view.container.textContent).toContain('Set up GitHub above first');
-    expect(view.container.querySelector('input[aria-label="Filter repositories"]')).toBeNull();
-
-    await tick(view, 'GitHub');
-    await act(async () => {
-      [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Connect with my app')!.click();
-    });
-    const root = view.container.querySelector<HTMLInputElement>('.tplf-connections input[name="root"]')!;
-    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (setInputValue === undefined) throw new Error('input value setter unavailable');
-    await act(async () => {
-      setInputValue.call(root, 'test-only-app-secret');
-      root.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      [...view.container.querySelectorAll('button')]
-        .find((button) => button.textContent === 'Save')!.click();
-    });
-    await settle();
-
-    // No reload: the saved credential refreshed the listing in place.
-    expect(view.container.querySelector('input[aria-label="Filter repositories"]')).not.toBeNull();
-    expect(view.container.textContent).toContain('acme/app');
-    expect(view.container.textContent).not.toContain('Configure the GitHub App first');
     await view.unmount();
   });
 

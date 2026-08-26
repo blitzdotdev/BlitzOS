@@ -3,9 +3,7 @@ import { HttpError, isRecord, isString } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import type { GithubRepositoryView, ListGithubRepositoriesResponse } from "../wire.js";
-import { appJwt } from "./minters/app-jwt/github-app.js";
-import { activeConnections } from "./registry.js";
-import { openRoot } from "./root-crypto.js";
+import { grantFor, openGrantSecret } from "./user-grants.js";
 
 /** GitHub repository objects carry dozens of fields apiece, so a page of 8
  * stays comfortably under the 64 KiB bounded-response cap. That cap is why
@@ -13,89 +11,14 @@ import { openRoot } from "./root-crypto.js";
 const REPOS_PER_PAGE = 8;
 const MAX_REPOSITORIES = 200;
 
-/** The slice of the github connection config this route needs, parsed at the
- * boundary. `repositories`/`permissions` mirror what the mint path sends, so
- * the picker lists exactly what a runtime clone token can reach. */
-interface GithubListingConfig {
-  app_id: string;
-  installation_id: string;
-  repositories?: string[];
-  permissions?: Record<string, string>;
-}
-
-function parseListingConfig(value: string): GithubListingConfig {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new HttpError(409, "connect github");
-  }
-  if (!isRecord(parsed) || !isString(parsed.app_id) || !isString(parsed.installation_id)) {
-    throw new HttpError(409, "connect github");
-  }
-  const config: GithubListingConfig = {
-    app_id: parsed.app_id,
-    installation_id: parsed.installation_id,
-  };
-  if (Array.isArray(parsed.repositories) && parsed.repositories.every(isString)) {
-    config.repositories = parsed.repositories;
-  }
-  if (isRecord(parsed.permissions)) {
-    const permissions: Record<string, string> = {};
-    for (const [permission, level] of Object.entries(parsed.permissions)) {
-      if (isString(level)) permissions[permission] = level;
-    }
-    config.permissions = permissions;
-  }
-  return config;
-}
-
-interface GithubTokenRequestBody {
-  repositories?: string[];
-  permissions?: Record<string, string>;
-}
-
-async function installationToken(root: string, config: GithubListingConfig): Promise<string> {
-  const body: GithubTokenRequestBody = {};
-  if (config.repositories !== undefined) body.repositories = config.repositories;
-  if (config.permissions !== undefined) body.permissions = config.permissions;
-  const { response, body: parsed } = await fetchBoundedJson(
-    globalThis.fetch,
-    `https://api.github.com/app/installations/${config.installation_id}/access_tokens`,
-    {
-      method: "POST",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${await appJwt(root, config, Date.now())}`,
-        "Content-Type": "application/json",
-        "User-Agent": "blitz-control-plane",
-      },
-      body: JSON.stringify(body),
-    },
-    {
-      responseLabel: "GitHub installation token",
-      bodyDisposition: () => "read",
-      invalidJsonDisposition: () => "provider-error",
-    },
-  );
-  if (!response.ok) {
-    throw new HttpError(
-      502,
-      `github installation token request failed with status ${String(response.status)}`,
-    );
-  }
-  if (!isRecord(parsed) || !isString(parsed.token)) {
-    throw new HttpError(502, "github returned an invalid installation token response");
-  }
-  return parsed.token;
-}
-
+/** `/user/repos` answers with a bare array, unlike the installation listing's
+ * `{ repositories: [...] }` envelope this route used to read. */
 function parseRepositoryPage(value: JsonValue | null): GithubRepositoryView[] {
-  if (!isRecord(value) || !Array.isArray(value.repositories)) {
+  if (!Array.isArray(value)) {
     throw new HttpError(502, "github returned an invalid repository listing");
   }
   const parsed: GithubRepositoryView[] = [];
-  for (const entry of value.repositories) {
+  for (const entry of value) {
     if (
       !isRecord(entry) ||
       !isString(entry.full_name) ||
@@ -108,13 +31,22 @@ function parseRepositoryPage(value: JsonValue | null): GithubRepositoryView[] {
   return parsed;
 }
 
-async function listInstallationRepositories(token: string): Promise<GithubRepositoryView[]> {
+/** What this person's own token can reach, which is exactly what a workspace
+ * running on that token will be able to clone. An org credential used to
+ * answer here and could list repositories the member themselves could not
+ * open. */
+async function listMemberRepositories(token: string): Promise<GithubRepositoryView[]> {
   const repositories: GithubRepositoryView[] = [];
   const maxPages = Math.ceil(MAX_REPOSITORIES / REPOS_PER_PAGE);
   for (let page = 1; page <= maxPages; page += 1) {
     const { response, body } = await fetchBoundedJson(
       globalThis.fetch,
-      `https://api.github.com/installation/repositories?per_page=${String(REPOS_PER_PAGE)}&page=${String(page)}`,
+      // affiliation keeps the list to repositories the person can actually
+      // push to or was given access to, rather than everything visible to
+      // them through an organization they merely belong to.
+      `https://api.github.com/user/repos?per_page=${String(REPOS_PER_PAGE)}`
+        + `&page=${String(page)}&sort=updated`
+        + "&affiliation=owner,collaborator,organization_member",
       {
         headers: {
           Accept: "application/vnd.github+json",
@@ -145,10 +77,12 @@ async function listInstallationRepositories(token: string): Promise<GithubReposi
 }
 
 /** GET /connections/github/repositories — the template repo picker's source.
- * Active-member read (picking repos for a template is not an admin act); the
- * secret stays server-side: the app JWT and installation token never leave
- * this route. 409 tells the webapp the github connection is not configured
- * yet, which the picker renders as its disabled hint. */
+ *
+ * It reads the caller's own GitHub grant. There is no org-wide GitHub
+ * credential any more: a shared one attributed every commit to itself, and it
+ * could offer a member repositories their own account could not open. 409
+ * tells the webApp this person has not connected GitHub yet, which the picker
+ * renders as its disabled hint. */
 export function addGithubRepositoryRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -158,17 +92,19 @@ export function addGithubRepositoryRoutes(
     const runtime = runtimeFactory(context);
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
-    const connection = (await activeConnections(runtime.db, principal.orgId)).find(
-      (candidate) => candidate.provider === "github" && candidate.kind === "app-jwt",
-    );
-    const rootCiphertext = connection?.root_ciphertext ?? null;
-    if (connection === undefined || rootCiphertext === null) {
+    const grant = await grantFor(runtime.db, principal.id, "github");
+    // A pasted token lives in the refresh slot. An `oauth` grant predates the
+    // move to personal tokens: its access token expires in hours and can never
+    // refresh, because the manifest has no authorize endpoint any more. Sending
+    // it would earn a 401 from GitHub and surface as a 502 — the mint path
+    // answers 409 for the same row, so this one does too.
+    if (grant === null || grant.kind !== "pat") {
       throw new HttpError(409, "connect github");
     }
-    const root = await openRoot(runtime.credentialMasterKey, connection.name, rootCiphertext);
-    const token = await installationToken(root, parseListingConfig(connection.config));
+    const token = await openGrantSecret(runtime.credentialMasterKey, grant, "refresh");
+    if (token === null) throw new HttpError(409, "connect github");
     return context.json<ListGithubRepositoriesResponse>({
-      repositories: await listInstallationRepositories(token),
+      repositories: await listMemberRepositories(token),
     });
   });
 }

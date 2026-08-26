@@ -29,7 +29,6 @@ const expected = [
   "connections/leases.ts",
   "connections/manifest.ts",
   "connections/mint.ts",
-  "connections/minters/app-jwt/github-app.ts",
   "connections/minters/grant.ts",
   "connections/minters/oauth.ts",
   "connections/minters/static.ts",
@@ -122,6 +121,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(97);
+    expect(expected).toHaveLength(96);
   });
 });

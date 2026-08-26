@@ -18,8 +18,6 @@ function Caller({
       <p data-testid="render-number">{renderNumber}</p>
       <TemplateRepoPicker
         client={client}
-        admin
-        githubConfigured
         value={[]}
         onChange={() => undefined}
       />

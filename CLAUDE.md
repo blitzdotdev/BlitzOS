@@ -32,16 +32,17 @@ npm test              # control-plane, box actor, ui, guest node:test,
 
 ## Known debt (as of 2026-08-18)
 
-- 107 anti-slop findings remain, all Tier C: external-boundary code that
-  needs real parsers (51 no-unknown-parameters, 27 no-runtime-typeof in
-  plain JS, 23 no-unsafe-dictionary-type, 6 no-unknown-returns). Fixing one
+- 102 anti-slop findings remain, all Tier C: external-boundary code that
+  needs real parsers (47 no-unknown-parameters, 27 no-runtime-typeof in
+  plain JS, 22 no-unsafe-dictionary-type, 6 no-unknown-returns). Fixing one
   requires characterization tests FIRST — these fixes can change accepted
   inputs. Plan and history: GitHub issue #1.
 - 16 `TODO(deslop-tier-c):` markers flag type assertions whose invariant is
   not actually enforced today (latent-bug candidates). Grep for the marker.
 - `TODO(house-canon):` markers flag direct fetch/console sites awaiting
   migration to the canon helpers.
-- 6 files exceed the 700-line warn: `core/bootstrap.ts`, `core/workspaces.ts`,
+- 7 files exceed the 700-line warn: `core/bootstrap.ts`, `core/compute/aws.ts`,
+  `core/workspaces.ts`,
   `control-plane/scripts/lib/worker-source.mjs`, `webapp/src/CloudApp.tsx`,
   `webapp/src/api.ts`, `webapp/src/terminal-touch-controller.ts`. Split on
   touch, never big-bang. (`core/files/sync.ts` left the list 2026-08-21 when
@@ -109,8 +110,8 @@ Do not add aliases anywhere else.
    and both conformance tests present and passing. A new cross-runtime
    payload without fixtures is a finding.
 6. Max-lines: the warn list printed by `lint:gate` should not grow.
-7. Reference counts for comparison (2026-08-24): anti-slop 107
-   (51/27/23/6), blitz-house 0, max-lines warnings 6. These are the numbers
+7. Reference counts for comparison (2026-08-26): anti-slop 102
+   (47/27/22/6), blitz-house 0, max-lines warnings 7. These are the numbers
    a sweep compares against, so lower them in the same change that removes
    findings — a stale reference hides the next regression.
 

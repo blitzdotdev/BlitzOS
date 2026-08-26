@@ -388,7 +388,6 @@ const catalogAdminForm: SharedShape<
     { kind: "env", name: "VENDOR_TOKEN", fill: "token" },
     { kind: "env", name: "VENDOR_BASE_URL", fill: "proxy-url" },
   ],
-  app: { appIdLabel: "App ID", installationIdLabel: "Installation ID" },
 };
 
 const catalogEntry: SharedShape<
@@ -405,7 +404,6 @@ const catalogEntry: SharedShape<
   personalTokenHelp: "Create it in Linear's own settings.",
   personalTokenBaseUrlLabel: null,
   adminForm: catalogAdminForm,
-  platformAppInstallUrl: null,
 };
 
 const userGrant: SharedShape<connections.UserGrantView, schema.UserGrantView> = {

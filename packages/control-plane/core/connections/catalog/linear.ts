@@ -21,7 +21,7 @@ export const linearManifest = {
     clientSecretVar: "LINEAR_CLIENT_SECRET",
     pkce: true,
     // actor=user keeps attribution on the human. actor=app is the agent-identity
-    // path, parked with installation tokens.
+    // path, parked.
     authorizeParams: [{ name: "actor", value: "user" }],
     scopeDelimiter: ",",
     accessTtlMs: 24 * HOUR_MS,

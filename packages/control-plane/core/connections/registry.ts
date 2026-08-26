@@ -17,19 +17,13 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { manifestBaseUrl } from "./catalog/index.js";
+import { manifestBaseUrl, providerManifest } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { revokeConnectionLeasesQuery } from "./leases.js";
 import { sealRoot } from "./root-crypto.js";
-import {
-  githubAppMinter,
-  importGithubAppPrivateKey,
-  normalizeGithubAppPrivateKey,
-  usesPlatformKey,
-} from "./minters/app-jwt/github-app.js";
 import { staticMinter } from "./minters/static.js";
 
-const minters: readonly Minter[] = [githubAppMinter, staticMinter];
+const minters: readonly Minter[] = [staticMinter];
 
 type PlacementFill = "token" | "proxy-url";
 
@@ -57,21 +51,8 @@ interface ParsedStaticConfig {
   proxy?: ParsedProxyConfig;
 }
 
-interface ParsedStringMap {
-  [key: string]: string;
-}
-
-interface ParsedAppJwtConfig {
-  app_id: string;
-  installation_id: string;
-  placements?: ParsedPlacementTemplate[];
-  repositories?: string[];
-  permissions?: ParsedStringMap;
-  platform_key?: boolean;
-}
-
 function isMintKind(value: unknown): value is MintKind {
-  return value === "app-jwt" || value === "oauth" || value === "static";
+  return value === "oauth" || value === "static";
 }
 
 function isCustody(value: unknown): value is Custody {
@@ -156,84 +137,9 @@ function staticConfigJson(value: unknown, custody: Custody): string {
   return JSON.stringify(config);
 }
 
-function digitString(value: unknown, field: string): string {
-  if (
-    !isString(value) ||
-    value.length === 0 ||
-    value.length > 256 ||
-    !/^\d+$/u.test(value)
-  ) {
-    throw new HttpError(400, `${field} must be a non-empty string of digits`);
-  }
-  return value;
-}
 
-function stringMap(value: unknown, field: string): ParsedStringMap {
-  if (!isRecord(value)) {
-    throw new HttpError(400, `${field} must be an object of non-empty strings`);
-  }
-  const result: ParsedStringMap = {};
-  for (const [key, item] of Object.entries(value)) {
-    if (key.length === 0 || !isString(item) || item.length === 0) {
-      throw new HttpError(400, `${field} must be an object of non-empty strings`);
-    }
-    result[key] = item;
-  }
-  return result;
-}
 
-function appJwtConfigJson(value: unknown): string {
-  if (!isRecord(value)) throw new HttpError(400, "config must be an object");
-  const config: ParsedAppJwtConfig = {
-    app_id: digitString(value.app_id, "config.app_id"),
-    installation_id: digitString(value.installation_id, "config.installation_id"),
-  };
-  // The flag is the whole difference between "the org registered a GitHub App"
-  // and "the org installed ours". Only `true` counts; anything else is the
-  // bring-your-own-App path and still owes a private key.
-  if (value.platform_key === true) config.platform_key = true;
-  if (value.placements !== undefined) {
-    if (!Array.isArray(value.placements)) {
-      throw new HttpError(400, "config.placements must be an array");
-    }
-    config.placements = value.placements.map((placement) =>
-      placementTemplate(placement)
-    );
-  }
-  if (value.repositories !== undefined) {
-    config.repositories = stringArray(value.repositories, "config.repositories");
-  }
-  if (value.permissions !== undefined) {
-    config.permissions = stringMap(value.permissions, "config.permissions");
-  }
-  return JSON.stringify(config);
-}
 
-function configJson(kind: MintKind, custody: Custody, value: unknown): string {
-  return kind === "app-jwt"
-    ? appJwtConfigJson(value)
-    : staticConfigJson(value, custody);
-}
-
-/** The exact root string to seal. For app-jwt it rewrites GitHub's PKCS#1
- * download into PKCS#8 and proves the result imports, so a sealed app root
- * is always a key the minter can sign with. Encrypted keys carry their own
- * 400 out of the normalizer; everything else that fails to import is one
- * generic 400. */
-async function validateRoot(kind: MintKind, root: string): Promise<string> {
-  if (kind !== "app-jwt") return root;
-  try {
-    const normalized = normalizeGithubAppPrivateKey(root);
-    await importGithubAppPrivateKey(normalized);
-    return normalized;
-  } catch (caught) {
-    if (caught instanceof HttpError) throw caught;
-    throw new HttpError(
-      400,
-      "private key must be an RSA private key PEM (the .pem file GitHub generates)",
-    );
-  }
-}
 
 function usableByJson(value: unknown): string | null {
   if (value === undefined || value === null) return null;
@@ -399,70 +305,19 @@ function validateServedConnection(
   if (resolveMinter(candidate) === null) {
     throw new HttpError(400, `credential kind ${kind} is not available`);
   }
-  // A static root can sit behind the proxy or be injected; an app-jwt root
-  // mints short-lived tokens the box holds itself, so it is cp only.
+  // A catalog provider that declares no admin form has no org credential at
+  // all. Without this the rule was only in the webApp: staticMinter claims
+  // every provider, so a PUT could still seal an org-wide GitHub root and
+  // serve it to every workspace whose owner has no grant of their own — the
+  // exact thing GitHub stopped having. Providers outside the catalog are
+  // unaffected; they never had a manifest to declare anything.
+  const manifest = providerManifest(provider);
+  if (manifest !== null && manifest.adminForm === null) {
+    throw new HttpError(400, `${provider} has no organization credential`);
+  }
+  // A static root can sit behind the proxy or be injected.
   if (kind === "static") return;
-  if (kind === "app-jwt" && custody === "cp") return;
   throw new HttpError(400, `credential kind ${kind} does not support ${custody} custody`);
-}
-
-/** The one write that creates or replaces an org's connection row. The admin
- * PUT and the platform-app install redirect both land here, so the two paths
- * cannot drift on what a stored connection looks like. */
-export interface ConnectionUpsert {
-  name: string;
-  provider: string;
-  kind: MintKind;
-  custody: Custody;
-  config: string;
-  /** Null for a platform-key connection: the deployment holds the key. */
-  root: string | null;
-  usableBy: string | null;
-}
-
-export async function upsertConnection(
-  runtime: ReturnType<RuntimeFactory>,
-  principal: Principal,
-  input: ConnectionUpsert,
-): Promise<void> {
-  if (principal.orgId === null) throw new HttpError(403, "active membership required");
-  const existing = await connectionByName(runtime.db, input.name, principal.orgId, false);
-  const id = existing?.id ?? crypto.randomUUID();
-  const now = Date.now();
-  const rootCiphertext = input.root === null
-    ? null
-    : await sealRoot(runtime.credentialMasterKey, input.name, input.root);
-  await rows(runtime.db, {
-    q: `INSERT INTO connections
-        (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
-         usable_by, created_by, created_at, revoked_at, org_id,
-         created_by_membership_id)
-        VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
-        ON CONFLICT(org_id, scoped_name) DO UPDATE SET
-          provider = excluded.provider,
-          kind = excluded.kind,
-          custody = excluded.custody,
-          config = excluded.config,
-          root_ciphertext = excluded.root_ciphertext,
-          usable_by = excluded.usable_by,
-          created_by = excluded.created_by,
-          created_by_membership_id = excluded.created_by_membership_id,
-          revoked_at = NULL`,
-    v: [
-      id,
-      input.name,
-      input.provider,
-      input.kind,
-      input.custody,
-      input.config,
-      rootCiphertext,
-      input.usableBy,
-      principal.id,
-      now,
-      principal.orgId,
-      principal.membershipId,
-    ],
-  });
 }
 
 export function addConnectionRoutes(
@@ -512,31 +367,51 @@ export function addConnectionRoutes(
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
     const provider = requiredString(value.provider, "provider", 256);
     if (!isMintKind(value.kind)) {
-      throw new HttpError(400, "kind must be app-jwt, oauth, or static");
+      throw new HttpError(400, "kind must be static");
     }
     const custodyValue = value.custody ?? (value.kind === "static" ? "proxy" : "cp");
     if (!isCustody(custodyValue)) {
       throw new HttpError(400, "custody must be cp or proxy");
     }
     validateServedConnection(provider, value.kind, custodyValue);
-    const config = configJson(value.kind, custodyValue, value.config);
-    // A platform-key connection has no root to seal — the deployment holds the
-    // key. Every other shape still requires one, so a missing key stays a 400
-    // rather than becoming a connection that cannot mint.
-    const platformKey = value.kind === "app-jwt" && usesPlatformKey(config);
-    const root = platformKey
-      ? null
-      : await validateRoot(value.kind, requiredString(value.root, "root"));
+    const config = staticConfigJson(value.config, custodyValue);
+    const root = requiredString(value.root, "root");
     const usableBy = usableByJson(value.usable_by);
     const runtime = runtimeFactory(context);
-    await upsertConnection(runtime, principal, {
-      name,
-      provider,
-      kind: value.kind,
-      custody: custodyValue,
-      config,
-      root,
-      usableBy,
+    const existing = await connectionByName(runtime.db, name, principal.orgId, false);
+    const id = existing?.id ?? crypto.randomUUID();
+    const now = Date.now();
+    const rootCiphertext = await sealRoot(runtime.credentialMasterKey, name, root);
+    await rows(runtime.db, {
+      q: `INSERT INTO connections
+          (id, name, scoped_name, provider, kind, custody, config, root_ciphertext,
+           usable_by, created_by, created_at, revoked_at, org_id,
+           created_by_membership_id)
+          VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11, ?12)
+          ON CONFLICT(org_id, scoped_name) DO UPDATE SET
+            provider = excluded.provider,
+            kind = excluded.kind,
+            custody = excluded.custody,
+            config = excluded.config,
+            root_ciphertext = excluded.root_ciphertext,
+            usable_by = excluded.usable_by,
+            created_by = excluded.created_by,
+            created_by_membership_id = excluded.created_by_membership_id,
+            revoked_at = NULL`,
+      v: [
+        id,
+        name,
+        provider,
+        value.kind,
+        custodyValue,
+        config,
+        rootCiphertext,
+        usableBy,
+        principal.id,
+        now,
+        principal.orgId,
+        principal.membershipId,
+      ],
     });
     return context.body(null, 204);
   };

@@ -192,8 +192,8 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   deleteConnection(name: string): Promise<void>;
   listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
   listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
-  /** Repos the org's GitHub App installation reaches, for the template repo
-   * picker. 409 until an admin configures the github connection. */
+  /** Repos the caller's own GitHub token reaches, for the template repo
+   * picker. 409 until that person connects GitHub themselves. */
   listGithubRepositories(signal?: AbortSignal): Promise<ListGithubRepositoriesResponse>;
   checkGithubRepositories(repos: string[]): Promise<CheckGithubRepositoriesResponse>;
   putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;

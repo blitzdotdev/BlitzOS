@@ -26,11 +26,6 @@ export function providerManifest(id: string): ProviderManifest | null {
 /** The redirect URI this instance registers with a provider. It is derived, not
  * declared: every provider has always used the same shape, and a manifest field
  * holding a constant invites the one typo the OAuth round trip cannot survive. */
-/** Binding naming the deployment's own GitHub App. Public information, but it
- * is read like any other connect binding so a deployment that has not set one
- * simply does not offer the path. */
-export const PLATFORM_APP_SLUG_VAR = "GITHUB_APP_SLUG";
-
 export function providerRedirectPath(manifest: ProviderManifest): string {
   return `/connect/${manifest.id}/callback`;
 }
@@ -58,8 +53,7 @@ export function manifestBaseUrl(
 
 /** The admin form, compiled so the panel can submit `PUT /connections/:id`
  * without knowing anything about manifests: the placements come from the env
- * deliveries. An `app` block flips the PUT to kind app-jwt, whose config
- * carries the ids instead of placements. */
+ * deliveries. */
 function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null {
   const form = manifest.adminForm;
   if (form === null) return null;
@@ -71,7 +65,6 @@ function adminFormView(manifest: ProviderManifest): CatalogAdminFormView | null 
       name,
       fill,
     })),
-    app: form.app,
   };
 }
 
@@ -98,15 +91,6 @@ export function catalogView(
     personalTokenHelp: manifest.personalToken?.help ?? null,
     personalTokenBaseUrlLabel: manifest.personalToken?.baseUrlLabel ?? null,
     adminForm: adminFormView(manifest),
-    // Only a provider with an app-shaped admin form can have a platform app,
-    // and only a deployment that named one can offer it. The route, not the
-    // vendor URL, so the server keeps ownership of the slug and the state.
-    platformAppInstallUrl:
-      manifest.adminForm?.app !== undefined
-      && manifest.adminForm.app !== null
-      && (secret(PLATFORM_APP_SLUG_VAR) ?? "") !== ""
-        ? `/connect/${manifest.id}/install`
-        : null,
   };
 }
 

@@ -1220,52 +1220,6 @@
   outline: 0;
 }
 
-/* The app key's primary input: GitHub hands admins a downloaded .pem, so the
- * field is a drop zone with a browse button, not a text control. */
-.connect-drop {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: 72px;
-  padding: 14px;
-  border: 1px dashed var(--rule);
-  border-radius: var(--r-item);
-  background: var(--paper);
-}
-
-.connect-drop--active {
-  border-color: var(--accent);
-  background: color-mix(in oklab, var(--accent) 6%, var(--paper));
-}
-
-.connect-drop__prompt,
-.connect-drop__loaded {
-  color: var(--muted);
-  font: 12px/1.45 var(--font-ui);
-  overflow-wrap: anywhere;
-}
-
-.connect-drop__loaded strong {
-  color: var(--ink);
-}
-
-.connect-drop__toggle {
-  justify-self: start;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--faint);
-  font: 11px/1.4 var(--font-ui);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.connect-drop__toggle:hover {
-  color: var(--ink);
-}
-
 .connect-field input[readonly] {
   color: var(--muted);
   background: color-mix(in oklab, var(--ink) 5%, var(--paper));

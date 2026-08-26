@@ -1,7 +1,7 @@
 {
-  "anti-slop/no-unknown-parameters": 51,
+  "anti-slop/no-unknown-parameters": 47,
   "anti-slop/no-runtime-typeof": 27,
-  "anti-slop/no-unsafe-dictionary-type": 23,
+  "anti-slop/no-unsafe-dictionary-type": 22,
   "anti-slop/no-unknown-returns": 6,
   "blitz-house/no-raw-fetch": 0,
   "blitz-house/no-console-in-core": 0

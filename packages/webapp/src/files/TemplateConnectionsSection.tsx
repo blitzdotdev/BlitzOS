@@ -118,7 +118,7 @@ export function TemplateConnectionsSection({
                   className="webapp-action tplf-connection-action"
                   type="button"
                   onClick={() => setConfirmingReplace(entry)}
-                >Replace my {entry.title} app</button>
+                >Replace {entry.title} key</button>
               )}
               {wantsOrgConfig && admin && !configured && memberPath
                 && configuring !== entry.id && (
@@ -126,21 +126,7 @@ export function TemplateConnectionsSection({
                   className="webapp-action tplf-connection-action"
                   type="button"
                   onClick={() => setConfiguring(entry.id)}
-                >Connect with my app</button>
-              )}
-              {/* The other half of the org path: install the deployment's own
-                * app rather than registering one. Only offered where the
-                * deployment named an app, so a self-hosted install still sees
-                * the bring-your-own button alone. */}
-              {/* Truthy, not `!== null`: a control plane older than this field
-                * omits it, and a webApp newer than its control plane must not
-                * offer a route that does not exist there. */}
-              {(entry.platformAppInstallUrl ?? '') !== '' && admin
-                && configuring !== entry.id && (
-                <a
-                  className="webapp-action webapp-action--primary tplf-connection-action"
-                  href={entry.platformAppInstallUrl ?? ''}
-                >Connect with BlitzOS app</a>
+                >Add {entry.title} key</button>
               )}
             </label>
             {wantsOrgConfig && admin && !configured && memberPath

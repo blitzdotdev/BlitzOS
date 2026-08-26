@@ -1,6 +1,11 @@
 # GitHub org path: install once, commit as the member
 
-Status: plan. App `blitzosauth`, App ID `4334267`, Client ID `Iv23liwiZP2zvQgqlCl5`.
+Status: ABANDONED 2026-08-26. GitHub is a per-member personal token and
+nothing else — no org credential, no OAuth, no App. See §7. §3 shipped (#71). §1, §2 and §5 shipped as
+#74 and were reverted the same day — see the note below. GitHub is moving to a
+personal-token connector, the same class as YouTrack.
+
+Original status: plan. App `blitzosauth`, App ID `4334267`, Client ID `Iv23liwiZP2zvQgqlCl5`.
 `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` are already set on canary
 and prod.
 
@@ -115,3 +120,45 @@ the PAT path and today's member OAuth.
 - Members whose GitHub account cannot see a repo the install covers — the
   intersection rule silently narrows them.
 - Commit signing. CLI pushes get no Verified badge either way.
+
+
+## Why §1, §2 and §5 were reverted
+
+A GitHub App has **one** Setup URL, not a list like its callback URLs. So every
+install redirect lands on a single host no matter which deployment started it.
+An install begun on canary returned to `blitzos.com`, which had neither the
+route nor the signed-state cookie — the cookie is host-scoped, so even a
+deployed prod could not have verified it.
+
+The workable answers were a second App per deployment, or dropping the redirect
+and matching installations through `GET /app/installations`. Both cost more than
+the org path was worth: the owner's call was that GitHub should be a personal
+token, the same class of connector as YouTrack, and that the org-key path should
+go with it.
+
+§3 stands on its own and stays: it derives a git identity from whatever token is
+in hand, which is a personal token just as readily as an App user token.
+
+
+## 7. The whole org path is gone
+
+The bring-your-own-App path went with the platform one. GitHub is now the same
+class of connector as YouTrack: a pasted personal token, `auth: null`,
+`adminForm: null`.
+
+The reasoning, from the owner: an org-level GitHub credential attributes every
+commit to itself, which is the opposite of what the attribution work is for. A
+personal token gives per-person attribution with no install dance, no second
+class of credential, and no App to register per deployment.
+
+Removed with it: the `app-jwt` mint kind and its only minter, the PKCS#1
+normalizer, the `.pem` drop zone, the App-shaped admin form fields, and
+GitHub's OAuth exchange fixtures.
+
+The template repo picker was rewritten rather than deleted. It listed
+repositories through the org installation; it now lists the caller's own,
+through their grant. That is a better answer as well as a necessary one — the
+installation could offer a member repositories their own account cannot open.
+
+§3 stands: it derives a git identity from whatever token is in hand, and a
+personal token answers `GET /user` exactly as an App user token did.
