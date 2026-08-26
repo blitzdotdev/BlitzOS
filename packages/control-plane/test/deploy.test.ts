@@ -18,6 +18,7 @@ import {
   d1DatabasePatch,
   localSecretValueProblems,
   missingSecretsMessage,
+  overrideVarsFromEnvironment,
   parseD1Binding,
   parseR2Binding,
   placeholderVars,
@@ -205,6 +206,21 @@ describe("control-plane deploy command", () => {
     });
     const bare = calls.find(({ tool, args }) => tool === "wrangler" && args[0] === "deploy");
     expect(bare?.args.join(" ")).not.toContain("CLOUD_WORKSPACE_CREDENTIAL_POLICY");
+  });
+
+  it("reads override vars from the environment, and treats an unset one as absent", () => {
+    // A workflow names a setting with ${{ vars.NAME }}, which arrives as the
+    // empty string until someone sets it. Skipping it is what lets the
+    // workflow carry the line before the value exists, so setting it later
+    // needs no commit.
+    expect(overrideVarsFromEnvironment({
+      BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+      BLITZ_DEPLOY_VAR_PAYMENT_URL: "",
+      CLOUDFLARE_API_TOKEN: "not-a-var",
+      PAYMENT_URL: "unprefixed, so not a var either",
+    })).toEqual({ CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required" });
+
+    expect(overrideVarsFromEnvironment({})).toEqual({});
   });
 
   it("passes the checked-out commit to the deploy, so GET /version can report it", async () => {

@@ -149,6 +149,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: byok-required
+          # The billing service's origin, once it has one. Empty is skipped, so
+          # this line changes nothing until the variable is set, and setting it
+          # then needs no commit.
+          BLITZ_DEPLOY_VAR_PAYMENT_URL: ${{ vars.PAYMENT_URL }}
         run: npm run deploy -w packages/control-plane
 
       # A green deploy command proves upload, not content. Ask the deployment
