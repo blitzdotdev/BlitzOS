@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { seatAvailable } from "../core/entitlements.js";
+import { inviteCodeHash } from "../core/identity/invites.js";
 import {
   appRequest,
   harness,
@@ -87,7 +88,6 @@ async function activeCount(orgId: string): Promise<number> {
 }
 
 async function inviteState(code: string): Promise<string | null> {
-  const { inviteCodeHash } = await import("../core/identity/invites.js");
   return env.DB
     .prepare("SELECT state FROM invites WHERE code_hash = ?1")
     .bind(await inviteCodeHash(code))

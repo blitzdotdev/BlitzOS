@@ -32,12 +32,12 @@ import type {
 
 /** Seats an organization has when no billing service has written a row for it.
  * One: a solo organization is free, and the second person is the pay gate. */
-export const FREE_SEAT_LIMIT = 1;
+const FREE_SEAT_LIMIT = 1;
 
 /** How long a checkout handoff token stays valid. */
-export const HANDOFF_TOKEN_TTL_SECONDS = 15 * 60;
+const HANDOFF_TOKEN_TTL_SECONDS = 15 * 60;
 
-export const SEAT_LIMIT_MESSAGE = "seat limit reached";
+const SEAT_LIMIT_MESSAGE = "seat limit reached";
 
 /** Workspace phases that hold a VM slot. Written once and read by both the
  * create-path predicate in core/workspaces.ts and the usage report below, so
@@ -46,7 +46,7 @@ export const SEAT_LIMIT_MESSAGE = "seat limit reached";
 export const VM_SLOT_PHASES = "'creating', 'ready', 'destroying', 'error'";
 
 /** The billing key, or undefined where no billing service is attached. */
-export function billingKey(vars: RuntimeVariables): string | undefined {
+function billingKey(vars: RuntimeVariables): string | undefined {
   const key = vars.entitlementsApiKey ?? "";
   return key === "" ? undefined : key;
 }
@@ -75,7 +75,7 @@ export function seatAvailable(orgParameter: string): string {
 }
 
 /** Active memberships: the seats an organization is using right now. */
-export async function activeSeats(db: Db, orgId: string): Promise<number> {
+async function activeSeats(db: Db, orgId: string): Promise<number> {
   const row = await first<{ count: number }>(db, {
     q: `SELECT COUNT(*) AS count FROM memberships
         WHERE org_id = ?1 AND status = 'active'`,
@@ -85,7 +85,7 @@ export async function activeSeats(db: Db, orgId: string): Promise<number> {
 }
 
 /** The seat cap in force, or null where seat gating is off. */
-export async function seatLimit(runtime: CoreRuntime, orgId: string): Promise<number | null> {
+async function seatLimit(runtime: CoreRuntime, orgId: string): Promise<number | null> {
   if (!seatGateEnabled(runtime.vars)) return null;
   const row = await first<{ seat_limit: number }>(runtime.db, {
     q: "SELECT seat_limit FROM org_entitlements WHERE org_id = ?1 LIMIT 1",
@@ -95,12 +95,16 @@ export async function seatLimit(runtime: CoreRuntime, orgId: string): Promise<nu
 }
 
 /** Whether the organization has no unused seat. Gates read this to name the
- * reason a write was refused; the refusal itself is decided by the predicate
- * inside the statement, never by this. */
+ * reason a write was refused; the refusal itself is decided inside the
+ * statement. It asks the gate's own predicate rather than re-deriving the
+ * comparison, so the message and the refusal cannot disagree. */
 export async function seatsExhausted(runtime: CoreRuntime, orgId: string): Promise<boolean> {
-  const limit = await seatLimit(runtime, orgId);
-  if (limit === null) return false;
-  return (await activeSeats(runtime.db, orgId)) >= limit;
+  if (!seatGateEnabled(runtime.vars)) return false;
+  const free = await first<{ ok: number }>(runtime.db, {
+    q: `SELECT 1 AS ok WHERE ${seatAvailable("?1")}`,
+    v: [orgId],
+  });
+  return free === null;
 }
 
 /**
