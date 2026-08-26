@@ -1,9 +1,10 @@
 # Cockpit UI restoration — current direction
 
-Status: **active rescope** (2026-08-25). This update supersedes the historical
-plan below without deleting it. The earlier work remains useful product and
-implementation history, but native Chat and Blitz-owned session
-archive/removal are no longer part of the current UI branch.
+Status: **implementation complete; final PR walkthrough pending** (2026-08-26).
+This update supersedes the historical plan below without deleting it. The
+earlier work remains useful product and implementation history, but native Chat
+and Blitz-owned session archive/removal are no longer part of the current UI
+branch.
 
 ## Product direction update
 
@@ -36,6 +37,8 @@ selection, lifecycle, queueing, recovery, and mobile behavior.
 
 ### Phase A — restore standard tab lifecycle
 
+Status: **complete**.
+
 1. Make the X use the normal tab-close operation for Claude, Codex, terminal,
    file, preview, and panel tabs.
 2. Remove the retained-window model (`windowOpen`), hidden resumable rail rows,
@@ -58,6 +61,8 @@ without losing its retained or archived tab records.
 
 ### Phase B — disable native Chat
 
+Status: **complete**.
+
 1. Add one centralized, documented native-Chat availability boundary.
 2. Remove Chat from New Session and every other creation entry point while the
    boundary is disabled.
@@ -78,6 +83,8 @@ before it returns.
 
 ### Phase C — Finder rename and delete
 
+Status: **complete**.
+
 Keep the implemented Finder file/folder rename and delete workflow, including
 dirty-editor protection, WebDAV error handling, open-tab/path reconciliation,
 and the existing Drive actions. These operations manage workspace files, not
@@ -85,12 +92,16 @@ provider-native session records.
 
 ### Phase D — Workspace Details
 
+Status: **complete**.
+
 Keep the implemented three-dot Workspace Details action, human-readable
 compute/storage/configuration metadata, access list, separate Share action, and
 workspace deletion inside Details. Workspace deletion is distinct from session
 archive/removal and remains in scope.
 
 ### Phase E — mobile responsiveness
+
+Status: **complete**.
 
 Audit global navigation, workspace creation, Templates, Recipes, Drive,
 Settings, the workspace rail, standard tab closing/renaming, Finder, Share, and
@@ -101,12 +112,58 @@ viewport-safe menus/dialogs, focus return, keyboard behavior, and safe areas.
 
 ### Phase F — final refinement and polish
 
+Status: **implementation complete; final manual walkthrough pending**.
+
 Walk fresh and persisted workspaces across desktop and mobile. Verify standard
 close behavior, Rename-only session menus, rail counts/selections, split-pane
 collapse, reload/reconnect, file actions, Share, and Workspace Details. Confirm
 that no native Chat or session archive/removal entry point remains, run the
 required repository gates and self-host walkthrough, and record intentional
 limitations before the PR.
+
+## Completion record — 2026-08-26
+
+The current implementation satisfies the active cockpit scope:
+
+- standard tab closing and Rename-only managed-session menus are restored;
+- native Chat, session archive/restore, and permanent session removal are not
+  exposed;
+- legacy retained-window, archived-tab, and Chat layout records are normalized
+  without extending those retired models;
+- Finder rename/delete, dirty-editor protection, path reconciliation, and Drive
+  actions are present;
+- Workspace Details includes compute, storage, configuration, access, Share,
+  and workspace deletion flows; and
+- the mobile pass covers cockpit navigation and density, terminal controls and
+  keyboard viewport behavior, Settings, Finder menus, creation-form actions,
+  safe areas, and opening Workspace Details from the mobile rail.
+
+Validation completed on Node 22:
+
+- WebApp tests: 273 passed;
+- control-plane tests and wire-drift checks: passed;
+- repository typecheck: passed;
+- lint gate: passed;
+- WebApp production build: passed; and
+- `git diff --check`: passed.
+
+Two `box-actor` terminal-environment tests remain failing around `LANG`
+propagation. This branch does not modify `packages/box/actor`, so these are
+recorded as unrelated environment/runtime failures rather than cockpit UI
+regressions.
+
+Before merge, perform one final self-host walkthrough covering a fresh and a
+persisted workspace, reload/reconnect, and a mobile landscape sanity check.
+Record any deployment-specific observations in the PR rather than expanding
+the cockpit scope unless the walkthrough exposes a reproducible regression.
+
+Intentional limitations:
+
+- native Chat remains deferred behind the centralized availability boundary;
+- Claude and Codex own their provider-native conversation history and resume
+  lifecycle; and
+- closing a cockpit tab removes the window from the Blitz layout but does not
+  claim to delete provider-native processes, transcripts, or journals.
 
 ## Deferred native Chat work
 
