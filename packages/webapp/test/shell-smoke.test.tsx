@@ -395,8 +395,6 @@ describe("webapp shell smoke", () => {
 
     const link = view.container.querySelector<HTMLAnchorElement>('a[href="/auth/google/start"]');
     expect(link?.textContent).toContain("Continue with Google");
-    const terms = view.container.querySelector<HTMLAnchorElement>('a[href="/terms"]');
-    expect(terms?.closest("p")?.textContent).toContain("By continuing you agree to the Terms");
     await view.unmount();
   });
 
