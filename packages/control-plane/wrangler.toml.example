@@ -30,6 +30,10 @@ APP_URL = ""
 # commit as --var GIT_COMMIT_SHA. GET /version reports it, so an operator can
 # ask a running deployment which commit it is, instead of guessing from a
 # bundle hash (which identifies the webapp build only).
+# The empty declaration still has to be here: `wrangler types` builds the Env
+# interface from this file, and src/worker.ts reads env.GIT_COMMIT_SHA. A
+# deployment config that lacks it is filled in from this line by the deploy, so
+# no stored config ever has to be edited for it.
 GIT_COMMIT_SHA = ""
 BOX_IMAGE_REF = ""
 # Image tag inside the R2-hosted archive. Empty for registry mode; see docs/BOX-IMAGE.md.
@@ -81,34 +85,58 @@ enabled = true
 directory = "../webapp/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
+# GENERATED — do not hand-edit. Derived from the literal route registrations in
+# core/ by scripts/lib/worker-first-routes.mjs. Run
+# `npm run routes:sync -w packages/control-plane` after adding, removing, or
+# renaming a core route; test/route-prefixes.test.ts fails if you forget.
+#
+# Your own wrangler.toml does not need this list: the deploy patches the derived
+# one in right before `wrangler deploy`, so a stored deployment config never has
+# to be edited for a new route again. The copy here exists because two things
+# read the file rather than the generator — `wrangler types` and the vitest
+# Workers pool.
 run_worker_first = [
-  "/sessions*",
+  "/agent-rules",
+  "/agent-rules/*",
+  "/api/*",
   "/auth/*",
-  "/invite/*",
-  "/invites*",
-  "/me",
-  "/members*",
-  "/orgs*",
-  "/workspaces*",
-  "/workspace-templates*",
-  "/workspace-recipes*",
-  "/agent-rules*",
-  "/folders*",
-  "/connections*",
-  "/connect/*",
-  "/integrations*",
-  "/leases*",
-  "/requests*",
-  "/proxy*",
-  "/volumes*",
-  "/machine-types*",
-  "/webapp-state*",
-  "/hosts*",
-  "/oauth/*",
+  "/box-image",
+  "/box-image/*",
   "/boxes/*",
-  "/box-image*",
+  "/connect/*",
+  "/connections",
+  "/connections/*",
+  "/folders",
+  "/folders/*",
+  "/hosts/*",
+  "/integrations",
+  "/integrations/*",
+  "/invite/*",
+  "/invites",
+  "/invites/*",
+  "/leases/*",
+  "/machine-types",
+  "/me",
+  "/members",
+  "/members/*",
+  "/oauth/*",
+  "/orgs",
+  "/orgs/*",
+  "/proxy/*",
+  "/requests",
+  "/requests/*",
+  "/sessions",
+  "/sessions/*",
   "/version",
-  "/api/*"
+  "/volumes",
+  "/volumes/*",
+  "/webapp-state",
+  "/workspace-recipes",
+  "/workspace-recipes/*",
+  "/workspace-templates",
+  "/workspace-templates/*",
+  "/workspaces",
+  "/workspaces/*",
 ]
 
 [triggers]

@@ -3,6 +3,7 @@ import {
   allowedEmailDomainsFromEnv,
   signupModeFromEnv,
 } from "../core/signup-config.js";
+import { deriveRunWorkerFirst } from "./lib/worker-first-routes.mjs";
 
 export const CONFIG_PATH = "packages/control-plane/wrangler.toml";
 export const DB_BINDING = "DB";
@@ -23,7 +24,7 @@ export const REQUIRED_SECRETS = Object.freeze([
 // value. The template ships none — vars that can only be filled in after a
 // first deploy ship as "" — so this only catches an operator who pasted a
 // doc example into wrangler.toml.
-const PLACEHOLDER_VALUE_PATTERN = /^<[^<>]*>$/u;
+export const PLACEHOLDER_VALUE_PATTERN = /^<[^<>]*>$/u;
 // R2 bucket names: 3-63 chars of lowercase letters, digits, and hyphens.
 const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u;
 // The canonical base64 alphabet accepted by the Worker's atob-based decoder.
@@ -76,6 +77,46 @@ export function d1DatabasePatch(rawConfig, binding, databaseName, databaseId) {
     throw new Error(`wrangler config must define exactly one ${binding} D1 binding`);
   }
   return { d1_databases: d1Databases };
+}
+
+/**
+ * True when the config already carries an assets.run_worker_first array.
+ *
+ * @param {unknown} rawConfig parsed wrangler config
+ * @returns {boolean}
+ */
+export function hasRunWorkerFirst(rawConfig) {
+  if (!isRecord(rawConfig) || !isRecord(rawConfig.assets)) return false;
+  return Array.isArray(rawConfig.assets.run_worker_first);
+}
+
+/**
+ * The patch that removes assets.run_worker_first.
+ *
+ * It has to be a separate step. wrangler's experimental_patchConfig writes an
+ * array element by element and leaves whatever sat past the end of the new one
+ * in place, so writing a shorter list over a longer one keeps the old tail —
+ * exactly the stale entries this generator exists to retire. Deleting the key
+ * first turns the write into a replacement. Only call it when
+ * hasRunWorkerFirst is true: deleting a key that is not there throws.
+ *
+ * @returns {object} a wrangler config patch
+ */
+export function runWorkerFirstRemoval() {
+  return { assets: { run_worker_first: undefined } };
+}
+
+/**
+ * The patch that writes the derived route list into a wrangler config.
+ *
+ * @param {readonly string[]} entries derived run_worker_first entries
+ * @returns {object} a wrangler config patch
+ */
+export function runWorkerFirstPatch(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new Error("refusing to write an empty assets.run_worker_first: every core route would be served the SPA shell");
+  }
+  return { assets: { run_worker_first: [...entries] } };
 }
 
 export function parseR2Binding(rawConfig, binding) {
@@ -245,6 +286,7 @@ export async function deployControlPlane({
   patchConfig,
   secretValues = process.env,
   gitCommitSha = "",
+  runWorkerFirst = deriveRunWorkerFirst,
 } = {}) {
   if (!isRecord(rawConfig)) throw new Error("raw Wrangler config is required");
   if (typeof run !== "function") throw new Error("deploy command runner is required");
@@ -336,6 +378,21 @@ export async function deployControlPlane({
   if (missing.length > 0) throw new Error(missingSecretsMessage(missing));
 
   await invoke("npm", ["run", "build", "-w", "@blitzos/webapp"]);
+
+  // Which paths the Worker must answer instead of the asset server is derived
+  // from core's route registrations and written in here, immediately before the
+  // deploy. It used to be hand-maintained inside the CANARY_WRANGLER_TOML and
+  // PROD_WRANGLER_TOML secrets, which meant a human had to edit two stored
+  // configs for every new route; twice nobody did, and the route shipped
+  // answering the SPA shell with status 200. Whatever the stored config holds
+  // is overwritten, so it never has to be edited for a route again.
+  const workerFirstEntries = runWorkerFirst();
+  if (hasRunWorkerFirst(rawConfig)) await patchConfig(runWorkerFirstRemoval());
+  await patchConfig(runWorkerFirstPatch(workerFirstEntries));
+  console.log(
+    `assets.run_worker_first: wrote ${workerFirstEntries.length} derived entries into ${configPath}`,
+  );
+
   // --var overrides the single key and leaves every other var from the config
   // in place. The version travels with the Worker version, so a rollback
   // restores the old commit string along with the old code.

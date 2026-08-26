@@ -2,12 +2,18 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import {
   UPLOAD_MANIFEST,
-  WORKER_SOURCE,
   importSpecifiers,
   isRelative,
+  managedApiRouting,
   redactSecrets,
+  workerSource,
 } from "../scripts/build-blitzdev.mjs";
-import { managedUploadSet } from "./managed-upload-set.js";
+import { coreSources, managedUploadSet } from "./managed-upload-set.js";
+
+// The emitted entry module. Its routing arrays are derived from the core
+// sources it ships (see scripts/lib/worker-first-routes.mjs), so it is built
+// from the same sources the upload set uses rather than read as a constant.
+const WORKER_SOURCE = workerSource(managedApiRouting(coreSources()));
 
 // Vendor-only: this suite pins the worker source emitted for the blitz.dev
 // managed platform, which forks do not use. Skipped unless BLITZDEV_MANAGED=1.

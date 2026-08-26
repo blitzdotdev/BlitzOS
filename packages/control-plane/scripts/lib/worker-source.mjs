@@ -10,17 +10,17 @@ import {
   rewriteSpecifiers,
 } from "./module-graph.mjs";
 import { normalizeSource, sha256 } from "./source-utils.mjs";
+import {
+  coreRoutePaths,
+  FRAMEWORK_ROUTE_PATHS,
+  managedApiExactPaths,
+  managedApiPrefixes,
+} from "./worker-first-routes.mjs";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE_DIR = path.resolve(SCRIPT_DIR, "../..");
 const DEFAULT_DIST_DIR = path.join(PACKAGE_DIR, ".managed-dist");
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_FILE_COUNT = 256;
-export const API_PREFIXES = Object.freeze([
-  "/sessions", "/workspaces", "/workspace-templates", "/workspace-recipes", "/agent-rules", "/folders", "/volumes", "/machine-types", "/webapp-state",
-  "/auth/", "/invite/", "/invites", "/me", "/members", "/orgs",
-  "/hosts/", "/oauth/", "/boxes/", "/connections", "/connect/", "/integrations", "/leases/", "/requests",
-  "/proxy/", "/box-image", "/version", "/api/",
-]);
 export const CORE_MANIFEST = Object.freeze([
   "core/index.ts",
   "core/app.ts",
@@ -471,7 +471,18 @@ const config = ${tsValue({ auth: false, ...BLITZDEV_CONFIG })} satisfies Databas
 export default config;
 `);
 
-export const WORKER_SOURCE = normalizeSource(`import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase";
+/**
+ * The managed Worker's entry module.
+ *
+ * The routing arrays are an argument rather than a constant because they are
+ * derived from the core sources being uploaded — see managedApiRouting below.
+ *
+ * @param {{exactPaths: readonly string[], prefixes: readonly string[]}} routing
+ *   paths the Worker answers instead of the stored webApp assets
+ * @returns {string} the emitted worker.ts source
+ */
+export function workerSource(routing) {
+  return normalizeSource(`import { $Database, $DatabaseRawImpl, teenyHono } from "teenybase";
 import config from "virtual:teenybase";
 import {
   awsProviderFromEnv,
@@ -607,7 +618,12 @@ function warnOnceIfWorkspaceTunnelsUnconfigured(runtime: CoreRuntime): void {
   );
 }
 
-const API_PREFIXES = ${JSON.stringify(API_PREFIXES, null, 2)};
+// Generated from the core route registrations by scripts/lib/worker-first-routes.mjs.
+// API_EXACT_PATHS holds the routes that are a whole path — the marketing home
+// "/" among them, which must never become a prefix here: startsWith("/") is
+// true of every request in the deployment.
+const API_EXACT_PATHS = ${JSON.stringify(routing.exactPaths, null, 2)};
+const API_PREFIXES = ${JSON.stringify(routing.prefixes, null, 2)};
 
 function managedBlobStore(db: $Database, kind: "box-image" | "webapp"): BlobStore {
   return {
@@ -633,7 +649,7 @@ function managedBlobStore(db: $Database, kind: "box-image" | "webapp"): BlobStor
 }
 
 function isApiPath(pathname: string): boolean {
-  return API_PREFIXES.some((prefix) => pathname === (prefix.endsWith("/") ? prefix.slice(0, -1) : prefix) || pathname.startsWith(prefix));
+  return API_EXACT_PATHS.includes(pathname) || API_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 async function webAppResponse(context: WebAppContext, logicalPath: string): Promise<Response> {
@@ -719,6 +735,29 @@ const worker = Object.assign(app, {
 });
 export default worker;
 `);
+}
+
+/**
+ * The managed Worker's routing arrays, derived from the sources it ships.
+ *
+ * Reading them off the very files being uploaded keeps the managed Worker and
+ * the standalone Worker's assets.run_worker_first answering the same question
+ * from the same place, with no second list to forget.
+ *
+ * @param {Map<string, string>} coreSources upload path -> source text
+ * @returns {{exactPaths: string[], prefixes: string[]}} exact paths and startsWith prefixes
+ */
+export function managedApiRouting(coreSources) {
+  const sources = [...coreSources].map(([sourcePath, source]) => ({ path: sourcePath, source }));
+  const { paths, nonLiteral } = coreRoutePaths(sources);
+  if (nonLiteral.length > 0) {
+    throw new Error(
+      `core route paths must be string literals; ${nonLiteral[0].path} hides at least one from the scan`,
+    );
+  }
+  const routePaths = [...paths, ...FRAMEWORK_ROUTE_PATHS];
+  return { exactPaths: managedApiExactPaths(routePaths), prefixes: managedApiPrefixes(routePaths) };
+}
 
 export function validateUploadSet(entries) {
   const paths = entries.map((entry) => entry.path);
@@ -777,7 +816,7 @@ function emitSource(uploadPath, source) {
 export function createUploadSet(coreSources, textAssets) {
   const entries = [
     { path: "teenybase.ts", source: emitSource("teenybase.ts", TEENYBASE_SOURCE) },
-    { path: "worker.ts", source: emitSource("worker.ts", WORKER_SOURCE) },
+    { path: "worker.ts", source: emitSource("worker.ts", workerSource(managedApiRouting(coreSources))) },
     ...CORE_MANIFEST.map((uploadPath) => {
       const source = coreSources.get(uploadPath);
       if (source === undefined) throw new Error(`missing source for ${uploadPath}`);
