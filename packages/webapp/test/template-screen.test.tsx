@@ -1661,7 +1661,7 @@ describe('template screen org-credential config', () => {
     await view.unmount();
   });
 
-  it('keeps per-member providers as plain checkboxes with no admin form', async () => {
+  it('explains a per-member provider when it is picked, with no admin form', async () => {
     connectionsStub();
     const view = await render(
       <CreateTemplateScreen
@@ -1675,10 +1675,14 @@ describe('template screen org-credential config', () => {
     await settle();
     await tick(view, 'YouTrack');
     // YouTrack is per-member PAT: the template names it, the member pastes
-    // inside the workspace. No org form, no ask-your-admin note.
+    // inside the workspace. No org form, no ask-your-admin note. It still owes
+    // the picker one line saying so — a provider with no admin form used to
+    // render a bare checkbox that explained nothing.
     expect(view.container.querySelector('.tplf-connections input[name="root"]')).toBeNull();
     expect(view.container.querySelector('.tplf-connections')?.textContent)
       .not.toContain('Ask an organization admin');
+    expect(view.container.querySelector('.tplf-connections')?.textContent)
+      .toContain('Members sign in to YouTrack themselves.');
     await view.unmount();
   });
 
@@ -1719,7 +1723,7 @@ describe('template screen org-credential config', () => {
       />,
     );
     await settle();
-    expect(view.container.textContent).toContain('Set up GitHub above first');
+    expect(view.container.textContent).toContain('Connect GitHub above first');
     expect(view.container.querySelector('input[aria-label="Filter repositories"]')).toBeNull();
 
     await tick(view, 'GitHub');

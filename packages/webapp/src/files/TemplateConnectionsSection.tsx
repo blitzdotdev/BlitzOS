@@ -80,6 +80,12 @@ export function TemplateConnectionsSection({
         const chosen = templateConnections.get(entry.id) ?? null;
         const configured = orgCredentialFor(orgConnections, entry.id);
         const wantsOrgConfig = chosen !== null && entry.adminForm !== null;
+        // A provider with no admin form has no org-key path at all, so every
+        // branch below — which all hang off wantsOrgConfig — used to skip it.
+        // Selecting Google Workspace, Linear or YouTrack therefore produced a
+        // bare checkbox that explained nothing. They are member-authorized, so
+        // say that, in the sentence the org-key providers already use.
+        const memberOnly = chosen !== null && entry.adminForm === null;
         // A provider members can authorize themselves — OAuth or a token
         // paste — is usable without any org credential, so its admin form is
         // an offer, never a gate.
@@ -133,6 +139,11 @@ export function TemplateConnectionsSection({
               && configuring !== entry.id && (
               <p className="tplf-connection-note">
                 Without an org key, members sign in to {entry.title} themselves.
+              </p>
+            )}
+            {memberOnly && (
+              <p className="tplf-connection-note">
+                Members sign in to {entry.title} themselves.
               </p>
             )}
             {wantsOrgConfig && !admin && !configured && (
