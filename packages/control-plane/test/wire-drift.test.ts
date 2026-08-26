@@ -168,15 +168,6 @@ const templateConnection: SharedShape<
   schema.TemplateConnectionView
 > = { provider: "linear" };
 
-const githubRepository: SharedShape<
-  wire.GithubRepositoryView,
-  schema.GithubRepositoryView
-> = { fullName: "blitzdotdev/blitz-core", private: true };
-
-const githubRepositories: SharedShape<
-  wire.ListGithubRepositoriesResponse,
-  schema.ListGithubRepositoriesResponse
-> = { repositories: [githubRepository] };
 
 const githubRepositoryCheck: SharedShape<
   wire.GithubRepositoryCheckView,
@@ -497,8 +488,6 @@ const fullFieldValues = [
   putAgentRuleResponse,
   workspace,
   templateConnection,
-  githubRepository,
-  githubRepositories,
   githubRepositoryCheck,
   checkGithubRepositoriesRequest,
   checkGithubRepositoriesResponse,
@@ -565,8 +554,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PutAgentRuleResponse>().toEqualTypeOf<schema.PutAgentRuleResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
-    expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();
-    expectTypeOf<wire.ListGithubRepositoriesResponse>().toEqualTypeOf<schema.ListGithubRepositoriesResponse>();
     expectTypeOf<wire.GithubRepositoryCheckFailure>().toEqualTypeOf<schema.GithubRepositoryCheckFailure>();
     expectTypeOf<wire.GithubRepositoryCheckView>().toEqualTypeOf<schema.GithubRepositoryCheckView>();
     expectTypeOf<wire.CheckGithubRepositoriesRequest>().toEqualTypeOf<schema.CheckGithubRepositoriesRequest>();

@@ -794,92 +794,6 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
-  it('hints at the github connection until it is configured, then offers repos', async () => {
-    // The stub's default 409 is the unconfigured state. There is no org
-    // GitHub credential to wait on any more, so the hint routes this person
-    // to their own connections rather than to an admin.
-    const unconfigured = await screenWith();
-    expect(unconfigured.view.container.textContent)
-      .toContain('Connect your GitHub account first');
-    expect(unconfigured.view.container.querySelector(
-      'input[aria-label="Filter repositories"]',
-    )).toBeNull();
-    await unconfigured.view.unmount();
-
-    const fetcher = stub((url) => {
-      if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ repositories: [
-          { fullName: 'acme/app', private: false },
-          { fullName: 'acme/tools', private: true },
-          { fullName: 'other/sdk', private: false },
-        ] });
-      }
-      return null;
-    });
-    const { view } = await screenWith(fetcher);
-    expect(view.container.textContent)
-      .not.toContain('Ask an admin to add the GitHub key');
-
-    // The filter narrows without losing the selection UI.
-    const filter = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Filter repositories"]',
-    )!;
-    const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    if (setInputValue === undefined) throw new Error('input value setter unavailable');
-    await act(async () => {
-      setInputValue.call(filter, 'acme');
-      filter.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    const labels = [...view.container.querySelectorAll('.tplf-repo')];
-    expect(labels.map((label) => label.textContent)).toEqual(['acme/app', 'acme/toolsprivate']);
-
-    const appToggle = labels[0]?.querySelector<HTMLInputElement>('input')!;
-    await act(async () => { appToggle.click(); });
-    expect(view.container.textContent).toContain('1 repository selected');
-
-    const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
-    await act(async () => {
-      setInputValue.call(name, 'repo starter');
-      name.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    });
-    await settle();
-    const post = fetcher.mock.calls.find(([input, init]) => (
-      new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
-    ));
-    expect(JSON.parse(String(post?.[1]?.body ?? '{}')).repos).toEqual(['acme/app']);
-    await view.unmount();
-  });
-
-  it('shows a picker selection as attached and removes it immediately when unchecked', async () => {
-    const fetcher = stub((url) => {
-      if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ repositories: [{ fullName: 'acme/app', private: false }] });
-      }
-      return null;
-    });
-    const { view } = await screenWith(fetcher);
-    const toggle = view.container.querySelector<HTMLInputElement>('.tplf-repo input')!;
-
-    await act(async () => { toggle.click(); });
-
-    expect(view.container.querySelector('.tplf-attached-label')?.textContent).toBe('Attached');
-    expect(view.container.querySelector('.tplf-attached-row')?.textContent).toBe('acme/appRemove');
-    expect(view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Remove acme/app"]',
-    )?.textContent).toBe('Remove');
-
-    await act(async () => { toggle.click(); });
-
-    expect(view.container.querySelector('.tplf-attached-row')).toBeNull();
-    expect(view.container.querySelector('button[aria-label="Remove acme/app"]')).toBeNull();
-    await view.unmount();
-  });
-
   it('reports a malformed public repo URL without checking it', async () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
@@ -1034,42 +948,7 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
-  it('reports a picker-selected repo as already added', async () => {
-    const fetcher = stub((url) => {
-      if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ repositories: [{ fullName: 'acme/app', private: false }] });
-      }
-      return null;
-    });
-    const { view } = await screenWith(fetcher);
-    await act(async () => {
-      view.container.querySelector<HTMLInputElement>('.tplf-repo input')?.click();
-    });
-    const textarea = view.container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Public repository URLs"]',
-    )!;
-    const setTextareaValue = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value',
-    )?.set;
-    if (setTextareaValue === undefined) throw new Error('textarea value setter unavailable');
-    await act(async () => {
-      setTextareaValue.call(textarea, 'https://github.com/acme/app');
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
-    });
-
-    expect(view.container.querySelector('[role="alert"]')?.textContent)
-      .toContain('https://github.com/acme/app — already added');
-    expect(fetcher.mock.calls.some(([input]) => (
-      new URL(String(input)).pathname === '/connections/github/repositories/check'
-    ))).toBe(false);
-    await view.unmount();
-  });
-
-  it('adds, shows, and submits a public repo when GitHub is unconfigured', async () => {
+  it('adds, shows, and submits a public repo', async () => {
     const fetcher = stub((url, init) => {
       if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
         return Response.json({ results: [{ repo: 'public/example', reachable: true }] });
@@ -1077,7 +956,6 @@ describe('create template screen', () => {
       return null;
     });
     const { view } = await screenWith(fetcher);
-    expect(view.container.textContent).toContain('Connect your GitHub account first');
     const textarea = view.container.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="Public repository URLs"]',
     )!;
@@ -1116,54 +994,6 @@ describe('create template screen', () => {
       new URL(String(input)).pathname === '/workspace-templates' && init?.method === 'POST'
     ));
     expect(JSON.parse(String(post?.[1]?.body ?? '{}')).repos).toEqual(['public/example']);
-    await view.unmount();
-  });
-
-  it('warns at the 16-repo cap and disables further picks', async () => {
-    const selected = Array.from({ length: 16 }, (_, i) => `acme/repo-${i}`);
-    stub((url, init) => {
-      if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ repositories: [
-          ...selected.map((fullName) => ({ fullName, private: false })),
-          { fullName: 'acme/one-more', private: false },
-        ] });
-      }
-      if (url.pathname === '/workspace-templates' && init?.method === undefined) {
-        return Response.json({ templates: [{
-          id: 'template-1',
-          name: 'starter',
-          machineTypeId: 'cx23@fsn1',
-          createdAt: 2,
-          createdBy: { name: 'Min Song', avatarUrl: null },
-          isOrgDefault: false,
-          folders: [],
-          connections: [{ provider: 'github' }],
-          repos: selected,
-        }] });
-      }
-      return null;
-    });
-    const view = await render(
-      <CreateTemplateScreen
-        client={createControlPlaneClient('https://cp.example')}
-        orgName="acme"
-        editTemplateId="template-1"
-        onCreated={() => undefined}
-        onCancel={() => undefined}
-      />,
-    );
-    await settle();
-
-    expect(view.container.textContent).toContain('Up to 16 repositories per template');
-    const oneMore = [...view.container.querySelectorAll('.tplf-repo')]
-      .find((label) => label.textContent?.includes('acme/one-more'))
-      ?.querySelector<HTMLInputElement>('input');
-    expect(oneMore?.disabled).toBe(true);
-    // Selected ones stay removable.
-    const first = [...view.container.querySelectorAll('.tplf-repo')]
-      .find((label) => label.textContent?.includes('acme/repo-0'))
-      ?.querySelector<HTMLInputElement>('input');
-    expect(first?.disabled).toBe(false);
     await view.unmount();
   });
 

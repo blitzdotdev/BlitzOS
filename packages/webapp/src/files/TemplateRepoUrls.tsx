@@ -1,6 +1,5 @@
 import type { CheckGithubRepositoriesResponse } from '@blitzos/schema';
 import { useId, useState } from 'react';
-import { MAX_TEMPLATE_REPOS } from './TemplateRepoPicker';
 import { parseRepoUrlLines, type RepoUrlLine } from './repo-urls';
 
 export interface TemplateRepoCheckApi {
@@ -15,6 +14,11 @@ interface RepoProblem {
 function lineProblem(line: RepoUrlLine, problem: string): RepoProblem {
   return { raw: line.raw, problem };
 }
+
+/** The cap a template's repo list carries. It lived on the private-repo
+ * picker until that surface was deleted; public URLs are the only way to add
+ * a repo now, so the limit lives with them. */
+export const MAX_TEMPLATE_REPOS = 16;
 
 export function TemplateRepoUrls({
   client,

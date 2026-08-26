@@ -10,7 +10,6 @@ import type {
   ListCatalogResponse,
   CheckGithubRepositoriesResponse,
   ListConnectionsResponse,
-  ListGithubRepositoriesResponse,
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   PutUserGrantRequest,
@@ -192,9 +191,6 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   deleteConnection(name: string): Promise<void>;
   listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
   listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
-  /** Repos the caller's own GitHub token reaches, for the template repo
-   * picker. 409 until that person connects GitHub themselves. */
-  listGithubRepositories(signal?: AbortSignal): Promise<ListGithubRepositoriesResponse>;
   checkGithubRepositories(repos: string[]): Promise<CheckGithubRepositoriesResponse>;
   putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
   deleteConnectionGrant(provider: string): Promise<void>;
@@ -705,8 +701,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<ListCatalogResponse>("/connections/catalog", { signal }),
     listConnectionGrants: (signal) =>
       request<ListUserGrantsResponse>("/connections/grants", { signal }),
-    listGithubRepositories: (signal) =>
-      request<ListGithubRepositoriesResponse>("/connections/github/repositories", { signal }),
     checkGithubRepositories: (repos) =>
       request<CheckGithubRepositoriesResponse>("/connections/github/repositories/check", {
         method: "POST",

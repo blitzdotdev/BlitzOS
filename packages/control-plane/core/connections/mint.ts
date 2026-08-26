@@ -7,7 +7,6 @@ import { providerManifest, providerRedirectPath } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { addConnectRoutes } from "./connect.js";
 import { addGithubRepositoryCheckRoutes } from "./github-repo-check.js";
-import { addGithubRepositoryRoutes } from "./github-repos.js";
 import { addConnectionHealthRoutes } from "./health.js";
 import {
   createLease,
@@ -553,7 +552,6 @@ export function addCredentialRoutes(
 ): void {
   addConnectionRoutes(router, runtimeFactory, requirePrincipal);
   addGithubRepositoryCheckRoutes(router, requirePrincipal);
-  addGithubRepositoryRoutes(router, runtimeFactory, requirePrincipal);
   addUserGrantRoutes(router, runtimeFactory, requirePrincipal);
   addConnectionHealthRoutes(router, runtimeFactory, requirePrincipal);
   addConnectRoutes(router, runtimeFactory, requirePrincipal, connectAfterGrant);

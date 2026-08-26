@@ -30,7 +30,6 @@ import {
   formatWhen,
 } from './drive-model';
 import { collectDropped, DropLimitError } from './drop-upload';
-import { TemplateRepoPicker } from './TemplateRepoPicker';
 import { TemplateRepoUrls } from './TemplateRepoUrls';
 import { TemplateMachineTypePicker } from './TemplateMachineTypePicker';
 import { useTemplateUploads } from './use-template-uploads';
@@ -623,12 +622,7 @@ export function CreateTemplateScreen({
             />
             <div className="tplf-repos">
               <h2>Repositories</h2>
-              <p>Repos cloned into /workspace at start. Picking one attaches GitHub above.</p>
-              <TemplateRepoPicker
-                client={client}
-                value={repos}
-                onChange={setRepos}
-              />
+              <p>Public repos cloned into /workspace at start.</p>
               <TemplateRepoUrls
                 client={client}
                 value={repos}

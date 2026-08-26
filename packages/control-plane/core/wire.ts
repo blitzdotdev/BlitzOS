@@ -255,17 +255,7 @@ export interface TemplateConnectionView {
   provider: string;
 }
 
-export interface GithubRepositoryView {
-  fullName: string;
-  private: boolean;
-}
 
-/** GET /connections/github/repositories: what the caller's own GitHub token
- * can reach, for the template repo picker. Paged out of GitHub
- * under the bounded-response cap and truncated at 200 entries. */
-export interface ListGithubRepositoriesResponse {
-  repositories: GithubRepositoryView[];
-}
 
 /** POST /connections/github/repositories/check: why one repo failed the
  * anonymous clone probe. */
