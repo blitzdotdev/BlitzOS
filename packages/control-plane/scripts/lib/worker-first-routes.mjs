@@ -53,7 +53,11 @@ export const LITERAL_ROUTE_PATH =
 // router.<method> call in core/ names it and the scan cannot see it. It is
 // written as a route path so it flows through exactly the same shaping as a
 // core route instead of being special-cased in three consumers.
-export const FRAMEWORK_ROUTE_PATHS = Object.freeze(["/api/v1"]);
+// "/" is the marketing home. Its handler lives in src/worker.ts, not core/ —
+// a core router.get("/") has no static first segment, and this scanner reads
+// core/ only — so it is declared here the way the framework-mounted /api/v1
+// is. The plan's root flag keeps it exact; it never becomes a prefix.
+export const FRAMEWORK_ROUTE_PATHS = Object.freeze(["/", "/api/v1"]);
 
 /**
  * The static first segment of a route path.
