@@ -8,7 +8,12 @@ import {
   requiredString,
 } from "../http.js";
 import type { Principal } from "../principals.js";
-import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import type {
+  CloudWorkspaceCredentialPolicy,
+  CoreContext,
+  CoreRouter,
+  RuntimeFactory,
+} from "../runtime.js";
 import { openRoot, sealRoot } from "../connections/root-crypto.js";
 import {
   awsProviderForCredentials,
@@ -95,6 +100,7 @@ export interface OrgComputeProviderResolverOptions {
   now?: () => number;
   sleep?: (milliseconds: number) => Promise<void>;
   warn?: HetznerWarningSink;
+  workspaceCredentialPolicy?: CloudWorkspaceCredentialPolicy;
 }
 
 function computeCredentialProvider(value: string): ComputeCredentialProvider {
@@ -270,6 +276,7 @@ export class OrgComputeProviderResolver {
   private readonly awsProviderOptions: AwsProviderOptions;
   private readonly deploymentProviders = new Map<ComputeCredentialProvider, CloudComputeProvider>();
   private readonly providerDescriptors: readonly VmProvider[];
+  private readonly workspaceCredentialPolicy: CloudWorkspaceCredentialPolicy;
 
   constructor(
     private readonly db: Db,
@@ -279,6 +286,7 @@ export class OrgComputeProviderResolver {
   ) {
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? Date.now;
+    this.workspaceCredentialPolicy = options.workspaceCredentialPolicy ?? "deployment-fallback";
     this.hetznerProviderOptions = hetznerOptions(options);
     if (env.HETZNER_MACHINE_TYPES !== undefined) {
       this.hetznerProviderOptions.machineTypeCatalog = env.HETZNER_MACHINE_TYPES;
@@ -346,24 +354,6 @@ export class OrgComputeProviderResolver {
     return storedCredential(provider, plaintext);
   }
 
-  /** An org containing an active platform operator belongs to the deployment
-   * owner, so it may use deployment credentials. Every other org is a tenant
-   * and must bring its own key for new cloud workspaces. This is org-scoped:
-   * a hosted operator keeps their own deployment usable without extending
-   * that billing identity to tenant orgs. */
-  private async orgMayUseDeploymentCredential(orgId: string): Promise<boolean> {
-    return await first<{ allowed: number }>(this.db, {
-      q: `SELECT 1 AS allowed
-          FROM memberships membership
-          JOIN users user ON user.id = membership.user_id
-          WHERE membership.org_id = ?1
-            AND membership.status = 'active'
-            AND user.platform_operator = 1
-          LIMIT 1`,
-      v: [orgId],
-    }) !== null;
-  }
-
   private deployment(
     provider: ComputeCredentialProvider,
   ): ResolvedComputeProvider {
@@ -391,12 +381,12 @@ export class OrgComputeProviderResolver {
           WHERE org_id = ?1 ORDER BY provider`,
       v: [orgId],
     })).map(({ provider }) => provider));
-    const deploymentAllowed = await this.orgMayUseDeploymentCredential(orgId);
     return this.providerDescriptors.flatMap(({ id }) => {
       if (!this.handles(id)) return [];
       const access: ComputeProviderStatus["access"] = configured.has(id)
         ? "org"
-        : deploymentAllowed && this.deploymentProviders.has(id)
+        : this.workspaceCredentialPolicy === "deployment-fallback"
+          && this.deploymentProviders.has(id)
           ? "deployment"
           : "credential-required";
       return [{ providerId: id, access }];
@@ -419,7 +409,7 @@ export class OrgComputeProviderResolver {
     }
     if (
       requiredSource !== "deployment"
-      && !(await this.orgMayUseDeploymentCredential(orgId))
+      && this.workspaceCredentialPolicy === "byok-required"
     ) {
       throw this.credentialRequired(provider, orgId);
     }

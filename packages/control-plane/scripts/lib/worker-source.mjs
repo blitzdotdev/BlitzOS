@@ -722,6 +722,7 @@ function runtimeFor(context: CoreContext | ManagedContext): CoreRuntime {
       googleClientId: env.GOOGLE_CLIENT_ID,
       googleClientSecret: env.GOOGLE_CLIENT_SECRET,
       bootstrapSecret: env.OPERATOR_API_KEY,
+      cloudWorkspaceCredentialPolicy: "deployment-fallback",
       connectSecret: (name) => nonEmptyString(dynamicBinding(env, name)),
     },
     providers: providersFor(env, db, context.get("$credentialMasterKey") as CryptoKey),

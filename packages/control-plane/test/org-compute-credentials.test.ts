@@ -11,6 +11,7 @@ import type {
   VmProvider,
 } from "../core/compute/types.js";
 import { runOrphanSweep } from "../core/janitors.js";
+import { cloudWorkspaceCredentialPolicyFromEnv } from "../core/runtime.js";
 import { rawDb } from "../src/raw-db.js";
 import {
   appRequest,
@@ -118,6 +119,7 @@ async function appFor(
   bindings: {
     HETZNER_API_TOKEN?: string;
     AWS_REGION?: string;
+    CLOUD_WORKSPACE_CREDENTIAL_POLICY?: string;
   },
   fake = providerHttp(),
   additionalVmProviders: readonly VmProvider[] = [],
@@ -125,6 +127,9 @@ async function appFor(
   const key = await credentialMasterKeyFor(CRED_MASTER_KEY);
   const compute = new OrgComputeProviderResolver(rawDb(env.DB), key, bindings, {
     fetcher: fake.fetcher,
+    workspaceCredentialPolicy: cloudWorkspaceCredentialPolicyFromEnv(
+      bindings.CLOUD_WORKSPACE_CREDENTIAL_POLICY,
+    ),
   });
   const volumes = new FakeProviders();
   const app = appWithVmProviders(
@@ -199,6 +204,16 @@ beforeEach(async () => {
   ]);
 });
 
+describe("cloud workspace credential policy", () => {
+  it("defaults to deployment fallback and rejects unknown values", () => {
+    expect(cloudWorkspaceCredentialPolicyFromEnv(undefined)).toBe("deployment-fallback");
+    expect(cloudWorkspaceCredentialPolicyFromEnv("")).toBe("deployment-fallback");
+    expect(cloudWorkspaceCredentialPolicyFromEnv(" BYOK-REQUIRED ")).toBe("byok-required");
+    expect(() => cloudWorkspaceCredentialPolicyFromEnv("tenant-detection"))
+      .toThrow(/CLOUD_WORKSPACE_CREDENTIAL_POLICY/u);
+  });
+});
+
 describe("organization compute credentials", () => {
   it("round-trips sealed storage into workspace creation and never returns ciphertext", async () => {
     const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
@@ -249,7 +264,7 @@ describe("organization compute credentials", () => {
     expect(JSON.stringify(getMetadata)).not.toContain(row?.ciphertext ?? "missing-ciphertext");
   });
 
-  it("lets an org containing the platform operator use the deployment credential", async () => {
+  it("keeps deployment fallback when the policy is unset", async () => {
     const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
     const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
@@ -269,9 +284,12 @@ describe("organization compute credentials", () => {
     expect(workspaceSource?.compute_credential_source).toBe("deployment");
   });
 
-  it("requires a tenant org credential before creating a cloud workspace", async () => {
-    const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
-    const cookie = await userSession("tenant-without-key");
+  it("requires BYOK from an org containing the platform operator", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -280,17 +298,20 @@ describe("organization compute credentials", () => {
 
     expect(created.status).toBe(402);
     await expect(created.json()).resolves.toEqual({
-      error: "hetzner compute credential required; an organization admin can add one at /orgs/tenant-without-key-org/compute-credentials/hetzner",
+      error: "hetzner compute credential required; an organization admin can add one at /orgs/personal/compute-credentials/hetzner",
       retryAction: null,
     });
     expect(fake.calls).toEqual([]);
     expect(await env.DB.prepare(
-      "SELECT id FROM workspaces WHERE org_id = 'tenant-without-key-org' LIMIT 1",
+      "SELECT id FROM workspaces WHERE org_id = 'personal' LIMIT 1",
     ).first()).toBeNull();
   });
 
   it("names AWS and its credential route when an AWS tenant has no key", async () => {
-    const { app, fake } = await appFor({ AWS_REGION: "us-east-1" });
+    const { app, fake } = await appFor({
+      AWS_REGION: "us-east-1",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
     const cookie = await userSession("aws-tenant-without-key");
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
@@ -306,8 +327,11 @@ describe("organization compute credentials", () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it("creates a tenant cloud workspace with the validated org credential", async () => {
-    const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
+  it("creates a hosted cloud workspace with the validated org credential", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
     const cookie = await userSession("tenant-with-key");
     expect((await putHetznerForOrg(app, cookie, "tenant-with-key-org")).status).toBe(200);
     fake.calls.length = 0;
@@ -347,8 +371,11 @@ describe("organization compute credentials", () => {
     ]);
   });
 
-  it("hides tenant cloud machines until a credential is validated", async () => {
-    const { app, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
+  it("hides hosted cloud machines until a credential is validated", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
     const cookie = await userSession("tenant-catalog");
 
     const before = await appRequest(app, "/machine-types", { headers: { Cookie: cookie } });
@@ -379,7 +406,10 @@ describe("organization compute credentials", () => {
     const microvm = new OfferedMicrovmProvider();
     const fake = providerHttp();
     const { app } = await appFor(
-      { HETZNER_API_TOKEN: "deployment-test-token" },
+      {
+        HETZNER_API_TOKEN: "deployment-test-token",
+        CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+      },
       fake,
       [microvm],
     );
@@ -406,10 +436,18 @@ describe("organization compute credentials", () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it("destroys and sweeps legacy NULL-source workspaces with the deployment credential", async () => {
-    const { app, compute, fake } = await appFor({ HETZNER_API_TOKEN: "deployment-test-token" });
-    const cookie = await userSession("tenant-legacy");
-    expect((await putHetznerForOrg(app, cookie, "tenant-legacy-org")).status).toBe(200);
+  it.each([
+    ["unset", {}],
+    ["byok-required", { CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required" }],
+  ] as const)("destroys and sweeps legacy NULL-source workspaces with the deployment credential when the policy is %s", async (policyName, policyBindings) => {
+    const { app, compute, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      ...policyBindings,
+    });
+    const userId = `tenant-legacy-${policyName}`;
+    const orgId = `${userId}-org`;
+    const cookie = await userSession(userId);
+    expect((await putHetznerForOrg(app, cookie, orgId)).status).toBe(200);
     fake.calls.length = 0;
 
     const createdIds: string[] = [];
@@ -431,7 +469,7 @@ describe("organization compute credentials", () => {
     ).bind(deleteId, sweepId).run();
     expect((await appRequest(
       app,
-      "/orgs/tenant-legacy-org/compute-credentials/hetzner",
+      `/orgs/${encodeURIComponent(orgId)}/compute-credentials/hetzner`,
       { method: "DELETE", headers: { Cookie: cookie } },
     )).status).toBe(204);
 

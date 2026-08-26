@@ -5,6 +5,7 @@ import { rawDb } from "../src/raw-db.js";
 import type { $Env } from "teenybase/worker";
 import {
   allowedEmailDomainsFromEnv,
+  cloudWorkspaceCredentialPolicyFromEnv,
   controlPlaneOriginFromEnv,
   createSessionPrincipalSource,
   credentialMasterKeyFor,
@@ -60,6 +61,7 @@ type TestBindings = Env & {
   ALLOWED_EMAIL_DOMAINS?: string;
   ENTITLEMENTS_API_KEY?: string;
   PAYMENT_URL?: string;
+  CLOUD_WORKSPACE_CREDENTIAL_POLICY?: string;
   CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
@@ -196,8 +198,14 @@ export function appWithVmProviders(
   ) as TestApp;
   const runtimeFor = (context: CoreContext): CoreRuntime => {
     const db = context.get("$db") as Db;
+    const bindings = context.env as TestBindings;
+    const cloudWorkspaceCredentialPolicy = cloudWorkspaceCredentialPolicyFromEnv(
+      bindings.CLOUD_WORKSPACE_CREDENTIAL_POLICY,
+    );
     const compute = computeProviderResolver
-      ?? new OrgComputeProviderResolver(db, credentialMasterKey, {});
+      ?? new OrgComputeProviderResolver(db, credentialMasterKey, {}, {
+        workspaceCredentialPolicy: cloudWorkspaceCredentialPolicy,
+      });
     return {
       db,
       blobs: (context.env as TestBindings).BOX_IMAGES as BlobStore,
@@ -214,6 +222,7 @@ export function appWithVmProviders(
         googleClientId: "test-google-client-id",
         googleClientSecret: "test-google-client-secret",
         bootstrapSecret: (context.env as TestBindings).OPERATOR_API_KEY ?? OPERATOR_KEY,
+        cloudWorkspaceCredentialPolicy,
         controlPlaneOrigin: controlPlaneOriginFromEnv((context.env as TestBindings).APP_URL),
         connectSecret: (name) => testConnectSecrets.get(name),
         signupMode: signupModeFromEnv((context.env as TestBindings).SIGNUP_MODE),
@@ -264,7 +273,12 @@ export function testRuntime(
   workspaceTunnels?: WorkspaceTunnels,
 ): CoreRuntime {
   const db = rawDb(env.DB);
-  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, {});
+  const cloudWorkspaceCredentialPolicy = cloudWorkspaceCredentialPolicyFromEnv(
+    (env as TestBindings).CLOUD_WORKSPACE_CREDENTIAL_POLICY,
+  );
+  const compute = new OrgComputeProviderResolver(db, credentialMasterKey, {}, {
+    workspaceCredentialPolicy: cloudWorkspaceCredentialPolicy,
+  });
   return {
     db,
     blobs: env.BOX_IMAGES as BlobStore,
@@ -278,6 +292,7 @@ export function testRuntime(
       googleClientId: "test-google-client-id",
       googleClientSecret: "test-google-client-secret",
       bootstrapSecret: OPERATOR_KEY,
+      cloudWorkspaceCredentialPolicy,
       connectSecret: (name) => testConnectSecrets.get(name),
     },
     providers: {

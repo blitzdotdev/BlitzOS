@@ -88,12 +88,14 @@ export type {
   CoreRequest,
   CoreRouter,
   CoreRuntime,
+  CloudWorkspaceCredentialPolicy,
   RuntimeFactory,
   RuntimeVariables,
   SignupMode,
 } from "./runtime.js";
 export {
   allowedEmailDomainsFromEnv,
+  cloudWorkspaceCredentialPolicyFromEnv,
   enforceRateLimit,
   sessionTtlMsFromEnv,
   signupModeFromEnv,

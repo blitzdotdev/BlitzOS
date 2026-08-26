@@ -50,6 +50,7 @@ export interface CoreRouter {
 }
 
 export type SignupMode = "open" | "invite";
+export type CloudWorkspaceCredentialPolicy = "deployment-fallback" | "byok-required";
 
 export interface RuntimeVariables {
   boxImageRef: string;
@@ -68,6 +69,10 @@ export interface RuntimeVariables {
    * deployment whose config predates the var, and on the managed worker
    * source; GET /version reports "unknown" for it. */
   gitCommitSha?: string;
+  /** Credential policy for new cloud workspaces. Unset deployments keep the
+   * self-host behavior: prefer an org credential, then use the deployment
+   * credential. Hosted deployments set this to "byok-required". */
+  cloudWorkspaceCredentialPolicy: CloudWorkspaceCredentialPolicy;
   /** The deployment's public origin, parsed from APP_URL by
    * `controlPlaneOriginFromEnv`. Absent where APP_URL is unset (a fresh
    * self-host) and on the managed worker source; the box-config route then
@@ -90,6 +95,19 @@ export interface RuntimeVariables {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function cloudWorkspaceCredentialPolicyFromEnv(
+  value: string | null | undefined,
+): CloudWorkspaceCredentialPolicy {
+  const policy = value?.trim().toLowerCase();
+  if (policy === undefined || policy === "" || policy === "deployment-fallback") {
+    return "deployment-fallback";
+  }
+  if (policy === "byok-required") return policy;
+  throw new Error(
+    "CLOUD_WORKSPACE_CREDENTIAL_POLICY must be deployment-fallback or byok-required",
+  );
+}
 
 export function sessionTtlMsFromEnv(value: string | number | null | undefined): number {
   const days = isNumber(value) ? value : Number(value);

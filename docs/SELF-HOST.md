@@ -230,11 +230,13 @@ listing or deleting it, so a server or volume this control plane did not
 create is never touched. Workspace servers do carry `blitz-purpose=workspace`
 and `blitz-workspace=<workspace-id>` labels, for your own filtering.
 
-The organization containing an active platform operator may create cloud
-workspaces with this deployment token, so a normal single-owner self-host does
-not need to paste the same key into Compute settings. Other organizations are
-treated as tenants: an organization admin must validate that organization's
-own provider key before its members can see or create cloud machines. Existing
+`CLOUD_WORKSPACE_CREDENTIAL_POLICY` defaults to `deployment-fallback`. Every
+organization first uses its validated provider key, then falls back to this
+deployment token. A self-host upgrade therefore needs no config change.
+
+A hosted deployment must set the policy to `byok-required`. Every organization,
+including one that contains a platform operator, must then validate its own
+provider key before its members can see or create new cloud machines. Existing
 workspaces and volumes keep using the credential source stored on their row;
 legacy rows with no source recorded remain pinned to the deployment token.
 
