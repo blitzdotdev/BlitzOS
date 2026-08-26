@@ -962,6 +962,15 @@ write_files:
   });
 
   it("creates a workspace with no EC2 text when the provider contributes none", async () => {
+    // The guard scans the whole MIME document. Pin unrelated dynamic values so
+    // a random boundary, workspace ID, or capability cannot spell "ec2".
+    vi.spyOn(crypto, "randomUUID").mockReturnValue(
+      "00000000-0000-4000-8000-000000000000",
+    );
+    vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
+      new Uint8Array(array.buffer, array.byteOffset, array.byteLength).fill(0);
+      return array;
+    });
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const response = await app.request(
