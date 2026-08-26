@@ -17,6 +17,12 @@ export interface ProviderCapabilities {
   /** Epoch ms from which this provider's guests enforce viewer read-only
    * correctly. Undefined is "never": viewers are refused. */
   webAppViewerGuardsSinceMs?: number;
+  /** False keeps this provider's machine types off the create page while
+   * leaving it registered for lifecycle. Undefined and true both offer them.
+   * Dropping a provider from the registry instead would strand every VM it
+   * already owns as an unowned id, which the registry refuses with a 409 and
+   * the janitors skip. */
+  offersMachineTypes?: boolean;
 }
 
 export interface CreateVmInput {

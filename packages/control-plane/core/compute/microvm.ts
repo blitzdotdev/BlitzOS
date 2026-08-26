@@ -98,7 +98,16 @@ export class MicrovmPoolProvider implements VmProvider {
   }
 
   capabilities(): ProviderCapabilities {
-    return { volumes: false, maxUserDataBytes: null, webAppActorBypassesGateway: true };
+    // The microVM pool is not offered to users yet. It stays registered so the
+    // VMs it already owns keep polling, stopping and destroying; only its
+    // machine types leave the create page. Flip offersMachineTypes to true to
+    // put them back — no deployment config changes with it.
+    return {
+      volumes: false,
+      maxUserDataBytes: null,
+      webAppActorBypassesGateway: true,
+      offersMachineTypes: false,
+    };
   }
 
   ownsMachineType(machineTypeId: string): boolean {

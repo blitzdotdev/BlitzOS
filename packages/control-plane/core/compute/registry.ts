@@ -61,7 +61,9 @@ export class VmProviderRegistry {
   async listMachineTypes(): Promise<VmProviderListResult> {
     const settled = await Promise.allSettled(
       this.providers.map(async (provider) => {
-        const supportsVolumes = provider.capabilities().volumes;
+        const capabilities = provider.capabilities();
+        if (capabilities.offersMachineTypes === false) return { machineTypes: [] };
+        const supportsVolumes = capabilities.volumes;
         const machineTypes = (await provider.listMachineTypes()).map((machineType) => ({
           ...machineType,
           providerId: provider.id,
