@@ -105,6 +105,9 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		if err != nil {
 			return mintFailure(args[1], err)
 		}
+		// An agent asks for the token before it commits, so this is the other
+		// place the identity can be settled in time.
+		workspace.ApplyGitIdentity(context.Background(), stateDir, token.Connection, token.Token, nil)
 		_, err = fmt.Fprintln(output, token.Token)
 		return err
 	case "env":
@@ -115,6 +118,7 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		if err != nil {
 			return mintFailure(args[1], err)
 		}
+		workspace.ApplyGitIdentity(context.Background(), stateDir, token.Connection, token.Token, nil)
 		return printEnv(output, token)
 	case "git-helper":
 		if len(args) != 2 {
