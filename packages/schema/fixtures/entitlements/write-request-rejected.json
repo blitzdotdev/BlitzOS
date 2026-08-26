@@ -1,0 +1,14 @@
+{
+  "note": "Bodies the write route must refuse with 400. Both limits are integers of at least 1, and both are required.",
+  "status": 400,
+  "cases": [
+    { "note": "seatLimit below one", "body": { "seatLimit": 0, "vmLimit": 20 } },
+    { "note": "vmLimit below one", "body": { "seatLimit": 5, "vmLimit": 0 } },
+    { "note": "seatLimit missing", "body": { "vmLimit": 20 } },
+    { "note": "vmLimit missing", "body": { "seatLimit": 5 } },
+    { "note": "seatLimit not an integer", "body": { "seatLimit": 2.5, "vmLimit": 20 } },
+    { "note": "seatLimit sent as a string", "body": { "seatLimit": "5", "vmLimit": 20 } },
+    { "note": "negative vmLimit", "body": { "seatLimit": 5, "vmLimit": -1 } },
+    { "note": "body is not an object", "body": [] }
+  ]
+}

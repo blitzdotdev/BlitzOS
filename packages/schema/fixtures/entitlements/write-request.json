@@ -1,0 +1,5 @@
+{
+  "note": "The only write. Two integers; no plan name, ever.",
+  "body": { "seatLimit": 5, "vmLimit": 20 },
+  "status": 204
+}

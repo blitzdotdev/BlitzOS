@@ -54,6 +54,8 @@ type TestBindings = Env & {
   MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
+  ENTITLEMENTS_API_KEY?: string;
+  PAYMENT_URL?: string;
   CRED_MASTER_KEY: string;
   RESPOND_WITH_ERRORS: string | boolean;
   RESPOND_WITH_QUERY_LOG: string | boolean;
@@ -209,6 +211,8 @@ export function appWithVmProviders(
       allowedEmailDomains: allowedEmailDomainsFromEnv(
         (context.env as TestBindings).ALLOWED_EMAIL_DOMAINS,
       ),
+      entitlementsApiKey: (context.env as TestBindings).ENTITLEMENTS_API_KEY,
+      paymentUrl: (context.env as TestBindings).PAYMENT_URL,
     },
     providers: {
       vmRegistry: new VmProviderRegistry(vmProviders),
@@ -496,6 +500,7 @@ export async function resetDatabase(): Promise<void> {
     "sessions",
     "invites",
     "memberships",
+    "org_entitlements",
     "orgs",
     "users",
     "principals",

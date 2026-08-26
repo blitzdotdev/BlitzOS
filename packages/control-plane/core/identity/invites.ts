@@ -1,9 +1,21 @@
 import { randomToken } from "../crypto.js";
 import type { Db } from "../db.js";
 import { first, rows, transaction } from "../db.js";
+import {
+  seatAvailable,
+  seatGateEnabled,
+  seatLimitReached,
+  seatsExhausted,
+} from "../entitlements.js";
 import { HttpError, isRecord, type JsonValue, readJson, requiredString } from "../http.js";
 import type { Principal } from "../principals.js";
-import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
+import type {
+  CoreContext,
+  CoreRouter,
+  CoreRuntime,
+  RuntimeFactory,
+  RuntimeVariables,
+} from "../runtime.js";
 import { INVITE_TTL_DAYS } from "../wire.js";
 
 type InviteRole = "admin" | "member";
@@ -81,6 +93,39 @@ async function expireInvites(db: Db, now: number, orgId?: string): Promise<void>
   });
 }
 
+/**
+ * The clause a redemption statement must satisfy before it may set a
+ * membership active.
+ *
+ * "Growth only": a user who already holds an active seat is re-stamping their
+ * role, not taking a new seat, so they pass regardless of the limit. Everyone
+ * else needs a free one, counted inside the statement that would take it.
+ *
+ * One clause covers both halves of the upsert, because it filters the invite
+ * row the INSERT selects: a candidate that cannot have a seat produces no row,
+ * so neither the insert nor the ON CONFLICT DO UPDATE that re-activates a
+ * disabled member ever runs. A second copy on the DO UPDATE branch would ask
+ * the same question again, in the same statement, one line later.
+ *
+ * The statement that burns the invite takes it too. The three statements run
+ * as one batch but are not rolled back for each other, and gating only the
+ * membership write would spend the code while admitting nobody — which is the
+ * same stockpiled code coming back tomorrow.
+ *
+ * Both statements read the invite row, so the organization is `target_org_id`,
+ * a column already in scope. Empty where gating is off, which leaves the
+ * statement and its parameter list exactly as they were before this module.
+ */
+function growthAllowed(vars: RuntimeVariables, userParameter: string): string {
+  if (!seatGateEnabled(vars)) return "";
+  return `AND (EXISTS (
+                SELECT 1 FROM memberships seated
+                WHERE seated.user_id = ${userParameter}
+                  AND seated.org_id = target_org_id
+                  AND seated.status = 'active')
+              OR ${seatAvailable("target_org_id")})`;
+}
+
 async function inviteByHash(db: Db, hash: string): Promise<InviteRow | null> {
   return first<InviteRow>(db, {
     q: `SELECT invite.*, org.name AS org_name, creator.name AS creator_name
@@ -94,14 +139,14 @@ async function inviteByHash(db: Db, hash: string): Promise<InviteRow | null> {
 }
 
 export async function redeemInviteSession(
-  db: Db,
+  runtime: CoreRuntime,
   code: string,
   userId: string,
   email: string,
   sessionTokenHash: string,
-  sessionTtlMs: number,
   now = Date.now(),
 ): Promise<string> {
+  const db = runtime.db;
   if (!/^[A-Za-z0-9_-]{43}$/u.test(code)) throw new HttpError(400, "invalid invite code");
   const hash = await inviteCodeHash(code);
   await expireInvites(db, now);
@@ -111,17 +156,23 @@ export async function redeemInviteSession(
   if (invite.email !== null && invite.email !== email) {
     throw new HttpError(403, "invite is for a different email address");
   }
-  const existing = await first<{ id: string }>(db, {
-    q: "SELECT id FROM memberships WHERE user_id = ?1 AND org_id = ?2 LIMIT 1",
+  const existing = await first<{ id: string; status: string }>(db, {
+    q: "SELECT id, status FROM memberships WHERE user_id = ?1 AND org_id = ?2 LIMIT 1",
     v: [userId, invite.target_org_id],
   });
   const membershipId = existing?.id ?? crypto.randomUUID();
+  // The seat gate lives in the statements below, not in a check above them.
+  // A revoked-then-restored member holding an old code is exactly the caller
+  // a read-then-write gate lets through.
+  const seatGate = growthAllowed(runtime.vars, "?2");
+  const burnGate = growthAllowed(runtime.vars, "?1");
   const result = await transaction(db, [
     {
       q: `INSERT INTO memberships (id, user_id, org_id, role, status)
           SELECT ?1, ?2, target_org_id, role, 'active' FROM invites
           WHERE code_hash = ?3 AND state = 'ready' AND expires_at > ?4
             AND (email IS NULL OR email = ?5)
+            ${seatGate}
           ON CONFLICT(user_id, org_id) DO UPDATE SET
             role = excluded.role, status = 'active'
           RETURNING id`,
@@ -132,6 +183,7 @@ export async function redeemInviteSession(
               redeemed_at = ?2
           WHERE code_hash = ?3 AND state = 'ready' AND expires_at > ?2
             AND (email IS NULL OR email = ?4)
+            ${burnGate}
           RETURNING id`,
       v: [userId, now, hash, email],
     },
@@ -143,10 +195,19 @@ export async function redeemInviteSession(
             SELECT 1 FROM invites WHERE code_hash = ?6 AND state = 'redeemed'
               AND redeemed_by_user_id = ?2 AND redeemed_at = ?3
           ) RETURNING token_hash`,
-      v: [sessionTokenHash, userId, now, now + sessionTtlMs, membershipId, hash],
+      v: [sessionTokenHash, userId, now, now + runtime.vars.sessionTtlMs, membershipId, hash],
     },
   ]);
   if (result[0]?.length !== 1 || result[1]?.length !== 1 || result[2]?.length !== 1) {
+    // Name the reason the statements refused. They decided it; this only reads
+    // it back, and only where taking a seat was what was being asked for.
+    if (existing?.status !== "active" && await seatsExhausted(runtime, invite.target_org_id)) {
+      throw await seatLimitReached(runtime, {
+        org: invite.target_org_id,
+        user: userId,
+        role: invite.role,
+      });
+    }
     throw new HttpError(409, "invite could not be redeemed");
   }
   return membershipId;
@@ -201,10 +262,16 @@ export function addInviteRoutes(
     if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
     const role = inviteRole(value.role);
     const email = optionalEmail(value.email);
+    // Soft, and only soft: an invite is not a seat, so this refuses early for
+    // the person's sake. The seat itself is granted or refused at redemption.
+    const runtime = runtimeFactory(context);
+    if (await seatsExhausted(runtime, orgId)) {
+      throw await seatLimitReached(runtime, { org: orgId, user: principal.id, role: "admin" });
+    }
     const code = randomToken(32);
     const id = crypto.randomUUID();
     const now = Date.now();
-    await rows(runtimeFactory(context).db, {
+    await rows(runtime.db, {
       q: `INSERT INTO invites
           (id, code_hash, email, target_org_id, role, state,
            created_by_membership_id, redeemed_by_user_id, created_at,

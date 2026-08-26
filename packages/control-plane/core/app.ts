@@ -2,6 +2,7 @@ import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js
 import { addBoxImageRoutes } from "./box-images.js";
 import { addCredentialRoutes } from "./connections/mint.js";
 import { addWorkspaceEnvironmentRoutes } from "./environment.js";
+import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./entitlements.js";
 import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addIdentityRoutes } from "./identity/routes.js";
@@ -73,6 +74,7 @@ export function installControlPlaneRoutes(
   addSessionRoutes(router, runtimeFactory, requirePrincipal);
   addOperatorTokenRoutes(router, runtimeFactory, requirePrincipal);
   addIdentityRoutes(router, runtimeFactory, requirePrincipal);
+  addEntitlementsRoutes(router, runtimeFactory, requirePrincipal);
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
@@ -98,6 +100,12 @@ export function installControlPlaneRoutes(
     context.json({ error: "not found", retryAction: null }, 404),
   );
   router.onError((error, context) => {
+    // The seat-gate refusal. It carries a retryAction and a checkout link, so
+    // it cannot travel as an HttpError: that envelope is fixed at
+    // `retryAction: null` and every other caller depends on it.
+    if (error instanceof SeatLimitReached) {
+      return context.json(seatLimitEnvelope(error), 402);
+    }
     if (error instanceof HttpError) {
       return error.requestId === undefined
         ? context.json({ error: error.message, retryAction: null }, error.status)

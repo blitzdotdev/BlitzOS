@@ -52,6 +52,7 @@ const expected = [
   "core/box-images.ts",
   "core/cloud-init.ts",
   "core/crypto.ts",
+  "core/entitlements.ts",
   "core/environment.ts",
   "core/connections/types.ts",
   "core/connections/pull-wire.ts",
@@ -143,7 +144,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(95);
+    expect(first.files).toHaveLength(96);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

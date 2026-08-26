@@ -49,6 +49,8 @@ type WorkerBindings = Env & {
   MAX_CONCURRENT_WORKSPACES: string;
   SIGNUP_MODE?: string;
   ALLOWED_EMAIL_DOMAINS?: string;
+  ENTITLEMENTS_API_KEY?: string;
+  PAYMENT_URL?: string;
   CRED_MASTER_KEY: string;
   CLOUDFLARE_API_TOKEN?: string;
   WEBAPP_TOKEN_SECRET?: string;
@@ -143,6 +145,8 @@ function runtimeFor(context: CoreContext | TargetContext): CoreRuntime {
       connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
+      entitlementsApiKey: env.ENTITLEMENTS_API_KEY,
+      paymentUrl: env.PAYMENT_URL,
     },
     providers: providersFor(env, db),
     principalSource: createSessionPrincipalSource(),
@@ -180,6 +184,8 @@ function runtimeForScheduled(
       connectSecret: (name) => connectSecretFrom(env, name),
       signupMode: signupModeFromEnv(env.SIGNUP_MODE),
       allowedEmailDomains: allowedEmailDomainsFromEnv(env.ALLOWED_EMAIL_DOMAINS),
+      entitlementsApiKey: env.ENTITLEMENTS_API_KEY,
+      paymentUrl: env.PAYMENT_URL,
     },
     providers,
     principalSource: createSessionPrincipalSource(),
