@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/workspace.png" alt="A BlitzOS workspace: agent terminal, chat, files, and connections in the browser" width="100%">
+  <img src="docs/images/workspace.png" alt="A BlitzOS workspace with an agent terminal, files, and workspace tools in the browser" width="100%">
 </p>
 
 # Features
@@ -48,7 +48,7 @@ Follow the [self-host guide](docs/SELF-HOST.md).
 
 # Packages
 
-- [`box`](packages/box/README.md) the complete workspace runtime: SSH, Docker, agent harnesses, terminal, chat, files, and previews.
+- [`box`](packages/box/README.md) the complete workspace runtime: SSH, Docker, agent harnesses, terminal, files, and previews.
 - [`control-plane`](packages/control-plane/README.md) workspace lifecycle, sessions, access, credential injection, volumes, and compute providers.
 - [`microvm-host`](packages/microvm-host/README.md) the Go host agent that runs and networks Firecracker workspaces.
 - [`webApp`](packages/webapp/README.md) the browser webApp for creating, configuring, sharing, and working inside workspaces.

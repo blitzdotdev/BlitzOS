@@ -17,8 +17,8 @@ With capture on, every workspace in the org mirrors its agents' **native
 harness transcripts** into one org Drive folder named **Agent usage**:
 
 - Claude Code project logs (what lands in `~/.claude/projects/` inside the
-  box), and Codex session logs (`~/.codex/sessions/`). Chat and terminal
-  sessions both write these.
+  box), and Codex session logs (`~/.codex/sessions/`). Headless recipe runs and
+  terminal harness sessions both write these.
 - The blobs are opaque vendor data. BlitzOS does not parse them; they already
   carry the full history, models, and token counts.
 - Attribution is **per workspace**. Each workspace gets its own subtree with a
@@ -76,10 +76,11 @@ skipped, not leaked.
 **2. The recipe.** On the **Recipes** page, create a recipe:
 
 - **Template**: the one above.
-- **Harness**: **Chat** — the run is headless; the prompt is delivered to the
+- **Harness**: **Chat** — this schema label means a headless recipe run, not
+  the unavailable native cockpit Chat surface. The prompt is delivered to the
   agent when the workspace boots.
-- **Model**: pick one (a chat recipe must pin a model; the model selects the
-  provider). Use a strong model — this is corpus analysis, not boilerplate.
+- **Model**: pick one (a headless recipe must pin a model; the model selects
+  the provider). Use a strong model — this is corpus analysis, not boilerplate.
 - **Prompt**: paste the canonical prompt below.
 
 **The canonical eval-authoring prompt:**
@@ -123,8 +124,8 @@ Re-running later regenerates evals against the grown corpus — same button.
 
 Nothing here needs a runner or a scoring UI; executing the suite is one more
 recipe. Make a template that attaches the **Evals** folder (and whatever the
-tasks operate on, for example a repo folder), then a chat recipe with a prompt
-along these lines:
+tasks operate on, for example a repo folder), then a headless recipe (the
+current schema's `Chat` harness) with a prompt along these lines:
 
 ```text
 For each task under /workspace/shared/Evals/<routine>/task-<n>/: perform

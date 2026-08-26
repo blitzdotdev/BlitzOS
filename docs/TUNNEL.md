@@ -6,8 +6,8 @@ Cloud-VM workspaces connect to the browser webApp automatically. At create
 time the control plane makes a named Cloudflare Tunnel for the workspace, a
 proxied DNS record `ws-<workspace-id>.<your-zone>`, and hands the box a tunnel
 token. The box dials out; it opens no inbound port. The webApp talks only to
-the control plane, which proxies terminal, chat, files, and previews through
-the tunnel and authenticates every hop. Destroying the workspace removes the
+the control plane, which proxies terminal, files, and previews through the
+tunnel and authenticates every hop. Destroying the workspace removes the
 tunnel and the DNS record.
 
 MicroVM workspaces do not use this path; they ride their host agent. Design
@@ -80,7 +80,7 @@ WORKSPACE_TUNNEL_ZONE = "<your-domain>"
 
 Leaving these three vars empty does not degrade gracefully for cloud VMs: a
 cloud-VM workspace still boots and reports `ready`, but every browser
-surface — terminal, chat, files, previews — routes through this tunnel and
+active surface — terminal, files, and previews — routes through this tunnel and
 returns `503 workspace has no webapp tunnel` without it. Only microVM
 workspaces are unaffected; their host agent carries webApp traffic itself.
 Leave the vars empty only for a microVM-only deployment.
@@ -111,7 +111,7 @@ the webApp, and deploys.
 
 1. Create a cloud-VM workspace in the webApp.
 2. A proxied DNS record `ws-<workspace-id>.<your-domain>` appears in the
-   zone, and the workspace terminal, chat, files, and preview tabs work with
+   zone, and the workspace terminal, files, and preview tabs work with
    no SSH forwards.
 3. Destroy the workspace. The DNS record and tunnel disappear.
 

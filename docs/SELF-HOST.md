@@ -77,7 +77,7 @@ not "refuse to deploy". So you can run step 4 immediately and come back here.
 | `ALLOWED_EMAIL_DOMAINS` | no | Comma-separated email domains, e.g. `example.com,example.org`. When set, **every** sign-in — new or existing user, invited or bootstrap — is refused unless the account's domain is listed. Empty (default) allows any domain. |
 | `CLOUDFLARE_ACCOUNT_ID` | for tunnels (step 8) | The account that owns the tunnel zone. |
 | `CLOUDFLARE_ZONE_ID` | for tunnels (step 8) | The zone that will hold `ws-<workspace-id>` records. |
-| `WORKSPACE_TUNNEL_ZONE` | for tunnels (step 8) | The zone's domain name. Leaving the three tunnel vars empty means cloud-VM workspaces boot but have no terminal, chat, files, or previews in the browser. See [TUNNEL.md](TUNNEL.md). |
+| `WORKSPACE_TUNNEL_ZONE` | for tunnels (step 8) | The zone's domain name. Leaving the three tunnel vars empty means cloud-VM workspaces boot but have no terminal, files, or previews in the browser. See [TUNNEL.md](TUNNEL.md). |
 
 The R2 binding (`BOX_IMAGES` → bucket `blitz-box-images`) and the D1 binding
 stay as they are; the deploy script creates the database and fills in
@@ -207,8 +207,8 @@ side.
 Follow [TUNNEL.md](TUNNEL.md): add a zone, mint a scoped API token, set the
 three `CLOUDFLARE_*`/`WORKSPACE_TUNNEL_ZONE` vars, and redeploy.
 
-Do not skip this for cloud VMs. Every browser surface — terminal, chat, files,
-previews — routes through the control plane's tunnel to the workspace. Without
+Do not skip this for cloud VMs. Every active browser surface — terminal, files,
+and previews — routes through the control plane's tunnel to the workspace. Without
 it, a Hetzner workspace boots, reports `ready`, and then every surface returns
 `503 workspace has no webapp tunnel`. MicroVM workspaces are the exception:
 their host agent carries this traffic itself.
@@ -259,7 +259,7 @@ In the webapp, create a workspace. Success looks like:
 - the workspace reaches `ready`;
 - for a cloud VM, a proxied DNS record `ws-<workspace-id>.<your-zone>`
   appears in the tunnel zone;
-- the terminal tab opens a shell, and chat, files, and previews load.
+- the terminal tab opens a shell, and files and previews load.
 
 If all of that works, the deployment is complete.
 
@@ -333,7 +333,7 @@ no longer exists. Check the migration list before you answer.
 | Every API request returns 500 | `CRED_MASTER_KEY` is not base64 of exactly 32 bytes, or a `MICROVM_*_TOKEN` is shorter than 32 characters or contains whitespace | Regenerate with `openssl rand -base64 32` (or `-hex 32` for the host token). No microVM hosts? Set `MICROVM_HOSTS = '[]'`. |
 | Every API request **and every cron** returns 500 right after a var edit | `SIGNUP_MODE` is not exactly `open` or `invite` (`invite-only` is the common typo), or an `ALLOWED_EMAIL_DOMAINS` entry is not a bare domain (`alice@example.com` and `gmail` are both rejected) | Fix the value in `wrangler.toml` and redeploy. The deploy command refuses both before it deploys, so a Worker in this state was deployed by hand. |
 | Machine-type list is empty in the create dialog | Bad `HETZNER_API_TOKEN`, or the catalog's types have no availability in their location | Verify the token is Read & Write on the right project; set `HETZNER_MACHINE_TYPES` to types and locations your project can get. |
-| `503 workspace has no webapp tunnel` on terminal/chat/files | Tunnel vars were unset when the workspace was created | Do step 8, then recreate the workspace. |
+| `503 workspace has no webapp tunnel` on terminal/files/previews | Tunnel vars were unset when the workspace was created | Do step 8, then recreate the workspace. |
 | `503 workspace webApp authentication is unavailable` | `WEBAPP_TOKEN_SECRET` missing | Set it and redeploy. |
 | Google login fails with a redirect error | Redirect URI mismatch | Register exactly `<origin>/auth/google/callback`. |
 | Workspace stuck in `creating` | The VM cannot fetch the box image | Check `BOX_IMAGE_*` against [BOX-IMAGE.md](BOX-IMAGE.md); registry images must be publicly pullable. |

@@ -26,7 +26,7 @@ in front of the Worker, or restrict sign-in at Google's side with an
 | Secret | Holder | If it leaks |
 |---|---|---|
 | `CRED_MASTER_KEY` | Worker | Decrypts every stored integration credential in the database. Rotating it does **not** re-protect data already exfiltrated, and credentials sealed under the old key become undecryptable — re-enter integrations after a rotation. |
-| `WEBAPP_TOKEN_SECRET` | Worker | Mints workspace webApp tickets and derives per-workspace guest credentials — terminal, chat, and files access to any workspace. Rotate freely: tickets live 60 seconds; derived guest credentials change with the secret. |
+| `WEBAPP_TOKEN_SECRET` | Worker | Mints workspace webApp tickets and derives per-workspace guest credentials for workspace webApp routes. Rotate freely: tickets live 60 seconds; derived guest credentials change with the secret. |
 | `CLOUDFLARE_API_TOKEN` | Worker | Scoped to Tunnel Edit + DNS Edit + Zone Read: can create or delete tunnels and DNS records on the account and zone. Keep the scope exactly as documented in [docs/TUNNEL.md](docs/TUNNEL.md). |
 | `HETZNER_API_TOKEN` | Worker | Full VM and volume lifecycle in its Hetzner project — create, list, and **delete**. Use a dedicated project holding nothing but BlitzOS workspaces, so the blast radius is the fleet, not your other infrastructure. |
 | `GOOGLE_CLIENT_SECRET` | Worker | Enables OAuth token exchange for your client ID; combined with a registered redirect an attacker can phish sign-ins. Rotate in the Google console. |
@@ -44,8 +44,8 @@ Treat a workspace as a single trust boundary. Inside it:
 - agent harnesses are launched with permission prompts off
   (`claude --dangerously-skip-permissions --permission-mode bypassPermissions`,
   `codex --dangerously-bypass-approvals-and-sandbox`);
-- anyone with terminal or chat access can act with every credential the
-  workspace holds.
+- anyone with an interactive terminal or agent session can act with every
+  credential the workspace holds.
 
 Isolation is per-VM, not per-process: the boundary is the single-tenant VM
 (or your Firecracker guest), never the container. Scope what you put into a
