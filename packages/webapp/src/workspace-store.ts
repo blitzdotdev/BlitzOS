@@ -167,10 +167,8 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
     }
     case 'workspace_created': {
       const preferences: UiPreferences = {
-        version: 1,
+        ...defaultPreferences(),
         activeWorkspaceId: action.record.id,
-        railWidth: 240,
-        order: [],
         workspaces: { [action.record.id]: { agentDefault: action.agentDefault } },
       };
       const workspace = createWorkspaceModel(action.record, preferences);

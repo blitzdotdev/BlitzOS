@@ -15,7 +15,22 @@ import {
 } from './storage.js';
 import { sharedSessionTab, type WorkspaceMemberViewResponse } from './workspace-sessions.js';
 
-const WORKSPACE_SESSION_POLL_INTERVAL_MS = 5_000;
+/** The shared-session registry is polled on the presence cadence: a visible
+ * tab every 5s, a hidden one every 30s, and an outage backs off instead of
+ * knocking every 5s until the control plane returns. */
+const WORKSPACE_SESSION_VISIBLE_POLL_MS = 5_000;
+const WORKSPACE_SESSION_HIDDEN_POLL_MS = 30_000;
+const WORKSPACE_SESSION_MAX_RETRY_MS = 30_000;
+
+function registryPollDelay(failures: number): number {
+  const jitter = Math.floor(Math.random() * 500);
+  if (failures > 0) {
+    return Math.min(WORKSPACE_SESSION_MAX_RETRY_MS, 1_000 * (2 ** Math.min(failures - 1, 5))) + jitter;
+  }
+  return (document.visibilityState === 'visible'
+    ? WORKSPACE_SESSION_VISIBLE_POLL_MS
+    : WORKSPACE_SESSION_HIDDEN_POLL_MS) + jitter;
+}
 
 export type PersistedWorkspaceTabs = {
   workspaceId: string;
@@ -206,6 +221,12 @@ export function useWorkspacePersistence(
     let active = true;
     let inFlight = false;
     let pending = false;
+    let failures = 0;
+    let timer = 0;
+    const schedule = (): void => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { void refresh(); }, registryPollDelay(failures));
+    };
     const refresh = async (): Promise<void> => {
       if (!active) return;
       if (inFlight) {
@@ -216,6 +237,7 @@ export function useWorkspacePersistence(
       try {
         const { sessions } = await api.listWorkspaceSessions(activeWorkspaceId);
         if (!active) return;
+        failures = 0;
         setWorkspaceSessions((current) => {
           if (current.workspaceId !== activeWorkspaceId) return current;
           return sameSessionRegistry(current.value, sessions)
@@ -224,22 +246,28 @@ export function useWorkspacePersistence(
         });
       } catch {
         // Keep the last successful registry while the control plane reconnects.
+        failures += 1;
       } finally {
         inFlight = false;
-        if (active && pending) {
-          pending = false;
-          void refresh();
+        if (active) {
+          if (pending) {
+            pending = false;
+            void refresh();
+          } else {
+            schedule();
+          }
         }
       }
     };
     const refreshNow = (): void => { void refresh(); };
     void refresh();
-    const interval = window.setInterval(refreshNow, WORKSPACE_SESSION_POLL_INTERVAL_MS);
     window.addEventListener('focus', refreshNow);
+    document.addEventListener('visibilitychange', refreshNow);
     return () => {
       active = false;
-      window.clearInterval(interval);
+      window.clearTimeout(timer);
       window.removeEventListener('focus', refreshNow);
+      document.removeEventListener('visibilitychange', refreshNow);
     };
   }, [activeWorkspaceId, api, enabled, serverSeededId, workspaceTabs.loaded]);
 

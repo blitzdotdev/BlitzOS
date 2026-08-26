@@ -164,9 +164,10 @@ export function SessionRail({
         aria-label={`Sessions in ${workspace.title}`}
         ref={onVendorHost}
       >
-        {vendored ? null : sessions.map((session, index) => {
-          const active = session.id === activeSessionId
-            || (activeSessionId === '' && index === 0);
+        {vendored ? null : sessions.map((session) => {
+          // Only the session actually in front is current. With a file,
+          // preview, or panel tab active, no shared-session row is current.
+          const active = session.id === activeSessionId;
           return (
             <button
               className={`shell-s${active ? ' shell-s--on' : ''}`}

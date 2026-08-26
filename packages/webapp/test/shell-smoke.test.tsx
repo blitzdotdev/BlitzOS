@@ -989,6 +989,29 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("marks no rail session current while a file tab is in front", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    serverWorkspaceSessions.set("workspace-running", [sharedSession("session-1", "claude")]);
+    saveTabs("workspace-running", [
+      { id: 1, type: "claude", sessionId: "session-1" },
+      { id: 2, type: "file", filePath: "notes.md" },
+    ], 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const row = view.container.querySelector<HTMLElement>('[data-rail-session-id="session-1"]');
+    expect(row).not.toBeNull();
+    expect(row?.getAttribute('aria-current')).toBeNull();
+    expect(row?.classList.contains('shell-s--on')).toBe(false);
+    await view.unmount();
+  });
+
   it("drops a personal-view tab when its shared session has been archived", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [{

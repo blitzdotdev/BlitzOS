@@ -1,6 +1,6 @@
 import type { WorkspaceSessionView } from '@blitzos/schema';
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiAdapter } from '../src/api-adapter';
 import { ApiRequestError, type ControlPlaneClient } from '../src/api';
 import { defaultWorkspaceWebAppState, type WorkspaceWebAppStateV1 } from '../src/storage';
@@ -155,6 +155,72 @@ describe('personal view persistence across two browsers of one member', () => {
     await act(async () => view.container.querySelector('button')?.click());
     await waitForDebounce();
     expect(stub.putWorkspaceWebAppState).toHaveBeenCalledTimes(2);
+
+    await view.unmount();
+  });
+});
+
+describe('shared-session registry polling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function flush(): Promise<void> {
+    await act(async () => {
+      for (let tick = 0; tick < 6; tick += 1) await Promise.resolve();
+    });
+  }
+
+  it('polls on the presence cadence and backs off while the control plane is down', async () => {
+    const { stub, api } = serverView();
+    const view = await render(<Probe api={api} onError={() => undefined} />);
+    await flush();
+    await flush();
+    expect(view.container.querySelector('button')?.dataset.loaded).toBe('true');
+    const polls = () => stub.listWorkspaceSessions.mock.calls.length;
+    const initial = polls();
+    expect(initial).toBeGreaterThanOrEqual(1);
+
+    // Visible: every 5s.
+    await act(async () => vi.advanceTimersByTime(4_999));
+    expect(polls()).toBe(initial);
+    await act(async () => vi.advanceTimersByTime(1));
+    await flush();
+    expect(polls()).toBe(initial + 1);
+
+    // Hidden: every 30s, not 5s.
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    await flush();
+    const hidden = polls();
+    await act(async () => vi.advanceTimersByTime(29_999));
+    expect(polls()).toBe(hidden);
+    await act(async () => vi.advanceTimersByTime(1));
+    await flush();
+    expect(polls()).toBe(hidden + 1);
+
+    // An outage backs off instead of knocking every interval.
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    stub.listWorkspaceSessions.mockRejectedValue(new Error('offline'));
+    await act(async () => window.dispatchEvent(new Event('focus')));
+    await flush();
+    const failedAt = polls();
+    await act(async () => vi.advanceTimersByTime(999));
+    expect(polls()).toBe(failedAt);
+    await act(async () => vi.advanceTimersByTime(1));
+    await flush();
+    expect(polls()).toBe(failedAt + 1);
+    await act(async () => vi.advanceTimersByTime(1_999));
+    expect(polls()).toBe(failedAt + 1);
+    await act(async () => vi.advanceTimersByTime(1));
+    await flush();
+    expect(polls()).toBe(failedAt + 2);
 
     await view.unmount();
   });
