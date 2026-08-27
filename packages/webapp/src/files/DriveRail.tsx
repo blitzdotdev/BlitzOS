@@ -3,7 +3,8 @@ import type { IdentityRecord, OrgRecord } from '../protocol';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { SessionTypeIcon, type WebAppSessionType } from '../WebAppHeader';
 import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
-import { DriveGlyph, RecipeGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
+// RecipeGlyph is unused while the Recipes rail entry stays commented out.
+import { DriveGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
 
 /** Brandon's cockpit rail (monorepov2 PR #252) with one insertion: the flat
  * Templates, Recipes, and Drive locations sit between the organization header
@@ -188,14 +189,16 @@ export function DriveRail({
           >
             <TemplateGlyph /><span>Templates</span>
           </button>
-          <button
+          {/* Recipes is incomplete: the rail entry stays hidden until the
+            * surface ships. Restore this button to bring it back. */}
+          {/* <button
             className={`drive-rail-row${nav === 'recipes' ? ' drive-rail-row--active' : ''}`}
             type="button"
             aria-current={nav === 'recipes' ? 'page' : undefined}
             onClick={onOpenRecipes}
           >
             <RecipeGlyph /><span>Recipes</span>
-          </button>
+          </button> */}
           <button
             className={`drive-rail-row${nav === 'drive' ? ' drive-rail-row--active' : ''}`}
             type="button"
