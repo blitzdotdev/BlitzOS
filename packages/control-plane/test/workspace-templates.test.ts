@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceTemplateView, WorkspaceView } from "@blitzos/schema";
 import {
   appRequest,
@@ -33,6 +33,7 @@ async function createFolder(
 
 describe("workspace templates", () => {
   beforeEach(resetDatabase);
+  afterEach(() => vi.restoreAllMocks());
 
   it("updates a template, preserving folders the editor can no longer read", async () => {
     const { app } = harness();
@@ -356,7 +357,10 @@ describe("workspace templates", () => {
 
     for (const bad of ["no-slash", "owner/name/extra", "owner/", "/name", "owner/na me"]) {
       const refused = await post({
-        name: "bad repos", machineTypeId: "small", folderIds: [], repos: [bad],
+        name: "bad repos",
+        machineTypeId: "small",
+        folderIds: [],
+        repos: [bad],
       });
       expect(refused.status, bad).toBe(400);
     }
@@ -367,7 +371,10 @@ describe("workspace templates", () => {
       repos: Array.from({ length: 17 }, (_, i) => `owner/repo-${String(i)}`),
     })).status).toBe(400);
     const collision = await post({
-      name: "collision", machineTypeId: "small", folderIds: [], repos: ["acme/app", "blitz/app"],
+      name: "collision",
+      machineTypeId: "small",
+      folderIds: [],
+      repos: ["acme/app", "blitz/app"],
     });
     expect(collision.status).toBe(400);
     await expect(collision.json()).resolves.toMatchObject({
@@ -377,6 +384,7 @@ describe("workspace templates", () => {
       .first<number>("count")).toBe(0);
 
     // Duplicates collapse; the view answers sorted; github rides along.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
     const created = await post({
       name: "repo starter",
       machineTypeId: "small",
@@ -386,7 +394,10 @@ describe("workspace templates", () => {
     });
     expect(created.status).toBe(201);
     const template = (await created.json<{ template: WorkspaceTemplateView }>()).template;
-    expect(template.repos).toEqual(["acme/tools", "blitzdotdev/blitz-core"]);
+    expect(template.repos).toEqual([
+      { repo: "acme/tools", private: false },
+      { repo: "blitzdotdev/blitz-core", private: false },
+    ]);
     expect(template.connections).toContainEqual({ provider: "github" });
     expect(template.connections).toContainEqual({ provider: "linear" });
 
@@ -414,13 +425,7 @@ describe("workspace templates", () => {
   it("boots a create from a repos template with the detached clone loop", async () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
-    // A minimal github grant so the create-time ceiling mints a live lease;
-    // creation would succeed without it — the clone loop is what this pins.
-    await env.DB.prepare(
-      `INSERT INTO user_oauth_grants
-       (id, user_id, provider, manifest_id, kind, scopes, created_at, updated_at)
-       VALUES ('grant-github', 'operator', 'github', 'github', 'pat', '[]', 1, 1)`,
-    ).run();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
     const template = (await (await appRequest(app, "/workspace-templates", {
       ...json({
@@ -454,6 +459,70 @@ describe("workspace templates", () => {
     expect(plain.status).toBe(201);
     const plainWorkspace = (await plain.json<{ workspace: WorkspaceView }>()).workspace;
     expect(providers.userData.get(plainWorkspace.id) ?? "").not.toContain("git clone");
+  });
+
+  it("refuses a private template repo until that member connects GitHub", async () => {
+    const { app, providers } = harness();
+    const owner = await operatorSession(app);
+    const member = await sameOrgSession("private-repo-member");
+    expect((await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-private-repo-owner",
+      }),
+    })).status).toBe(204);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => (
+      new Response(null, {
+        status: new Headers(init?.headers).has("Authorization") ? 200 : 404,
+      })
+    ));
+    const template = (await (await appRequest(app, "/workspace-templates", {
+      ...json({
+        name: "private starter",
+        machineTypeId: "small",
+        folderIds: [],
+        repos: ["acme/private-tools"],
+      }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).json<{ template: WorkspaceTemplateView }>()).template;
+
+    expect(template.repos).toEqual([{ repo: "acme/private-tools", private: true }]);
+    await expect(env.DB.prepare(
+      "SELECT repo, private FROM workspace_template_repos WHERE template_id = ?1",
+    ).bind(template.id).first()).resolves.toEqual({ repo: "acme/private-tools", private: 1 });
+
+    const refused = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(refused.status).toBe(409);
+    await expect(refused.json()).resolves.toMatchObject({
+      error: expect.stringContaining("connect GitHub"),
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspaces")
+      .first<number>("count")).toBe(0);
+
+    const connected = await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-private-repo-member",
+      }),
+    });
+    expect(connected.status).toBe(204);
+
+    const created = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    expect(providers.userData.get(workspace.id) ?? "").toContain(
+      "git clone https://github.com/acme/private-tools /workspace/private-tools",
+    );
   });
 
   it("resolves org-wide sharing for workspaces and folders and clears it on demand", async () => {

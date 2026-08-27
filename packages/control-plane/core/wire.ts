@@ -261,21 +261,50 @@ export interface TemplateConnectionView {
   provider: string;
 }
 
-
-
-/** POST /connections/github/repositories/check: why one repo failed the
- * anonymous clone probe. */
-export type GithubRepositoryCheckFailure = "not-public" | "unreachable";
-
-/** One requested repo and the anonymous clone verdict GitHub returned. */
-export interface GithubRepositoryCheckView {
+export interface TemplateRepoView {
   repo: string;
-  reachable: boolean;
-  /** Absent when `reachable` is true. */
-  failure?: GithubRepositoryCheckFailure;
+  private: boolean;
 }
 
-/** Repos ("owner/name") to prove clonable without credentials. */
+export interface GithubInstallationView {
+  id: number;
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: "all" | "selected";
+}
+
+export interface ListGithubInstallationsResponse {
+  installations: GithubInstallationView[];
+}
+
+export interface GithubRepositoryView {
+  repo: string;
+  accountLogin: string;
+  private: boolean;
+}
+
+export type GithubRepositoriesSource = "installations" | "personal-token";
+
+export interface ListGithubRepositoriesResponse {
+  source: GithubRepositoriesSource;
+  repositories: GithubRepositoryView[];
+  truncated: boolean;
+}
+
+export type GithubRepositoryCheckVerdict =
+  | "public"
+  | "private-reachable"
+  | "not-found"
+  | "unreachable";
+
+/** One requested repo and the Git transport verdict GitHub returned. */
+export interface GithubRepositoryCheckView {
+  repo: string;
+  verdict: GithubRepositoryCheckVerdict;
+}
+
+/** Repos ("owner/name") to prove clonable with the caller's credential when
+ * one exists. */
 export interface CheckGithubRepositoriesRequest {
   repos: string[];
 }
@@ -301,9 +330,9 @@ export interface WorkspaceTemplateView {
   /** Provider names only. Each name draws a status row in the workspace
    * connections panel; creation never blocks on connections. */
   connections: TemplateConnectionView[];
-  /** GitHub repos ("owner/name") cloned into /workspace/<name> when a
-   * workspace is created from this template. */
-  repos: string[];
+  /** GitHub repos cloned into /workspace/<name>. Privacy lets create require
+   * the member's GitHub grant before bootstrap starts. */
+  repos: TemplateRepoView[];
 }
 
 export interface ListWorkspaceTemplatesResponse {
@@ -426,8 +455,8 @@ export interface CreateWorkspaceTemplateRequest {
   /** An org agent rule to hand every workspace made from this template; null
    * (or absent) leaves it on the built-in doc. */
   agentRuleId?: string | null;
-  /** Repos ("owner/name") to clone at create. Naming any force-attaches the
-   * github connection. */
+  /** Repo names to clone at create. Naming any force-attaches the github
+   * connection; the server derives privacy with the caller's credential. */
   repos?: string[];
   /** True marks this template as the org default (admin only). False clears
    * the mark iff it currently points at this template. Absent leaves the org

@@ -243,9 +243,8 @@ describe("provider catalog conformance", () => {
         expect(form.rootHelp.length, "help says where the admin creates it")
           .toBeGreaterThan(20);
         // A static root is pasted, not authorized, so it cannot share a
-        // manifest with an OAuth flow that would fight it at mint. The app-jwt
-        // shape used to be the exception; GitHub was its only user and is now
-        // a pasted personal token like every other.
+        // manifest with an OAuth flow that would make mint selection
+        // ambiguous. Personal-token fallbacks do not use this admin form.
         expect(manifest.auth, "a static admin root is pasted, not authorized").toBeNull();
         // The admin form has never reached a proxy-custody provider, and the
         // form no longer carries a field for one. A manifest that wants both

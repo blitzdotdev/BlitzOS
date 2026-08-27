@@ -24,6 +24,7 @@ const expected = [
   "connections/canary.ts",
   "connections/connect.ts",
   "connections/github-repo-check.ts",
+  "connections/github-repositories.ts",
   "connections/health.ts",
   "connections/leases.ts",
   "connections/manifest.ts",
@@ -121,6 +122,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(96);
+    expect(expected).toHaveLength(97);
   });
 });

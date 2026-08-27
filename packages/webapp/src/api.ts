@@ -10,6 +10,8 @@ import type {
   ListCatalogResponse,
   CheckGithubRepositoriesResponse,
   ListConnectionsResponse,
+  ListGithubInstallationsResponse,
+  ListGithubRepositoriesResponse,
   ListProviderHealthResponse,
   ListUserGrantsResponse,
   PutUserGrantRequest,
@@ -69,6 +71,11 @@ export class ApiRequestError extends Error {
 }
 
 export type CredentialRequestState = "pending" | "approved" | "denied";
+
+export type ConnectReturnTo =
+  | "template-new"
+  | `template-edit:${string}`
+  | "workspace-new";
 
 export interface MeResponse {
   user: {
@@ -199,15 +206,20 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   deleteConnection(name: string): Promise<void>;
   listConnectionCatalog(signal?: AbortSignal): Promise<ListCatalogResponse>;
   listConnectionGrants(signal?: AbortSignal): Promise<ListUserGrantsResponse>;
+  listGithubInstallations(signal?: AbortSignal): Promise<ListGithubInstallationsResponse>;
+  listGithubRepositories(signal?: AbortSignal): Promise<ListGithubRepositoriesResponse>;
   checkGithubRepositories(repos: string[]): Promise<CheckGithubRepositoriesResponse>;
   putConnectionGrant(provider: string, input: PutUserGrantRequest): Promise<void>;
   deleteConnectionGrant(provider: string): Promise<void>;
   listProviderHealth(signal?: AbortSignal): Promise<ListProviderHealthResponse>;
   /** Full-page navigation target: the provider redirect cannot ride fetch.
-   * A workspace id sends the round trip back to that workspace with the lease
-   * already minted; without one it is an account authorization and lands in
-   * settings. */
-  connectStartUrl(provider: string, workspaceId?: string): string;
+   * Workspace ids return with a lease; named surfaces use the control plane's
+   * closed returnTo set; callers that supply neither still return to settings. */
+  connectStartUrl(
+    provider: string,
+    workspaceId?: string,
+    returnTo?: ConnectReturnTo,
+  ): string;
   /** Connects a provider in one workspace: adds it to that workspace's
    * allow-list, then mints once so a broken credential says so now. */
   mintWorkspaceConnection(
@@ -716,6 +728,10 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       request<ListCatalogResponse>("/connections/catalog", { signal }),
     listConnectionGrants: (signal) =>
       request<ListUserGrantsResponse>("/connections/grants", { signal }),
+    listGithubInstallations: (signal) =>
+      request<ListGithubInstallationsResponse>("/connections/github/installations", { signal }),
+    listGithubRepositories: (signal) =>
+      request<ListGithubRepositoriesResponse>("/connections/github/repositories", { signal }),
     checkGithubRepositories: (repos) =>
       request<CheckGithubRepositoriesResponse>("/connections/github/repositories/check", {
         method: "POST",
@@ -734,12 +750,15 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     listProviderHealth: (signal) =>
       request<ListProviderHealthResponse>("/connections/health", { signal }),
-    connectStartUrl: (provider, workspaceId) =>
-      `${base}/connect/${encodeURIComponent(provider)}/start${
-        workspaceId === undefined
-          ? ""
-          : `?workspaceId=${encodeURIComponent(workspaceId)}`
-      }`,
+    connectStartUrl: (provider, workspaceId, returnTo) => {
+      const query = new URLSearchParams();
+      if (workspaceId !== undefined) query.set("workspaceId", workspaceId);
+      if (returnTo !== undefined) query.set("returnTo", returnTo);
+      const serialized = query.toString();
+      return `${base}/connect/${encodeURIComponent(provider)}/start${
+        serialized === "" ? "" : `?${serialized}`
+      }`;
+    },
     listCredentialEvents: (workspaceId, signal) =>
       request<ListCredentialEventsResponse>(
         `/workspaces/${encodeURIComponent(workspaceId)}/credential-events`,

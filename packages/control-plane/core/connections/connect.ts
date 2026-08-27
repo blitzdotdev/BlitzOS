@@ -3,10 +3,12 @@ import { HttpError, requiredString } from "../http.js";
 import { canControlWorkspace, type WorkspaceAccessRow } from "../workspace-access.js";
 import {
   clearConnectOAuthStateCookie,
+  connectReturnTo,
   CONNECT_OAUTH_COOKIE,
   createConnectOAuthState,
   verifyConnectOAuthStateCookie,
 } from "../oauth-state.js";
+import type { ConnectReturnTo } from "../oauth-state.js";
 import { cookieValue, findStatePrincipal } from "../principals.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
@@ -68,18 +70,25 @@ function configuredProvider(
   return { manifest, clientId, clientSecret };
 }
 
-/** A round trip that began in a workspace ends there: connecting is a thing
- * that happened to that workspace, and the connect grid it started from is the
- * surface that has to show it. Everything else lands back in settings. */
+/** A round trip that began in a workspace ends there. Other named surfaces
+ * resolve from a closed state value, and the settings path remains the default
+ * for callers that genuinely started there. */
 function returnUrl(
   origin: string,
   status: string,
   provider: string,
   workspaceId: string | null = null,
+  returnTo: ConnectReturnTo | null = null,
 ): string {
-  const path = workspaceId === null
-    ? CONNECT_RETURN_PATH
-    : `/workspaces/${encodeURIComponent(workspaceId)}`;
+  let path = CONNECT_RETURN_PATH;
+  if (returnTo === "template-new") path = "/templates/new";
+  if (returnTo === "workspace-new") path = "/workspaces/new";
+  if (returnTo?.startsWith("template-edit:") === true) {
+    path = `/templates/${encodeURIComponent(returnTo.slice("template-edit:".length))}/edit`;
+  }
+  // A workspace id grants a lease after authorization, so it keeps precedence
+  // over a return surface even if a caller supplies both query parameters.
+  if (workspaceId !== null) path = `/workspaces/${encodeURIComponent(workspaceId)}`;
   const url = new URL(path, origin);
   url.searchParams.set("connect", status);
   url.searchParams.set("provider", provider);
@@ -105,6 +114,13 @@ async function controllableWorkspace(
   }
   if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
   return id;
+}
+
+function requestedReturnTo(value: string | null): ConnectReturnTo | null {
+  if (value === null) return null;
+  const parsed = connectReturnTo(value);
+  if (parsed === null) throw new HttpError(400, "returnTo is invalid");
+  return parsed;
 }
 
 function catalogGrantConfig(manifest: ProviderManifest): GrantConfig {
@@ -134,21 +150,25 @@ export function addConnectRoutes(
       principal,
       new URL(context.req.url).searchParams.get("workspaceId"),
     );
+    const returnTo = requestedReturnTo(new URL(context.req.url).searchParams.get("returnTo"));
     const oauth = await createConnectOAuthState(
       runtime.vars.googleClientSecret,
       manifest.id,
       principal.id,
       principal.membershipId,
       workspaceId,
+      returnTo,
     );
     const authorize = new URL(manifest.auth.authorizeUrl);
     const parameters = new URLSearchParams({
       client_id: clientId,
       redirect_uri: `${origin}${providerRedirectPath(manifest)}`,
       response_type: "code",
-      scope: manifest.defaultScopes.join(manifest.auth.scopeDelimiter),
       state: oauth.state,
     });
+    if (manifest.defaultScopes.length > 0) {
+      parameters.set("scope", manifest.defaultScopes.join(manifest.auth.scopeDelimiter));
+    }
     if (manifest.auth.pkce) {
       parameters.set("code_challenge", oauth.codeChallenge);
       parameters.set("code_challenge_method", "S256");
@@ -170,9 +190,6 @@ export function addConnectRoutes(
     const origin = new URL(context.req.url).origin;
     const query = new URL(context.req.url).searchParams;
     context.header("Set-Cookie", clearConnectOAuthStateCookie(), { append: true });
-    if (query.get("error") !== null) {
-      return context.body(null, 302, { Location: returnUrl(origin, "denied", id) });
-    }
     const { manifest, clientId, clientSecret } = configuredProvider(
       id,
       runtime.vars.connectSecret,
@@ -189,6 +206,11 @@ export function addConnectRoutes(
       runtime.vars.googleClientSecret,
     );
     if (state === null) throw new HttpError(400, "connect state is invalid or expired");
+    if (query.get("error") !== null) {
+      return context.body(null, 302, {
+        Location: returnUrl(origin, "denied", id, state.workspaceId, state.returnTo),
+      });
+    }
     const principal = await findStatePrincipal(runtime.db, state.userId, state.membershipId);
     if (principal === null || principal.orgId === null) {
       throw new HttpError(403, "active membership required");
@@ -236,7 +258,9 @@ export function addConnectRoutes(
     );
     // Started in settings: authorizing the account is the whole errand.
     if (state.workspaceId === null) {
-      return context.body(null, 302, { Location: returnUrl(origin, "ok", manifest.id) });
+      return context.body(null, 302, {
+        Location: returnUrl(origin, "ok", manifest.id, null, state.returnTo),
+      });
     }
     // Started in a workspace: the errand was connecting it, so the grant is
     // only half of it. A ceiling that refuses leaves the grant standing and

@@ -68,7 +68,7 @@ async function check(
   });
 }
 
-describe("GitHub public repository checks", () => {
+describe("GitHub repository checks", () => {
   beforeEach(async () => {
     await resetDatabase();
   });
@@ -125,9 +125,9 @@ describe("GitHub public repository checks", () => {
     expect(response.status).toBe(200);
     await expect(response.json<CheckGithubRepositoriesResponse>()).resolves.toEqual({
       results: [
-        { repo: "owner/public", reachable: true },
-        { repo: "owner/private", reachable: false, failure: "not-public" },
-        { repo: "owner/broken", reachable: false, failure: "unreachable" },
+        { repo: "owner/public", verdict: "public" },
+        { repo: "owner/private", verdict: "not-found" },
+        { repo: "owner/broken", verdict: "unreachable" },
       ],
     });
   });
@@ -172,7 +172,7 @@ describe("GitHub public repository checks", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json<CheckGithubRepositoriesResponse>()).resolves.toEqual({
-      results: [{ repo: "owner/name", reachable: false, failure: "unreachable" }],
+      results: [{ repo: "owner/name", verdict: "unreachable" }],
     });
   });
 
@@ -188,8 +188,97 @@ describe("GitHub public repository checks", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json<CheckGithubRepositoriesResponse>()).resolves.toEqual({
-      results: [{ repo: "owner/name", reachable: true }],
+      results: [{ repo: "owner/name", verdict: "public" }],
     });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses Basic auth and separates public from private credential reach", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const token = "github_pat_test-repository-check";
+    expect((await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ manifestId: "github", token }),
+    })).status).toBe(204);
+
+    const requests: Array<{ repo: string; authorization: string | null }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const repo = /github\.com\/([^?]+)\.git/u.exec(String(input))?.[1] ?? "";
+      const authorization = new Headers(init?.headers).get("Authorization");
+      requests.push({ repo, authorization });
+      if (repo === "owner/missing") return new Response(null, { status: 404 });
+      if (authorization !== null) return new Response(null, { status: 200 });
+      return new Response(null, { status: repo === "owner/public" ? 200 : 404 });
+    });
+
+    const response = await check(app, cookie, {
+      repos: ["owner/public", "owner/private", "owner/missing"],
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json<CheckGithubRepositoriesResponse>()).resolves.toEqual({
+      results: [
+        { repo: "owner/public", verdict: "public" },
+        { repo: "owner/private", verdict: "private-reachable" },
+        { repo: "owner/missing", verdict: "not-found" },
+      ],
+    });
+    const basic = `Basic ${btoa(`x-access-token:${token}`)}`;
+    expect(requests).toEqual([
+      { repo: "owner/public", authorization: basic },
+      { repo: "owner/private", authorization: basic },
+      { repo: "owner/missing", authorization: basic },
+      { repo: "owner/public", authorization: null },
+      { repo: "owner/private", authorization: null },
+      { repo: "owner/missing", authorization: null },
+    ]);
+  });
+
+  it("still recognizes a public repo when a stored token is rejected", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    expect((await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-rejected-token",
+      }),
+    })).status).toBe(204);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => (
+      new Response(null, {
+        status: new Headers(init?.headers).has("Authorization") ? 401 : 200,
+      })
+    ));
+
+    const response = await check(app, cookie, { repos: ["owner/public"] });
+
+    await expect(response.json<CheckGithubRepositoriesResponse>()).resolves.toEqual({
+      results: [{ repo: "owner/public", verdict: "public" }],
+    });
+  });
+
+  it("does not call a failed anonymous comparison private", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    expect((await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-anonymous-comparison",
+      }),
+    })).status).toBe(204);
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockRejectedValueOnce(new Error("network failed"));
+
+    const response = await check(app, cookie, { repos: ["owner/name"] });
+
+    await expect(response.json<CheckGithubRepositoriesResponse>()).resolves.toEqual({
+      results: [{ repo: "owner/name", verdict: "unreachable" }],
+    });
   });
 });

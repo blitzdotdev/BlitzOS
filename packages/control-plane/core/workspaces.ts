@@ -2,6 +2,8 @@ import { boxHostname, type RecipeBootstrap } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
+import { checkGithubRepositories } from "./connections/github-repo-check.js";
+import { githubCallerCredential } from "./connections/github-repositories.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
 import { connectionByName } from "./connections/registry.js";
@@ -438,11 +440,40 @@ export async function performWorkspaceCreate(
   const templateConnectionList = template === null
     ? []
     : await templateConnections(runtime.db, template.id);
-  // Creation never blocks on connections, and never mints one either. The
-  // names land in the allow-list below, and an agent pulls a credential when
-  // it needs one. Minting here used to leave a live proxy lease token nobody
-  // held, which is a capability with no holder. A stipulated provider with no
-  // grant behind it still creates: the first pull files a connect request.
+  const repos = template === null ? [] : await templateRepos(runtime.db, template.id);
+  const privateRepos = repos.filter((repo) => repo.private);
+  if (privateRepos.length > 0) {
+    // Public repos and ordinary provider ceilings never block create. A private
+    // clone is different: bootstrap waits 600 seconds before it records the
+    // failure in repo-clone.log, so refuse before any VM or volume work starts.
+    const credential = await githubCallerCredential(runtime, principal.id);
+    if (credential === null) {
+      throw new HttpError(
+        409,
+        "connect GitHub before creating a workspace from a template with private repositories",
+      );
+    }
+    const checks = await checkGithubRepositories(
+      privateRepos.map(({ repo }) => repo),
+      credential.token,
+    );
+    const inaccessible = checks.find((check) => check.verdict === "not-found");
+    if (inaccessible !== undefined) {
+      throw new HttpError(
+        409,
+        `the GitHub connection cannot reach private repository ${inaccessible.repo}`,
+      );
+    }
+    const failed = checks.find((check) => check.verdict === "unreachable");
+    if (failed !== undefined) {
+      throw new HttpError(502, `GitHub could not check private repository ${failed.repo}`);
+    }
+  }
+  // Creation never mints a connection. The names land in the allow-list below,
+  // and an agent pulls a credential when it needs one. Minting here used to
+  // leave a live proxy lease token nobody held, which is a capability with no
+  // holder. A stipulated provider with no grant behind it still creates unless
+  // a private template repo requires GitHub during bootstrap.
   const requested = [...new Set([
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
@@ -474,8 +505,7 @@ export async function performWorkspaceCreate(
   if (recipe !== undefined) shaping.recipe = recipe.bootstrap;
   // Template repos ride the bootstrap as a detached clone loop; an empty
   // list stays absent so the emitted bytes match every pre-repo pin.
-  const repos = template === null ? [] : await templateRepos(runtime.db, template.id);
-  if (repos.length > 0) shaping.repos = repos;
+  if (repos.length > 0) shaping.repos = repos.map(({ repo }) => repo);
   const id = crypto.randomUUID();
   const capability = randomToken();
   const now = Date.now();
