@@ -299,12 +299,8 @@ const uncappedOrgUsage: SharedShape<wire.OrgUsageResponse, schema.OrgUsageRespon
   seatLimit: null,
 };
 
-const orgBillingLinks: SharedShape<
-  wire.OrgBillingLinksResponse,
-  schema.OrgBillingLinksResponse
-> = {
-  checkoutUrl: "https://billing.example/checkout#token=header.payload.signature",
-  portalUrl: "https://billing.example/portal#token=header.payload.signature",
+const orgBilling: SharedShape<wire.OrgBillingResponse, schema.OrgBillingResponse> = {
+  url: "https://billing.example/checkout#token=header.payload.signature",
 };
 
 const createVolumeRequest: SharedShape<
@@ -539,7 +535,7 @@ const fullFieldValues = [
   seatLimitError,
   orgUsage,
   uncappedOrgUsage,
-  orgBillingLinks,
+  orgBilling,
   createVolumeRequest,
   createVolumeResponse,
   listVolumesResponse,
@@ -610,7 +606,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.RegisterKeysResponse>().toEqualTypeOf<schema.RegisterKeysResponse>();
     expectTypeOf<wire.ApiError>().toEqualTypeOf<schema.ApiError>();
     expectTypeOf<wire.OrgUsageResponse>().toEqualTypeOf<schema.OrgUsageResponse>();
-    expectTypeOf<wire.OrgBillingLinksResponse>().toEqualTypeOf<schema.OrgBillingLinksResponse>();
+    expectTypeOf<wire.OrgBillingResponse>().toEqualTypeOf<schema.OrgBillingResponse>();
     expectTypeOf<wire.CreateVolumeRequest>().toEqualTypeOf<schema.CreateVolumeRequest>();
     expectTypeOf<wire.CreateVolumeResponse>().toEqualTypeOf<schema.CreateVolumeResponse>();
     expectTypeOf<wire.ListVolumesResponse>().toEqualTypeOf<schema.ListVolumesResponse>();

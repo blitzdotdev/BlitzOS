@@ -46,10 +46,11 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
 
   // Follows the hop the control plane signs. Minted on the click rather than
   // on load: the token lives fifteen minutes, and a settings tab left open
-  // outlives that.
-  const openBilling = (which: 'checkoutUrl' | 'portalUrl') => {
-    void client.billingLinks()
-      .then((links) => { window.location.href = links[which]; })
+  // outlives that. One destination — the billing service decides whether this
+  // organization is buying seats or changing the ones it has.
+  const openBilling = () => {
+    void client.billing()
+      .then((billing) => { window.location.href = billing.url; })
       .catch((caught: Error) => setError(caught.message));
   };
 
@@ -68,9 +69,9 @@ export function InvitesPanel({ client }: { client: ControlPlaneClient }) {
           <button
             className={`webapp-action${full ? ' webapp-action--primary' : ''}`}
             type="button"
-            onClick={() => openBilling(full ? 'checkoutUrl' : 'portalUrl')}
+            onClick={openBilling}
           >
-            {full ? 'Upgrade' : 'Manage billing'}
+            Manage
           </button>
         </div>
       )}
