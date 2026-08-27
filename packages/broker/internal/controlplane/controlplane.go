@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/blitzdotdev/blitz-core/broker/internal/feed"
+	"github.com/blitzdotdev/blitz-core/broker/internal/filelock"
 	"github.com/blitzdotdev/blitz-core/broker/internal/store"
 )
 
@@ -251,9 +253,56 @@ func (c *Client) authenticated(ctx context.Context, method string, path func(str
 	return response, err
 }
 
+// refreshLockWait bounds how long a rotation queues behind another process's
+// rotation. The critical section is one HTTP round trip plus two small file
+// operations, so a waiter that is still here has met a holder that is stuck,
+// not one that is slow.
+const refreshLockWait = 30 * time.Second
+
+// RefreshLockFile is the flock every rotation contends on. It sits beside the
+// credential rather than inside it: the credential is replaced by rename, and
+// a lock whose inode is swapped mid-hold locks nothing.
+const RefreshLockFile = "box-credential.lock"
+
+// refreshCredential rotates this box's control-plane credential.
+//
+// The whole read-refresh-write is held under a cross-process flock, and that
+// is the point of this function rather than an implementation detail. The
+// control plane makes a refresh token single-use: redeeming it rotates the
+// family, and the box only writes the new pair AFTER the server has already
+// rotated. Two processes that both read an expired credential would POST the
+// same single-use token, and the loser would report a bare HTTP 400 for a box
+// that is in fact healthy. broker.withMemberLock guards the vendor credential
+// against exactly this; the box's own credential went without.
+//
+// The re-read INSIDE the lock is what makes the loser correct rather than
+// merely quiet: by the time it holds the lock the winner has already written,
+// so the stale-access check hands it the fresh credential and no second
+// rotation happens at all.
 func (c *Client) refreshCredential(ctx context.Context, staleAccess string) (store.Credential, error) {
 	c.refresh.Lock()
 	defer c.refresh.Unlock()
+	if err := store.EnsureDir(c.stateDir); err != nil {
+		return store.Credential{}, err
+	}
+	var rotated store.Credential
+	err := filelock.With(
+		ctx,
+		filepath.Join(c.stateDir, RefreshLockFile),
+		refreshLockWait,
+		func() error {
+			credential, err := c.refreshLocked(ctx, staleAccess)
+			rotated = credential
+			return err
+		},
+	)
+	if err != nil {
+		return store.Credential{}, err
+	}
+	return rotated, nil
+}
+
+func (c *Client) refreshLocked(ctx context.Context, staleAccess string) (store.Credential, error) {
 	credential, err := store.LoadCredential(c.stateDir)
 	if err != nil {
 		return store.Credential{}, err
