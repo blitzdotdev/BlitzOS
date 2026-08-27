@@ -147,6 +147,16 @@ async function screenWith(fetcher = stub()) {
   return { view, onCreated, fetcher };
 }
 
+// An install with no repositories in the member intersection: enough to keep
+// the picker out of its no-installation state, whose Refresh button shares a
+// class with the URL box's Add.
+const INSTALLED_ACCOUNT = {
+  id: 11,
+  accountLogin: 'acme',
+  accountType: 'Organization',
+  repositorySelection: 'all',
+};
+
 describe('create template screen', () => {
   it('attaches on row click, detaches on a second click, and posts the template', async () => {
     const fetcher = stub();
@@ -856,7 +866,7 @@ describe('create template screen', () => {
   it('requires an org owner install and refreshes the no-installation state', async () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ source: 'installations', repositories: [], truncated: false });
+        return Response.json({ repositories: [], truncated: false });
       }
       if (url.pathname === '/connections/github/installations') {
         return Response.json({ installations: [] });
@@ -884,7 +894,6 @@ describe('create template screen', () => {
     const fetcher = stub((url, init) => {
       if (url.pathname === '/connections/github/repositories') {
         return Response.json({
-          source: 'installations',
           truncated: false,
           repositories: [
             { repo: 'acme/private-app', accountLogin: 'acme', private: true },
@@ -961,7 +970,6 @@ describe('create template screen', () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
         return Response.json({
-          source: 'installations',
           truncated: false,
           repositories: [
             { repo: 'acme/app', accountLogin: 'acme', private: true },
@@ -990,7 +998,10 @@ describe('create template screen', () => {
   it('reports a malformed public repo URL without checking it', async () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ source: 'personal-token', repositories: [], truncated: false });
+        return Response.json({ repositories: [], truncated: false });
+      }
+      if (url.pathname === '/connections/github/installations') {
+        return Response.json({ installations: [INSTALLED_ACCOUNT] });
       }
       return null;
     });
@@ -1023,7 +1034,10 @@ describe('create template screen', () => {
   it('adds a public repo batch only after every repo is reachable and saves it through PUT', async () => {
     const fetcher = stub((url, init) => {
       if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ source: 'personal-token', repositories: [], truncated: false });
+        return Response.json({ repositories: [], truncated: false });
+      }
+      if (url.pathname === '/connections/github/installations') {
+        return Response.json({ installations: [INSTALLED_ACCOUNT] });
       }
       if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
         if (String(init.body).includes('acme/private')) {

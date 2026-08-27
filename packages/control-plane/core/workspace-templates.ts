@@ -18,7 +18,7 @@ import {
 } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
-import { checkGithubRepositories } from "./connections/github-repo-check.js";
+import { probedRepos } from "./connections/github-repo-check.js";
 import { githubCallerCredential } from "./connections/github-repositories.js";
 import {
   parseTemplateRepos,
@@ -144,10 +144,9 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
   return result;
 }
 
-/** Privacy is provider truth, not a client assertion. Both picker selections
- * and typed URLs arrive as names; the server repeats the credential-aware Git
- * probe before it writes rows, so a direct API caller cannot bypass the future
- * workspace-create gate by labelling a private repository public. */
+/** A template save probes with whatever GitHub credential the admin holds, a
+ * personal token included: a template is a name list, not a workspace, and the
+ * App-only rule bites at create where the clone actually happens. */
 async function checkedTemplateRepos(
   runtime: ReturnType<RuntimeFactory>,
   userId: string,
@@ -155,15 +154,7 @@ async function checkedTemplateRepos(
 ): Promise<TemplateRepo[]> {
   if (repos.length === 0) return [];
   const credential = await githubCallerCredential(runtime, userId);
-  const results = await checkGithubRepositories(repos, credential?.token ?? null);
-  return results.map((result) => {
-    if (result.verdict === "public") return { repo: result.repo, private: false };
-    if (result.verdict === "private-reachable") return { repo: result.repo, private: true };
-    if (result.verdict === "not-found") {
-      throw new HttpError(400, `repository ${result.repo} was not found or is not reachable`);
-    }
-    throw new HttpError(502, `GitHub could not check repository ${result.repo}`);
-  });
+  return probedRepos(repos, credential?.token ?? null);
 }
 
 async function templateConnectionRows(

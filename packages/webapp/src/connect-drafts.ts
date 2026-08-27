@@ -19,9 +19,13 @@ export interface TemplateConnectDraft {
 }
 
 export interface WorkspaceConnectDraft {
-  templateId: string;
+  /** null is a real answer, not a missing one: the repo picker only appears
+   * with no template selected, so that is the state most likely to be
+   * mid-edit when the member leaves for github.com. */
+  templateId: string | null;
   environment: WorkspaceEnvironment;
   agentRuleId: string | null;
+  repos: string[];
 }
 
 const TEMPLATE_DRAFT_PREFIX = 'blitz:github-connect-draft:';
@@ -108,17 +112,19 @@ function workspaceDraft(serialized: string): WorkspaceConnectDraft | null {
   }
   const parsed = asJsonObject(value);
   const environment = draftEnvironment(parsed?.environment);
+  const repos = stringList(parsed?.repos);
   if (
     parsed === null
-    || !isString(parsed.templateId)
-    || parsed.templateId === ''
+    || !(parsed.templateId === null || (isString(parsed.templateId) && parsed.templateId !== ''))
     || environment === null
     || !(parsed.agentRuleId === null || isString(parsed.agentRuleId))
+    || repos === null
   ) return null;
   return {
     templateId: parsed.templateId,
     environment,
     agentRuleId: parsed.agentRuleId,
+    repos,
   };
 }
 

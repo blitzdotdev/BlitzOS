@@ -89,51 +89,25 @@ describe("GitHub installation and repository listings", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("uses the personal repository fallback for a pasted token and follows Link", async () => {
+  it("refuses a pasted personal token on both routes without calling GitHub", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-    const token = "github_pat_test-repository-list";
-    await connectPat(app, cookie, token);
-    const requests: Array<{ url: string; authorization: string | null }> = [];
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const url = String(input);
-      requests.push({
-        url,
-        authorization: new Headers(init?.headers).get("Authorization"),
+    await connectPat(app, cookie, "github_pat_test-repository-list");
+    const fetch = vi.spyOn(globalThis, "fetch");
+
+    for (const path of [
+      "/connections/github/installations",
+      "/connections/github/repositories",
+    ]) {
+      const refused = await appRequest(app, path, { headers: { Cookie: cookie } });
+      expect(refused.status, path).toBe(409);
+      await expect(refused.json(), path).resolves.toMatchObject({
+        error: "connect GitHub through the App to list repositories",
       });
-      if (url.includes("page=2")) {
-        return Response.json([{ full_name: "acme/private", private: true }]);
-      }
-      return Response.json(
-        [{ full_name: "member/public", private: false }],
-        {
-          headers: {
-            Link: '<https://api.github.com/user/repos?page=2&per_page=8>; rel="next"',
-          },
-        },
-      );
-    });
-
-    const response = await appRequest(app, "/connections/github/repositories", {
-      headers: { Cookie: cookie },
-    });
-
-    expect(response.status).toBe(200);
-    await expect(response.json<ListGithubRepositoriesResponse>()).resolves.toEqual({
-      source: "personal-token",
-      repositories: [
-        { repo: "member/public", accountLogin: "member", private: false },
-        { repo: "acme/private", accountLogin: "acme", private: true },
-      ],
-      truncated: false,
-    });
-    expect(requests).toHaveLength(2);
-    expect(requests[0]?.url).toBe(
-      "https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member"
-      + "&per_page=8",
-    );
-    expect(requests.map(({ authorization }) => authorization))
-      .toEqual([`Bearer ${token}`, `Bearer ${token}`]);
+    }
+    // The same 409 a missing grant returns, so the picker offers Connect for
+    // either. Nothing reaches github.com: there is no personal-token listing.
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("pages installations and merges the user-token repository intersection", async () => {
@@ -205,7 +179,6 @@ describe("GitHub installation and repository listings", () => {
     });
     expect(repositories.status).toBe(200);
     await expect(repositories.json<ListGithubRepositoriesResponse>()).resolves.toEqual({
-      source: "installations",
       repositories: [
         { repo: "acme/public", accountLogin: "acme", private: false },
         { repo: "acme/private", accountLogin: "acme", private: true },
@@ -224,10 +197,12 @@ describe("GitHub installation and repository listings", () => {
   it("refuses a cross-origin pagination link before it can receive the token", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-    await connectPat(app, cookie, "github_pat_test-pagination-origin");
-    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json([], {
-      headers: { Link: '<https://attacker.example/repos?page=2>; rel="next"' },
-    }));
+    await connectOauth(app, cookie);
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ installations: [] }, {
+        headers: { Link: '<https://attacker.example/repos?page=2>; rel="next"' },
+      }),
+    );
 
     const response = await appRequest(app, "/connections/github/repositories", {
       headers: { Cookie: cookie },

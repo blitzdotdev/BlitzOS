@@ -283,10 +283,9 @@ export interface GithubRepositoryView {
   private: boolean;
 }
 
-export type GithubRepositoriesSource = "installations" | "personal-token";
-
+/** Every row here came through an App installation, reached with the member's
+ * own token. There is no second path, so nothing names which one answered. */
 export interface ListGithubRepositoriesResponse {
-  source: GithubRepositoriesSource;
   repositories: GithubRepositoryView[];
   truncated: boolean;
 }
@@ -495,6 +494,10 @@ export interface CreateWorkspaceRequest {
   /** Overrides the template's rule; null (or absent) falls back to the
    * template's rule and then the built-in doc. */
   agentRuleId?: string | null;
+  /** GitHub repositories ("owner/name") the box clones into /workspace. Only
+   * for a create with no template: a template already carries its own list,
+   * and a request that names both is refused rather than merged. */
+  repos?: string[];
 }
 
 export interface CreateWorkspaceResponse {
