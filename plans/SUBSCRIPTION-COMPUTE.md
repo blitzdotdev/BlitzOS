@@ -85,8 +85,18 @@ an admin can see why creates are refused.
 copies. Fixtures under `schema/fixtures/entitlements/` gain a case with the flag
 set, because the billing service pins the same corpus.
 
-**Webapp.** The 402 today says "add a credential". For an org whose plan should
-include compute it should say so instead. One string, gated on the usage field.
+**Webapp.** ~~The 402 today says "add a credential". For an org whose plan should
+include compute it should say so instead.~~ **Amended 2026-08-27 (PR for
+`0037`): dropped, the branch is unreachable.** An org with the flag never
+receives the 402, and an org without it has no such plan. The one residual case
+— flag set, deployment holds no Hetzner token — is a 409, where that wording
+would be wrong.
+
+**Provider statuses.** `providerStatuses()` must read the flag too. Missed when
+this plan was written: `/machine-types` drops any provider whose access is
+`credential-required` (`core/app.ts:109-110`), so a subscribed org would pass
+`resolve()` and still be shown an empty catalog — refused one screen earlier,
+for a reason that no longer holds.
 
 ## 3. Done when
 
