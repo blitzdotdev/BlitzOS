@@ -93,6 +93,10 @@ export interface ComputeProviderStatus {
 export interface ComputeProviderEnvironment extends AwsProviderEnv {
   HETZNER_API_TOKEN?: string;
   HETZNER_MACHINE_TYPES?: string;
+  /** Golden-image map for the DEPLOYMENT Hetzner project only. A snapshot
+   * lives in one project, so an organization booting its own project must
+   * never be handed this deployment's snapshot id. */
+  HETZNER_SERVER_IMAGES?: string;
 }
 
 export interface OrgComputeProviderResolverOptions {
@@ -293,10 +297,20 @@ export class OrgComputeProviderResolver {
     }
     this.awsProviderOptions = awsOptions(options);
 
+    // The golden image is deployment-only. A Hetzner snapshot exists in one
+    // project, so handing a BYOK organization this deployment's snapshot id
+    // would make every one of its creates fail on an image it cannot see.
+    // Its adapter keeps the shared options and boots stock Ubuntu.
+    const deploymentHetznerOptions: HetznerProviderOptions = {
+      ...this.hetznerProviderOptions,
+    };
+    if (env.HETZNER_SERVER_IMAGES !== undefined) {
+      deploymentHetznerOptions.serverImages = env.HETZNER_SERVER_IMAGES;
+    }
     const deploymentHetznerToken = env.HETZNER_API_TOKEN ?? "";
     const deploymentHetzner = new HetznerProvider(
       deploymentHetznerToken,
-      this.hetznerProviderOptions,
+      deploymentHetznerOptions,
     );
     if (deploymentHetznerToken !== "") {
       this.deploymentProviders.set("hetzner", deploymentHetzner);

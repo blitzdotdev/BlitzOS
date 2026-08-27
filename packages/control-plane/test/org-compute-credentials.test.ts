@@ -31,6 +31,11 @@ interface ProviderCall {
   body: string;
 }
 
+// Volume ids are handed out across the whole file, not per fake. Hetzner never
+// repeats one, and `volume_ownership` keys on it, so a per-fake counter let the
+// first volume of one test collide with a row another test had already made.
+let nextVolumeId = 20_000;
+
 function providerHttp(options: { rejectHetzner?: boolean } = {}) {
   const calls: ProviderCall[] = [];
   let serverId = 10_000;
@@ -58,9 +63,10 @@ function providerHttp(options: { rejectHetzner?: boolean } = {}) {
       });
     }
     if (url.endsWith("api.hetzner.cloud/v1/volumes") && init?.method === "POST") {
+      nextVolumeId += 1;
       return Response.json({
         volume: {
-          id: 20_001,
+          id: nextVolumeId,
           name: "org-volume",
           size: 10,
           location: { name: "hil" },
@@ -99,6 +105,19 @@ function providerHttp(options: { rejectHetzner?: boolean } = {}) {
           status: "off",
           public_net: { ipv4: { ip: "203.0.113.40" } },
         },
+      });
+    }
+    // Volume lifecycle. Workspaces now carry an auto-created volume, so the
+    // destroy path detaches one on every cloud workspace, not only on the rare
+    // hand-attached case these tests used to cover.
+    if (/api\.hetzner\.cloud\/v1\/volumes\/\d+\/actions\/detach$/u.test(url)) {
+      return Response.json({ action: { id: 2 } });
+    }
+    if (/api\.hetzner\.cloud\/v1\/volumes\/\d+$/u.test(url)) {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const id = Number(url.slice(url.lastIndexOf("/") + 1));
+      return Response.json({
+        volume: { id, name: "org-volume", size: 50, location: { name: "hil" }, server: null },
       });
     }
     if (url.includes("sts.us-east-1.amazonaws.com")) {
@@ -546,10 +565,13 @@ describe("organization compute credentials", () => {
     });
     expect(created.status).toBe(201);
     expect(fake.calls[0]?.authorization).toBe("Bearer org-test-token");
+    // The id comes from the response: volume ids are unique across the file,
+    // so no test may assume it is the first one ever handed out.
+    const volumeId = (await created.json<{ volume: { id: string } }>()).volume.id;
     expect(
       await env.DB.prepare(
-        "SELECT compute_credential_source FROM volume_ownership WHERE volume_id = '20001'",
-      ).first(),
+        "SELECT compute_credential_source FROM volume_ownership WHERE volume_id = ?1",
+      ).bind(volumeId).first(),
     ).toMatchObject({ compute_credential_source: "org" });
 
     expect((await appRequest(app, "/orgs/personal/compute-credentials/hetzner", {
@@ -557,14 +579,15 @@ describe("organization compute credentials", () => {
       headers: { Cookie: cookie },
     })).status).toBe(204);
     fake.calls.length = 0;
-    const removed = await appRequest(app, "/volumes/20001", {
+    const removed = await appRequest(app, `/volumes/${volumeId}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
     });
     expect(removed.status).toBe(409);
     expect(fake.calls).toEqual([]);
     expect(
-      await env.DB.prepare("SELECT volume_id FROM volume_ownership WHERE volume_id = '20001'").first(),
+      await env.DB.prepare("SELECT volume_id FROM volume_ownership WHERE volume_id = ?1")
+        .bind(volumeId).first(),
     ).not.toBeNull();
   });
 

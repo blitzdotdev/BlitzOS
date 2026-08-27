@@ -267,11 +267,26 @@ main().catch(function (error) {
  * the way you would edit a wire format, not a script. Recipe launches add
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
  * without a recipe or usage capture emits byte-identical output. */
-export function buildBootstrapScript(options: BootstrapOptions): string {
-  const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
+/** The three variables that name one box image build. */
+export interface BoxImageRef {
+  boxImageRef: string;
+  boxImageTag: string;
+  boxImageSha256: string;
+}
+
+/**
+ * The bash that puts the box image into the host's docker store: download and
+ * `docker load` for an HTTPS tarball ref, or `docker pull` for a registry ref.
+ * Both branches guard on `docker image inspect`, so a host that already holds
+ * the image does no work at all. That guard is what makes a golden snapshot
+ * fast: the image is already there and the whole block is skipped.
+ *
+ * Exported so the golden-image bake script bakes the SAME bytes a workspace
+ * would download. Two copies of this would be two sides of one contract, and
+ * drift between them would produce snapshots holding the wrong image.
+ */
+export function boxImageSetupScript(options: BoxImageRef): string {
   const isTarball = options.boxImageRef.startsWith("https://");
-  const trimmedSshPublicKey = options.sshPublicKey?.trim();
-  const sshPublicKey = trimmedSshPublicKey === "" ? undefined : trimmedSshPublicKey;
   if (isTarball && options.boxImageTag.trim() === "") {
     throw new Error("BOX_IMAGE_TAG is required when BOX_IMAGE_REF is an HTTPS URL");
   }
@@ -280,8 +295,7 @@ export function buildBootstrapScript(options: BootstrapOptions): string {
       "BOX_IMAGE_SHA256 must be a 64-character hexadecimal digest when BOX_IMAGE_REF is an HTTPS URL",
     );
   }
-
-  const imageSetup = isTarball
+  return isTarball
     ? String.raw`download() {
   curl --fail --location --retry 10 --retry-all-errors --retry-delay 3 \
     --silent --show-error --output "$2" "$1"
@@ -370,6 +384,14 @@ box_image="$BOX_IMAGE_TAG"`
 fi
 docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
+}
+
+export function buildBootstrapScript(options: BootstrapOptions): string {
+  const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
+  const trimmedSshPublicKey = options.sshPublicKey?.trim();
+  const sshPublicKey = trimmedSshPublicKey === "" ? undefined : trimmedSshPublicKey;
+
+  const imageSetup = boxImageSetupScript(options);
 
   // The resolved provider's own lines. "" for a provider that needs none, so
   // its boxes never read another provider's setup.
@@ -593,8 +615,17 @@ apt_watchdog() {
   done
   fail "apt-get $1 kept failing or stalling after 3 attempts"
 }
-apt_watchdog update
-apt_watchdog install -y docker.io curl
+# A golden image already carries docker and curl, and re-running apt on it
+# changes nothing while costing about 36 seconds (measured 2026-08-27 on
+# cx23@hel1: 18.3 s for update, 17.4 s for the install). A stock Ubuntu image
+# has neither and takes the original path, so this is a skip, not a new
+# dependency: the box never relies on the tools being pre-baked.
+if command -v docker >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+  echo "blitz: docker and curl are already installed; skipping apt"
+else
+  apt_watchdog update
+  apt_watchdog install -y docker.io curl
+fi
 systemctl enable --now docker
 
 mkdir -p /var/lib/blitz

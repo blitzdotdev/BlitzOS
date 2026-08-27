@@ -48,7 +48,8 @@
     "config:check": "node scripts/config-drift.mjs",
     "migrations:pending": "wrangler d1 migrations list DB --remote --config wrangler.toml",
     "rollback": "node scripts/rollback.mjs",
-    "box-image:check": "node scripts/check-box-image.mjs"
+    "box-image:check": "node scripts/check-box-image.mjs",
+    "golden:bake": "npm run build --silent && node scripts/bake-golden-image.mjs"
   },
   "dependencies": {
     "hono": "4.13.1",

@@ -38,19 +38,21 @@ const EC2_MIRROR = "http://us-east-1.ec2.archive.ubuntu.com";
 const FALLBACK_MIRROR = "http://archive.ubuntu.com";
 
 /** The emitted apt setup, ready to run: the real shebang and shell options,
- * then everything from the apt tuning up to the first `apt_watchdog` call.
- * The run stops before that call, because installing docker.io needs a real
- * box. `/etc/apt` is repointed at a scratch directory so a test never reads or
- * writes the machine's own apt sources. */
+ * then everything from the apt tuning up to the docker-presence guard that
+ * wraps the first `apt_watchdog` call. The run stops at that guard, because
+ * installing docker.io needs a real box. `/etc/apt` is repointed at a scratch
+ * directory so a test never reads or writes the machine's own apt sources. */
 function runnableAptSetup(providerAptSetup, aptRoot, extraLines = "") {
   const script = providerAptSetup === undefined
     ? buildBootstrapScript(BOOTSTRAP_BASE)
     : buildBootstrapScript({ ...BOOTSTRAP_BASE, providerAptSetup });
   const lines = script.split("\n");
   const start = lines.indexOf("export DEBIAN_FRONTEND=noninteractive");
-  const end = lines.indexOf("apt_watchdog update");
+  // The guard is the boundary: slicing at `apt_watchdog update` itself would
+  // cut the enclosing `if` in half and hand bash an unbalanced block.
+  const end = lines.findIndex((line) => line.startsWith("if command -v docker "));
   assert.ok(start > 0, "apt setup start was not found in the emitted script");
-  assert.ok(end > start, "apt_watchdog call was not found in the emitted script");
+  assert.ok(end > start, "docker-presence guard was not found in the emitted script");
   const header = lines.slice(0, 2).join("\n");
   assert.equal(header, "#!/bin/bash\nset -Eeuo pipefail");
   const section = lines.slice(start, end).join("\n");

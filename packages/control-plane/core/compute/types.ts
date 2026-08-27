@@ -17,6 +17,11 @@ export interface ProviderCapabilities {
   /** Epoch ms from which this provider's guests enforce viewer read-only
    * correctly. Undefined is "never": viewers are refused. */
   webAppViewerGuardsSinceMs?: number;
+  /** True when the provider attaches volumes as part of the VM create call,
+   * so the disk is present before the guest's first boot. A provider that
+   * answers false (or stays silent) is attached after create, which races the
+   * guest's one-shot device scan in `core/bootstrap.ts`. */
+  attachesVolumesAtCreate?: boolean;
   /** False keeps this provider's machine types off the create page while
    * leaving it registered for lifecycle. Undefined and true both offer them.
    * Dropping a provider from the registry instead would strand every VM it
@@ -31,6 +36,11 @@ export interface CreateVmInput {
   sshPublicKey?: string;
   phoneHomeUrl: string;
   userData: string;
+  /** Volumes to attach during create, for a provider whose capabilities claim
+   * `attachesVolumesAtCreate`. Every id must already exist in the same
+   * location as the machine type. Providers that do not claim the capability
+   * ignore this field and are attached afterwards. */
+  volumeIds?: readonly string[];
 }
 
 export interface CreatedVm {
@@ -59,6 +69,13 @@ export interface VmProvider {
   shutdown(id: string): Promise<void>;
   destroy(id: string): Promise<void>;
   inspect(id: string): Promise<VmInspection | null>;
+  /** The location an auto-created workspace volume must be placed in for this
+   * machine type, or null when the provider cannot say. The machine-type id
+   * format belongs to the provider (`cx23@hel1` is a Hetzner shape), so the
+   * question is asked here rather than parsed by core. A provider that omits
+   * the member gets no auto-created volume, which is the honest answer for a
+   * backend whose placement is not known until the VM exists. */
+  volumeLocation?(machineTypeId: string): string | null;
   /** Bash lines the bootstrap runs only on this provider's machines. They are
    * spliced into the shared apt setup. Return complete lines, each one ending
    * in a newline. Omit the member when the provider needs nothing extra.

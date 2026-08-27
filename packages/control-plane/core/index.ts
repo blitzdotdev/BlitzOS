@@ -25,6 +25,7 @@ export {
   maybeScheduleLazySweep,
   runInvariantSweep,
   runOrphanSweep,
+  runVolumeRetentionSweep,
   runWorkspaceTunnelSweep,
   runSessionSweep,
 } from "./janitors.js";

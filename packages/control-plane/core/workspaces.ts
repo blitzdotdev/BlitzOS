@@ -29,7 +29,12 @@ import type { Principal } from "./principals.js";
 import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
 import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
-import type { WebAppPort, VmProvider } from "./compute/types.js";
+import {
+  markVolumeAttachedQuery,
+  markVolumeDetachedQuery,
+  provisionWorkspaceVolume,
+} from "./workspace-volumes.js";
+import type { CreateVmInput, WebAppPort, VmProvider } from "./compute/types.js";
 import { resolveWorkspacePlacement } from "./compute/workspace-placement.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { rewriteWebDavDestination } from "./webapp-proxy.js";
@@ -528,6 +533,9 @@ export async function performWorkspaceCreate(
   if (template !== null) {
     await attachTemplateFolders(runtime.db, template.id, id, principal, now);
   }
+  // Declared out here so the catch below can reclaim a volume whose workspace
+  // never reached a VM. It bills monthly and nothing else can reach it.
+  let autoVolumeId: string | undefined;
   try {
     // The size check runs on a tunnel-less build so a 413 always fires
     // before any Cloudflare resource exists (the deleted row then owes
@@ -557,6 +565,51 @@ export async function performWorkspaceCreate(
         );
       }
     }
+    // The workspace's own disk. It holds /var/lib/blitz, which is the docker
+    // store and /workspace both, so a destroyed workspace can come back on it.
+    // An explicit volumeId from the caller wins. A provider that cannot place
+    // a volume answers null, and the workspace runs on the VM's own disk
+    // exactly as it did before.
+    const autoVolume = input.volumeId !== undefined
+      ? null
+      : await provisionWorkspaceVolume({
+          db: runtime.db,
+          provider: vmProvider,
+          createVolume: async (volumeName, sizeGb, location) => {
+            const resolved = await runtime.providers.volume.forOrg(
+              orgId,
+              vmResolution.credentialSource,
+            );
+            return resolved.provider.createVolume({
+              name: volumeName,
+              sizeGb,
+              location,
+            });
+          },
+          deleteVolume: async (volumeId) => {
+            const resolved = await runtime.providers.volume.forOrg(
+              orgId,
+              vmResolution.credentialSource,
+            );
+            await resolved.provider.deleteVolume(volumeId);
+          },
+          workspaceId: id,
+          workspaceName: name,
+          machineTypeId,
+          orgId,
+          membershipId,
+          credentialSource: vmResolution.credentialSource,
+          now: Date.now(),
+        });
+    if (autoVolume !== null) {
+      autoVolumeId = autoVolume.id;
+      await rows(runtime.db, {
+        q: `UPDATE workspaces SET volume_id = ?1, updated_at = ?2
+            WHERE id = ?3 AND phase = 'creating'`,
+        v: [autoVolume.id, Date.now(), id],
+      });
+    }
+    const volumeId = input.volumeId ?? autoVolume?.id;
     // Providers that cannot proxy their own webApp endpoints (cloud VMs) get a
     // per-workspace tunnel; identifiers persist onto the row before the
     // VM exists so a crash can never orphan Cloudflare resources.
@@ -576,25 +629,36 @@ export async function performWorkspaceCreate(
           tunnel,
           shaping,
         );
-    const vm = await vmProvider.createVm({
+    // A provider that attaches during create hands the guest a disk that is
+    // already present at first boot. The bootstrap scans /dev/disk/by-id once,
+    // with no retry, so attaching afterwards raced that scan and could leave
+    // the box with no persistent disk and no error.
+    const attachesAtCreate = providerCapabilities.attachesVolumesAtCreate === true;
+    const createInput: CreateVmInput = {
       workspaceId: id,
       machineTypeId,
       sshPublicKey: input.sshPublicKey,
       phoneHomeUrl,
       userData,
-    });
+    };
+    if (attachesAtCreate && volumeId !== undefined) createInput.volumeIds = [volumeId];
+    const vm = await vmProvider.createVm(createInput);
     await rows(runtime.db, {
       q: `UPDATE workspaces
           SET vm_id = ?1, updated_at = ?2
           WHERE id = ?3 AND phase = 'creating'`,
       v: [vm.id, Date.now(), id],
     });
-    if (input.volumeId !== undefined) {
+    if (volumeId !== undefined && !attachesAtCreate) {
       const volume = await runtime.providers.volume.forOrg(
         orgId,
         vmResolution.credentialSource,
       );
-      await volume.provider.attachVolume(input.volumeId, vm.id);
+      await volume.provider.attachVolume(volumeId, vm.id);
+    }
+    if (volumeId !== undefined) {
+      // A reused volume is live again, so its retention clock stops.
+      await rows(runtime.db, markVolumeAttachedQuery(volumeId));
     }
     await rows(runtime.db, {
       q: `UPDATE workspaces
@@ -604,6 +668,36 @@ export async function performWorkspaceCreate(
       v: [vm.host, vm.port, vm.user, Date.now(), id],
     });
   } catch (error) {
+    // The workspace never got a VM, so its auto-created volume holds nothing
+    // and no later path can reach it. Leaving it behind bills every month.
+    if (autoVolumeId !== undefined) {
+      try {
+        const resolved = await runtime.providers.volume.forOrg(
+          orgId,
+          vmResolution.credentialSource,
+        );
+        await resolved.provider.deleteVolume(autoVolumeId);
+        await transaction(runtime.db, [
+          {
+            q: "DELETE FROM volume_ownership WHERE volume_id = ?1 AND org_id = ?2",
+            v: [autoVolumeId, orgId],
+          },
+          {
+            q: "UPDATE workspaces SET volume_id = NULL WHERE id = ?1",
+            v: [id],
+          },
+        ]);
+      } catch (cleanupError) {
+        // The volume outlives the failed create. Say so: it bills until an
+        // operator removes it, and silence here reads as a clean rollback.
+        runtime.reportError(
+          "workspace_create_volume_cleanup_failed",
+          cleanupError instanceof Error
+            ? cleanupError
+            : new Error(`volume ${autoVolumeId} survived a failed create`),
+        );
+      }
+    }
     if (
       error instanceof HttpError &&
       (error.status === 503 || error.status === 413)
@@ -672,6 +766,117 @@ export function addWorkspaceRoutes(
       workspaces: result.map((row) =>
         workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
     });
+  });
+
+  /**
+   * Destroyed workspaces whose volume is still alive.
+   *
+   * This is the recreate history. `GET /workspaces` hides destroyed rows, so
+   * without this list the disk that outlived a workspace is invisible and the
+   * seven-day window passes unused. A row leaves the list when the janitor
+   * reclaims its volume, which is the same moment the recreate stops working.
+   *
+   * Registered before `/workspaces/:id` so the literal path wins the match.
+   */
+  router.get("/workspaces/history", async (context) => {
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    const runtime = runtimeFactory(context);
+    const result = await rows<WorkspaceRow>(runtime.db, {
+      q: `SELECT w.*, grant.role AS grant_role,
+                 owner_user.name AS owner_name,
+                 owner_user.avatar_url AS owner_avatar_url
+          FROM workspaces w
+          JOIN memberships owner ON owner.id = w.owner_membership_id
+          JOIN users owner_user ON owner_user.id = owner.user_id
+          JOIN volume_ownership vol ON vol.volume_id = w.volume_id
+          LEFT JOIN workspace_grants grant
+            ON grant.workspace_id = w.id AND grant.membership_id = ?1
+          WHERE w.org_id = ?2 AND w.phase = 'destroyed'
+            AND w.volume_id IS NOT NULL AND vol.org_id = ?2
+          ORDER BY w.updated_at DESC, w.id
+          LIMIT 100`,
+      v: [principal.membershipId, principal.orgId],
+    });
+    return context.json<PollResponse>({
+      workspaces: result.map((row) =>
+        workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
+    });
+  });
+
+  /**
+   * Brings a destroyed workspace back on its own volume.
+   *
+   * The new workspace is a new row with a new id, because the old row is the
+   * tombstone that proves the old VM is gone. It inherits the name, machine
+   * type, volume, environment, agent rule and share role of the row it came
+   * from. The machine type is inherited rather than chosen, because the volume
+   * only attaches inside its own location.
+   *
+   * The volume moves to the new row and the old row lets go of it, so one
+   * volume is never claimed by two workspaces.
+   */
+  router.post("/workspaces/:id/recreate", async (context) => {
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    const runtime = runtimeFactory(context);
+    await enforceRateLimit(runtime.vars.requestRateLimiter, `create:${principal.id}`);
+    const id = context.req.param("id");
+    const row = await workspaceById(runtime.db, id);
+    if (row === null || row.org_id !== principal.orgId) {
+      throw new HttpError(404, "workspace not found");
+    }
+    if (row.phase !== "destroyed") {
+      throw new HttpError(409, "only a destroyed workspace can be recreated");
+    }
+    if (row.volume_id === null) {
+      throw new HttpError(409, "workspace kept no volume, so it cannot be recreated");
+    }
+    const request: CreateWorkspaceRequest = {
+      machineTypeId: row.machine_type_id,
+      volumeId: row.volume_id,
+    };
+    if (row.name !== null) request.name = row.name;
+    if (row.agent_rule_id !== null) request.agentRuleId = row.agent_rule_id;
+    if (row.org_share_role !== null && row.org_share_role !== undefined) {
+      request.orgShareRole = row.org_share_role;
+    }
+    const environment = workspaceEnvironmentFromJson(row.environment);
+    if (environment !== null) request.environment = environment;
+    // The tombstone lets go first. A create that fails still leaves the volume
+    // owned by the org, so the next attempt finds it; a create that succeeds
+    // must never leave two rows pointing at one disk.
+    await rows(runtime.db, {
+      q: `UPDATE workspaces SET volume_id = NULL, updated_at = ?1
+          WHERE id = ?2 AND phase = 'destroyed'`,
+      v: [Date.now(), id],
+    });
+    try {
+      const created = await performWorkspaceCreate(
+        runtime,
+        principal,
+        new URL(context.req.url).origin,
+        request,
+      );
+      return context.json<CreateWorkspaceResponse>(
+        { workspace: workspaceView(created, "owner") },
+        201,
+      );
+    } catch (error) {
+      // Hand the volume back to the tombstone so the history row reappears and
+      // the operator can try again. Without this a failed recreate hides the
+      // disk until the retention clock deletes it.
+      await rows(runtime.db, {
+        q: `UPDATE workspaces SET volume_id = ?1, updated_at = ?2
+            WHERE id = ?3 AND phase = 'destroyed' AND volume_id IS NULL`,
+        v: [row.volume_id, Date.now(), id],
+      });
+      throw error;
+    }
   });
 
   router.get("/workspaces/:id", async (context) => {
@@ -848,6 +1053,10 @@ export function addWorkspaceRoutes(
           row.compute_credential_source ?? "deployment",
         );
         await volume.provider.detachVolume(row.volume_id, row.vm_id);
+        // The retention clock starts here. The volume is the only copy of
+        // /workspace once the VM is gone, so the destroy stays reversible
+        // until the janitor reclaims it.
+        await rows(runtime.db, markVolumeDetachedQuery(row.volume_id, Date.now()));
       }
       await vmProvider.destroy(row.vm_id);
     }

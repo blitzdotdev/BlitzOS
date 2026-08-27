@@ -73,6 +73,7 @@ const expected = [
   "compute/aws-sigv4.ts",
   "compute/aws-xml.ts",
   "compute/cloudflare-tunnels.ts",
+  "compute/hetzner-config.ts",
   "compute/hetzner.ts",
   "compute/json-fetch.ts",
   "compute/org-credentials.ts",
@@ -95,6 +96,7 @@ const expected = [
   "workspace-templates.ts",
   "workspace-records.ts",
   "workspace-tunnels.ts",
+  "workspace-volumes.ts",
   "types.ts",
   "volumes.ts",
   "webapp-state.ts",
@@ -121,6 +123,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(96);
+    expect(expected).toHaveLength(98);
   });
 });
