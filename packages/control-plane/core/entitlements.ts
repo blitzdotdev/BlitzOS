@@ -157,23 +157,29 @@ export async function handoffToken(secret: string, claims: HandoffClaims): Promi
   return `${signingInput}.${base64Url(new Uint8Array(signature))}`;
 }
 
-/** A signed hop to the billing service, and the base it lands on. Null where
- * no billing service is attached, or where one is but has no checkout surface
- * for a person to be sent to. */
-interface BillingHandoff {
-  readonly base: string;
-  readonly token: string;
+/** The seat count a purchase has to cover: everybody seated now, plus the one
+ * more this organization is trying to add. Counted here because this is where
+ * the memberships are — the billing service is told the number rather than
+ * asking a buyer for it, which is how somebody pays for a quantity that does
+ * not unblock them. */
+async function seatsToBuy(runtime: CoreRuntime, orgId: string): Promise<number> {
+  const row = await first<{ seated: number }>(runtime.db, {
+    q: `SELECT ${activeSeatsSql("?1")} AS seated`,
+    v: [orgId],
+  });
+  return (row?.seated ?? 0) + 1;
 }
 
-/** Mints the hop. Every link into the billing service is built from this, so
- * a refusal and a settings link cannot disagree about where a person lands or
- * where they come back to. */
-async function billingHandoff(
+/** Mints the hop. Every link into the billing service is built here, so a
+ * refusal and a settings link cannot disagree about where a person lands, what
+ * they are buying, or where they come back to. Null where no billing service
+ * is attached, or where one is but has no checkout surface to send them to. */
+async function billingCheckoutUrl(
   runtime: CoreRuntime,
   request: Request,
   claims: Pick<HandoffClaims, "org" | "user" | "role">,
   nowSeconds: number,
-): Promise<BillingHandoff | null> {
+): Promise<string | null> {
   const key = billingKey(runtime.vars);
   // A base URL is routinely configured with a trailing slash; "//checkout" is
   // a 404 at the worst possible moment.
@@ -201,7 +207,7 @@ async function billingHandoff(
     returnTo,
     exp: nowSeconds + HANDOFF_TOKEN_TTL_SECONDS,
   });
-  return { base, token };
+  return `${base}/checkout#token=${token}&seats=${await seatsToBuy(runtime, claims.org)}`;
 }
 
 /** Builds the refusal a seat gate throws, minting the checkout link. */
@@ -211,9 +217,8 @@ export async function seatLimitReached(
   claims: Pick<HandoffClaims, "org" | "user" | "role">,
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): Promise<SeatLimitReached> {
-  const handoff = await billingHandoff(runtime, request, claims, nowSeconds);
   return new SeatLimitReached(
-    handoff === null ? null : `${handoff.base}/checkout#token=${handoff.token}`,
+    await billingCheckoutUrl(runtime, request, claims, nowSeconds),
   );
 }
 
@@ -334,7 +339,7 @@ export function addEntitlementsRoutes(
     if (principal.orgId === null || principal.role !== "admin") {
       throw new HttpError(403, "organization admin required");
     }
-    const handoff = await billingHandoff(
+    const url = await billingCheckoutUrl(
       runtime,
       context.req.raw,
       { org: principal.orgId, user: principal.id, role: "admin" },
@@ -343,9 +348,7 @@ export function addEntitlementsRoutes(
     // 404 rather than an empty body: on a deployment with no billing service
     // this route does not exist, which is what every other billing-shaped
     // route on it answers.
-    if (handoff === null) throw new HttpError(404, "not found");
-    return context.json<OrgBillingResponse>({
-      url: `${handoff.base}/checkout#token=${handoff.token}`,
-    });
+    if (url === null) throw new HttpError(404, "not found");
+    return context.json<OrgBillingResponse>({ url });
   });
 }
