@@ -505,6 +505,27 @@ describe("FilesSidebar root listing retries", () => {
     await view.unmount();
   });
 
+  it("closes the context menu from a click anywhere outside it", async () => {
+    const getDirectoryContents = vi.fn().mockResolvedValue([
+      { basename: "notes.txt", filename: "/notes.txt", type: "file" },
+    ]);
+    const client = { getDirectoryContents } as unknown as WebDAVClient;
+    const view = await render(sidebar(client, () => client));
+    await flushPromises();
+
+    const row = [...view.container.querySelectorAll(".files-tree-row")]
+      .find((entry) => entry.textContent?.includes("notes.txt"));
+    await act(async () => row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    expect(document.body.querySelector(".files-context-menu")).not.toBeNull();
+
+    const backdrop = document.body.querySelector<HTMLElement>(".files-context-backdrop");
+    expect(backdrop).not.toBeNull();
+    await act(async () => backdrop?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    expect(document.body.querySelector(".files-context-menu")).toBeNull();
+    expect(document.body.querySelector(".files-context-backdrop")).toBeNull();
+    await view.unmount();
+  });
+
   it("shows files created outside the sidebar on the next poll", async () => {
     const getDirectoryContents = vi.fn().mockResolvedValue([]);
     const client = webDavClient(getDirectoryContents);

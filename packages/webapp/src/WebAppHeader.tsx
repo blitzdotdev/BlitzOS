@@ -155,7 +155,6 @@ export function WebAppHeader({
   } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const newTabControl = useRef<HTMLDivElement>(null);
-  const contextMenuElement = useRef<HTMLDivElement>(null);
   const newSessionButton = useRef<HTMLButtonElement>(null);
   const tabstrip = useRef<HTMLDivElement>(null);
   const renameInput = useRef<HTMLInputElement>(null);
@@ -170,7 +169,6 @@ export function WebAppHeader({
         setMenuOpen(false);
         onMenuOpenChange(false);
       }
-      if (!contextMenuElement.current?.contains(target)) setContextMenu(null);
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -417,19 +415,21 @@ export function WebAppHeader({
 
       </div>
       {contextMenu && selectedContextTab && (
-        <div
-          ref={contextMenuElement}
-          className="webapp-session-menu"
-          role="menu"
-          style={{ left: contextMenu.left, top: contextMenu.top }}
-        >
-          {selectedContextTab.renameable && onRename && (
-            <button type="button" role="menuitem" onClick={() => beginRename(selectedContextTab)}>
-              <span className="codicon codicon-edit" aria-hidden="true" />
-              <span>Rename</span>
-            </button>
-          )}
-        </div>
+        <>
+          <div className="webapp-session-backdrop" onMouseDown={() => setContextMenu(null)} />
+          <div
+            className="webapp-session-menu"
+            role="menu"
+            style={{ left: contextMenu.left, top: contextMenu.top }}
+          >
+            {selectedContextTab.renameable && onRename && (
+              <button type="button" role="menuitem" onClick={() => beginRename(selectedContextTab)}>
+                <span className="codicon codicon-edit" aria-hidden="true" />
+                <span>Rename</span>
+              </button>
+            )}
+          </div>
+        </>
       )}
     </header>
   );

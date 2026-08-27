@@ -525,6 +525,23 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("opens the Create organization dialog from inside a workspace", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
+    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create"));
+    expect(document.querySelector('[aria-label="Create organization"]')).not.toBeNull();
+    await view.unmount();
+  });
+
   it("creates a second organization from the rail organization menu", async () => {
     const createOrg = vi.fn(async () => ({
       org: { id: "org-two", slug: "side", name: "Side", vmLimit: 10 },
@@ -1090,6 +1107,42 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector('.drive-rail--open')).toBeNull();
     expect(view.container.textContent).toContain("Workspace details");
 
+    await view.unmount();
+  });
+
+  it("resizes the side pane by dragging its handle, no narrower than the default", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "terminal" },
+      { id: 2, type: "panel", panel: "files", region: "side" },
+    ], 1, 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const panes = view.container.querySelector<HTMLElement>(".webapp-panes")!;
+    const width = () => panes.style.getPropertyValue("--side-pane-width");
+    const handle = view.container.querySelector<HTMLElement>(".webapp-pane-resizer");
+    expect(handle).not.toBeNull();
+    expect(width()).toBe("340px");
+
+    // Mouse events only: the drag must not depend on pointer capture.
+    await act(async () => handle?.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 800 }),
+    ));
+    await act(async () => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 700 })));
+    expect(width()).toBe("440px");
+    // Dragging past the default width stops at the default.
+    await act(async () => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 1000 })));
+    expect(width()).toBe("340px");
+    await act(async () => window.dispatchEvent(new MouseEvent("mouseup", { clientX: 1000 })));
+    await act(async () => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 600 })));
+    expect(width()).toBe("340px");
     await view.unmount();
   });
 

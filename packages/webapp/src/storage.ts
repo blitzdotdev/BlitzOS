@@ -219,11 +219,18 @@ export function maxDrawerWidth(viewportWidth: number): number {
   return Math.max(480, Math.round((viewportWidth - 264) * 0.65));
 }
 
+/** The default pane width is also the floor: the Finder's Name + Modified +
+ * Size columns need it, so a drag can widen the pane but never squeeze it. */
+export const MIN_DRAWER_WIDTH = 340;
+
+export function clampDrawerWidth(width: number, viewportWidth: number): number {
+  return Math.max(MIN_DRAWER_WIDTH, Math.min(maxDrawerWidth(viewportWidth), width));
+}
+
 export function defaultWorkspaceFiles(): WorkspaceFiles {
   return {
     version: 1,
-    // Wide enough for the Finder view's Name + Modified + Size columns.
-    width: 340,
+    width: MIN_DRAWER_WIDTH,
     expanded: [],
   };
 }

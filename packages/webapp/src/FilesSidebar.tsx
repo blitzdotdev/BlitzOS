@@ -27,7 +27,7 @@ import {
 import { FilesContextMenu } from './FilesContextMenu';
 import { FilesTreeRow } from './FilesTreeRow';
 import { FinderPins, FinderToolbar, type FinderRoot } from './FinderChrome';
-import { maxDrawerWidth } from './storage';
+import { clampDrawerWidth } from './storage';
 import { useFilesActions } from './use-files-actions';
 
 type FilesSidebarProps = {
@@ -436,7 +436,7 @@ export function FilesSidebar({
   const resize = (event: ReactPointerEvent<HTMLDivElement>) => {
     const origin = resizeOrigin.current;
     if (!origin) return;
-    onWidthChange(Math.max(200, Math.min(maxDrawerWidth(window.innerWidth), origin.width + origin.x - event.clientX)));
+    onWidthChange(clampDrawerWidth(origin.width + origin.x - event.clientX, window.innerWidth));
   };
 
   return (
@@ -594,28 +594,38 @@ export function FilesSidebar({
         })}
       </div>
       {contextMenu && actionConfirmation === null && contextMenu.action !== 'delete' && createPortal(
-        <FilesContextMenu
-          menu={contextMenu}
-          popupRef={contextPopup}
-          firstActionRef={contextFirstAction}
-          inputRef={createInput}
-          createName={createName}
-          createError={createError}
-          creating={creating}
-          driveFolder={contextDriveFolder}
-          shareablePath={contextShareable}
-          onNameChange={(name) => {
-            setCreateName(name);
-            setCreateError(null);
-          }}
-          onPickCreateKind={chooseCreateKind}
-          onPickRename={chooseRename}
-          onPickDelete={chooseDelete}
-          onSubmit={(event) => { void createEntry(event); }}
-          onClose={() => setContextMenu(null)}
-          onOpenDriveFolder={onOpenDriveFolder}
-          onShareToDrive={onShareToDrive}
-        />,
+        <>
+          <div
+            className="files-context-backdrop"
+            onMouseDown={() => setContextMenu(null)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setContextMenu(null);
+            }}
+          />
+          <FilesContextMenu
+            menu={contextMenu}
+            popupRef={contextPopup}
+            firstActionRef={contextFirstAction}
+            inputRef={createInput}
+            createName={createName}
+            createError={createError}
+            creating={creating}
+            driveFolder={contextDriveFolder}
+            shareablePath={contextShareable}
+            onNameChange={(name) => {
+              setCreateName(name);
+              setCreateError(null);
+            }}
+            onPickCreateKind={chooseCreateKind}
+            onPickRename={chooseRename}
+            onPickDelete={chooseDelete}
+            onSubmit={(event) => { void createEntry(event); }}
+            onClose={() => setContextMenu(null)}
+            onOpenDriveFolder={onOpenDriveFolder}
+            onShareToDrive={onShareToDrive}
+          />
+        </>,
         document.body,
       )}
       {actionConfirmation && (

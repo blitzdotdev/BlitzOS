@@ -35,6 +35,28 @@ describe("workspace session header actions", () => {
     await view.unmount();
   });
 
+  it("closes the tab context menu from a click anywhere outside it", async () => {
+    const view = await render(<WebAppHeader
+      tabs={[{ id: "one", label: "Claude", agent: "claude", pending: false, renameable: true }]}
+      activeSessionId="one"
+      sessionBusy={false}
+      terminalDisabled={false}
+      onSelect={() => undefined}
+      onClose={() => undefined}
+      onRename={() => undefined}
+      onSpawn={() => undefined}
+    />);
+    await act(async () => view.container.querySelector("[data-session-id='one']")?.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, clientX: 20, clientY: 20 }),
+    ));
+    expect(view.container.querySelector(".webapp-session-menu")).not.toBeNull();
+    const backdrop = view.container.querySelector<HTMLElement>(".webapp-session-backdrop");
+    expect(backdrop).not.toBeNull();
+    await act(async () => backdrop?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    expect(view.container.querySelector(".webapp-session-menu")).toBeNull();
+    await view.unmount();
+  });
+
   it("offers Rename as the only managed-session context action", async () => {
     const onRename = vi.fn();
     const view = await render(<WebAppHeader

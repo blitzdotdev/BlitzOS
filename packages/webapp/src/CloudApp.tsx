@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
 import {
@@ -63,9 +64,9 @@ import {
   templatesPath,
 } from './sessions-page-state';
 import {
+  clampDrawerWidth,
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
-  maxDrawerWidth,
   removeDismissedChatAuthProviders,
   tabRegion,
   withPreviewTabPath,
@@ -290,7 +291,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // panes are, but the focus between them is a per-view detail.
   const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
   const panesRef = useRef<HTMLDivElement>(null);
-  const paneResizeOrigin = useRef<{ x: number; width: number } | null>(null);
+  // Mouse events on purpose: the drag must not depend on pointer capture, and
+  // window listeners keep it alive over the terminal and the other pane.
+  const [paneResizing, setPaneResizing] = useState(false);
+  const endPaneResize = useRef<(() => void) | null>(null);
+  useEffect(() => () => endPaneResize.current?.(), []);
   const shellRef = useRef<HTMLElement>(null);
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
@@ -1788,8 +1793,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         </div>
       )}
       {railFor(null, activeWorkspaceId)}
-      {shareWorkspaceDialog}
-      {workspaceDetailsDialog}
+      {railOverlays}
 
       <div className="drive-ws-frame">
           <section className="webapp-workspace-view">
@@ -1806,6 +1810,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             <div
               className={`webapp-panes${visibleRegions.length > 1 ? ' webapp-panes--split' : ''}`}
               ref={panesRef}
+              data-resizing={paneResizing || undefined}
               style={
                 // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
                 { '--side-pane-width': `${activeFiles.width}px` } as CSSProperties
@@ -1970,27 +1975,30 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   role="separator"
                   aria-label="Resize side pane"
                   aria-orientation="vertical"
-                  onPointerDown={(event) => {
+                  onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
                     if (event.button !== 0) return;
-                    paneResizeOrigin.current = { x: event.clientX, width: activeFiles.width };
-                    event.currentTarget.setPointerCapture(event.pointerId);
+                    event.preventDefault();
+                    endPaneResize.current?.();
+                    const origin = { x: event.clientX, width: activeFiles.width };
+                    const move = (moveEvent: MouseEvent) => {
+                      setSidePaneWidth(clampDrawerWidth(
+                        origin.width + origin.x - moveEvent.clientX,
+                        window.innerWidth,
+                      ));
+                    };
+                    const stop = () => endPaneResize.current?.();
+                    window.addEventListener('mousemove', move);
+                    window.addEventListener('mouseup', stop);
+                    window.addEventListener('blur', stop);
+                    endPaneResize.current = () => {
+                      window.removeEventListener('mousemove', move);
+                      window.removeEventListener('mouseup', stop);
+                      window.removeEventListener('blur', stop);
+                      endPaneResize.current = null;
+                      setPaneResizing(false);
+                    };
+                    setPaneResizing(true);
                   }}
-                  onPointerMove={(event) => {
-                    const origin = paneResizeOrigin.current;
-                    if (origin === null) return;
-                    setSidePaneWidth(Math.max(
-                      200,
-                      Math.min(
-                        maxDrawerWidth(window.innerWidth),
-                        origin.width + origin.x - event.clientX,
-                      ),
-                    ));
-                  }}
-                  onPointerUp={(event) => {
-                    paneResizeOrigin.current = null;
-                    event.currentTarget.releasePointerCapture(event.pointerId);
-                  }}
-                  onPointerCancel={() => { paneResizeOrigin.current = null; }}
                 />
               )}
               {tabDrag !== null && (
@@ -2239,8 +2247,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}
-      {createWorkspaceDialog}
-      {deleteWorkspaceDialog}
       {fileCloseConfirmation && (
         <ConfirmationDialog
           title="Discard changes?"

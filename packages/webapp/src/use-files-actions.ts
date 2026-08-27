@@ -73,27 +73,17 @@ export function useFilesActions({
 
   useEffect(() => {
     if (!contextMenu) return;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
-      if (confirmation === null && !contextPopup.current?.contains(event.target as Node)) {
-        setContextMenu(null);
-      }
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setContextMenu(null);
     };
-    window.addEventListener('pointerdown', closeOnPointerDown);
     window.addEventListener('keydown', closeOnEscape);
     if (confirmation === null && (contextMenu.createKind || contextMenu.action === 'rename')) {
       createInput.current?.focus();
     } else {
       contextFirstAction.current?.focus();
     }
-    return () => {
-      window.removeEventListener('pointerdown', closeOnPointerDown);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [confirmation, contextFirstAction, contextMenu, contextPopup, createInput]);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [confirmation, contextFirstAction, contextMenu, createInput]);
 
   const openContextMenu = (
     event: ReactMouseEvent,

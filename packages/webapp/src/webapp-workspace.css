@@ -240,6 +240,12 @@
   white-space: nowrap;
 }
 
+.webapp-session-backdrop {
+  position: fixed;
+  z-index: 199;
+  inset: 0;
+}
+
 .webapp-session-menu {
   z-index: 200;
   border: 1px solid var(--rule);
@@ -1384,14 +1390,18 @@
   transition: all 90ms ease-out;
 }
 
-/* The boundary between two panes resizes the side column. */
+/* The boundary between two panes resizes the side column. A grid item pinned
+ * to the side column's real left edge, so the handle stays on the border even
+ * when the column is clamped narrower than the stored width (see
+ * .webapp-panes--split in files.css). */
 .webapp-pane-resizer {
-  position: absolute;
+  position: relative;
   z-index: 21;
-  top: 0;
-  bottom: 0;
+  grid-column: 2;
+  grid-row: 1 / span 2;
   width: 7px;
-  right: calc(var(--side-pane-width, 340px) - 3px);
+  margin-left: -3px;
+  justify-self: start;
   cursor: col-resize;
   touch-action: none;
 }

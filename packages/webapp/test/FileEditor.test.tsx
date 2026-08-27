@@ -90,6 +90,40 @@ describe('FileEditor rename handling', () => {
     await view.unmount();
   });
 
+  it('saves when the proxy weakened the ETag it served for the open file', async () => {
+    vi.stubGlobal('crypto', { randomUUID: () => 'test-weak' });
+    const moveFile = vi.fn().mockResolvedValue(undefined);
+    const client = {
+      stat: vi.fn().mockResolvedValue({ size: 5 }),
+      // Cloudflare rewrites a strong ETag to weak on the compressed GET body;
+      // the HEAD before save has no body and keeps the strong form.
+      getFileContents: vi.fn().mockResolvedValue(detailedContents('notes', 'W/"v1"')),
+      customRequest: vi.fn().mockResolvedValue(new Response(null, { headers: { etag: '"v1"' } })),
+      putFileContents: vi.fn().mockResolvedValue(true),
+      moveFile,
+      deleteFile: vi.fn().mockResolvedValue(undefined),
+    } as unknown as WebDAVClient;
+    const view = await render(editor(client, 'notes.md'));
+    await settle();
+    const textarea = view.container.querySelector<HTMLTextAreaElement>('textarea');
+    await act(async () => changeTextarea(textarea!, 'dirty notes'));
+    const save = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent?.includes('Save'));
+    await act(async () => {
+      save?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(moveFile).toHaveBeenCalledWith(
+      '.notes.md.blitz-test-weak.tmp',
+      'notes.md',
+      expect.objectContaining({ overwrite: true }),
+    );
+    expect(view.container.textContent).not.toContain('Changed on disk while you edited');
+    await view.unmount();
+  });
+
   it('hides redundant file actions while the conflict actions are present', async () => {
     vi.stubGlobal('crypto', { randomUUID: () => 'test-conflict' });
     const client = {

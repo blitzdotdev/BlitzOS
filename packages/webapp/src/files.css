@@ -15,6 +15,14 @@
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.webapp-panes[data-resizing] {
+  user-select: none;
+}
+
+.webapp-panes[data-resizing] iframe {
+  pointer-events: none;
+}
+
 .webapp-panes--split {
   /* A stored width survives a move to a narrower screen: the side pane never
    * exceeds 65% of the space left by the 264px rail and the 44px strip. */
@@ -386,6 +394,15 @@
   max-height: calc(100dvh - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* A press anywhere else closes the menu. A window listener used to do this and
+ * did not fire reliably in the cockpit; an element under the menu is what the
+ * app's other overlays use. */
+.files-context-backdrop {
+  position: fixed;
+  z-index: 199;
+  inset: 0;
 }
 
 .files-context-menu > button {

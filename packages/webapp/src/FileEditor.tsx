@@ -113,12 +113,20 @@ async function readTargetVersion(
   return { exists: true, etag: response.headers.get('etag') };
 }
 
+/** The opaque tag with any weak marker removed. Both sides come from the same
+ * dufs value (mtime + size); the control plane's edge rewrites it to `W/` only
+ * when it compressed the body, which the GET has and the HEAD does not. */
+function comparableEtag(etag: string | null): string | null {
+  const tag = etag?.trim().replace(/^W\//iu, '') ?? '';
+  return tag === '' ? null : tag;
+}
+
 function targetIsUnchanged(opened: TargetVersion, current: TargetVersion): boolean {
   if (opened.exists !== current.exists) return false;
   if (!opened.exists) return true;
-  if (!opened.etag || !current.etag) return false;
-  if (/^\s*W\//iu.test(opened.etag) || /^\s*W\//iu.test(current.etag)) return false;
-  return opened.etag === current.etag;
+  const before = comparableEtag(opened.etag);
+  const after = comparableEtag(current.etag);
+  return before !== null && after !== null && before === after;
 }
 
 function readableSize(size: number): string {

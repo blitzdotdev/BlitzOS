@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { IdentityRecord, OrgRecord } from '../protocol';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { SessionTypeIcon, type WebAppSessionType } from '../WebAppHeader';
@@ -94,25 +94,16 @@ export function DriveRail({
 }) {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
-  const orgSelector = useRef<HTMLDivElement>(null);
   const orgLabel = org?.name || org?.slug || 'Organization';
   const userLabel = identity?.name || identity?.email || 'BlitzOS';
 
   useEffect(() => {
     if (!orgMenuOpen) return;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
-      if (!orgSelector.current?.contains(event.target as Node)) setOrgMenuOpen(false);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOrgMenuOpen(false);
     };
-    window.addEventListener('pointerdown', closeOnPointerDown);
     window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      window.removeEventListener('pointerdown', closeOnPointerDown);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
+    return () => window.removeEventListener('keydown', closeOnEscape);
   }, [orgMenuOpen]);
 
   const toggleWorkspaceSessions = (workspaceId: string) => {
@@ -130,7 +121,7 @@ export function DriveRail({
         className={`drive-rail webapp-rail${drawerOpen ? ' drive-rail--open webapp-rail--drawer-open' : ''}`}
         aria-label="Cloud workspaces"
       >
-        <div className="webapp-org-wrap" ref={orgSelector}>
+        <div className="webapp-org-wrap">
           <button
             className="webapp-org-button"
             type="button"
@@ -149,11 +140,14 @@ export function DriveRail({
             aria-label="Close workspace navigation"
             onClick={onCloseDrawer}
           >×</button>
+          {orgMenuOpen && (
+            <div className="webapp-org-backdrop" onMouseDown={() => setOrgMenuOpen(false)} />
+          )}
           <div className="webapp-org-menu" id="webapp-org-menu" role="menu" hidden={!orgMenuOpen}>
             <div className="webapp-org-menu-label">organization</div>
             <div className="webapp-org-menu-current" role="menuitemradio" aria-checked="true">
               <span>{orgLabel}</span>
-              <span aria-hidden="true">✓</span>
+              <span className="webapp-org-menu-check" aria-hidden="true">✓</span>
             </div>
             {organizations.filter((candidate) => candidate.id !== org?.id).map((candidate) => (
               <button

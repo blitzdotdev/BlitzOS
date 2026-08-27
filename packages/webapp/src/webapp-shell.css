@@ -130,6 +130,12 @@
   background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
+.webapp-org-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+}
+
 .webapp-org-menu {
   position: absolute;
   z-index: 20;
@@ -167,7 +173,7 @@
   background: var(--hover);
 }
 
-.webapp-org-menu-current span:last-child {
+.webapp-org-menu-check {
   color: var(--accent);
 }
 
