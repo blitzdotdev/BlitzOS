@@ -2,7 +2,11 @@ import { fetchBoundedText } from "../compute/json-fetch.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { MAX_TEMPLATE_REPOS, TEMPLATE_REPO_PATTERN } from "../template-repos.js";
+import {
+  MAX_TEMPLATE_REPOS,
+  TEMPLATE_REPO_PATTERN,
+  type TemplateRepo,
+} from "../template-repos.js";
 import type {
   CheckGithubRepositoriesRequest,
   CheckGithubRepositoriesResponse,
@@ -94,6 +98,27 @@ export async function checkGithubRepositories(
   token: string | null,
 ): Promise<GithubRepositoryCheckView[]> {
   return Promise.all(repos.map((repo) => checkGithubRepository(repo, token)));
+}
+
+/** Privacy is provider truth, not a client assertion. A template save and a
+ * workspace create both receive bare names, so both run this probe before they
+ * write a row: otherwise a direct API caller could label a private repository
+ * public and walk past the create-time gate that keeps a doomed clone from
+ * failing silently ten minutes into bootstrap. */
+export async function probedRepos(
+  repos: readonly string[],
+  token: string | null,
+): Promise<TemplateRepo[]> {
+  if (repos.length === 0) return [];
+  const results = await checkGithubRepositories(repos, token);
+  return results.map((result) => {
+    if (result.verdict === "public") return { repo: result.repo, private: false };
+    if (result.verdict === "private-reachable") return { repo: result.repo, private: true };
+    if (result.verdict === "not-found") {
+      throw new HttpError(400, `repository ${result.repo} was not found or is not reachable`);
+    }
+    throw new HttpError(502, `GitHub could not check repository ${result.repo}`);
+  });
 }
 
 /** POST /connections/github/repositories/check — proves the clone path the

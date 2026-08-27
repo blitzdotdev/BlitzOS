@@ -21,6 +21,7 @@ import { isComputeCredentialProvider } from './ComputeCredentialFields';
 import { InlineComputeCredentialSetup } from './InlineComputeCredentialSetup';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
+import { TemplateRepoPicker } from './files/TemplateRepoPicker';
 import {
   EMPTY_WORKSPACE_ENVIRONMENT,
   EnvironmentEditor,
@@ -45,7 +46,7 @@ type CreateWorkspaceDialogProps = {
   saveComputeCredential?: ComputeCredentialsClient['putComputeCredential'];
   client: AgentRulesApi & Pick<
     ControlPlaneClient,
-    'connectStartUrl' | 'listGithubRepositories'
+    'connectStartUrl' | 'listGithubInstallations' | 'listGithubRepositories'
   >;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
@@ -77,7 +78,10 @@ export function CreateWorkspaceDialog({
 }: CreateWorkspaceDialogProps) {
   const returningFromConnect = hasConnectReturn();
   const [restoredDraft] = useState(readWorkspaceConnectDraft);
-  const seededTemplateId = restoredDraft?.templateId ?? initialTemplateId;
+  // A draft that chose "no template" must survive the round trip as that
+  // choice; ?? would quietly hand the org default back to a member who had
+  // just deselected it.
+  const seededTemplateId = restoredDraft === null ? initialTemplateId : restoredDraft.templateId;
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
@@ -95,6 +99,7 @@ export function CreateWorkspaceDialog({
   const [agentRuleId, setAgentRuleId] = useState<string | null>(
     restoredDraft?.agentRuleId ?? null,
   );
+  const [repos, setRepos] = useState<string[]>(restoredDraft?.repos ?? []);
   const [githubGrantCheck, setGithubGrantCheck] = useState<GithubGrantCheck>({ kind: 'idle' });
   const [githubCheckVersion, setGithubCheckVersion] = useState(0);
   const submitted = useRef(false);
@@ -202,6 +207,23 @@ export function CreateWorkspaceDialog({
     setEnvironment(EMPTY_WORKSPACE_ENVIRONMENT);
     setAgentRuleId(null);
   };
+  // The picker is hidden under a template, and the control plane refuses a
+  // body carrying both sources, so the selection is dropped rather than kept
+  // out of sight to be sent later.
+  const selectTemplate = (template: WorkspaceTemplateView) => {
+    setSelectedTemplateId(template.id);
+    setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+    setAgentRuleId(template.agentRuleId);
+    setRepos([]);
+  };
+  const storeDraft = () => {
+    storeWorkspaceConnectDraft({
+      templateId: selectedTemplateId,
+      environment,
+      agentRuleId,
+      repos,
+    });
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -239,6 +261,7 @@ export function CreateWorkspaceDialog({
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
     if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
+    if (repos.length > 0) input.repos = repos;
     const configured = populatedEnvironment(environment);
     if (configured !== undefined) input.environment = configured;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
@@ -295,9 +318,7 @@ export function CreateWorkspaceDialog({
                         clearTemplate();
                         return;
                       }
-                      setSelectedTemplateId(template.id);
-                      setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
-                      setAgentRuleId(template.agentRuleId);
+                      selectTemplate(template);
                     }}
                   >
                     <strong>{template.name}</strong>
@@ -362,13 +383,7 @@ export function CreateWorkspaceDialog({
                   <a
                     className="webapp-action webapp-action--primary"
                     href={client.connectStartUrl('github', undefined, 'workspace-new')}
-                    onClick={() => {
-                      storeWorkspaceConnectDraft({
-                        templateId: selectedTemplate.id,
-                        environment,
-                        agentRuleId,
-                      });
-                    }}
+                    onClick={storeDraft}
                   >
                     Connect GitHub
                   </a>
@@ -474,6 +489,23 @@ export function CreateWorkspaceDialog({
                 <span>Volumes are not supported by this machine provider.</span>
               )}
             </label>
+          </section>}
+
+          {/* Only without a template. A template already carries a repository
+            * list, and the two sources never mix — showing both would invite a
+            * body the control plane refuses with a 400. */}
+          {selectedTemplate === null && <section className="blueprint-selection tplf-repos">
+            <div className="blueprint-selection__heading">
+              <h2>Repositories</h2>
+              <p>GitHub repositories cloned into /workspace when this workspace starts.</p>
+            </div>
+            <TemplateRepoPicker
+              client={client}
+              connectHref={client.connectStartUrl('github', undefined, 'workspace-new')}
+              onConnect={storeDraft}
+              value={repos}
+              onChange={setRepos}
+            />
           </section>}
 
           {selectedTemplate === null && <section className="blueprint-selection">

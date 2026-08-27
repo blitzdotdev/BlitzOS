@@ -23,7 +23,7 @@ function rulesClient(
   rules: AgentRuleView[] = [BUILT_IN_RULE],
 ): AgentRulesApi & Pick<
   ControlPlaneClient,
-  "connectStartUrl" | "listGithubRepositories"
+  "connectStartUrl" | "listGithubInstallations" | "listGithubRepositories"
 > {
   return {
     listAgentRules: vi.fn(async () => ({ rules })),
@@ -31,8 +31,8 @@ function rulesClient(
       rule: { id, ...input, updatedAt: 5, builtIn: false },
     })),
     deleteAgentRule: vi.fn(async () => undefined),
+    listGithubInstallations: vi.fn(async () => ({ installations: [] })),
     listGithubRepositories: vi.fn(async () => ({
-      source: 'installations' as const,
       repositories: [],
       truncated: false,
     })),
@@ -328,6 +328,153 @@ describe("create workspace dialog", () => {
   });
 
 
+  it("picks repositories without a template and hides the picker under one", async () => {
+    const submit = vi.fn();
+    const client = rulesClient();
+    client.listGithubRepositories = vi.fn(async () => ({
+      repositories: [
+        { repo: "acme/app", accountLogin: "acme", private: true },
+        { repo: "acme/tools", accountLogin: "acme", private: false },
+      ],
+      truncated: false,
+    }));
+    const template = {
+      id: "template-1",
+      name: "analysis starter",
+      machineTypeId: "cx23@fsn1",
+      createdAt: 1,
+      createdBy: { name: "Ada Park", avatarUrl: null },
+      agentRuleId: null,
+      isOrgDefault: false,
+      environment: null,
+      folders: [],
+      connections: [],
+      repos: [],
+    };
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={client}
+        listTemplates={async () => [template]}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const checkbox = (repo: string) => [...view.container
+      .querySelectorAll<HTMLLabelElement>('.tplf-repo')]
+      .find((label) => label.textContent?.startsWith(repo))
+      ?.querySelector<HTMLInputElement>('input')!;
+    await act(async () => checkbox('acme/app').click());
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      machineTypeId: "cx23@fsn1",
+      repos: ["acme/app"],
+    }));
+
+    // A template carries its own list, and the control plane refuses a body
+    // that names both, so selecting one takes the picker and the selection.
+    await act(async () => {
+      [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
+        .find((tile) => tile.textContent?.includes('analysis starter'))?.click();
+    });
+    expect(view.container.querySelector('.tplf-repos')).toBeNull();
+    await act(async () => {
+      [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
+        .find((tile) => tile.textContent?.includes('No template'))?.click();
+    });
+    await settle();
+    expect(checkbox('acme/app').checked).toBe(false);
+    await view.unmount();
+  });
+
+  it("carries a repo selection with no template through the connect round trip", async () => {
+    const client = rulesClient();
+    client.listGithubRepositories = vi.fn(async () => {
+      throw new ApiRequestError("GitHub is not connected", 409, null);
+    });
+    const first = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={client}
+        listTemplates={async () => []}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={vi.fn()}
+      />,
+    );
+    await settle();
+    const connect = first.container.querySelector<HTMLAnchorElement>(
+      'a[href="/connect/github/start?returnTo=workspace-new"]',
+    )!;
+    connect.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => connect.click());
+    // templateId null is the member's answer, not a missing one: the picker
+    // only exists in that state, so the draft has to be able to say it.
+    expect(JSON.parse(window.sessionStorage.getItem(
+      'blitz:github-connect-draft:workspace-new',
+    ) ?? '{}')).toEqual({
+      templateId: null,
+      environment: { env: {}, startupScript: null },
+      agentRuleId: null,
+      repos: [],
+    });
+    await first.unmount();
+
+    window.history.replaceState({}, "", "/workspaces/new?connect=ok&provider=github");
+    window.sessionStorage.setItem(
+      'blitz:github-connect-draft:workspace-new',
+      JSON.stringify({
+        templateId: null,
+        environment: { env: {}, startupScript: null },
+        agentRuleId: null,
+        repos: ['acme/app'],
+      }),
+    );
+    const submit = vi.fn();
+    const returned = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient()}
+        listTemplates={async () => []}
+        // The org default must not reclaim a member who deselected it.
+        initialTemplateId="template-default"
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+    expect(window.sessionStorage.getItem('blitz:github-connect-draft:workspace-new')).toBeNull();
+    await act(async () => {
+      returned.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ repos: ['acme/app'] }));
+    await returned.unmount();
+  });
+
   it("collapses the form when a template is selected and submits the template body", async () => {
     const submit = vi.fn();
     const onNewTemplate = vi.fn();
@@ -459,6 +606,7 @@ describe("create workspace dialog", () => {
       templateId: 'template-private',
       environment: { env: {}, startupScript: null },
       agentRuleId: null,
+      repos: [],
     });
     await view.unmount();
   });
@@ -471,6 +619,7 @@ describe("create workspace dialog", () => {
         templateId: 'template-private',
         environment: { env: { ROUND_TRIP: 'yes' }, startupScript: './resume.sh\n' },
         agentRuleId: 'rule-override',
+        repos: [],
       }),
     );
     const submit = vi.fn();

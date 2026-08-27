@@ -84,3 +84,20 @@ export async function templateRepos(db: Db, templateId: string): Promise<Templat
     private: row.private === 1,
   }));
 }
+
+/** The list a workspace owns, whichever source chose it. Written once at
+ * create beside the bootstrap that clones it, so the database can answer what
+ * a box holds instead of only the script that built it. */
+export async function insertWorkspaceRepos(
+  db: Db,
+  workspaceId: string,
+  repos: readonly TemplateRepo[],
+): Promise<void> {
+  for (const repo of repos) {
+    await rows(db, {
+      q: `INSERT INTO workspace_repos (workspace_id, repo, private)
+          VALUES (?1, ?2, ?3)`,
+      v: [workspaceId, repo.repo, repo.private ? 1 : 0],
+    });
+  }
+}

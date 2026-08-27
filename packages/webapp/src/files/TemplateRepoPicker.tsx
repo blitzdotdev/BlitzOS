@@ -18,17 +18,14 @@ type PickerState =
   | { kind: 'loading' }
   | { kind: 'connect' }
   | { kind: 'install' }
-  | {
-      kind: 'ready';
-      repositories: GithubRepositoryView[];
-      source: ListGithubRepositoriesResponse['source'];
-      truncated: boolean;
-    }
+  | { kind: 'ready'; repositories: GithubRepositoryView[]; truncated: boolean }
   | { kind: 'error'; message: string };
 
 /** Lists only repos the member's own credential reaches. App installation
- * widens that reach, but never supplies identity. A 409 is therefore a member
- * connect action; an empty App installation list is the separate owner action. */
+ * widens that reach, but never supplies identity. The App is the only path
+ * here: a 409 means no grant or a pasted personal token, and either way the
+ * answer is the same member connect action. An empty App installation list is
+ * the separate owner action. */
 export function TemplateRepoPicker({
   client,
   connectHref,
@@ -53,7 +50,7 @@ export function TemplateRepoPicker({
     setState({ kind: 'loading' });
     void client.listGithubRepositories()
       .then(async (result) => {
-        if (result.source === 'installations' && result.repositories.length === 0) {
+        if (result.repositories.length === 0) {
           // The repositories route intentionally omits installation rows. Only
           // the empty result needs this second read to distinguish "no install"
           // from "installed, but no repositories in the member intersection".
@@ -68,7 +65,6 @@ export function TemplateRepoPicker({
           setState({
             kind: 'ready',
             repositories: result.repositories,
-            source: result.source,
             truncated: result.truncated,
           });
         }
@@ -187,7 +183,7 @@ export function TemplateRepoPicker({
       </div>
       {atCap && (
         <p className="tplf-repos-hint" role="status">
-          Up to {MAX_TEMPLATE_REPOS} repositories per template — remove one to add another.
+          Up to {MAX_TEMPLATE_REPOS} repositories — remove one to add another.
         </p>
       )}
       {selectionProblem !== null && (
@@ -217,9 +213,7 @@ export function TemplateRepoPicker({
         {shown.length === 0 && (
           <p className="tplf-repos-hint">
             {state.repositories.length === 0
-              ? state.source === 'installations'
-                ? 'The installed App reaches no repositories available to your account.'
-                : 'Your GitHub token reaches no repositories.'
+              ? 'The installed App reaches no repositories available to your account.'
               : 'No repositories match these filters.'}
           </p>
         )}

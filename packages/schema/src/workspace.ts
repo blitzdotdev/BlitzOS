@@ -92,10 +92,9 @@ export interface GithubRepositoryView {
   private: boolean;
 }
 
-export type GithubRepositoriesSource = "installations" | "personal-token";
-
+/** Every row here came through an App installation, reached with the member's
+ * own token. There is no second path, so nothing names which one answered. */
 export interface ListGithubRepositoriesResponse {
-  source: GithubRepositoriesSource;
   repositories: GithubRepositoryView[];
   truncated: boolean;
 }

@@ -156,8 +156,9 @@ function parseInstallations(value: JsonValue): GithubInstallationView[] {
   });
 }
 
-function parseRepositories(value: JsonValue, wrapped: boolean): GithubRepositoryView[] {
-  const entries = wrapped && isRecord(value) ? value.repositories : value;
+function parseRepositories(value: JsonValue): GithubRepositoryView[] {
+  // Only the installation endpoint answers now, and it wraps its rows.
+  const entries = isRecord(value) ? value.repositories : undefined;
   if (!Array.isArray(entries)) {
     throw new HttpError(502, "GitHub repositories returned an invalid response");
   }
@@ -214,7 +215,7 @@ async function installationRepositories(
     while (next !== null && pages < maxPages) {
       const page = await githubApiPage(token, next, "GitHub repositories");
       pages += 1;
-      for (const repository of parseRepositories(page.body, true)) {
+      for (const repository of parseRepositories(page.body)) {
         byRepo.set(repository.repo, repository);
       }
       next = page.next;
@@ -227,32 +228,22 @@ async function installationRepositories(
   return { repositories: [...byRepo.values()], truncated };
 }
 
-async function personalRepositories(
-  token: string,
-): Promise<{ repositories: GithubRepositoryView[]; truncated: boolean }> {
-  const byRepo = new Map<string, GithubRepositoryView>();
-  let next: string | null =
-    `${GITHUB_API}/user/repos?affiliation=owner,collaborator,organization_member`
-    + `&per_page=${String(GITHUB_ITEMS_PER_PAGE)}`;
-  let pages = 0;
-  while (next !== null && pages < MAX_GITHUB_PAGES) {
-    const page = await githubApiPage(token, next, "GitHub repositories");
-    pages += 1;
-    for (const repository of parseRepositories(page.body, false)) {
-      byRepo.set(repository.repo, repository);
-    }
-    next = page.next;
-  }
-  return { repositories: [...byRepo.values()], truncated: next !== null };
-}
-
-async function requiredGithubCredential(
+/** Both listing routes are App-only, so a pasted token is refused with the
+ * same 409 a missing grant returns and the picker offers Connect for either.
+ * A personal token carries whatever reach its holder chose on github.com,
+ * which the product can neither see nor trust: falling back to it would make
+ * one screen list different repositories for two members of the same org, for
+ * reasons neither of them could see. */
+async function requiredAppToken(
   runtime: CoreRuntime,
   principal: Principal,
-): Promise<GithubCallerCredential> {
+): Promise<string> {
   const credential = await githubCallerCredential(runtime, principal.id);
   if (credential === null) throw new HttpError(409, "GitHub is not connected");
-  return credential;
+  if (credential.kind !== "oauth") {
+    throw new HttpError(409, "connect GitHub through the App to list repositories");
+  }
+  return credential.token;
 }
 
 /** Lists only repositories the caller's own token can reach. An App install
@@ -266,8 +257,8 @@ export function addGithubRepositoryRoutes(
   router.get("/connections/github/installations", async (context) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
-    const credential = await requiredGithubCredential(runtimeFactory(context), principal);
-    const result = await githubInstallations(credential.token, MAX_GITHUB_PAGES);
+    const token = await requiredAppToken(runtimeFactory(context), principal);
+    const result = await githubInstallations(token, MAX_GITHUB_PAGES);
     if (result.truncated) {
       throw new HttpError(502, "GitHub installations exceeded the page limit");
     }
@@ -279,25 +270,15 @@ export function addGithubRepositoryRoutes(
   router.get("/connections/github/repositories", async (context) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
-    const credential = await requiredGithubCredential(runtimeFactory(context), principal);
-    if (credential.kind === "pat") {
-      const result = await personalRepositories(credential.token);
-      return context.json<ListGithubRepositoriesResponse>({
-        source: "personal-token",
-        ...result,
-      });
-    }
-    const installed = await githubInstallations(credential.token, MAX_GITHUB_PAGES);
+    const token = await requiredAppToken(runtimeFactory(context), principal);
+    const installed = await githubInstallations(token, MAX_GITHUB_PAGES);
     const result = installed.truncated
       ? { repositories: [], truncated: true }
       : await installationRepositories(
-          credential.token,
+          token,
           installed.installations,
           MAX_GITHUB_PAGES - installed.pages,
         );
-    return context.json<ListGithubRepositoriesResponse>({
-      source: "installations",
-      ...result,
-    });
+    return context.json<ListGithubRepositoriesResponse>(result);
   });
 }

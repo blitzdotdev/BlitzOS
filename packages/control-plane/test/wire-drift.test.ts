@@ -198,7 +198,7 @@ const githubRepository: SharedShape<
 const listGithubRepositories: SharedShape<
   wire.ListGithubRepositoriesResponse,
   schema.ListGithubRepositoriesResponse
-> = { source: "installations", repositories: [githubRepository], truncated: false };
+> = { repositories: [githubRepository], truncated: false };
 
 const githubRepositoryCheck: SharedShape<
   wire.GithubRepositoryCheckView,
@@ -280,6 +280,7 @@ const createWorkspaceRequest: SharedShape<
   connections: ["github"],
   environment,
   agentRuleId: agentRule.id,
+  repos: [templateRepo.repo],
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -624,7 +625,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.GithubInstallationView>().toEqualTypeOf<schema.GithubInstallationView>();
     expectTypeOf<wire.ListGithubInstallationsResponse>().toEqualTypeOf<schema.ListGithubInstallationsResponse>();
     expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();
-    expectTypeOf<wire.GithubRepositoriesSource>().toEqualTypeOf<schema.GithubRepositoriesSource>();
     expectTypeOf<wire.ListGithubRepositoriesResponse>().toEqualTypeOf<schema.ListGithubRepositoriesResponse>();
     expectTypeOf<wire.GithubRepositoryCheckVerdict>().toEqualTypeOf<schema.GithubRepositoryCheckVerdict>();
     expectTypeOf<wire.GithubRepositoryCheckView>().toEqualTypeOf<schema.GithubRepositoryCheckView>();
