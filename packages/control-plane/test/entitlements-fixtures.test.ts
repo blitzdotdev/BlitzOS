@@ -128,7 +128,9 @@ describe("entitlements fixture conformance", () => {
   it("mints the exact checkout link the denial fixture carries", async () => {
     const token = await handoffToken(context.entitlementsApiKey, claims);
     expect(claims.exp - context.issuedAtSeconds).toBe(15 * 60);
-    expect(denial.body.paymentUrl).toBe(`${context.paymentUrl}/checkout#token=${token}`);
+    // The fixture organization seats one person, so inviting a second has to
+    // buy two: the number is in the link, not asked for on the billing page.
+    expect(denial.body.paymentUrl).toBe(`${context.paymentUrl}/checkout#token=${token}&seats=2`);
   });
 
   it("answers the denial fixture when the second person is invited", async () => {
@@ -149,7 +151,10 @@ describe("entitlements fixture conformance", () => {
     expect(body.error).toBe(denial.body.error);
     expect(body.retryAction).toBe(denial.body.retryAction);
     expect(body.paymentUrl).toMatch(
-      new RegExp(`^${context.paymentUrl}/checkout#token=[\\w-]+\\.[\\w-]+\\.[\\w-]+$`, "u"),
+      new RegExp(
+        `^${context.paymentUrl}/checkout#token=[\\w-]+\\.[\\w-]+\\.[\\w-]+&seats=2$`,
+        "u",
+      ),
     );
     if (typeof body.paymentUrl !== "string") throw new Error("denial omitted paymentUrl");
     const encodedPayload = new URL(body.paymentUrl).hash.split(".")[1];

@@ -1,10 +1,10 @@
 {
-  "note": "What all three seat gates answer. HTTP 402. Built from context.json and handoff-claims.json: paymentUrl is <paymentUrl>/checkout#token=<jwt>, the token signed HS256 with entitlementsApiKey. Where PAYMENT_URL is unset the paymentUrl key is absent and the other two are unchanged.",
+  "note": "What all three seat gates answer. HTTP 402. Built from context.json and handoff-claims.json: paymentUrl is <paymentUrl>/checkout#token=<jwt>&seats=<n>, the token signed HS256 with entitlementsApiKey and seats the count the purchase has to cover: everybody seated now plus the one being invited. Where PAYMENT_URL is unset the paymentUrl key is absent and the other two are unchanged.",
   "status": 402,
   "body": {
     "error": "seat limit reached",
     "retryAction": "upgrade",
-    "paymentUrl": "https://billing.example/checkout#token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJvcmctYWNtZSIsInVzZXIiOiJ1c2VyLWRhbmEiLCJyb2xlIjoiYWRtaW4iLCJjb250cm9sUGxhbmVPcmlnaW4iOiJodHRwczovL2NvbnRyb2wtcGxhbmUuZXhhbXBsZSIsInJldHVyblRvIjoiL3NldHRpbmdzL2ludml0ZXMiLCJleHAiOjE3ODcwMDAwMDB9.tI8J-7objHXHj1btnx7qEbdqaMEIQY4f0HS55O7C6yY"
+    "paymentUrl": "https://billing.example/checkout#token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJvcmciOiJvcmctYWNtZSIsInVzZXIiOiJ1c2VyLWRhbmEiLCJyb2xlIjoiYWRtaW4iLCJjb250cm9sUGxhbmVPcmlnaW4iOiJodHRwczovL2NvbnRyb2wtcGxhbmUuZXhhbXBsZSIsInJldHVyblRvIjoiL3NldHRpbmdzL2ludml0ZXMiLCJleHAiOjE3ODcwMDAwMDB9.tI8J-7objHXHj1btnx7qEbdqaMEIQY4f0HS55O7C6yY&seats=2"
   },
   "withoutPaymentUrl": {
     "error": "seat limit reached",

@@ -387,10 +387,15 @@ describe("entitlements", () => {
       expect(response.status).toBe(200);
       const billing = await response.json<{ url: string }>();
 
-      const token = new URL(billing.url).hash.slice("#token=".length);
+      const link = new URL(billing.url);
+      const handoff = new URLSearchParams(link.hash.slice(1));
+      const token = handoff.get("token") ?? "";
       // One destination. The billing service reads the hop and decides whether
       // this organization is buying or managing what it already bought.
-      expect(billing.url).toBe(`https://billing.test/checkout#token=${token}`);
+      expect(`${link.origin}${link.pathname}`).toBe("https://billing.test/checkout");
+      // One person seated, so a purchase has to cover two. The billing page is
+      // told the number rather than asking the buyer for it.
+      expect(handoff.get("seats")).toBe("2");
 
       const claims = JSON.parse(
         atob((token.split(".")[1] ?? "").replaceAll("-", "+").replaceAll("_", "/")),
