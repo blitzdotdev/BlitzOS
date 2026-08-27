@@ -49,15 +49,16 @@ Status: **complete**.
    action. Right-click must not select the target tab.
 5. Preserve normal pane invariants: closing the active tab selects an adjacent
    tab, and closing the last side-pane tab collapses the split.
-6. Add compatibility normalization for documents written by the earlier branch:
-   reopen `windowOpen: false` tabs as ordinary tabs, restore `archivedTabs` to
-   the regular tab collection without selecting over an existing active tab,
-   preserve IDs/titles, and drop the retired fields on the next save.
+6. Do not adapt documents written by the earlier branch. `windowOpen` and
+   `archivedTabs` are unknown keys the parsers ignore on both runtimes: a
+   retained-window tab loads as an ordinary tab and archived records drop.
+   Only one self-hosted deployment ever wrote them. Persisted native-Chat
+   records are dropped on read because every `main` deployment wrote them.
 
 Done when closed tabs disappear from both the tab strip and workspace rail,
 Rename remains available without activating a right-clicked tab, no session
-archive/removal control is rendered, and an earlier branch document loads
-without losing its retained or archived tab records.
+archive/removal control is rendered, and a document carrying the retired keys
+loads without being rejected.
 
 ### Phase B — disable native Chat
 
@@ -128,8 +129,8 @@ The current implementation satisfies the active cockpit scope:
 - standard tab closing and Rename-only managed-session menus are restored;
 - native Chat, session archive/restore, and permanent session removal are not
   exposed;
-- legacy retained-window, archived-tab, and Chat layout records are normalized
-  without extending those retired models;
+- retired `windowOpen`/`archivedTabs` keys are ignored at the parsers rather
+  than adapted, and persisted Chat layout records are dropped on read;
 - Finder rename/delete, dirty-editor protection, path reconciliation, and Drive
   actions are present;
 - Workspace Details includes compute, storage, configuration, access, Share,

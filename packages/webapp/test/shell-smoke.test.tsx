@@ -5,6 +5,7 @@ import CloudApp from "../src/CloudApp.js";
 import { ApiRequestError, type ControlPlaneClient } from "../src/api.js";
 import { standaloneResolver } from "../src/resolver.js";
 import {
+  decodeWorkspaceWebAppStateResponse,
   defaultWorkspaceFiles,
   defaultWorkspaceWebAppState,
   type WorkspaceWebAppStateV1,
@@ -275,10 +276,14 @@ function client(): ControlPlaneClient {
     })),
     getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
     putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
-    getWorkspaceWebAppState: vi.fn(async (workspaceId) => ({
-      doc: serverWorkspaceStates.get(workspaceId) ?? null,
-      updatedAt: serverWorkspaceStates.has(workspaceId) ? 1 : null,
-    })),
+    // Seeded docs take the production read path: the real client decodes
+    // (and normalizes) every response before the shell sees it.
+    getWorkspaceWebAppState: vi.fn(async (workspaceId) => decodeWorkspaceWebAppStateResponse(
+      JSON.stringify({
+        doc: serverWorkspaceStates.get(workspaceId) ?? null,
+        updatedAt: serverWorkspaceStates.has(workspaceId) ? 1 : null,
+      }),
+    )),
     putWorkspaceWebAppState: vi.fn(async (workspaceId, doc) => {
       serverWorkspaceStates.set(workspaceId, doc);
       return { doc, updatedAt: 1 };
@@ -827,9 +832,10 @@ describe("webapp shell smoke", () => {
       { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
       { id: 2, type: "terminal" },
     ], 1);
+    const wire = runningClient();
     const view = await render(
       <CloudApp
-        client={runningClient()}
+        client={wire}
         resolver={standaloneResolver({ acp: 7444, files: 7445 })}
       />,
     );
@@ -846,11 +852,12 @@ describe("webapp shell smoke", () => {
       ".webapp-agent-menu [role='menuitem']",
     )].map(({ textContent }) => textContent?.trim());
     expect(actions).toEqual(["Claude", "Codex", "Terminal"]);
+    // Dropping the record on read is not an edit: a plain load never echoes a
+    // write that could outrank another account's newer save.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
-    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
-      .toEqual([{ id: 2, type: "terminal" }]);
+    expect(wire.putWorkspaceWebAppState).not.toHaveBeenCalled();
     await view.unmount();
   });
 

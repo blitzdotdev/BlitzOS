@@ -91,94 +91,48 @@ describe("server-side webApp state", () => {
     expect(invalid.status).toBe(400);
   });
 
-  it("restores legacy archived/window records while enforcing shared ids", async () => {
+  it("keeps bounded managed-session titles and ignores retired layout keys", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
     const path = `/workspaces/${workspace.id}/webapp-state`;
-    const withArchive = {
-      ...workspaceDoc,
-      tabs: {
-        version: 1,
-        tabs: [{ id: 1, type: "claude", title: "Active" }],
-        archivedTabs: [{
-          id: 4,
-          type: "terminal",
-          title: "Archived",
-          region: "side",
-        }],
-        activeId: 1,
-        nextId: 5,
-      },
-    };
-    const stored = await appRequest(app, path, {
-      method: "PUT",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify(withArchive),
-    });
-    expect(stored.status).toBe(200);
-    await expect(stored.json()).resolves.toMatchObject({
-      doc: {
-        tabs: {
-          version: 1,
-          tabs: [
-            { id: 1, type: "claude", title: "Active" },
-            { id: 4, type: "terminal", title: "Archived", region: "side" },
-          ],
-          activeId: 1,
-          nextId: 5,
-        },
-      },
-    });
-
     const sendTabs = (tabs: unknown) => appRequest(app, path, {
       method: "PUT",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({ ...workspaceDoc, tabs }),
     });
-    expect((await sendTabs({
+    const titled = await sendTabs({
       version: 1,
-      tabs: [{ id: 1, type: "chat" }],
-      archivedTabs: [{ id: 1, type: "claude" }],
+      tabs: [{ id: 1, type: "claude", title: "  Release work  " }],
       activeId: 1,
       nextId: 2,
-    })).status).toBe(400);
-    expect((await sendTabs({
-      version: 1,
-      tabs: [],
-      archivedTabs: [{ id: 2, type: "file", filePath: "a.txt" }],
-      activeId: null,
-      nextId: 3,
-    })).status).toBe(400);
+    });
+    expect(titled.status).toBe(200);
+    expect((await titled.json<{ doc: { tabs: { tabs: unknown[] } } }>()).doc.tabs.tabs)
+      .toEqual([{ id: 1, type: "claude", title: "Release work" }]);
     expect((await sendTabs({
       version: 1,
       tabs: [{ id: 1, type: "terminal", title: "x".repeat(65) }],
       activeId: 1,
       nextId: 2,
     })).status).toBe(400);
-    const closed = {
+    // The short-lived archive/window model only ever ran on one self-hosted
+    // deployment. Its keys are unknown fields like any other: archived
+    // records drop and a retained-window tab is an ordinary tab.
+    const legacy = await sendTabs({
       version: 1,
       tabs: [{ id: 1, type: "terminal", title: "Build", windowOpen: false }],
-      activeId: null,
+      archivedTabs: [{ id: 4, type: "terminal", title: "Archived" }],
+      activeId: 1,
       nextId: 5,
-    };
-    const storedClosed = await sendTabs(closed);
-    expect(storedClosed.status).toBe(200);
-    await expect(storedClosed.json()).resolves.toMatchObject({
-      doc: {
-        tabs: {
-          version: 1,
-          tabs: [{ id: 1, type: "terminal", title: "Build" }],
-          activeId: null,
-          nextId: 5,
-        },
-      },
     });
-    expect((await sendTabs({ ...closed, activeId: 1 })).status).toBe(200);
-    expect((await sendTabs({
-      ...closed,
-      tabs: [{ id: 1, type: "chat", windowOpen: "no" }],
-    })).status).toBe(400);
+    expect(legacy.status).toBe(200);
+    expect((await legacy.json<{ doc: { tabs: unknown } }>()).doc.tabs).toEqual({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", title: "Build" }],
+      activeId: 1,
+      nextId: 5,
+    });
   });
 
   it("shares one workspace doc between the owner and org-wide editors", async () => {

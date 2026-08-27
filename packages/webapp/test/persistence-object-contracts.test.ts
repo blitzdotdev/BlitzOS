@@ -60,7 +60,7 @@ describe("UI protocol and persistence object contracts", () => {
     expect(restored).toEqual({ version: 1, tabs: [], activeId: null, nextId: 2 });
   });
 
-  it("restores legacy archived sessions as ordinary titled tabs", () => {
+  it("keeps trimmed managed-session titles and ignores retired layout keys", () => {
     const decode = (tabs: object) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
       doc: {
         version: 1,
@@ -70,69 +70,24 @@ describe("UI protocol and persistence object contracts", () => {
       },
       updatedAt: 1,
     })).doc?.tabs;
-    const restored = decode({
-      version: 1,
-      tabs: [{ id: 1, type: "claude", title: "Active" }],
-      archivedTabs: [{
-        id: 4,
-        type: "terminal",
-        title: "Archived",
-        region: "side",
-      }],
-      activeId: 1,
-      nextId: 5,
-    });
-    expect(restored).toEqual({
-      version: 1,
-      tabs: [
-        { id: 1, type: "claude", title: "Active" },
-        { id: 4, type: "terminal", title: "Archived", region: "side" },
-      ],
-      activeId: 1,
-      nextId: 5,
-      sideActiveId: 4,
-    });
-    expect(() => decode({
-      version: 1,
-      tabs: [{ id: 1, type: "claude" }],
-      archivedTabs: [{ id: 1, type: "claude" }],
-      activeId: 1,
-      nextId: 2,
-    })).toThrow("webApp state response has invalid doc");
-    expect(() => decode({
-      version: 1,
-      tabs: [],
-      archivedTabs: [{ id: 2, type: "file", filePath: "a.txt" }],
-      activeId: null,
-      nextId: 3,
-    })).toThrow("webApp state response has invalid doc");
-  });
-
-  it("reopens legacy retained-window sessions and rejects malformed flags", () => {
-    const decode = (tabs: object) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
-      doc: {
-        version: 1,
-        agentDefault: "claude",
-        tabs,
-        drawer: { version: 1, width: 264, expanded: [] },
-      },
-      updatedAt: 1,
-    })).doc?.tabs;
+    // `windowOpen` and `archivedTabs` were written by one self-hosted
+    // deployment of a superseded branch; they parse as unknown keys.
     expect(decode({
       version: 1,
-      tabs: [{ id: 1, type: "terminal", title: "Build", windowOpen: false }],
-      activeId: null,
-      nextId: 2,
+      tabs: [{ id: 1, type: "claude", title: "  Release work  ", windowOpen: false }],
+      archivedTabs: [{ id: 4, type: "terminal", title: "Archived" }],
+      activeId: 1,
+      nextId: 5,
     })).toEqual({
       version: 1,
-      tabs: [{ id: 1, type: "terminal", title: "Build" }],
+      tabs: [{ id: 1, type: "claude", title: "Release work" }],
       activeId: 1,
-      nextId: 2,
+      nextId: 5,
     });
     expect(() => decode({
       version: 1,
-      tabs: [{ id: 1, type: "terminal", windowOpen: "no" }],
-      activeId: null,
+      tabs: [{ id: 1, type: "terminal", title: "x".repeat(65) }],
+      activeId: 1,
       nextId: 2,
     })).toThrow("webApp state response has invalid doc");
   });

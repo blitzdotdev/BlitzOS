@@ -3,7 +3,6 @@ import { first, rows, transaction } from "./db.js";
 import {
   HttpError,
   type JsonValue,
-  isBoolean,
   isNumber,
   isRecord,
   isString,
@@ -44,13 +43,11 @@ interface WebAppTabV1 {
   panel?: WebAppDrawerSegment;
   region?: WebAppRegion;
   path?: string;
-  windowOpen?: false;
 }
 
 interface WebAppTabsV1 {
   version: 1;
   tabs: WebAppTabV1[];
-  archivedTabs?: WebAppTabV1[];
   activeId: number | null;
   nextId: number;
   sideActiveId?: number;
@@ -106,34 +103,10 @@ const TAB_TYPES: ReadonlySet<string> = new Set([
 ]);
 const SESSION_TITLE_MAX_LENGTH = 64;
 
-function isManagedTab(tab: WebAppTabV1): boolean {
-  return tab.type === "chat"
-    || tab.type === "terminal"
-    || tab.type === "claude"
-    || tab.type === "codex"
-    || tab.type === "opencode"
-    || tab.type === "pi"
-    || tab.type === "kimi"
-    || tab.type === "prime";
-}
-
 function parseManagedTitle(value: OptionalJsonValue, field: string): string | undefined {
   if (value === undefined) return undefined;
   const title = boundedString(value, field, SESSION_TITLE_MAX_LENGTH).trim();
   return title === "" ? undefined : title;
-}
-
-function parseWindowOpen(value: OptionalJsonValue, field: string): false | undefined {
-  if (value === undefined || value === true) return undefined;
-  if (!isBoolean(value)) throw new HttpError(400, `${field} must be a boolean`);
-  return false;
-}
-
-function restoreLegacyWindow(tab: WebAppTabV1): WebAppTabV1 {
-  if (tab.windowOpen !== false) return tab;
-  const restored = { ...tab };
-  delete restored.windowOpen;
-  return restored;
 }
 
 function boundedString(value: OptionalJsonValue, field: string, maxLength: number): string {
@@ -247,8 +220,6 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
     const tab: WebAppTabV1 = { id, type };
     if (title !== undefined) tab.title = title;
-    const windowOpen = parseWindowOpen(value.windowOpen, `tabs.tabs[${index}].windowOpen`);
-    if (windowOpen === false) tab.windowOpen = false;
     return withRegion(tab, region);
   }
   const tab: WebAppTabV1 = { id, type };
@@ -264,8 +235,6 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
   if (value.chatProvider !== undefined) {
     tab.chatProvider = parseAgent(value.chatProvider, `tabs.tabs[${index}].chatProvider`);
   }
-  const windowOpen = parseWindowOpen(value.windowOpen, `tabs.tabs[${index}].windowOpen`);
-  if (windowOpen === false) tab.windowOpen = false;
   return withRegion(tab, region);
 }
 
@@ -273,20 +242,9 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.tabs)) {
     throw new HttpError(400, "tabs must be a version 1 tabs document");
   }
-  const archivedValues = value.archivedTabs === undefined ? [] : value.archivedTabs;
-  if (!Array.isArray(archivedValues)) {
-    throw new HttpError(400, "tabs.archivedTabs must be an array");
-  }
-  if (value.tabs.length + archivedValues.length > 100) {
-    throw new HttpError(400, "tabs may contain at most 100 active and archived items");
-  }
+  if (value.tabs.length > 100) throw new HttpError(400, "tabs may contain at most 100 items");
   const tabs = value.tabs.map(parseTab);
-  const archivedTabs = archivedValues.map(parseTab);
-  if (!archivedTabs.every(isManagedTab)) {
-    throw new HttpError(400, "tabs.archivedTabs may only contain managed sessions");
-  }
-  const allTabs = [...tabs, ...archivedTabs];
-  if (new Set(allTabs.map(({ id }) => id)).size !== allTabs.length) {
+  if (new Set(tabs.map(({ id }) => id)).size !== tabs.length) {
     throw new HttpError(400, "tabs must have unique ids");
   }
   const activeId = value.activeId === null
@@ -296,14 +254,10 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
     throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
   }
   const nextId = positiveId(value.nextId, "tabs.nextId");
-  if (allTabs.some(({ id }) => id >= nextId)) {
+  if (tabs.some(({ id }) => id >= nextId)) {
     throw new HttpError(400, "tabs.nextId must be greater than every tab id");
   }
-  // Compatibility with the short-lived archive/window model: accept older
-  // documents, restore every record as an ordinary tab, and stop emitting the
-  // retired fields on the next state write.
-  const restoredTabs = allTabs.map(restoreLegacyWindow);
-  const parsed: WebAppTabsV1 = { version: 1, tabs: restoredTabs, activeId, nextId };
+  const parsed: WebAppTabsV1 = { version: 1, tabs, activeId, nextId };
   if (value.sideActiveId !== undefined) {
     const sideActiveId = positiveId(value.sideActiveId, "tabs.sideActiveId");
     if (!tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {

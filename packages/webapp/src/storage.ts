@@ -41,8 +41,6 @@ export type ManagedWorkspaceTab = {
   id: number;
   type: TerminalAgent | 'terminal';
   title?: string;
-  /** @deprecated Compatibility input from the superseded retained-window model. */
-  windowOpen?: false;
   region?: WorkspaceRegion;
 } | {
   id: number;
@@ -50,8 +48,6 @@ export type ManagedWorkspaceTab = {
   chatSessionId?: string;
   chatProvider?: Agent;
   title?: string;
-  /** @deprecated Compatibility input from the superseded retained-window model. */
-  windowOpen?: false;
   region?: WorkspaceRegion;
 };
 
@@ -85,8 +81,6 @@ export type WorkspaceTab = ManagedWorkspaceTab | {
 export type WorkspaceTabs = {
   version: 1;
   tabs: WorkspaceTab[];
-  /** @deprecated Compatibility input restored into `tabs` during normalization. */
-  archivedTabs?: WorkspaceTab[];
   /** Active tab of the main (left) pane. */
   activeId: number | null;
   nextId: number;
@@ -130,7 +124,6 @@ interface RestoredSessionTab {
   chatSessionId?: string;
   chatProvider?: Agent;
   title?: string;
-  windowOpen?: false;
 }
 
 export const SESSION_TITLE_MAX_LENGTH = 64;
@@ -295,26 +288,15 @@ function clampedTab(tab: WorkspaceTab): WorkspaceTab {
   return withRegion({ id: tab.id, type: 'preview', port: tab.port }, tabRegion(tab));
 }
 
-function restoreLegacyTab(tab: WorkspaceTab): WorkspaceTab {
-  if (!isManagedWorkspaceTab(tab) || tab.windowOpen !== false) return tab;
-  const restored: WorkspaceTab = { ...tab };
-  delete restored.windowOpen;
-  return restored;
-}
-
-/** Keeps the two panes coherent and consumes the short-lived archive/window
- * format written by the superseded UI branch. Archived and retained-window
- * tabs return as ordinary tabs, while disabled native Chat layout records are
- * dropped without touching the actor's provider-native session journal. */
+/** Keeps the two panes coherent: a side pane only exists while it holds tabs,
+ * a pane's active id always names one of its own tabs, and the side pane never
+ * outlives an emptied main pane — the split collapses left instead. Disabled
+ * native Chat layout records are dropped here without touching the actor's
+ * provider-native session journal. */
 export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
-  const entriesToRestore = [...tabs.tabs, ...(tabs.archivedTabs ?? [])]
-    .map(restoreLegacyTab)
-    .filter((tab) => NATIVE_CHAT_ENABLED || tab.type !== 'chat');
-  const collapse = entriesToRestore.length > 0
-    && entriesToRestore.every((tab) => tabRegion(tab) === 'side');
-  const entries = collapse
-    ? entriesToRestore.map((tab) => withRegion(tab, 'main'))
-    : entriesToRestore;
+  const kept = tabs.tabs.filter((tab) => NATIVE_CHAT_ENABLED || tab.type !== 'chat');
+  const collapse = kept.length > 0 && kept.every((tab) => tabRegion(tab) === 'side');
+  const entries = collapse ? kept.map((tab) => withRegion(tab, 'main')) : kept;
   const main = entries.filter((tab) => tabRegion(tab) === 'main');
   const side = entries.filter((tab) => tabRegion(tab) === 'side');
   const requestedActive = collapse ? tabs.sideActiveId ?? tabs.activeId : tabs.activeId;
@@ -341,20 +323,9 @@ export function normalizedWorkspaceTabs(tabs: WorkspaceTabs): WorkspaceTabs {
  * limits here rather than letting one field end persistence. Mirror
  * `parseWorkspaceDoc` in the control plane. */
 function clampedDoc(doc: WorkspaceWebAppStateV1): WorkspaceWebAppStateV1 {
-  const activeTabs = doc.tabs.tabs.slice(0, 100).map(clampedTab);
-  const archivedTabs = (doc.tabs.archivedTabs ?? [])
-    .slice(0, Math.max(0, 100 - activeTabs.length))
-    .map(clampedTab);
-  const { archivedTabs: _archivedTabs, ...baseTabs } = doc.tabs;
-  const tabsToNormalize: WorkspaceTabs = {
-    ...baseTabs,
-    tabs: activeTabs,
-  };
-  if (archivedTabs.length > 0) tabsToNormalize.archivedTabs = archivedTabs;
-  const tabs = normalizedWorkspaceTabs(tabsToNormalize);
   return {
     ...doc,
-    tabs,
+    tabs: normalizedWorkspaceTabs({ ...doc.tabs, tabs: doc.tabs.tabs.slice(0, 100).map(clampedTab) }),
     drawer: {
       ...doc.drawer,
       width: Math.min(2000, Math.max(200, Math.round(doc.drawer.width))),
@@ -461,8 +432,6 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
   }
   if (object.type === 'chat') {
     const tab: RestoredSessionTab = { id, type: 'chat' };
-    if (object.windowOpen !== undefined && !isBoolean(object.windowOpen)) return null;
-    if (object.windowOpen === false) tab.windowOpen = false;
     if (object.title !== undefined) {
       if (!isString(object.title) || object.title.length > SESSION_TITLE_MAX_LENGTH) return null;
       const title = object.title.trim();
@@ -484,7 +453,6 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
     || object.type === 'kimi'
     || object.type === 'prime'
   ) {
-    if (object.windowOpen !== undefined && !isBoolean(object.windowOpen)) return null;
     if (object.title !== undefined && (
       !isString(object.title) || object.title.length > SESSION_TITLE_MAX_LENGTH
     )) return null;
@@ -495,7 +463,6 @@ function parseTab(entry: OptionalJsonValue, seen: Set<number>): WorkspaceTab | n
       type: object.type as TerminalAgent | 'terminal',
     };
     if (title !== '') tab.title = title;
-    if (object.windowOpen === false) tab.windowOpen = false;
     // SAFETY: The branch checks every TerminalAgent literal plus terminal.
     return withRegion(tab as WorkspaceTab, region);
   }
@@ -512,17 +479,7 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     const tab = parseTab(entry, seen);
     return tab === null ? [] : [tab];
   });
-  const archivedEntries = object.archivedTabs === undefined ? [] : object.archivedTabs;
-  if (!Array.isArray(archivedEntries)) return null;
-  const archivedTabs = archivedEntries.flatMap((entry) => {
-    const tab = parseTab(entry, seen);
-    return tab === null || !isManagedWorkspaceTab(tab) ? [] : [tab];
-  });
-  if (
-    tabs.length !== object.tabs.length
-    || archivedTabs.length !== archivedEntries.length
-    || tabs.length + archivedTabs.length > 100
-  ) return null;
+  if (tabs.length !== object.tabs.length) return null;
   const activeId = object.activeId === null
     ? null
     : isNumber(object.activeId) && Number.isSafeInteger(object.activeId)
@@ -530,8 +487,7 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
       : -1;
   const mainTabs = tabs.filter((tab) => tabRegion(tab) === 'main');
   if (activeId !== null && !mainTabs.some((tab) => tab.id === activeId)) return null;
-  const minimumNextId = [...tabs, ...archivedTabs]
-    .reduce((highest, { id }) => Math.max(highest, id), 0) + 1;
+  const minimumNextId = tabs.reduce((highest, { id }) => Math.max(highest, id), 0) + 1;
   if (
     !isNumber(object.nextId)
     || !Number.isSafeInteger(object.nextId)
@@ -540,7 +496,6 @@ function parseTabs(value: OptionalJsonValue): WorkspaceTabs | null {
     return null;
   }
   const restored: WorkspaceTabs = { version: 1, tabs, activeId, nextId: object.nextId };
-  if (archivedTabs.length > 0) restored.archivedTabs = archivedTabs;
   if (object.sideActiveId !== undefined) {
     if (
       !isNumber(object.sideActiveId)
