@@ -94,8 +94,50 @@ mkdir -p /var/lib/blitz
 ${boxImageSetupScript(image)}
 echo "bake: box image present as $box_image"
 
+# Lever 1: make the sshd move here, once, instead of on every workspace boot.
+# The bootstrap skips its own move when a listener is already on 2222 and port
+# 22 is free, so a workspace on this image pays none of the stop/restart cost.
+install -d -m 0755 /etc/ssh/sshd_config.d
+cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
+Port 2222
+SSHD_CONFIG
+/usr/sbin/sshd -t
+systemctl disable ssh.socket 2>/dev/null || true
+systemctl mask ssh.socket
+systemctl enable ssh
+
+# Lever 2: units a workspace never uses, and which cost seconds of every boot.
+# `|| true` throughout: an absent unit is not a bake failure.
+for unit in snapd.service snapd.socket snapd.seeded.service unattended-upgrades.service \
+            multipathd.service multipathd.socket apt-daily.timer apt-daily-upgrade.timer \
+            motd-news.timer man-db.timer e2scrub_all.timer fstrim.timer; do
+  systemctl disable --now "$unit" 2>/dev/null || true
+done
+
+# Root's password is expired on a Hetzner image built without an SSH key, and a
+# snapshot freezes that state. PAM then refuses every key-based login, so the
+# host cannot be debugged. Lock the password instead: no password login, no
+# expiry, keys still work.
+usermod -p '*' root
+chage -I -1 -m 0 -M 99999 -E -1 root
+# Undoing the expiry once is not enough: cloud-init runs again on every clone
+# and re-expires root, because the Ubuntu cloud image defaults to
+# a chpasswd expire default. Turning that default off is what survives.
+install -d -m 0755 /etc/cloud/cloud.cfg.d
+cat >/etc/cloud/cloud.cfg.d/99-blitz-no-expire.cfg <<'CLOUDCFG'
+chpasswd:
+  expire: false
+CLOUDCFG
+
 # Nothing below this line may survive into a workspace's identity.
 systemctl stop docker
+
+# Lever 3: Hetzner bills and materializes a snapshot by its used size, and a
+# faster materialization is a faster create. The box image dominates the 2.6 GB
+# and cannot shrink, so this only reclaims what the build itself left behind.
+apt-get clean
+rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /var/cache/*
+journalctl --vacuum-size=1M 2>/dev/null || true
 rm -rf /var/lib/blitz/.bootstrap-image.* /var/log/blitz-bake.log
 cloud-init clean --logs --seed
 rm -f /etc/ssh/ssh_host_*
@@ -106,6 +148,9 @@ sync
 
 # The marker is the only thing the bake adds beyond the tools and the image.
 printf '%s\\n' ${JSON.stringify(image.boxImageTag || image.boxImageRef)} > /etc/blitz-golden-image
+# Zero the free space last so the snapshot carries no deleted blocks.
+fstrim -av 2>/dev/null || true
+sync
 shutdown -h now
 `;
 }

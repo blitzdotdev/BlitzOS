@@ -640,6 +640,12 @@ else
 fi
 systemctl enable --now docker
 
+# Every phase marker carries seconds since the script started. Without these
+# the only way to attribute boot time was subtraction, which turned every
+# tuning decision into an estimate (tools/e2e/GAPS.md).
+blitz_phase() { echo "blitz-phase: $1 seconds=$SECONDS"; }
+blitz_phase apt-done
+
 mkdir -p /var/lib/blitz
 volume_device=""
 for candidate in /dev/disk/by-id/scsi-0HC_Volume_*; do
@@ -671,6 +677,7 @@ if [ -n "$volume_device" ]; then
   grep -Fqx "$fstab_entry" /etc/fstab || printf '%s\n' "$fstab_entry" >>/etc/fstab
 fi
 
+blitz_phase volume-mounted
 touch "$DURABLE_BOOTSTRAP_LOG"
 chmod 0600 "$DURABLE_BOOTSTRAP_LOG"
 cat "$BOOTSTRAP_LOG" >"$DURABLE_BOOTSTRAP_LOG"
@@ -711,9 +718,20 @@ ${sshPublicKeyProvisioning}
 # credentials are installed after this VM proves its host key to phone-home.
 rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin
 
+port_22_free() {
+  ! ss -tln 2>/dev/null | grep -qE '(^|[^0-9.:])(0\.0\.0\.0|\[::\]|\*):22[[:space:]]'
+}
 # Ubuntu 24.04 activates sshd through ssh.socket on port 22. Validate the
 # replacement listener before stopping that socket so Docker can safely claim
 # host port 22 without losing the host SSH recovery path.
+#
+# A golden image has already made this move, and its sshd comes up on 2222 with
+# ssh.socket masked. Stopping and restarting sshd there costs seconds and
+# changes nothing, so the whole block is skipped when the invariant already
+# holds: a listener on 2222 and nothing on 22.
+if ss -tln 2>/dev/null | grep -qE ':2222[[:space:]]' && port_22_free; then
+  echo "blitz: host sshd is already on 2222 and port 22 is free; skipping the move"
+else
 install -d -m 0755 /etc/ssh/sshd_config.d
 # 00- sorts ahead of image drop-ins; sshd takes the first Port it sees.
 cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
@@ -746,9 +764,6 @@ done
 # "failed to bind host port 0.0.0.0:22/tcp: address already in use" (exit 125)
 # on whichever boots fast enough to lose the race. Wait for the port to be
 # genuinely free, and say so plainly if it never is.
-port_22_free() {
-  ! ss -tln 2>/dev/null | grep -qE '(^|[^0-9.:])(0\.0\.0\.0|\[::\]|\*):22[[:space:]]'
-}
 sshd_release_deadline=$((SECONDS + 60))
 until port_22_free; do
   if (( SECONDS >= sshd_release_deadline )); then
@@ -757,8 +772,11 @@ until port_22_free; do
   fi
   sleep 1
 done
+fi
+blitz_phase sshd-ready
 
 ${imageSetup}
+blitz_phase box-image-ready
 install -d -m 0755 /etc/blitz
 ${invocationFiles}${usageDirectories}# The one docker run for the box container, extracted to a host script so
 # the initial start here and the host-side updater (blitz-box-update below)
