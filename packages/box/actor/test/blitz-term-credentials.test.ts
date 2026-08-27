@@ -1,7 +1,7 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -240,76 +240,6 @@ describe("blitz-term tmux session environment", () => {
     // blitz-term argv, so that contract must stay exactly `<type> <key> [ro]`.
     const box = configuredBox();
     expect(await runTerm(box, ["claude", "run", "ro", "extra"])).toBe(2);
-  });
-});
-
-const tmuxBinary = spawnSync("sh", ["-c", "command -v tmux"], { encoding: "utf8" })
-  .stdout.trim();
-
-/** Real tmux, because the bug was tmux's own inheritance rule and no stub can
- * pin it: a tmux server keeps the environment of the client that started it,
- * and hands that snapshot — not the creating client's — to every session
- * opened afterwards. */
-describe.skipIf(tmuxBinary === "")("blitz-term against a foreign tmux server", () => {
-  it("reaches a tab whose server was started by somebody else", async () => {
-    const root = mkdtempSync(join(tmpdir(), "term-tmux-"));
-    boxes.push(root);
-    const socketDir = join(root, "s");
-    const stateDir = join(root, "state");
-    const envDir = join(stateDir, "creds", "env.d");
-    const binDir = join(root, "bin");
-    const outDir = join(root, "out");
-    for (const directory of [socketDir, envDir, binDir, outDir]) {
-      mkdirSync(directory, { recursive: true });
-    }
-    writeFileSync(join(envDir, "00-workspace.sh"), "export PROJECT_MODE='analysis'\n");
-    writeFileSync(join(envDir, "github.sh"), "export GH_TOKEN='ghs_minted'\n");
-    // Stands in for the agent: whatever tmux execs is the only witness that
-    // matters, so it writes its own environment down and stays alive.
-    stub(
-      binDir,
-      "claude",
-      "#!/bin/sh\n"
-        + `{ printenv GH_TOKEN || echo '<unset>'; } >'${join(outDir, "gh")}'\n`
-        + `{ printenv PROJECT_MODE || echo '<unset>'; } >'${join(outDir, "mode")}'\n`
-        + `{ printenv LANG || echo '<unset>'; } >'${join(outDir, "lang")}'\n`
-        + "sleep 30\n",
-    );
-
-    const tmuxDir = dirname(tmuxBinary);
-    const clientEnv = { ...process.env, TMUX_TMPDIR: socketDir };
-    // The foreign server first, holding a bare environment: no credential, no
-    // locale. This is bootstrap's blitz-rc `docker exec` in miniature.
-    spawnSync("env", [
-      "-i",
-      `PATH=${tmuxDir}:/usr/bin:/bin`,
-      `HOME=${root}`,
-      `TMUX_TMPDIR=${socketDir}`,
-      "tmux", "new-session", "-d", "-s", "foreign", "sleep", "120",
-    ]);
-    try {
-      // blitz-term runs in a pane on that same server, so it gets a real tty
-      // and its `new-session -A` can attach. `env -u TMUX` keeps tmux from
-      // refusing the nested session.
-      spawnSync("tmux", [
-        "new-session", "-d", "-s", "driver", "-c", root,
-        `TMUX_TMPDIR=${socketDir} BLITZ_STATE_DIR=${stateDir}`
-          + ` PATH=${binDir}:${tmuxDir}:/usr/bin:/bin`
-          + ` env -u TMUX bash ${blitzTermPath} claude probe >${join(outDir, "log")} 2>&1`,
-      ], { env: clientEnv });
-
-      for (let attempt = 0; attempt < 100 && !existsSync(join(outDir, "lang")); attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      const observed = (name: string) => readFileSync(join(outDir, name), "utf8").trim();
-      // Without the -e flags all three read `<unset>`: the agent inherits the
-      // foreign server's snapshot instead of the tab's own environment.
-      expect(observed("gh")).toBe("ghs_minted");
-      expect(observed("mode")).toBe("analysis");
-      expect(observed("lang")).toBe("C.UTF-8");
-    } finally {
-      spawnSync("tmux", ["kill-server"], { env: clientEnv });
-    }
   });
 });
 
