@@ -804,6 +804,7 @@ describe("microVM pool provider", () => {
       method: string;
       authorization: string | null;
       cookie: string | null;
+      destination: string | null;
       body: string;
     }> = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -822,6 +823,7 @@ describe("microVM pool provider", () => {
           method: init?.method ?? "GET",
           authorization: headers.get("authorization"),
           cookie: headers.get("cookie"),
+          destination: headers.get("destination"),
           body: init?.body === undefined || init.body === null
             ? ""
             : await new Response(init.body).text(),
@@ -877,13 +879,36 @@ describe("microVM pool provider", () => {
     expect(response.status).toBe(207);
     expect(response.headers.get("x-guest-webApp")).toBe("7445");
     expect(await response.text()).toBe("guest-response");
-    expect(webAppCalls).toEqual([{
-      url: "https://lab.example/vms/vm-1-abcdef123456/webapp/7445/workspace/a%20b?arg=one&arg=two",
-      method: "PATCH",
-      authorization: `Bearer ${LAB_TOKEN}`,
-      cookie: null,
-      body: "stream-me",
-    }]);
+    const move = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/webapp/7445/workspace/.a%20b.tmp`,
+      {
+        method: "MOVE",
+        headers: {
+          Cookie: cookie,
+          Destination: `https://cp.example/workspaces/${workspace.id}/webapp/7445/workspace/a%20b`,
+        },
+      },
+    );
+    expect(move.status).toBe(207);
+    expect(webAppCalls).toEqual([
+      {
+        url: "https://lab.example/vms/vm-1-abcdef123456/webapp/7445/workspace/a%20b?arg=one&arg=two",
+        method: "PATCH",
+        authorization: `Bearer ${LAB_TOKEN}`,
+        cookie: null,
+        destination: null,
+        body: "stream-me",
+      },
+      {
+        url: "https://lab.example/vms/vm-1-abcdef123456/webapp/7445/workspace/.a%20b.tmp",
+        method: "MOVE",
+        authorization: `Bearer ${LAB_TOKEN}`,
+        cookie: null,
+        destination: "/workspace/a%20b",
+        body: "",
+      },
+    ]);
   });
 
   it("rejects webapp access for tunnel-less cloud workspaces with a clear 503", async () => {
