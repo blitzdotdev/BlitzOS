@@ -1,15 +1,27 @@
 {
-  "note": "GET /orgs/:id/usage, session-authed, for an active member of the org. seatLimit is null where no billing service is attached and no seat gate runs; vmLimit is never null, because orgs.vm_limit has always had a value.",
+  "note": "GET /orgs/:id/usage, session-authed, for an active member of the org. seatLimit is null where no billing service is attached and no seat gate runs; vmLimit is never null, because orgs.vm_limit has always had a value. platformCompute is never null: it is the stored flag, and 0 on every deployment that has no billing service.",
   "body": {
     "seatsUsed": 3,
     "seatLimit": 5,
     "vmsUsed": 2,
-    "vmLimit": 20
+    "vmLimit": 20,
+    "platformCompute": false
   },
   "gatingOff": {
     "seatsUsed": 3,
     "seatLimit": null,
     "vmsUsed": 2,
-    "vmLimit": 20
+    "vmLimit": 20,
+    "platformCompute": false
+  },
+  "subscribed": {
+    "note": "A plan that includes compute. The organization runs on the deployment credential without one of its own, and an admin reads that here rather than guessing at why a create was allowed.",
+    "body": {
+      "seatsUsed": 3,
+      "seatLimit": 5,
+      "vmsUsed": 2,
+      "vmLimit": 20,
+      "platformCompute": true
+    }
   }
 }

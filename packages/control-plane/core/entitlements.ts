@@ -2,13 +2,19 @@ import { bearerToken, safeEqualSecret } from "./crypto.js";
 import { first, transaction } from "./db.js";
 import {
   HttpError,
+  isBoolean,
   isRecord,
   positiveInteger,
   readJson,
   type JsonObject,
+  type JsonValue,
 } from "./http.js";
 import type { Principal } from "./principals.js";
-import type { OrgBillingResponse, OrgUsageResponse } from "./wire.js";
+import type {
+  EntitlementsRequest,
+  OrgBillingResponse,
+  OrgUsageResponse,
+} from "./wire.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -42,6 +48,31 @@ const HANDOFF_TOKEN_TTL_SECONDS = 15 * 60;
  * the number a person is shown and the number they are stopped by are the
  * same number. */
 export const VM_SLOT_PHASES = "'creating', 'ready', 'destroying', 'error'";
+
+/** The billing service's write, parsed at the boundary into the named wire
+ * type. An absent `platformCompute` is `false`: the body states an
+ * organization's whole entitlement, so omitting the flag says the organization
+ * does not have platform compute — the same thing an absent row says. */
+function entitlementsRequest(value: JsonValue): EntitlementsRequest {
+  if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+  const platformCompute = value.platformCompute;
+  if (platformCompute !== undefined && !isBoolean(platformCompute)) {
+    throw new HttpError(400, "platformCompute must be a boolean");
+  }
+  return {
+    seatLimit: positiveInteger(value.seatLimit, "seatLimit"),
+    vmLimit: positiveInteger(value.vmLimit, "vmLimit"),
+    platformCompute: platformCompute ?? false,
+  };
+}
+
+/** Whether this organization may run on the deployment's own cloud credential.
+ * An absent row is the free tier, so it reads 0 exactly as a written 0 does. */
+function platformComputeSql(orgSource: string): string {
+  return `COALESCE(
+            (SELECT platform_compute FROM org_entitlements WHERE org_id = ${orgSource}),
+            0)`;
+}
 
 /** The billing key, or undefined where no billing service is attached. */
 function billingKey(vars: RuntimeVariables): string | undefined {
@@ -256,30 +287,30 @@ export function addEntitlementsRoutes(
   router.put("/orgs/:id/entitlements", async (context) => {
     const runtime = runtimeFactory(context);
     await requireBillingCaller(context, runtime);
-    const value = await readJson(context.req.raw);
-    if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
-    const seats = positiveInteger(value.seatLimit, "seatLimit");
-    const vms = positiveInteger(value.vmLimit, "vmLimit");
+    const written = entitlementsRequest(await readJson(context.req.raw));
     const orgId = context.req.param("id");
     const now = Date.now();
     // vmLimit lands in orgs.vm_limit, the column core/workspaces.ts has always
     // enforced. Storing it here as well would be a second source of truth for
     // one limit, and the enforcing statement would keep reading the other one.
-    const written = await transaction<{ id: string }>(runtime.db, [
+    const rowsWritten = await transaction<{ id: string }>(runtime.db, [
       {
-        q: `INSERT INTO org_entitlements (org_id, seat_limit, updated_at)
-            SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM orgs WHERE id = ?1)
+        q: `INSERT INTO org_entitlements
+              (org_id, seat_limit, platform_compute, updated_at)
+            SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM orgs WHERE id = ?1)
             ON CONFLICT(org_id) DO UPDATE SET
-              seat_limit = excluded.seat_limit, updated_at = excluded.updated_at
+              seat_limit = excluded.seat_limit,
+              platform_compute = excluded.platform_compute,
+              updated_at = excluded.updated_at
             RETURNING org_id AS id`,
-        v: [orgId, seats, now],
+        v: [orgId, written.seatLimit, written.platformCompute === true ? 1 : 0, now],
       },
       {
         q: "UPDATE orgs SET vm_limit = ?2, updated_at = ?3 WHERE id = ?1 RETURNING id",
-        v: [orgId, vms, now],
+        v: [orgId, written.vmLimit, now],
       },
     ]);
-    if (written[0]?.length !== 1 || written[1]?.length !== 1) {
+    if (rowsWritten[0]?.length !== 1 || rowsWritten[1]?.length !== 1) {
       throw new HttpError(404, "organization not found");
     }
     return context.body(null, 204);
@@ -298,12 +329,14 @@ export function addEntitlementsRoutes(
       vms_used: number;
       seats_used: number;
       seat_limit: number;
+      platform_compute: number;
     }>(runtime.db, {
       q: `SELECT o.vm_limit,
                  (SELECT COUNT(*) FROM workspaces
                   WHERE org_id = o.id AND phase IN (${VM_SLOT_PHASES})) AS vms_used,
                  ${activeSeatsSql("o.id")} AS seats_used,
-                 ${seatLimitSql("o.id")} AS seat_limit
+                 ${seatLimitSql("o.id")} AS seat_limit,
+                 ${platformComputeSql("o.id")} AS platform_compute
           FROM orgs o
           WHERE o.id = ?1 AND EXISTS (
             SELECT 1 FROM memberships
@@ -319,6 +352,10 @@ export function addEntitlementsRoutes(
       seatLimit: seatGateEnabled(runtime.vars) ? org.seat_limit : null,
       vmsUsed: org.vms_used,
       vmLimit: org.vm_limit,
+      // Why a create is refused, or allowed without an organization
+      // credential. Reported unconditionally: the column is 0 on every
+      // deployment with no billing service, which is the honest answer there.
+      platformCompute: org.platform_compute === 1,
     });
   });
 

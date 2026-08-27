@@ -73,14 +73,28 @@ export interface ApiError {
   paymentUrl?: string;
 }
 
+/** The one write a private billing service makes. Two integers and one flag;
+ * no plan name, ever. `platformCompute` is optional and absent means 0: the
+ * body states an organization's whole entitlement, so a write that omits the
+ * flag says the organization does not have it, exactly as a missing row does.
+ */
+export interface EntitlementsRequest {
+  seatLimit: number;
+  vmLimit: number;
+  platformCompute?: boolean;
+}
+
 /** What an organization's limits are and how much of them is in use.
  * `seatLimit` is null where no billing service is attached: that deployment
- * has no cap to show, rather than a large one. */
+ * has no cap to show, rather than a large one. `platformCompute` is why a
+ * workspace create is refused or allowed without an organization credential,
+ * so an admin can see the reason rather than guess at it. */
 export interface OrgUsageResponse {
   seatsUsed: number;
   seatLimit: number | null;
   vmsUsed: number;
   vmLimit: number;
+  platformCompute: boolean;
 }
 
 /** Where an admin goes to deal with billing, carrying a signed hop. One link,

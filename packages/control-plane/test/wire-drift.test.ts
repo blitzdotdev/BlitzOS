@@ -288,11 +288,17 @@ const seatLimitError: SharedShape<wire.ApiError, schema.ApiError> = {
   paymentUrl: "https://billing.example/checkout#token=header.payload.signature",
 };
 
+const entitlementsRequest: SharedShape<
+  wire.EntitlementsRequest,
+  schema.EntitlementsRequest
+> = { seatLimit: 3, vmLimit: 10, platformCompute: true };
+
 const orgUsage: SharedShape<wire.OrgUsageResponse, schema.OrgUsageResponse> = {
   seatsUsed: 2,
   seatLimit: 3,
   vmsUsed: 1,
   vmLimit: 10,
+  platformCompute: true,
 };
 
 // No billing service attached: a null cap is a different field than a number.
@@ -535,6 +541,7 @@ const fullFieldValues = [
   registerKeysResponse,
   apiError,
   seatLimitError,
+  entitlementsRequest,
   orgUsage,
   uncappedOrgUsage,
   orgBilling,
@@ -607,6 +614,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PollResponse>().toEqualTypeOf<schema.PollResponse>();
     expectTypeOf<wire.RegisterKeysResponse>().toEqualTypeOf<schema.RegisterKeysResponse>();
     expectTypeOf<wire.ApiError>().toEqualTypeOf<schema.ApiError>();
+    expectTypeOf<wire.EntitlementsRequest>().toEqualTypeOf<schema.EntitlementsRequest>();
     expectTypeOf<wire.OrgUsageResponse>().toEqualTypeOf<schema.OrgUsageResponse>();
     expectTypeOf<wire.OrgBillingResponse>().toEqualTypeOf<schema.OrgBillingResponse>();
     expectTypeOf<wire.CreateVolumeRequest>().toEqualTypeOf<schema.CreateVolumeRequest>();

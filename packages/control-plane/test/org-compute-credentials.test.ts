@@ -220,8 +220,32 @@ beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM workspaces"),
     env.DB.prepare("DELETE FROM org_compute_credentials"),
+    env.DB.prepare("DELETE FROM org_entitlements"),
   ]);
 });
+
+const ENTITLEMENTS_KEY = "entitlements-test-key";
+
+/** The billing service's one write, through the route it actually uses. */
+async function writeEntitlements(
+  app: Awaited<ReturnType<typeof appFor>>["app"],
+  orgId: string,
+  platformCompute: boolean,
+) {
+  return appRequest(
+    app,
+    `/orgs/${encodeURIComponent(orgId)}/entitlements`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${ENTITLEMENTS_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ seatLimit: 5, vmLimit: 20, platformCompute }),
+    },
+    { ENTITLEMENTS_API_KEY: ENTITLEMENTS_KEY },
+  );
+}
 
 describe("cloud workspace credential policy", () => {
   it("defaults to deployment fallback and rejects unknown values", () => {
@@ -360,6 +384,82 @@ describe("organization compute credentials", () => {
     expect(created.status).toBe(402);
     await expect(created.json()).resolves.toEqual({
       error: "aws compute credential required; an organization admin can add one at /orgs/aws-tenant-without-key-org/compute-credentials/aws",
+      retryAction: null,
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("runs a subscribed org on the deployment credential without one of its own", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await userSession("subscribed-tenant");
+    expect((await writeEntitlements(app, "subscribed-tenant-org", true)).status).toBe(204);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(201);
+    const createCall = fake.calls.find(
+      (call) => call.url.endsWith("/servers") && call.method === "POST",
+    );
+    expect(createCall?.authorization).toBe("Bearer deployment-test-token");
+    // The pinned source is what destroy and the janitors resolve by, so it has
+    // to say deployment even though the policy is byok-required.
+    expect(await env.DB.prepare(
+      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'subscribed-tenant-org' LIMIT 1",
+    ).first()).toMatchObject({ compute_credential_source: "deployment" });
+  });
+
+  it("keeps using an org credential while the org is subscribed", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await userSession("subscribed-byok");
+    expect((await putHetznerForOrg(app, cookie, "subscribed-byok-org")).status).toBe(200);
+    expect((await writeEntitlements(app, "subscribed-byok-org", true)).status).toBe(204);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(201);
+    const createCall = fake.calls.find(
+      (call) => call.url.endsWith("/servers") && call.method === "POST",
+    );
+    expect(createCall?.authorization).toBe("Bearer org-test-token");
+    expect(await env.DB.prepare(
+      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'subscribed-byok-org' LIMIT 1",
+    ).first()).toMatchObject({ compute_credential_source: "org" });
+  });
+
+  it("still refuses a create once the flag is written back to zero", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await userSession("lapsed-tenant");
+    expect((await writeEntitlements(app, "lapsed-tenant-org", false)).status).toBe(204);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(402);
+    await expect(created.json()).resolves.toEqual({
+      error: "hetzner compute credential required; an organization admin can add one at /orgs/lapsed-tenant-org/compute-credentials/hetzner",
       retryAction: null,
     });
     expect(fake.calls).toEqual([]);

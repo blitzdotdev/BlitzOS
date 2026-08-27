@@ -158,6 +158,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
       fields: [
         { name: "org_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid", foreignKey: { table: "orgs", column: "id" } },
         { name: "seat_limit", type: "integer", sqlType: "integer", notNull: true, check: "seat_limit >= 1" },
+        // Migration 0037. A boolean-shaped integer: the plan that produced it
+        // stays on the billing side, and core only ever reads 0 or 1.
+        { name: "platform_compute", type: "integer", sqlType: "integer", notNull: true, default: { l: 0 } },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
       ],
       extensions: [DENY_ALL_RULES],
