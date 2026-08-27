@@ -448,7 +448,9 @@ targets either support it or degrade to the tested polling contract.
 
 Expected control-plane changes:
 
-- `packages/control-plane/migrations/0029_*.sql` and following migrations
+- `packages/control-plane/migrations/0036_workspace_sessions.sql` and
+  `0037_presence_connections.sql` (renumbered past main's `0035` at the
+  2026-08-26 rebase)
 - `packages/control-plane/core/presence.ts`
 - `packages/control-plane/core/workspace-sessions.ts`
 - `packages/control-plane/core/webapp-state.ts` during V1-to-V2 compatibility
