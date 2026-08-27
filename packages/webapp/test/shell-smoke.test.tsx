@@ -5,6 +5,7 @@ import CloudApp from "../src/CloudApp.js";
 import { ApiRequestError, type ControlPlaneClient } from "../src/api.js";
 import { standaloneResolver } from "../src/resolver.js";
 import {
+  decodeWorkspaceWebAppStateResponse,
   defaultWorkspaceFiles,
   defaultWorkspaceWebAppState,
   type WorkspaceWebAppStateV1,
@@ -58,9 +59,11 @@ vi.mock("../src/TtydTerminal.js", async () => {
 vi.mock("../src/chat/ChatPanel.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatPanel: ({ initialSessionId, onSignIn }: {
+    ChatPanel: ({ initialSessionId, sessionIntent, onOpenFile, onStatusChange }: {
       initialSessionId: string | null;
-      onSignIn?: (provider: "claude" | "codex") => void;
+      sessionIntent?: string;
+      onOpenFile?: (filePath: string) => void;
+      onStatusChange?: (status: "idle" | "generating" | "needs-attention" | "done" | "error") => void;
     }) => {
       const [mountId] = React.useState(() => `chat-${++webAppHarness.nextMountId}`);
       React.useEffect(() => {
@@ -71,36 +74,27 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
         <div
           data-testid="chat-session"
           data-initial-session-id={initialSessionId ?? ""}
+          data-session-intent={sessionIntent ?? ""}
           data-mount-id={mountId}
         >
+          {(["generating", "needs-attention", "done", "error"] as const).map((status) => (
+            <button
+              type="button"
+              data-testid={`chat-status-${status}`}
+              key={status}
+              onClick={() => onStatusChange?.(status)}
+            >{status}</button>
+          ))}
           <button
             type="button"
-            data-testid="chat-sign-in"
-            onClick={() => onSignIn?.("claude")}
-          >Sign in to Claude</button>
-          <button
-            type="button"
-            data-testid="chat-sign-in-codex"
-            onClick={() => onSignIn?.("codex")}
-          >Sign in to Codex</button>
+            data-testid="chat-open-file"
+            onClick={() => onOpenFile?.("src/app.ts")}
+          >open file</button>
         </div>
       );
     },
   };
 });
-
-type TerminalSubmitDetail = { data?: string; enters?: number; sessionKey?: string };
-
-/** Collects what the shell types at terminal tabs until the returned stop. */
-function recordTerminalSubmits(): { submits: TerminalSubmitDetail[]; stop: () => void } {
-  const submits: TerminalSubmitDetail[] = [];
-  const record = (event: Event) => {
-    // SAFETY: The shell is the only dispatcher of this event name in the test environment.
-    submits.push((event as CustomEvent<TerminalSubmitDetail>).detail);
-  };
-  window.addEventListener("blitz:terminal-submit", record);
-  return { submits, stop: () => window.removeEventListener("blitz:terminal-submit", record) };
-}
 
 function selectedSessionId(container: HTMLElement): string | undefined {
   return container.querySelector<HTMLElement>(
@@ -156,6 +150,8 @@ const creating: WorkspaceView = {
   canObserve: false,
   launchable: false,
   revision: 1,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_000_000,
   ssh: null,
   volumeId: null,
   error: null,
@@ -176,6 +172,8 @@ const running: WorkspaceView = {
   canObserve: true,
   launchable: true,
   revision: 2,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_005_000,
   ssh: {
     host: "box.example.test",
     port: 2222,
@@ -278,10 +276,14 @@ function client(): ControlPlaneClient {
     })),
     getGlobalWebAppState: vi.fn(async () => ({ doc: null, updatedAt: null })),
     putGlobalWebAppState: vi.fn(async (doc) => ({ doc, updatedAt: 1 })),
-    getWorkspaceWebAppState: vi.fn(async (workspaceId) => ({
-      doc: serverWorkspaceStates.get(workspaceId) ?? null,
-      updatedAt: serverWorkspaceStates.has(workspaceId) ? 1 : null,
-    })),
+    // Seeded docs take the production read path: the real client decodes
+    // (and normalizes) every response before the shell sees it.
+    getWorkspaceWebAppState: vi.fn(async (workspaceId) => decodeWorkspaceWebAppStateResponse(
+      JSON.stringify({
+        doc: serverWorkspaceStates.get(workspaceId) ?? null,
+        updatedAt: serverWorkspaceStates.has(workspaceId) ? 1 : null,
+      }),
+    )),
     putWorkspaceWebAppState: vi.fn(async (workspaceId, doc) => {
       serverWorkspaceStates.set(workspaceId, doc);
       return { doc, updatedAt: 1 };
@@ -336,7 +338,7 @@ function saveTabs(
       // SAFETY: Each caller below supplies complete tab objects accepted by the state decoder.
       tabs: tabs as WorkspaceWebAppStateV1["tabs"]["tabs"],
       activeId,
-      nextId: Math.max(...tabs.map((tab) => Number(tab.id))) + 1,
+      nextId: tabs.reduce((highest, tab) => Math.max(highest, Number(tab.id)), 0) + 1,
       ...(sideActiveId === undefined ? {} : { sideActiveId }),
     },
     drawer: defaultWorkspaceFiles(),
@@ -414,6 +416,40 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  it("returns to workspace details when workspace deletion is cancelled", async () => {
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const detailsButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Workspace details for workspace-running-name"]',
+    );
+    await act(async () => detailsButton?.click());
+    await settle();
+    expect(view.container.textContent).toContain("Workspace details");
+
+    const deleteButton = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Delete workspace");
+    await act(async () => deleteButton?.click());
+    expect(view.container.textContent).toContain("Delete workspace?");
+
+    const cancelButton = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "No");
+    await act(async () => cancelButton?.click());
+    expect(view.container.textContent).not.toContain("Delete workspace?");
+    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.textContent).toContain("Delete workspace");
+    expect(wire.destroy).not.toHaveBeenCalled();
+
+    await view.unmount();
+  });
+
   it("creates an organization from the identity-only onboarding page", async () => {
     const createOrg = vi.fn(async () => ({
       org: tenantMe.org,
@@ -486,6 +522,23 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector('form[aria-label="Create workspace template"]'))
       .not.toBeNull();
 
+    await view.unmount();
+  });
+
+  it("opens the Create organization dialog from inside a workspace", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
+    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create"));
+    expect(document.querySelector('[aria-label="Create organization"]')).not.toBeNull();
     await view.unmount();
   });
 
@@ -749,11 +802,11 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("retains visited terminal and chat panes while hiding inactive panes", async () => {
+  it("retains visited terminal panes while hiding inactive panes", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
-      { id: 2, type: "chat", chatProvider: "claude", chatSessionId: "chat-two" },
+      { id: 2, type: "claude" },
     ], 1);
     const view = await render(
       <CloudApp
@@ -765,29 +818,148 @@ describe("webapp shell smoke", () => {
     await settle();
 
     const terminal = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
-    expect(view.container.querySelector('[data-testid="chat-session"]')).toBeNull();
+    expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
       '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
     )?.click());
-    const chat = view.container.querySelector<HTMLElement>('[data-testid="chat-session"]')!;
-    expect(chat.dataset.initialSessionId).toBe("chat-two");
+    const claude = view.container.querySelector<HTMLElement>(
+      '[data-testid="terminal-session"][data-session-key="2"]',
+    )!;
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
-    expect(chat.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
+    expect(claude.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
       '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
     )?.click());
     expect(view.container.querySelector('[data-testid="terminal-session"]')).toBe(terminal);
-    expect(view.container.querySelector('[data-testid="chat-session"]')).toBe(chat);
+    expect(view.container.querySelector(
+      '[data-testid="terminal-session"][data-session-key="2"]',
+    )).toBe(claude);
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(false);
-    expect(chat.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
+    expect(claude.closest<HTMLElement>(".webapp-workspace-session")?.hidden).toBe(true);
     expect(webAppHarness.mounts).toHaveBeenCalledTimes(2);
 
     await view.unmount();
   });
 
-  it("reuses retained terminal instances and unmounts a visited tab when closed", async () => {
+  it("does not expose native Chat or restore its persisted layout records", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
+      { id: 2, type: "terminal" },
+    ], 1);
+    const wire = runningClient();
+    const view = await render(
+      <CloudApp
+        client={wire}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelector("[data-testid='chat-session']")).toBeNull();
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="2"]')).not.toBeNull();
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      ".webapp-new-tab-spawn",
+    )?.click());
+    const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-agent-menu [role='menuitem']",
+    )].map(({ textContent }) => textContent?.trim());
+    expect(actions).toEqual(["Claude", "Codex", "Terminal"]);
+    // Dropping the record on read is not an edit: a plain load never echoes a
+    // write that could outrank another account's newer save.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    expect(wire.putWorkspaceWebAppState).not.toHaveBeenCalled();
+    await view.unmount();
+  });
+
+  it("keeps file tabs out of the workspace session rail and collapsed count", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "claude" },
+      { id: 2, type: "terminal" },
+      { id: 3, type: "file", filePath: "getting-started.md" },
+    ], 3);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(2);
+    expect(view.container.querySelector('[data-rail-session-id="3"]')).toBeNull();
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="3"]')).not.toBeNull();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      ".webapp-workspace-disclosure",
+    )?.click());
+    expect(view.container.querySelector(".webapp-workspace-session-count")?.textContent)
+      .toBe("2 sessions");
+
+    await view.unmount();
+  });
+
+  it("keeps the visible agent session highlighted when a side-pane file has focus", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "claude" },
+      { id: 2, type: "file", filePath: "test1.md", region: "side" },
+    ], 1, 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      '.webapp-pane-strip[data-region="side"] .webapp-tab-cell[data-session-id="2"] [role="tab"]',
+    )?.click());
+    const railAgent = view.container.querySelector<HTMLButtonElement>('[data-rail-session-id="1"]');
+    expect(railAgent?.classList.contains("webapp-session--active")).toBe(true);
+    expect(view.container.querySelector('[data-rail-session-id="2"]')).toBeNull();
+
+    await view.unmount();
+  });
+
+  it("keeps Rename as the only managed-session context action", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "claude", title: "Release work" },
+      { id: 2, type: "terminal" },
+    ], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const sessionCell = () => view.container.querySelector<HTMLElement>(
+      ".webapp-tab-cell[data-session-id='1']",
+    );
+    await act(async () => sessionCell()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    const actions = [...view.container.querySelectorAll<HTMLButtonElement>(
+      ".webapp-session-menu [role='menuitem']",
+    )].map(({ textContent }) => textContent);
+    expect(actions).toEqual(["Rename"]);
+    expect(view.container.querySelector("[aria-label='Archived sessions']")).toBeNull();
+    await view.unmount();
+  });
+
+  it("closes the active session tab and removes its workspace-rail record", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "terminal" },
@@ -825,7 +997,36 @@ describe("webapp shell smoke", () => {
     expect(first.isConnected).toBe(false);
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
+    expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
+    expect(view.container.querySelector('[data-rail-session-id="1"]')).toBeNull();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    });
+    expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
+      .toEqual([{ id: 2, type: "claude" }]);
 
+    await view.unmount();
+  });
+
+  it("uses the standard empty pane after every tab is closed", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close Terminal"]',
+    )?.click());
+    expect(view.container.textContent).toContain("Empty pane");
+    expect(view.container.textContent).not.toContain("Resume your session");
+    expect(view.container.textContent).not.toContain("Start a session");
+    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(0);
     await view.unmount();
   });
 
@@ -871,6 +1072,77 @@ describe("webapp shell smoke", () => {
     expect(drawer.querySelector('[role="tab"][aria-selected="true"]')?.textContent)
       .toBe("teenyapps");
 
+    await view.unmount();
+  });
+
+  it("closes mobile workspace navigation before showing workspace details", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const openNavigation = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open workspace navigation"]',
+    );
+    await act(async () => openNavigation?.click());
+    expect(view.container.querySelector('.drive-rail--open')).not.toBeNull();
+
+    const detailsButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Workspace details for workspace-running-name"]',
+    );
+    await act(async () => detailsButton?.click());
+    expect(view.container.querySelector('.drive-rail--open')).toBeNull();
+    expect(view.container.textContent).toContain("Workspace details");
+
+    await view.unmount();
+  });
+
+  it("resizes the side pane by dragging its handle, no narrower than the default", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    saveTabs("workspace-running", [
+      { id: 1, type: "terminal" },
+      { id: 2, type: "panel", panel: "files", region: "side" },
+    ], 1, 2);
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const panes = view.container.querySelector<HTMLElement>(".webapp-panes")!;
+    const width = () => panes.style.getPropertyValue("--side-pane-width");
+    const handle = view.container.querySelector<HTMLElement>(".webapp-pane-resizer");
+    expect(handle).not.toBeNull();
+    expect(width()).toBe("340px");
+
+    // Mouse events only: the drag must not depend on pointer capture.
+    await act(async () => handle?.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, button: 0, clientX: 800 }),
+    ));
+    await act(async () => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 700 })));
+    expect(width()).toBe("440px");
+    // Dragging past the default width stops at the default.
+    await act(async () => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 1000 })));
+    expect(width()).toBe("340px");
+    await act(async () => window.dispatchEvent(new MouseEvent("mouseup", { clientX: 1000 })));
+    await act(async () => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 600 })));
+    expect(width()).toBe("340px");
     await view.unmount();
   });
 
@@ -963,169 +1235,6 @@ describe("webapp shell smoke", () => {
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs.find(
       (tab) => tab.id === 1,
     )).toEqual({ id: 1, type: "terminal", region: "side" });
-
-    await view.unmount();
-  });
-
-  it("drives the open claude tab into its login flow from chat", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
-      { id: 2, type: "claude" },
-    ], 2);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    // Visit chat second, so the claude pane is already mounted behind it.
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )?.click());
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("2");
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    });
-    recorder.stop();
-
-    // The slash command and its submit are separate writes, and both are
-    // addressed at the claude tab rather than at whatever happens to be
-    // selected when they land.
-    expect(recorder.submits).toEqual([
-      { data: "/login", enters: 0, sessionKey: "2" },
-      { data: "\r", enters: 0, sessionKey: "2" },
-    ]);
-
-    await view.unmount();
-  });
-
-  it("opens a claude tab for the login flow when none is running", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("2");
-    const terminal = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="2"]',
-    );
-    expect(terminal?.textContent).toBe("claude");
-    expect(terminal?.dataset.active).toBe("true");
-    expect(recorder.submits).toEqual([]);
-
-    // A tab that was not open yet has to connect and let the TUI take the pty
-    // before anything typed at it is read.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_800));
-    });
-    recorder.stop();
-    expect(recorder.submits).toEqual([
-      { data: "/login", enters: 0, sessionKey: "2" },
-      { data: "\r", enters: 0, sessionKey: "2" },
-    ]);
-
-    await view.unmount();
-  });
-
-  it("opens a fresh codex device-auth tab without typing the localhost login command", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "codex", chatSessionId: "chat-one" },
-      { id: 2, type: "codex" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in-codex"]',
-    )?.click());
-
-    expect(selectedSessionId(view.container)).toBe("3");
-    const terminal = view.container.querySelector<HTMLElement>(
-      '[data-testid="terminal-session"][data-session-key="3"]',
-    );
-    expect(terminal?.textContent).toBe("codex");
-    expect(terminal?.dataset.active).toBe("true");
-
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_800));
-    });
-    recorder.stop();
-    expect(recorder.submits).toEqual([]);
-
-    await view.unmount();
-  });
-
-  it("drops an abandoned sign-in instead of re-arming it on the way back", async () => {
-    window.history.replaceState({}, "", "/workspaces/workspace-running");
-    saveTabs("workspace-running", [
-      { id: 1, type: "chat", chatProvider: "claude", chatSessionId: "chat-one" },
-    ], 1);
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const recorder = recordTerminalSubmits();
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '[data-testid="chat-sign-in"]',
-    )?.click());
-    expect(selectedSessionId(view.container)).toBe("2");
-
-    // Leaving the tab inside the warm-up window is the reader abandoning the
-    // flow, not pausing it.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    });
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="1"] [role="tab"]',
-    )?.click());
-    expect(recorder.submits).toEqual([]);
-
-    // Coming back to that tab must not resume the request. The pane is a live
-    // agent TUI by then, and `/login` plus Enter typed into it mid-session
-    // interrupts whatever the reader was actually doing there.
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-tab-cell[data-session-id="2"] [role="tab"]',
-    )?.click());
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1_800));
-    });
-    recorder.stop();
-    expect(recorder.submits).toEqual([]);
 
     await view.unmount();
   });

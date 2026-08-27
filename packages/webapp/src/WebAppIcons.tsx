@@ -102,4 +102,3 @@ export function FolderIcon(props: WebAppIconProps) {
     </svg>
   );
 }
-

@@ -69,8 +69,8 @@
   flex: 1;
   align-items: center;
   gap: 9px;
-  margin: 7px 0 7px 8px;
-  padding: 0 8px;
+  margin: 7px 0;
+  padding: 0 12px;
   border-radius: 8px;
   text-align: left;
 }
@@ -130,16 +130,23 @@
   background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
+.webapp-org-backdrop {
+  position: fixed;
+  z-index: 19;
+  inset: 0;
+}
+
 .webapp-org-menu {
   position: absolute;
   z-index: 20;
   top: calc(100% - 4px);
   right: 16px;
   left: 16px;
+  padding: 6px;
   border: 1px solid var(--rule);
-  border-radius: 8px;
+  border-radius: var(--r-card);
   background: var(--paper);
-  overflow: hidden;
+  box-shadow: var(--lift);
 }
 
 .webapp-org-menu-label {
@@ -152,14 +159,21 @@
 
 .webapp-org-menu-current {
   display: flex;
+  min-height: 38px;
   align-items: center;
   justify-content: space-between;
-  padding: 7px 12px;
+  padding: 0 12px;
+  border-radius: var(--r-item);
   color: var(--ink);
   font-weight: 650;
 }
 
-.webapp-org-menu-current span:last-child {
+.webapp-org-menu-switch:hover,
+.webapp-org-menu-switch:focus-visible {
+  background: var(--hover);
+}
+
+.webapp-org-menu-check {
   color: var(--accent);
 }
 
@@ -313,7 +327,7 @@
   color: var(--ink) !important;
 }
 
-.webapp-workspace-delete {
+.webapp-workspace-menu {
   display: grid;
   grid-column: 4;
   grid-row: 2;
@@ -359,13 +373,12 @@
   background: color-mix(in oklab, var(--ink) 6%, transparent);
 }
 
-.webapp-workspace-delete .mi-trash {
-  width: 14px;
-  height: 14px;
+.webapp-workspace-menu span {
+  display: block;
 }
 
-.webapp-workspace:hover .webapp-workspace-delete,
-.webapp-workspace:focus-within .webapp-workspace-delete,
+.webapp-workspace:hover .webapp-workspace-menu,
+.webapp-workspace:focus-within .webapp-workspace-menu,
 .webapp-workspace:hover .webapp-workspace-details-button,
 .webapp-workspace:focus-within .webapp-workspace-details-button {
   visibility: visible;
@@ -373,12 +386,12 @@
   pointer-events: auto;
 }
 
-.webapp-workspace-delete:hover:not(:disabled),
-.webapp-workspace-delete:focus-visible:not(:disabled) {
+.webapp-workspace-menu:hover:not(:disabled),
+.webapp-workspace-menu:focus-visible:not(:disabled) {
   color: var(--accent) !important;
 }
 
-.webapp-workspace-delete:disabled {
+.webapp-workspace-menu:disabled {
   cursor: default;
 }
 
@@ -589,8 +602,7 @@
   color: var(--accent);
 }
 
-.webapp-session--active,
-.webapp-session--unread {
+.webapp-session--active {
   font-weight: 650 !important;
 }
 
@@ -606,20 +618,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.webapp-session-spinner {
-  width: 10px;
-  height: 10px;
-  flex: none;
-  border: 1px solid var(--accent);
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: webapp-session-spin 900ms linear infinite;
-}
-
-@keyframes webapp-session-spin {
-  to { transform: rotate(360deg); }
 }
 
 .webapp-support {
@@ -770,7 +768,7 @@
 
   .webapp-org-button {
     min-height: 44px;
-    padding-left: 16px;
+    padding: 0 8px;
   }
 
   .webapp-workspace-add {
@@ -785,40 +783,43 @@
   }
 
   .webapp-workspace {
-    padding-top: 8px;
-    padding-bottom: 8px;
+    padding-top: 3px;
+    padding-bottom: 3px;
   }
 
   .webapp-workspace:first-child {
-    padding-top: 8px;
+    padding-top: 3px;
   }
 
   .webapp-workspace-button {
-    padding: 0 16px;
+    min-height: 36px;
+    padding: 0 10px;
   }
 
   .webapp-workspace-disclosure {
-    width: 44px;
-    min-width: 44px;
-    min-height: 44px;
-    padding-right: 16px;
+    width: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding-right: 10px;
   }
 
   .webapp-workspace-meta {
-    padding-right: 16px;
-    padding-left: 38px;
+    min-height: 18px;
+    padding-right: 10px;
+    padding-left: 32px;
   }
 
-  .webapp-workspace--expanded .webapp-workspace-delete,
+  .webapp-workspace--expanded .webapp-workspace-menu,
   .webapp-workspace--expanded .webapp-workspace-details-button {
-    min-height: var(--touchTarget);
+    min-height: 22px;
     visibility: visible;
     opacity: 1;
     pointer-events: auto;
   }
 
   .webapp-session {
-    padding: 0 16px 0 38px;
+    min-height: 30px;
+    padding: 0 10px 0 32px;
   }
 
   .webapp-support {
@@ -837,9 +838,6 @@
     transition: none;
   }
 
-  .webapp-session-spinner {
-    animation: none;
-  }
 }
 
 /* Drag a screenshot anywhere over the cockpit: the overlay is the only signal

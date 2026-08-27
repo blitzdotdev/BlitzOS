@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { IdentityRecord, OrgRecord } from '../protocol';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import { SessionTypeIcon, type WebAppTabModel } from '../WebAppHeader';
+import { SessionTypeIcon, type WebAppSessionType } from '../WebAppHeader';
 import { NewWorkspaceIcon, OrganizationIcon } from '../WebAppIcons';
 import { DriveGlyph, RecipeGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons';
 
@@ -10,6 +10,12 @@ import { DriveGlyph, RecipeGlyph, ShareGlyph, TemplateGlyph } from './DriveIcons
  * and a divider, and the workspace tree keeps the section header below it. */
 
 export type DriveRailNav = 'templates' | 'recipes' | 'drive';
+export type DriveRailSession = {
+  id: string;
+  label: string;
+  agent: WebAppSessionType;
+  filePath?: string;
+};
 
 function workspaceStateLabel(workspace: CloudWorkspaceModel): string {
   if (workspace.lifecycleStatus === 'creating') return 'creating';
@@ -59,8 +65,8 @@ export function DriveRail({
   onSwitchOrg,
   onCreateOrg,
   onOpenSettings,
+  onOpenWorkspaceShare,
   onOpenWorkspaceDetails,
-  onDeleteWorkspace,
   drawerOpen,
   onCloseDrawer,
 }: {
@@ -70,7 +76,7 @@ export function DriveRail({
   identity: IdentityRecord | null;
   org: OrgRecord | null;
   organizations: OrgRecord[];
-  sessions: WebAppTabModel[];
+  sessions: DriveRailSession[];
   activeSessionId: string;
   onSelectSession: (sessionId: string) => void;
   onOpenDrive: () => void;
@@ -81,32 +87,23 @@ export function DriveRail({
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
   onOpenSettings: () => void;
+  onOpenWorkspaceShare: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
   drawerOpen: boolean;
   onCloseDrawer: () => void;
 }) {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
   const [collapsedWorkspaceIds, setCollapsedWorkspaceIds] = useState<Set<string>>(() => new Set());
-  const orgSelector = useRef<HTMLDivElement>(null);
   const orgLabel = org?.name || org?.slug || 'Organization';
   const userLabel = identity?.name || identity?.email || 'BlitzOS';
 
   useEffect(() => {
     if (!orgMenuOpen) return;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
-      if (!orgSelector.current?.contains(event.target as Node)) setOrgMenuOpen(false);
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOrgMenuOpen(false);
     };
-    window.addEventListener('pointerdown', closeOnPointerDown);
     window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      window.removeEventListener('pointerdown', closeOnPointerDown);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
+    return () => window.removeEventListener('keydown', closeOnEscape);
   }, [orgMenuOpen]);
 
   const toggleWorkspaceSessions = (workspaceId: string) => {
@@ -124,7 +121,7 @@ export function DriveRail({
         className={`drive-rail webapp-rail${drawerOpen ? ' drive-rail--open webapp-rail--drawer-open' : ''}`}
         aria-label="Cloud workspaces"
       >
-        <div className="webapp-org-wrap" ref={orgSelector}>
+        <div className="webapp-org-wrap">
           <button
             className="webapp-org-button"
             type="button"
@@ -143,11 +140,14 @@ export function DriveRail({
             aria-label="Close workspace navigation"
             onClick={onCloseDrawer}
           >×</button>
+          {orgMenuOpen && (
+            <div className="webapp-org-backdrop" onMouseDown={() => setOrgMenuOpen(false)} />
+          )}
           <div className="webapp-org-menu" id="webapp-org-menu" role="menu" hidden={!orgMenuOpen}>
             <div className="webapp-org-menu-label">organization</div>
             <div className="webapp-org-menu-current" role="menuitemradio" aria-checked="true">
               <span>{orgLabel}</span>
-              <span aria-hidden="true">✓</span>
+              <span className="webapp-org-menu-check" aria-hidden="true">✓</span>
             </div>
             {organizations.filter((candidate) => candidate.id !== org?.id).map((candidate) => (
               <button
@@ -222,6 +222,7 @@ export function DriveRail({
           {workspaces.length === 0 && <div className="webapp-tree-empty">No workspaces yet</div>}
           {workspaces.map((workspace) => {
             const workspaceActive = workspace.canControl && workspace.id === activeWorkspaceId;
+            const canManageWorkspace = workspace.accessRole === 'owner' || workspace.accessRole === 'admin';
             const stateLabel = workspaceStateLabel(workspace);
             const railSessions = workspaceActive ? sessions : [];
             const sessionsId = `workspace-sessions-${workspace.id}`;
@@ -279,13 +280,13 @@ export function DriveRail({
                       {workspaceRow}
                     </div>
                   )}
-                  {workspace.canControl && (
+                  {canManageWorkspace && (
                     <button
                       className="webapp-workspace-details-button"
                       type="button"
                       aria-label={`Share ${workspace.title}`}
                       title={`Share ${workspace.title}`}
-                      onClick={() => onOpenWorkspaceDetails(workspace.id)}
+                      onClick={() => onOpenWorkspaceShare(workspace.id)}
                     ><ShareGlyph /></button>
                   )}
                   {canDiscloseSessions && (
@@ -318,13 +319,13 @@ export function DriveRail({
                   </div>
                   {workspace.canControl && (
                     <button
-                      className="webapp-workspace-delete"
+                      className="webapp-workspace-menu"
                       type="button"
-                      aria-label={`Delete ${workspace.title}`}
-                      title={`Delete ${workspace.title}`}
-                      onClick={() => onDeleteWorkspace(workspace.id)}
+                      aria-label={`Workspace details for ${workspace.title}`}
+                      title={`Workspace details for ${workspace.title}`}
+                      onClick={() => onOpenWorkspaceDetails(workspace.id)}
                     >
-                      <span className="mi-trash" aria-hidden="true" />
+                      <span className="codicon codicon-ellipsis" aria-hidden="true" />
                     </button>
                   )}
                 </div>
@@ -354,9 +355,6 @@ export function DriveRail({
                             filePath={session.filePath}
                           />
                           <span className="webapp-session-label">{session.label}</span>
-                          {session.pending && (
-                            <span className="webapp-session-spinner" aria-label="working" />
-                          )}
                         </button>
                       );
                     })}

@@ -91,6 +91,50 @@ describe("server-side webApp state", () => {
     expect(invalid.status).toBe(400);
   });
 
+  it("keeps bounded managed-session titles and ignores retired layout keys", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/webapp-state`;
+    const sendTabs = (tabs: unknown) => appRequest(app, path, {
+      method: "PUT",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...workspaceDoc, tabs }),
+    });
+    const titled = await sendTabs({
+      version: 1,
+      tabs: [{ id: 1, type: "claude", title: "  Release work  " }],
+      activeId: 1,
+      nextId: 2,
+    });
+    expect(titled.status).toBe(200);
+    expect((await titled.json<{ doc: { tabs: { tabs: unknown[] } } }>()).doc.tabs.tabs)
+      .toEqual([{ id: 1, type: "claude", title: "Release work" }]);
+    expect((await sendTabs({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", title: "x".repeat(65) }],
+      activeId: 1,
+      nextId: 2,
+    })).status).toBe(400);
+    // The short-lived archive/window model only ever ran on one self-hosted
+    // deployment. Its keys are unknown fields like any other: archived
+    // records drop and a retained-window tab is an ordinary tab.
+    const legacy = await sendTabs({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", title: "Build", windowOpen: false }],
+      archivedTabs: [{ id: 4, type: "terminal", title: "Archived" }],
+      activeId: 1,
+      nextId: 5,
+    });
+    expect(legacy.status).toBe(200);
+    expect((await legacy.json<{ doc: { tabs: unknown } }>()).doc.tabs).toEqual({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", title: "Build" }],
+      activeId: 1,
+      nextId: 5,
+    });
+  });
+
   it("shares one workspace doc between the owner and org-wide editors", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);

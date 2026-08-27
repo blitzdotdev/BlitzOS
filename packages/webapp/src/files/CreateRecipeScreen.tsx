@@ -295,7 +295,7 @@ export function CreateRecipeScreen({
           </section>
         </div>
 
-        <footer className="create-workspace-actions">
+        <footer className="create-workspace-actions create-workspace-actions--blueprint">
           <button className="blueprint-cancel" type="button" disabled={busy} onClick={onCancel}>Cancel</button>
           <button
             className="create-workspace-primary"

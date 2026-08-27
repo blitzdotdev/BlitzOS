@@ -1,11 +1,11 @@
 # webapp
 
-The browser webApp: workspace rail, terminal, ACP chat, files browser/editor,
-and previews.
+The browser webApp: workspace rail, terminal, files browser/editor, previews,
+and workspace management.
 
 - Renders the server view. Never infers it. Retry, phase, and capability all
   come from the API.
-- Talks only to the control plane. Every workspace surface — terminal, chat,
+- Talks only to the control plane. Every active workspace surface — terminal,
   files, previews — goes through the control plane's
   `/workspaces/:id/webapp/:port` proxy; the browser never connects to a box
   directly.

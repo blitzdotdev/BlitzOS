@@ -3,8 +3,10 @@
 One OCI image is one complete agent workspace: key-only SSH, a ttyd + tmux
 terminal, the ACP session actor, WebDAV plus preview routing, and
 Docker-in-Docker. The state volume keeps host keys, broker client state, agent
-HOME, the actor's chat-session store, and box credentials. `/workspace` is a
-caller-owned bind mount.
+HOME, the actor's ACP session store, and box credentials. `/workspace` is a
+caller-owned bind mount. The ACP actor supports headless recipe execution and
+protocol compatibility; it is not currently exposed as a native cockpit Chat
+surface.
 
 ## Install
 
@@ -124,7 +126,8 @@ behind; the first `claude`/`codex` request whose type matches `HARNESS` and
 that CREATES its tmux session consumes them — model/effort flags plus the
 prompt as a final positional argument — renaming both files to `*.delivered`
 before tmux starts (once-only). Attach never re-injects, `ro` never consumes,
-and `HARNESS=chat` files belong to the bootstrap chat sender. Pinned by
+and `HARNESS=chat` files belong to the headless recipe prompt sender, not a
+native cockpit Chat surface. Pinned by
 `schema/fixtures/recipe-invocation/` + `actor/test/recipe-invocation-guest.test.ts`.
 
 ### Ports and preview URL contract
@@ -151,11 +154,13 @@ authentication, and WebSocket handling remain those of that existing route.
 
 Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar saves are last-write-wins.
 
-## Chat-session store
+## ACP session store
 
-The ACP actor persists chat to `chat-session.db` on the state volume — two
-SQLite tables, `sessions` and `events`. It serves the chat session list,
-replay, and resume, and nothing else: both journaled frame shapes
+The ACP actor persists ACP sessions used by headless recipes to the
+legacy-named `chat-session.db` on the state volume — two SQLite tables,
+`sessions` and `events`. This retained backend is not an available native
+cockpit Chat feature. It serves the ACP session list, replay, and resume, and
+nothing else: both journaled frame shapes
 (`session/update` and `blitz/permission_answered`) live in `events`, so replay
 keeps permission history. On open the actor adopts a pre-rename `journal.db`
 from a reused volume and drops the retired `turns`, `permissions`, and
@@ -164,7 +169,7 @@ from a reused volume and drops the retired `turns`, `permissions`, and
 Scope fence: this store is deliberately NOT an analytics, metering, or usage
 store. Usage and eval data comes from the native harness transcripts in the
 agent HOME (`~/.claude/projects/…`, `~/.codex/sessions/…`). Do not extend this
-store beyond chat.
+store beyond its headless ACP session role.
 
 ## Stop and upgrade
 

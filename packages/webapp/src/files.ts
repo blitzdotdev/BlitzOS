@@ -11,6 +11,11 @@ export function fullDavPath(filePath: string): string {
   return `~/${filePath}`;
 }
 
+/** True when candidate is the path itself or one of its descendants. */
+export function isPathAtOrBelow(path: string, candidate: string): boolean {
+  return candidate === path || candidate.startsWith(`${path}/`);
+}
+
 export function shellQuotedPath(filePath: string): string {
   return `~/'${filePath.replaceAll("'", "'\\''")}'`;
 }

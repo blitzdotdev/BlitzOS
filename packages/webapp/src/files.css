@@ -15,6 +15,14 @@
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.webapp-panes[data-resizing] {
+  user-select: none;
+}
+
+.webapp-panes[data-resizing] iframe {
+  pointer-events: none;
+}
+
 .webapp-panes--split {
   /* A stored width survives a move to a narrower screen: the side pane never
    * exceeds 65% of the space left by the 264px rail and the 44px strip. */
@@ -374,24 +382,38 @@
 
 .files-context-menu {
   position: fixed;
-  z-index: 40;
-  width: 200px;
+  z-index: 200;
+  width: 208px;
+  padding: 6px;
   border: 1px solid var(--rule);
-  border-radius: 8px;
-  overflow: hidden;
-  color: var(--muted);
+  border-radius: var(--r-card);
+  color: var(--ink);
   background: var(--paper);
-  font: 12px/1.4 var(--font-ui);
+  box-shadow: var(--lift);
+  font: 13px/1.4 var(--font-ui);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A press anywhere else closes the menu. A window listener used to do this and
+ * did not fire reliably in the cockpit; an element under the menu is what the
+ * app's other overlays use. */
+.files-context-backdrop {
+  position: fixed;
+  z-index: 199;
+  inset: 0;
 }
 
 .files-context-menu > button {
   display: flex;
   width: 100%;
-  min-height: 36px;
+  min-height: 38px;
   align-items: center;
-  gap: 9px;
-  padding: 0 11px;
+  gap: 12px;
+  padding: 0 12px;
   border: 0;
+  border-radius: var(--r-item);
   color: inherit;
   background: transparent;
   font: inherit;
@@ -401,17 +423,21 @@
 
 .files-context-menu > button:hover,
 .files-context-menu > button:focus-visible {
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 6%, var(--paper));
+  background: var(--hover);
 }
 
 .files-context-menu > button .codicon {
-  color: var(--faint);
-  font-size: 15px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.files-context-menu > button.files-context-menu-danger,
+.files-context-menu > button.files-context-menu-danger .codicon {
+  color: var(--accent);
 }
 
 .files-context-menu form {
-  padding: 10px;
+  padding: 8px;
 }
 
 .files-context-menu-label {
@@ -453,19 +479,20 @@
 }
 
 .files-context-menu-actions button {
-  min-height: 28px;
-  padding: 0 8px;
+  min-height: 32px;
+  padding: 0 11px;
   border: 1px solid var(--rule);
-  border-radius: 6px;
-  color: var(--muted);
+  border-radius: var(--r-pill);
+  color: var(--ink);
   background: transparent;
   font: 11px/1 var(--font-ui);
   cursor: pointer;
 }
 
 .files-context-menu-actions button[type='submit'] {
-  border-color: var(--accent);
-  color: var(--ink);
+  border-color: transparent;
+  color: var(--paper);
+  background: var(--ink);
 }
 
 .files-context-menu-actions button:hover:not(:disabled),
@@ -473,9 +500,33 @@
   background: color-mix(in oklab, var(--ink) 6%, var(--paper));
 }
 
+.files-context-menu-actions button[type='submit']:hover:not(:disabled),
+.files-context-menu-actions button[type='submit']:focus-visible:not(:disabled) {
+  background: var(--ink);
+  opacity: .86;
+}
+
 .files-context-menu-actions button:disabled {
   opacity: .5;
   cursor: default;
+}
+
+@media (max-width: 899px) {
+  .files-context-menu {
+    width: min(180px, calc(100vw - 16px));
+    padding: 4px;
+    font-size: 11.5px;
+  }
+
+  .files-context-menu > button {
+    min-height: 32px;
+    gap: 9px;
+    padding: 0 9px;
+  }
+
+  .files-context-menu > button .codicon {
+    font-size: 14px;
+  }
 }
 
 .file-editor {
@@ -523,6 +574,18 @@
   gap: 5px;
   color: var(--status-warm-yellow);
   white-space: nowrap;
+}
+
+.file-editor-banner-message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-editor-meta--conflict .file-editor-copy,
+.file-editor-meta--conflict .file-editor-save,
+.file-editor-meta--conflict .file-editor-saved {
+  display: none;
 }
 
 .file-editor-banner button,

@@ -327,6 +327,8 @@ describe("control plane security and lifecycle", () => {
 
       expect(response.status).toBe(201);
       const { workspace } = await response.json<WorkspaceResponse>();
+      expect(workspace.createdAt).toBeTypeOf("number");
+      expect(workspace.updatedAt).toBeGreaterThanOrEqual(workspace.createdAt);
       const userData = providers.userData.get(workspace.id);
       expect(userData).toBeDefined();
       expect(userData).not.toContain("ssh_authorized_keys");

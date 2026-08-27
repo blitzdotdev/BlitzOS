@@ -39,6 +39,8 @@ export interface WorkspaceView {
   launchable: boolean;
   /** Monotonic per workspace; clients must drop older revisions. */
   revision: number;
+  createdAt: number;
+  updatedAt: number;
   ssh: {
     host: string;
     port: number;

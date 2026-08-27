@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { WebAppLoadingPane } from './LoadingSkeleton';
+import { observeVisualViewportGeometry } from './mobile-webapp';
 import { hasTerminalChoiceMenu } from './terminal-choices';
 import { installTerminalKeyHandler } from './terminal-paste-binding';
 import { isTouchInputDevice } from './terminal-touch';
@@ -388,6 +389,10 @@ export function TtydTerminal({
       resizeTimer = window.setTimeout(() => {
         if (!activeRef.current) return;
         fit.fit();
+        // A mobile keyboard shrinks the visual viewport. Refit to that visible
+        // space and reveal the prompt instead of leaving the cursor below the
+        // keyboard at the old scroll position.
+        if (isTouchInputDevice()) terminal.scrollToBottom();
         // Observers must not resize the tenant's pty.
         if (readOnly) return;
         send('1', JSON.stringify({
@@ -396,6 +401,15 @@ export function TtydTerminal({
         }));
       }, 200);
     };
+    // The workspace shell follows visualViewport rather than the layout
+    // viewport on mobile. Observe that source directly as well as the host so
+    // Android keyboard animation always produces a final fit/redraw, even when
+    // ResizeObserver coalesces an intermediate parent-size change.
+    const stopObservingViewport = isTouchInputDevice()
+      ? observeVisualViewportGeometry(({ source }) => {
+          if (source !== 'initial') resize();
+        })
+      : () => undefined;
 
     const connect = () => {
       if (stopped) return;
@@ -474,6 +488,7 @@ export function TtydTerminal({
       themeObserver.disconnect();
       schemeQuery?.removeEventListener('change', applyTheme);
       observer.disconnect();
+      stopObservingViewport();
       input.dispose();
       releaseKeyHandler();
       socket?.close();

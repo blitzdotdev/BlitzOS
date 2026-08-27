@@ -11,7 +11,7 @@ stores `id`, `provider`, and `createdBy` in `_meta` for cross-device discovery.
 
 `blitz/auth_required` announces that the box could not mint a credential for
 the session's harness, so the reader has to sign that harness in again. Typed
-in `schema/src/acp.ts`; `provider` is read off `HARNESSES`, so the chat panel
+in `schema/src/acp.ts`; `provider` is read off `HARNESSES`, so the ACP client
 can never offer a sign-in the broker does not serve. The frame is live-only —
 the actor never journals it, because replaying it onto tomorrow's attach would
 demand a sign-in the session no longer needs. `auth-required.jsonl` therefore

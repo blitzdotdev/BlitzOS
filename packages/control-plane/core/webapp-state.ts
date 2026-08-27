@@ -101,6 +101,13 @@ const TAB_TYPES: ReadonlySet<string> = new Set([
   "preview",
   "panel",
 ]);
+const SESSION_TITLE_MAX_LENGTH = 64;
+
+function parseManagedTitle(value: OptionalJsonValue, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  const title = boundedString(value, field, SESSION_TITLE_MAX_LENGTH).trim();
+  return title === "" ? undefined : title;
+}
 
 function boundedString(value: OptionalJsonValue, field: string, maxLength: number): string {
   if (!isString(value) || value.length > maxLength) {
@@ -209,8 +216,15 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     const title = boundedString(value.title, `tabs.tabs[${index}].title`, 256);
     return withRegion({ id, type, url, title }, region);
   }
-  if (type !== "chat") return withRegion({ id, type }, region);
+  if (type !== "chat") {
+    const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
+    const tab: WebAppTabV1 = { id, type };
+    if (title !== undefined) tab.title = title;
+    return withRegion(tab, region);
+  }
   const tab: WebAppTabV1 = { id, type };
+  const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
+  if (title !== undefined) tab.title = title;
   if (value.chatSessionId !== undefined) {
     tab.chatSessionId = boundedString(
       value.chatSessionId,

@@ -13,6 +13,7 @@ import './files-drive.css';
 import './drive-shell.css';
 import './files.css';
 import './confirmation-dialog.css';
+import './workspace-details-dialog.css';
 import './loading-skeleton.css';
 import './create-workspace-dialog.css';
 import './settings.css';

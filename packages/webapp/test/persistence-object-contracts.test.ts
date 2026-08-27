@@ -37,41 +37,59 @@ describe("UI protocol and persistence object contracts", () => {
     expect(JSON.stringify(customTitle)).toBe('{"title":"Docs","agentDefault":"codex"}');
   });
 
-  it("preserves restored chat optional-key absence, order, and serialization", () => {
-    const absent = decodeWorkspaceWebAppStateResponse(JSON.stringify({
-      doc: {
-        version: 1,
-        agentDefault: "claude",
-        tabs: { version: 1, tabs: [{ id: 1, type: "chat" }], activeId: 1, nextId: 2 },
-        drawer: { version: 1, open: true, width: 264, expanded: [], segment: "files" },
-      },
-      updatedAt: 1,
-    })).doc?.tabs.tabs[0];
-    expect(Object.keys(absent ?? {})).toEqual(["id", "type"]);
-    expect(absent && "chatSessionId" in absent).toBe(false);
-    expect(absent && "chatProvider" in absent).toBe(false);
-    expect(JSON.stringify(absent)).toBe('{"id":1,"type":"chat"}');
-
-    const present = decodeWorkspaceWebAppStateResponse(JSON.stringify({
+  it("drops disabled native Chat layout records without rejecting the document", () => {
+    const restored = decodeWorkspaceWebAppStateResponse(JSON.stringify({
       doc: {
         version: 1,
         agentDefault: "claude",
         tabs: {
           version: 1,
-          tabs: [{ id: 1, type: "chat", chatSessionId: "session-1", chatProvider: "codex" }],
+          tabs: [{
+            id: 1,
+            type: "chat",
+            chatSessionId: "session-1",
+            chatProvider: "codex",
+          }],
           activeId: 1,
           nextId: 2,
         },
-        drawer: { version: 1, open: true, width: 264, expanded: [], segment: "files" },
+        drawer: { version: 1, width: 264, expanded: [] },
       },
       updatedAt: 1,
-    })).doc?.tabs.tabs[0];
-    expect(Object.keys(present ?? {})).toEqual(["id", "type", "chatSessionId", "chatProvider"]);
-    expect(present && "chatSessionId" in present).toBe(true);
-    expect(present && "chatProvider" in present).toBe(true);
-    expect(JSON.stringify(present)).toBe(
-      '{"id":1,"type":"chat","chatSessionId":"session-1","chatProvider":"codex"}',
-    );
+    })).doc?.tabs;
+    expect(restored).toEqual({ version: 1, tabs: [], activeId: null, nextId: 2 });
+  });
+
+  it("keeps trimmed managed-session titles and ignores retired layout keys", () => {
+    const decode = (tabs: object) => decodeWorkspaceWebAppStateResponse(JSON.stringify({
+      doc: {
+        version: 1,
+        agentDefault: "claude",
+        tabs,
+        drawer: { version: 1, width: 264, expanded: [] },
+      },
+      updatedAt: 1,
+    })).doc?.tabs;
+    // `windowOpen` and `archivedTabs` were written by one self-hosted
+    // deployment of a superseded branch; they parse as unknown keys.
+    expect(decode({
+      version: 1,
+      tabs: [{ id: 1, type: "claude", title: "  Release work  ", windowOpen: false }],
+      archivedTabs: [{ id: 4, type: "terminal", title: "Archived" }],
+      activeId: 1,
+      nextId: 5,
+    })).toEqual({
+      version: 1,
+      tabs: [{ id: 1, type: "claude", title: "Release work" }],
+      activeId: 1,
+      nextId: 5,
+    });
+    expect(() => decode({
+      version: 1,
+      tabs: [{ id: 1, type: "terminal", title: "x".repeat(65) }],
+      activeId: 1,
+      nextId: 2,
+    })).toThrow("webApp state response has invalid doc");
   });
 
   it("accepts wide drawer widths to the server cap and rejects beyond it", () => {

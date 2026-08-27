@@ -1,5 +1,7 @@
 import {
   normalizedWorkspaceTabs,
+  isManagedWorkspaceTab,
+  SESSION_TITLE_MAX_LENGTH,
   tabRegion,
   withRegion,
   type WorkspaceDrawerSegment,
@@ -7,6 +9,7 @@ import {
   type WorkspaceTab,
   type WorkspaceTabs,
 } from './storage';
+import { isPathAtOrBelow } from './files';
 
 /** Panes render in this order, left to right. */
 export const PANE_REGIONS: readonly WorkspaceRegion[] = ['main', 'side'];
@@ -101,6 +104,39 @@ export function closeTab(tabs: WorkspaceTabs, id: number): WorkspaceTabs {
     else next.sideActiveId = successor;
   }
   return normalizedWorkspaceTabs(next);
+}
+
+/** Closes every editor whose file is the deleted path or lives below it. */
+export function closeFileTabsAtPath(tabs: WorkspaceTabs, path: string): WorkspaceTabs {
+  const ids = tabs.tabs
+    .filter((tab) => tab.type === 'file' && isPathAtOrBelow(path, tab.filePath))
+    .map(({ id }) => id);
+  return ids.reduce((current, id) => closeTab(current, id), tabs);
+}
+
+/** Applies a bounded custom label to an active managed session.
+ * An empty label restores the generated provider label. */
+export function renameTab(
+  tabs: WorkspaceTabs,
+  id: number,
+  title: string | undefined,
+): WorkspaceTabs {
+  const normalizedTitle = title?.trim().slice(0, SESSION_TITLE_MAX_LENGTH) || undefined;
+  let changed = false;
+  const rename = (tab: WorkspaceTab): WorkspaceTab => {
+    if (tab.id !== id || !isManagedWorkspaceTab(tab) || tab.title === normalizedTitle) return tab;
+    changed = true;
+    const next = { ...tab };
+    if (normalizedTitle === undefined) delete next.title;
+    else next.title = normalizedTitle;
+    return next;
+  };
+  const active = tabs.tabs.map(rename);
+  if (!changed) return tabs;
+  return normalizedWorkspaceTabs({
+    ...tabs,
+    tabs: active,
+  });
 }
 
 /** Brings a panel forward, opening it in the side pane when it is not open at

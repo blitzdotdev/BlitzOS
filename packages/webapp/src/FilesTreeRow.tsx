@@ -16,7 +16,11 @@ export function FilesTreeRow({
   onRetry,
 }: NodeRendererProps<FileNode> & {
   loading: boolean;
-  onContextMenu: (event: ReactMouseEvent, directory: string) => void;
+  onContextMenu: (
+    event: ReactMouseEvent,
+    directory: string,
+    target?: { path: string; name: string; kind: 'file' | 'directory' },
+  ) => void;
   onOpenFile: (path: string) => void;
   onRetry: (path: string) => void;
 }) {
@@ -65,6 +69,7 @@ export function FilesTreeRow({
       onContextMenu={(event) => onContextMenu(
         event,
         directory ? data.path : data.path.split('/').slice(0, -1).join('/'),
+        { path: data.path, name: data.name, kind: data.kind },
       )}
       onClick={(event) => {
         event.stopPropagation();

@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type ReactNode,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { createClient, type WebDAVClient } from 'webdav';
 import {
@@ -26,7 +27,7 @@ import { FileIcon } from './WebAppIcons';
 import { DriveHome } from './files/DriveHome';
 import { CreateRecipeScreen } from './files/CreateRecipeScreen';
 import { CreateTemplateScreen } from './files/CreateTemplateScreen';
-import { DriveRail, type DriveRailNav } from './files/DriveRail';
+import { DriveRail, type DriveRailNav, type DriveRailSession } from './files/DriveRail';
 import { RecipesHome } from './files/RecipesHome';
 import { TemplatesHome } from './files/TemplatesHome';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
@@ -43,6 +44,7 @@ import {
 import { machineTypeLabel } from './MachineCatalogGrid';
 import { SettingsHeader, SettingsPage } from './SettingsPage';
 import { ShareWorkspaceDialog } from './ShareWorkspaceDialog';
+import { WorkspaceDetailsDialog } from './WorkspaceDetailsDialog';
 import {
   bindVisualViewportGeometry,
   useMobileWebApp,
@@ -62,8 +64,9 @@ import {
   templatesPath,
 } from './sessions-page-state';
 import {
+  clampDrawerWidth,
   defaultWorkspaceFiles,
-  maxDrawerWidth,
+  isManagedWorkspaceTab,
   removeDismissedChatAuthProviders,
   tabRegion,
   withPreviewTabPath,
@@ -75,12 +78,14 @@ import {
 } from './storage';
 import {
   appendTab,
+  closeFileTabsAtPath,
   closeTab as closePaneTab,
   filesHostRegion,
   moveTab,
   paneRegions,
   panelTab,
   regionActiveId,
+  renameTab,
   showPanelTab,
   splitTab,
   togglePanelTab,
@@ -90,13 +95,11 @@ import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
 import { terminalPastePayload } from './terminal-paste';
-import { useTerminalSignIn } from './use-terminal-sign-in';
-import { ChatPanel } from './chat/ChatPanel';
 import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
 import { FileEditor } from './FileEditor';
 import { FilesSidebar } from './FilesSidebar';
-import { fullDavPath } from './files';
+import { fullDavPath, isPathAtOrBelow } from './files';
 import { dropPasteText, uploadDroppedFiles } from './file-drop';
 import {
   initialWorkspaceStore,
@@ -104,6 +107,7 @@ import {
   workspaceReducer,
 } from './workspace-store';
 import { PreviewPanel } from './PreviewPanel';
+import { NATIVE_CHAT_ENABLED } from './product-features';
 import {
   isPreviewPath,
   isPreviewPort,
@@ -176,7 +180,6 @@ type FileCloseConfirmation = {
   id: string;
   label: string;
 };
-
 
 const PANEL_LABELS = {
   files: 'Files',
@@ -262,6 +265,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
+  const [detailsWorkspaceId, setDetailsWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -287,7 +291,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // panes are, but the focus between them is a per-view detail.
   const [focusedRegion, setFocusedRegion] = useState<WorkspaceRegion>('main');
   const panesRef = useRef<HTMLDivElement>(null);
-  const paneResizeOrigin = useRef<{ x: number; width: number } | null>(null);
+  // Mouse events on purpose: the drag must not depend on pointer capture, and
+  // window listeners keep it alive over the terminal and the other pane.
+  const [paneResizing, setPaneResizing] = useState(false);
+  const endPaneResize = useRef<(() => void) | null>(null);
+  useEffect(() => () => endPaneResize.current?.(), []);
   const shellRef = useRef<HTMLElement>(null);
   const activeWorkspaceIdRef = useRef(activeWorkspaceId);
   const storeRef = useRef(store);
@@ -428,7 +436,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const activeSessionUrl = activeWorkspaceRunning
     ? activeIngressEntry?.terminalUrl ?? null
     : null;
-  const activeAcpUrl = activeWorkspaceRunning ? activeIngressEntry?.acpUrl ?? null : null;
   const activeFilesBase = activeWorkspaceRunning ? activeIngressEntry?.filesBase ?? null : null;
   const activeFiles = workspaceFiles.workspaceId === activeWorkspaceId
     ? workspaceFiles.value
@@ -922,6 +929,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!confirmation) return;
     const request = confirmation;
     setConfirmation(null);
+    setDetailsWorkspaceId((current) => current === request.workspaceId ? null : current);
     deleteWorkspace(request.workspaceId);
   }, [confirmation, deleteWorkspace]);
 
@@ -968,8 +976,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const sideActiveId = activeWorkspaceTabs === null
     ? null
     : regionActiveId(activeWorkspaceTabs, 'side');
-  // The focused session drives the statusline, the rail and terminal keyboard
-  // events. Mobile skips panel tabs: those live in the sheet, not the strip.
+  // The focused session drives the statusline and terminal keyboard events.
+  // Mobile skips panel tabs: those live in the sheet, not the strip.
   const focusedSessionId = (() => {
     const preferred = focusedRegion === 'side' ? sideActiveId : mainActiveId;
     for (const candidate of [preferred, mainActiveId, sideActiveId]) {
@@ -1010,7 +1018,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           || session.type === 'claude'
           || session.type === 'codex'
           || session.type === 'terminal'
-            ? SPAWN_SESSION_LABELS[session.type]
+            ? session.title ?? SPAWN_SESSION_LABELS[session.type]
             : session.type
         );
   const ttydTabs = useMemo<WebAppTabModel[]>(() => {
@@ -1031,12 +1039,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         };
       }
       if (session.type !== 'file') {
-        return {
+        const tab: WebAppTabModel = {
           id: String(session.id),
           label: ttydLabel(session),
           agent: session.type,
           pending: false,
         };
+        if (isManagedWorkspaceTab(session)) {
+          tab.customTitle = session.title;
+          tab.renameable = true;
+        }
+        return tab;
       }
       const parts = session.filePath.split('/');
       const basename = parts.at(-1) ?? session.filePath;
@@ -1052,6 +1065,32 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       };
     });
   }, [dirtyFileIds, ttydSessions]);
+  const railSessions = useMemo<DriveRailSession[]>(() => ttydTabs
+    .filter((tab) => tab.agent !== 'panel' && tab.agent !== 'file' && tab.agent !== 'preview')
+    .map((tab) => {
+      const session: DriveRailSession = {
+        id: tab.id,
+        label: tab.label,
+        agent: tab.agent,
+      };
+      if (tab.filePath !== undefined) session.filePath = tab.filePath;
+      return session;
+    }), [ttydTabs]);
+  const railActiveSessionId = (() => {
+    const railIds = new Set(railSessions.map(({ id }) => id));
+    if (ttydActiveId !== null && railIds.has(ttydActiveId)) return ttydActiveId;
+    // Files, previews and utility panels are not rail sessions. When one has
+    // focus, keep the agent-like session still visible in the other pane
+    // highlighted instead of making the rail appear to have no active item.
+    const fallback = focusedRegion === 'side'
+      ? [mainActiveId, sideActiveId]
+      : [sideActiveId, mainActiveId];
+    for (const id of fallback) {
+      if (id !== null && railIds.has(String(id))) return String(id);
+    }
+    return null;
+  })();
+  const canEditWorkspaceLayout = activeWorkspace?.accessRole !== 'viewer';
   /** Tab models for one column, in the order that column draws them. */
   const paneTabModels = (region: WorkspaceRegion): WebAppTabModel[] => ttydTabs.filter(
     (tab, index) => {
@@ -1082,16 +1121,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setFocusedRegion(region);
   }, [updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
-    addWorkspaceTab((id) => type === 'chat'
-      ? { id, type, chatProvider: 'claude' }
-      : { id, type });
+    if (type === 'chat' && !NATIVE_CHAT_ENABLED) return;
+    addWorkspaceTab((id) => ({ id, type }));
   };
   const selectTtydSession = useCallback((id: string) => {
     const session = ttydSessions.find((tab) => String(tab.id) === id);
     if (session === undefined) return;
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
-  }, [surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+  }, [activeWorkspaceId, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1108,16 +1146,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     if (mobileWebApp) setFilesDrawerOpen(false);
   };
-  const signInToTerminal = useTerminalSignIn({
-    workspaceId: activeWorkspaceId,
-    tabs: activeWorkspaceTabs === null ? null : ttydSessions,
-    nextId: activeWorkspaceTabs?.nextId ?? 0,
-    accessRole: activeWorkspace?.accessRole,
-    ttydActiveId,
-    retainedSessions: retainedSessionIdsRef,
-    selectSession: selectTtydSession,
-    spawnSession: spawnTtydSession,
-  });
   const retargetPreviewTab = useCallback((tabId: number, path: string | undefined) => {
     setWorkspaceTabs((current) => {
       if (current.workspaceId !== activeWorkspaceId || !current.loaded) return current;
@@ -1183,15 +1211,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   );
   const closeTtydSessionNow = (id: string) => {
     updateWorkspaceTabs((tabs) => {
-      const numericId = tabs.tabs.find((tab) => String(tab.id) === id)?.id;
-      return numericId === undefined ? tabs : closePaneTab(tabs, numericId);
+      const tab = tabs.tabs.find((entry) => String(entry.id) === id);
+      return tab === undefined ? tabs : closePaneTab(tabs, tab.id);
     });
+    retainedSessionIdsRef.current.ids.delete(id);
     setDirtyFileIds((current) => {
       if (!current.has(id)) return current;
       const next = new Set(current);
       next.delete(id);
       return next;
     });
+  };
+  const renameTtydSession = (id: string, title: string | undefined) => {
+    const numericId = Number(id);
+    if (!Number.isSafeInteger(numericId)) return;
+    updateWorkspaceTabs((tabs) => renameTab(tabs, numericId, title));
   };
   const closeTtydSession = (id: string) => {
     const tab = ttydSessions.find((session) => String(session.id) === id);
@@ -1213,32 +1247,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return next;
     });
   };
-  const rememberChatSession = (
-    id: string,
-    chatSessionId: string | undefined,
-    chatProvider: 'claude' | 'codex',
-  ) => {
-    updateWorkspaceTabs((current) => {
-      const numericId = current.tabs.find((tab) => String(tab.id) === id)?.id;
-      if (numericId === undefined) return current;
-      const tab = current.tabs.find((entry) => entry.id === numericId);
-      if (
-        tab?.type !== 'chat'
-        || (tab.chatSessionId === chatSessionId && tab.chatProvider === chatProvider)
-      ) return current;
-      return {
-        ...current,
-        tabs: current.tabs.map((entry) => entry.id === numericId && entry.type === 'chat'
-          ? {
-              ...entry,
-              ...(chatSessionId ? { chatSessionId } : { chatSessionId: undefined }),
-              chatProvider,
-            }
-          : entry),
-      };
-    });
-  };
-
   const {
     tabDrag,
     beginTabDrag,
@@ -1279,7 +1287,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeWorkspace.lifecycleStatus === 'error'
     || (activeWorkspace.lifecycleStatus === 'parked' && activeWorkspace.errorDetail !== null)
   );
-  // Terminals and chat need a live box; files, previews and panels draw their
+  // Terminals need a live box; files, previews and panels draw their
   // own unavailable states and stay mounted while the box wakes.
   const sessionsRenderable = !workspaceErrored
     && activeSessionUrl !== null
@@ -1357,9 +1365,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!tabsLoaded) {
       return <WebAppLoadingPane ariaLabel="Loading workspace" stage="loading · local tabs" />;
     }
-    return session === null
-      ? <p className="webapp-pane-empty">Empty pane</p>
-      : null;
+    return session === null ? <p className="webapp-pane-empty">Empty pane</p> : null;
   };
   const filesSidebar = activeWorkspace === undefined ? null : (
     <FilesSidebar
@@ -1391,6 +1397,35 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           : current);
       }}
       onOpenFile={openFile}
+      dirtyFilePaths={ttydSessions.flatMap((tab) => (
+        tab.type === 'file' && dirtyFileIds.has(String(tab.id)) ? [tab.filePath] : []
+      ))}
+      onPathMoved={(source, destination) => {
+        updateWorkspaceTabs((tabs) => ({
+          ...tabs,
+          tabs: tabs.tabs.map((tab) => {
+            if (tab.type !== 'file') return tab;
+            if (tab.filePath === source) return { ...tab, filePath: destination };
+            if (tab.filePath.startsWith(`${source}/`)) {
+              return { ...tab, filePath: `${destination}${tab.filePath.slice(source.length)}` };
+            }
+            return tab;
+          }),
+        }));
+      }}
+      onPathDeleted={(path) => {
+        const affectedIds = ttydSessions.flatMap((tab) => (
+          tab.type === 'file' && isPathAtOrBelow(path, tab.filePath) ? [String(tab.id)] : []
+        ));
+        for (const id of affectedIds) retainedSessionIdsRef.current.ids.delete(id);
+        updateWorkspaceTabs((tabs) => closeFileTabsAtPath(tabs, path));
+        setDirtyFileIds((current) => {
+          if (!affectedIds.some((id) => current.has(id))) return current;
+          const next = new Set(current);
+          for (const id of affectedIds) next.delete(id);
+          return next;
+        });
+      }}
       onOpenDriveFolder={(folderId) => navigateTo(folderPagePath(folderId))}
       onShareToDrive={setShareToDrivePath}
       onUnauthorized={handleUnauthorized}
@@ -1421,9 +1456,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       org={store.viewer?.org ?? null}
       organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
-        ? ttydTabs.filter((tab) => tab.agent !== 'panel')
+        ? railSessions
         : []}
-      activeSessionId={ttydActiveId ?? ''}
+      activeSessionId={railActiveSessionId ?? ''}
       onSelectSession={selectTtydSession}
       onOpenDrive={() => navigateTo(drivePath())}
       onOpenTemplates={() => navigateTo(templatesPath())}
@@ -1435,8 +1470,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onCreateOrg={() => setShowCreateOrg(true)}
       onOpenSettings={() => navigateToSettings('profile')}
-      onOpenWorkspaceDetails={(workspaceId) => setShareWorkspaceId(workspaceId)}
-      onDeleteWorkspace={requestDeleteWorkspace}
+      onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
+      onOpenWorkspaceDetails={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetailsWorkspaceId(workspaceId);
+      }}
       drawerOpen={drawerOpen}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
@@ -1504,12 +1542,30 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCancel={() => setShowCreateOrg(false)}
     />
   );
+  const workspaceDetailsDialog = detailsWorkspaceId && (() => {
+    const workspace = store.workspaces.find(({ id }) => id === detailsWorkspaceId);
+    const canManage = workspace?.accessRole === 'owner' || workspace?.accessRole === 'admin';
+    return workspace?.canControl ? (
+      <WorkspaceDetailsDialog
+        client={client}
+        workspace={workspace}
+        orgName={store.viewer?.org.name ?? 'your org'}
+        listMachineTypes={listMachineTypes}
+        listVolumes={listVolumes}
+        onClose={() => setDetailsWorkspaceId(null)}
+        onDelete={canManage
+          ? () => requestDeleteWorkspace(workspace.id)
+          : null}
+      />
+    ) : null;
+  })();
   const railOverlays = (
     <>
       {createOrgDialog}
       {createWorkspaceDialog}
-      {deleteWorkspaceDialog}
       {shareWorkspaceDialog}
+      {workspaceDetailsDialog}
+      {deleteWorkspaceDialog}
     </>
   );
 
@@ -1737,7 +1793,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         </div>
       )}
       {railFor(null, activeWorkspaceId)}
-      {shareWorkspaceDialog}
+      {railOverlays}
 
       <div className="drive-ws-frame">
           <section className="webapp-workspace-view">
@@ -1754,6 +1810,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
             <div
               className={`webapp-panes${visibleRegions.length > 1 ? ' webapp-panes--split' : ''}`}
               ref={panesRef}
+              data-resizing={paneResizing || undefined}
               style={
                 // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
                 { '--side-pane-width': `${activeFiles.width}px` } as CSSProperties
@@ -1786,6 +1843,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                     }}
                     onSelect={selectTtydSession}
                     onClose={closeTtydSession}
+                    onRename={canEditWorkspaceLayout ? renameTtydSession : undefined}
                     onSpawn={spawnTtydSession}
                     onTabDragStart={splitEnabled ? beginTabDrag : undefined}
                     onTabDragEnd={clearTabDrag}
@@ -1890,26 +1948,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   );
                 }
                 if (session.type === 'chat') {
-                  return (
-                    <div
-                      className="webapp-workspace-session"
-                      data-region={region}
-                      hidden={!active}
-                      key={sessionId}
-                    >
-                      <ChatPanel
-                        url={activeAcpUrl ?? ''}
-                        workspaceId={activeWorkspaceId}
-                        initialSessionId={session.chatSessionId ?? null}
-                        onSessionId={(_workspaceId, chatSessionId) => {
-                          rememberChatSession(sessionId, chatSessionId, 'claude');
-                        }}
-                        onOpenPreview={openPreviewPort}
-                        onSignIn={signInToTerminal}
-                        readOnly={activeWorkspace?.accessRole === 'viewer'}
-                      />
-                    </div>
-                  );
+                  return null;
                 }
                 return (
                   <div
@@ -1936,27 +1975,30 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                   role="separator"
                   aria-label="Resize side pane"
                   aria-orientation="vertical"
-                  onPointerDown={(event) => {
+                  onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
                     if (event.button !== 0) return;
-                    paneResizeOrigin.current = { x: event.clientX, width: activeFiles.width };
-                    event.currentTarget.setPointerCapture(event.pointerId);
+                    event.preventDefault();
+                    endPaneResize.current?.();
+                    const origin = { x: event.clientX, width: activeFiles.width };
+                    const move = (moveEvent: MouseEvent) => {
+                      setSidePaneWidth(clampDrawerWidth(
+                        origin.width + origin.x - moveEvent.clientX,
+                        window.innerWidth,
+                      ));
+                    };
+                    const stop = () => endPaneResize.current?.();
+                    window.addEventListener('mousemove', move);
+                    window.addEventListener('mouseup', stop);
+                    window.addEventListener('blur', stop);
+                    endPaneResize.current = () => {
+                      window.removeEventListener('mousemove', move);
+                      window.removeEventListener('mouseup', stop);
+                      window.removeEventListener('blur', stop);
+                      endPaneResize.current = null;
+                      setPaneResizing(false);
+                    };
+                    setPaneResizing(true);
                   }}
-                  onPointerMove={(event) => {
-                    const origin = paneResizeOrigin.current;
-                    if (origin === null) return;
-                    setSidePaneWidth(Math.max(
-                      200,
-                      Math.min(
-                        maxDrawerWidth(window.innerWidth),
-                        origin.width + origin.x - event.clientX,
-                      ),
-                    ));
-                  }}
-                  onPointerUp={(event) => {
-                    paneResizeOrigin.current = null;
-                    event.currentTarget.releasePointerCapture(event.pointerId);
-                  }}
-                  onPointerCancel={() => { paneResizeOrigin.current = null; }}
                 />
               )}
               {tabDrag !== null && (
@@ -2205,8 +2247,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}
-      {createWorkspaceDialog}
-      {deleteWorkspaceDialog}
       {fileCloseConfirmation && (
         <ConfirmationDialog
           title="Discard changes?"

@@ -1,12 +1,32 @@
-import { Fragment, useEffect, useRef, useState, type DragEvent } from 'react';
-import { CodexIcon, FileIcon, FolderIcon, GenericProviderIcon, ShellIcon } from './WebAppIcons';
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+} from 'react';
+import {
+  CodexIcon,
+  FileIcon,
+  FolderIcon,
+  GenericProviderIcon,
+  ShellIcon,
+} from './WebAppIcons';
 import { FileTypeIcon } from './FileTypeIcon';
 import { previewLinkLabel, type LivePort, type PreviewLink } from './preview';
+import { NATIVE_CHAT_ENABLED } from './product-features';
 import type { TerminalAgent } from './protocol';
+import { SESSION_TITLE_MAX_LENGTH } from './storage';
+
+export { SESSION_TITLE_MAX_LENGTH } from './storage';
 
 export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview' | 'panel';
 export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
-export const SESSION_TITLE_MAX_LENGTH = 64;
+
+function isManagedSessionTab(tab: WebAppTabModel): boolean {
+  return tab.agent !== 'file' && tab.agent !== 'preview' && tab.agent !== 'panel';
+}
 
 export const SPAWN_SESSION_LABELS = {
   chat: 'Chat',
@@ -16,7 +36,7 @@ export const SPAWN_SESSION_LABELS = {
 } satisfies Record<SpawnSessionType, string>;
 
 const SPAWN_SESSION_TYPES: SpawnSessionType[] = [
-  'chat',
+  ...(NATIVE_CHAT_ENABLED ? ['chat' as const] : []),
   'claude',
   'codex',
   'terminal',
@@ -128,6 +148,11 @@ export function WebAppHeader({
   draggingSessionId = null,
 }: WebAppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    tabId: string;
+    left: number;
+    top: number;
+  } | null>(null);
   const [renaming, setRenaming] = useState<{ id: string; value: string } | null>(null);
   const newTabControl = useRef<HTMLDivElement>(null);
   const newSessionButton = useRef<HTMLButtonElement>(null);
@@ -136,10 +161,11 @@ export function WebAppHeader({
   const renameFinished = useRef(false);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !contextMenu) return;
     const closeOnPointerDown = (event: PointerEvent) => {
       // SAFETY: Browser pointer-event targets used for DOM containment are Nodes.
-      if (!newTabControl.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (!newTabControl.current?.contains(target)) {
         setMenuOpen(false);
         onMenuOpenChange(false);
       }
@@ -147,6 +173,7 @@ export function WebAppHeader({
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setMenuOpen(false);
+        setContextMenu(null);
         onMenuOpenChange(false);
       }
     };
@@ -156,12 +183,12 @@ export function WebAppHeader({
       window.removeEventListener('pointerdown', closeOnPointerDown);
       window.removeEventListener('keydown', closeOnEscape);
     };
-  }, [menuOpen, onMenuOpenChange]);
+  }, [contextMenu, menuOpen, onMenuOpenChange]);
 
   useEffect(() => {
     const active = [...(tabstrip.current?.querySelectorAll<HTMLElement>('.webapp-tab-cell') ?? [])]
       .find((cell) => cell.dataset.sessionId === activeSessionId);
-    active?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    active?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }, [activeSessionId, tabs.length]);
 
   useEffect(() => {
@@ -171,6 +198,7 @@ export function WebAppHeader({
 
   const beginRename = (tab: WebAppTabModel) => {
     if (!tab.renameable || !onRename) return;
+    setContextMenu(null);
     renameFinished.current = false;
     setRenaming({ id: tab.id, value: tab.customTitle ?? tab.label });
   };
@@ -191,6 +219,19 @@ export function WebAppHeader({
     onMenuOpenChange(false);
     onSpawn(agent);
     newSessionButton.current?.focus();
+  };
+  const selectedContextTab = contextMenu
+    ? tabs.find((tab) => tab.id === contextMenu.tabId) ?? null
+    : null;
+  const openContextMenu = (event: ReactMouseEvent, tab: WebAppTabModel) => {
+    if (!isManagedSessionTab(tab) || !tab.renameable || !onRename) return;
+    event.preventDefault();
+    setMenuOpen(false);
+    setContextMenu({
+      tabId: tab.id,
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - 190)),
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - 140)),
+    });
   };
   const openPreview = (port: number) => {
     setMenuOpen(false);
@@ -232,6 +273,7 @@ export function WebAppHeader({
                   className={`webapp-tab-cell${active ? ' webapp-tab-cell--active' : ''}${
                     draggingSessionId === tab.id ? ' webapp-tab-cell--dragging' : ''}`}
                   data-session-id={tab.id}
+                  onContextMenu={(event) => openContextMenu(event, tab)}
                 >
                   {renaming?.id === tab.id ? (
                     <div className="webapp-tab-select webapp-tab-select--editing">
@@ -294,8 +336,8 @@ export function WebAppHeader({
                       type="button"
                       aria-label={`Close ${tab.label}`}
                       title={tab.pending
-                        ? 'Archiving session…'
-                        : tab.agent === 'file' ? 'Close file' : 'Archive session'}
+                        ? 'Closing…'
+                        : `Close ${tab.label}`}
                       disabled={tab.pending}
                       onClick={() => onClose(tab.id)}
                     >×</button>
@@ -372,6 +414,23 @@ export function WebAppHeader({
         )}
 
       </div>
+      {contextMenu && selectedContextTab && (
+        <>
+          <div className="webapp-session-backdrop" onMouseDown={() => setContextMenu(null)} />
+          <div
+            className="webapp-session-menu"
+            role="menu"
+            style={{ left: contextMenu.left, top: contextMenu.top }}
+          >
+            {selectedContextTab.renameable && onRename && (
+              <button type="button" role="menuitem" onClick={() => beginRename(selectedContextTab)}>
+                <span className="codicon codicon-edit" aria-hidden="true" />
+                <span>Rename</span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </header>
   );
 }
