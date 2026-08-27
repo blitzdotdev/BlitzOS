@@ -12,6 +12,12 @@ export const TEMPLATE_REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 export interface TemplateRepoRow {
   template_id: string;
   repo: string;
+  private: number;
+}
+
+export interface TemplateRepo {
+  repo: string;
+  private: boolean;
 }
 
 export function parseTemplateRepos(value: JsonValue | undefined): string[] {
@@ -45,7 +51,7 @@ export async function templateRepoRows(
 ): Promise<TemplateRepoRow[]> {
   if (templateIds.length === 0) return [];
   return rows<TemplateRepoRow>(db, {
-    q: `SELECT template_id, repo FROM workspace_template_repos
+    q: `SELECT template_id, repo, private FROM workspace_template_repos
         WHERE template_id IN (${templateIds.map((_id, index) => `?${String(index + 1)}`).join(",")})
         ORDER BY template_id, repo`,
     v: templateIds,
@@ -55,7 +61,7 @@ export async function templateRepoRows(
 export async function replaceTemplateRepos(
   db: Db,
   templateId: string,
-  repos: readonly string[],
+  repos: readonly TemplateRepo[],
 ): Promise<void> {
   await rows(db, {
     q: "DELETE FROM workspace_template_repos WHERE template_id = ?1",
@@ -63,14 +69,18 @@ export async function replaceTemplateRepos(
   });
   for (const repo of repos) {
     await rows(db, {
-      q: "INSERT INTO workspace_template_repos (template_id, repo) VALUES (?1, ?2)",
-      v: [templateId, repo],
+      q: `INSERT INTO workspace_template_repos (template_id, repo, private)
+          VALUES (?1, ?2, ?3)`,
+      v: [templateId, repo.repo, repo.private ? 1 : 0],
     });
   }
 }
 
-/** The repos a workspace created from this template clones, for the
- * bootstrap's clone loop. Sorted so the emitted script is deterministic. */
-export async function templateRepos(db: Db, templateId: string): Promise<string[]> {
-  return (await templateRepoRows(db, [templateId])).map(({ repo }) => repo);
+/** The repos a workspace created from this template clones. Privacy gates
+ * create; row order keeps the emitted bootstrap script deterministic. */
+export async function templateRepos(db: Db, templateId: string): Promise<TemplateRepo[]> {
+  return (await templateRepoRows(db, [templateId])).map((row) => ({
+    repo: row.repo,
+    private: row.private === 1,
+  }));
 }

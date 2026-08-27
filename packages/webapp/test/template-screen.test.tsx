@@ -4,7 +4,11 @@ import { createControlPlaneClient } from '../src/api.js';
 import { CreateTemplateScreen } from '../src/files/CreateTemplateScreen.js';
 import { render, settle } from './dom.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.history.replaceState({}, '', '/');
+  window.sessionStorage.clear();
+});
 
 const machines = [{
   id: 'cx23@fsn1',
@@ -258,6 +262,8 @@ describe('create template screen', () => {
     const name = view.container.querySelector<HTMLInputElement>('input[aria-label="Template name"]')!;
     expect(name.value).toBe('starter');
     expect(row(view, 'datasets').textContent).toContain('In template');
+    expect(view.container.querySelector<HTMLAnchorElement>('a[href*="returnTo="]')?.getAttribute('href'))
+      .toBe('https://cp.example/connect/github/start?returnTo=template-edit%3Atemplate-1');
 
     const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
     if (setInputValue === undefined) throw new Error('input value setter unavailable');
@@ -794,16 +800,203 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  it('saves and restores the template draft around the GitHub connect redirect', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
+        return Response.json({ results: [{ repo: 'public/example', verdict: 'public' }] });
+      }
+      return null;
+    });
+    const first = await screenWith(fetcher);
+    await settle();
+    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (inputSetter === undefined || textareaSetter === undefined) throw new Error('setter unavailable');
+    const name = first.view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Template name"]',
+    )!;
+    const textarea = first.view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Repository URLs"]',
+    )!;
+    await act(async () => {
+      inputSetter.call(name, 'redirect-safe starter');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+      row(first.view, 'datasets').click();
+      textareaSetter.call(textarea, 'https://github.com/public/example');
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      first.view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+    await settle();
+    const connect = first.view.container.querySelector<HTMLAnchorElement>(
+      'a[href="https://cp.example/connect/github/start?returnTo=template-new"]',
+    )!;
+    connect.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => connect.click());
+    expect(window.sessionStorage.length).toBe(1);
+    await first.view.unmount();
+
+    window.history.replaceState({}, '', '/templates/new?connect=ok&provider=github');
+    const restored = await screenWith(fetcher);
+    await settle();
+    expect(restored.view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Template name"]',
+    )?.value).toBe('redirect-safe starter');
+    expect(row(restored.view, 'datasets').getAttribute('aria-pressed')).toBe('true');
+    expect(restored.view.container.querySelector('.tplf-attached-row')?.textContent)
+      .toBe('public/exampleRemove');
+    expect(restored.view.container.querySelector<HTMLInputElement>(
+      'input[value="cx23@fsn1"]',
+    )?.checked).toBe(true);
+    expect(window.sessionStorage.length).toBe(0);
+    await restored.view.unmount();
+  });
+
+  it('requires an org owner install and refreshes the no-installation state', async () => {
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({ source: 'installations', repositories: [], truncated: false });
+      }
+      if (url.pathname === '/connections/github/installations') {
+        return Response.json({ installations: [] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    await settle();
+    expect(view.container.textContent).toContain('A GitHub organization owner must install');
+    expect(view.container.querySelector<HTMLAnchorElement>(
+      'a[href="https://github.com/apps/blitzosauth/installations/new"]',
+    )?.textContent).toContain('Install GitHub App');
+    await act(async () => {
+      [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Refresh')?.click();
+    });
+    await settle();
+    expect(fetcher.mock.calls.filter(([input]) => (
+      new URL(String(input)).pathname === '/connections/github/installations'
+    ))).toHaveLength(2);
+    await view.unmount();
+  });
+
+  it('filters installed repositories and shares the URL input cap and removals', async () => {
+    const fetcher = stub((url, init) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({
+          source: 'installations',
+          truncated: false,
+          repositories: [
+            { repo: 'acme/private-app', accountLogin: 'acme', private: true },
+            { repo: 'other/secret-tool', accountLogin: 'other', private: true },
+          ],
+        });
+      }
+      if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { repos: string[] };
+        return Response.json({
+          results: body.repos.map((repo) => ({ repo, verdict: 'public' })),
+        });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    await settle();
+    expect([...view.container.querySelectorAll('.tplf-repo .tplf-chip')]
+      .map((badge) => badge.textContent)).toEqual(['private', 'private']);
+
+    const textarea = view.container.querySelector<HTMLTextAreaElement>(
+      'textarea[aria-label="Repository URLs"]',
+    )!;
+    const textareaSetter = Object.getOwnPropertyDescriptor(
+      HTMLTextAreaElement.prototype,
+      'value',
+    )?.set;
+    if (textareaSetter === undefined) throw new Error('textarea setter unavailable');
+    await act(async () => {
+      textareaSetter.call(textarea, Array.from(
+        { length: 15 },
+        (_unused, index) => `https://github.com/public/repo-${String(index)}`,
+      ).join('\n'));
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repo-urls-add')?.click();
+    });
+    await settle();
+    const repoCheckbox = (repo: string) => [...view.container.querySelectorAll<HTMLLabelElement>(
+      '.tplf-repo',
+    )].find((label) => label.textContent?.includes(repo))?.querySelector<HTMLInputElement>('input')!;
+    await act(async () => repoCheckbox('acme/private-app').click());
+    expect(repoCheckbox('other/secret-tool').disabled).toBe(true);
+
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Remove public/repo-0"]',
+      )?.click();
+    });
+    expect(repoCheckbox('other/secret-tool').disabled).toBe(false);
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Remove acme/private-app"]',
+      )?.click();
+    });
+    expect(repoCheckbox('acme/private-app').checked).toBe(false);
+
+    const account = view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Filter repositories by account"]',
+    )!;
+    const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+    if (selectSetter === undefined) throw new Error('select setter unavailable');
+    await act(async () => {
+      selectSetter.call(account, 'other');
+      account.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect([...view.container.querySelectorAll('.tplf-repo')]
+      .map((label) => label.textContent)).toEqual(['other/secret-toolprivate']);
+    await view.unmount();
+  });
+
+  it('rejects picker repositories that clone into the same folder', async () => {
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({
+          source: 'installations',
+          truncated: false,
+          repositories: [
+            { repo: 'acme/app', accountLogin: 'acme', private: true },
+            { repo: 'other/app', accountLogin: 'other', private: false },
+          ],
+        });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    await settle();
+    const checkbox = (repo: string) => [...view.container.querySelectorAll<HTMLLabelElement>(
+      '.tplf-repo',
+    )].find((label) => label.textContent?.includes(repo))?.querySelector<HTMLInputElement>('input')!;
+
+    await act(async () => checkbox('acme/app').click());
+    await act(async () => checkbox('other/app').click());
+
+    expect(checkbox('acme/app').checked).toBe(true);
+    expect(checkbox('other/app').checked).toBe(false);
+    expect(view.container.querySelector('[role="alert"]')?.textContent)
+      .toBe('other/app clones into the same folder as acme/app');
+    await view.unmount();
+  });
+
   it('reports a malformed public repo URL without checking it', async () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ repositories: [] });
+        return Response.json({ source: 'personal-token', repositories: [], truncated: false });
       }
       return null;
     });
     const { view } = await screenWith(fetcher);
     const textarea = view.container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Public repository URLs"]',
+      'textarea[aria-label="Repository URLs"]',
     )!;
     const setTextareaValue = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
@@ -830,18 +1023,18 @@ describe('create template screen', () => {
   it('adds a public repo batch only after every repo is reachable and saves it through PUT', async () => {
     const fetcher = stub((url, init) => {
       if (url.pathname === '/connections/github/repositories') {
-        return Response.json({ repositories: [] });
+        return Response.json({ source: 'personal-token', repositories: [], truncated: false });
       }
       if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
         if (String(init.body).includes('acme/private')) {
           return Response.json({ results: [
-            { repo: 'acme/one', reachable: true },
-            { repo: 'acme/private', reachable: false, failure: 'not-public' },
+            { repo: 'acme/one', verdict: 'public' },
+            { repo: 'acme/private', verdict: 'not-found' },
           ] });
         }
         return Response.json({ results: [
-          { repo: 'acme/one', reachable: true },
-          { repo: 'acme/two', reachable: true },
+          { repo: 'acme/one', verdict: 'public' },
+          { repo: 'acme/two', verdict: 'public' },
         ] });
       }
       if (url.pathname === '/workspace-templates' && init?.method === undefined) {
@@ -866,7 +1059,10 @@ describe('create template screen', () => {
           createdBy: { name: 'Min Song', avatarUrl: null },
           folders: [],
           connections: [],
-          repos: ['acme/one', 'acme/two'],
+          repos: [
+            { repo: 'acme/one', private: false },
+            { repo: 'acme/two', private: false },
+          ],
         } });
       }
       return null;
@@ -882,7 +1078,7 @@ describe('create template screen', () => {
     );
     await settle();
     const textarea = view.container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Public repository URLs"]',
+      'textarea[aria-label="Repository URLs"]',
     )!;
     const setTextareaValue = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,
@@ -903,7 +1099,7 @@ describe('create template screen', () => {
     await settle();
 
     expect(view.container.querySelector('[role="alert"]')?.textContent)
-      .toContain('acme/private — not found, or it is private');
+      .toContain('acme/private — not found, or your GitHub connection cannot reach it');
     expect(view.container.querySelectorAll('.tplf-attached-row')).toHaveLength(0);
 
     await act(async () => {
@@ -951,13 +1147,13 @@ describe('create template screen', () => {
   it('adds, shows, and submits a public repo', async () => {
     const fetcher = stub((url, init) => {
       if (url.pathname === '/connections/github/repositories/check' && init?.method === 'POST') {
-        return Response.json({ results: [{ repo: 'public/example', reachable: true }] });
+        return Response.json({ results: [{ repo: 'public/example', verdict: 'public' }] });
       }
       return null;
     });
     const { view } = await screenWith(fetcher);
     const textarea = view.container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Public repository URLs"]',
+      'textarea[aria-label="Repository URLs"]',
     )!;
     const setTextareaValue = Object.getOwnPropertyDescriptor(
       HTMLTextAreaElement.prototype,

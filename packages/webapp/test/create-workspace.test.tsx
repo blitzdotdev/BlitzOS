@@ -1,7 +1,8 @@
 import { act } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRuleView } from "@blitzos/schema";
 import type { AgentRulesApi } from "../src/AgentRulesPicker.js";
+import { ApiRequestError, type ControlPlaneClient } from "../src/api.js";
 import { CreateWorkspaceDialog } from "../src/CreateWorkspaceDialog.js";
 import { render, settle } from "./dom.js";
 
@@ -13,13 +14,34 @@ const BUILT_IN_RULE = {
   builtIn: true,
 } as const;
 
-function rulesClient(rules: AgentRuleView[] = [BUILT_IN_RULE]): AgentRulesApi {
+afterEach(() => {
+  window.history.replaceState({}, "", "/");
+  window.sessionStorage.clear();
+});
+
+function rulesClient(
+  rules: AgentRuleView[] = [BUILT_IN_RULE],
+): AgentRulesApi & Pick<
+  ControlPlaneClient,
+  "connectStartUrl" | "listGithubRepositories"
+> {
   return {
     listAgentRules: vi.fn(async () => ({ rules })),
     putAgentRule: vi.fn(async (id: string, input: { name: string; content: string }) => ({
       rule: { id, ...input, updatedAt: 5, builtIn: false },
     })),
     deleteAgentRule: vi.fn(async () => undefined),
+    listGithubRepositories: vi.fn(async () => ({
+      source: 'installations' as const,
+      repositories: [],
+      truncated: false,
+    })),
+    connectStartUrl: (provider, _workspaceId, returnTo) => {
+      const query = returnTo === undefined
+        ? ''
+        : `?returnTo=${encodeURIComponent(returnTo)}`;
+      return `/connect/${encodeURIComponent(provider)}/start${query}`;
+    },
   };
 }
 
@@ -377,6 +399,155 @@ describe("create workspace dialog", () => {
       newTile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onNewTemplate).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it("blocks a private-repo template until the member connects GitHub", async () => {
+    const submit = vi.fn();
+    const listGithubRepositories = vi.fn(async () => {
+      throw new ApiRequestError("GitHub is not connected", 409, null);
+    });
+    const template = {
+      id: "template-private",
+      name: "private starter",
+      machineTypeId: "cx23@fsn1",
+      createdAt: 1,
+      createdBy: { name: "Ada Park", avatarUrl: null },
+      agentRuleId: null,
+      isOrgDefault: false,
+      environment: null,
+      folders: [],
+      connections: [{ provider: "github" }],
+      repos: [{ repo: "acme/private-app", private: true }],
+    };
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={{ ...rulesClient(), listGithubRepositories }}
+        listTemplates={async () => [template]}
+        initialTemplateId={template.id}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(listGithubRepositories).toHaveBeenCalledWith();
+    const create = view.container.querySelector<HTMLButtonElement>('.create-workspace-primary')!;
+    expect(create.disabled).toBe(true);
+    const connect = view.container.querySelector<HTMLAnchorElement>(
+      'a[href="/connect/github/start?returnTo=workspace-new"]',
+    )!;
+    expect(connect.textContent).toBe('Connect GitHub');
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).not.toHaveBeenCalled();
+    connect.addEventListener('click', (event) => event.preventDefault());
+    await act(async () => connect.click());
+    expect(JSON.parse(window.sessionStorage.getItem(
+      'blitz:github-connect-draft:workspace-new',
+    ) ?? '{}')).toEqual({
+      templateId: 'template-private',
+      environment: { env: {}, startupScript: null },
+      agentRuleId: null,
+    });
+    await view.unmount();
+  });
+
+  it("restores the selected template after connect instead of the org default", async () => {
+    window.history.replaceState({}, "", "/workspaces/new?connect=ok&provider=github");
+    window.sessionStorage.setItem(
+      'blitz:github-connect-draft:workspace-new',
+      JSON.stringify({
+        templateId: 'template-private',
+        environment: { env: { ROUND_TRIP: 'yes' }, startupScript: './resume.sh\n' },
+        agentRuleId: 'rule-override',
+      }),
+    );
+    const submit = vi.fn();
+    const privateTemplate = {
+      id: "template-private",
+      name: "private starter",
+      machineTypeId: "cx23@fsn1",
+      createdAt: 1,
+      createdBy: { name: "Ada Park", avatarUrl: null },
+      agentRuleId: null,
+      isOrgDefault: false,
+      environment: null,
+      folders: [],
+      connections: [{ provider: "github" }],
+      repos: [{ repo: "acme/private-app", private: true }],
+    };
+    const defaultTemplate = {
+      ...privateTemplate,
+      id: "template-default",
+      name: "org default",
+      isOrgDefault: true,
+      connections: [],
+      repos: [],
+    };
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        client={rulesClient([BUILT_IN_RULE, {
+          id: 'rule-override',
+          name: 'Redirect rules',
+          content: '# Redirect rules\n',
+          updatedAt: 7,
+          builtIn: false,
+        }])}
+        listTemplates={async () => [defaultTemplate, privateTemplate]}
+        initialTemplateId={defaultTemplate.id}
+        onNewTemplate={() => undefined}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const privateTile = [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
+      .find((tile) => tile.textContent?.includes('private starter'))!;
+    const defaultTile = [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
+      .find((tile) => tile.textContent?.includes('org default'))!;
+    expect(privateTile.getAttribute('aria-pressed')).toBe('true');
+    expect(defaultTile.getAttribute('aria-pressed')).toBe('false');
+    expect(window.sessionStorage.getItem('blitz:github-connect-draft:workspace-new')).toBeNull();
+    expect(view.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Environment variable key 1"]',
+    )?.value).toBe('ROUND_TRIP');
+    expect(view.container.querySelector<HTMLSelectElement>(
+      'select[aria-label="Agent rules document"]',
+    )?.value).toBe('rule-override');
+    expect(view.container.querySelector<HTMLButtonElement>('.create-workspace-primary')?.disabled)
+      .toBe(false);
+    await act(async () => {
+      view.container.querySelector('form')?.dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith({
+      templateId: 'template-private',
+      orgShareRole: 'editor',
+      environment: {
+        env: { ROUND_TRIP: 'yes' },
+        startupScript: './resume.sh\n',
+      },
+      agentRuleId: 'rule-override',
+    });
     await view.unmount();
   });
 

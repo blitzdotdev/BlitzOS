@@ -1,13 +1,14 @@
 import { fetchBoundedText } from "../compute/json-fetch.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "../http.js";
 import type { Principal } from "../principals.js";
-import type { CoreContext, CoreRouter } from "../runtime.js";
+import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { MAX_TEMPLATE_REPOS, TEMPLATE_REPO_PATTERN } from "../template-repos.js";
 import type {
   CheckGithubRepositoriesRequest,
   CheckGithubRepositoriesResponse,
   GithubRepositoryCheckView,
 } from "../wire.js";
+import { githubCallerCredential } from "./github-repositories.js";
 
 function parseCheckGithubRepositoriesRequest(
   value: JsonValue,
@@ -31,51 +32,87 @@ function parseCheckGithubRepositoriesRequest(
 }
 
 /** Probe Git transport instead of the REST repository endpoint. This is the
- * exact first request `git clone` makes, so 200 proves the bootstrap clone can
- * succeed without credentials. The REST API allows only 60 anonymous requests
- * per hour per source IP, which shared Worker egress can exhaust; this
- * endpoint does not carry that limit. GitHub deliberately answers 401 for
- * both private and missing repos, so "not-public" is the honest verdict. */
-async function checkGithubRepository(repo: string): Promise<GithubRepositoryCheckView> {
+ * exact first request `git clone` makes. The REST API allows only 60 anonymous
+ * requests per hour per source IP, which shared Worker egress can exhaust;
+ * this endpoint does not carry that limit. */
+async function gitProbeStatus(repo: string, token: string | null): Promise<number | null> {
   try {
+    const headers = new Headers({ "User-Agent": "blitz-control-plane" });
+    if (token !== null) {
+      // Measured against GitHub's git endpoint: Bearer answers 401 while
+      // Basic with this fixed username accepts the same user token.
+      headers.set("Authorization", `Basic ${btoa(`x-access-token:${token}`)}`);
+    }
     const { response } = await fetchBoundedText(
       globalThis.fetch,
       `https://github.com/${repo}.git/info/refs?service=git-upload-pack`,
       {
         method: "GET",
-        // The verdict must match the bootstrap's anonymous clone.
-        headers: { "User-Agent": "blitz-control-plane" },
+        headers,
       },
       {
         responseLabel: "GitHub repository probe",
         bodyDisposition: () => "omit",
       },
     );
-    if (response.status === 200) return { repo, reachable: true };
-    if (response.status === 401 || response.status === 403 || response.status === 404) {
-      return { repo, reachable: false, failure: "not-public" };
-    }
-    return { repo, reachable: false, failure: "unreachable" };
+    return response.status;
   } catch {
-    return { repo, reachable: false, failure: "unreachable" };
+    return null;
   }
 }
 
-/** POST /connections/github/repositories/check — proves public repos can be
- * cloned by the credential-free bootstrap path. Picking repos for a template
- * is an active-member read, not an admin act. No runtime factory: the probe
- * reads no stored credential and touches no row, so it needs no database. */
+function hidden(status: number | null): boolean {
+  return status === 401 || status === 403 || status === 404;
+}
+
+async function checkGithubRepository(
+  repo: string,
+  token: string | null,
+): Promise<GithubRepositoryCheckView> {
+  if (token === null) {
+    // The credential-free answer still matches a public bootstrap clone. A
+    // private repo is deliberately indistinguishable from a missing one, so
+    // GitHub's hidden response becomes the only closed verdict available.
+    const status = await gitProbeStatus(repo, null);
+    if (status === 200) return { repo, verdict: "public" };
+    if (hidden(status)) return { repo, verdict: "not-found" };
+    return { repo, verdict: "unreachable" };
+  }
+
+  const authenticated = await gitProbeStatus(repo, token);
+  const anonymous = await gitProbeStatus(repo, null);
+  if (anonymous === 200) return { repo, verdict: "public" };
+  if (authenticated === 200 && hidden(anonymous)) {
+    return { repo, verdict: "private-reachable" };
+  }
+  if (hidden(authenticated) && hidden(anonymous)) return { repo, verdict: "not-found" };
+  return { repo, verdict: "unreachable" };
+}
+
+export async function checkGithubRepositories(
+  repos: readonly string[],
+  token: string | null,
+): Promise<GithubRepositoryCheckView[]> {
+  return Promise.all(repos.map((repo) => checkGithubRepository(repo, token)));
+}
+
+/** POST /connections/github/repositories/check — proves the clone path the
+ * caller will use. Picking repos for a template is an active-member read, not
+ * an admin act. */
 export function addGithubRepositoryCheckRoutes(
   router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
   router.post("/connections/github/repositories/check", async (context) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
     const request = parseCheckGithubRepositoriesRequest(await readJson(context.req.raw));
+    const credential = await githubCallerCredential(runtimeFactory(context), principal.id);
     return context.json<CheckGithubRepositoriesResponse>({
-      // Sixteen concurrent probes stay well inside the Worker subrequest budget.
-      results: await Promise.all(request.repos.map(checkGithubRepository)),
+      // Sixteen authenticated repos need at most thirty-two probes, plus one
+      // refresh. That remains below the smallest Worker subrequest allowance.
+      results: await checkGithubRepositories(request.repos, credential?.token ?? null),
     });
   });
 }

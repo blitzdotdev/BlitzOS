@@ -228,6 +228,27 @@ export interface ConnectOAuthExtra {
    * is signed like everything else, because an attacker-chosen workspace id
    * would aim a freshly stored grant at someone else's box. */
   workspaceId: string | null;
+  /** The non-workspace surface that started the round trip. This is a closed
+   * route name rather than a path, so the signed cookie cannot become an open
+   * redirect even if a future caller forgets where the value originated. */
+  returnTo: ConnectReturnTo | null;
+}
+
+export type ConnectReturnTo =
+  | "template-new"
+  | `template-edit:${string}`
+  | "workspace-new";
+
+/** Parses the only route names a connect caller may sign. Template ids stay
+ * data inside one encoded path segment; accepting a free path here would turn
+ * the OAuth callback into an open redirect. */
+export function connectReturnTo(value: string): ConnectReturnTo | null {
+  if (value === "template-new" || value === "workspace-new") return value;
+  if (!value.startsWith("template-edit:")) return null;
+  const templateId = value.slice("template-edit:".length);
+  return templateId.length > 0 && templateId.length <= 64
+    ? `template-edit:${templateId}`
+    : null;
 }
 
 export type ConnectOAuthStateV1 = OAuthStateBase & ConnectOAuthExtra;
@@ -236,10 +257,11 @@ export type CreatedConnectOAuthState = CreatedOAuthState;
 const connectFlow: OAuthStateFlow<ConnectOAuthExtra> = {
   cookieName: CONNECT_OAUTH_COOKIE,
   cookiePath: CONNECT_COOKIE_PATH,
-  bind({ provider, userId, membershipId, workspaceId }) {
+  bind({ provider, userId, membershipId, workspaceId, returnTo }) {
     const bound: JsonObject = { provider, userId };
     if (membershipId !== null) bound.membershipId = membershipId;
     if (workspaceId !== null) bound.workspaceId = workspaceId;
+    if (returnTo !== null) bound.returnTo = returnTo;
     return bound;
   },
   read(parsed) {
@@ -253,11 +275,18 @@ const connectFlow: OAuthStateFlow<ConnectOAuthExtra> = {
       parsed.workspaceId !== undefined
       && (!isString(parsed.workspaceId) || parsed.workspaceId.length === 0)
     ) return null;
+    let returnTo: ConnectReturnTo | null = null;
+    if (parsed.returnTo !== undefined) {
+      if (!isString(parsed.returnTo)) return null;
+      returnTo = connectReturnTo(parsed.returnTo);
+      if (returnTo === null) return null;
+    }
     return {
       provider: parsed.provider,
       userId: parsed.userId,
       membershipId: isString(parsed.membershipId) ? parsed.membershipId : null,
       workspaceId: isString(parsed.workspaceId) ? parsed.workspaceId : null,
+      returnTo,
     };
   },
 };
@@ -268,12 +297,13 @@ export async function createConnectOAuthState(
   userId: string,
   membershipId: string | null,
   workspaceId: string | null = null,
+  returnTo: ConnectReturnTo | null = null,
   now = Date.now(),
 ): Promise<CreatedConnectOAuthState> {
   return createOAuthState(
     connectFlow,
     signingSecret,
-    { provider, userId, membershipId, workspaceId },
+    { provider, userId, membershipId, workspaceId, returnTo },
     now,
   );
 }

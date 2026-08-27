@@ -79,6 +79,7 @@ const expected = [
   "core/connections/mint.ts",
   "core/connections/proxy.ts",
   "core/connections/github-repo-check.ts",
+  "core/connections/github-repositories.ts",
   "core/http.ts",
   "core/files/access.ts",
   "core/files/attachments.ts",
