@@ -105,6 +105,25 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: byok-required
+          # The golden Hetzner snapshot this deployment boots, per location. It
+          # removes the apt install, the box-image download and the sshd move
+          # from first boot: 130.6 s to 45.3 s, measured 2026-08-27.
+          #
+          # It is hardcoded here rather than kept in a secret because it is not
+          # one: it is a plain [vars] entry, and this is where the other
+          # per-deployment non-secret settings already live. A snapshot id is
+          # scoped to ONE Hetzner project, which is why it cannot be a default
+          # in code and why client prod needs its own bake before release.yml
+          # gets a line like this.
+          #
+          # Rebake with `npm run golden:bake -- --location hel1` and update the
+          # value. An id that no longer resolves is not an outage: the adapter
+          # warns and falls back to stock Ubuntu.
+          #
+          # Inert while the policy above is byok-required, because a snapshot
+          # cannot cross into an org's own project. It goes live for subscribed
+          # orgs under plans/SUBSCRIPTION-COMPUTE.md.
+          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: hel1=425047509
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an
