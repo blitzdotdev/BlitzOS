@@ -909,6 +909,19 @@ describe("microVM pool provider", () => {
         body: "",
       },
     ]);
+
+    // The rewrite's refusal has to surface as the route's 400, not as a
+    // guest call carrying a foreign target.
+    const crossOrigin = await appRequest(
+      app,
+      `/workspaces/${workspace.id}/webapp/7445/workspace/.a%20b.tmp`,
+      {
+        method: "MOVE",
+        headers: { Cookie: cookie, Destination: "https://evil.example/workspace/stolen" },
+      },
+    );
+    expect(crossOrigin.status).toBe(400);
+    expect(webAppCalls).toHaveLength(2);
   });
 
   it("rejects webapp access for tunnel-less cloud workspaces with a clear 503", async () => {
