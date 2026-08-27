@@ -170,6 +170,32 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   return result;
 }
 
+/** The recreate body is optional: an empty POST restores the workspace as it
+ * was. Only the SSH key may be supplied, because it belongs to whoever is
+ * asking rather than to the row being restored. */
+interface RecreateOverrides {
+  sshPublicKey?: string;
+}
+
+async function readOptionalJson(request: Request): Promise<RecreateOverrides> {
+  const raw = await request.text();
+  if (raw.trim() === "") return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new HttpError(400, "request body must be JSON");
+  }
+  if (!isRecord(parsed)) throw new HttpError(400, "request body must be an object");
+  if (parsed.sshPublicKey === undefined) return {};
+  const sshPublicKey = requiredString(parsed.sshPublicKey, "sshPublicKey").trim();
+  if (sshPublicKey === "") return {};
+  if (!isSshPublicKey(sshPublicKey)) {
+    throw new HttpError(400, "sshPublicKey must be an SSH public key");
+  }
+  return { sshPublicKey };
+}
+
 async function markCreateError(
   db: Db,
   id: string,
@@ -836,10 +862,17 @@ export function addWorkspaceRoutes(
     if (row.volume_id === null) {
       throw new HttpError(409, "workspace kept no volume, so it cannot be recreated");
     }
+    // The SSH key is the caller's, not the workspace's: the row never stored
+    // one, and a key from weeks ago may not be the key they hold now. Without
+    // this the recreated box came up with no authorized key at all and the
+    // owner could not reach their own restored disk. Proven on a real
+    // destroy/recreate pair on 2026-08-27.
+    const overrides = await readOptionalJson(context.req.raw);
     const request: CreateWorkspaceRequest = {
       machineTypeId: row.machine_type_id,
       volumeId: row.volume_id,
     };
+    if (overrides.sshPublicKey !== undefined) request.sshPublicKey = overrides.sshPublicKey;
     if (row.name !== null) request.name = row.name;
     if (row.agent_rule_id !== null) request.agentRuleId = row.agent_rule_id;
     if (row.org_share_role !== null && row.org_share_role !== undefined) {

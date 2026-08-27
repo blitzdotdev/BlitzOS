@@ -27,6 +27,10 @@ import {
 
 const API = "https://api.hetzner.cloud/v1";
 const SHUTDOWN_POLL_INTERVAL_MS = 1_000;
+// A detach is an async Hetzner action. These bound the wait for the volume to
+// actually come free, which is what the next attach needs.
+const DETACH_POLL_INTERVAL_MS = 1_000;
+const DETACH_TIMEOUT_MS = 60_000;
 const SHUTDOWN_TIMEOUT_MS = 45_000;
 // Hetzner bills some accounts in euro and some in dollars, and /v1/pricing
 // says which. A constant here read "EUR" and printed a euro sign over dollar
@@ -627,15 +631,38 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     });
   }
 
+  /**
+   * Detaches the volume and waits for Hetzner to finish.
+   *
+   * The POST only starts an action. Returning on the POST let a destroy report
+   * success while the volume was still attached, and an immediate recreate on
+   * that volume then failed with "volume already attached". Measured on a real
+   * destroy/recreate pair on 2026-08-27, so the wait is the fix, not a guard
+   * against a hypothetical.
+   *
+   * The postcondition is polled rather than the action id: "no server holds
+   * this volume" is what the next attach actually needs. A timeout returns
+   * quietly, because the janitor retries and a destroy must not wedge on a
+   * volume Hetzner is slow to release.
+   */
   async detachVolume(volumeId: string, vmId: string): Promise<void> {
-    const value = await this.request(`/volumes/${encodeURIComponent(volumeId)}`, undefined, true);
+    const path = `/volumes/${encodeURIComponent(volumeId)}`;
+    const value = await this.request(path, undefined, true);
     if (value === null) return;
     if (!isRecord(value) || !isRecord(value.volume)) throw new Error("invalid Hetzner volume response");
     if (value.volume.server !== Number(vmId)) return;
-    await this.request(`/volumes/${encodeURIComponent(volumeId)}/actions/detach`, {
-      method: "POST",
-      body: "{}",
-    });
+    await this.request(`${path}/actions/detach`, { method: "POST", body: "{}" });
+
+    const deadline = this.now() + DETACH_TIMEOUT_MS;
+    while (this.now() < deadline) {
+      const current = await this.request(path, undefined, true);
+      if (current === null) return;
+      if (!isRecord(current) || !isRecord(current.volume)) {
+        throw new Error("invalid Hetzner volume response");
+      }
+      if (current.volume.server === null) return;
+      await this.sleep(Math.min(DETACH_POLL_INTERVAL_MS, deadline - this.now()));
+    }
   }
 
   async deleteVolume(id: string): Promise<void> {

@@ -17,7 +17,7 @@
  * It prints the entry to add to HETZNER_SERVER_IMAGES. It creates one builder
  * VM and always deletes it, including on failure.
  */
-import { boxImageSetupScript } from "../dist/core/bootstrap.js";
+import { BOX_IMAGE_SETUP_HELPERS, boxImageSetupScript } from "../dist/core/bootstrap.js";
 
 const API = "https://api.hetzner.cloud/v1";
 const POLL_INTERVAL_MS = 5_000;
@@ -78,8 +78,14 @@ export BOX_IMAGE_REF=${JSON.stringify(image.boxImageRef)}
 export BOX_IMAGE_TAG=${JSON.stringify(image.boxImageTag)}
 export BOX_IMAGE_SHA256=${JSON.stringify(image.boxImageSha256)}
 
-fail() { echo "bake failed: $*"; exit 1; }
+# Without this the builder can die mid-script and simply never power off, and
+# the bake waits for a shutdown that cannot come. Fail loudly, then stop, so a
+# broken bake costs two minutes instead of thirty.
+trap 'echo "bake: FAILED at line $LINENO"; shutdown -h now' ERR
 
+# The emitted image setup calls these. Without them the setup dies on a
+# "retry: command not found", and set -e stops the builder where it stands.
+${BOX_IMAGE_SETUP_HELPERS}
 apt-get update
 apt-get install -y docker.io curl
 systemctl enable --now docker

@@ -267,6 +267,30 @@ main().catch(function (error) {
  * the way you would edit a wire format, not a script. Recipe launches add
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
  * without a recipe or usage capture emits byte-identical output. */
+/**
+ * The shell helpers `boxImageSetupScript` calls. Emitting that setup without
+ * these gives `retry: command not found`, and under `set -e` the script dies
+ * where it stands. The golden-image bake hit exactly that on its first real
+ * run: the builder never powered off, and the bake waited 30 minutes for a
+ * shutdown that could not come.
+ *
+ * `buildBootstrapScript` emits these in its own preamble. Any other caller
+ * that embeds the setup has to emit them first.
+ */
+export const BOX_IMAGE_SETUP_HELPERS = `retry() {
+  local attempt=1
+  local max_attempts=10
+  until "$@"; do
+    if (( attempt >= max_attempts )); then
+      echo "command failed after $attempt attempts: $*"
+      return 1
+    fi
+    sleep $((attempt * 3))
+    attempt=$((attempt + 1))
+  done
+}
+`;
+
 /** The three variables that name one box image build. */
 export interface BoxImageRef {
   boxImageRef: string;
@@ -566,19 +590,7 @@ touch "$BOOTSTRAP_LOG"
 chmod 0600 "$BOOTSTRAP_LOG"
 exec >>"$BOOTSTRAP_LOG" 2>&1
 
-retry() {
-  local attempt=1
-  local max_attempts=10
-  until "$@"; do
-    if (( attempt >= max_attempts )); then
-      echo "command failed after $attempt attempts: $*"
-      return 1
-    fi
-    sleep $((attempt * 3))
-    attempt=$((attempt + 1))
-  done
-}
-
+${BOX_IMAGE_SETUP_HELPERS}
 fail() {
   bootstrap_error="$*"
   echo "blitz bootstrap failed: $*"
