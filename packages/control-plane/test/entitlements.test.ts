@@ -377,7 +377,7 @@ describe("entitlements", () => {
   });
 
   describe("the billing links", () => {
-    it("mints one hop an admin can follow to buy or to change what they bought", async () => {
+    it("mints one hop an admin can follow into the billing service", async () => {
       const { app } = harness();
       const admin = await operatorSession(app);
 
@@ -385,14 +385,12 @@ describe("entitlements", () => {
         headers: { Cookie: admin, Referer: "https://cp.example/settings/invites" },
       }, BILLING);
       expect(response.status).toBe(200);
-      const links = await response.json<{ checkoutUrl: string; portalUrl: string }>();
+      const billing = await response.json<{ url: string }>();
 
-      // One token, two destinations: a person who lands on the wrong page is
-      // one click from the right one, with the same return path.
-      const token = new URL(links.checkoutUrl).hash.slice("#token=".length);
-      expect(new URL(links.portalUrl).hash.slice("#token=".length)).toBe(token);
-      expect(links.checkoutUrl).toBe(`https://billing.test/checkout#token=${token}`);
-      expect(links.portalUrl).toBe(`https://billing.test/portal#token=${token}`);
+      const token = new URL(billing.url).hash.slice("#token=".length);
+      // One destination. The billing service reads the hop and decides whether
+      // this organization is buying or managing what it already bought.
+      expect(billing.url).toBe(`https://billing.test/checkout#token=${token}`);
 
       const claims = JSON.parse(
         atob((token.split(".")[1] ?? "").replaceAll("-", "+").replaceAll("_", "/")),

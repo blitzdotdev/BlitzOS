@@ -22,7 +22,7 @@ import type {
   ListRecipesResponse,
   ListWorkspaceTemplatesResponse,
   ListVolumesResponse,
-  OrgBillingLinksResponse,
+  OrgBillingResponse,
   OrgUsageCaptureResponse,
   OrgUsageResponse,
   PollResponse,
@@ -189,7 +189,7 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   launchRecipe(id: string): Promise<CreateWorkspaceResponse>;
   getUsageCapture(): Promise<OrgUsageCaptureResponse>;
   orgUsage(): Promise<OrgUsageResponse>;
-  billingLinks(): Promise<OrgBillingLinksResponse>;
+  billing(): Promise<OrgBillingResponse>;
   putUsageCapture(enabled: boolean): Promise<OrgUsageCaptureResponse>;
   setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
@@ -685,7 +685,7 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       }),
     getUsageCapture: () => request<OrgUsageCaptureResponse>("/orgs/self/usage-capture"),
     orgUsage: () => request<OrgUsageResponse>("/orgs/self/usage"),
-    billingLinks: () => request<OrgBillingLinksResponse>("/orgs/self/billing"),
+    billing: () => request<OrgBillingResponse>("/orgs/self/billing"),
     putUsageCapture: (enabled) =>
       request<OrgUsageCaptureResponse>("/orgs/self/usage-capture", {
         method: "PUT",

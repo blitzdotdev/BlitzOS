@@ -266,7 +266,7 @@ function client(): ControlPlaneClient {
   launchRecipe: vi.fn(async () => { throw new Error("unused"); }),
   getUsageCapture: vi.fn(async () => ({ enabled: false, folderId: null })),
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10 })),
-    billingLinks: vi.fn(async () => { throw new Error('unused'); }),
+    billing: vi.fn(async () => { throw new Error('unused'); }),
   putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
   setWorkspaceOrgRole: vi.fn(async () => undefined),
     deleteFolderObject: vi.fn(async () => undefined),

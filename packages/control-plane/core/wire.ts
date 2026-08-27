@@ -503,11 +503,12 @@ export interface OrgUsageResponse {
   vmLimit: number;
 }
 
-/** The two places an admin can go in the billing service: buy seats, or change
- * the seats already bought. Both carry the same signed hop. */
-export interface OrgBillingLinksResponse {
-  checkoutUrl: string;
-  portalUrl: string;
+/** Where an admin goes to deal with billing, carrying a signed hop. One link,
+ * not one per errand: the billing service reads the hop and offers buying or
+ * the portal depending on what the organization already has, so choosing here
+ * would only be a second opinion about the same fact. */
+export interface OrgBillingResponse {
+  url: string;
 }
 
 export interface CreateVolumeRequest {

@@ -8,7 +8,7 @@ import {
   type JsonObject,
 } from "./http.js";
 import type { Principal } from "./principals.js";
-import type { OrgBillingLinksResponse, OrgUsageResponse } from "./wire.js";
+import type { OrgBillingResponse, OrgUsageResponse } from "./wire.js";
 import type {
   CoreContext,
   CoreRouter,
@@ -317,13 +317,15 @@ export function addEntitlementsRoutes(
     });
   });
 
-  // The two links an admin can follow into the billing service: one to buy
-  // seats, one to change what they already bought. Both are the same signed
-  // hop, so a person who lands on the wrong one is one click from the other.
+  // The one link an admin follows into the billing service. It exists because
+  // that link used to be reachable only by being refused: an admin who wanted
+  // to add seats before hitting the wall, or to change a card, had nowhere to
+  // go.
   //
-  // It exists because the checkout link used to be reachable only by being
-  // refused. An admin who wants to add seats before they hit the wall, or to
-  // change a card, had nowhere to go.
+  // One link rather than one per errand. The billing service reads the hop and
+  // offers buying or the portal depending on what the organization already
+  // has, so deciding that here would be a second opinion about a fact this
+  // side does not hold.
   router.get("/orgs/self/billing", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
@@ -342,9 +344,8 @@ export function addEntitlementsRoutes(
     // this route does not exist, which is what every other billing-shaped
     // route on it answers.
     if (handoff === null) throw new HttpError(404, "not found");
-    return context.json<OrgBillingLinksResponse>({
-      checkoutUrl: `${handoff.base}/checkout#token=${handoff.token}`,
-      portalUrl: `${handoff.base}/portal#token=${handoff.token}`,
+    return context.json<OrgBillingResponse>({
+      url: `${handoff.base}/checkout#token=${handoff.token}`,
     });
   });
 }

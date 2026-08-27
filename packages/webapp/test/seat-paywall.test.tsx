@@ -17,7 +17,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
       vmsUsed: 0,
       vmLimit: 10,
     })),
-    billingLinks: vi.fn(async () => { throw new Error('unused'); }),
+    billing: vi.fn(async () => { throw new Error('unused'); }),
     ...overrides,
   } as unknown as ControlPlaneClient;
 }
@@ -46,18 +46,25 @@ describe('the seat paywall', () => {
     await settle();
     expect(text(view.container)).toContain('2');
     expect(text(view.container)).toContain('3');
-    // Room left, so the control manages what is already bought.
-    expect(text(view.container)).toContain('Manage billing');
+    // One control, one word, whichever side of the limit the organization is
+    // on. The billing service decides what it opens.
+    expect(text(view.container)).toContain('Manage');
     expect(text(view.container)).not.toContain('Upgrade');
     await view.unmount();
   });
 
-  it('offers to buy when the seats are full', async () => {
+  it('keeps the same control when the seats are full', async () => {
+    const billing = vi.fn(async () => ({ url: 'https://billing.example/checkout#token=abc' }));
     const view = await render(<InvitesPanel client={client({
+      billing,
       orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10 })),
     })} />);
     await settle();
-    expect(text(view.container)).toContain('Upgrade');
+
+    const control = view.container.querySelector('.settings-seats button');
+    expect(control?.textContent).toBe('Manage');
+    // Emphasis changes with the limit; the word and the destination do not.
+    expect(control?.className).toContain('webapp-action--primary');
     await view.unmount();
   });
 
