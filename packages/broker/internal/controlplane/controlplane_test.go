@@ -176,3 +176,86 @@ func TestOriginRequiresHTTPSExceptLoopback(t *testing.T) {
 		}
 	}
 }
+
+// TestConcurrentRefreshRotatesOnce is the regression for the bug that stranded
+// boxes: two clients on one state directory, both holding the same expired
+// access token, both driven at the control plane at once.
+//
+// The control plane makes a refresh token single-use, so the second POST of
+// the same token is a 400 the box cannot recover from. The flock plus the
+// re-read inside it means the second client never sends that POST at all: by
+// the time it holds the lock the first has written, and the stale-access check
+// hands it the fresh credential.
+func TestConcurrentRefreshRotatesOnce(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := store.SaveCredential(stateDir, store.Credential{
+		BoxID: "box", AccessToken: "old-access", RefreshToken: "old-refresh",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var refreshCalls atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/oauth/token":
+			body, _ := io.ReadAll(request.Body)
+			form, _ := url.ParseQuery(string(body))
+			// Single-use, exactly as the control plane treats it: the second
+			// redemption of a spent token is invalid_grant.
+			if form.Get("refresh_token") != "old-refresh" {
+				writer.WriteHeader(http.StatusBadRequest)
+				io.WriteString(writer, `{"error":"invalid_grant"}`)
+				return
+			}
+			if refreshCalls.Add(1) == 1 {
+				// Hold the winner inside the critical section so the other
+				// client is guaranteed to arrive while the rotation is open.
+				<-release
+			}
+			io.WriteString(writer, `{"box_id":"box","access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","expires_in":900}`)
+		case "/boxes/box/feed":
+			if request.Header.Get("Authorization") == "Bearer old-access" {
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			writer.Header().Set("ETag", `"v1"`)
+			io.WriteString(writer, `{"version":"v1","members":[]}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	// Two clients, because two processes are what the box actually runs. One
+	// Client with one mutex would pass this test without the file lock.
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			client, err := New(server.URL, stateDir, server.Client())
+			if err != nil {
+				results <- err
+				return
+			}
+			_, _, _, err = client.FetchFeed(context.Background(), "")
+			results <- err
+		}()
+	}
+	// Both are now either in the rotation or queued behind it.
+	time.Sleep(200 * time.Millisecond)
+	close(release)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatalf("fetch failed: %v", err)
+		}
+	}
+	if calls := refreshCalls.Load(); calls != 1 {
+		t.Fatalf("refresh POSTs = %d, want 1: the spent token was redeemed twice", calls)
+	}
+	credential, err := store.LoadCredential(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.AccessToken != "new-access" || credential.RefreshToken != "new-refresh" {
+		t.Fatalf("credential was not rotated: %#v", credential)
+	}
+}
