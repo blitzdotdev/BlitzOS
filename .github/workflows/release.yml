@@ -172,7 +172,12 @@ jobs:
           # Rebake with `npm run golden:bake -- --location hel1` and update
           # BOTH workflows. An id that no longer resolves is not an outage: the
           # adapter warns and falls back to stock Ubuntu.
-          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=425047509'
+          #
+          # Snapshot 425198627, baked 2026-08-28 by the repaired bake (#101).
+          # The timings above were measured on 425047509, which was a partial
+          # build: it carried the box image but not lever 2, so those numbers
+          # are a floor for this image rather than a measurement of it.
+          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=425198627'
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an
