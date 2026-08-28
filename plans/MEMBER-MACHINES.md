@@ -167,9 +167,10 @@ manual path until then.
 
 ### workspace_credentials — the statics the workspace adds
 
-Sealed static keys, scoped to the workspace, managed by the **org admin** in
-workspace settings (and at create time). Values are AES-256-GCM sealed with
-the existing `CRED_MASTER_KEY`, AAD = `wscred:<workspaceId>:<name>`. Note:
+Sealed static keys, scoped to the workspace, managed by the **workspace
+admin** in workspace settings (and at create time). Values are AES-256-GCM
+sealed with the existing `CRED_MASTER_KEY`, AAD =
+`wscred:<workspaceId>:<name>`. Note:
 this deliberately reverses migration 0028's ruling ("ad-hoc secrets are a
 workspace file"); the reversal is intended and recorded here.
 
@@ -244,7 +245,7 @@ interface CreateWorkspaceRequest {
   credentials?: { name: string; label?: string; value: string;
                   delivery: 'env' | 'header'; envName?: string }[];
                                   // create-time only path where a value is sent;
-                                  // org-admin caller required when present
+                                  // the creator is the first workspace admin
   cloneFromWorkspaceId?: string;  // copy config (never credential values, never members)
 }
 ```
@@ -274,23 +275,35 @@ interface CreateWorkspaceRequest {
 
 ## 3. Permissions
 
-| Action | Org admin | WS admin | Editor | Viewer |
-| --- | --- | --- | --- | --- |
-| Create workspace | ✓ | — | — | — |
-| Workspace settings (name, machine type, auto_provision, config) | ✓ | ✓ | — | — |
-| Manage member roles in the workspace | ✓ | ✓ | — | — |
-| Add / remove workspace members (active org members only) | ✓ | ✓ | — | — |
-| Manage members' machine lifecycle (provision, stop, start, recreate, destroy) | ✓ | ✓ | own stop/start | — |
-| Change a machine's type, keep its volume (SetMachineType) | ✓ | ✓ | — | — |
-| Workspace credentials: add, rotate, revoke | ✓ | — | — | — |
-| Workspace credentials: use in sessions | ✓ | ✓ | ✓ | — |
-| Run sessions on own machine | ✓ | ✓ | ✓ | — |
-| Watch workspace-visible sessions | ✓ | ✓ | ✓ | ✓ |
-| Delete workspace | ✓ | ✓ | — | — |
+Three workspace roles, one implicit reach. In one line each:
 
-Workspace admin and org admin are distinct on purpose: the workspace admin
-runs the team (roles, machines); the org admin holds the org's secrets and
-billing. Org-admin implicit access remains, as today.
+- **Workspace admin** runs the workspace: members, roles, machines,
+  settings, workspace credentials. The creator is the first admin.
+- **Editor** works in it: own machine, own sessions, credential use,
+  drive write.
+- **Viewer** watches: workspace-visible sessions and drive read. No
+  machine, no sessions of their own, no credential use.
+- **Org admin** is not a workspace role. Org admins hold implicit
+  workspace-admin reach in every workspace of the org (today's invariant),
+  plus the org-only concerns: the org roster and invites, billing, the org
+  compute credential, and workspace creation.
+
+| Action | WS admin | Editor | Viewer |
+| --- | --- | --- | --- |
+| Workspace settings (name, default type, auto_provision, environment, rules, repos) | ✓ | — | — |
+| Add / remove workspace members (active org members only) | ✓ | — | — |
+| Manage member roles | ✓ | — | — |
+| Machine lifecycle on any member machine (provision, stop, start, recreate, destroy) | ✓ | own stop/start | — |
+| SetMachineType on any member machine (keep volume) | ✓ | — | — |
+| Workspace credentials: add, rotate, revoke | ✓ | — | — |
+| Workspace credentials: use in sessions | ✓ | ✓ | — |
+| Run sessions on own machine | ✓ | ✓ | — |
+| Watch workspace-visible sessions | ✓ | ✓ | ✓ |
+| Drive: write / read | ✓ / ✓ | ✓ / ✓ | — / ✓ |
+| Delete workspace | ✓ | — | — |
+
+Org admins pass every ✓ in the WS-admin column through implicit reach.
+Workspace creation is org-admin only.
 
 ## 4. Credentials — two planes, one resolution rule
 
@@ -335,7 +348,8 @@ becomes the workspace administration surface. Tabs:
    / destroy) per the matrix. An add-member control at the top — a picker
    over active org members — with a per-member type override.
 2. **Credentials** — workspace credential list: name, label, created-by,
-   created-at; add/rotate/revoke for org admins. Values are write-only.
+   created-at; add/rotate/revoke for workspace admins. Values are
+   write-only.
 3. **Settings** — name, machine type (with "applies to new machines" note),
    auto_provision toggle, environment, agent rules, repos, clone action,
    delete.
@@ -396,6 +410,50 @@ hides machines. The slot stays; the feed is a product call.
 3. Migrate the ~20 class-selector test assertions to role/label queries.
 4. Build Strip and Rail as new components against the mockup; delete
    `DriveRail`; rewire the 8 `railFor` call sites.
+
+## 6b. Member and machine-type configuration UI
+
+Per-member machine types (§1a) need UI in two places: workspace create and
+workspace edit. The design reuses what exists; two components are new.
+Implementation ships with Build 1.
+
+**Existing parts to reuse** (from the ground-truth survey):
+
+- `MachineCatalogGrid` — the radio-card type grid, with `groupMachineTypes`
+  (provider + location groups) and `monthlyPriceLabel`. Stays the picker
+  for the **workspace default**.
+- `ShareWorkspaceDialog` — its people search over org members, suggestion
+  list, and per-person role selects are exactly the member-picker pattern.
+  The pattern is lifted; the dialog itself retires with `workspace_grants`.
+- `WebAppSelectMenu` — the listbox popover (outside-click, Escape, focus
+  return). Base for the compact type select.
+- `DriveAvatar` — member avatars in rows.
+
+**New component 1 — `MachineTypeSelect`.** A compact select on
+`WebAppSelectMenu`. One option per machine type: name, vCPU/RAM, monthly
+price, grouped by provider + location like the grid. First option:
+"Workspace default (<type>)". Two contexts gate its option list: at add
+time, all locations; on a live machine (`SetMachineType`), only types in
+the volume's location, others visible but disabled with a "volume is in
+<location>" note (§1a constraint).
+
+**New component 2 — `WorkspaceMembersEditor`.** One list, two modes.
+Row = avatar · name · role select (`admin | editor | viewer`) ·
+`MachineTypeSelect` · remove. A viewer row hides the type select (no
+machine, §2). Header = the lifted people search over active org members,
+plus Add.
+
+- *Draft mode* (inside `CreateWorkspaceDialog`): edits local state only;
+  submit sends `CreateWorkspaceRequest.members[]`. The creator appears
+  pinned as the first workspace admin.
+- *Live mode* (details-page Members tab, §6): each edit calls the API at
+  once. Rows gain the machine state chip and the lifecycle menu from §6;
+  the type select performs `SetMachineType` with a "keeps the disk"
+  confirmation.
+
+`CreateWorkspaceDialog` gains a Members section holding the draft-mode
+editor, below the machine-type grid (which now labels itself "Default
+machine type"). The details page embeds live mode. Nothing else changes.
 
 ## 7. Builds (revised)
 
