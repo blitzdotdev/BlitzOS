@@ -16,9 +16,11 @@ org
 
 ## 0. The idea
 
-A workspace works like a Discord server. Members are invited to it with a
-role. Each member gets one always-on machine, sized by the workspace's
-machine type, provisioned when the invite is sent, destroyed when they leave.
+A workspace works like a Discord server. A workspace admin adds org members
+to it with a role — only existing org members; the org roster grows through
+the org's own invite system, which this plan does not touch. Each member
+gets one always-on machine, provisioned the moment they are added, destroyed
+when they leave.
 Sessions inherit the workspace's agent rules, drive, and credentials.
 Machines never appear as a user decision — only in workspace administration.
 
@@ -45,7 +47,7 @@ workspaces (
   name                 TEXT NOT NULL,
   owner_membership_id  TEXT NOT NULL REFERENCES memberships(id), -- creator; first admin
   default_machine_type_id TEXT NOT NULL,  -- a default, never a restriction (§1a)
-  auto_provision       INTEGER NOT NULL DEFAULT 1,  -- provision + start VM on invite
+  auto_provision       INTEGER NOT NULL DEFAULT 1,  -- provision + start machine on member add
   environment          TEXT,              -- existing shape (0017)
   agent_rule_id        TEXT REFERENCES agent_rules(id),
   created_at           INTEGER NOT NULL,
@@ -80,9 +82,17 @@ workspace-admin powers — see the matrix in §3.
 ### machines — one VM per (workspace, member)
 
 The machines table takes every VM column the workspace row loses. A machine
-belongs to a workspace and to exactly one of: a membership (after
-redemption) or an invite (between invite creation and redemption — no
-membership row exists yet, so the invite is the key).
+belongs to a workspace and to a membership — always. Workspace members are
+org members, so the membership row exists before the machine does.
+
+**Terminology.** The codebase mixes three words, each with its own layer,
+and this plan keeps all three: a **machine** is the durable per-member
+object this table defines (the word already exists user-facing as "machine
+type"); a **vm** is the provider-level incarnation (`vm_id`, `createVm`,
+`VmProvider`, `vm_limit`); a **box** is the enrolled guest runtime on it
+(the `boxes` row, the box packages, the box credential). One machine has at
+most one live vm and one box at a time. `boxes.machine_id` replaces
+`boxes.workspace_id`.
 
 **The volume is the durable machine; the VM is an incarnation.** Machine
 state is volume-backed (#88), so the VM fields are replaceable while the
@@ -94,8 +104,7 @@ volume, and creates a new VM of the new type.
 machines (
   id                         TEXT PRIMARY KEY,
   workspace_id               TEXT NOT NULL REFERENCES workspaces(id),
-  membership_id              TEXT REFERENCES memberships(id),
-  invite_id                  TEXT REFERENCES invites(id),
+  membership_id              TEXT NOT NULL REFERENCES memberships(id),
   state                      TEXT NOT NULL CHECK (state IN
                                ('provisioning','running','stopped','error',
                                 'destroying','destroyed')),
@@ -109,7 +118,6 @@ machines (
   error                      TEXT,
   created_at                 INTEGER NOT NULL,
   updated_at                 INTEGER NOT NULL,
-  CHECK ((membership_id IS NULL) <> (invite_id IS NULL)),
   UNIQUE (workspace_id, membership_id)
 )
 ```
@@ -125,7 +133,7 @@ The workspace holds only a **default**. The model must never restrict which
 types a workspace can hold. Three consequences:
 
 1. At provision, a machine takes an explicit type when one is given (per
-   member at create or invite), else the workspace default.
+   member at create or add), else the workspace default.
 2. A machine's type is mutable. `SetMachineType` destroys the VM, keeps the
    volume, and provisions a new VM of the new type on the same volume. The
    member's disk state survives; running sessions restart.
@@ -137,22 +145,6 @@ location. A type change keeps the volume when the new type is in the same
 location. A cross-location change needs a volume move — deferred (§5).
 Automatic resize on pressure is also deferred; `SetMachineType` is the
 manual path until then.
-
-### invite_workspaces — what an invite grants
-
-Invites stay org-scoped (they must: the user does not exist yet). An invite
-carries workspace assignments. Redemption creates the `workspace_members`
-rows and re-keys each invite-held machine to the new membership.
-
-```sql
-invite_workspaces (
-  invite_id        TEXT NOT NULL REFERENCES invites(id),
-  workspace_id     TEXT NOT NULL REFERENCES workspaces(id),
-  role             TEXT NOT NULL CHECK (role IN ('admin','editor','viewer')),
-  machine_type_id  TEXT,   -- NULL = workspace default (§1a)
-  PRIMARY KEY (invite_id, workspace_id)
-)
-```
 
 ### workspace_credentials — the statics the workspace adds
 
@@ -190,8 +182,7 @@ interface MachineView {
   state: MachineState;
   machineTypeId: string;         // this machine's type; workspace holds only a default
   volumeId: string | null;       // the durable half; survives SetMachineType
-  membershipId: string | null;   // null while invite-held
-  inviteId: string | null;
+  membershipId: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -224,10 +215,9 @@ interface CreateWorkspaceRequest {
   name: string;
   defaultMachineTypeId: string;
   autoProvision?: boolean;        // default true
-  members?: { membershipId?: string; email?: string; role: WorkspaceRole;
+  members?: { membershipId: string; role: WorkspaceRole;
               machineTypeId?: string }[];
-                                  // membershipId: existing org member, added directly
-                                  // email: creates an org invite + invite_workspaces row
+                                  // existing org members only, added immediately
                                   // machineTypeId: per-member override of the default
   environment?: Record<string, string>;
   agentRuleId?: string;
@@ -242,27 +232,26 @@ interface CreateWorkspaceRequest {
 
 ## 2. Lifecycle rules
 
-1. **Invite sent** (existing member assigned, or email invite created): if
-   `auto_provision = 1`, a machine row is created (invite-keyed for email
-   invites, membership-keyed for existing members) and provisioned to
-   `running`. If `auto_provision = 0`, no machine; it provisions on first
-   open or by workspace-admin action.
-2. **Invite redeemed**: `workspace_members` rows created from
-   `invite_workspaces`; invite-held machines re-key to the membership.
-3. **Viewer role**: no machine, ever. Viewers watch sessions; they do not
+1. **Member added** (workspace admin picks an active org member, at create
+   or later): the `workspace_members` row is written immediately. If
+   `auto_provision = 1` (the default), a machine row is created in the same
+   act and provisions to `running`. If `auto_provision = 0`, no machine
+   yet; it provisions on first open or by workspace-admin action.
+2. **Viewer role**: no machine, ever. Viewers watch sessions; they do not
    run them.
-4. **Member removed from workspace / leaves org**: their machines in that
+3. **Member removed from workspace / leaves org**: their machines in that
    scope are destroyed after a grace snapshot; volume retention (existing
    7-day sweep) covers restore.
-5. **Unredeemed invite**: janitor destroys invite-held machines and expires
-   the invite after 14 days.
-6. **Workspace deleted**: all machines destroy; the workspace row tombstones
+4. **Workspace deleted**: all machines destroy; the workspace row tombstones
    after the last machine is gone.
-7. **vm_limit** counts `machines` rows in live states; `vmsUsed` and the
+5. **vm_limit** counts `machines` rows in live states; `vmsUsed` and the
    entitlements fixtures move to the same definition.
-8. **SetMachineType**: destroy the VM, keep the volume, provision a new VM
-   of the new type, reattach. Sessions restart; disk state survives. Refuse
-   a cross-location type until the volume move lands (§5).
+6. **SetMachineType**: destroy the VM incarnation, keep the volume,
+   provision the new type on the same volume. Sessions restart; disk state
+   survives. Refuse a cross-location type until the volume move lands (§5).
+7. **Org invites are out of scope.** The org roster grows through the
+   existing org invite system. A new org member holds no machines until a
+   workspace admin adds them to a workspace.
 
 ## 3. Permissions
 
@@ -271,7 +260,7 @@ interface CreateWorkspaceRequest {
 | Create workspace | ✓ | — | — | — |
 | Workspace settings (name, machine type, auto_provision, config) | ✓ | ✓ | — | — |
 | Manage member roles in the workspace | ✓ | ✓ | — | — |
-| Invite / add / remove workspace members | ✓ | ✓ | — | — |
+| Add / remove workspace members (active org members only) | ✓ | ✓ | — | — |
 | Manage members' machine lifecycle (provision, stop, start, recreate, destroy) | ✓ | ✓ | own stop/start | — |
 | Change a machine's type, keep its volume (SetMachineType) | ✓ | ✓ | — | — |
 | Workspace credentials: add, rotate, revoke | ✓ | — | — | — |
@@ -324,8 +313,8 @@ becomes the workspace administration surface. Tabs:
 1. **Members** — one row per member: name, role selector (WS admin), machine
    state chip, machine type selector (SetMachineType, with a "keeps the
    disk" note), and lifecycle controls (provision / stop / start / recreate
-   / destroy) per the matrix. Invite control at the top, with a per-member
-   type override.
+   / destroy) per the matrix. An add-member control at the top — a picker
+   over active org members — with a per-member type override.
 2. **Credentials** — workspace credential list: name, label, created-by,
    created-at; add/rotate/revoke for org admins. Values are write-only.
 3. **Settings** — name, machine type (with "applies to new machines" note),
@@ -392,13 +381,12 @@ hides machines. The slot stays; the feed is a product call.
 ## 7. Builds (revised)
 
 **Build 1 — workspaces, members, machines.** The schema in §1 minus
-credentials; migration off the template tables; invite assignments;
-provision-on-invite with the auto_provision toggle; destroy-on-leave;
-janitors re-pointed at `machines`; `vm_limit`/`vmsUsed` re-based; the
-details-page Members tab. Done when: an invited member's first open lands
-on a running machine, a removed member's machine destroys with a grace
-snapshot, and a WS admin can stop and start any member machine from the
-page.
+credentials; migration off the template tables; provision-on-add with the
+auto_provision toggle; destroy-on-leave; janitors re-pointed at `machines`;
+`vm_limit`/`vmsUsed` re-based; the details-page Members tab. Done when: an
+added member's first open lands on a running machine, a removed member's
+machine destroys with a grace snapshot, and a WS admin can stop and start
+any member machine from the page.
 
 **Build 2 — sessions as objects.** Control-plane `agent_sessions`; promote
 the ACP actor. The rail shell already exists via the sidecar (§6a); this
