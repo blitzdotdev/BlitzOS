@@ -188,21 +188,27 @@ workspace_credentials (
 -- one live row per (workspace_id, name): partial unique index WHERE revoked_at IS NULL
 ```
 
-**One store, two reads — this table replaces `workspaces.environment`.**
+**One store, one read — this table replaces `workspaces.environment`.**
 Today's two half-systems (plaintext workspace env vars; sealed but
-org-scoped connections) unify here. A row is a name and a sealed value.
+org-scoped connections) unify here. A row is a name and a sealed value,
+and the only consumer is `blitz-cred`:
 
-1. *Ambient*: all live rows export as env vars on every member machine
-   through the existing `env.d` path. Programs and the agent read
-   `$STRIPE_API_KEY` like any variable. New sessions see changes at start;
-   running sessions keep their env — today's semantics, unchanged.
-2. *On demand*: `blitz-cred get <name>` serves the same value, behind the
-   §4 resolution rule (personal grant first).
+- `blitz-cred get <name>` / `blitz-cred env <name>` serve the value on
+  demand, behind the §4 resolution rule (personal grant first).
+- Nothing is exported ambiently. An agent or program that wants an env var
+  sets it itself, scoped as the agent rules already teach:
+  `STRIPE_API_KEY=$(blitz-cred get STRIPE_API_KEY) cmd`.
 
-An add is available at once: machines re-sync `env.d` (the rules-sync
-pattern) and `blitz-cred` reads the store live. A revoke removes the row,
-the file entry, and the value from every new session. There is no delivery
-enum: one store, one name, both reads.
+An add is available at once — the next `blitz-cred` call reads the store
+live; no sync, no restart. A revoke refuses the next call. No value ever
+sits in a file on the machine.
+
+**The `env.d` delivery path is deleted with this.** It existed only for
+`workspaces.environment`: the broker-written `creds/env.d/00-workspace.sh`,
+its profile sourcing, the `tmux -e` pass in `blitz-term`, the env merge
+into chat turns, and the `workspace-environment` cross-runtime contract
+with its fixtures all retire. `blitz-cred` becomes the single door to
+every secret on the box.
 
 ### Wire types
 
