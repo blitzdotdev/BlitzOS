@@ -44,7 +44,7 @@ workspaces (
   org_id               TEXT NOT NULL REFERENCES orgs(id),
   name                 TEXT NOT NULL,
   owner_membership_id  TEXT NOT NULL REFERENCES memberships(id), -- creator; first admin
-  machine_type_id      TEXT NOT NULL,     -- the default for every member machine
+  default_machine_type_id TEXT NOT NULL,  -- a default, never a restriction (§1a)
   auto_provision       INTEGER NOT NULL DEFAULT 1,  -- provision + start VM on invite
   environment          TEXT,              -- existing shape (0017)
   agent_rule_id        TEXT REFERENCES agent_rules(id),
@@ -84,6 +84,12 @@ belongs to a workspace and to exactly one of: a membership (after
 redemption) or an invite (between invite creation and redemption — no
 membership row exists yet, so the invite is the key).
 
+**The volume is the durable machine; the VM is an incarnation.** Machine
+state is volume-backed (#88), so the VM fields are replaceable while the
+machine row and its volume persist. This is what makes machine types
+per-member and mutable (§1a): a type change destroys the VM, keeps the
+volume, and creates a new VM of the new type.
+
 ```sql
 machines (
   id                         TEXT PRIMARY KEY,
@@ -93,7 +99,7 @@ machines (
   state                      TEXT NOT NULL CHECK (state IN
                                ('provisioning','running','stopped','error',
                                 'destroying','destroyed')),
-  machine_type_id            TEXT NOT NULL,   -- copied from the workspace at provision
+  machine_type_id            TEXT NOT NULL,   -- per machine; defaulted, overridable, mutable
   compute_credential_source  TEXT NOT NULL CHECK (compute_credential_source IN ('org','deployment')),
   vm_id                      TEXT,
   volume_id                  TEXT,
@@ -113,9 +119,24 @@ principal is the machine's member, not the workspace owner — this is the D4
 identity fix, and the change site is known (`workspaces.ts:1252-1256`,
 `mint.ts:243`).
 
-`machine_type_id` is **copied at provision**. A workspace machine-type
-change applies to machines provisioned after the change. Live machines keep
-their size; resize/auto-upgrade is deferred (§5).
+### §1a Machine types are per machine, not per workspace
+
+The workspace holds only a **default**. The model must never restrict which
+types a workspace can hold. Three consequences:
+
+1. At provision, a machine takes an explicit type when one is given (per
+   member at create or invite), else the workspace default.
+2. A machine's type is mutable. `SetMachineType` destroys the VM, keeps the
+   volume, and provisions a new VM of the new type on the same volume. The
+   member's disk state survives; running sessions restart.
+3. Different members of one workspace can hold different types at the same
+   time.
+
+One provider constraint carries over: a volume attaches within its own
+location. A type change keeps the volume when the new type is in the same
+location. A cross-location change needs a volume move — deferred (§5).
+Automatic resize on pressure is also deferred; `SetMachineType` is the
+manual path until then.
 
 ### invite_workspaces — what an invite grants
 
@@ -125,9 +146,10 @@ rows and re-keys each invite-held machine to the new membership.
 
 ```sql
 invite_workspaces (
-  invite_id     TEXT NOT NULL REFERENCES invites(id),
-  workspace_id  TEXT NOT NULL REFERENCES workspaces(id),
-  role          TEXT NOT NULL CHECK (role IN ('admin','editor','viewer')),
+  invite_id        TEXT NOT NULL REFERENCES invites(id),
+  workspace_id     TEXT NOT NULL REFERENCES workspaces(id),
+  role             TEXT NOT NULL CHECK (role IN ('admin','editor','viewer')),
+  machine_type_id  TEXT,   -- NULL = workspace default (§1a)
   PRIMARY KEY (invite_id, workspace_id)
 )
 ```
@@ -166,11 +188,16 @@ type MachineState  = 'provisioning' | 'running' | 'stopped' | 'error'
 interface MachineView {
   id: string;
   state: MachineState;
-  machineTypeId: string;
+  machineTypeId: string;         // this machine's type; workspace holds only a default
+  volumeId: string | null;       // the durable half; survives SetMachineType
   membershipId: string | null;   // null while invite-held
   inviteId: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+interface SetMachineTypeRequest {
+  machineTypeId: string;         // same-location: VM recreates on the same volume
 }
 
 interface WorkspaceMemberView {
@@ -185,7 +212,7 @@ interface WorkspaceView {
   orgId: string;
   name: string;
   ownerMembershipId: string;
-  machineTypeId: string;         // default for new machines
+  defaultMachineTypeId: string;  // a default only; each machine carries its own
   autoProvision: boolean;
   myRole: WorkspaceRole;
   members: WorkspaceMemberView[];
@@ -195,11 +222,13 @@ interface WorkspaceView {
 
 interface CreateWorkspaceRequest {
   name: string;
-  machineTypeId: string;
+  defaultMachineTypeId: string;
   autoProvision?: boolean;        // default true
-  members?: { membershipId?: string; email?: string; role: WorkspaceRole }[];
+  members?: { membershipId?: string; email?: string; role: WorkspaceRole;
+              machineTypeId?: string }[];
                                   // membershipId: existing org member, added directly
                                   // email: creates an org invite + invite_workspaces row
+                                  // machineTypeId: per-member override of the default
   environment?: Record<string, string>;
   agentRuleId?: string;
   repos?: string[];
@@ -231,6 +260,9 @@ interface CreateWorkspaceRequest {
    after the last machine is gone.
 7. **vm_limit** counts `machines` rows in live states; `vmsUsed` and the
    entitlements fixtures move to the same definition.
+8. **SetMachineType**: destroy the VM, keep the volume, provision a new VM
+   of the new type, reattach. Sessions restart; disk state survives. Refuse
+   a cross-location type until the volume move lands (§5).
 
 ## 3. Permissions
 
@@ -241,6 +273,7 @@ interface CreateWorkspaceRequest {
 | Manage member roles in the workspace | ✓ | ✓ | — | — |
 | Invite / add / remove workspace members | ✓ | ✓ | — | — |
 | Manage members' machine lifecycle (provision, stop, start, recreate, destroy) | ✓ | ✓ | own stop/start | — |
+| Change a machine's type, keep its volume (SetMachineType) | ✓ | ✓ | — | — |
 | Workspace credentials: add, rotate, revoke | ✓ | — | — | — |
 | Workspace credentials: use in sessions | ✓ | ✓ | ✓ | — |
 | Run sessions on own machine | ✓ | ✓ | ✓ | — |
@@ -276,10 +309,11 @@ Injection-at-use (values out of transcripts) rides the existing seams
 
 ## 5. Deferred
 
-- **Auto-upgrade on pressure** (the old D2 resize): deferred. The provider
-  interface has no resize verb and recreate refuses type changes; this is a
-  later optimization, not part of the model. Until then: workspace admin
-  changes the workspace machine type, then recreates a machine.
+- **Auto-upgrade on pressure** (the old D2 resize): deferred. This is a
+  later optimization. Until then, `SetMachineType` is the manual path.
+- **Cross-location type change**: deferred. It needs a volume move
+  (snapshot + restore in the new location). Until then, `SetMachineType`
+  refuses a type whose location differs from the volume's.
 - Per-session credential audit dimension: lands with sessions (Build 2+).
 
 ## 6. The workspace details page (revamp target)
@@ -288,8 +322,10 @@ The dialog at `/workspaces/:id` ("Workspace details", annotated for revamp)
 becomes the workspace administration surface. Tabs:
 
 1. **Members** — one row per member: name, role selector (WS admin), machine
-   state chip, and lifecycle controls (provision / stop / start / recreate /
-   destroy) per the matrix. Invite control at the top.
+   state chip, machine type selector (SetMachineType, with a "keeps the
+   disk" note), and lifecycle controls (provision / stop / start / recreate
+   / destroy) per the matrix. Invite control at the top, with a per-member
+   type override.
 2. **Credentials** — workspace credential list: name, label, created-by,
    created-at; add/rotate/revoke for org admins. Values are write-only.
 3. **Settings** — name, machine type (with "applies to new machines" note),
