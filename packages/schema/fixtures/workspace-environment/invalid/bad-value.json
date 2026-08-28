@@ -1,7 +1,0 @@
-{
-  "env": {
-    "PORT": 3000
-  },
-  "startupScript": null,
-  "filesReady": true
-}
