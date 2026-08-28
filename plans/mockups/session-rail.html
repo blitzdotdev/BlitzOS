@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BlitzOS — session rail</title>
+<meta name="description" content="A design mockup for BlitzOS: durable team workspaces where every agent session is a named, shareable thing." />
+<style>
+:root{
+  --paper:#16181d; --ink:#dfe2e8; --accent:#7e95d7;
+  --muted:color-mix(in oklab,#dfe2e8 52%,#16181d);
+  --faint:color-mix(in oklab,#dfe2e8 30%,#16181d);
+  --soft-ink:color-mix(in oklab,#dfe2e8 82%,#16181d);
+  --rule:color-mix(in oklab,#dfe2e8 13%,#16181d);
+  --hover:color-mix(in oklab,#dfe2e8 7%,#16181d);
+  --sunken:color-mix(in oklab,#dfe2e8 5%,#16181d);
+  --selected:color-mix(in oklab,#7e95d7 20%,#16181d);
+  --live:#7fd39b;
+  --r:8px;
+  --font-ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:"Fira Code",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--paper);color:var(--ink);font:14px/1.5 var(--font-ui);-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+input{font:inherit;color:var(--ink);background:none;border:0;outline:0;width:100%}
+input::placeholder{color:var(--faint)}
+.app{display:grid;grid-template-columns:48px 252px 1fr;height:100vh;overflow:hidden}
+
+/* column 1 — the boxes */
+.strip{border-right:1px solid var(--rule);display:flex;flex-direction:column;align-items:center;padding:12px 0 10px;gap:6px}
+.orgmark{width:22px;height:22px;border-radius:6px;background:var(--accent);display:grid;place-items:center;color:#12141a;font-weight:700;font-size:11px;flex:none}
+.strip .sep{width:20px;border-top:1px solid var(--rule);margin:3px 0}
+.wtile{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:11.5px;font-weight:700;color:var(--muted);background:var(--hover);position:relative;flex:none}
+.wtile:hover{color:var(--ink)}
+.wtile--on{background:color-mix(in oklab,var(--accent) 34%,var(--paper));color:var(--ink);box-shadow:0 0 0 2px color-mix(in oklab,var(--accent) 45%,var(--paper))}
+.wtile--off{background:transparent;border:1px dashed var(--rule);color:var(--faint)}
+.wtile--off.wtile--on{background:color-mix(in oklab,var(--accent) 20%,var(--paper));color:var(--ink)}
+.wtile .beat{position:absolute;top:-1px;right:-1px;width:7px;height:7px;border-radius:50%;background:var(--live);box-shadow:0 0 0 2px var(--paper)}
+.strip .sp{flex:1}
+.ic{width:30px;height:30px;border-radius:var(--r);display:grid;place-items:center;color:var(--faint);position:relative;flex:none}
+.ic:hover{background:var(--hover);color:var(--ink)}
+.ic svg{width:15px;height:15px}
+.ic .n{position:absolute;top:2px;right:2px;min-width:13px;height:13px;padding:0 3px;border-radius:7px;background:var(--accent);color:#12141a;font-size:9px;font-weight:700;display:grid;place-items:center}
+.av{border-radius:50%;display:grid;place-items:center;font-weight:700;color:#12141a;flex:none}
+.av--a{background:#e2a2a2}.av--r{background:#a2c9e2}.av--m{background:var(--accent)}
+.memark{width:24px;height:24px;font-size:10px}
+
+/* column 2 — the sessions */
+.rail{border-right:1px solid var(--rule);display:flex;flex-direction:column;min-width:0}
+.rhead{display:flex;align-items:center;gap:8px;height:46px;padding:0 8px 0 13px;flex:none}
+.rhead b{font-size:13.5px;font-weight:600;letter-spacing:-.01em;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rhead .sub{font-size:10.5px;color:var(--faint)}
+.ib{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--faint);flex:none}
+.ib:hover{background:var(--hover);color:var(--ink)}
+.ib svg{width:14px;height:14px}
+.list{flex:1;min-height:0;overflow-y:auto;padding:0 8px 8px}
+.list::-webkit-scrollbar{width:6px}
+.list::-webkit-scrollbar-thumb{background:var(--rule);border-radius:3px}
+/* the row: gutter · title · time. never more. */
+.s{display:flex;align-items:center;gap:9px;width:100%;height:31px;padding:0 9px;border-radius:var(--r);color:var(--soft-ink)}
+.s:hover{background:var(--hover)}
+.s--on{background:var(--selected);color:var(--ink)}
+.s--on .s__t{font-weight:600}
+.g{width:17px;flex:none;display:grid;place-items:center}
+.g .av{width:17px;height:17px;font-size:9px}
+.g svg{width:12px;height:12px;color:var(--faint)}
+.s__t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+/* the time is the status. green means running. */
+.s__a{flex:none;font-size:10.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.s__a--live{color:var(--live);font-weight:600}
+/* New session is an action, not a session — it holds its place while the list scrolls */
+.newbar{flex:none;padding:0 8px 5px;margin-bottom:3px;border-bottom:1px solid var(--rule)}
+.new{display:flex;align-items:center;gap:9px;width:100%;height:31px;padding:0 9px;border-radius:var(--r);color:var(--muted);font-size:13px}
+.new:hover{background:var(--hover);color:var(--ink)}
+.new--on{background:var(--selected);color:var(--ink);font-weight:600}
+.new .g svg{color:var(--accent)}
+.asleep{flex:1;padding:14px 14px 0;color:var(--faint);font-size:12.5px;line-height:1.6}
+.asleep p{margin-bottom:9px}
+.asleep b{color:var(--soft-ink)}
+.wake{height:29px;padding:0 13px;border-radius:var(--r);background:var(--selected);color:var(--ink);font-size:12.5px;font-weight:600}
+.wake:hover{background:color-mix(in oklab,var(--accent) 30%,var(--paper))}
+
+/* column 3 — the work */
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.tabs{height:46px;flex:none;display:flex;align-items:center;gap:2px;padding:0 8px;border-bottom:1px solid var(--rule);overflow:hidden}
+.tab{display:flex;align-items:center;gap:7px;height:30px;max-width:210px;padding:0 9px;border-radius:var(--r);color:var(--muted);font-size:13px;flex:none}
+.tab:hover{background:var(--hover)}
+.tab--on{background:var(--sunken);color:var(--ink)}
+.tab--on .tab__t{font-weight:600}
+.tab__t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab .av{width:15px;height:15px;font-size:8.5px}
+.tab svg{width:13px;height:13px;flex:none;color:var(--faint)}
+.tab__x{width:16px;height:16px;border-radius:4px;display:grid;place-items:center;color:var(--faint);font-size:13px;flex:none;margin-right:-3px}
+.tab__x:hover{background:color-mix(in oklab,var(--ink) 12%,var(--paper));color:var(--ink)}
+.tabplus{width:28px;height:28px;border-radius:var(--r);display:grid;place-items:center;color:var(--faint);flex:none}
+.tabplus:hover{background:var(--hover);color:var(--ink)}
+.blank{flex:1;display:grid;place-items:center;color:var(--faint);font-size:13px}
+
+.head{display:flex;align-items:flex-start;gap:12px;padding:18px 28px 10px;flex:none;position:relative}
+.head h1{font-size:15px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}
+.head h1 .av{width:17px;height:17px;font-size:9px}
+.head .meta{font-size:11.5px;color:var(--faint);margin-top:2px}
+.head .meta code{font-family:var(--font-mono);font-size:11px}
+.acts{margin-left:auto;display:flex;align-items:center;gap:2px;position:relative}
+.act{height:27px;padding:0 10px;border-radius:var(--r);color:var(--muted);font-size:12.5px;white-space:nowrap}
+.act:hover{background:var(--hover);color:var(--ink)}
+.act--on{background:var(--sunken);color:var(--ink)}
+.act .n{color:var(--faint)}
+
+/* share popover — fill, no border */
+.pop{position:absolute;top:33px;right:0;width:290px;background:#1d2027;border-radius:11px;box-shadow:0 16px 44px rgba(0,0,0,.5);padding:8px;z-index:20}
+.pop .cap{padding:5px 9px 8px;font-size:11px;color:var(--faint);line-height:1.45}
+.pop .cap code{font-family:var(--font-mono)}
+.opt{display:flex;align-items:flex-start;gap:8px;width:100%;padding:8px 9px;border-radius:var(--r)}
+.opt:hover{background:var(--hover)}
+.opt--on{background:var(--selected)}
+.opt .tk{width:13px;flex:none;margin-top:2px;color:var(--accent);font-size:12px;line-height:1}
+.opt .t{font-size:12.5px;font-weight:600;color:var(--soft-ink)}
+.opt--on .t{color:var(--ink)}
+.opt .d{font-size:11px;color:var(--faint);line-height:1.4}
+.pop .line{height:1px;background:var(--rule);margin:7px 9px}
+.wr{display:flex;align-items:center;gap:8px;padding:5px 9px;font-size:12px;color:var(--muted)}
+.wr .av{width:19px;height:19px;font-size:9px}
+.wr .role{margin-left:auto;font-size:11px;color:var(--faint)}
+
+.feed{flex:1;min-height:0;overflow-y:auto;padding:6px 28px 0}
+.feed::-webkit-scrollbar{width:10px}
+.feed::-webkit-scrollbar-thumb{background:var(--rule);border-radius:5px}
+.col{max-width:720px;margin:0 auto;padding-bottom:16px}
+
+/* turns: a filled block is a person, bare prose is the agent */
+.turn{margin-bottom:26px}
+.turn--said{background:var(--sunken);border-radius:10px;padding:13px 16px}
+.by{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--faint);margin-bottom:7px}
+.by .av{width:15px;height:15px;font-size:8px}
+.turn p{font-size:14px;line-height:1.65;margin-bottom:12px;color:var(--soft-ink)}
+.turn p:last-child{margin-bottom:0}
+.turn h3{font-size:14px;font-weight:600;margin:19px 0 8px;color:var(--ink)}
+.turn strong{color:var(--ink);font-weight:600}
+.turn code{font-family:var(--font-mono);font-size:12.5px;color:var(--ink)}
+.turn ol,.turn ul{margin:0 0 12px 19px}
+.turn li{font-size:14px;line-height:1.65;margin-bottom:5px;color:var(--soft-ink)}
+/* tool rows hang into the gutter, so they add no indent */
+.tool{display:flex;align-items:center;gap:9px;width:calc(100% + 16px);margin:0 0 10px -8px;padding:6px 8px;border-radius:var(--r);color:var(--faint);font-size:12.5px}
+.tool:hover{background:var(--hover);color:var(--muted)}
+.tool svg{width:12px;height:12px;flex:none}
+.tool .n{margin-left:auto;font-size:11px}
+.code{background:var(--sunken);border-radius:var(--r);padding:11px 14px;margin-bottom:12px;font-family:var(--font-mono);font-size:12.5px;line-height:1.7;color:var(--soft-ink)}
+.code .f{color:var(--faint);font-size:11px;margin-bottom:7px}
+.code pre{font:inherit;white-space:pre-wrap;word-break:break-word}
+.add{color:#8fc98f}.del{color:#c98f8f}
+.out{background:var(--sunken);border-radius:var(--r);padding:11px 14px;margin:-4px 0 12px;font-family:var(--font-mono);font-size:12.5px;line-height:1.75;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.out .d{color:var(--faint)}.out .w{color:#c98f8f}
+.quiet{font-size:12.5px;color:var(--faint)}
+table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:13px}
+th{text-align:left;font-weight:500;color:var(--faint);font-size:11px;padding:0 12px 7px 0}
+td{padding:7px 12px 7px 0;border-top:1px solid var(--rule);color:var(--soft-ink)}
+td code{font-size:12px}
+.ok{color:var(--live)}.no{color:#e08a8a}
+.termpane{max-width:900px;margin:0 auto;padding:4px 0 16px;font-family:var(--font-mono);font-size:12.5px;line-height:1.75;color:var(--soft-ink);white-space:pre-wrap;word-break:break-word}
+
+/* composer: fill, no border */
+.comp{flex:none;padding:4px 28px 18px}
+.comp .col{padding:0}
+.box{background:var(--sunken);border-radius:12px}
+.box .in{padding:14px 15px 2px;font-size:14px}
+.box .bar{display:flex;align-items:center;gap:3px;padding:6px 8px 8px}
+.cbtn{height:26px;padding:0 9px;border-radius:7px;color:var(--muted);font-size:12px}
+.cbtn:hover{background:var(--hover);color:var(--ink)}
+.cbtn b{color:var(--ink);font-weight:600}
+.cbtn--r{margin-left:auto}
+.cbtn--off{opacity:.4;pointer-events:none}
+.cbtn--go{color:var(--accent);font-weight:600}
+.send{width:27px;height:27px;border-radius:7px;background:var(--accent);color:#12141a;display:grid;place-items:center;margin-left:4px;flex:none}
+.send--off{background:var(--rule);color:var(--faint)}
+.note{margin-top:8px;text-align:center;font-size:11.5px;color:var(--faint)}
+
+/* launcher */
+.pane{flex:1;min-height:0;overflow-y:auto;padding:0 28px}
+.pane::-webkit-scrollbar{width:10px}
+.pane::-webkit-scrollbar-thumb{background:var(--rule);border-radius:5px}
+.wrap{max-width:720px;margin:0 auto;padding:52px 0 40px}
+.wrap h1{font-size:19px;font-weight:600;letter-spacing:-.015em;margin-bottom:18px}
+.in--big{padding:17px 16px 4px;font-size:15px;min-height:74px}
+.seg{display:flex;gap:1px}
+.seg button{height:26px;padding:0 10px;border-radius:7px;color:var(--faint);font-size:12.5px}
+.seg button:hover{color:var(--ink)}
+.seg button.on{background:var(--selected);color:var(--ink);font-weight:600}
+.runs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--faint);padding:0 4px;margin:10px 0 34px}
+.runs button{color:var(--muted);border-radius:5px;padding:1px 5px;margin:0 -3px}
+.runs button:hover{background:var(--hover);color:var(--ink)}
+.runs code{font-family:var(--font-mono);font-size:11px}
+.pip{width:6px;height:6px;border-radius:50%;background:var(--live);display:inline-block}
+.sec{display:flex;align-items:baseline;gap:10px;margin:0 4px 6px}
+.sec h2{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--faint)}
+.sec .rest{margin-left:auto;font-size:11.5px;color:var(--faint)}
+.sec .rest:hover{color:var(--muted)}
+.starts{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:32px}
+.start{height:28px;padding:0 12px;border-radius:999px;background:var(--sunken);color:var(--muted);font-size:12.5px}
+.start:hover{background:var(--hover);color:var(--ink)}
+/* the resume list reuses the rail row, one size up */
+.r{display:flex;align-items:center;gap:11px;width:100%;height:36px;padding:0 10px;border-radius:var(--r);color:var(--soft-ink)}
+.r:hover{background:var(--hover)}
+.r .g{width:18px}
+.r .g .av{width:18px;height:18px;font-size:9px}
+.r .g svg{width:13px;height:13px}
+.r__t{font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none;max-width:230px}
+.r__p{flex:1;min-width:0;font-size:12px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r__a{flex:none;font-size:10.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.r__a--live{color:var(--live);font-weight:600}
+.mocknote{margin-top:40px;padding-top:14px;border-top:1px solid var(--rule);font-size:11.5px;color:var(--faint)}
+
+.madeon{position:fixed;right:10px;bottom:8px;font-size:10.5px;color:var(--faint);text-decoration:none;padding:3px 7px;border-radius:6px;z-index:50}
+.madeon:hover{background:var(--hover);color:var(--muted)}
+
+@media (max-width:820px){
+  .app{grid-template-columns:44px 1fr}
+  .main{display:none}
+  .app.showmain .rail{display:none}
+  .app.showmain .main{display:flex}
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="strip" id="strip"></aside>
+  <aside class="rail" id="rail"></aside>
+  <div class="main" id="main"></div>
+</div>
+<a class="madeon" href="/agents.md" title="Built on blitz.dev — clone or edit this app">⚡ blitz.dev</a>
+
+<script>
+/* ─────────────────────────────────────────────────────────────
+   BlitzOS — session rail mockup.
+   Everything below is fake data. There is no box behind it.
+   ───────────────────────────────────────────────────────────── */
+
+const PEOPLE = {
+  m: { n:'Minjune Song', s:'Minjune', c:'av--m', i:'M' },
+  a: { n:'Ana Reyes',    s:'Ana',     c:'av--a', i:'A' },
+  r: { n:'Ravi Menon',   s:'Ravi',    c:'av--r', i:'R' },
+};
+const ME = 'm';
+
+const WS = [
+  { id:'dt', code:'DT', name:'design-team',     ram:'32 GB', state:'online', members:4 },
+  { id:'en', code:'EN', name:'engineering',     ram:'64 GB', state:'online', members:6 },
+  { id:'rs', code:'RS', name:'research-sandbox',ram:'16 GB', state:'asleep', members:2 },
+];
+
+const VIS = {
+  private: { label:'Private',                  short:'private',      d:'Only you. Nobody else sees the transcript.' },
+  read:    { label:'Workspace · read',         short:'read only',    d:'Anyone in this workspace reads it. Nobody else sends a turn.' },
+  send:    { label:'Workspace · read and send',short:'read and send',d:'Teammates can take the turn. Files still write as the owner.' },
+};
+
+/* an assistant turn */ const A = h => ({ who:null, html:h });
+/* a person's turn   */ const U = (who, h, at) => ({ who, html:h, at });
+
+let SESSIONS = [
+
+  { id:'s1', ws:'dt', title:'Landing hero rewrite', owner:'m', kind:'chat', agent:'Claude',
+    ago:'2m', live:true, vis:'read', cwd:'/workspace/site',
+    snip:'Six words, and the durability promise stays.',
+    turns:[
+      U('m','<p>The hero headline is too long. Cut it to six words. Keep the promise about durable workspaces, and drop the word "platform".</p>'),
+      A('<p>Six words, and the durability promise stays. I read the current copy first.</p>'
+        + tool('term','Read the hero component','2 files')
+        + '<p>The live headline runs eleven words and leans on "platform" twice. Three cuts, all six words, all keeping durability.</p>'
+        + '<ol><li><strong>Your team\'s machine never goes away.</strong> Plain. Says durable without the word.</li>'
+        + '<li><strong>One box. Your whole team. Always.</strong> Punchy. The rhythm carries it.</li>'
+        + '<li><strong>Durable workspaces your whole team shares.</strong> Literal. Weakest rhythm.</li></ol>'
+        + '<p>I recommend the first. It states the benefit, not the feature. "Never goes away" is the durability claim in words a buyer already owns.</p>'
+        + '<div class="code"><div class="f">site/src/Hero.tsx</div><pre><span class="del">− &lt;h1&gt;The AI platform for teams that need a real, persistent platform&lt;/h1&gt;</span>\n<span class="add">+ &lt;h1&gt;Your team\'s machine never goes away&lt;/h1&gt;</span></pre></div>'
+        + tool('port','Applied the edit and rebuilt',':4173')
+        + '<p>The preview is live on port 4173. Check the line break on a narrow screen. Say the word and I will write the other two as variants.</p>'
+        + '<div class="quiet">Cogitated for 8s</div>'),
+    ]},
+
+  { id:'s2', ws:'dt', title:'Pricing page copy', owner:'a', kind:'chat', agent:'Claude',
+    ago:'now', live:true, vis:'read', cwd:'/home/ana/site',
+    snip:'Nine strings say "seat". Two of them are not copy.',
+    turns:[
+      U('a','<p>The three pricing tiers all say "per seat". That reads wrong for us. We charge per workspace. Find every place the copy says seat and tell me what breaks.</p>','11:02'),
+      A('<p>You are right, and the mismatch runs deeper than the copy.</p>'
+        + tool('search','Searched for seat pricing copy','6 files')
+        + '<p><strong>Nine strings say "seat". Two of them are not copy.</strong> They name a real field. Changing the words alone would make the page lie about what the invoice charges.</p>'
+        + '<table><thead><tr><th>Where</th><th>Says</th><th>Safe to reword</th></tr></thead><tbody>'
+        + '<tr><td><code>Pricing.tsx</code></td><td>"$20 per seat"</td><td class="ok">yes</td></tr>'
+        + '<tr><td><code>PlanCard.tsx</code></td><td>"Seats included"</td><td class="ok">yes</td></tr>'
+        + '<tr><td><code>billing/plan.ts</code></td><td><code>seatCount</code></td><td class="no">no — billing field</td></tr>'
+        + '<tr><td><code>checkout.ts</code></td><td><code>per_seat</code></td><td class="no">no — Stripe price id</td></tr>'
+        + '</tbody></table>'
+        + tool('term','Checked what the live plan meters','')
+        + '<pre class="out"><span class="d">$</span> blitz-cred get stripe | plan-probe --live\n<span class="d">→</span> price_1P9x…  unit: <span class="w">per_seat</span>  qty: workspace.members\n<span class="d">→</span> 4 of 6 live customers pay for more members than they have</pre>'
+        + '<p>So the invoice already counts members, not workspaces. The copy is not wrong. <strong>The plan is.</strong> That is a pricing decision, not a copy edit.</p>'
+        + '<h3>What I suggest</h3>'
+        + '<ol><li>Reword the seven display strings to "per member". True today, and it costs nothing.</li>'
+        + '<li>Open a separate thread with billing about per-workspace pricing. It needs a new Stripe price.</li>'
+        + '<li>Leave <code>seatCount</code> and <code>per_seat</code> alone until that lands.</li></ol>'
+        + '<p>Say go and I will do step one. I will not touch billing from this session.</p>'),
+    ]},
+
+  { id:'s3', ws:'dt', title:'Figma export script', owner:'m', kind:'chat', agent:'Codex',
+    ago:'1h', live:false, vis:'private', cwd:'/workspace/icons',
+    snip:'240 icons exported, 12 names collide.',
+    turns:[
+      U('m','<p>The Figma export dumps every icon into one folder. Some names collide. Fix it without renaming anything a component already imports.</p>'),
+      A('<p>240 icons out, 12 names colliding. Every collision is a light and dark pair that lost its suffix.</p>'
+        + tool('search','Listed the export and grouped by name','240 files')
+        + '<p>No component imports a colliding name today, so nothing breaks. I appended the variant to the 12, and left the other 228 alone.</p>'
+        + '<div class="code"><div class="f">tools/export-icons.ts</div><pre><span class="del">− const out = name + \'.svg\'</span>\n<span class="add">+ const out = variant === \'default\' ? name + \'.svg\' : name + \'-\' + variant + \'.svg\'</span></pre></div>'
+        + '<p>Re-run gives 240 unique names. Worth a second look: the 12 pairs are the only icons with a dark variant at all. That may be the real gap.</p>'),
+    ]},
+
+  { id:'s4', ws:'dt', title:'Nav spacing pass', owner:'m', kind:'chat', agent:'Claude',
+    ago:'3h', live:false, vis:'private', cwd:'/workspace/site',
+    snip:'The 8px grid breaks at the third level.',
+    turns:[
+      U('m','<p>Nav spacing looks off on deep pages. Is it the grid or the content?</p>'),
+      A('<p>The grid. The first two nav levels sit on the 8px step. The third indents by 12, because it inherits a padding meant for the card, not the list.</p>'
+        + tool('search','Measured every nav level','3 files')
+        + '<p>One rule fixes it, and nothing else uses that selector. I have not applied it — the 12px may have been deliberate, and you would know.</p>'),
+    ]},
+
+  { id:'s5', ws:'dt', title:'Icon set audit', owner:'r', kind:'chat', agent:'Claude',
+    ago:'3h', live:false, vis:'send', cwd:'/home/ravi/icons',
+    snip:'Four icons carry two meanings each.',
+    turns:[
+      U('r','<p>Audit the icon set. I want to know which glyphs are doing more than one job.</p>','08:40'),
+      A('<p><strong>Four icons carry two meanings each.</strong> That is the whole bug — the set is not too small, it is too overloaded.</p>'
+        + tool('search','Read every icon usage site','61 files')
+        + '<table><thead><tr><th>Glyph</th><th>Means</th><th>And also</th></tr></thead><tbody>'
+        + '<tr><td>chain link</td><td>Connections</td><td>copy a URL</td></tr>'
+        + '<tr><td>square</td><td>Ports</td><td>a preview window</td></tr>'
+        + '<tr><td>folder</td><td>Files</td><td>Drive</td></tr>'
+        + '<tr><td>circle-slash</td><td>Codex agent</td><td>disabled</td></tr>'
+        + '</tbody></table>'
+        + '<p>The folder pair is the one that actually confuses people — Files is a place on the box, Drive is a place in the org. Same glyph, different worlds.</p>'
+        + '<p>I can draw four replacements, or we can drop the second meaning in each pair and use a word. The second is cheaper and clearer.</p>'),
+    ]},
+
+  { id:'s6', ws:'dt', title:'shell', owner:'m', kind:'term', agent:'Terminal',
+    ago:'4h', live:false, vis:'private', cwd:'/workspace/site',
+    snip:'/workspace/site',
+    term:'minjune@design-team:/workspace/site$ git status --short\n M src/Hero.tsx\n M src/Pricing.tsx\n?? src/PlanCard.tsx\n\nminjune@design-team:/workspace/site$ npm run preview\n\n  vite v5.4.2  ready in 214 ms\n  ➜  Local:   http://localhost:4173/\n  ➜  Network: exposed as :4173 on this workspace\n\nminjune@design-team:/workspace/site$ ▊'},
+
+  { id:'s7', ws:'dt', title:'Onboarding illustrations', owner:'a', kind:'chat', agent:'Claude',
+    ago:'1d', live:false, vis:'read', cwd:'/home/ana/site',
+    snip:'Three of the five scenes show a single user.',
+    turns:[
+      U('a','<p>Look at the onboarding illustrations. Do they match what we actually sell?</p>','yesterday'),
+      A('<p>Three of the five scenes show one person at one laptop. We sell a box a team shares. The pictures argue against the pitch.</p>'
+        + tool('search','Read the five scene descriptions','5 files')
+        + '<p>Scene 2 and scene 4 already show two people. Those are the ones to keep. The other three need a second figure, or they need to go.</p>'),
+    ]},
+
+  { id:'s8', ws:'dt', title:'Old pricing table', owner:'m', kind:'chat', agent:'Claude',
+    ago:'2d', live:false, vis:'private', cwd:'/workspace/site',
+    snip:'Archived. Superseded by the per-member thread.',
+    turns:[
+      U('m','<p>Draft a three-tier pricing table.</p>'),
+      A('<p>Drafted. Note that this predates the per-seat finding — treat the numbers as stale.</p>'),
+    ]},
+
+  { id:'e1', ws:'en', title:'Broker retry backoff', owner:'m', kind:'chat', agent:'Claude',
+    ago:'40m', live:true, vis:'private', cwd:'/workspace/blitz-core',
+    snip:'The retry is not the bug. The timeout is.',
+    turns:[
+      U('m','<p>Enrollment fails about once in twenty. Add a retry.</p>'),
+      A('<p>I would not add one yet. I reproduced the failure first, and the retry would hide it.</p>'
+        + tool('term','Reproduced the enrol failure 40 times','2 failures')
+        + '<p><strong>The retry is not the bug. The timeout is.</strong> Both failures took 30.1 seconds against a 30 second client timeout. The server answered — we hung up first.</p>'
+        + '<p>A retry would turn a 30 second failure into a 60 second one, and the success rate would look fine while every user waited twice as long.</p>'
+        + '<p>Raise the timeout to 45 seconds, or find out why enrol takes 30. I would rather find out. Say which.</p>'),
+    ]},
+
+  { id:'e2', ws:'en', title:'Enroll timeout repro', owner:'r', kind:'chat', agent:'Claude',
+    ago:'1d', live:false, vis:'send', cwd:'/home/ravi/blitz-core',
+    snip:'Two of forty runs cross 30 seconds.',
+    turns:[
+      U('r','<p>Write a repro harness for the enrol timeout.</p>','yesterday'),
+      A('<p>Harness runs enrol forty times and records the wall time of each. Two of forty crossed 30 seconds. Both were cold hosts.</p>'
+        + tool('term','Ran the harness','40 runs')
+        + '<p>Cold host is the variable, not load. That points at image pull, not the broker.</p>'),
+    ]},
+
+  { id:'e3', ws:'en', title:'shell', owner:'m', kind:'term', agent:'Terminal',
+    ago:'2d', live:false, vis:'private', cwd:'/workspace/blitz-core',
+    snip:'/workspace/blitz-core',
+    term:'minjune@engineering:/workspace/blitz-core$ npm test\n\n  control-plane   428 passing\n  box actor        96 passing\n  ui              212 passing\n  guest            41 passing\n\nminjune@engineering:/workspace/blitz-core$ ▊'},
+
+  { id:'r1', ws:'rs', title:'Scaling law replication', owner:'m', kind:'chat', agent:'Claude',
+    ago:'6d', live:false, vis:'private', cwd:'/workspace/papers',
+    snip:'The curve holds to 3 significant figures.',
+    turns:[
+      U('m','<p>Replicate the scaling curve from the paper on our own runs.</p>'),
+      A('<p>Replicated across nine runs. The curve holds to three significant figures until the last decade, where our data thins out.</p>'),
+    ]},
+];
+
+function tool(icon, label, note){
+  const g = {
+    term:'<path d="M3.5 4.5l3 3-3 3M8.5 11.5h4"/>',
+    search:'<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2L14 14"/>',
+    port:'<rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2 6.5h12"/>',
+  }[icon];
+  return '<button class="tool"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">' + g + '</svg>'
+       + esc(label) + (note ? '<span class="n">' + esc(note) + '</span>' : '') + '</button>';
+}
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── state ── */
+let activeWs = 'dt';
+const tabs   = { dt:['s1','s2','s6','new1'], en:['e1','new2'], rs:[] };
+const active = { dt:'s1', en:'e1', rs:null };
+let newSeq = 2;
+let sharePopover = false;
+
+const ws      = id => WS.find(w => w.id === id);
+const sess    = id => SESSIONS.find(s => s.id === id);
+const wsSess  = id => SESSIONS.filter(s => s.ws === id);
+const isNew   = id => typeof id === 'string' && id.indexOf('new') === 0;
+const mine    = s => s.owner === ME;
+
+/* ── rail ── */
+function renderStrip(){
+  const el = document.getElementById('strip');
+  let h = '<span class="orgmark" title="BlitzOS — design mockup">B</span><div class="sep"></div>';
+  for (const w of WS){
+    const on   = w.id === activeWs;
+    const live = wsSess(w.id).some(s => s.live);
+    h += '<button class="wtile' + (on ? ' wtile--on' : '') + (w.state === 'asleep' ? ' wtile--off' : '')
+       + '" data-ws="' + w.id + '" title="' + esc(w.name + ' — ' + w.state) + '">' + w.code
+       + (live ? '<span class="beat"></span>' : '') + '</button>';
+  }
+  h += '<button class="wtile wtile--off" title="New workspace"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" width="13" height="13"><path d="M8 3.5v9M3.5 8h9"/></svg></button>'
+     + '<div class="sp"></div>'
+     + surface('Files','<path d="M2 4.5A1.5 1.5 0 013.5 3h2.6l1.4 1.8h5A1.5 1.5 0 0114 6.3v6.2A1.5 1.5 0 0112.5 14h-9A1.5 1.5 0 012 12.5z"/>','')
+     + surface('Ports','<rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2 6.5h12"/>', activeWs === 'dt' ? '1' : '')
+     + surface('Connections','<path d="M6.8 9.2a2.6 2.6 0 003.9.3l1.8-1.8a2.6 2.6 0 00-3.7-3.7l-1 1"/><path d="M9.2 6.8a2.6 2.6 0 00-3.9-.3L3.5 8.3a2.6 2.6 0 003.7 3.7l1-1"/>','')
+     + '<div class="sep"></div>'
+     + '<button class="av av--m memark" title="' + esc(PEOPLE[ME].n) + '">' + PEOPLE[ME].i + '</button>';
+  el.innerHTML = h;
+}
+function surface(name, path, n){
+  return '<button class="ic" title="' + name + (n ? ' — ' + n + ' live' : '') + '"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">'
+       + path + '</svg>' + (n ? '<span class="n">' + n + '</span>' : '') + '</button>';
+}
+
+function renderRail(){
+  const w  = ws(activeWs);
+  const el = document.getElementById('rail');
+  let h = '<div class="rhead"><b>' + esc(w.name) + '</b><span class="sub">' + w.ram + '</span>'
+        + '<button class="ib" title="Share workspace"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="11.5" cy="4" r="2"/><circle cx="4.5" cy="8" r="2"/><circle cx="11.5" cy="12" r="2"/><path d="M6.3 7l3.4-2M6.3 9l3.4 2"/></svg></button></div>';
+
+  if (w.state === 'asleep'){
+    h += '<div class="asleep"><p><b>' + esc(w.name) + '</b> is asleep.</p>'
+       + '<p>The disk is intact. Waking takes about twenty seconds, and every session comes back.</p>'
+       + '<button class="wake" data-wake="' + w.id + '">Wake it</button></div>';
+  } else {
+    // New session is an action, not a session. It stays put while the list scrolls.
+    h += '<div class="newbar"><button class="new' + (isNew(active[activeWs]) ? ' new--on' : '') + '" data-new="1">'
+       + '<span class="g"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 3.5v9M3.5 8h9"/></svg></span>New session</button></div>';
+    h += '<div class="list">';
+    for (const s of wsSess(activeWs)) h += row(s);
+    h += '</div>';
+  }
+  el.innerHTML = h;
+}
+
+/* the row: gutter · title · time. never more. */
+function row(s){
+  return '<button class="s' + (s.id === active[activeWs] ? ' s--on' : '') + '" data-open="' + s.id + '">'
+       + '<span class="g">' + gutter(s) + '</span>'
+       + '<span class="s__t">' + esc(s.title) + '</span>'
+       + '<span class="s__a' + (s.live ? ' s__a--live' : '') + '">' + s.ago + '</span></button>';
+}
+/* empty when it is yours. a face only when it is not. */
+function gutter(s){
+  if (s.kind === 'term') return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 4.5l3 3-3 3M8.5 11.5h4"/></svg>';
+  if (mine(s)) return '';
+  const p = PEOPLE[s.owner];
+  return '<span class="av ' + p.c + '">' + p.i + '</span>';
+}
+
+/* ── main ── */
+function renderMain(){
+  const el = document.getElementById('main');
+  const w  = ws(activeWs);
+  if (w.state === 'asleep'){ el.innerHTML = '<div class="tabs"></div><div class="blank">Wake the workspace to open a session.</div>'; return; }
+  el.innerHTML = renderTabs() + renderPane();
+  const f = el.querySelector('.feed'); if (f) f.scrollTop = 0;
+}
+
+function renderTabs(){
+  let h = '<div class="tabs">';
+  for (const id of tabs[activeWs]){
+    const on = id === active[activeWs];
+    if (isNew(id)){
+      h += '<button class="tab' + (on ? ' tab--on' : '') + '" data-tab="' + id + '"><span class="tab__t">New</span>'
+         + (on ? '<span class="tab__x" data-close="' + id + '">×</span>' : '') + '</button>';
+      continue;
+    }
+    const s = sess(id); if (!s) continue;
+    h += '<button class="tab' + (on ? ' tab--on' : '') + '" data-tab="' + id + '">'
+       + (s.kind === 'term'
+          ? '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 4.5l3 3-3 3M8.5 11.5h4"/></svg>'
+          : mine(s) ? '' : '<span class="av ' + PEOPLE[s.owner].c + '">' + PEOPLE[s.owner].i + '</span>')
+       + '<span class="tab__t">' + esc(s.title) + '</span>'
+       + (on ? '<span class="tab__x" data-close="' + id + '">×</span>' : '') + '</button>';
+  }
+  h += '<button class="tabplus" data-new="1" title="New tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" width="13" height="13"><path d="M8 3.5v9M3.5 8h9"/></svg></button></div>';
+  return h;
+}
+
+function renderPane(){
+  const id = active[activeWs];
+  if (id === null) return '<div class="blank">No session open.</div>';
+  if (isNew(id))   return launcher();
+  const s = sess(id);
+  if (!s) return '<div class="blank">No session open.</div>';
+  return s.kind === 'term' ? terminal(s) : chat(s);
+}
+
+function terminal(s){
+  return head(s) + '<div class="feed"><pre class="termpane">' + esc(s.term) + '</pre></div>';
+}
+
+function head(s){
+  const p = PEOPLE[s.owner];
+  const meta = (mine(s) ? ws(s.ws).name : p.n) + ' · <code>' + esc(s.cwd) + '</code> · '
+             + (mine(s) ? readers(s) : 'you can ' + VIS[s.vis].short);
+  let h = '<div class="head"><div><h1>' + (mine(s) ? '' : '<span class="av ' + p.c + '">' + p.i + '</span>') + esc(s.title) + '</h1>'
+        + '<div class="meta">' + meta + '</div></div><div class="acts">';
+  if (!mine(s)) h += '<button class="act" data-fork="' + s.id + '">Fork</button>';
+  h += '<button class="act">Diff <span class="n">' + (s.kind === 'term' ? '0' : (mine(s) ? '3' : '1')) + '</span></button>'
+     + '<button class="act' + (sharePopover ? ' act--on' : '') + '" data-share="1">Share</button>'
+     + '<button class="act">⋯</button>';
+  if (sharePopover) h += popover(s);
+  return h + '</div></div>';
+}
+function readers(s){
+  if (s.vis === 'private') return 'private';
+  const others = Object.keys(PEOPLE).filter(k => k !== ME);
+  return s.live ? PEOPLE[others[0]].s + ' reading' : 'workspace can ' + VIS[s.vis].short;
+}
+
+function popover(s){
+  const owner = PEOPLE[s.owner];
+  let h = '<div class="pop"><div class="cap">' + (mine(s) ? 'You own this session.' : esc(owner.n) + ' owns this session.')
+        + ' It runs as <code>' + esc(s.owner === ME ? 'minjune' : owner.s.toLowerCase()) + '</code> on ' + esc(ws(s.ws).name) + '.</div>';
+  for (const k of ['private','read','send']){
+    const on = s.vis === k;
+    h += '<button class="opt' + (on ? ' opt--on' : '') + '"' + (mine(s) ? ' data-vis="' + k + '"' : '') + '>'
+       + '<span class="tk">' + (on ? '✓' : '') + '</span><span><span class="t">' + VIS[k].label + '</span><br>'
+       + '<span class="d">' + VIS[k].d + '</span></span></button>';
+  }
+  h += '<div class="line"></div>';
+  h += whoRow(s.owner, 'owner');
+  for (const k of Object.keys(PEOPLE)){
+    if (k === s.owner) continue;
+    h += whoRow(k, s.vis === 'private' ? 'no access' : (k === ME ? 'reading now' : 'can ' + VIS[s.vis].short));
+  }
+  if (!mine(s)) h += '<div class="cap" style="padding-top:8px">Only ' + esc(owner.s) + ' can change this.</div>';
+  return h + '</div>';
+}
+function whoRow(k, role){
+  const p = PEOPLE[k];
+  return '<div class="wr"><span class="av ' + p.c + '">' + p.i + '</span>' + esc(p.n) + '<span class="role">' + role + '</span></div>';
+}
+
+function chat(s){
+  let h = head(s) + '<div class="feed"><div class="col">';
+  for (const t of s.turns){
+    if (t.who === null){ h += '<div class="turn">' + t.html + '</div>'; continue; }
+    const p = PEOPLE[t.who];
+    h += '<div class="turn turn--said">'
+       + (t.who === ME && !t.at ? '' : '<div class="by"><span class="av ' + p.c + '">' + p.i + '</span>' + esc(p.s) + (t.at ? ' · ' + t.at : '') + '</div>')
+       + t.html + '</div>';
+  }
+  h += '</div></div>';
+
+  const can = mine(s) || s.vis === 'send';
+  h += '<div class="comp"><div class="col"><div class="box' + (can ? '' : ' box--off') + '">'
+     + (can
+        ? '<input class="in" id="say" placeholder="Type / for commands" autocomplete="off">'
+        : '<div class="in">Reading ' + esc(PEOPLE[s.owner].s) + '’s session.</div>')
+     + '<div class="bar">'
+     + (can ? '<button class="cbtn">Auto</button><button class="cbtn">Attach</button>'
+            : '<button class="cbtn cbtn--go" data-ask="1">Ask to send</button><button class="cbtn cbtn--go" data-fork="' + s.id + '">Fork to my own</button>')
+     + '<button class="cbtn cbtn--r' + (can ? '' : ' cbtn--off') + '">' + s.agent.replace('Claude','Opus 5').replace('Codex','GPT-5') + '</button>'
+     + '<button class="cbtn' + (can ? '' : ' cbtn--off') + '">Effort <b>Extra</b></button>'
+     + '<button class="send' + (can ? '' : ' send--off') + '" data-send="' + s.id + '"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" width="12" height="12"><path d="M8 12.5v-9M4.5 7L8 3.5 11.5 7"/></svg></button>'
+     + '</div></div>'
+     + (can ? '' : '<div class="note">' + esc(PEOPLE[s.owner].s) + ' set this to ' + VIS[s.vis].short + '. Forking copies the transcript into your own home directory.</div>')
+     + '</div></div>';
+  return h;
+}
+
+function launcher(){
+  const w = ws(activeWs);
+  const recent = SESSIONS.filter(s => s.ws === activeWs).slice(0, 6);
+  let h = '<div class="pane"><div class="wrap"><h1>What should we build?</h1>'
+    + '<div class="box"><input class="in in--big" id="ask" placeholder="Describe the work. Type / for a recipe, @ for a file." autocomplete="off">'
+    + '<div class="bar"><div class="seg">'
+    + '<button class="on" data-agent="Claude">Claude</button><button data-agent="Codex">Codex</button><button data-agent="Terminal">Terminal</button>'
+    + '</div><button class="cbtn cbtn--r">Opus 5</button><button class="cbtn">Effort <b>Extra</b></button>'
+    + '<button class="send" data-start="1"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" width="12" height="12"><path d="M8 12.5v-9M4.5 7L8 3.5 11.5 7"/></svg></button>'
+    + '</div></div>'
+    + '<div class="runs"><span class="pip"></span>Runs on <button>' + esc(w.name) + '</button> as <button><code>/home/minjune</code></button> · <button>Private</button> until you share it</div>'
+    + '<div class="sec"><h2>Start from</h2><button class="rest">All recipes</button></div>'
+    + '<div class="starts"><button class="start">Review a PR</button><button class="start">Ship a preview</button><button class="start">Audit copy</button><button class="start">Bisect a regression</button></div>'
+    + '<div class="sec"><h2>Pick up</h2><button class="rest">All sessions</button></div><div>';
+  for (const s of recent){
+    h += '<button class="r" data-open="' + s.id + '"><span class="g">' + gutter(s) + '</span>'
+       + '<span class="r__t">' + esc(s.title) + '</span><span class="r__p">' + esc(s.snip) + '</span>'
+       + '<span class="r__a' + (s.live ? ' r__a--live' : '') + '">' + s.ago + '</span></button>';
+  }
+  h += '</div><div class="mocknote">A design mockup of BlitzOS. The data is invented and no workspace is running behind it.</div>'
+     + '</div></div>';
+  return h;
+}
+
+/* ── actions ── */
+function openSession(id){
+  const s = sess(id); if (!s) return;
+  activeWs = s.ws;
+  if (tabs[s.ws].indexOf(id) === -1){
+    const at = tabs[s.ws].findIndex(isNew);
+    if (at === -1) tabs[s.ws].push(id); else tabs[s.ws].splice(at, 0, id);
+  }
+  active[s.ws] = id;
+  sharePopover = false;
+  render();
+}
+function openNew(){
+  newSeq += 1;
+  const id = 'new' + newSeq;
+  tabs[activeWs].push(id);
+  active[activeWs] = id;
+  sharePopover = false;
+  render();
+}
+function closeTab(id){
+  const list = tabs[activeWs];
+  const at = list.indexOf(id); if (at === -1) return;
+  list.splice(at, 1);
+  if (active[activeWs] === id) active[activeWs] = list[Math.min(at, list.length - 1)] ?? null;
+  sharePopover = false;
+  render();
+}
+function startSession(text, agent){
+  const t = text.trim(); if (!t) return;
+  const words = t.replace(/[.?!]+$/, '').split(/\s+/).slice(0, 6).join(' ');
+  const title = words.charAt(0).toUpperCase() + words.slice(1);
+  const id = 'u' + (SESSIONS.length + 1);
+  const kind = agent === 'Terminal' ? 'term' : 'chat';
+  const s = { id, ws:activeWs, title, owner:ME, kind, agent, ago:'now', live:true, vis:'private',
+    cwd:'/home/minjune', snip:t.slice(0, 70),
+    turns:[ U(ME, '<p>' + esc(t) + '</p>'),
+            A('<p>Started. This is a mockup, so nothing runs — but notice what just happened: the session took its name from your first sentence, and it is now a row in the rail with an owner and a clock.</p>'
+              + '<p>That is the whole proposal. A session is a named thing you can list, resume and share. Today it is only a tab type.</p>') ],
+    term:'minjune@' + ws(activeWs).name + ':~$ ▊' };
+  SESSIONS.unshift(s);
+  openSession(id);
+}
+function forkSession(id){
+  const src = sess(id); if (!src) return;
+  const copy = Object.assign({}, src, {
+    id: 'f' + (SESSIONS.length + 1),
+    title: src.title + ' (fork)',
+    owner: ME, vis:'private', ago:'now', live:false,
+    cwd:'/home/minjune' + src.cwd.replace(/^\/home\/[a-z]+/, ''),
+    turns: src.turns.concat([ A('<p>Forked into your own home directory. You own this copy, and ' + esc(PEOPLE[src.owner].s) + ' cannot see it until you share it.</p>') ]),
+  });
+  SESSIONS.unshift(copy);
+  openSession(copy.id);
+}
+function say(id){
+  const s = sess(id); if (!s) return;
+  const box = document.getElementById('say');
+  const t = box ? box.value.trim() : ''; if (!t) return;
+  s.turns.push(U(ME, '<p>' + esc(t) + '</p>'));
+  s.turns.push(A('<p>This is a mockup, so there is no agent on the other end. Everything you see is invented data held in the page.</p>'));
+  s.ago = 'now'; s.live = true;
+  render();
+  const f = document.querySelector('.feed'); if (f) f.scrollTop = f.scrollHeight;
+}
+
+function render(){ renderStrip(); renderRail(); renderMain(); }
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('[data-ws],[data-open],[data-tab],[data-close],[data-new],[data-share],[data-vis],[data-send],[data-start],[data-fork],[data-wake],[data-agent],[data-ask]');
+  if (!t){ if (sharePopover && !e.target.closest('.pop')){ sharePopover = false; render(); } return; }
+
+  if (t.dataset.close  !== undefined){ e.stopPropagation(); closeTab(t.dataset.close); return; }
+  if (t.dataset.ws     !== undefined){ activeWs = t.dataset.ws; sharePopover = false; render(); return; }
+  if (t.dataset.wake   !== undefined){ ws(t.dataset.wake).state = 'online'; active[t.dataset.wake] = 'r1'; tabs[t.dataset.wake] = ['r1']; render(); return; }
+  if (t.dataset.open   !== undefined){ openSession(t.dataset.open); return; }
+  if (t.dataset.tab    !== undefined){ active[activeWs] = t.dataset.tab; sharePopover = false; render(); return; }
+  if (t.dataset.new    !== undefined){ openNew(); return; }
+  if (t.dataset.share  !== undefined){ sharePopover = !sharePopover; render(); return; }
+  if (t.dataset.fork   !== undefined){ forkSession(t.dataset.fork); return; }
+  if (t.dataset.send   !== undefined){ say(t.dataset.send); return; }
+  if (t.dataset.ask    !== undefined){ t.textContent = 'Asked'; return; }
+  if (t.dataset.agent  !== undefined){
+    document.querySelectorAll('.seg button').forEach(b => b.classList.toggle('on', b === t));
+    return;
+  }
+  if (t.dataset.start  !== undefined){
+    const box = document.getElementById('ask');
+    const on  = document.querySelector('.seg button.on');
+    startSession(box ? box.value : '', on ? on.dataset.agent : 'Claude');
+    return;
+  }
+  if (t.dataset.vis    !== undefined){
+    const s = sess(active[activeWs]); if (s && mine(s)) s.vis = t.dataset.vis;
+    render(); return;
+  }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  if (e.target.id === 'ask'){
+    const on = document.querySelector('.seg button.on');
+    startSession(e.target.value, on ? on.dataset.agent : 'Claude');
+  } else if (e.target.id === 'say'){
+    say(active[activeWs]);
+  }
+});
+
+render();
+</script>
+</body>
+</html>
