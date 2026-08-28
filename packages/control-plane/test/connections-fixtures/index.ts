@@ -110,6 +110,42 @@ export const PROBE_FIXTURES: Readonly<Record<string, readonly ProbeFixture[]>> =
 /** Keyed by catalog id, and present only for providers with an authorize
  * endpoint: a pasted-key provider runs no exchange to record. */
 export const EXCHANGE_FIXTURES: Readonly<Record<string, readonly ExchangeFixture[]>> = {
+  "github": [
+    {
+      name: "authorization code exchange",
+      grantType: "authorization_code",
+      request: [
+        { name: "grant_type", value: "authorization_code" },
+        { name: "code", value: "recorded-authorization-code" },
+        { name: "client_id", value: "recorded-client-id" },
+        { name: "client_secret", value: "recorded-client-secret" },
+        { name: "redirect_uri", value: "https://cp.example/connect/github/callback" },
+        { name: "code_verifier", value: "recorded-code-verifier" },
+      ],
+      response: '{"access_token":"ghu_recorded_first","expires_in":28800,"refresh_token":"ghr_recorded_first","refresh_token_expires_in":15897600,"scope":"","token_type":"bearer"}',
+      expect: {
+        accessToken: "ghu_recorded_first",
+        refreshToken: "ghr_recorded_first",
+        expiresInMs: 28_800_000,
+      },
+    },
+    {
+      name: "rotating refresh",
+      grantType: "refresh_token",
+      request: [
+        { name: "grant_type", value: "refresh_token" },
+        { name: "refresh_token", value: "ghr_recorded_first" },
+        { name: "client_id", value: "recorded-client-id" },
+        { name: "client_secret", value: "recorded-client-secret" },
+      ],
+      response: '{"access_token":"ghu_recorded_second","expires_in":28800,"refresh_token":"ghr_recorded_second","refresh_token_expires_in":15897600,"scope":"","token_type":"bearer"}',
+      expect: {
+        accessToken: "ghu_recorded_second",
+        refreshToken: "ghr_recorded_second",
+        expiresInMs: 28_800_000,
+      },
+    },
+  ],
   "linear": [
     {
       name: "authorization code exchange",

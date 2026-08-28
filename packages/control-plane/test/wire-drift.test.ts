@@ -170,11 +170,40 @@ const templateConnection: SharedShape<
   schema.TemplateConnectionView
 > = { provider: "linear" };
 
+const templateRepo: SharedShape<
+  wire.TemplateRepoView,
+  schema.TemplateRepoView
+> = { repo: "blitzdotdev/blitz-core", private: true };
+
+const githubInstallation: SharedShape<
+  wire.GithubInstallationView,
+  schema.GithubInstallationView
+> = {
+  id: 42,
+  accountLogin: "blitzdotdev",
+  accountType: "Organization",
+  repositorySelection: "selected",
+};
+
+const listGithubInstallations: SharedShape<
+  wire.ListGithubInstallationsResponse,
+  schema.ListGithubInstallationsResponse
+> = { installations: [githubInstallation] };
+
+const githubRepository: SharedShape<
+  wire.GithubRepositoryView,
+  schema.GithubRepositoryView
+> = { repo: templateRepo.repo, accountLogin: "blitzdotdev", private: true };
+
+const listGithubRepositories: SharedShape<
+  wire.ListGithubRepositoriesResponse,
+  schema.ListGithubRepositoriesResponse
+> = { repositories: [githubRepository], truncated: false };
 
 const githubRepositoryCheck: SharedShape<
   wire.GithubRepositoryCheckView,
   schema.GithubRepositoryCheckView
-> = { repo: "blitzdotdev/blitz-core", reachable: false, failure: "not-public" };
+> = { repo: "blitzdotdev/blitz-core", verdict: "private-reachable" };
 
 const checkGithubRepositoriesRequest: SharedShape<
   wire.CheckGithubRepositoriesRequest,
@@ -200,7 +229,7 @@ const workspaceTemplate: SharedShape<
   isOrgDefault: true,
   folders: [{ id: "folder", name: "Shared", role: "editor" }],
   connections: [templateConnection],
-  repos: ["blitzdotdev/blitz-core"],
+  repos: [templateRepo],
 };
 
 const workspaceTemplates: SharedShape<
@@ -218,7 +247,7 @@ const createWorkspaceTemplate: SharedShape<
   connections: [templateConnection],
   environment,
   agentRuleId: agentRule.id,
-  repos: ["blitzdotdev/blitz-core"],
+  repos: [templateRepo.repo],
   isOrgDefault: true,
 };
 
@@ -251,6 +280,7 @@ const createWorkspaceRequest: SharedShape<
   connections: ["github"],
   environment,
   agentRuleId: agentRule.id,
+  repos: [templateRepo.repo],
 };
 
 const createWorkspaceResponse: SharedShape<
@@ -516,6 +546,11 @@ const fullFieldValues = [
   putAgentRuleResponse,
   workspace,
   templateConnection,
+  templateRepo,
+  githubInstallation,
+  listGithubInstallations,
+  githubRepository,
+  listGithubRepositories,
   githubRepositoryCheck,
   checkGithubRepositoriesRequest,
   checkGithubRepositoriesResponse,
@@ -586,7 +621,12 @@ describe("local wire copies", () => {
     expectTypeOf<wire.PutAgentRuleResponse>().toEqualTypeOf<schema.PutAgentRuleResponse>();
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
-    expectTypeOf<wire.GithubRepositoryCheckFailure>().toEqualTypeOf<schema.GithubRepositoryCheckFailure>();
+    expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
+    expectTypeOf<wire.GithubInstallationView>().toEqualTypeOf<schema.GithubInstallationView>();
+    expectTypeOf<wire.ListGithubInstallationsResponse>().toEqualTypeOf<schema.ListGithubInstallationsResponse>();
+    expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();
+    expectTypeOf<wire.ListGithubRepositoriesResponse>().toEqualTypeOf<schema.ListGithubRepositoriesResponse>();
+    expectTypeOf<wire.GithubRepositoryCheckVerdict>().toEqualTypeOf<schema.GithubRepositoryCheckVerdict>();
     expectTypeOf<wire.GithubRepositoryCheckView>().toEqualTypeOf<schema.GithubRepositoryCheckView>();
     expectTypeOf<wire.CheckGithubRepositoriesRequest>().toEqualTypeOf<schema.CheckGithubRepositoriesRequest>();
     expectTypeOf<wire.CheckGithubRepositoriesResponse>().toEqualTypeOf<schema.CheckGithubRepositoriesResponse>();

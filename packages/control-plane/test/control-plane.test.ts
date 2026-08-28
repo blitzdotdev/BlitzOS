@@ -1414,7 +1414,39 @@ describe("control plane security and lifecycle", () => {
     expect(response.status).toBe(403);
   });
 
-  it("rejects a refresh token after it has rotated away", async () => {
+  /** A box writes its new pair to disk only after this endpoint has already
+   * rotated. A box that dies in that window still holds the token it came
+   * with, and before the grace window that box was stranded for good: one hash
+   * per family, and re-enrolment needs a human at a device code. */
+  it("redeems a rotated-away refresh token inside the grace window", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const box = await enrollBox(app, cookie);
+    const refresh = () =>
+      appRequest(app, "/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: box.refresh_token,
+        }),
+      });
+
+    const first = await refresh();
+    expect(first.status).toBe(200);
+    const winner = await first.json<{ access_token: string; refresh_token: string }>();
+
+    // The box never kept the winner's pair. It comes back with what it holds.
+    const recovered = await refresh();
+    expect(recovered.status).toBe(200);
+    const rescued = await recovered.json<{ access_token: string; refresh_token: string }>();
+    // A fresh pair, not the one the lost write was carrying: the control plane
+    // stores hashes, so it cannot hand the old answer back.
+    expect(rescued.refresh_token).not.toBe(winner.refresh_token);
+    expect(rescued.access_token).not.toBe(winner.access_token);
+  });
+
+  it("rejects a refresh token once its grace window has passed", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const box = await enrollBox(app, cookie);
@@ -1429,9 +1461,47 @@ describe("control plane security and lifecycle", () => {
       });
 
     expect((await refresh()).status).toBe(200);
-    const rotatedAway = await refresh();
-    expect(rotatedAway.status).toBe(400);
-    expect(await rotatedAway.json()).toEqual({ error: "invalid_grant" });
+    // The grace is the 15-minute access lifetime; one second past it, the
+    // retired hash is no better than a guess.
+    vi.setSystemTime(Date.now() + 15 * 60 * 1000 + 1_000);
+    try {
+      const rotatedAway = await refresh();
+      expect(rotatedAway.status).toBe(400);
+      expect(await rotatedAway.json()).toEqual({ error: "invalid_grant" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** The grace slot is a way back for the box that lost a write, not a second
+   * living token: redeeming it must not let a third party keep a spent token
+   * alive by presenting it over and over. */
+  it("does not extend the grace window when the retired hash is redeemed", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const box = await enrollBox(app, cookie);
+    const refresh = () =>
+      appRequest(app, "/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: box.refresh_token,
+        }),
+      });
+
+    expect((await refresh()).status).toBe(200);
+    vi.setSystemTime(Date.now() + 10 * 60 * 1000);
+    try {
+      // Still inside the window that started at the FIRST rotation.
+      expect((await refresh()).status).toBe(200);
+      // The clock the grace runs on is that first rotation, not this
+      // redemption, so it expires on schedule rather than being renewed.
+      vi.setSystemTime(Date.now() + 6 * 60 * 1000);
+      expect((await refresh()).status).toBe(400);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps destroyed terminal and returns the same tombstone", async () => {

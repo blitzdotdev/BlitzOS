@@ -17,6 +17,19 @@ const DEVICE_LIFETIME_MS = 10 * 60 * 1000;
 const DEVICE_INTERVAL_SECONDS = 5;
 const ACCESS_LIFETIME_MS = 15 * 60 * 1000;
 
+/** How long the refresh hash a rotation retires stays redeemable.
+ *
+ * A box writes its new pair to disk only after this endpoint has already
+ * rotated, so a box that dies inside that window holds a token the family no
+ * longer names. Without a way back that box is stranded for good: re-enrolment
+ * needs a human at a device code. The grace is the way back.
+ *
+ * It is the access lifetime, because that is the longest a box can sit quiet
+ * between calls and still believe its credential is current. Shorter, and a
+ * box that crashes early in an idle period wakes past the window and strands
+ * anyway — which is the bug this exists to end. */
+const REFRESH_GRACE_MS = ACCESS_LIFETIME_MS;
+
 interface DeviceRow {
   device_hash: string;
   user_hash: string;
@@ -36,6 +49,11 @@ interface BoxTokenRow {
   workspace_id: string | null;
   is_broker: number;
   platform_operator: number;
+}
+
+interface RefreshRow extends BoxTokenRow {
+  previous_refresh_hash: string | null;
+  previous_rotated_at: number | null;
 }
 
 export interface IssuedBoxTokens {
@@ -99,6 +117,15 @@ async function deviceByHash(db: Db, hash: string): Promise<DeviceRow | null> {
   });
 }
 
+/** Which slot of the family the presented refresh token matched.
+ *
+ * `current` is the ordinary rotation. `previous` is a box coming back for a
+ * rotation it never got to keep, and the two retire different things: a
+ * current match retires the hash it just spent, while a previous match retires
+ * nothing, because the grace it is spending is already running and restarting
+ * that clock would let one stale token be redeemed forever. */
+type RefreshSlot = "current" | "previous";
+
 async function refreshGrant(
   context: CoreContext,
   runtimeFactory: RuntimeFactory,
@@ -106,25 +133,41 @@ async function refreshGrant(
 ): Promise<Response> {
   const db = runtimeFactory(context).db;
   const oldHash = await hashSecret(refreshToken);
-  const row = await first<BoxTokenRow>(db, {
+  const now = Date.now();
+  const row = await first<RefreshRow>(db, {
     q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
+               f.previous_refresh_hash, f.previous_rotated_at,
                b.id, b.principal_id, b.workspace_id, b.is_broker
         FROM box_token_families f JOIN boxes b ON b.id = f.box_id
-        WHERE f.refresh_hash = ?1 LIMIT 1`,
+        WHERE f.refresh_hash = ?1 OR f.previous_refresh_hash = ?1 LIMIT 1`,
     v: [oldHash],
   });
-  const matches = await matchesStoredHash(refreshToken, row?.refresh_hash ?? DUMMY_HASH);
-  if (row === null || !matches) return oauthError(context, "invalid_grant");
+  const slot = row === null ? null : await refreshSlot(refreshToken, row, now);
+  if (row === null || slot === null) return oauthError(context, "invalid_grant");
 
   const tokens = await issueBoxTokens();
-  const count = await changed(db, {
-    q: `UPDATE box_token_families
-        SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
-            generation = generation + 1
-        WHERE box_id = ?4 AND refresh_hash = ?5
-        RETURNING box_id`,
-    v: [tokens.accessHash, tokens.refreshHash, Date.now(), row.id, row.refresh_hash],
-  });
+  // The WHERE is a compare-and-swap on the hash this request read, so two
+  // boxes racing the same rotation cannot both win it. The loser reads
+  // invalid_grant and retries; by then the file it re-reads holds the winner's
+  // pair, or its own token sits in the grace slot.
+  const count = await changed(db, slot === "current"
+    ? {
+      q: `UPDATE box_token_families
+          SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
+              previous_refresh_hash = ?5, previous_rotated_at = ?3,
+              generation = generation + 1
+          WHERE box_id = ?4 AND refresh_hash = ?5
+          RETURNING box_id`,
+      v: [tokens.accessHash, tokens.refreshHash, now, row.id, row.refresh_hash],
+    }
+    : {
+      q: `UPDATE box_token_families
+          SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
+              generation = generation + 1
+          WHERE box_id = ?4 AND refresh_hash = ?5
+          RETURNING box_id`,
+      v: [tokens.accessHash, tokens.refreshHash, now, row.id, row.refresh_hash],
+    });
   if (count !== 1) return oauthError(context, "invalid_grant");
   return context.json({
     box_id: row.id,
@@ -133,6 +176,23 @@ async function refreshGrant(
     token_type: "Bearer",
     expires_in: tokens.expiresIn,
   });
+}
+
+/** The slot the presented token belongs to, or null when it belongs to
+ * neither. Both hashes are compared, in both branches, so the work this does
+ * cannot tell an attacker which slot a guess missed. */
+async function refreshSlot(
+  refreshToken: string,
+  row: RefreshRow,
+  now: number,
+): Promise<RefreshSlot | null> {
+  const [isCurrent, isPrevious] = await Promise.all([
+    matchesStoredHash(refreshToken, row.refresh_hash),
+    matchesStoredHash(refreshToken, row.previous_refresh_hash ?? DUMMY_HASH),
+  ]);
+  if (isCurrent) return "current";
+  if (!isPrevious || row.previous_rotated_at === null) return null;
+  return now - row.previous_rotated_at < REFRESH_GRACE_MS ? "previous" : null;
 }
 
 export async function authenticateBox(

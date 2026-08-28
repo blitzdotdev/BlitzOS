@@ -1024,15 +1024,10 @@
   overflow: visible;
 }
 
-/* Four sections, one rhythm: every slab is a bordered card inset 14px, every
- * title sits 16px in and 8px above it. */
-.workspace-connections .workspace-credential-rows,
+/* One rhythm for the whole column: every card is a .wsc-tile inset 14px, every
+ * title sits 16px in and 8px above the list it names. */
 .workspace-connections .workspace-drawer-state {
   border: 1px solid var(--rule);
-}
-
-.workspace-connections .workspace-requests .workspace-credential-rows {
-  border-color: color-mix(in oklab, var(--status-warm-yellow) 30%, var(--rule));
 }
 
 /* A provider row opens onto its own connect surface: the OAuth button or the
@@ -1082,53 +1077,6 @@
   background: var(--sheet);
 }
 
-.workspace-credential-rows {
-  overflow: hidden;
-  margin: 0 14px;
-  border-radius: var(--r-card);
-  background: var(--wash);
-}
-
-/* Pending requests are the one warm slab — urgency reads as warmth. */
-.workspace-requests .workspace-credential-rows {
-  background: color-mix(in oklab, var(--status-warm-yellow) 12%, var(--sheet));
-}
-
-.workspace-credential-row {
-  display: grid;
-  gap: 7px;
-  padding: 12px 14px;
-}
-
-.workspace-credential-row + .workspace-credential-row {
-  border-top: 1px solid color-mix(in oklab, var(--ink) 6%, transparent);
-}
-
-/* The row `blitz connections open` pointed the person at. Focus wins over the
- * connected wash — it is the answer to a question the person just asked. */
-.workspace-credential-row--focus {
-  background: color-mix(in oklab, var(--accent) 8%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.workspace-credential-row__title,
-.workspace-credential-row__meta,
-.workspace-credential-row__actions {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.workspace-credential-row__title strong {
-  min-width: 0;
-  overflow: hidden;
-  font: 600 13px/1.3 var(--font-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workspace-state-badge {
   display: inline-flex;
   flex: none;
@@ -1157,29 +1105,19 @@
   color: var(--faint);
 }
 
-.workspace-credential-row > p {
-  margin: 0;
-  color: var(--muted);
-  font: 11px/1.5 var(--font-ui);
-  overflow-wrap: anywhere;
-}
-
-.workspace-credential-row__meta {
-  justify-content: flex-start;
-  color: var(--faint);
-  font: 10.5px/1.4 var(--font-ui);
-  font-variant-numeric: tabular-nums;
-}
-
-.workspace-credential-row__meta > :last-child {
-  margin-left: auto;
-}
-
 /* ------------------------------------------------------- connection tiles */
 /* The provider list is built from the shapes the create-workspace pages
  * already use: the tile is .template-tile, the state strip under it is
  * .blueprint-machine-facts, the chip is .tplf-chip, and connected wears the
- * 1px inset ring that marks a chosen template tile. Nothing here is new. */
+ * 1px inset ring that marks a chosen template tile. Nothing here is new.
+ *
+ * Every card in the connections column is one of these tiles: the provider
+ * row, the request an agent filed, and the credential log entry. They used to
+ * be two families — a bordered tile beside a tinted slab of dividerless rows —
+ * so the request an agent raised looked like a different product than the
+ * provider it asked for. One shell, one head, one footer strip; the state word
+ * carries the difference, and the ring colour names the state: green for
+ * connected, warm for wanted, accent for the one somebody just pointed at. */
 .wsc-list {
   display: grid;
   gap: 8px;
@@ -1194,12 +1132,24 @@
   background: var(--sheet);
 }
 
-.wsc-tile:hover { border-color: var(--muted); }
+/* A tile a press does something to. A request card and a log entry carry their
+ * own controls, so lighting their border on hover would promise a press that
+ * does nothing. */
+.wsc-tile:not(.wsc-tile--static):hover { border-color: var(--muted); }
 
 .wsc-tile--on,
 .wsc-tile--on:hover {
   border-color: color-mix(in oklab, var(--ansi-green) 70%, var(--ink));
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--ansi-green) 70%, var(--ink)) inset;
+}
+
+/* An agent wanted this and found nothing behind it. Urgency reads as warmth,
+ * the way the pending slab did, but in the ring the connected tile already
+ * uses — one vocabulary, three colours. */
+.wsc-tile--wanted {
+  border-color: color-mix(in oklab, var(--status-warm-yellow) 70%, var(--ink));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--status-warm-yellow) 70%, var(--ink)) inset;
+  background: color-mix(in oklab, var(--status-warm-yellow) 7%, var(--sheet));
 }
 
 /* The tile `blitz connections open` pointed the person at. It outranks the
@@ -1232,7 +1182,23 @@
   padding: 12px 12px 10px;
 }
 
+/* A log entry names an event, not a provider, so it has no mark to print and
+ * the head closes to two columns rather than holding an empty one. */
+.wsc-tile--log .wsc-tile__head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-bottom: 12px;
+}
+
 .wsc-tile__glyph { width: 16px; height: 16px; flex: none; color: var(--soft-ink); }
+
+/* When the card happened, in the head's trailing column. */
+.wsc-tile__when {
+  align-self: center;
+  color: var(--faint);
+  font: 10.5px/1.4 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 .wsc-tile__name { min-width: 0; display: grid; gap: 4px; }
 
@@ -1271,6 +1237,28 @@
 
 .wsc-tile--on .wsc-tile__state { color: color-mix(in oklab, var(--ansi-green) 62%, var(--ink)); }
 .wsc-tile--go .wsc-tile__state { color: var(--accent); }
+.wsc-tile--wanted .wsc-tile__state {
+  color: color-mix(in oklab, var(--status-warm-yellow) 62%, var(--ink));
+}
+
+/* The same strip, when the card answers with buttons instead of one word. It
+ * keeps the strip's height and rule, so a request card and a provider tile
+ * close on the same line. */
+.wsc-tile__foot {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.wsc-tile__foot .wsc-tile__state {
+  min-height: 0;
+  padding: 0;
+  border-top: 0;
+}
 
 /* Everything the press reveals, and only what the press reveals. */
 .wsc-tile__open {
@@ -1285,42 +1273,26 @@
 .wsc-tile__open .connect-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .wsc-tile__actions { display: flex; gap: 8px; }
 
-/* Quiet pill buttons; the primary keeps the accent fill. The fill alone sat
- * too close to the panel — an 8% wash on a paper sheet reads as a label, not
- * a control — so the quiet variant carries a rule and full-ink text. */
-.workspace-credential-row__action,
-.workspace-credential-row__actions .webapp-action {
+/* One control size for every tile: the Connect on a request card and the
+ * Disconnect a provider tile opens onto are the same button. The primary keeps
+ * the app's ink fill rather than an accent of its own — a request used to be
+ * the one place in the webapp where the confirming button was blue. */
+.wsc-tile__actions .webapp-action,
+.wsc-tile__open .connect-actions .webapp-action {
   min-height: 28px;
-  padding: 0 14px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-pill);
-  color: var(--ink);
-  background: var(--quiet-hover);
+  padding: 0 12px;
   font: 650 11.5px/1 var(--font-ui);
 }
 
-.workspace-credential-row__action:hover,
-.workspace-credential-row__actions .webapp-action:hover {
-  border-color: var(--muted);
-  color: var(--ink);
-  background: color-mix(in oklab, var(--ink) 17%, var(--paper));
+.wsc-tile__actions .webapp-action:hover:not(:disabled) {
+  background: var(--quiet-hover);
 }
 
-.workspace-credential-row__actions .webapp-action--primary {
-  color: var(--paper);
-  background: var(--accent);
+.wsc-tile__actions .webapp-action--primary:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ink) 88%, var(--accent));
 }
 
-.workspace-credential-row__actions .webapp-action--primary:hover {
-  background: color-mix(in oklab, var(--accent) 88%, var(--ink));
-}
-
-.workspace-credential-row__action {
-  width: max-content;
-}
-
-.workspace-credential-row__action:disabled,
-.workspace-credential-row__actions .webapp-action:disabled {
+.wsc-tile__actions .webapp-action:disabled {
   color: var(--faint);
   background: color-mix(in oklab, var(--ink) 4%, transparent);
 }

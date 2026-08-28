@@ -9,11 +9,19 @@ import type {
 } from '@blitzos/schema';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
+import { ApiRequestError, type ControlPlaneClient } from './api';
+import {
+  clearWorkspaceConnectDraft,
+  hasConnectReturn,
+  readWorkspaceConnectDraft,
+  storeWorkspaceConnectDraft,
+} from './connect-drafts';
 import type { ComputeCredentialsClient } from './compute-credentials-api';
 import { isComputeCredentialProvider } from './ComputeCredentialFields';
 import { InlineComputeCredentialSetup } from './InlineComputeCredentialSetup';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
+import { TemplateRepoPicker } from './files/TemplateRepoPicker';
 import {
   EMPTY_WORKSPACE_ENVIRONMENT,
   EnvironmentEditor,
@@ -22,6 +30,13 @@ import {
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
+type GithubGrantCheck =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'live' }
+  | { kind: 'missing' }
+  | { kind: 'failed'; message: string };
+
 type CreateWorkspaceDialogProps = {
   busy: boolean;
   error: string | null;
@@ -29,7 +44,10 @@ type CreateWorkspaceDialogProps = {
   orgId?: string;
   admin?: boolean;
   saveComputeCredential?: ComputeCredentialsClient['putComputeCredential'];
-  client: AgentRulesApi;
+  client: AgentRulesApi & Pick<
+    ControlPlaneClient,
+    'connectStartUrl' | 'listGithubInstallations' | 'listGithubRepositories'
+  >;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
   listTemplates: () => Promise<WorkspaceTemplateView[]>;
@@ -58,19 +76,32 @@ export function CreateWorkspaceDialog({
   onCancel,
   onSubmit,
 }: CreateWorkspaceDialogProps) {
+  const returningFromConnect = hasConnectReturn();
+  const [restoredDraft] = useState(readWorkspaceConnectDraft);
+  // A draft that chose "no template" must survive the round trip as that
+  // choice; ?? would quietly hand the org default back to a member who had
+  // just deselected it.
+  const seededTemplateId = restoredDraft === null ? initialTemplateId : restoredDraft.templateId;
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-    initialTemplateId ?? null,
+    seededTemplateId ?? null,
   );
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
-  const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
+  const [environment, setEnvironment] = useState(
+    restoredDraft?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT,
+  );
+  const [agentRuleId, setAgentRuleId] = useState<string | null>(
+    restoredDraft?.agentRuleId ?? null,
+  );
+  const [repos, setRepos] = useState<string[]>(restoredDraft?.repos ?? []);
+  const [githubGrantCheck, setGithubGrantCheck] = useState<GithubGrantCheck>({ kind: 'idle' });
+  const [githubCheckVersion, setGithubCheckVersion] = useState(0);
   const submitted = useRef(false);
   const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
   const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
@@ -93,22 +124,26 @@ export function CreateWorkspaceDialog({
     if (!busy) submitted.current = false;
   }, [busy]);
 
+  useEffect(() => {
+    if (returningFromConnect) clearWorkspaceConnectDraft();
+  }, [returningFromConnect]);
+
   // Seeding needs the template row, not just its id: selecting a template
   // also loads its environment and agent rule, exactly like a click on the
   // tile. Runs at most once — the prop may arrive after the list (or the
   // list after the prop), and a member who deselected must stay deselected.
   const seededTemplate = useRef(false);
   useEffect(() => {
-    if (seededTemplate.current || initialTemplateId === null || initialTemplateId === undefined) {
+    if (seededTemplate.current || seededTemplateId === null || seededTemplateId === undefined) {
       return;
     }
-    const template = templates.find(({ id }) => id === initialTemplateId);
+    const template = templates.find(({ id }) => id === seededTemplateId);
     if (template === undefined) return;
     seededTemplate.current = true;
     setSelectedTemplateId(template.id);
-    setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
-    setAgentRuleId(template.agentRuleId);
-  }, [templates, initialTemplateId]);
+    setEnvironment(restoredDraft?.environment ?? template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+    setAgentRuleId(restoredDraft === null ? template.agentRuleId : restoredDraft.agentRuleId);
+  }, [templates, restoredDraft, seededTemplateId]);
 
   useEffect(() => {
     let mounted = true;
@@ -137,6 +172,32 @@ export function CreateWorkspaceDialog({
   }, [installMachineTypes, listMachineTypes, listVolumes, listTemplates]);
 
   const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId) ?? null;
+  const requiresGithubGrant = selectedTemplate?.repos.some((repo) => repo.private) ?? false;
+  useEffect(() => {
+    if (!requiresGithubGrant) {
+      setGithubGrantCheck({ kind: 'idle' });
+      return;
+    }
+    let mounted = true;
+    setGithubGrantCheck({ kind: 'checking' });
+    // The listing route resolves and refreshes the member credential. Its
+    // result is deliberately ignored: only the server create preflight owns
+    // the separate question of whether this grant reaches each private repo.
+    void client.listGithubRepositories()
+      .then(() => {
+        if (mounted) setGithubGrantCheck({ kind: 'live' });
+      })
+      .catch((caught: Error) => {
+        if (!mounted) return;
+        if (caught instanceof ApiRequestError && caught.status === 409) {
+          setGithubGrantCheck({ kind: 'missing' });
+          return;
+        }
+        setGithubGrantCheck({ kind: 'failed', message: caught.message });
+      });
+    return () => { mounted = false; };
+  }, [client, githubCheckVersion, requiresGithubGrant]);
+  const githubCreateBlocked = requiresGithubGrant && githubGrantCheck.kind !== 'live';
   const machineFailureItems = machineFailures.map((failure) => (
     <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
   ));
@@ -146,14 +207,32 @@ export function CreateWorkspaceDialog({
     setEnvironment(EMPTY_WORKSPACE_ENVIRONMENT);
     setAgentRuleId(null);
   };
+  // The picker is hidden under a template, and the control plane refuses a
+  // body carrying both sources, so the selection is dropped rather than kept
+  // out of sight to be sent later.
+  const selectTemplate = (template: WorkspaceTemplateView) => {
+    setSelectedTemplateId(template.id);
+    setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
+    setAgentRuleId(template.agentRuleId);
+    setRepos([]);
+  };
+  const storeDraft = () => {
+    storeWorkspaceConnectDraft({
+      templateId: selectedTemplateId,
+      environment,
+      agentRuleId,
+      repos,
+    });
+  };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy || submitted.current) return;
     if (selectedTemplate !== null) {
-      // Creation never blocks on connections: the server enables every
-      // stipulated provider on the ceiling, mints what the creator's grants
-      // already back, and the workspace connections panel collects the rest.
+      // Ordinary stipulated providers still connect after create. A private
+      // bootstrap clone is the one exception: the server refuses it without a
+      // live GitHub grant, so this dialog waits for the cheap grant check.
+      if (githubCreateBlocked) return;
       submitted.current = true;
       const input: CreateWorkspaceDialogInput = {
         templateId: selectedTemplate.id,
@@ -182,6 +261,7 @@ export function CreateWorkspaceDialog({
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
     if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
+    if (repos.length > 0) input.repos = repos;
     const configured = populatedEnvironment(environment);
     if (configured !== undefined) input.environment = configured;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
@@ -238,9 +318,7 @@ export function CreateWorkspaceDialog({
                         clearTemplate();
                         return;
                       }
-                      setSelectedTemplateId(template.id);
-                      setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
-                      setAgentRuleId(template.agentRuleId);
+                      selectTemplate(template);
                     }}
                   >
                     <strong>{template.name}</strong>
@@ -295,6 +373,35 @@ export function CreateWorkspaceDialog({
                     </li>
                   ))}
                 </ul>
+              )}
+              {requiresGithubGrant && githubGrantCheck.kind === 'checking' && (
+                <p className="template-github-gate" role="status">Checking your GitHub connection…</p>
+              )}
+              {requiresGithubGrant && githubGrantCheck.kind === 'missing' && (
+                <div className="template-github-gate">
+                  <p>This template includes private repositories. Connect GitHub before create.</p>
+                  <a
+                    className="webapp-action webapp-action--primary"
+                    href={client.connectStartUrl('github', undefined, 'workspace-new')}
+                    onClick={storeDraft}
+                  >
+                    Connect GitHub
+                  </a>
+                </div>
+              )}
+              {requiresGithubGrant && githubGrantCheck.kind === 'failed' && (
+                <div className="template-github-gate">
+                  <p className="webapp-form-message" role="alert">
+                    {githubGrantCheck.message}
+                  </p>
+                  <button
+                    className="webapp-action"
+                    type="button"
+                    onClick={() => setGithubCheckVersion((current) => current + 1)}
+                  >
+                    Retry
+                  </button>
+                </div>
               )}
             </section>
           )}
@@ -384,6 +491,23 @@ export function CreateWorkspaceDialog({
             </label>
           </section>}
 
+          {/* Only without a template. A template already carries a repository
+            * list, and the two sources never mix — showing both would invite a
+            * body the control plane refuses with a 400. */}
+          {selectedTemplate === null && <section className="blueprint-selection tplf-repos">
+            <div className="blueprint-selection__heading">
+              <h2>Repositories</h2>
+              <p>GitHub repositories cloned into /workspace when this workspace starts.</p>
+            </div>
+            <TemplateRepoPicker
+              client={client}
+              connectHref={client.connectStartUrl('github', undefined, 'workspace-new')}
+              onConnect={storeDraft}
+              value={repos}
+              onChange={setRepos}
+            />
+          </section>}
+
           {selectedTemplate === null && <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
               <h2>Sharing</h2>
@@ -418,7 +542,7 @@ export function CreateWorkspaceDialog({
             <div className="blueprint-advanced__content">
               <EnvironmentEditor
                 key={selectedTemplateId ?? 'workspace'}
-                initial={selectedTemplate?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT}
+                initial={environment}
                 onChange={setEnvironment}
               />
               <AgentRulesPicker
@@ -436,6 +560,7 @@ export function CreateWorkspaceDialog({
             className="create-workspace-primary"
             type="submit"
             disabled={busy
+              || githubCreateBlocked
               || (selectedTemplate === null && (loading || selectedMachineType === ''))}
           >
             {busy ? 'Creating…' : selectedTemplate === null ? 'Create workspace' : `Create from ${selectedTemplate.name}`}
