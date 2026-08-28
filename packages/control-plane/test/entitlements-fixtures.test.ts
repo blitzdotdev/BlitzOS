@@ -112,6 +112,9 @@ describe("entitlements fixture conformance", () => {
       "updated_at",
       // Appended by migration 0037; ALTER TABLE puts a new column last.
       "platform_compute",
+      // Appended by migration 0040: the operator-sponsored trial clock. A
+      // billing write nulls it, so it never survives into a paid row.
+      "trial_expires_at",
     ]);
     // A body that omits the flag says the organization does not have it, which
     // is the same thing an absent row says.

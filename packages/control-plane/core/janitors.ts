@@ -212,6 +212,31 @@ export async function runInvariantSweep(
   });
 }
 
+/**
+ * Ends platform-sponsored trials whose clock has run out.
+ *
+ * One flag flip, no provider calls: the compute resolver reads
+ * platform_compute live on every create, so clearing it is the whole
+ * enforcement. Running workspaces stay alive by design — the same downgrade
+ * contract a billing cancellation follows — and vm_limit keeps bounding them
+ * until they are destroyed.
+ *
+ * trial_expires_at stays set: it is the record that this organization was a
+ * trial and when it ended, which is what the operator console reports.
+ */
+export async function runTrialExpirySweep(
+  runtime: CoreRuntime,
+  now = Date.now(),
+): Promise<number> {
+  return changed(runtime.db, {
+    q: `UPDATE org_entitlements SET platform_compute = 0, updated_at = ?1
+        WHERE trial_expires_at IS NOT NULL AND trial_expires_at <= ?1
+          AND platform_compute = 1
+        RETURNING org_id`,
+    v: [now],
+  });
+}
+
 export async function runSessionSweep(
   runtime: CoreRuntime,
   now = Date.now(),
@@ -235,6 +260,7 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
     try {
       await runSessionSweep(runtime);
       await runLeaseSweep(runtime);
+      await runTrialExpirySweep(runtime);
       await runInvariantSweep(runtime);
       await runOrphanSweep(runtime);
       await runWorkspaceTunnelSweep(runtime);

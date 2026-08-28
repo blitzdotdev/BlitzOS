@@ -293,14 +293,19 @@ export function addEntitlementsRoutes(
     // vmLimit lands in orgs.vm_limit, the column core/workspaces.ts has always
     // enforced. Storing it here as well would be a second source of truth for
     // one limit, and the enforcing statement would keep reading the other one.
+    // trial_expires_at is cleared on every billing write: the body states the
+    // organization's whole entitlement, and a paid (or cancelled) organization
+    // is not a trial. An operator-seeded trial converts by paying, and the
+    // trial clock must not end the subscription it converted into.
     const rowsWritten = await transaction<{ id: string }>(runtime.db, [
       {
         q: `INSERT INTO org_entitlements
-              (org_id, seat_limit, platform_compute, updated_at)
-            SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM orgs WHERE id = ?1)
+              (org_id, seat_limit, platform_compute, trial_expires_at, updated_at)
+            SELECT ?1, ?2, ?3, NULL, ?4 WHERE EXISTS (SELECT 1 FROM orgs WHERE id = ?1)
             ON CONFLICT(org_id) DO UPDATE SET
               seat_limit = excluded.seat_limit,
               platform_compute = excluded.platform_compute,
+              trial_expires_at = NULL,
               updated_at = excluded.updated_at
             RETURNING org_id AS id`,
         v: [orgId, written.seatLimit, written.platformCompute === true ? 1 : 0, now],

@@ -25,6 +25,7 @@ export {
   maybeScheduleLazySweep,
   runInvariantSweep,
   runOrphanSweep,
+  runTrialExpirySweep,
   runVolumeRetentionSweep,
   runWorkspaceTunnelSweep,
   runSessionSweep,

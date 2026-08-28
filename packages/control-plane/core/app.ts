@@ -1,3 +1,4 @@
+import { addAdminRoutes } from "./admin.js";
 import { addAgentRuleLibraryRoutes, addAgentRulesRoutes } from "./agent-rules.js";
 import { addBoxConfigRoutes } from "./box-config.js";
 import { addBoxImageRoutes } from "./box-images.js";
@@ -75,6 +76,7 @@ export function installControlPlaneRoutes(
 
   addSessionRoutes(router, runtimeFactory, requirePrincipal);
   addOperatorTokenRoutes(router, runtimeFactory, requirePrincipal);
+  addAdminRoutes(router, runtimeFactory, requirePrincipal);
   addIdentityRoutes(router, runtimeFactory, requirePrincipal);
   addEntitlementsRoutes(router, runtimeFactory, requirePrincipal);
   addOrgComputeCredentialRoutes(router, runtimeFactory, requirePrincipal);
