@@ -59,8 +59,9 @@ export const CORE_MANIFEST = Object.freeze([
   "core/webapp-state.ts", "core/webapp-proxy.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts", "core/workspace-names.ts", "core/workspace-records.ts", "core/workspace-templates.ts", "core/workspace-tunnels.ts",
+  "core/workspace-volumes.ts",
   "core/workspaces.ts",
-  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/workspace-placement.ts", "core/compute/microvm-hosts.js",
+  "core/compute/registry.ts", "core/compute/types.ts", "core/compute/hetzner-config.ts", "core/compute/hetzner.ts", "core/compute/json-fetch.ts", "core/compute/org-credentials.ts", "core/compute/workspace-placement.ts", "core/compute/microvm-hosts.js",
   "core/compute/microvm-config.ts", "core/compute/microvm-agent.ts", "core/compute/microvm-host-registry.ts", "core/compute/microvm.ts",
   "core/compute/aws.ts", "core/compute/aws-prices.ts", "core/compute/aws-sigv4.ts",
   "core/compute/aws-xml.ts", "core/compute/cloudflare-tunnels.ts",
@@ -157,6 +158,9 @@ export const BLITZDEV_CONFIG = Object.freeze({
       fields: [
         { name: "org_id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid", foreignKey: { table: "orgs", column: "id" } },
         { name: "seat_limit", type: "integer", sqlType: "integer", notNull: true, check: "seat_limit >= 1" },
+        // Migration 0037. A boolean-shaped integer: the plan that produced it
+        // stays on the billing side, and core only ever reads 0 or 1.
+        { name: "platform_compute", type: "integer", sqlType: "integer", notNull: true, default: { l: 0 } },
         { name: "updated_at", type: "integer", sqlType: "integer", notNull: true },
       ],
       extensions: [DENY_ALL_RULES],

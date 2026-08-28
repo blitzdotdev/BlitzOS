@@ -267,11 +267,50 @@ main().catch(function (error) {
  * the way you would edit a wire format, not a script. Recipe launches add
  * segments pinned by `test/recipe-invocation-fixtures.test.ts`; a create
  * without a recipe or usage capture emits byte-identical output. */
-export function buildBootstrapScript(options: BootstrapOptions): string {
-  const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
+/**
+ * The shell helpers `boxImageSetupScript` calls. Emitting that setup without
+ * these gives `retry: command not found`, and under `set -e` the script dies
+ * where it stands. The golden-image bake hit exactly that on its first real
+ * run: the builder never powered off, and the bake waited 30 minutes for a
+ * shutdown that could not come.
+ *
+ * `buildBootstrapScript` emits these in its own preamble. Any other caller
+ * that embeds the setup has to emit them first.
+ */
+export const BOX_IMAGE_SETUP_HELPERS = `retry() {
+  local attempt=1
+  local max_attempts=10
+  until "$@"; do
+    if (( attempt >= max_attempts )); then
+      echo "command failed after $attempt attempts: $*"
+      return 1
+    fi
+    sleep $((attempt * 3))
+    attempt=$((attempt + 1))
+  done
+}
+`;
+
+/** The three variables that name one box image build. */
+export interface BoxImageRef {
+  boxImageRef: string;
+  boxImageTag: string;
+  boxImageSha256: string;
+}
+
+/**
+ * The bash that puts the box image into the host's docker store: download and
+ * `docker load` for an HTTPS tarball ref, or `docker pull` for a registry ref.
+ * Both branches guard on `docker image inspect`, so a host that already holds
+ * the image does no work at all. That guard is what makes a golden snapshot
+ * fast: the image is already there and the whole block is skipped.
+ *
+ * Exported so the golden-image bake script bakes the SAME bytes a workspace
+ * would download. Two copies of this would be two sides of one contract, and
+ * drift between them would produce snapshots holding the wrong image.
+ */
+export function boxImageSetupScript(options: BoxImageRef): string {
   const isTarball = options.boxImageRef.startsWith("https://");
-  const trimmedSshPublicKey = options.sshPublicKey?.trim();
-  const sshPublicKey = trimmedSshPublicKey === "" ? undefined : trimmedSshPublicKey;
   if (isTarball && options.boxImageTag.trim() === "") {
     throw new Error("BOX_IMAGE_TAG is required when BOX_IMAGE_REF is an HTTPS URL");
   }
@@ -280,8 +319,7 @@ export function buildBootstrapScript(options: BootstrapOptions): string {
       "BOX_IMAGE_SHA256 must be a 64-character hexadecimal digest when BOX_IMAGE_REF is an HTTPS URL",
     );
   }
-
-  const imageSetup = isTarball
+  return isTarball
     ? String.raw`download() {
   curl --fail --location --retry 10 --retry-all-errors --retry-delay 3 \
     --silent --show-error --output "$2" "$1"
@@ -370,6 +408,14 @@ box_image="$BOX_IMAGE_TAG"`
 fi
 docker image inspect "$BOX_IMAGE_REF" >/dev/null
 box_image="$BOX_IMAGE_REF"`;
+}
+
+export function buildBootstrapScript(options: BootstrapOptions): string {
+  const controlPlaneOrigin = new URL(options.phoneHomeUrl).origin;
+  const trimmedSshPublicKey = options.sshPublicKey?.trim();
+  const sshPublicKey = trimmedSshPublicKey === "" ? undefined : trimmedSshPublicKey;
+
+  const imageSetup = boxImageSetupScript(options);
 
   // The resolved provider's own lines. "" for a provider that needs none, so
   // its boxes never read another provider's setup.
@@ -544,19 +590,7 @@ touch "$BOOTSTRAP_LOG"
 chmod 0600 "$BOOTSTRAP_LOG"
 exec >>"$BOOTSTRAP_LOG" 2>&1
 
-retry() {
-  local attempt=1
-  local max_attempts=10
-  until "$@"; do
-    if (( attempt >= max_attempts )); then
-      echo "command failed after $attempt attempts: $*"
-      return 1
-    fi
-    sleep $((attempt * 3))
-    attempt=$((attempt + 1))
-  done
-}
-
+${BOX_IMAGE_SETUP_HELPERS}
 fail() {
   bootstrap_error="$*"
   echo "blitz bootstrap failed: $*"
@@ -593,9 +627,24 @@ apt_watchdog() {
   done
   fail "apt-get $1 kept failing or stalling after 3 attempts"
 }
-apt_watchdog update
-apt_watchdog install -y docker.io curl
+# A golden image already carries docker and curl, and re-running apt on it
+# changes nothing while costing about 36 seconds (measured 2026-08-27 on
+# cx23@hel1: 18.3 s for update, 17.4 s for the install). A stock Ubuntu image
+# has neither and takes the original path, so this is a skip, not a new
+# dependency: the box never relies on the tools being pre-baked.
+if command -v docker >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then
+  echo "blitz: docker and curl are already installed; skipping apt"
+else
+  apt_watchdog update
+  apt_watchdog install -y docker.io curl
+fi
 systemctl enable --now docker
+
+# Every phase marker carries seconds since the script started. Without these
+# the only way to attribute boot time was subtraction, which turned every
+# tuning decision into an estimate (tools/e2e/GAPS.md).
+blitz_phase() { echo "blitz-phase: $1 seconds=$SECONDS"; }
+blitz_phase apt-done
 
 mkdir -p /var/lib/blitz
 volume_device=""
@@ -628,6 +677,7 @@ if [ -n "$volume_device" ]; then
   grep -Fqx "$fstab_entry" /etc/fstab || printf '%s\n' "$fstab_entry" >>/etc/fstab
 fi
 
+blitz_phase volume-mounted
 touch "$DURABLE_BOOTSTRAP_LOG"
 chmod 0600 "$DURABLE_BOOTSTRAP_LOG"
 cat "$BOOTSTRAP_LOG" >"$DURABLE_BOOTSTRAP_LOG"
@@ -668,9 +718,20 @@ ${sshPublicKeyProvisioning}
 # credentials are installed after this VM proves its host key to phone-home.
 rm -f /var/lib/blitz/box-credential.json /var/lib/blitz/origin
 
+port_22_free() {
+  ! ss -tln 2>/dev/null | grep -qE '(^|[^0-9.:])(0\.0\.0\.0|\[::\]|\*):22[[:space:]]'
+}
 # Ubuntu 24.04 activates sshd through ssh.socket on port 22. Validate the
 # replacement listener before stopping that socket so Docker can safely claim
 # host port 22 without losing the host SSH recovery path.
+#
+# A golden image has already made this move, and its sshd comes up on 2222 with
+# ssh.socket masked. Stopping and restarting sshd there costs seconds and
+# changes nothing, so the whole block is skipped when the invariant already
+# holds: a listener on 2222 and nothing on 22.
+if ss -tln 2>/dev/null | grep -qE ':2222[[:space:]]' && port_22_free; then
+  echo "blitz: host sshd is already on 2222 and port 22 is free; skipping the move"
+else
 install -d -m 0755 /etc/ssh/sshd_config.d
 # 00- sorts ahead of image drop-ins; sshd takes the first Port it sees.
 cat >/etc/ssh/sshd_config.d/00-blitz.conf <<'SSHD_CONFIG'
@@ -703,9 +764,6 @@ done
 # "failed to bind host port 0.0.0.0:22/tcp: address already in use" (exit 125)
 # on whichever boots fast enough to lose the race. Wait for the port to be
 # genuinely free, and say so plainly if it never is.
-port_22_free() {
-  ! ss -tln 2>/dev/null | grep -qE '(^|[^0-9.:])(0\.0\.0\.0|\[::\]|\*):22[[:space:]]'
-}
 sshd_release_deadline=$((SECONDS + 60))
 until port_22_free; do
   if (( SECONDS >= sshd_release_deadline )); then
@@ -714,8 +772,11 @@ until port_22_free; do
   fi
   sleep 1
 done
+fi
+blitz_phase sshd-ready
 
 ${imageSetup}
+blitz_phase box-image-ready
 install -d -m 0755 /etc/blitz
 ${invocationFiles}${usageDirectories}# The one docker run for the box container, extracted to a host script so
 # the initial start here and the host-side updater (blitz-box-update below)

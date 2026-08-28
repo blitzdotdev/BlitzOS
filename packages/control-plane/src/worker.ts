@@ -19,6 +19,7 @@ import {
   runOrphanSweep,
   runProviderCanary,
   runSessionSweep,
+  runVolumeRetentionSweep,
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
   signupModeFromEnv,
@@ -42,6 +43,7 @@ type WorkerBindings = Env & {
   ASSETS: { fetch(request: Request): Promise<Response> };
   HETZNER_API_TOKEN: string;
   HETZNER_MACHINE_TYPES?: string;
+  HETZNER_SERVER_IMAGES?: string;
   OPERATOR_API_KEY: string;
   GOOGLE_CLIENT_ID: string;
   GOOGLE_CLIENT_SECRET: string;
@@ -320,6 +322,7 @@ export default {
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);
+        await runVolumeRetentionSweep(runtime);
         // The canary is the one sweep that costs an authenticated call to a
         // third party per provider, so it takes the hourly tick alone. On the
         // daily tick as well it would be counted twice against the same rate

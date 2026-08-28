@@ -38,6 +38,27 @@ it did before entitlements existed.
 enforced. It is deliberately not copied into the new table: two rows holding
 one limit is two answers to one question.
 
+`platformCompute` is optional and stored in
+`org_entitlements.platform_compute` as 0 or 1. It says the organization may run
+its workspaces on the deployment's own cloud credential instead of bringing a
+key. It is a flag, not a plan name: core reads the integer and still cannot ask
+which plan produced it. Absent means 0, because the body states an
+organization's whole entitlement — a write that omits the flag says the
+organization does not have it, exactly as a missing row does.
+
+## Platform compute
+
+Where `CLOUD_WORKSPACE_CREDENTIAL_POLICY` is `byok-required`, a workspace
+create resolves a credential in this order: the organization's own credential,
+then `platform_compute = 1`, then a 402 that names the route for adding a key.
+
+An organization credential always wins, so a team that adds its own key keeps
+using it while subscribed. Dropping the flag back to 0 never touches a running
+workspace: every workspace row pins the credential source that made it, so
+destroy still resolves the key that created the VM, and only the next create is
+refused. The spend ceiling stays `orgs.vm_limit`, which the create transaction
+already enforces.
+
 An organization with no `org_entitlements` row, on a deployment where the
 secret IS set, is on the free tier: **one seat**. A solo organization is free
 and the second person is the pay gate.
@@ -86,9 +107,18 @@ authenticates the browser when it returns; nothing in the token grants anything.
 | Fixture | What it pins |
 |---|---|
 | `context.json` | The key, checkout origin, control-plane return location, and mint time every other fixture is built from |
-| `write-request.json` | A body the write route accepts |
+| `write-request.json` | A body the write route accepts, and one that sets `platformCompute` |
 | `write-request-rejected.json` | Bodies it must refuse with 400 |
 | `seat-limit-denial.json` | The 402 body, with and without a configured `PAYMENT_URL` |
 | `handoff-claims.json` | The decoded claims inside that `paymentUrl` |
-| `usage.json` | `GET /orgs/:id/usage`, with seat gating on and off |
-| `corpus.sha256` | SHA-256 of every other fixture's filename and exact bytes, in filename order |
+| `usage.json` | `GET /orgs/:id/usage`, with seat gating on and off, and for a subscribed organization |
+| `corpus.sha256` | SHA-256 of every other `.json` fixture's filename and exact bytes, in filename order |
+
+`corpus.sha256` is `sha256(name₁ ‖ bytes₁ ‖ name₂ ‖ bytes₂ ‖ …)` over the
+`.json` files above, sorted by filename, with no separator between the parts:
+
+```sh
+( cd packages/schema/fixtures/entitlements
+  for f in $(ls *.json | LC_ALL=C sort); do printf '%s' "$f"; cat "$f"; done \
+    | sha256sum | cut -d' ' -f1 )
+```

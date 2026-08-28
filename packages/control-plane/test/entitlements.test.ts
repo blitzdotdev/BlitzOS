@@ -138,6 +138,8 @@ describe("entitlements", () => {
         seatLimit: null,
         vmsUsed: 0,
         vmLimit: 10,
+        // No billing service has written a row, so the free tier answers 0.
+        platformCompute: false,
       });
     });
   });

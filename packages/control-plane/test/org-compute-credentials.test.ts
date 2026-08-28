@@ -31,6 +31,11 @@ interface ProviderCall {
   body: string;
 }
 
+// Volume ids are handed out across the whole file, not per fake. Hetzner never
+// repeats one, and `volume_ownership` keys on it, so a per-fake counter let the
+// first volume of one test collide with a row another test had already made.
+let nextVolumeId = 20_000;
+
 function providerHttp(options: { rejectHetzner?: boolean } = {}) {
   const calls: ProviderCall[] = [];
   let serverId = 10_000;
@@ -58,9 +63,10 @@ function providerHttp(options: { rejectHetzner?: boolean } = {}) {
       });
     }
     if (url.endsWith("api.hetzner.cloud/v1/volumes") && init?.method === "POST") {
+      nextVolumeId += 1;
       return Response.json({
         volume: {
-          id: 20_001,
+          id: nextVolumeId,
           name: "org-volume",
           size: 10,
           location: { name: "hil" },
@@ -99,6 +105,19 @@ function providerHttp(options: { rejectHetzner?: boolean } = {}) {
           status: "off",
           public_net: { ipv4: { ip: "203.0.113.40" } },
         },
+      });
+    }
+    // Volume lifecycle. Workspaces now carry an auto-created volume, so the
+    // destroy path detaches one on every cloud workspace, not only on the rare
+    // hand-attached case these tests used to cover.
+    if (/api\.hetzner\.cloud\/v1\/volumes\/\d+\/actions\/detach$/u.test(url)) {
+      return Response.json({ action: { id: 2 } });
+    }
+    if (/api\.hetzner\.cloud\/v1\/volumes\/\d+$/u.test(url)) {
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      const id = Number(url.slice(url.lastIndexOf("/") + 1));
+      return Response.json({
+        volume: { id, name: "org-volume", size: 50, location: { name: "hil" }, server: null },
       });
     }
     if (url.includes("sts.us-east-1.amazonaws.com")) {
@@ -201,8 +220,32 @@ beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM workspaces"),
     env.DB.prepare("DELETE FROM org_compute_credentials"),
+    env.DB.prepare("DELETE FROM org_entitlements"),
   ]);
 });
+
+const ENTITLEMENTS_KEY = "entitlements-test-key";
+
+/** The billing service's one write, through the route it actually uses. */
+async function writeEntitlements(
+  app: Awaited<ReturnType<typeof appFor>>["app"],
+  orgId: string,
+  platformCompute: boolean,
+) {
+  return appRequest(
+    app,
+    `/orgs/${encodeURIComponent(orgId)}/entitlements`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${ENTITLEMENTS_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ seatLimit: 5, vmLimit: 20, platformCompute }),
+    },
+    { ENTITLEMENTS_API_KEY: ENTITLEMENTS_KEY },
+  );
+}
 
 describe("cloud workspace credential policy", () => {
   it("defaults to deployment fallback and rejects unknown values", () => {
@@ -341,6 +384,82 @@ describe("organization compute credentials", () => {
     expect(created.status).toBe(402);
     await expect(created.json()).resolves.toEqual({
       error: "aws compute credential required; an organization admin can add one at /orgs/aws-tenant-without-key-org/compute-credentials/aws",
+      retryAction: null,
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("runs a subscribed org on the deployment credential without one of its own", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await userSession("subscribed-tenant");
+    expect((await writeEntitlements(app, "subscribed-tenant-org", true)).status).toBe(204);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(201);
+    const createCall = fake.calls.find(
+      (call) => call.url.endsWith("/servers") && call.method === "POST",
+    );
+    expect(createCall?.authorization).toBe("Bearer deployment-test-token");
+    // The pinned source is what destroy and the janitors resolve by, so it has
+    // to say deployment even though the policy is byok-required.
+    expect(await env.DB.prepare(
+      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'subscribed-tenant-org' LIMIT 1",
+    ).first()).toMatchObject({ compute_credential_source: "deployment" });
+  });
+
+  it("keeps using an org credential while the org is subscribed", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await userSession("subscribed-byok");
+    expect((await putHetznerForOrg(app, cookie, "subscribed-byok-org")).status).toBe(200);
+    expect((await writeEntitlements(app, "subscribed-byok-org", true)).status).toBe(204);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(201);
+    const createCall = fake.calls.find(
+      (call) => call.url.endsWith("/servers") && call.method === "POST",
+    );
+    expect(createCall?.authorization).toBe("Bearer org-test-token");
+    expect(await env.DB.prepare(
+      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'subscribed-byok-org' LIMIT 1",
+    ).first()).toMatchObject({ compute_credential_source: "org" });
+  });
+
+  it("still refuses a create once the flag is written back to zero", async () => {
+    const { app, fake } = await appFor({
+      HETZNER_API_TOKEN: "deployment-test-token",
+      CLOUD_WORKSPACE_CREDENTIAL_POLICY: "byok-required",
+    });
+    const cookie = await userSession("lapsed-tenant");
+    expect((await writeEntitlements(app, "lapsed-tenant-org", false)).status).toBe(204);
+    fake.calls.length = 0;
+
+    const created = await appRequest(app, "/workspaces", {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
+    });
+
+    expect(created.status).toBe(402);
+    await expect(created.json()).resolves.toEqual({
+      error: "hetzner compute credential required; an organization admin can add one at /orgs/lapsed-tenant-org/compute-credentials/hetzner",
       retryAction: null,
     });
     expect(fake.calls).toEqual([]);
@@ -546,10 +665,13 @@ describe("organization compute credentials", () => {
     });
     expect(created.status).toBe(201);
     expect(fake.calls[0]?.authorization).toBe("Bearer org-test-token");
+    // The id comes from the response: volume ids are unique across the file,
+    // so no test may assume it is the first one ever handed out.
+    const volumeId = (await created.json<{ volume: { id: string } }>()).volume.id;
     expect(
       await env.DB.prepare(
-        "SELECT compute_credential_source FROM volume_ownership WHERE volume_id = '20001'",
-      ).first(),
+        "SELECT compute_credential_source FROM volume_ownership WHERE volume_id = ?1",
+      ).bind(volumeId).first(),
     ).toMatchObject({ compute_credential_source: "org" });
 
     expect((await appRequest(app, "/orgs/personal/compute-credentials/hetzner", {
@@ -557,14 +679,15 @@ describe("organization compute credentials", () => {
       headers: { Cookie: cookie },
     })).status).toBe(204);
     fake.calls.length = 0;
-    const removed = await appRequest(app, "/volumes/20001", {
+    const removed = await appRequest(app, `/volumes/${volumeId}`, {
       method: "DELETE",
       headers: { Cookie: cookie },
     });
     expect(removed.status).toBe(409);
     expect(fake.calls).toEqual([]);
     expect(
-      await env.DB.prepare("SELECT volume_id FROM volume_ownership WHERE volume_id = '20001'").first(),
+      await env.DB.prepare("SELECT volume_id FROM volume_ownership WHERE volume_id = ?1")
+        .bind(volumeId).first(),
     ).not.toBeNull();
   });
 

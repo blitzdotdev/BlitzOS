@@ -16,6 +16,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
       seatLimit: null,
       vmsUsed: 0,
       vmLimit: 10,
+      platformCompute: false,
     })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
     ...overrides,
@@ -41,7 +42,7 @@ describe('the seat paywall', () => {
 
   it('counts the seats in use against the cap', async () => {
     const view = await render(<InvitesPanel client={client({
-      orgUsage: vi.fn(async () => ({ seatsUsed: 2, seatLimit: 3, vmsUsed: 0, vmLimit: 10 })),
+      orgUsage: vi.fn(async () => ({ seatsUsed: 2, seatLimit: 3, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     })} />);
     await settle();
     expect(text(view.container)).toContain('2');
@@ -57,7 +58,7 @@ describe('the seat paywall', () => {
     const billing = vi.fn(async () => ({ url: 'https://billing.example/checkout#token=abc' }));
     const view = await render(<InvitesPanel client={client({
       billing,
-      orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10 })),
+      orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     })} />);
     await settle();
 
@@ -79,7 +80,7 @@ describe('the seat paywall', () => {
     });
     const view = await render(<InvitesPanel client={client({
       createInvite,
-      orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10 })),
+      orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: 1, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     })} />);
     await settle();
     await submit(view.container);

@@ -1,5 +1,10 @@
 {
-  "note": "The only write. Two integers; no plan name, ever.",
+  "note": "The only write. Two integers and one flag; no plan name, ever.",
   "body": { "seatLimit": 5, "vmLimit": 20 },
-  "status": 204
+  "status": 204,
+  "subscribed": {
+    "note": "platformCompute is how a plan that includes compute is expressed. It stores 1 in org_entitlements.platform_compute; an absent flag stores 0, because the body states the organization's whole entitlement.",
+    "body": { "seatLimit": 5, "vmLimit": 20, "platformCompute": true },
+    "storedPlatformCompute": 1
+  }
 }

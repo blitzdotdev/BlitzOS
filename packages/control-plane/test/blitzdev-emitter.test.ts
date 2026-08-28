@@ -121,9 +121,11 @@ const expected = [
   "core/workspace-records.ts",
   "core/workspace-templates.ts",
   "core/workspace-tunnels.ts",
+  "core/workspace-volumes.ts",
   "core/workspaces.ts",
   "core/compute/registry.ts",
   "core/compute/types.ts",
+  "core/compute/hetzner-config.ts",
   "core/compute/hetzner.ts",
   "core/compute/json-fetch.ts",
   "core/compute/org-credentials.ts",
@@ -148,7 +150,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(99);
+    expect(first.files).toHaveLength(102);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

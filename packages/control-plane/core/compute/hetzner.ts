@@ -1,6 +1,16 @@
 import { isNumber, isRecord, isString } from "../http.js";
 import type { CreateVolumeRequest, MachinePrice, Volume } from "../wire.js";
 import { fetchBoundedJson, type Fetcher } from "./json-fetch.js";
+import {
+  HETZNER_STOCK_IMAGE,
+  HETZNER_USER_DATA_MAX_BYTES,
+  hetznerMachineTypeAllowlistFromEnv,
+  hetznerServerImagesFromEnv,
+  machineId,
+  SERVER_TYPE_NAME_PATTERN,
+  LOCATION_NAME_PATTERN,
+  type HetznerWarningSink,
+} from "./hetzner-config.js";
 import type {
   CreatedVm,
   CreateVmInput,
@@ -16,93 +26,16 @@ import {
 } from "../webapp-tickets.js";
 
 const API = "https://api.hetzner.cloud/v1";
-export const HETZNER_USER_DATA_MAX_BYTES = 32 * 1024;
 const SHUTDOWN_POLL_INTERVAL_MS = 1_000;
+// A detach is an async Hetzner action. These bound the wait for the volume to
+// actually come free, which is what the next attach needs.
+const DETACH_POLL_INTERVAL_MS = 1_000;
+const DETACH_TIMEOUT_MS = 60_000;
 const SHUTDOWN_TIMEOUT_MS = 45_000;
-// Current Hetzner server-type names (for example cx22, cpx31, and cax11)
-// are lowercase ASCII letters followed by decimal digits, with no dash.
-const SERVER_TYPE_NAME_PATTERN = /^[a-z]+\d+$/u;
-const LOCATION_NAME_PATTERN = /^[a-z0-9-]+$/u;
 // Hetzner bills some accounts in euro and some in dollars, and /v1/pricing
 // says which. A constant here read "EUR" and printed a euro sign over dollar
 // amounts on every card. The account this repo deploys with bills in USD.
 const ISO_4217_PATTERN = /^[A-Z]{3}$/u;
-// Default catalog: two cheap EU types first, then the two US-west types.
-// Gross price each month, read from /v1/pricing on 2026-08-25: cx23@hel1
-// 6.49, cx33@hel1 9.99, cpx21@hil 37.49, cpx31@hil 73.49. That account bills
-// in USD. The figures are the same numbers this comment once called euro,
-// which is how the wrong sign reached the cards.
-// cx33@hel1 gives the same 4 cpu and 8 GB as cpx31@hil. It costs about one
-// seventh as much. That is the reason for the EU entries.
-// Hetzner does not sell cpx21 or cpx31 in any EU location. It sells the cx
-// line only in hel1. A cheaper EU box needs a different type, not the same
-// type in a different region.
-// Operators override the catalog with the HETZNER_MACHINE_TYPES Worker var.
-// The catalog constrains what the create page offers; existing workspaces on
-// other types keep working because ownership stays shape-based.
-export const DEFAULT_HETZNER_MACHINE_TYPES: readonly string[] = [
-  "cx23@hel1",
-  "cx33@hel1",
-  "cpx21@hil",
-  "cpx31@hil",
-];
-
-export interface HetznerMachineTypeCatalogWarning {
-  event: "hetzner_machine_type_catalog_entry_rejected";
-  entry: string;
-  reason: string;
-}
-
-/** Hetzner states the billing currency only in /v1/pricing. When that read
- * fails, every Hetzner card loses its price. The operator must hear why. */
-export interface HetznerPriceCurrencyWarning {
-  event: "hetzner_price_currency_unavailable";
-  reason: string;
-}
-
-export type HetznerProviderWarning =
-  | HetznerMachineTypeCatalogWarning
-  | HetznerPriceCurrencyWarning;
-
-export type HetznerWarningSink = (warning: HetznerProviderWarning) => void;
-
-type HetznerCatalogWarningSink = (
-  warning: HetznerMachineTypeCatalogWarning,
-) => void;
-
-/**
- * Parses the HETZNER_MACHINE_TYPES Worker var (comma-separated
- * "type@location" entries) into the machine-type catalog allowlist. An unset
- * or blank var keeps the default catalog. Malformed entries are skipped with
- * one structured warning each; they never crash the Worker.
- */
-export function hetznerMachineTypeAllowlistFromEnv(
-  raw: string | undefined,
-  warn: HetznerCatalogWarningSink = () => {},
-): ReadonlySet<string> {
-  if (raw === undefined || raw.trim() === "") {
-    return new Set(DEFAULT_HETZNER_MACHINE_TYPES);
-  }
-  const allowlist = new Set<string>();
-  for (const segment of raw.split(",")) {
-    const entry = segment.trim();
-    if (entry === "") continue;
-    const selected = machineId(entry);
-    const valid = selected.location !== null
-      && SERVER_TYPE_NAME_PATTERN.test(selected.type)
-      && LOCATION_NAME_PATTERN.test(selected.location);
-    if (!valid) {
-      warn({
-        event: "hetzner_machine_type_catalog_entry_rejected",
-        entry,
-        reason: 'expected "<server-type>@<location>" (for example "cpx21@hil")',
-      });
-      continue;
-    }
-    allowlist.add(entry);
-  }
-  return allowlist;
-}
 
 export interface HetznerProviderOptions {
   fetcher?: Fetcher;
@@ -110,14 +43,12 @@ export interface HetznerProviderOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   /** Raw HETZNER_MACHINE_TYPES Worker var; unset or blank keeps the default catalog. */
   machineTypeCatalog?: string;
+  /** Raw HETZNER_SERVER_IMAGES Worker var: the golden-image map. Unset or
+   * blank boots stock Ubuntu and pays the full bootstrap. */
+  serverImages?: string;
   /** Receives one structured warning per malformed catalog entry, and one
    * more when Hetzner does not state a usable billing currency. */
   warn?: HetznerWarningSink;
-}
-
-interface MachineSelection {
-  type: string;
-  location: string | null;
 }
 
 interface CreateServerBody {
@@ -130,6 +61,10 @@ interface CreateServerBody {
     "blitz-purpose": "workspace";
   };
   location?: string;
+  /** Hetzner attaches these before the guest boots, so the bootstrap's
+   * one-shot scan of /dev/disk/by-id always sees the device. Attaching after
+   * create raced that scan and left the box with no persistent disk. */
+  volumes?: number[];
 }
 
 type HetznerRequestHeaders = {
@@ -192,12 +127,35 @@ function isDeprecated(value: Record<string, unknown>): boolean {
   return value.deprecated === true || isRecord(value.deprecation);
 }
 
-function hetznerErrorMessage(value: unknown): string | null {
-  if (!isRecord(value) || !isRecord(value.error) || !isString(value.error.message)) {
-    return null;
+/** Carries Hetzner's machine-readable error code beside the message, so a
+ * caller can tell a definitive pre-creation refusal from anything else.
+ * Existing catchers read `.message` only and are unaffected. */
+export class HetznerApiError extends Error {
+  constructor(message: string, readonly code: string | null) {
+    super(message);
+    this.name = "HetznerApiError";
   }
-  const message = value.error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
-  return message === "" ? null : message.slice(0, 1_024);
+}
+
+/** A Hetzner failure body, parsed at the boundary into a named shape. `code`
+ * is the machine-readable reason, which tells a definitive pre-creation
+ * refusal apart from anything else. Either field is null when the body does
+ * not state it. */
+interface HetznerFailure {
+  message: string | null;
+  code: string | null;
+}
+
+function hetznerFailure(value: unknown): HetznerFailure {
+  const error = isRecord(value) && isRecord(value.error) ? value.error : null;
+  if (error === null) return { message: null, code: null };
+  const raw = isString(error.message)
+    ? error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim()
+    : "";
+  return {
+    message: raw === "" ? null : raw.slice(0, 1_024),
+    code: isString(error.code) ? error.code : null,
+  };
 }
 
 function annotateServerTypeIds(
@@ -217,12 +175,6 @@ function serverTypeIds(message: string): number[] {
   return [...new Set(ids)].slice(0, 8);
 }
 
-function machineId(value: string): MachineSelection {
-  const separator = value.lastIndexOf("@");
-  if (separator === -1) return { type: value, location: null };
-  return { type: value.slice(0, separator), location: value.slice(separator + 1) };
-}
-
 function volumeFromHetzner(value: Record<string, unknown>): Volume {
   const server = value.server;
   return {
@@ -235,6 +187,21 @@ function volumeFromHetzner(value: Record<string, unknown>): Volume {
   };
 }
 
+export {
+  DEFAULT_HETZNER_MACHINE_TYPES,
+  HETZNER_STOCK_IMAGE,
+  HETZNER_USER_DATA_MAX_BYTES,
+  hetznerMachineTypeAllowlistFromEnv,
+  hetznerServerImagesFromEnv,
+} from "./hetzner-config.js";
+export type {
+  HetznerMachineTypeCatalogWarning,
+  HetznerPriceCurrencyWarning,
+  HetznerProviderWarning,
+  HetznerServerImageWarning,
+  HetznerWarningSink,
+} from "./hetzner-config.js";
+
 export class HetznerProvider implements VmProvider, VolumeProvider {
   readonly id = "hetzner";
   private readonly serverTypeNames = new Map<number, string>();
@@ -242,6 +209,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   private readonly now: () => number;
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly machineTypeAllowlist: ReadonlySet<string>;
+  private readonly serverImages: ReadonlyMap<string, string>;
   private readonly warn: HetznerWarningSink;
 
   constructor(
@@ -256,11 +224,23 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       options.machineTypeCatalog,
       this.warn,
     );
+    this.serverImages = hetznerServerImagesFromEnv(options.serverImages, this.warn);
+  }
+
+  /** The image this location boots. A golden snapshot carries docker and the
+   * box image already, which removes about 94 seconds of first-boot work
+   * (measured 2026-08-27: 18.3 s apt update, 17.4 s docker install, 58 s box
+   * image download and load). Stock Ubuntu is the answer when no snapshot is
+   * configured for the location. */
+  private serverImage(location: string | null): string {
+    const exact = location === null ? undefined : this.serverImages.get(location);
+    return exact ?? this.serverImages.get("*") ?? HETZNER_STOCK_IMAGE;
   }
 
   capabilities(): ProviderCapabilities {
     return {
       volumes: true,
+      attachesVolumesAtCreate: true,
       maxUserDataBytes: HETZNER_USER_DATA_MAX_BYTES,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
@@ -275,6 +255,15 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
 
   ownsVmId(vmId: string): boolean {
     return /^\d+$/u.test(vmId);
+  }
+
+  /** Hetzner requires a volume and its server in one location, and the machine
+   * type states it after the last `@`. A type with no location (the account
+   * default) cannot place a volume, so it gets none. */
+  volumeLocation(machineTypeId: string): string | null {
+    const selected = machineId(machineTypeId);
+    if (selected.location === null) return null;
+    return LOCATION_NAME_PATTERN.test(selected.location) ? selected.location : null;
   }
 
   private async request(
@@ -299,12 +288,16 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     });
     if (response.status === 404 && notFoundIsNull) return null;
     if (!response.ok) {
-      const message = hetznerErrorMessage(body);
+      const failure = hetznerFailure(body);
+      const message = failure.message;
       if (message === null) {
         throw new Error(`Hetzner API request failed with status ${response.status}`);
       }
       await this.resolveServerTypeNames(message);
-      throw new Error(annotateServerTypeIds(message, this.serverTypeNames));
+      throw new HetznerApiError(
+        annotateServerTypeIds(message, this.serverTypeNames),
+        failure.code,
+      );
     }
     if (response.status === 204) return null;
     return body;
@@ -463,7 +456,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     const body: CreateServerBody = {
       name: `blitz-${input.workspaceId.slice(0, 12)}`,
       server_type: selected.type,
-      image: "ubuntu-24.04",
+      image: this.serverImage(selected.location),
       user_data: input.userData,
       labels: {
         "blitz-workspace": input.workspaceId,
@@ -471,11 +464,65 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       },
     };
     if (selected.location !== null) body.location = selected.location;
+    const volumes = (input.volumeIds ?? []).map((volumeId) => {
+      const numeric = Number(volumeId);
+      if (!Number.isSafeInteger(numeric) || numeric <= 0) {
+        throw new Error(`invalid Hetzner volume ID: ${volumeId}`);
+      }
+      return numeric;
+    });
+    // Hetzner mounts nothing on its own: `automount` stays unset because the
+    // bootstrap owns /var/lib/blitz and writes its own fstab entry.
+    if (volumes.length > 0) body.volumes = volumes;
+    return this.createServer(body, selected.location);
+  }
+
+  /**
+   * Posts the server, and falls back to stock Ubuntu when a configured golden
+   * image is refused.
+   *
+   * The retry runs only for a definitive refusal of the image: Hetzner
+   * answered, so no server was allocated, and a second POST cannot duplicate
+   * one. An ambiguous failure (a timeout, a network error) is rethrown
+   * untouched, because a retry there could leave two servers behind and only
+   * one id to destroy.
+   *
+   * A workspace that boots stock Ubuntu still works. It just pays the full
+   * bootstrap again, so the fallback is warned about rather than swallowed.
+   */
+  private async createServer(
+    body: CreateServerBody,
+    location: string | null,
+  ): Promise<CreatedVm> {
+    const configured = body.image;
+    try {
+      return await this.postServer(body);
+    } catch (error) {
+      const refusedImage = configured !== HETZNER_STOCK_IMAGE
+        && error instanceof HetznerApiError
+        && (error.code === "not_found" || error.code === "invalid_input");
+      if (!refusedImage) throw error;
+      this.warn({
+        event: "hetzner_server_image_rejected",
+        location: location ?? "*",
+        image: configured,
+        reason: error.message,
+      });
+      return this.postServer({ ...body, image: HETZNER_STOCK_IMAGE });
+    }
+  }
+
+  /** The single place a server-create response is narrowed. Both the golden
+   * image attempt and the stock fallback go through it, so a change to the
+   * response shape cannot leave one path behind. */
+  private async postServer(body: CreateServerBody): Promise<CreatedVm> {
     const value = await this.request("/servers", {
       method: "POST",
       body: JSON.stringify(body),
     });
-    if (!isRecord(value) || !isRecord(value.server)) throw new Error("invalid Hetzner server response");
+    if (!isRecord(value) || !isRecord(value.server)) {
+      throw new Error("invalid Hetzner server response");
+    }
     const server = value.server;
     const ipv4 =
       isRecord(server.public_net) &&
@@ -584,15 +631,38 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
     });
   }
 
+  /**
+   * Detaches the volume and waits for Hetzner to finish.
+   *
+   * The POST only starts an action. Returning on the POST let a destroy report
+   * success while the volume was still attached, and an immediate recreate on
+   * that volume then failed with "volume already attached". Measured on a real
+   * destroy/recreate pair on 2026-08-27, so the wait is the fix, not a guard
+   * against a hypothetical.
+   *
+   * The postcondition is polled rather than the action id: "no server holds
+   * this volume" is what the next attach actually needs. A timeout returns
+   * quietly, because the janitor retries and a destroy must not wedge on a
+   * volume Hetzner is slow to release.
+   */
   async detachVolume(volumeId: string, vmId: string): Promise<void> {
-    const value = await this.request(`/volumes/${encodeURIComponent(volumeId)}`, undefined, true);
+    const path = `/volumes/${encodeURIComponent(volumeId)}`;
+    const value = await this.request(path, undefined, true);
     if (value === null) return;
     if (!isRecord(value) || !isRecord(value.volume)) throw new Error("invalid Hetzner volume response");
     if (value.volume.server !== Number(vmId)) return;
-    await this.request(`/volumes/${encodeURIComponent(volumeId)}/actions/detach`, {
-      method: "POST",
-      body: "{}",
-    });
+    await this.request(`${path}/actions/detach`, { method: "POST", body: "{}" });
+
+    const deadline = this.now() + DETACH_TIMEOUT_MS;
+    while (this.now() < deadline) {
+      const current = await this.request(path, undefined, true);
+      if (current === null) return;
+      if (!isRecord(current) || !isRecord(current.volume)) {
+        throw new Error("invalid Hetzner volume response");
+      }
+      if (current.volume.server === null) return;
+      await this.sleep(Math.min(DETACH_POLL_INTERVAL_MS, deadline - this.now()));
+    }
   }
 
   async deleteVolume(id: string): Promise<void> {

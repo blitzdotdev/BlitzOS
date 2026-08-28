@@ -5,6 +5,11 @@ import {
 } from "./connections/leases.js";
 import type { CoreRuntime } from "./runtime.js";
 import type { WorkspaceRow } from "./workspaces.js";
+import {
+  expiredVolumes,
+  markVolumeDetachedQuery,
+  VOLUME_RETENTION_MS,
+} from "./workspace-volumes.js";
 
 const STUCK_CREATING_MS = 60 * 60 * 1000;
 export const LAZY_SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -75,6 +80,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
           row.compute_credential_source ?? "deployment",
         );
         await volume.provider.detachVolume(row.volume_id, row.vm_id);
+        await rows(runtime.db, markVolumeDetachedQuery(row.volume_id, Date.now()));
       }
       if ((await provider.inspect(row.vm_id)) !== null) {
         await provider.destroy(row.vm_id);
@@ -112,6 +118,57 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
     destroyed += 1;
   }
   return destroyed;
+}
+
+/**
+ * Deletes auto-created volumes whose retention window has closed.
+ *
+ * A destroyed workspace leaves its volume behind on purpose: it is the only
+ * copy of `/workspace`, so the destroy stays reversible while the clock runs.
+ * Once the window closes the volume is only a monthly bill, and this removes
+ * it. A volume the operator created through POST /volumes is never touched;
+ * only `auto_created` rows carry a clock at all.
+ *
+ * A provider failure leaves the row in place with its clock still set, so the
+ * next sweep tries again. The delete is idempotent: Hetzner answers 404 for a
+ * volume that is already gone, and the adapter maps that to success.
+ */
+export async function runVolumeRetentionSweep(
+  runtime: CoreRuntime,
+  now = Date.now(),
+  retentionMs = VOLUME_RETENTION_MS,
+): Promise<number> {
+  const expired = await expiredVolumes(runtime.db, now, retentionMs);
+  let reclaimed = 0;
+  for (const row of expired) {
+    try {
+      const resolved = await runtime.providers.volume.forOrg(
+        row.org_id,
+        row.compute_credential_source ?? "deployment",
+      );
+      await resolved.provider.deleteVolume(row.volume_id);
+    } catch (error) {
+      runtime.reportError(
+        "volume_retention_sweep_failed",
+        error instanceof Error
+          ? error
+          : new Error(`volume ${row.volume_id} could not be reclaimed`),
+      );
+      continue;
+    }
+    await transaction(runtime.db, [
+      {
+        q: "DELETE FROM volume_ownership WHERE volume_id = ?1",
+        v: [row.volume_id],
+      },
+      {
+        q: "UPDATE workspaces SET volume_id = NULL WHERE volume_id = ?1",
+        v: [row.volume_id],
+      },
+    ]);
+    reclaimed += 1;
+  }
+  return reclaimed;
 }
 
 export async function runWorkspaceTunnelSweep(runtime: CoreRuntime): Promise<number> {
@@ -181,6 +238,7 @@ export function maybeScheduleLazySweep(runtime: CoreRuntime, path: string): void
       await runInvariantSweep(runtime);
       await runOrphanSweep(runtime);
       await runWorkspaceTunnelSweep(runtime);
+      await runVolumeRetentionSweep(runtime);
     } catch (error) {
       console.error(
         JSON.stringify({

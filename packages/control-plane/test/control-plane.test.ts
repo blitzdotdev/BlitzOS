@@ -1165,6 +1165,7 @@ describe("control plane security and lifecycle", () => {
     ).toBe(0);
     expect(new HetznerProvider("test-token").capabilities()).toEqual({
       volumes: true,
+      attachesVolumesAtCreate: true,
       maxUserDataBytes: 32 * 1024,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
