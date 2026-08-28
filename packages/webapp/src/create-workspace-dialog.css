@@ -784,26 +784,24 @@
 
 .tplf-repos-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  /* Search, account filter, Refresh — one row. Refresh is a control over the
+     list below, so it belongs beside the other two rather than stranded on a
+     row of its own. */
+  grid-template-columns: minmax(0, 1fr) minmax(120px, auto) auto;
   gap: 6px;
 }
 
-/* Sits with the filters because a member reaches for it mid-selection, once
-   they notice an account missing. */
+/* Matches the input and select beside it: same padding, same font, so the row
+   reads as three controls rather than two plus a button. */
 .tplf-repos-refresh {
+  padding: 5px 10px;
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
   background: var(--paper);
   color: var(--ink);
-  padding: 5px 12px;
+  font: 12px/1.5 var(--font-ui);
   cursor: pointer;
-  font: 11px/1.5 var(--font-ui);
-  text-align: center;
-  text-decoration: none;
-}
-
-.tplf-repos-refresh {
-  justify-self: end;
+  white-space: nowrap;
 }
 
 .tplf-repos-controls input,
