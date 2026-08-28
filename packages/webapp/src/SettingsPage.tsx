@@ -118,9 +118,11 @@ function AppearanceControl() {
 export function SettingsHeader({
   workspaceLabel,
   onBack,
+  title = 'Settings',
 }: {
   workspaceLabel?: string;
   onBack: () => void;
+  title?: string;
 }) {
   return (
     <header className="settings-header">
@@ -134,7 +136,7 @@ export function SettingsHeader({
         <span className="settings-back-label">{workspaceLabel || 'WebApp'}</span>
         <span className="settings-back-mobile-label">Back</span>
       </button>
-      <strong>Settings</strong>
+      <strong>{title}</strong>
     </header>
   );
 }

@@ -19,7 +19,8 @@ export type AppRoute =
   | { workspaceId: null; page: 'recipes' }
   | { workspaceId: null; page: 'recipe-new' }
   | { workspaceId: null; page: 'recipe-edit'; recipeId: string }
-  | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection };
+  | { workspaceId: null; page: 'settings'; settingsSection: SettingsSection }
+  | { workspaceId: null; page: 'admin' };
 
 const HOME: AppRoute = { workspaceId: null, page: 'drive' };
 
@@ -35,6 +36,11 @@ export function parseAppRoute(pathname: string): AppRoute {
       // SAFETY: After the fold, group 1 holds only SettingsSection literals.
       settingsSection: (section as SettingsSection | undefined) ?? 'profile',
     };
+  }
+  // Only the bare /admin is a page. /admin/orgs and /admin/trial-orgs are
+  // control-plane API routes, so anything deeper falls through to home.
+  if (/^\/admin\/?$/u.test(pathname)) {
+    return { workspaceId: null, page: 'admin' };
   }
   if (/^\/templates\/new\/?$/u.test(pathname)) {
     return { workspaceId: null, page: 'template-new' };
@@ -108,6 +114,10 @@ export function workspacePath(workspaceId: string): string {
 
 export function settingsPath(section: SettingsSection): string {
   return section === 'profile' ? '/settings' : `/settings/${section}`;
+}
+
+export function adminPath(): string {
+  return '/admin';
 }
 
 /** Drive is one destination: the root lists owned folders and the folders

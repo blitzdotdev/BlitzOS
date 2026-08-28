@@ -134,6 +134,8 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     deleteConnectionGrant: vi.fn(async () => undefined),
     listProviderHealth: vi.fn(async () => ({ providers: [] })),
     connectStartUrl: (provider: string) => `/connect/${provider}/start`,
+    adminOrgs: vi.fn(async () => ({ orgs: [] })),
+    createTrialOrg: vi.fn(async () => { throw new Error("unused"); }),
     ...overrides,
   };
 }
