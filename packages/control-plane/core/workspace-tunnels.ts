@@ -85,8 +85,9 @@ export class WorkspaceTunnels {
   }
 
   /** Deletes tunnel resources, clearing each column only after its
-   * confirmed deletion. Callers log the returned errors; anything left
-   * behind stays on the row for the janitor to retry. */
+   * confirmed deletion. Never throws, like the client it wraps: callers log
+   * the returned errors, and anything left behind stays on the row for the
+   * janitor to retry. */
   async cleanup(db: Db, row: WorkspaceTunnelRow): Promise<SurfaceCleanupResult> {
     if (row.tunnel_id === null && row.dns_record_id === null) {
       return { dnsDeleted: true, tunnelDeleted: true, errors: [] };
@@ -101,11 +102,23 @@ export class WorkspaceTunnels {
       assignments.push("tunnel_id = NULL", "tunnel_hostname = NULL");
     }
     if (assignments.length > 0) {
-      await rows(db, {
-        q: `UPDATE workspaces SET ${assignments.join(", ")}, updated_at = ?1
-            WHERE id = ?2`,
-        v: [Date.now(), row.id],
-      });
+      try {
+        await rows(db, {
+          q: `UPDATE workspaces SET ${assignments.join(", ")}, updated_at = ?1
+              WHERE id = ?2`,
+          v: [Date.now(), row.id],
+        });
+      } catch (error) {
+        // The client never throws and neither may this, because destroy calls
+        // cleanup AFTER the VM is gone: a throw here answered 500 for work
+        // that had already half-succeeded irreversibly, and left the caller
+        // with no way to tell that from a destroy which did nothing.
+        //
+        // Not clearing the columns is the safe half of this failure. Both
+        // deletes tolerate an already-deleted resource, so the janitor's retry
+        // is a no-op against Cloudflare and clears the columns then.
+        result.errors.push(error instanceof Error ? error.message : String(error));
+      }
     }
     return result;
   }
