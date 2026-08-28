@@ -149,9 +149,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: byok-required
-          # The golden Hetzner snapshot a workspace boots, per location. It
-          # removes the apt install, the box-image download and the sshd move
-          # from first boot: 130.6 s to 45.3 s, measured 2026-08-27.
+          # The golden Hetzner snapshot a workspace boots. It removes the apt
+          # install, the box-image download and the sshd move from first boot:
+          # 130.6 s to 45.3 s, measured 2026-08-27.
+          #
+          # `*` is every location, not a shortcut. A Hetzner snapshot carries an
+          # architecture and no location at all, so one x86 image boots every
+          # x86 type in the project. Measured 2026-08-28: cx23@hel1 reaches its
+          # relocated sshd in 41.3 s and cpx21@hil in 40.1 s, from this image.
+          # An arm type would not match and would fall back to stock Ubuntu with
+          # a warning; the catalog offers none today.
           #
           # The SAME id as canary, because both deployments use one Hetzner
           # project. A snapshot cannot cross projects, so that shared project
@@ -165,7 +172,7 @@ jobs:
           # Rebake with `npm run golden:bake -- --location hel1` and update
           # BOTH workflows. An id that no longer resolves is not an outage: the
           # adapter warns and falls back to stock Ubuntu.
-          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: hel1=425047509
+          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=425047509'
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an

@@ -105,9 +105,14 @@ The rest are prod's.
 Consequences an agent must not learn the hard way:
 
 - **A golden snapshot id is valid for both.** `HETZNER_SERVER_IMAGES` is pinned
-  to the same `hel1=<id>` in `canary.yml` and `release.yml`. That is correct
+  to the same `*=<id>` in `canary.yml` and `release.yml`. That is correct
   here, and correct only because of the shared project — a snapshot cannot
   cross Hetzner projects.
+- **`*` is every location, and that is deliberate.** A Hetzner snapshot carries
+  an architecture and no location at all, so one x86 image boots every x86 type
+  in the project. Measured 2026-08-28: `cx23@hel1` reaches its relocated sshd in
+  41.3 s, `cpx21@hil` in 40.1 s, from the same image. Per-location entries exist
+  in the parser for the day an arm image is baked, not because x86 needs them.
 - **Deleting a snapshot breaks both deployments at once.** Neither breaks
   loudly: `HetznerProvider` warns `hetzner_server_image_rejected` and falls
   back to stock Ubuntu, so the only symptom is every create paying the full

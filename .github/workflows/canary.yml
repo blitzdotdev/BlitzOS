@@ -105,9 +105,16 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: byok-required
-          # The golden Hetzner snapshot this deployment boots, per location. It
-          # removes the apt install, the box-image download and the sshd move
-          # from first boot: 130.6 s to 45.3 s, measured 2026-08-27.
+          # The golden Hetzner snapshot this deployment boots. It removes the
+          # apt install, the box-image download and the sshd move from first
+          # boot: 130.6 s to 45.3 s, measured 2026-08-27.
+          #
+          # `*` is every location, not a shortcut. A Hetzner snapshot carries an
+          # architecture and no location at all, so one x86 image boots every
+          # x86 type in the project. Measured 2026-08-28: cx23@hel1 reaches its
+          # relocated sshd in 41.3 s and cpx21@hil in 40.1 s, from this image.
+          # An arm type would not match and would fall back to stock Ubuntu with
+          # a warning; the catalog offers none today.
           #
           # It is hardcoded here rather than kept in a secret because it is not
           # one: it is a plain [vars] entry, and this is where the other
@@ -123,7 +130,7 @@ jobs:
           # Inert while the policy above is byok-required, because a snapshot
           # cannot cross into an org's own project. It goes live for subscribed
           # orgs under plans/SUBSCRIPTION-COMPUTE.md.
-          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: hel1=425047509
+          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=425047509'
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an
