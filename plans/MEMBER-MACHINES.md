@@ -9,7 +9,7 @@ UI mockup: `plans/mockups/session-rail.html`.
 org
  └─ workspace "engineering"            ← its own template; nothing else is
      ├─ config: machine type · environment · agent rules · repos · credentials
-     ├─ workspace_members: (membership, role)      role: admin | editor | viewer
+     ├─ workspace_members: (membership, role)      role: admin | member | viewer
      ├─ machines: one VM per member, on by default
      └─ sessions (Build 2)
 ```
@@ -68,7 +68,7 @@ admin, with distinct powers (§3).
 workspace_members (
   workspace_id            TEXT NOT NULL REFERENCES workspaces(id),
   membership_id           TEXT NOT NULL REFERENCES memberships(id),
-  role                    TEXT NOT NULL CHECK (role IN ('admin','editor','viewer')),
+  role                    TEXT NOT NULL CHECK (role IN ('admin','member','viewer')),
   added_by_membership_id  TEXT REFERENCES memberships(id),
   added_at                INTEGER NOT NULL,
   PRIMARY KEY (workspace_id, membership_id)
@@ -193,7 +193,7 @@ workspace_credentials (
 ### Wire types
 
 ```ts
-type WorkspaceRole = 'admin' | 'editor' | 'viewer';
+type WorkspaceRole = 'admin' | 'member' | 'viewer';
 type MachineState  = 'provisioning' | 'running' | 'stopped' | 'error'
                    | 'destroying' | 'destroyed';
 
@@ -279,7 +279,7 @@ Three workspace roles, one implicit reach. In one line each:
 
 - **Workspace admin** runs the workspace: members, roles, machines,
   settings, workspace credentials. The creator is the first admin.
-- **Editor** works in it: own machine, own sessions, credential use,
+- **Member** works in it: own machine, own sessions, credential use,
   drive write.
 - **Viewer** watches: workspace-visible sessions and drive read. No
   machine, no sessions of their own, no credential use.
@@ -288,7 +288,7 @@ Three workspace roles, one implicit reach. In one line each:
   plus the org-only concerns: the org roster and invites, billing, the org
   compute credential, and workspace creation.
 
-| Action | WS admin | Editor | Viewer |
+| Action | WS admin | Member | Viewer |
 | --- | --- | --- | --- |
 | Workspace settings (name, default type, auto_provision, environment, rules, repos) | ✓ | — | — |
 | Add / remove workspace members (active org members only) | ✓ | — | — |
@@ -303,7 +303,11 @@ Three workspace roles, one implicit reach. In one line each:
 | Delete workspace | ✓ | — | — |
 
 Org admins pass every ✓ in the WS-admin column through implicit reach.
-Workspace creation is org-admin only.
+Workspace creation is org-admin only for now; a later revision can open it.
+
+Naming note: the workspace role `member` and the org `memberships` table
+are different things. A person is an org member through `memberships`, and
+holds a workspace role (`admin | member | viewer`) per workspace.
 
 ## 4. Credentials — two planes, one resolution rule
 
@@ -438,7 +442,7 @@ the volume's location, others visible but disabled with a "volume is in
 <location>" note (§1a constraint).
 
 **New component 2 — `WorkspaceMembersEditor`.** One list, two modes.
-Row = avatar · name · role select (`admin | editor | viewer`) ·
+Row = avatar · name · role select (`admin | member | viewer`) ·
 `MachineTypeSelect` · remove. A viewer row hides the type select (no
 machine, §2). Header = the lifted people search over active org members,
 plus Add.
