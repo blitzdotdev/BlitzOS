@@ -1179,6 +1179,15 @@ export function addWorkspaceRoutes(
       if (cleanup.errors.length > 0) {
         // Honest destroy: the row stays in destroying with its remaining
         // identifiers; the janitor retries until Cloudflare cleanup lands.
+        //
+        // Report them. The caller gets a 200 and the janitor's own transition
+        // sets `error` back to NULL, so these errors are the only account of
+        // why a destroy needed two attempts, and dropping them is what made
+        // the first such destroy unexplainable.
+        runtime.reportError(
+          "workspace_destroy_cleanup_incomplete",
+          new Error(`workspace ${id}: ${cleanup.errors.join("; ")}`),
+        );
         const pending = await workspaceById(runtime.db, id);
         if (pending === null) throw new Error("workspace disappeared during destroy");
         return context.json<CreateWorkspaceResponse>({

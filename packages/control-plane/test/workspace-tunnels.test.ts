@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { rows } from "../core/db.js";
+import type { Db } from "../core/db.js";
 import { CloudflareTunnels } from "../core/compute/cloudflare-tunnels.js";
 import { WorkspaceTunnels } from "../core/workspace-tunnels.js";
+import type { WorkspaceTunnelRow } from "../core/workspace-tunnels.js";
 import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 import type { WorkspaceRow } from "../core/workspaces.js";
 import type { WorkspaceView } from "../core/wire.js";
@@ -88,6 +90,41 @@ describe("workspace tunnels", () => {
     }))[0];
     expect(row?.tunnel_id).toBeNull();
     expect(row?.dns_record_id).toBeNull();
+  });
+
+  it("reports a failed column clear rather than throwing it at the caller", async () => {
+    // Destroy calls cleanup AFTER the VM is already deleted. A throw here
+    // answered an opaque 500 for a destroy that had irreversibly succeeded:
+    // the server was gone, the janitor finished the row and cleared `error`
+    // to NULL, and nothing was left to explain the 500 to whoever saw it.
+    const workspaceTunnels = new WorkspaceTunnels(
+      new CloudflareTunnels({
+        accountId: "test-account",
+        zoneId: "test-zone-id",
+        apiToken: "test-api-token",
+        fetcher: async () => Response.json({ success: true, result: {} }),
+      }),
+      "webapp.test",
+      "test-webapp-root-secret",
+      async () => Response.json({ ok: true }),
+    );
+    const unreachable = new Error("D1_ERROR: Network connection lost");
+    const failingDb: Db = {
+      rawSQL: () => ({ run: async () => { throw unreachable; } }),
+      rawSQLTransaction: () => ({ run: async () => { throw unreachable; } }),
+    };
+
+    const result = await workspaceTunnels.cleanup(failingDb, {
+      id: "ws-1",
+      tunnel_id: "tun-1",
+      tunnel_hostname: "ws-1.webapp.test",
+      dns_record_id: "dns-1",
+    } satisfies WorkspaceTunnelRow);
+
+    // Cloudflare did its half; only the column clear failed.
+    expect(result.tunnelDeleted).toBe(true);
+    expect(result.dnsDeleted).toBe(true);
+    expect(result.errors).toEqual(["D1_ERROR: Network connection lost"]);
   });
 
   it("stays inert without configuration", async () => {
