@@ -335,6 +335,57 @@ becomes the workspace administration surface. Tabs:
 Today's Compute/Storage panels collapse into the per-member machine rows;
 per-machine detail (vCPU, RAM, disk, volume) opens from the row.
 
+## 6a. Sidecar — the strip and the rail, before sessions
+
+A UI refactor that ships independently of every build, grounded on
+`plans/mockups/session-rail.html` (columns 1 and 2 only). **No sessions
+yet.** The rail lists the managed tab types that already exist under a
+workspace (`claude | codex | terminal | chat` from `webapp_state`), one
+workspace at a time. Everything to the right of the rail stays as it is:
+the tab strip (`WebAppHeader`), the terminal and editor panes, the right
+icon strip (`WorkspaceRailStrip`), and the mobile drawer semantics.
+
+**Column 1 — the strip** (replaces the left half of `DriveRail`):
+
+- Org mark at the top; the org-switcher popover moves onto it.
+- One tile per workspace: a 2–3 letter code, full name as tooltip, a ring
+  on the active tile. A "+" tile creates a workspace (per the §3 matrix).
+- Bottom: a Drive icon (routes to `/`) and the user/settings avatar.
+- The Templates and Recipes nav rows die with the template concept
+  (Recipes is already hidden, #103).
+- The live dot on a tile arrives with sessions; until then, no dot.
+
+**Column 2 — the rail** (replaces the right half of `DriveRail`):
+
+- Header: workspace name plus a Share button. Share opens the existing
+  `ShareWorkspaceDialog` until Build 3 replaces it.
+- A pinned "New tab" action above the list; it opens the same menu as the
+  tab strip's "+" (spawn types, ports, previews).
+- Rows: the active workspace's managed tabs, same filter as today's
+  `railSessions` memo. Row = type glyph in the gutter + title. No time
+  column, no live state, no owner faces yet — those are session
+  properties and arrive with Build 2.
+- A row click activates that tab in the tab strip; the active row
+  highlights. A strip click switches the workspace.
+- Non-workspace pages (Drive, settings) render with the strip and use the
+  rail-plus-main width for their content.
+
+**Order of work** (from the ground-truth survey):
+
+1. Land or rebase `feat/operator-console` first — it collides with
+   `DriveRail`, `CloudApp`, and `sessions-page-state`.
+2. Split `CloudApp.tsx` into rail container, work-pane container, route
+   switch, and dialog stack. This is the first commit, before visuals.
+3. Migrate the ~20 class-selector test assertions to role/label queries.
+4. Build Strip and Rail as new components; delete `DriveRail`; rewire the
+   8 `railFor` call sites. Shell grid becomes
+   `48px 252px minmax(0,1fr) auto`.
+
+**What this buys Build 2:** when sessions become objects, the rail swaps
+its data source from `webapp_state` tabs to `agent_sessions` rows and
+gains the clock, the live state, the owner gutter, and visibility — with
+no further layout change.
+
 ## 7. Builds (revised)
 
 **Build 1 — workspaces, members, machines.** The schema in §1 minus
@@ -346,9 +397,10 @@ on a running machine, a removed member's machine destroys with a grace
 snapshot, and a WS admin can stop and start any member machine from the
 page.
 
-**Build 2 — sessions as objects.** Unchanged from the prior revision
-(control-plane `agent_sessions`, the three-column rail, promote the ACP
-actor). Grounding: the survey's Build-2 section.
+**Build 2 — sessions as objects.** Control-plane `agent_sessions`; promote
+the ACP actor. The rail shell already exists via the sidecar (§6a); this
+build swaps its data source and adds clock, live state, owner, visibility.
+Grounding: the survey's Build-2 section.
 
 **Build 3 — sharing.** Unchanged: visibility enforcement, watch, send with
 attribution, fork.
