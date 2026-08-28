@@ -28,6 +28,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/db.ts",
   "core/blobs.ts",
   "core/wire.ts",
+  "core/admin.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",

@@ -58,7 +58,7 @@ function inviteRole(value: JsonValue | undefined): InviteRole {
   return value;
 }
 
-function optionalEmail(value: JsonValue | undefined): string | null {
+export function optionalEmail(value: JsonValue | undefined): string | null {
   if (value === undefined || value === null || value === "") return null;
   const email = requiredString(value, "email", 320).trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+$/u.test(email)) throw new HttpError(400, "email must be valid");
@@ -86,7 +86,7 @@ function requireAdmin(principal: Principal): string {
   return principal.orgId;
 }
 
-async function expireInvites(db: Db, now: number, orgId?: string): Promise<void> {
+export async function expireInvites(db: Db, now: number, orgId?: string): Promise<void> {
   await rows(db, {
     q: `UPDATE invites SET state = 'expired'
         WHERE state = 'ready' AND expires_at <= ?1${orgId === undefined ? "" : " AND target_org_id = ?2"}`,

@@ -1354,3 +1354,82 @@
   justify-content: center;
   text-decoration: none;
 }
+
+/* ================= blitz additions: platform console ============ */
+
+/* The operator console is one full-width column: no section nav, every
+ * organization a dense card under the trial form. */
+.settings-page--admin {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-admin-org {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+}
+
+.settings-admin-org-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.settings-admin-org-head h2 {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.settings-admin-slug {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.settings-admin-badge {
+  padding: 1px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.settings-admin-meta {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.settings-admin-group {
+  margin-top: 10px;
+}
+
+.settings-admin-group-label {
+  display: block;
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.settings-admin-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 11.5px;
+}
+
+.settings-admin-row strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-admin-dim {
+  color: var(--faint);
+}

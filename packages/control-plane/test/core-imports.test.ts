@@ -7,6 +7,7 @@ const sources = import.meta.glob<string>(["../core/**/*.ts", "../core/**/*.js"],
 });
 
 const expected = [
+  "admin.ts",
   "agent-rules.ts",
   "app.ts",
   "blobs.ts",
@@ -124,6 +125,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(99);
+    expect(expected).toHaveLength(100);
   });
 });

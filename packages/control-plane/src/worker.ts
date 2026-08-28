@@ -19,6 +19,7 @@ import {
   runOrphanSweep,
   runProviderCanary,
   runSessionSweep,
+  runTrialExpirySweep,
   runVolumeRetentionSweep,
   runWorkspaceTunnelSweep,
   sessionTtlMsFromEnv,
@@ -319,6 +320,7 @@ export default {
         await runtime.providers.microvm?.syncStaticHosts();
         await runSessionSweep(runtime);
         await runLeaseSweep(runtime);
+        await runTrialExpirySweep(runtime);
         await runInvariantSweep(runtime);
         await runOrphanSweep(runtime);
         await runWorkspaceTunnelSweep(runtime);

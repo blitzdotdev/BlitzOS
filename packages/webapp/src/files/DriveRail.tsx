@@ -65,6 +65,7 @@ export function DriveRail({
   onSwitchOrg,
   onCreateOrg,
   onOpenSettings,
+  onOpenAdmin,
   onOpenWorkspaceShare,
   onOpenWorkspaceDetails,
   drawerOpen,
@@ -87,6 +88,7 @@ export function DriveRail({
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
   onOpenSettings: () => void;
+  onOpenAdmin: () => void;
   onOpenWorkspaceShare: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
   drawerOpen: boolean;
@@ -372,6 +374,17 @@ export function DriveRail({
           rel="noreferrer"
         >Having issues? Ask us on Discord</a>
 
+        {/* Platform operators only: the flag rides /me, and the console
+          * routes refuse everyone else. */}
+        {identity?.platformOperator === true && (
+          <button
+            className="drive-rail-row"
+            type="button"
+            onClick={onOpenAdmin}
+          >
+            <OrganizationIcon /><span>Admin</span>
+          </button>
+        )}
         <button
           className="webapp-user"
           type="button"

@@ -129,6 +129,7 @@ describe('WorkspaceDetailsDialog', () => {
         onSwitchOrg={() => undefined}
         onCreateOrg={() => undefined}
         onOpenSettings={() => undefined}
+        onOpenAdmin={() => undefined}
         onOpenWorkspaceShare={onShare}
         onOpenWorkspaceDetails={onDetails}
         drawerOpen={false}
@@ -168,6 +169,7 @@ describe('WorkspaceDetailsDialog', () => {
         onSwitchOrg={() => undefined}
         onCreateOrg={() => undefined}
         onOpenSettings={() => undefined}
+        onOpenAdmin={() => undefined}
         onOpenWorkspaceShare={onShare}
         onOpenWorkspaceDetails={onDetails}
         drawerOpen={false}

@@ -26,6 +26,7 @@ function rail(onSwitchOrg: (orgId: string) => void = () => undefined) {
       onSwitchOrg={onSwitchOrg}
       onCreateOrg={() => undefined}
       onOpenSettings={() => undefined}
+      onOpenAdmin={() => undefined}
       onOpenWorkspaceShare={() => undefined}
       onOpenWorkspaceDetails={() => undefined}
       drawerOpen={false}

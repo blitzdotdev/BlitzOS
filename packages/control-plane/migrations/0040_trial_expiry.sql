@@ -1,0 +1,13 @@
+-- Trial expiry: when a platform-sponsored trial stops sponsoring.
+--
+-- A platform operator can seed an organization with platform_compute = 1 so a
+-- prospect tries the product on the deployment's own cloud credential, with no
+-- BYOK setup. That sponsorship must end on its own: nothing else bounds the
+-- deployment's bill for an organization that never converts.
+--
+-- NULL is "not a trial". A billing write through PUT /orgs/:id/entitlements
+-- states the organization's whole entitlement, so it clears this column: once
+-- the customer pays (or cancels), the trial clock is meaningless either way.
+-- Core still never learns a plan name; an expiry instant is a number, not a
+-- plan.
+ALTER TABLE org_entitlements ADD COLUMN trial_expires_at INTEGER;

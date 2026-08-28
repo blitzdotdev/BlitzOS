@@ -49,7 +49,9 @@ import {
   bindVisualViewportGeometry,
   useMobileWebApp,
 } from './mobile-webapp';
+import { AdminPage } from './admin/AdminPage';
 import {
+  adminPath,
   drivePath,
   folderPagePath,
   parseAppRoute,
@@ -694,6 +696,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       || !store.viewer
       || (!createWorkspaceRoute && store.workspaces.length > 0)
       || route.page === 'settings'
+      || route.page === 'admin'
       || firstWorkspacePrompted.current
     ) return;
     firstWorkspacePrompted.current = true;
@@ -1470,6 +1473,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       }}
       onCreateOrg={() => setShowCreateOrg(true)}
       onOpenSettings={() => navigateToSettings('profile')}
+      onOpenAdmin={() => navigateTo(adminPath())}
       onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
       onOpenWorkspaceDetails={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
@@ -1710,6 +1714,29 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         )}
         {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
         {railOverlays}
+      </main>
+    );
+  }
+
+  if (route.page === 'admin') {
+    // No client-side operator gate beyond the rail entry: the server's 403 is
+    // the one refusal, and AdminPage renders it in place.
+    return (
+      <main className="settings-shell" aria-busy={!loaded}>
+        <SettingsHeader
+          title="Admin"
+          workspaceLabel={activeWorkspace?.title}
+          onBack={returnToWebApp}
+        />
+        {loaded && store.viewer ? (
+          <AdminPage client={client} />
+        ) : (
+          <div className="settings-page-state settings-page-state--loading" role="status">
+            Loading admin console…
+          </div>
+        )}
+        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
+        {updateNotice}
       </main>
     );
   }
