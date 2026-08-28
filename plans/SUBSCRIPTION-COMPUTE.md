@@ -64,7 +64,7 @@ project is meaningless in theirs.
 
 ## 2. The change
 
-**Schema** (`0037_platform_compute.sql`):
+**Schema** (`0039_platform_compute.sql`):
 ```sql
 ALTER TABLE org_entitlements ADD COLUMN platform_compute INTEGER NOT NULL DEFAULT 0;
 ```
