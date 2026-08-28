@@ -124,6 +124,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(97);
+    expect(expected).toHaveLength(99);
   });
 });
