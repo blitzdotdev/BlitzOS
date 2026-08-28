@@ -7,13 +7,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 /**
  * blitz-term hands a tab's environment to tmux, which execs the agent without
- * a login shell — so whatever this script does not source, the agent does not
- * have. It used to source only `00-workspace.sh` and step over the credential
- * files beside it, which left a claude tab unable to read the very token its
- * workspace had connected. These drive the real script with stub tmux,
+ * a login shell. No secret rides that hand-off: every credential, the
+ * workspace's own variables included, is pulled at the moment of use with
+ * `blitz-cred get <name>`, so a tmux session environment can never outlive the
+ * grant that authorized it. These drive the real script with stub tmux,
  * blitz-cred and timeout binaries, because the failures that matter here are
- * runtime ones `bash -n` cannot see: an unsourced glob, or a `set -e` abort
- * that takes the terminal down with it.
+ * runtime ones `bash -n` cannot see.
  */
 
 const blitzTermPath = fileURLToPath(
@@ -56,7 +55,6 @@ const TIMEOUT_STUB = "#!/bin/sh\nshift\nexec \"$@\"\n";
 
 interface TermBox {
   stateDir: string;
-  envDir: string;
   binDir: string;
 }
 
@@ -74,8 +72,6 @@ function stub(binDir: string, name: string, body: string): void {
 function makeTermBox(): TermBox {
   const stateDir = mkdtempSync(join(tmpdir(), "term-creds-"));
   boxes.push(stateDir);
-  const envDir = join(stateDir, "creds", "env.d");
-  mkdirSync(envDir, { recursive: true });
   const binDir = join(stateDir, "stub-bin");
   mkdirSync(binDir);
   stub(binDir, "tmux", TMUX_STUB);
@@ -88,7 +84,7 @@ function makeTermBox(): TermBox {
     "blitz-cred",
     `#!/bin/sh\nprintf '%s\\n' "$*" >>'${join(stateDir, "cred-calls")}'\n`,
   );
-  return { stateDir, envDir, binDir };
+  return { stateDir, binDir };
 }
 
 function runTerm(box: TermBox, args: string[]): Promise<number | null> {
@@ -139,94 +135,47 @@ function credCalls(box: TermBox): string[] {
   return existsSync(path) ? readFileSync(path, "utf8").trim().split("\n") : [];
 }
 
-function writeEnvFile(box: TermBox, file: string, body: string): void {
-  writeFileSync(join(box.envDir, file), body);
-}
-
-/** A box whose workspace declares variables. Only the workspace entry lives in
- * env.d now: connection secrets are pulled at the moment of use. */
-function configuredBox(): TermBox {
-  const box = makeTermBox();
-  writeEnvFile(box, "00-workspace.sh", "export PROJECT_MODE='analysis'\nexport REGION='eu'\n");
-  return box;
-}
-
-describe("blitz-term credential delivery", () => {
-  it("gives an agent tab the whole env.d glob", async () => {
-    const box = configuredBox();
+describe("blitz-term carries no credential", () => {
+  it("starts a tab with no secret in the tmux session environment", async () => {
+    const box = makeTermBox();
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    expect(deliveredEnv(box, "new-session")).toMatchObject({
-      PROJECT_MODE: "analysis",
-      REGION: "eu",
-    });
-  });
-
-  it("gives a plain terminal tab the same environment", async () => {
-    const box = configuredBox();
-    expect(await runTerm(box, ["terminal", "shell"])).toBe(0);
-    expect(deliveredEnv(box, "new-session").PROJECT_MODE).toBe("analysis");
-  });
-
-  it("carries no connection secret into the tmux session", async () => {
-    // A tab used to inherit every connected provider's token, and a tmux
-    // session environment outlives the grant that authorized it. An agent now
-    // asks for a credential when it needs one.
-    const box = configuredBox();
-    expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    expect(deliveredEnv(box, "new-session").GH_TOKEN).toBe("<unset>");
+    const delivered = deliveredEnv(box, "new-session");
+    expect(delivered.GH_TOKEN).toBe("<unset>");
+    expect(delivered.PROJECT_MODE).toBe("<unset>");
+    // Pulling one here would put it in a session environment that outlives the
+    // grant. The agent asks for its own when it needs one.
     expect(credCalls(box)).toEqual([]);
   });
 
-  it("starts the tab anyway when an entry cannot be read", async () => {
-    const box = configuredBox();
-    // env.d entries are mode 0600 and a stripped or half-migrated box can leave
-    // one unreadable. Under `set -euo pipefail` a careless source here would
-    // take the whole terminal down instead of one variable.
-    writeEnvFile(box, "mm-locked.sh", "export LOCKED='x'\n");
-    chmodSync(join(box.envDir, "mm-locked.sh"), 0o000);
-    try {
-      expect(await runTerm(box, ["claude", "run"])).toBe(0);
-      expect(deliveredEnv(box, "new-session").PROJECT_MODE).toBe("analysis");
-    } finally {
-      chmodSync(join(box.envDir, "mm-locked.sh"), 0o600);
-    }
-  });
-
-  it("starts the tab when the workspace declares nothing", async () => {
+  it("ignores a creds/env.d left behind by an older box image", async () => {
+    // The broker no longer writes this directory, but a box that boots on an
+    // upgraded image still has yesterday's file on its state volume. Sourcing
+    // it would re-export a value the workspace may already have revoked.
     const box = makeTermBox();
-    rmSync(join(box.stateDir, "creds"), { recursive: true, force: true });
+    const envDir = join(box.stateDir, "creds", "env.d");
+    mkdirSync(envDir, { recursive: true });
+    writeFileSync(join(envDir, "00-workspace.sh"), "export PROJECT_MODE='analysis'\n");
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
     expect(deliveredEnv(box, "new-session").PROJECT_MODE).toBe("<unset>");
   });
 });
 
 describe("blitz-term tmux session environment", () => {
-  it("names every sourced variable in a tmux -e flag", async () => {
-    const box = configuredBox();
+  it("names the locale pair in tmux -e flags, and nothing else", async () => {
+    const box = makeTermBox();
     expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    const flags = sessionEnvFlags(deliveredArgv(box, "new-session"));
-    // Exporting alone reaches the agent only when this client also starts the
-    // tmux server. Bootstrap's blitz-rc session usually starts it first, so
-    // the tab has to state its environment rather than inherit it.
-    expect(flags).toContain("PROJECT_MODE=analysis");
-    expect(flags).toContain("REGION=eu");
-    expect(flags).toContain("LANG=C.UTF-8");
-    expect(flags).toContain("LC_ALL=C.UTF-8");
-  });
-
-  it("names only what env.d changed, not the whole inherited environment", async () => {
-    // PATH and BLITZ_STATE_DIR reach blitz-term from ttyd, unchanged by the
-    // glob. Restating them would let a stale tab pin an old PATH.
-    const box = configuredBox();
-    expect(await runTerm(box, ["claude", "run"])).toBe(0);
-    const names = sessionEnvFlags(deliveredArgv(box, "new-session"))
-      .map((flag) => flag.slice(0, flag.indexOf("=")));
-    expect(names).not.toContain("PATH");
-    expect(names).not.toContain("BLITZ_STATE_DIR");
+    // A tmux server hands later sessions its own startup snapshot rather than
+    // the creating client's environment, and the box's first session is a
+    // detached blitz-rc started from a bare `docker exec` with no LANG. So the
+    // tab has to state the locale rather than inherit it. PATH and
+    // BLITZ_STATE_DIR are deliberately absent: restating them would let a
+    // stale tab pin an old PATH.
+    expect(sessionEnvFlags(deliveredArgv(box, "new-session")))
+      .toEqual(["LANG=C.UTF-8", "LC_ALL=C.UTF-8"]);
   });
 
   it("passes no -e on the read-only attach path", async () => {
-    const box = configuredBox();
+    const box = makeTermBox();
     writeFileSync(join(box.stateDir, "session-claude-obs"), "");
     expect(await runTerm(box, ["claude", "obs", "ro"])).toBe(0);
     // `-e` applies on create only, and an observer never creates.
@@ -238,8 +187,7 @@ describe("blitz-term tmux session environment", () => {
     // forceReadOnlyTerminalArgs) appends "ro" only to a two-argument request
     // and refuses any other shape. The -e flags are tmux argv, never
     // blitz-term argv, so that contract must stay exactly `<type> <key> [ro]`.
-    const box = configuredBox();
+    const box = makeTermBox();
     expect(await runTerm(box, ["claude", "run", "ro", "extra"])).toBe(2);
   });
 });
-
