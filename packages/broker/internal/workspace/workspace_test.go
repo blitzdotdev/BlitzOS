@@ -152,14 +152,3 @@ func TestLoadBrokerRejectsMissingMember(t *testing.T) {
 		t.Fatal("broker config without member was accepted")
 	}
 }
-
-func assertFileMode(t *testing.T, path string, expected os.FileMode) {
-	t.Helper()
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != expected {
-		t.Errorf("%s mode = %o, want %o", path, info.Mode().Perm(), expected)
-	}
-}
