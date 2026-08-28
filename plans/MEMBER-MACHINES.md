@@ -85,14 +85,34 @@ The machines table takes every VM column the workspace row loses. A machine
 belongs to a workspace and to a membership — always. Workspace members are
 org members, so the membership row exists before the machine does.
 
-**Terminology.** The codebase mixes three words, each with its own layer,
-and this plan keeps all three: a **machine** is the durable per-member
-object this table defines (the word already exists user-facing as "machine
-type"); a **vm** is the provider-level incarnation (`vm_id`, `createVm`,
-`VmProvider`, `vm_limit`); a **box** is the enrolled guest runtime on it
-(the `boxes` row, the box packages, the box credential). One machine has at
-most one live vm and one box at a time. `boxes.machine_id` replaces
-`boxes.workspace_id`.
+**Terminology.** A **machine** is the durable per-member object this table
+defines (the word already exists user-facing as "machine type"). A **vm**
+is the provider-level incarnation (`vm_id`, `createVm`, `VmProvider`,
+`vm_limit`). A **box** stays a word for the guest runtime — the packages,
+the image, the gateway — but **the `boxes` table is deleted**: the machine
+row is the guest's identity. There is one row, not two.
+
+**Enrollment folds into the machine.** Today phone-home inserts a `boxes`
+row plus a token family, and `boxes.principal_id` stores the workspace
+owner — the stored principal that causes the D4 misattribution. Unified:
+
+- Phone-home verifies `machines.phone_home_hash`, mints a token family in
+  `machine_token_families` (the renamed `box_token_families`, keyed by
+  `machine_id` and stamped with the `vm_id` it was minted for), and flips
+  the machine to `running`. The capability re-arms at every vm provision.
+- The guest calls the control plane as its machine. `boxCaller` resolves
+  the acting principal from `machines.membership_id` at call time — no
+  stored principal exists to go stale. D4 stops being a fix and becomes
+  structure.
+- `credential_leases.box_id` becomes `machine_id`; `GET /boxes/:id/feed`
+  becomes `GET /machines/:id/feed`.
+- A vm destroy (stop, `SetMachineType`, recreate) revokes the machine's
+  token families; the stamped `vm_id` fences any stale guest that
+  outlives its incarnation. The next boot enrolls fresh against the same
+  machine row.
+
+(`broker_boxes` is the broker's own fleet table and is unrelated; it
+stays.)
 
 **The volume is the durable machine; the VM is an incarnation.** Machine
 state is volume-backed (#88), so the VM fields are replaceable while the
@@ -122,10 +142,9 @@ machines (
 )
 ```
 
-`boxes.workspace_id UNIQUE` becomes `boxes.machine_id UNIQUE`. The box
-principal is the machine's member, not the workspace owner — this is the D4
-identity fix, and the change site is known (`workspaces.ts:1252-1256`,
-`mint.ts:243`).
+The change sites for the old stored-principal path are known
+(`workspaces.ts:1252-1256`, `mint.ts:243`); both now read the machine row
+instead.
 
 ### §1a Machine types are per machine, not per workspace
 
