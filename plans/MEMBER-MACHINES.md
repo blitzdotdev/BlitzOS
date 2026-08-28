@@ -337,38 +337,47 @@ per-machine detail (vCPU, RAM, disk, volume) opens from the row.
 
 ## 6a. Sidecar — the strip and the rail, before sessions
 
-A UI refactor that ships independently of every build, grounded on
-`plans/mockups/session-rail.html` (columns 1 and 2 only). **No sessions
-yet.** The rail lists the managed tab types that already exist under a
-workspace (`claude | codex | terminal | chat` from `webapp_state`), one
-workspace at a time. Everything to the right of the rail stays as it is:
-the tab strip (`WebAppHeader`), the terminal and editor panes, the right
-icon strip (`WorkspaceRailStrip`), and the mobile drawer semantics.
+A UI refactor that ships independently of every build. **The canonical
+reference is the mockup**: `plans/mockups/session-rail.html`, live at
+https://blitzos-session-rail.app.blitz.dev/. Adopt its `#strip` and
+`#rail` as designed — structure, dimensions, and visual vocabulary come
+from the mockup, not from this document. Its stylesheet is the visual
+spec (`--paper/--ink/--accent` tokens, radii, the 48px/252px columns);
+port those values into `tokens.css` rather than restyle by taste.
 
-**Column 1 — the strip** (replaces the left half of `DriveRail`):
+**Scope.** Columns 1 and 2 only. No change to the right icon strip
+(`WorkspaceRailStrip`), the tab strip (`WebAppHeader`), the terminal and
+editor panes, or the mobile drawer semantics. **No sessions yet** — the
+rail lists the managed tab types that already exist under a workspace
+(`claude | codex | terminal | chat` from `webapp_state`), one workspace
+at a time. Build 2 later swaps the rail's data source to session rows;
+the mockup already draws the end state, so no second layout change comes.
 
-- Org mark at the top; the org-switcher popover moves onto it.
-- One tile per workspace: a 2–3 letter code, full name as tooltip, a ring
-  on the active tile. A "+" tile creates a workspace (per the §3 matrix).
-- Bottom: a Drive icon (routes to `/`) and the user/settings avatar.
-- The Templates and Recipes nav rows die with the template concept
-  (Recipes is already hidden, #103).
-- The live dot on a tile arrives with sessions; until then, no dot.
+**Element-by-element mapping** — mockup element → what feeds it now →
+what changes at Build 2:
 
-**Column 2 — the rail** (replaces the right half of `DriveRail`):
+| Mockup element | Now (pre-sessions) | At Build 2 |
+| --- | --- | --- |
+| `.app` grid `48px 252px 1fr` | replaces `drive-shell`'s `264px` rail column; the right icon strip stays as a fourth column | unchanged |
+| `#strip` `.orgmark` | org mark; the org-switcher popover moves onto it | unchanged |
+| `#strip` `.wtile` per workspace | tile with 2–3 letter code, name tooltip, `wtile--on` ring on the active one | `.beat` live dot when a session is live |
+| `#strip` "+" tile | create workspace (per the §3 matrix) | unchanged |
+| `#strip` surface icons (Files, Ports, Connections) | present per the mockup; they focus the same panels the right strip toggles today | Keys and Members surfaces join (§6) |
+| `#strip` `.av` avatar | user/settings menu | unchanged |
+| `#rail` `.rhead` name + `.sub` + share icon | workspace name; `.sub` slot stays empty (the mockup shows RAM; machines are not user-facing — open mapping, see below); share opens `ShareWorkspaceDialog` | `.sub` = live-session count or member count; share becomes the session share popover (Build 3) |
+| `.newbar` "New session" | pinned action; opens the same menu as the tab strip's "+" | spawns a real session via the launcher |
+| `.s` row: `.g` gutter · `.s__t` title · `.s__a` time — "never more" | gutter = tab-type glyph; title = tab title; `.s__a` stays empty (tabs have no clock) | gutter = empty for own / face for others; `.s__a` = time, green when live |
+| `.asleep` pane | not rendered; workspace `creating`/`error` states keep their existing main-pane copy | not rendered (D3: no sleep state) |
+| launcher pane ("What should we build?") | deferred — it creates sessions | ships with Build 2 |
 
-- Header: workspace name plus a Share button. Share opens the existing
-  `ShareWorkspaceDialog` until Build 3 replaces it.
-- A pinned "New tab" action above the list; it opens the same menu as the
-  tab strip's "+" (spawn types, ports, previews).
-- Rows: the active workspace's managed tabs, same filter as today's
-  `railSessions` memo. Row = type glyph in the gutter + title. No time
-  column, no live state, no owner faces yet — those are session
-  properties and arrive with Build 2.
-- A row click activates that tab in the tab strip; the active row
-  highlights. A strip click switches the workspace.
-- Non-workspace pages (Drive, settings) render with the strip and use the
-  rail-plus-main width for their content.
+A row click activates that tab in the tab strip; a strip click switches
+the workspace. Non-workspace pages (Drive, settings) keep the strip and
+use the remaining width. The Templates and Recipes nav rows die with the
+template concept (Recipes is already hidden, #103).
+
+**Open mapping to confirm:** the mockup's `.rhead .sub` shows the
+workspace RAM. Per-member machines have no single RAM figure, and D3
+hides machines. The slot stays; the feed is a product call.
 
 **Order of work** (from the ground-truth survey):
 
@@ -377,14 +386,8 @@ icon strip (`WorkspaceRailStrip`), and the mobile drawer semantics.
 2. Split `CloudApp.tsx` into rail container, work-pane container, route
    switch, and dialog stack. This is the first commit, before visuals.
 3. Migrate the ~20 class-selector test assertions to role/label queries.
-4. Build Strip and Rail as new components; delete `DriveRail`; rewire the
-   8 `railFor` call sites. Shell grid becomes
-   `48px 252px minmax(0,1fr) auto`.
-
-**What this buys Build 2:** when sessions become objects, the rail swaps
-its data source from `webapp_state` tabs to `agent_sessions` rows and
-gains the clock, the live state, the owner gutter, and visibility — with
-no further layout change.
+4. Build Strip and Rail as new components against the mockup; delete
+   `DriveRail`; rewire the 8 `railFor` call sites.
 
 ## 7. Builds (revised)
 
