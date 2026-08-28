@@ -348,6 +348,18 @@ export class OrgComputeProviderResolver {
     return awsProviderForCredentials(this.env, credential, this.awsProviderOptions);
   }
 
+  /** Whether this organization's plan includes running on the deployment's own
+   * cloud credential. One integer, written by the billing service through the
+   * entitlements seam: core reads a 0 or a 1 and never learns a plan name. An
+   * absent row is the free tier, so it reads 0 exactly as a written 0 does. */
+  private async platformCompute(orgId: string): Promise<boolean> {
+    const row = await first<{ platform_compute: number }>(this.db, {
+      q: `SELECT platform_compute FROM org_entitlements WHERE org_id = ?1 LIMIT 1`,
+      v: [orgId],
+    });
+    return row?.platform_compute === 1;
+  }
+
   private async orgCredential(
     orgId: string,
     provider: ComputeCredentialProvider,
@@ -395,12 +407,18 @@ export class OrgComputeProviderResolver {
           WHERE org_id = ?1 ORDER BY provider`,
       v: [orgId],
     })).map(({ provider }) => provider));
+    // A subscribed organization reaches the deployment key, so the catalog has
+    // to show it machines: hiding them would refuse the create one screen
+    // earlier than resolve() does, and for a reason that no longer holds.
+    const subscribed = await this.platformCompute(orgId);
     return this.providerDescriptors.flatMap(({ id }) => {
       if (!this.handles(id)) return [];
+      const deploymentReachable = (
+        this.workspaceCredentialPolicy === "deployment-fallback" || subscribed
+      ) && this.deploymentProviders.has(id);
       const access: ComputeProviderStatus["access"] = configured.has(id)
         ? "org"
-        : this.workspaceCredentialPolicy === "deployment-fallback"
-          && this.deploymentProviders.has(id)
+        : deploymentReachable
           ? "deployment"
           : "credential-required";
       return [{ providerId: id, access }];
@@ -421,9 +439,16 @@ export class OrgComputeProviderResolver {
         throw new HttpError(409, `org has no ${provider} credential`);
       }
     }
+    // Order: an organization credential (above) always wins, then the platform
+    // entitlement, then the refusal. A team that adds its own key keeps using
+    // it while subscribed, which preserves the strict source pinning that stops
+    // a deployment key from ever touching an organization's resources. The
+    // entitlement is only read under byok-required — the other policy has
+    // already fallen back, so the lookup would buy nothing.
     if (
       requiredSource !== "deployment"
       && this.workspaceCredentialPolicy === "byok-required"
+      && !(await this.platformCompute(orgId))
     ) {
       throw this.credentialRequired(provider, orgId);
     }

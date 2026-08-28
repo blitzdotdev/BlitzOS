@@ -20,6 +20,7 @@ interface FixtureContext {
 interface WriteRequest {
   body: JsonObject;
   status: number;
+  subscribed: { body: JsonObject; storedPlatformCompute: number };
 }
 
 interface RejectedWriteRequests {
@@ -36,6 +37,7 @@ interface SeatLimitDenial {
 interface UsageResponse {
   body: JsonObject;
   gatingOff: JsonObject;
+  subscribed: { body: JsonObject };
 }
 
 const sources = import.meta.glob<string>("../../schema/fixtures/entitlements/*.json", {
@@ -108,7 +110,33 @@ describe("entitlements fixture conformance", () => {
       "org_id",
       "seat_limit",
       "updated_at",
+      // Appended by migration 0037; ALTER TABLE puts a new column last.
+      "platform_compute",
     ]);
+    // A body that omits the flag says the organization does not have it, which
+    // is the same thing an absent row says.
+    expect(
+      await env.DB.prepare(
+        "SELECT platform_compute FROM org_entitlements WHERE org_id = 'personal'",
+      ).first<number>("platform_compute"),
+    ).toBe(0);
+  });
+
+  it("stores the platform compute flag the subscribed body sets", async () => {
+    const { app } = harness();
+    await operatorSession(app);
+    const response = await appRequest(
+      app,
+      "/orgs/personal/entitlements",
+      billingWrite(write.subscribed.body),
+      billing,
+    );
+    expect(response.status).toBe(write.status);
+    expect(
+      await env.DB.prepare(
+        "SELECT platform_compute FROM org_entitlements WHERE org_id = 'personal'",
+      ).first<number>("platform_compute"),
+    ).toBe(write.subscribed.storedPlatformCompute);
   });
 
   for (const rejectedCase of rejected.cases) {
@@ -196,6 +224,7 @@ describe("entitlements fixture conformance", () => {
       seatLimit: usage.body.seatLimit,
       vmsUsed: 0,
       vmLimit: usage.body.vmLimit,
+      platformCompute: usage.body.platformCompute,
     });
     const ungated = await appRequest(app, "/orgs/dana-org/usage", { headers: { Cookie: owner } });
     expect(await ungated.json()).toEqual({
@@ -203,7 +232,34 @@ describe("entitlements fixture conformance", () => {
       seatLimit: null,
       vmsUsed: 0,
       vmLimit: usage.body.vmLimit,
+      platformCompute: usage.gatingOff.platformCompute,
     });
     expect(Object.keys(usage.gatingOff).sort()).toEqual(Object.keys(usage.body).sort());
+    expect(Object.keys(usage.subscribed.body).sort()).toEqual(Object.keys(usage.body).sort());
+  });
+
+  it("reports the platform compute flag an admin needs to explain a create", async () => {
+    const { app } = harness();
+    const owner = await userSession("dana");
+    await appRequest(
+      app,
+      "/orgs/dana-org/entitlements",
+      billingWrite({
+        seatLimit: usage.subscribed.body.seatLimit,
+        vmLimit: usage.subscribed.body.vmLimit,
+        platformCompute: usage.subscribed.body.platformCompute,
+      }),
+      billing,
+    );
+    const reported = await appRequest(app, "/orgs/dana-org/usage", {
+      headers: { Cookie: owner },
+    }, billing);
+    expect(await reported.json()).toEqual({
+      seatsUsed: 1,
+      seatLimit: usage.subscribed.body.seatLimit,
+      vmsUsed: 0,
+      vmLimit: usage.subscribed.body.vmLimit,
+      platformCompute: usage.subscribed.body.platformCompute,
+    });
   });
 });

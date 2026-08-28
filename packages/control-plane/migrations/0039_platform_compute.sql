@@ -1,0 +1,14 @@
+-- Platform compute: the one integer that says an organization may run on the
+-- deployment's own cloud credential.
+--
+-- The billing service translates its plan into 0 or 1 and pushes it through
+-- the existing PUT /orgs/:id/entitlements. Core still never learns a plan
+-- name, so no branch here can ever ask which plan an organization is on.
+--
+-- An absent org_entitlements row already means the free tier, so the default
+-- and the missing row agree — the same reasoning 0031 uses for seat_limit.
+--
+-- The cost ceiling is orgs.vm_limit, which the workspace-create transaction
+-- has always enforced. Once we pay for the VMs that cap stops being a fairness
+-- knob and becomes the spend control; it needs no new column.
+ALTER TABLE org_entitlements ADD COLUMN platform_compute INTEGER NOT NULL DEFAULT 0;

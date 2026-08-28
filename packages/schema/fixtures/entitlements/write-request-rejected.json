@@ -1,5 +1,5 @@
 {
-  "note": "Bodies the write route must refuse with 400. Both limits are integers of at least 1, and both are required.",
+  "note": "Bodies the write route must refuse with 400. Both limits are integers of at least 1, and both are required. platformCompute is optional, and a boolean when present.",
   "status": 400,
   "cases": [
     { "note": "seatLimit below one", "body": { "seatLimit": 0, "vmLimit": 20 } },
@@ -9,6 +9,7 @@
     { "note": "seatLimit not an integer", "body": { "seatLimit": 2.5, "vmLimit": 20 } },
     { "note": "seatLimit sent as a string", "body": { "seatLimit": "5", "vmLimit": 20 } },
     { "note": "negative vmLimit", "body": { "seatLimit": 5, "vmLimit": -1 } },
+    { "note": "platformCompute is not a boolean", "body": { "seatLimit": 5, "vmLimit": 20, "platformCompute": 1 } },
     { "note": "body is not an object", "body": [] }
   ]
 }
