@@ -190,6 +190,17 @@ workspace_credentials (
 -- one live row per (workspace_id, name): partial unique index WHERE revoked_at IS NULL
 ```
 
+**The two deliveries map to mechanisms that exist.** `env` rides the
+workspace-environment path (`creds/env.d/*.sh`, sourced by shells, merged
+into chat turns): the value becomes an ambient variable named `env_name` on
+every member machine — but sealed in D1 and removable, unlike today's
+plaintext `workspaces.environment`. `header` is for HTTP API keys and is
+on-demand: the agent asks via `blitz-cred get|env <name>` at use time, the
+row records the header shape (the comment line `blitz-cred env` already
+prints), and with proxy custody the machine holds only a revocable lease
+token while the control plane swaps the real key into the header. Rule of
+thumb: `env` for tools that read the environment, `header` for API calls.
+
 ### Wire types
 
 ```ts
