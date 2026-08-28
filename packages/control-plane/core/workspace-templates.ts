@@ -18,10 +18,13 @@ import {
 } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
+import { probedRepos } from "./connections/github-repo-check.js";
+import { githubCallerCredential } from "./connections/github-repositories.js";
 import {
   parseTemplateRepos,
   replaceTemplateRepos,
   templateRepoRows,
+  type TemplateRepo,
   type TemplateRepoRow,
 } from "./template-repos.js";
 import type { TemplateConnectionView, WorkspaceEnvironment, WorkspaceTemplateView } from "./wire.js";
@@ -139,6 +142,19 @@ function parseCreateTemplate(value: JsonValue): CreateTemplateInput {
     result.isOrgDefault = value.isOrgDefault;
   }
   return result;
+}
+
+/** A template save probes with whatever GitHub credential the admin holds, a
+ * personal token included: a template is a name list, not a workspace, and the
+ * App-only rule bites at create where the clone actually happens. */
+async function checkedTemplateRepos(
+  runtime: ReturnType<RuntimeFactory>,
+  userId: string,
+  repos: readonly string[],
+): Promise<TemplateRepo[]> {
+  if (repos.length === 0) return [];
+  const credential = await githubCallerCredential(runtime, userId);
+  return probedRepos(repos, credential?.token ?? null);
 }
 
 async function templateConnectionRows(
@@ -339,7 +355,7 @@ function templateView(
     connections: connections.map((connection) => ({
       provider: connection.provider,
     })),
-    repos: repos.map(({ repo }) => repo),
+    repos: repos.map((row) => ({ repo: row.repo, private: row.private === 1 })),
   };
 }
 
@@ -417,6 +433,7 @@ export function addWorkspaceTemplateRoutes(
     for (const folderId of input.folderIds) {
       await requireFolderAccess(runtime.db, folderId, actor, "read");
     }
+    const repos = await checkedTemplateRepos(runtime, principal.id, input.repos);
     const agentRuleId = await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
     const id = crypto.randomUUID();
     const now = Date.now();
@@ -444,7 +461,7 @@ export function addWorkspaceTemplateRoutes(
       });
     }
     await replaceTemplateConnections(runtime.db, id, input.connections, now);
-    await replaceTemplateRepos(runtime.db, id, input.repos);
+    await replaceTemplateRepos(runtime.db, id, repos);
     await applyOrgDefault(runtime.db, principal.orgId, id, input.isOrgDefault);
     const creator = await first<{ name: string; avatar_url: string | null }>(runtime.db, {
       q: "SELECT name, avatar_url FROM users WHERE id = ?1 LIMIT 1",
@@ -517,6 +534,7 @@ export function addWorkspaceTemplateRoutes(
     const agentRuleId = input.agentRuleId === undefined
       ? undefined
       : await agentRuleIdForOrg(runtime.db, input.agentRuleId, principal.orgId);
+    const repos = await checkedTemplateRepos(runtime, principal.id, input.repos);
     const now = Date.now();
     await rows(runtime.db, {
       q: `UPDATE workspace_templates
@@ -548,7 +566,7 @@ export function addWorkspaceTemplateRoutes(
       });
     }
     await replaceTemplateConnections(runtime.db, template.id, input.connections, now);
-    await replaceTemplateRepos(runtime.db, template.id, input.repos);
+    await replaceTemplateRepos(runtime.db, template.id, repos);
     await applyOrgDefault(runtime.db, principal.orgId, template.id, input.isOrgDefault);
     const updated = await first<TemplateListRow>(runtime.db, {
       q: `SELECT t.*, creator_user.name AS creator_name,

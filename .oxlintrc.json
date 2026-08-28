@@ -69,7 +69,6 @@
             "allowFiles": [
               "packages/control-plane/core/compute/json-fetch.ts",
               "packages/control-plane/core/connections/proxy.ts",
-              "packages/control-plane/core/connections/minters/app-jwt/github-app.ts",
               "packages/control-plane/core/compute/hetzner.ts",
               "packages/control-plane/core/workspace-tunnels.ts"
             ]

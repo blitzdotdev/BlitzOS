@@ -87,11 +87,17 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     denyCredentialRequest: vi.fn(async () => undefined),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    listGithubInstallations: vi.fn(async () => ({ installations: [] })),
+    listGithubRepositories: vi.fn(async () => ({
+      source: 'installations' as const,
+      repositories: [],
+      truncated: false,
+    })),
     putConnectionGrant: vi.fn(async () => undefined),
     deleteConnectionGrant: vi.fn(async () => undefined),
     listProviderHealth: vi.fn(async () => ({ providers: [] })),
     checkGithubRepositories: vi.fn(async (repos: string[]) => ({
-      results: repos.map((repo) => ({ repo, reachable: true })),
+      results: repos.map((repo) => ({ repo, verdict: 'public' as const })),
     })),
     connectStartUrl: (provider: string) => `/connect/${provider}/start`,
     ...overrides,

@@ -304,8 +304,14 @@ function client(): ControlPlaneClient {
     denyCredentialRequest: vi.fn(async () => undefined),
     listConnectionCatalog: vi.fn(async () => ({ providers: [] })),
     listConnectionGrants: vi.fn(async () => ({ grants: [] })),
+    listGithubInstallations: vi.fn(async () => ({ installations: [] })),
+    listGithubRepositories: vi.fn(async () => ({
+      source: "installations" as const,
+      repositories: [],
+      truncated: false,
+    })),
     checkGithubRepositories: vi.fn(async (repos: string[]) => ({
-      results: repos.map((repo) => ({ repo, reachable: true })),
+      results: repos.map((repo) => ({ repo, verdict: "public" as const })),
     })),
     putConnectionGrant: vi.fn(async () => undefined),
     deleteConnectionGrant: vi.fn(async () => undefined),
@@ -352,6 +358,7 @@ beforeEach(() => {
   webAppHarness.unmounts.mockClear();
   Object.defineProperty(window, "location", realLocation);
   window.history.replaceState({}, "", "/");
+  window.sessionStorage.clear();
   deviceStorageValues = new Map<string, string>();
   serverWorkspaceStates = new Map<string, WorkspaceWebAppStateV1>();
   Object.defineProperty(globalThis, "localStorage", {
@@ -522,6 +529,30 @@ describe("webapp shell smoke", () => {
     expect(view.container.querySelector('form[aria-label="Create workspace template"]'))
       .not.toBeNull();
 
+    await view.unmount();
+  });
+
+  it("reopens the create dialog on the GitHub workspace return route", async () => {
+    window.history.replaceState({}, "", "/workspaces/new?connect=ok&provider=github");
+    window.sessionStorage.setItem(
+      'blitz:github-connect-draft:workspace-new',
+      JSON.stringify({
+        templateId: 'template-private',
+        environment: { env: {}, startupScript: null },
+        agentRuleId: null,
+      }),
+    );
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.querySelector('form[aria-label="Create workspace"]')).not.toBeNull();
+    expect(window.sessionStorage.getItem('blitz:github-connect-draft:workspace-new')).toBeNull();
     await view.unmount();
   });
 

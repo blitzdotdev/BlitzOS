@@ -2,6 +2,7 @@ import type { CredentialEventView, CredentialRequestView } from '@blitzos/schema
 import { useCallback, useEffect, useState } from 'react';
 import type { ControlPlaneClient } from './api';
 import { caughtErrorMessage } from './error-message';
+import { ProviderGlyph } from './connections/ProviderGlyph';
 import { WorkspaceProviderRows } from './connections/WorkspaceProviderRows';
 import { asJsonObject, isString } from './type-guards';
 
@@ -16,6 +17,19 @@ export function portAge(firstSeenAt: number, now = Date.now()): string {
  * `blitz connections open`. A fresh object arrives per focus event, so the
  * panel re-selects even when the same provider is asked for twice. */
 export type ConnectionsPanelFocus = { provider: string; at: number };
+
+/** Every card in this panel wears the same stamp: `Aug 27, 14:02`. A wanted
+ * card and a log card used to print a full `toLocaleString`, which wrapped in a
+ * 320px drawer and read as a different kind of card than the provider tile
+ * beside it. */
+function cardTime(at: number): string {
+  return new Date(at).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 /** The connect inbox. A pending row is not a decision waiting on an approver —
  * it is an agent that wanted `@name` and found no grant behind it. An empty
@@ -54,37 +68,41 @@ export function WorkspaceRequestsPanel({
     <section className="workspace-drawer-panel workspace-requests" aria-label="Workspace connect inbox">
       {(error ?? loadError) && <p className="webapp-form-message" role="alert">{error ?? loadError}</p>}
       {requests.length > 0 && (
-        <div className="workspace-credential-rows">
+        <div className="wsc-list">
           {requests.map((request) => (
-            <article className="workspace-credential-row" key={request.id}>
-              <div className="workspace-credential-row__title">
-                <strong>@{request.connection_name}</strong>
-                <span className="workspace-state-badge workspace-state-badge--active">wanted</span>
+            <article className="wsc-tile wsc-tile--static wsc-tile--wanted" key={request.id}>
+              <div className="wsc-tile__head">
+                <ProviderGlyph className="wsc-tile__glyph" provider={request.connection_name} />
+                <span className="wsc-tile__name">
+                  <strong>@{request.connection_name}</strong>
+                  <span>{request.requested_scopes.length === 0
+                    ? 'An agent asked for this connection and found nothing behind it.'
+                    : `An agent asked for ${request.requested_scopes.join(', ')}.`}</span>
+                </span>
+                <time
+                  className="wsc-tile__when"
+                  dateTime={new Date(request.created_at).toISOString()}
+                >{cardTime(request.created_at)}</time>
               </div>
-              <p>{request.requested_scopes.length === 0
-                ? 'An agent asked for this connection and found nothing behind it.'
-                : `An agent asked for ${request.requested_scopes.join(', ')}.`}</p>
-              <div className="workspace-credential-row__meta">
-                <time dateTime={new Date(request.created_at).toISOString()}>
-                  {new Date(request.created_at).toLocaleString()}
-                </time>
+              <div className="wsc-tile__foot">
+                <span className="wsc-tile__state">Wanted</span>
+                {readOnly !== true && (
+                  <div className="wsc-tile__actions">
+                    <button
+                      className="webapp-action"
+                      type="button"
+                      disabled={resolving !== null}
+                      onClick={() => { void resolve(request, 'deny'); }}
+                    >Dismiss</button>
+                    <button
+                      className="webapp-action webapp-action--primary"
+                      type="button"
+                      disabled={resolving !== null}
+                      onClick={() => onConnect?.(request.connection_name)}
+                    >Connect</button>
+                  </div>
+                )}
               </div>
-              {readOnly !== true && (
-                <div className="workspace-credential-row__actions">
-                  <button
-                    className="webapp-action"
-                    type="button"
-                    disabled={resolving !== null}
-                    onClick={() => { void resolve(request, 'deny'); }}
-                  >Dismiss</button>
-                  <button
-                    className="webapp-action webapp-action--primary"
-                    type="button"
-                    disabled={resolving !== null}
-                    onClick={() => onConnect?.(request.connection_name)}
-                  >Connect</button>
-                </div>
-              )}
             </article>
           ))}
         </div>
@@ -133,13 +151,18 @@ export function WorkspaceEventsPanel({ events, error }: WorkspaceEventFeed) {
     <section className="workspace-drawer-panel" aria-label="Workspace credential events">
       {error !== null && <p className="webapp-form-message" role="alert">{error}</p>}
       {events.length > 0 && (
-        <div className="workspace-credential-rows">
+        <div className="wsc-list">
           {events.map((event) => (
-            <article className="workspace-credential-row" key={event.id}>
-              <div className="workspace-credential-row__title"><strong>{event.event}</strong></div>
-              <div className="workspace-credential-row__meta">
-                <span>{eventActor(event) ?? 'system'}</span>
-                <time dateTime={new Date(event.createdAt).toISOString()}>{new Date(event.createdAt).toLocaleString()}</time>
+            <article className="wsc-tile wsc-tile--static wsc-tile--log" key={event.id}>
+              <div className="wsc-tile__head">
+                <span className="wsc-tile__name">
+                  <strong>{event.event}</strong>
+                  <span>{eventActor(event) ?? 'system'}</span>
+                </span>
+                <time
+                  className="wsc-tile__when"
+                  dateTime={new Date(event.createdAt).toISOString()}
+                >{cardTime(event.createdAt)}</time>
               </div>
             </article>
           ))}

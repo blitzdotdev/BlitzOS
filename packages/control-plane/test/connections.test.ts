@@ -57,8 +57,8 @@ async function connectLinear(
   });
 }
 
-/** A pasted GitHub token, which is the only kind of GitHub credential there
- * is now. */
+/** The pasted-token fallback for an organization that does not install the
+ * BlitzOS GitHub App. */
 async function connectGithubToken(
   app: Harness["app"],
   cookie: string,
@@ -707,6 +707,53 @@ describe("connections: connect flow and canary", () => {
     expect(location.search).not.toContain("client-secret-value");
   });
 
+  it("returns denied connect attempts only to closed named surfaces", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
+    testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
+
+    for (const invalid of [
+      "/templates/new",
+      "https://attacker.example",
+      "template-edit:",
+      `template-edit:${"x".repeat(65)}`,
+    ]) {
+      const response = await appRequest(
+        app,
+        `/connect/linear/start?returnTo=${encodeURIComponent(invalid)}`,
+        { headers: { Cookie: cookie } },
+      );
+      expect(response.status, invalid).toBe(400);
+    }
+
+    for (const [returnTo, path] of [
+      ["template-new", "/templates/new"],
+      ["template-edit:template-123", "/templates/template-123/edit"],
+      ["workspace-new", "/workspaces/new"],
+    ] as const) {
+      const started = await appRequest(
+        app,
+        `/connect/linear/start?returnTo=${encodeURIComponent(returnTo)}`,
+        { headers: { Cookie: cookie } },
+      );
+      expect(started.status).toBe(302);
+      const state = new URL(started.headers.get("location") ?? "")
+        .searchParams.get("state") ?? "";
+      const stateCookie = (started.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+      const callback = await appRequest(
+        app,
+        `/connect/linear/callback?error=access_denied&state=${encodeURIComponent(state)}`,
+        { headers: { Cookie: stateCookie } },
+      );
+      expect(callback.status).toBe(302);
+      const returned = new URL(callback.headers.get("location") ?? "");
+      expect(returned.pathname).toBe(path);
+      expect(returned.searchParams.get("connect")).toBe("denied");
+      expect(returned.searchParams.get("provider")).toBe("linear");
+    }
+  });
+
   it("refuses a callback whose state cookie is missing", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
@@ -1057,7 +1104,7 @@ describe("connections: connecting from the webApp", () => {
 
     const started = await appRequest(
       app,
-      `/connect/linear/start?workspaceId=${workspace.id}`,
+      `/connect/linear/start?workspaceId=${workspace.id}&returnTo=template-new`,
       { headers: { Cookie: cookie } },
     );
     expect(started.status).toBe(302);
@@ -1134,7 +1181,15 @@ describe("connect oauth state", () => {
     state: string;
     codeVerifier: string;
   }> {
-    const created = await createConnectOAuthState(SECRET, provider, "user-1", "membership-1", null, CREATED_AT);
+    const created = await createConnectOAuthState(
+      SECRET,
+      provider,
+      "user-1",
+      "membership-1",
+      null,
+      null,
+      CREATED_AT,
+    );
     const pair = (created.cookie.split(";")[0] ?? "");
     expect(pair.startsWith(`${CONNECT_OAUTH_COOKIE}=`)).toBe(true);
     expect(created.cookie).toContain("Path=/connect");
@@ -1178,7 +1233,15 @@ describe("connect oauth state", () => {
   });
 
   it("keeps the login cookie and the connect cookie apart", async () => {
-    const connect = await createConnectOAuthState(SECRET, "linear", "user-1", null, null, CREATED_AT);
+    const connect = await createConnectOAuthState(
+      SECRET,
+      "linear",
+      "user-1",
+      null,
+      null,
+      null,
+      CREATED_AT,
+    );
     expect(connect.cookie).toContain(`${CONNECT_OAUTH_COOKIE}=`);
     expect(connect.cookie).not.toContain("blitz_google_oauth=");
     expect(connect.cookie).not.toContain("Path=/auth/google");
@@ -1187,93 +1250,6 @@ describe("connect oauth state", () => {
 
 const ROOT = "test-only-static-root-value";
 const GITHUB_TOKEN = "test-only-github-personal-token";
-
-function encodePem(label: string, value: Uint8Array): string {
-  let binary = "";
-  for (const byte of value) binary += String.fromCharCode(byte);
-  const encoded = btoa(binary).match(/.{1,64}/gu)?.join("\n") ?? "";
-  return `-----BEGIN ${label}-----\n${encoded}\n-----END ${label}-----`;
-}
-
-function derElement(
-  value: Uint8Array,
-  offset: number,
-): { tag: number; contentStart: number; contentEnd: number; next: number } {
-  const tag = value[offset];
-  const lengthByte = value[offset + 1];
-  if (tag === undefined || lengthByte === undefined) throw new Error("invalid DER");
-  let length = lengthByte;
-  let contentStart = offset + 2;
-  if ((lengthByte & 0x80) !== 0) {
-    const lengthBytes = lengthByte & 0x7f;
-    if (lengthBytes === 0) throw new Error("invalid DER");
-    length = 0;
-    for (let index = 0; index < lengthBytes; index += 1) {
-      const byte = value[contentStart + index];
-      if (byte === undefined) throw new Error("invalid DER");
-      length = length * 256 + byte;
-    }
-    contentStart += lengthBytes;
-  }
-  const contentEnd = contentStart + length;
-  if (contentEnd > value.byteLength) throw new Error("invalid DER");
-  return { tag, contentStart, contentEnd, next: contentEnd };
-}
-
-function pkcs1FromPkcs8(value: Uint8Array): Uint8Array {
-  const outer = derElement(value, 0);
-  const version = derElement(value, outer.contentStart);
-  const algorithm = derElement(value, version.next);
-  const privateKey = derElement(value, algorithm.next);
-  if (
-    outer.tag !== 0x30 ||
-    version.tag !== 0x02 ||
-    algorithm.tag !== 0x30 ||
-    privateKey.tag !== 0x04
-  ) {
-    throw new Error("unexpected PKCS#8 structure");
-  }
-  return value.slice(privateKey.contentStart, privateKey.contentEnd);
-}
-
-function decodeBase64Url(value: string): Uint8Array {
-  const encoded = value.replace(/-/gu, "+").replace(/_/gu, "/");
-  const padded = encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
-}
-
-/** The DER inside a PEM, whatever its armor label. */
-function pemDer(value: string): Uint8Array {
-  const body = value
-    .replace(/-----(?:BEGIN|END) [A-Z ]*PRIVATE KEY-----/gu, "")
-    .replace(/\s/gu, "");
-  return Uint8Array.from(atob(body), (character) => character.charCodeAt(0));
-}
-
-async function githubKeyPair(): Promise<{
-  privatePem: string;
-  pkcs1Pem: string;
-  publicKey: CryptoKey;
-}> {
-  const pair = (await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2_048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const privateKey = new Uint8Array(
-    await crypto.subtle.exportKey("pkcs8", pair.privateKey),
-  );
-  return {
-    privatePem: encodePem("PRIVATE KEY", privateKey),
-    pkcs1Pem: encodePem("RSA PRIVATE KEY", pkcs1FromPkcs8(privateKey)),
-    publicKey: pair.publicKey,
-  };
-}
 
 async function createReadyWorkspace(
   app: ReturnType<typeof harness>["app"],

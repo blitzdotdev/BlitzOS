@@ -1,27 +1,36 @@
-import type { StaticProviderManifest } from "./types.js";
+import type { OAuthProviderManifest } from "./types.js";
 
+const HOUR_MS = 60 * 60 * 1_000;
 
-/** A personal access token, and nothing else. Every action attributes to the
- * person whose token it is, which is the whole point — a shared org credential
- * attributes to the app instead.
+/** Installing the App once on an organization gives every authorized member
+ * reach to their own intersection of its repositories. That replaces one
+ * fine-grained-token approval per member with one organization-owner action.
  *
- * The GitHub App paths that used to live here are gone: user OAuth, and an org
- * credential minting installation tokens. Both worked, and both cost an
- * install dance and a second class of credential to reach the attribution one
- * pasted token already gives. Custody stays `cp` because git talks to
- * github.com directly and cannot ride the proxy. */
+ * Authorization still yields the member's user-to-server token. Blitz never
+ * mints an installation token, so commits keep the member's identity rather
+ * than the App's. Custody stays `cp` because git talks to github.com directly
+ * and cannot ride the proxy. */
 export const githubManifest = {
   id: "github",
   title: "GitHub",
-  summary: "Repos, pull requests, and issues as you, through a personal access token.",
+  summary: "Repos, pull requests, and issues as you, through the BlitzOS App or a personal token.",
   custody: "cp",
-  // GitHub refresh tokens are single-use: a refresh re-issues both tokens and
-  // kills the old pair. Nothing here serializes refreshes — one shared refresh
-  // path runs them, and the compare-and-set in `rotateGrantTokens` guards the
-  // database write alone. A loser re-reads the row and uses the winner's token.
+  // GitHub refresh tokens rotate on use. The shared refresher's compare-and-set
+  // protects the database write, but it does not serialize provider exchanges;
+  // concurrent refreshes can still race before either request reaches that
+  // write. This manifest cannot repair that generic minter constraint.
   tokenHeader: { name: "Authorization", prefix: "Bearer " },
   baseUrl: "https://api.github.com",
-  auth: null,
+  auth: {
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    clientIdVar: "GITHUB_APP_CLIENT_ID",
+    clientSecretVar: "GITHUB_APP_CLIENT_SECRET",
+    pkce: true,
+    authorizeParams: [],
+    scopeDelimiter: " ",
+    accessTtlMs: 8 * HOUR_MS,
+  },
   personalToken: {
     label: "Fine-grained personal access token",
     help: "github.com → Settings → Developer settings → Personal access tokens → Fine-grained. Scope it to the repositories the agent needs. Some organizations require an owner to approve each token.",
@@ -29,14 +38,11 @@ export const githubManifest = {
     baseUrlLabel: null,
   },
   adminForm: null,
-  // Empty on purpose. A fine-grained token carries its reach in the token
-  // itself, chosen on github.com; nothing here can narrow or widen it. This
-  // list once held display entries for a scope-checkbox UI that no longer
-  // exists, so a pasted token recorded a vocabulary it never carried.
+  // Empty on purpose. GitHub App user tokens and fine-grained personal tokens
+  // carry permissions chosen on github.com; neither has an OAuth scope
+  // vocabulary this manifest can narrow or widen.
   scopes: [],
-  // Kept because a live consumer reads it: the lease records these as what
-  // this connection asked for.
-  defaultScopes: ["metadata:read", "contents:read", "contents:write", "pull_requests:write"],
+  defaultScopes: [],
   delivery: {
     env: [
       { name: "GH_TOKEN", fill: "token" },
@@ -57,4 +63,4 @@ export const githubManifest = {
     }),
     expect: { status: 200, jsonFields: ["login"] },
   },
-} satisfies StaticProviderManifest;
+} satisfies OAuthProviderManifest;

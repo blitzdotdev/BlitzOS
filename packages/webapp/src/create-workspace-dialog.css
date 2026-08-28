@@ -703,6 +703,16 @@
   align-items: center;
 }
 
+.template-github-gate {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.template-github-gate p {
+  margin: 0;
+}
+
 .tplf-connections {
   display: grid;
   gap: 6px;
@@ -772,13 +782,32 @@
   gap: 6px;
 }
 
-.tplf-repos-picker input[aria-label='Filter repositories'] {
+.tplf-repos-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  gap: 6px;
+}
+
+.tplf-repos-controls input,
+.tplf-repos-controls select {
   padding: 5px 8px;
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
   background: var(--paper);
   color: var(--ink);
   font: 12px/1.5 var(--font-ui);
+}
+
+.tplf-repos-setup {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.tplf-repos-setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .tplf-repos-list {

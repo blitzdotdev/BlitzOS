@@ -5,8 +5,6 @@ import type {
   ListMachineTypesResponse,
   MachineType,
   MachineTypeProviderStatus,
-  TemplateConnectionView,
-  WorkspaceEnvironment,
   WorkspaceTemplateView,
 } from '@blitzos/schema';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -30,10 +28,12 @@ import {
   formatWhen,
 } from './drive-model';
 import { collectDropped, DropLimitError } from './drop-upload';
+import { TemplateRepoPicker } from './TemplateRepoPicker';
 import { TemplateRepoUrls } from './TemplateRepoUrls';
 import { TemplateMachineTypePicker } from './TemplateMachineTypePicker';
 import { useTemplateUploads } from './use-template-uploads';
 import { orgCredentialFor } from '../connections/ProviderAdminForm';
+import { useTemplateConnectDraft } from './use-template-connect-draft';
 
 interface BrowseState {
   folderId: string;
@@ -69,37 +69,46 @@ export function CreateTemplateScreen({
   onCreated: (template: WorkspaceTemplateView) => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const {
+    connectReturnTo,
+    name,
+    setName,
+    machineTypeId,
+    setMachineTypeId,
+    attachedIds,
+    setAttachedIds,
+    shareWithOrg,
+    setShareWithOrg,
+    templateConnections,
+    setTemplateConnections,
+    environment,
+    setEnvironment,
+    loadedEnvironment,
+    agentRuleId,
+    setAgentRuleId,
+    isOrgDefault,
+    setIsOrgDefault,
+    repos,
+    setRepos,
+    persistConnectDraft,
+  } = useTemplateConnectDraft(client, editTemplateId, setError);
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
-  const [machineTypeId, setMachineTypeId] = useState('');
   const [folders, setFolders] = useState<FolderView[]>([]);
-  const [attachedIds, setAttachedIds] = useState<Set<string>>(new Set());
   const [browse, setBrowse] = useState<BrowseState | null>(null);
   /** Open state of the single Upload button's files-or-folder menu. */
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const [objectsByFolder, setObjectsByFolder] = useState<Map<string, FolderObjectView[]>>(new Map());
-  const [shareWithOrg, setShareWithOrg] = useState(true);
   const [catalog, setCatalog] = useState<CatalogEntryView[]>([]);
   // A template references providers by name. It never carries a grant, so an
   // instantiating member always supplies their own identity — except the
   // admin-configured providers below, whose one org credential is stored
   // right here when the provider gets attached.
-  const [templateConnections, setTemplateConnections] = useState<Map<string, TemplateConnectionView>>(new Map());
   const [orgConnections, setOrgConnections] = useState<ConnectionView[]>([]);
   const [loading, setLoading] = useState(true);
   const [dropActive, setDropActive] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [environment, setEnvironment] = useState(EMPTY_WORKSPACE_ENVIRONMENT);
-  // Editing loads the stored environment first, then re-keys the editor onto
-  // it. Null means an edit whose template has not arrived yet.
-  const [loadedEnvironment, setLoadedEnvironment] = useState<WorkspaceEnvironment | null>(
-    editTemplateId === undefined ? EMPTY_WORKSPACE_ENVIRONMENT : null,
-  );
-  const [agentRuleId, setAgentRuleId] = useState<string | null>(null);
-  const [isOrgDefault, setIsOrgDefault] = useState(false);
-  const [repos, setRepos] = useState<string[]>([]);
   const dragDepth = useRef(0);
   const filePickerRef = useRef<HTMLInputElement | null>(null);
   const folderPickerRef = useRef<HTMLInputElement | null>(null);
@@ -212,35 +221,6 @@ export function CreateTemplateScreen({
       return next;
     });
   };
-
-  useEffect(() => {
-    if (editTemplateId === undefined) return;
-    let mounted = true;
-    void client.listWorkspaceTemplates().then(({ templates }) => {
-      if (!mounted) return;
-      const existing = templates.find(({ id }) => id === editTemplateId);
-      if (existing === undefined) {
-        setError('That template no longer exists.');
-        return;
-      }
-      setName(existing.name);
-      setMachineTypeId(existing.machineTypeId);
-      setIsOrgDefault(existing.isOrgDefault);
-      setRepos(existing.repos);
-      // Keep every attached folder id, including ones this editor cannot
-      // read — the server preserves them and only checks new additions.
-      setAttachedIds(new Set(existing.folders.map(({ id }) => id)));
-      setTemplateConnections(new Map(
-        existing.connections.map((connection) => [connection.provider, connection]),
-      ));
-      const stored = existing.environment ?? EMPTY_WORKSPACE_ENVIRONMENT;
-      setLoadedEnvironment(stored);
-      // Seed the submitted value too: saving without opening Advanced has to
-      // resubmit what is stored, not wipe it.
-      setEnvironment(stored);
-    }).catch((caught: Error) => setError(caught.message));
-    return () => { mounted = false; };
-  }, [client, editTemplateId]);
 
   const create = async () => {
     const trimmed = name.trim();
@@ -622,7 +602,14 @@ export function CreateTemplateScreen({
             />
             <div className="tplf-repos">
               <h2>Repositories</h2>
-              <p>Public repos cloned into /workspace at start.</p>
+              <p>GitHub repositories cloned into /workspace when a workspace starts.</p>
+              <TemplateRepoPicker
+                client={client}
+                connectHref={client.connectStartUrl('github', undefined, connectReturnTo)}
+                onConnect={persistConnectDraft}
+                value={repos}
+                onChange={setRepos}
+              />
               <TemplateRepoUrls
                 client={client}
                 value={repos}

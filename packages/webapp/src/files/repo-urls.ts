@@ -15,6 +15,22 @@ const NOT_GITHUB = 'only github.com repositories can be cloned';
 const EXTRA_PATH = 'drop the path after the repository name';
 const NOT_REPOSITORY = 'not a repository URL';
 
+/** The form has two repo inputs, but the saved template has one list. Keep
+ * its count and clone-folder rules here so neither input accepts a draft the
+ * server will reject. */
+export const MAX_TEMPLATE_REPOS = 16;
+
+export function repoBasenameCollision(
+  repos: readonly string[],
+  repo: string,
+): string | null {
+  const basename = repo.slice(repo.indexOf('/') + 1);
+  return repos.find((candidate) => (
+    candidate !== repo
+    && candidate.slice(candidate.indexOf('/') + 1) === basename
+  )) ?? null;
+}
+
 function stripCloneSuffix(value: string): string {
   const withoutSlash = value.endsWith('/') ? value.slice(0, -1) : value;
   return withoutSlash.endsWith('.git') ? withoutSlash.slice(0, -4) : withoutSlash;

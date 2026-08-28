@@ -2,6 +2,8 @@ import { boxHostname, type RecipeBootstrap } from "./bootstrap.js";
 import { buildUserData, type BootShaping } from "./cloud-init.js";
 import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
+import { checkGithubRepositories, probedRepos } from "./connections/github-repo-check.js";
+import { githubCallerCredential } from "./connections/github-repositories.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
 import { connectionByName } from "./connections/registry.js";
@@ -39,7 +41,12 @@ import { resolveWorkspacePlacement } from "./compute/workspace-placement.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { rewriteWebDavDestination } from "./webapp-proxy.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
-import { templateRepos } from "./template-repos.js";
+import {
+  insertWorkspaceRepos,
+  parseTemplateRepos,
+  templateRepos,
+  type TemplateRepo,
+} from "./template-repos.js";
 import {
   attachTemplateFolders,
   templateConnections,
@@ -166,6 +173,21 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
       throw new HttpError(400, "agentRuleId must be a string or null");
     }
     result.agentRuleId = value.agentRuleId;
+  }
+  if (value.repos !== undefined) {
+    // Same validator the template save runs: "owner/name", a cap of sixteen,
+    // and no two repos that would clone into one /workspace directory.
+    const repos = parseTemplateRepos(value.repos);
+    if (repos.length > 0) {
+      if (result.templateId !== undefined) {
+        // Refused rather than resolved. A template's repos describe a starting
+        // point a team shares and a request's describe a one-off, so picking a
+        // winner here would turn one UI bug into a clone list nobody can
+        // explain from the request that produced it.
+        throw new HttpError(400, "repos cannot be combined with templateId");
+      }
+      result.repos = repos;
+    }
   }
   return result;
 }
@@ -469,14 +491,68 @@ export async function performWorkspaceCreate(
   const templateConnectionList = template === null
     ? []
     : await templateConnections(runtime.db, template.id);
-  // Creation never blocks on connections, and never mints one either. The
-  // names land in the allow-list below, and an agent pulls a credential when
-  // it needs one. Minting here used to leave a live proxy lease token nobody
-  // held, which is a capability with no holder. A stipulated provider with no
-  // grant behind it still creates: the first pull files a connect request.
+  // A workspace clones the template's repos or the ones the request named,
+  // never a merge of the two — the request parser already refused a body that
+  // carried both, so this is a choice with nothing left to arbitrate. Template
+  // rows arrive with the privacy a save probed; a request list arrives as bare
+  // names, so its privacy is derived here rather than believed.
+  const requestedRepos = input.repos ?? [];
+  const requestCredential = requestedRepos.length === 0
+    ? null
+    : await githubCallerCredential(runtime, principal.id);
+  const repos: TemplateRepo[] = template !== null
+    ? await templateRepos(runtime.db, template.id)
+    : await probedRepos(requestedRepos, requestCredential?.token ?? null);
+  const privateRepos = repos.filter((repo) => repo.private);
+  if (privateRepos.length > 0) {
+    // Public repos and ordinary provider ceilings never block create. A private
+    // clone is different: bootstrap waits 600 seconds before it records the
+    // failure in repo-clone.log, so refuse before any VM or volume work starts.
+    const credential = requestCredential
+      ?? await githubCallerCredential(runtime, principal.id);
+    if (credential === null || credential.kind !== "oauth") {
+      throw new HttpError(
+        409,
+        "connect GitHub through the App before creating a workspace with private repositories",
+      );
+    }
+    if (template !== null) {
+      // Only the template path still owes a probe. Its rows record a verdict
+      // some other member's credential produced, possibly months ago, so this
+      // member's own reach is still unproven. A request list was probed a few
+      // lines up with this same credential, and sixteen repos cost two
+      // subrequests each — asking GitHub twice would spend a Worker's whole
+      // subrequest allowance to learn nothing new.
+      const checks = await checkGithubRepositories(
+        privateRepos.map(({ repo }) => repo),
+        credential.token,
+      );
+      const inaccessible = checks.find((check) => check.verdict === "not-found");
+      if (inaccessible !== undefined) {
+        throw new HttpError(
+          409,
+          `the GitHub connection cannot reach private repository ${inaccessible.repo}`,
+        );
+      }
+      const failed = checks.find((check) => check.verdict === "unreachable");
+      if (failed !== undefined) {
+        throw new HttpError(502, `GitHub could not check private repository ${failed.repo}`);
+      }
+    }
+  }
+  // Creation never mints a connection. The names land in the allow-list below,
+  // and an agent pulls a credential when it needs one. Minting here used to
+  // leave a live proxy lease token nobody held, which is a capability with no
+  // holder. A stipulated provider with no grant behind it still creates unless
+  // a private template repo requires GitHub during bootstrap.
   const requested = [...new Set([
     ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
+    // Cloning reads through the baked git credential helper, which mints from
+    // the workspace ceiling. Naming repos therefore stipulates github, exactly
+    // as naming them on a template does — idempotent, since a template that
+    // carries repos already lists it.
+    ...(repos.length > 0 ? ["github"] : []),
   ])];
   const vmResolution = await resolveWorkspacePlacement(
     runtime.db,
@@ -505,8 +581,7 @@ export async function performWorkspaceCreate(
   if (recipe !== undefined) shaping.recipe = recipe.bootstrap;
   // Template repos ride the bootstrap as a detached clone loop; an empty
   // list stays absent so the emitted bytes match every pre-repo pin.
-  const repos = template === null ? [] : await templateRepos(runtime.db, template.id);
-  if (repos.length > 0) shaping.repos = repos;
+  if (repos.length > 0) shaping.repos = repos.map(({ repo }) => repo);
   const id = crypto.randomUUID();
   const capability = randomToken();
   const now = Date.now();
@@ -742,6 +817,10 @@ export async function performWorkspaceCreate(
     );
   }
 
+  // Recorded only once the VM exists. The 503 and 413 branches above delete
+  // the workspace row outright, and a child row would hold that delete open;
+  // an errored create never boots, so it has nothing to clone anyway.
+  await insertWorkspaceRepos(runtime.db, id, repos);
   const row = await workspaceById(runtime.db, id);
   if (row === null) throw new Error("workspace disappeared during create");
   return row;

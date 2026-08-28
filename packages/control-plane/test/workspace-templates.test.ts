@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceTemplateView, WorkspaceView } from "@blitzos/schema";
 import {
   appRequest,
@@ -7,6 +7,7 @@ import {
   operatorSession,
   sameOrgSession,
   resetDatabase,
+  testConnectSecrets,
   userSession,
 } from "./helpers.js";
 
@@ -16,6 +17,31 @@ function json(body: object) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
+}
+
+/** Walks the real authorize -> callback round trip. A pasted token cannot
+ * stand in for this: private repos in a workspace are App-only, and the two
+ * grants are distinguishable to every route that cares. The ambient fetch mock
+ * has to answer the token endpoint. */
+async function connectGithubApp(
+  app: ReturnType<typeof harness>["app"],
+  cookie: string,
+): Promise<void> {
+  testConnectSecrets.set("GITHUB_APP_CLIENT_ID", "github-client-id");
+  testConnectSecrets.set("GITHUB_APP_CLIENT_SECRET", "github-client-secret");
+  const started = await appRequest(app, "/connect/github/start", {
+    headers: { Cookie: cookie },
+  });
+  expect(started.status).toBe(302);
+  const authorize = new URL(started.headers.get("location") ?? "");
+  const state = authorize.searchParams.get("state") ?? "";
+  const stateCookie = (started.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  const callback = await appRequest(
+    app,
+    `/connect/github/callback?code=github-code&state=${encodeURIComponent(state)}`,
+    { headers: { Cookie: stateCookie } },
+  );
+  expect(callback.status).toBe(302);
 }
 
 async function createFolder(
@@ -33,6 +59,7 @@ async function createFolder(
 
 describe("workspace templates", () => {
   beforeEach(resetDatabase);
+  afterEach(() => vi.restoreAllMocks());
 
   it("updates a template, preserving folders the editor can no longer read", async () => {
     const { app } = harness();
@@ -356,7 +383,10 @@ describe("workspace templates", () => {
 
     for (const bad of ["no-slash", "owner/name/extra", "owner/", "/name", "owner/na me"]) {
       const refused = await post({
-        name: "bad repos", machineTypeId: "small", folderIds: [], repos: [bad],
+        name: "bad repos",
+        machineTypeId: "small",
+        folderIds: [],
+        repos: [bad],
       });
       expect(refused.status, bad).toBe(400);
     }
@@ -367,7 +397,10 @@ describe("workspace templates", () => {
       repos: Array.from({ length: 17 }, (_, i) => `owner/repo-${String(i)}`),
     })).status).toBe(400);
     const collision = await post({
-      name: "collision", machineTypeId: "small", folderIds: [], repos: ["acme/app", "blitz/app"],
+      name: "collision",
+      machineTypeId: "small",
+      folderIds: [],
+      repos: ["acme/app", "blitz/app"],
     });
     expect(collision.status).toBe(400);
     await expect(collision.json()).resolves.toMatchObject({
@@ -377,6 +410,7 @@ describe("workspace templates", () => {
       .first<number>("count")).toBe(0);
 
     // Duplicates collapse; the view answers sorted; github rides along.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
     const created = await post({
       name: "repo starter",
       machineTypeId: "small",
@@ -386,7 +420,10 @@ describe("workspace templates", () => {
     });
     expect(created.status).toBe(201);
     const template = (await created.json<{ template: WorkspaceTemplateView }>()).template;
-    expect(template.repos).toEqual(["acme/tools", "blitzdotdev/blitz-core"]);
+    expect(template.repos).toEqual([
+      { repo: "acme/tools", private: false },
+      { repo: "blitzdotdev/blitz-core", private: false },
+    ]);
     expect(template.connections).toContainEqual({ provider: "github" });
     expect(template.connections).toContainEqual({ provider: "linear" });
 
@@ -414,13 +451,7 @@ describe("workspace templates", () => {
   it("boots a create from a repos template with the detached clone loop", async () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
-    // A minimal github grant so the create-time ceiling mints a live lease;
-    // creation would succeed without it — the clone loop is what this pins.
-    await env.DB.prepare(
-      `INSERT INTO user_oauth_grants
-       (id, user_id, provider, manifest_id, kind, scopes, created_at, updated_at)
-       VALUES ('grant-github', 'operator', 'github', 'github', 'pat', '[]', 1, 1)`,
-    ).run();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
 
     const template = (await (await appRequest(app, "/workspace-templates", {
       ...json({
@@ -445,6 +476,15 @@ describe("workspace templates", () => {
     expect(userData).toContain(
       "[ -d /workspace/tools/.git ] || git clone https://github.com/acme/tools /workspace/tools || cloned=false",
     );
+    // The workspace owns the list whichever source chose it, so the template
+    // path lands in the same table the picker path writes.
+    await expect(env.DB.prepare(
+      "SELECT repo FROM workspace_repos WHERE workspace_id = ?1 ORDER BY repo",
+    ).bind(workspace.id).all<{ repo: string }>()
+      .then((result) => result.results.map(({ repo }) => repo))).resolves.toEqual([
+        "acme/tools",
+        "blitzdotdev/blitz-core",
+      ]);
 
     // An ordinary create on the same instance carries none of it.
     const plain = await appRequest(app, "/workspaces", {
@@ -454,6 +494,216 @@ describe("workspace templates", () => {
     expect(plain.status).toBe(201);
     const plainWorkspace = (await plain.json<{ workspace: WorkspaceView }>()).workspace;
     expect(providers.userData.get(plainWorkspace.id) ?? "").not.toContain("git clone");
+    expect(await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM workspace_repos WHERE workspace_id = ?1",
+    ).bind(plainWorkspace.id).first<number>("count")).toBe(0);
+  });
+
+  it("clones and stores a request repo list when no template is selected", async () => {
+    const { app, providers } = harness();
+    const owner = await operatorSession(app);
+    // Reachable anonymously, so every repo probes public and no grant is owed.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+
+    const created = await appRequest(app, "/workspaces", {
+      ...json({
+        machineTypeId: "small",
+        repos: ["blitzdotdev/blitz-core", "acme/tools"],
+      }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+
+    await expect(env.DB.prepare(
+      "SELECT repo, private FROM workspace_repos WHERE workspace_id = ?1 ORDER BY repo",
+    ).bind(workspace.id).all<{ repo: string; private: number }>()
+      .then((result) => result.results)).resolves.toEqual([
+        { repo: "acme/tools", private: 0 },
+        { repo: "blitzdotdev/blitz-core", private: 0 },
+      ]);
+    const userData = providers.userData.get(workspace.id) ?? "";
+    expect(userData).toContain(
+      "[ -d /workspace/blitz-core/.git ] || git clone https://github.com/blitzdotdev/blitz-core /workspace/blitz-core || cloned=false",
+    );
+    // Cloning mints through the box git credential helper, so naming repos
+    // stipulates github exactly as naming them on a template does.
+    await expect(env.DB.prepare("SELECT manifest FROM workspaces WHERE id = ?1")
+      .bind(workspace.id).first<string>("manifest")).resolves.toContain("github");
+  });
+
+  it("refuses a create that names both a template and its own repos", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+
+    const template = (await (await appRequest(app, "/workspace-templates", {
+      ...json({
+        name: "repo starter",
+        machineTypeId: "small",
+        folderIds: [],
+        repos: ["blitzdotdev/blitz-core"],
+      }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).json<{ template: WorkspaceTemplateView }>()).template;
+
+    // Refused, not resolved: a silent winner would turn one UI bug into a
+    // clone list nobody can explain from the request that produced it.
+    const both = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id, repos: ["acme/tools"] }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+    expect(both.status).toBe(400);
+    await expect(both.json()).resolves.toMatchObject({
+      error: "repos cannot be combined with templateId",
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspaces")
+      .first<number>("count")).toBe(0);
+  });
+
+  it("applies the shared repo validators to a request list", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    const fetch = vi.spyOn(globalThis, "fetch");
+
+    const cases: Array<[string[], string]> = [
+      [["https://github.com/acme/tools"], 'repos entries must be "owner/name"'],
+      [
+        Array.from({ length: 17 }, (_entry, index) => `acme/repo-${String(index)}`),
+        "repos must have at most 16 entries",
+      ],
+      // Both would clone into /workspace/app and fight over the directory.
+      [["acme/app", "other/app"], "clone into the same directory"],
+    ];
+    for (const [repos, message] of cases) {
+      const refused = await appRequest(app, "/workspaces", {
+        ...json({ machineTypeId: "small", repos }),
+        headers: { Cookie: owner, "Content-Type": "application/json" },
+      });
+      expect(refused.status, message).toBe(400);
+      await expect(refused.json(), message).resolves.toMatchObject({
+        error: expect.stringContaining(message),
+      });
+    }
+    // Every one of these is decided at the boundary, before any probe.
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a private request repo to a member who holds only a pasted token", async () => {
+    const { app } = harness();
+    const owner = await operatorSession(app);
+    expect((await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-workspace-repo-owner",
+      }),
+    })).status).toBe(204);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => (
+      new Response(null, {
+        status: new Headers(init?.headers).has("Authorization") ? 200 : 404,
+      })
+    ));
+
+    const refused = await appRequest(app, "/workspaces", {
+      ...json({ machineTypeId: "small", repos: ["acme/private-tools"] }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    });
+
+    expect(refused.status).toBe(409);
+    await expect(refused.json()).resolves.toMatchObject({
+      error: expect.stringContaining("connect GitHub through the App"),
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_repos")
+      .first<number>("count")).toBe(0);
+  });
+
+  it("refuses a private template repo until that member connects GitHub", async () => {
+    const { app, providers } = harness();
+    const owner = await operatorSession(app);
+    const member = await sameOrgSession("private-repo-member");
+    expect((await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-private-repo-owner",
+      }),
+    })).status).toBe(204);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (String(input).startsWith("https://github.com/login/oauth/access_token")) {
+        return Response.json({
+          access_token: "ghu_test-private-repo-member",
+          expires_in: 28_800,
+          refresh_token: "ghr_test-private-repo-member",
+          refresh_token_expires_in: 15_897_600,
+          scope: "",
+          token_type: "bearer",
+        });
+      }
+      // The git probe: reachable with a credential, hidden without one, which
+      // is what "private but reachable" looks like from the transport.
+      return new Response(null, {
+        status: new Headers(init?.headers).has("Authorization") ? 200 : 404,
+      });
+    });
+    const template = (await (await appRequest(app, "/workspace-templates", {
+      ...json({
+        name: "private starter",
+        machineTypeId: "small",
+        folderIds: [],
+        repos: ["acme/private-tools"],
+      }),
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+    })).json<{ template: WorkspaceTemplateView }>()).template;
+
+    expect(template.repos).toEqual([{ repo: "acme/private-tools", private: true }]);
+    await expect(env.DB.prepare(
+      "SELECT repo, private FROM workspace_template_repos WHERE template_id = ?1",
+    ).bind(template.id).first()).resolves.toEqual({ repo: "acme/private-tools", private: 1 });
+
+    const refused = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(refused.status).toBe(409);
+    await expect(refused.json()).resolves.toMatchObject({
+      error: expect.stringContaining("connect GitHub"),
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspaces")
+      .first<number>("count")).toBe(0);
+
+    const pasted = await appRequest(app, "/connections/grants/github", {
+      method: "PUT",
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        manifestId: "github",
+        token: "github_pat_test-private-repo-member",
+      }),
+    });
+    expect(pasted.status).toBe(204);
+
+    // A pasted token still buys nothing here. Its reach is whatever the member
+    // chose on github.com, which the product can neither see nor trust, so the
+    // clone stays refused until the App grant replaces it.
+    const stillRefused = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(stillRefused.status).toBe(409);
+
+    await connectGithubApp(app, member.cookie);
+
+    const created = await appRequest(app, "/workspaces", {
+      ...json({ templateId: template.id }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    });
+    expect(created.status).toBe(201);
+    const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    expect(providers.userData.get(workspace.id) ?? "").toContain(
+      "git clone https://github.com/acme/private-tools /workspace/private-tools",
+    );
   });
 
   it("resolves org-wide sharing for workspaces and folders and clears it on demand", async () => {

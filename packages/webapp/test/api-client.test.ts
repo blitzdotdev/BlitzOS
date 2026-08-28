@@ -78,6 +78,37 @@ describe("wire API client", () => {
     expect(fetcher.mock.calls[0]?.[1]?.method).toBe("DELETE");
   });
 
+  it("reads GitHub installations and repositories from their settled routes", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).endsWith('/installations')
+        ? Response.json({ installations: [] })
+        : Response.json({ source: 'installations', repositories: [], truncated: false })
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    const client = createControlPlaneClient("https://control.example");
+
+    await client.listGithubInstallations();
+    await client.listGithubRepositories();
+
+    expect(fetcher.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://control.example/connections/github/installations',
+      'https://control.example/connections/github/repositories',
+    ]);
+  });
+
+  it("builds base-aware connect URLs for closed return surfaces", () => {
+    const client = createControlPlaneClient("https://control.example");
+
+    expect(client.connectStartUrl("github", undefined, "template-edit:template/one"))
+      .toBe(
+        "https://control.example/connect/github/start?returnTo=template-edit%3Atemplate%2Fone",
+      );
+    expect(client.connectStartUrl("github", "workspace/one"))
+      .toBe(
+        "https://control.example/connect/github/start?workspaceId=workspace%2Fone",
+      );
+  });
+
   it("chunks large folder uploads with the shared cutoff and completes ordered parts", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

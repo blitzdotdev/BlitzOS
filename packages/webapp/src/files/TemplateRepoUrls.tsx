@@ -1,6 +1,11 @@
 import type { CheckGithubRepositoriesResponse } from '@blitzos/schema';
 import { useId, useState } from 'react';
-import { parseRepoUrlLines, type RepoUrlLine } from './repo-urls';
+import {
+  MAX_TEMPLATE_REPOS,
+  parseRepoUrlLines,
+  repoBasenameCollision,
+  type RepoUrlLine,
+} from './repo-urls';
 
 export interface TemplateRepoCheckApi {
   checkGithubRepositories(repos: string[]): Promise<CheckGithubRepositoriesResponse>;
@@ -14,11 +19,6 @@ interface RepoProblem {
 function lineProblem(line: RepoUrlLine, problem: string): RepoProblem {
   return { raw: line.raw, problem };
 }
-
-/** The cap a template's repo list carries. It lived on the private-repo
- * picker until that surface was deleted; public URLs are the only way to add
- * a repo now, so the limit lives with them. */
-export const MAX_TEMPLATE_REPOS = 16;
 
 export function TemplateRepoUrls({
   client,
@@ -72,16 +72,15 @@ export function TemplateRepoUrls({
 
     // Match packages/control-plane/core/template-repos.ts so save never
     // rejects repositories the editor already accepted.
-    const reposByBasename = new Map(value.map((repo) => [repo.slice(repo.indexOf('/') + 1), repo]));
+    const accepted = [...value];
     const collisionProblems: RepoProblem[] = [];
     for (const [index, repo] of additions.entries()) {
-      const basename = repo.slice(repo.indexOf('/') + 1);
-      const other = reposByBasename.get(basename);
+      const other = repoBasenameCollision(accepted, repo);
       const line = lines[index];
-      if (other !== undefined && line !== undefined) {
+      if (other !== null && line !== undefined) {
         collisionProblems.push(lineProblem(line, `clones into the same folder as ${other}`));
       } else {
-        reposByBasename.set(basename, repo);
+        accepted.push(repo);
       }
     }
     if (collisionProblems.length > 0) {
@@ -101,11 +100,11 @@ export function TemplateRepoUrls({
     try {
       const { results } = await client.checkGithubRepositories(additions);
       const reachabilityProblems = results.flatMap((result): RepoProblem[] => {
-        if (result.reachable) return [];
+        if (result.verdict === 'public' || result.verdict === 'private-reachable') return [];
         return [{
           raw: result.repo,
-          problem: result.failure === 'not-public'
-            ? 'not found, or it is private'
+          problem: result.verdict === 'not-found'
+            ? 'not found, or your GitHub connection cannot reach it'
             : 'GitHub could not be reached',
         }];
       });
@@ -149,9 +148,12 @@ export function TemplateRepoUrls({
         </div>
       )}
       <label className="tplf-repo-urls-label" htmlFor={inputId}>
-        Public repositories
+        Repository URLs
       </label>
-      <p>One URL per line. Any public repo, no GitHub setup needed.</p>
+      <p>
+        One GitHub URL per line. Public repos need no setup; a personal token
+        can reach private repos without an App install.
+      </p>
       {problems.length > 0 && (
         <ul className="tplf-repo-urls-problems" role="alert">
           {problems.map((problem, index) => (
@@ -165,7 +167,7 @@ export function TemplateRepoUrls({
       )}
       <textarea
         id={inputId}
-        aria-label="Public repository URLs"
+        aria-label="Repository URLs"
         placeholder="https://github.com/owner/name"
         className={`tplf-repo-urls-input${problems.length > 0 ? ' tplf-invalid' : ''}`}
         value={text}
