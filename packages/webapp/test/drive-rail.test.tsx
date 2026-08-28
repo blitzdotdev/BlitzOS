@@ -1,5 +1,5 @@
 import { act } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { DriveRail } from "../src/files/DriveRail.js";
 import { render } from "./dom.js";
 
@@ -37,22 +37,29 @@ function rail(onSwitchOrg: (orgId: string) => void = () => undefined) {
 describe("rail organization menu", () => {
   it("marks only the current organization and closes from a click anywhere outside", async () => {
     const view = await render(rail());
-    const menu = () => view.container.querySelector<HTMLElement>("#webapp-org-menu");
+    const menu = () => view.container.querySelector<HTMLElement>(
+      '[role="menu"][aria-label="Organizations"]',
+    );
     expect(menu()?.hidden).toBe(true);
 
-    await act(async () => view.container.querySelector<HTMLButtonElement>(".webapp-org-button")?.click());
+    await act(async () => view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Organization: Acme"]',
+    )?.click());
     expect(menu()?.hidden).toBe(false);
-    const current = menu()?.querySelector('[role="menuitemradio"][aria-checked="true"]');
-    expect(current?.querySelector(".webapp-org-menu-check")).not.toBeNull();
-    const other = menu()?.querySelector<HTMLElement>(".webapp-org-menu-switch");
+    const checked = [...menu()!.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
+      .filter((item) => item.getAttribute("aria-checked") === "true")
+      .map(({ textContent }) => textContent);
+    expect(checked).toEqual(["Acme✓"]);
+    const other = menu()!.querySelector<HTMLElement>('[role="menuitemradio"][aria-checked="false"]');
     expect(other?.textContent).toBe("Side");
-    expect(other?.querySelector(".webapp-org-menu-check")).toBeNull();
 
-    const backdrop = view.container.querySelector<HTMLElement>(".webapp-org-backdrop");
+    const backdrop = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close organization menu"]',
+    );
     expect(backdrop).not.toBeNull();
     await act(async () => backdrop?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
     expect(menu()?.hidden).toBe(true);
-    expect(view.container.querySelector(".webapp-org-backdrop")).toBeNull();
+    expect(view.container.querySelector('button[aria-label="Close organization menu"]')).toBeNull();
     await view.unmount();
   });
 });

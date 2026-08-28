@@ -96,6 +96,33 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
   };
 });
 
+function railSessions(container: HTMLElement): HTMLButtonElement[] {
+  return [...container.querySelectorAll<HTMLButtonElement>(
+    '[aria-label^="Sessions in "] button',
+  )];
+}
+
+function railSessionLabels(container: HTMLElement): string[] {
+  return railSessions(container).map(({ textContent }) => textContent ?? "");
+}
+
+function railSession(container: HTMLElement, label: string): HTMLButtonElement | undefined {
+  return railSessions(container).find((row) => row.textContent === label);
+}
+
+function createOrgItem(container: HTMLElement): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>(
+    '[role="menu"][aria-label="Organizations"] [role="menuitem"]',
+  )].find((item) => item.textContent?.includes("Create organization"));
+}
+
+/** The mobile navigation toggle reports the drawer state, so no test needs to
+ * reach for the rail's open class. */
+function navigationExpanded(container: HTMLElement): string | null {
+  return container.querySelector('button[aria-label="Open workspace navigation"]')
+    ?.getAttribute("aria-expanded") ?? null;
+}
+
 function selectedSessionId(container: HTMLElement): string | undefined {
   return container.querySelector<HTMLElement>(
     '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"][aria-selected="true"]',
@@ -193,6 +220,8 @@ const running: WorkspaceView = {
 const runningTwo: WorkspaceView = {
   ...running,
   id: "workspace-two",
+  // A distinct name so the rail entry can be found by its accessible name.
+  name: "workspace-two-name",
   ssh: {
     ...running.ssh!,
     host: "box-two.example.test",
@@ -418,7 +447,7 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
+    expect(view.container.querySelector('button[aria-label="workspace-running-name"]')).not.toBeNull();
     expect(view.container.textContent).toContain("Example");
     await view.unmount();
   });
@@ -496,7 +525,7 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(createOrg).toHaveBeenCalledWith("Example");
-    expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
+    expect(view.container.querySelector('button[aria-label="workspace-running-name"]')).not.toBeNull();
     await view.unmount();
   });
 
@@ -567,8 +596,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
-    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create"));
+    await click(view.container.querySelector<HTMLButtonElement>('button[aria-label="Organization: Example"]'));
+    await click(createOrgItem(view.container));
     expect(document.querySelector('[aria-label="Create organization"]')).not.toBeNull();
     await view.unmount();
   });
@@ -588,8 +617,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
-    const create = view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create");
+    await click(view.container.querySelector<HTMLButtonElement>('button[aria-label="Organization: Example"]'));
+    const create = createOrgItem(view.container);
     expect(create?.textContent).toContain("Create organization");
     await click(create);
 
@@ -925,15 +954,13 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(2);
-    expect(view.container.querySelector('[data-rail-session-id="3"]')).toBeNull();
+    expect(railSessionLabels(view.container)).toEqual(["Claude", "Terminal"]);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="3"]')).not.toBeNull();
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-workspace-disclosure",
+      'button[aria-label="Collapse sessions for workspace-running-name"]',
     )?.click());
-    expect(view.container.querySelector(".webapp-workspace-session-count")?.textContent)
-      .toBe("2 sessions");
+    expect(view.container.textContent).toContain("2 sessions");
 
     await view.unmount();
   });
@@ -954,11 +981,11 @@ describe("webapp shell smoke", () => {
     await settle();
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-pane-strip[data-region="side"] .webapp-tab-cell[data-session-id="2"] [role="tab"]',
+      '[aria-label="Workspace side pane sessions"] [role="tab"]',
     )?.click());
-    const railAgent = view.container.querySelector<HTMLButtonElement>('[data-rail-session-id="1"]');
-    expect(railAgent?.classList.contains("webapp-session--active")).toBe(true);
-    expect(view.container.querySelector('[data-rail-session-id="2"]')).toBeNull();
+    const railAgent = railSession(view.container, "Claude");
+    expect(railAgent?.getAttribute("aria-current")).toBe("page");
+    expect(railSessionLabels(view.container)).toEqual(["Claude"]);
 
     await view.unmount();
   });
@@ -1029,7 +1056,7 @@ describe("webapp shell smoke", () => {
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
-    expect(view.container.querySelector('[data-rail-session-id="1"]')).toBeNull();
+    expect(railSessionLabels(view.container)).toEqual(["Claude"]);
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
@@ -1057,7 +1084,7 @@ describe("webapp shell smoke", () => {
     expect(view.container.textContent).toContain("Empty pane");
     expect(view.container.textContent).not.toContain("Resume your session");
     expect(view.container.textContent).not.toContain("Start a session");
-    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(0);
+    expect(railSessionLabels(view.container)).toEqual([]);
     await view.unmount();
   });
 
@@ -1091,12 +1118,12 @@ describe("webapp shell smoke", () => {
 
     // No rail, no split: one strip holding only the session tabs, with the
     // panel living in the drawer the mobile layout already had.
-    expect(view.container.querySelector(".webapp-rail-strip")).toBeNull();
-    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(view.container.querySelector('[aria-label="Workspace panels"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     expect([...view.container.querySelectorAll(
       '[aria-label="Workspace sessions"] .webapp-tab-cell',
     )]).toHaveLength(1);
-    const drawer = view.container.querySelector("#webapp-workspace-drawer")!;
+    const drawer = view.container.querySelector('[aria-label="Workspace drawer"]')!;
     const segments = [...drawer.querySelectorAll('[role="tab"]')]
       .map((tab) => tab.textContent);
     expect(segments).toEqual(["Files", "teenyapps", "Connections"]);
@@ -1129,13 +1156,13 @@ describe("webapp shell smoke", () => {
       'button[aria-label="Open workspace navigation"]',
     );
     await act(async () => openNavigation?.click());
-    expect(view.container.querySelector('.drive-rail--open')).not.toBeNull();
+    expect(navigationExpanded(view.container)).toBe("true");
 
     const detailsButton = view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Workspace details for workspace-running-name"]',
     );
     await act(async () => detailsButton?.click());
-    expect(view.container.querySelector('.drive-rail--open')).toBeNull();
+    expect(navigationExpanded(view.container)).toBe("false");
     expect(view.container.textContent).toContain("Workspace details");
 
     await view.unmount();
@@ -1189,21 +1216,22 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     const filesIcon = view.container.querySelector<HTMLButtonElement>(
-      '.webapp-rail-strip button[aria-label="Files"]',
+      '[aria-label="Workspace panels"] button[aria-label="Files"]',
     )!;
     await act(async () => filesIcon.click());
 
-    const strips = [...view.container.querySelectorAll<HTMLElement>(".webapp-pane-strip")];
-    expect(strips.map((strip) => strip.dataset.region)).toEqual(["main", "side"]);
-    expect(strips[1]?.querySelector('[role="tab"]')?.textContent).toContain("Files");
+    const sideStrip = view.container.querySelector<HTMLElement>(
+      '[aria-label="Workspace side pane sessions"]',
+    );
+    expect(sideStrip?.querySelector('[role="tab"]')?.textContent).toContain("Files");
     expect(filesIcon.getAttribute("aria-pressed")).toBe("true");
 
     // Clicking the same icon while its tab is in front closes the panel, and
     // the side pane goes with it.
     await act(async () => filesIcon.click());
-    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
       .toEqual([{ id: 1, type: "terminal" }]);
   });
@@ -1236,7 +1264,7 @@ describe("webapp shell smoke", () => {
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.dataset.region).toBe("main");
 
     const handle = view.container.querySelector<HTMLElement>(
-      '.webapp-pane-strip[data-region="main"] .webapp-tab-cell[data-session-id="1"] [role="tab"]',
+      '[aria-label="Workspace sessions"] .webapp-tab-cell[data-session-id="1"] [role="tab"]',
     )!;
     const panes = view.container.querySelector<HTMLElement>(".webapp-panes")!;
     await act(async () => {
@@ -1290,7 +1318,7 @@ describe("webapp shell smoke", () => {
     const first = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
     const firstMountId = first.dataset.mountId;
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-workspace[data-workspace-id="workspace-two"] .webapp-workspace-button',
+      'button[aria-label="workspace-two-name"]',
     )?.click());
     await settle();
 

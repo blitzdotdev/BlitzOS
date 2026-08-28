@@ -134,6 +134,9 @@
   position: fixed;
   z-index: 19;
   inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: default;
 }
 
 .webapp-org-menu {

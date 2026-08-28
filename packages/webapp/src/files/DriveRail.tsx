@@ -125,6 +125,7 @@ export function DriveRail({
           <button
             className="webapp-org-button"
             type="button"
+            aria-label={`Organization: ${orgLabel}`}
             aria-haspopup="menu"
             aria-expanded={orgMenuOpen}
             aria-controls="webapp-org-menu"
@@ -141,9 +142,21 @@ export function DriveRail({
             onClick={onCloseDrawer}
           >×</button>
           {orgMenuOpen && (
-            <div className="webapp-org-backdrop" onMouseDown={() => setOrgMenuOpen(false)} />
+            <button
+              className="webapp-org-backdrop"
+              type="button"
+              aria-label="Close organization menu"
+              tabIndex={-1}
+              onMouseDown={() => setOrgMenuOpen(false)}
+            />
           )}
-          <div className="webapp-org-menu" id="webapp-org-menu" role="menu" hidden={!orgMenuOpen}>
+          <div
+            className="webapp-org-menu"
+            id="webapp-org-menu"
+            role="menu"
+            aria-label="Organizations"
+            hidden={!orgMenuOpen}
+          >
             <div className="webapp-org-menu-label">organization</div>
             <div className="webapp-org-menu-current" role="menuitemradio" aria-checked="true">
               <span>{orgLabel}</span>
@@ -267,6 +280,7 @@ export function DriveRail({
                         canDiscloseSessions ? ' webapp-workspace-button--disclosable' : ''
                       }`}
                       type="button"
+                      aria-label={workspace.title}
                       aria-current={workspaceActive ? 'page' : undefined}
                       onClick={() => {
                         onSelectWorkspace(workspace.id);
