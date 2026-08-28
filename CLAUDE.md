@@ -96,6 +96,33 @@ Do not add aliases anywhere else.
   Do not edit the emitted script casually. Extraction to build-time text
   imports is an approved future direction (see issue #1 discussion).
 
+## Hetzner: one project behind both deployments
+
+Canary and client prod share ONE Hetzner project. Verified 2026-08-28: of the
+8 servers labelled `blitz-purpose=workspace` in it, canary's database claims 1.
+The rest are prod's.
+
+Consequences an agent must not learn the hard way:
+
+- **A golden snapshot id is valid for both.** `HETZNER_SERVER_IMAGES` is pinned
+  to the same `hel1=<id>` in `canary.yml` and `release.yml`. That is correct
+  here, and correct only because of the shared project — a snapshot cannot
+  cross Hetzner projects.
+- **Deleting a snapshot breaks both deployments at once.** Neither breaks
+  loudly: `HetznerProvider` warns `hetzner_server_image_rejected` and falls
+  back to stock Ubuntu, so the only symptom is every create paying the full
+  bootstrap again. Rebake with `npm run golden:bake -- --location hel1` and
+  update BOTH workflows.
+- **A server or volume you did not create probably belongs to the other
+  deployment.** Match by the `blitz-workspace` label against the right D1
+  before touching anything. Never sweep the project by hand.
+- **A BYOK organization is a different project**, so the golden image never
+  reaches it, and its stock-Ubuntu creates are correct rather than broken.
+
+The image only reaches an org with `org_entitlements.platform_compute = 1`,
+because both deployments run `byok-required` and the image is wired to the
+deployment credential alone (`plans/SUBSCRIPTION-COMPUTE.md`).
+
 ## Drift sweep runbook (for scheduled agent sweeps)
 
 1. Run the three gates. Any failure is a finding.

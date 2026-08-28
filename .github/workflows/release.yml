@@ -149,6 +149,23 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           BLITZ_DEPLOY_VAR_CLOUD_WORKSPACE_CREDENTIAL_POLICY: byok-required
+          # The golden Hetzner snapshot a workspace boots, per location. It
+          # removes the apt install, the box-image download and the sshd move
+          # from first boot: 130.6 s to 45.3 s, measured 2026-08-27.
+          #
+          # The SAME id as canary, because both deployments use one Hetzner
+          # project. A snapshot cannot cross projects, so that shared project
+          # is the only reason one value serves both. Verified 2026-08-28: of
+          # the 8 labelled servers in it, canary's database claims 1.
+          #
+          # Only orgs with org_entitlements.platform_compute = 1 ever reach it,
+          # because this deployment is byok-required and the image is wired to
+          # the deployment credential alone. Everyone else boots stock Ubuntu.
+          #
+          # Rebake with `npm run golden:bake -- --location hel1` and update
+          # BOTH workflows. An id that no longer resolves is not an outage: the
+          # adapter warns and falls back to stock Ubuntu.
+          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: hel1=425047509
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an
