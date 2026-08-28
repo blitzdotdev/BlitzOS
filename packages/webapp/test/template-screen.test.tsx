@@ -966,6 +966,44 @@ describe('create template screen', () => {
     await view.unmount();
   });
 
+  it('re-reads repositories from the ready state, so a mid-session install appears', async () => {
+    // The account is installed after the picker already listed another one.
+    // GitHub never returns to this page from an install, so Refresh beside the
+    // filters is the only way that account can ever show up.
+    let installedSecond = false;
+    const fetcher = stub((url) => {
+      if (url.pathname === '/connections/github/repositories') {
+        return Response.json({
+          truncated: false,
+          repositories: installedSecond
+            ? [
+              { repo: 'acme/app', accountLogin: 'acme', private: false },
+              { repo: 'later/joined', accountLogin: 'later', private: true },
+            ]
+            : [{ repo: 'acme/app', accountLogin: 'acme', private: false }],
+        });
+      }
+      if (url.pathname === '/connections/github/installations') {
+        return Response.json({ installations: [INSTALLED_ACCOUNT] });
+      }
+      return null;
+    });
+    const { view } = await screenWith(fetcher);
+    await settle();
+
+    const listed = () => [...view.container.querySelectorAll('.tplf-repo')]
+      .map((label) => label.textContent);
+    expect(listed()).toEqual(['acme/app']);
+
+    installedSecond = true;
+    await act(async () => {
+      view.container.querySelector<HTMLButtonElement>('.tplf-repos-refresh')?.click();
+    });
+    await settle();
+    expect(listed()).toEqual(['acme/app', 'later/joinedprivate']);
+    await view.unmount();
+  });
+
   it('rejects picker repositories that clone into the same folder', async () => {
     const fetcher = stub((url) => {
       if (url.pathname === '/connections/github/repositories') {
