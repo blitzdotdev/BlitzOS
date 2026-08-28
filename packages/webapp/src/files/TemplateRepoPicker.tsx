@@ -180,6 +180,17 @@ export function TemplateRepoPicker({
           <option value="">All accounts</option>
           {accounts.map((login) => <option key={login} value={login}>{login}</option>)}
         </select>
+        {/* Refresh repeats here, not only in the empty state. GitHub never
+         * returns to this page after an install, so the list cannot re-read
+         * itself. Without this, an account installed mid-session stays
+         * invisible until the whole screen is rebuilt. */}
+        <button
+          className="tplf-repos-refresh"
+          type="button"
+          onClick={() => setRefreshVersion((current) => current + 1)}
+        >
+          Refresh
+        </button>
       </div>
       {atCap && (
         <p className="tplf-repos-hint" role="status">

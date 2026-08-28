@@ -788,6 +788,24 @@
   gap: 6px;
 }
 
+/* Sits with the filters because a member reaches for it mid-selection, once
+   they notice an account missing. */
+.tplf-repos-refresh {
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  background: var(--paper);
+  color: var(--ink);
+  padding: 5px 12px;
+  cursor: pointer;
+  font: 11px/1.5 var(--font-ui);
+  text-align: center;
+  text-decoration: none;
+}
+
+.tplf-repos-refresh {
+  justify-self: end;
+}
+
 .tplf-repos-controls input,
 .tplf-repos-controls select {
   padding: 5px 8px;
