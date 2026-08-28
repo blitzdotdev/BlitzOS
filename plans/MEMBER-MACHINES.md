@@ -8,7 +8,7 @@ UI mockup: `plans/mockups/session-rail.html`.
 ```
 org
  └─ workspace "engineering"            ← its own template; nothing else is
-     ├─ config: machine type · environment · agent rules · repos · credentials
+     ├─ config: machine type · agent rules · repos · credentials (env)
      ├─ workspace_members: (membership, role)      role: admin | member | viewer
      ├─ machines: one VM per member, on by default
      └─ sessions (Build 2)
@@ -26,7 +26,7 @@ Machines never appear as a user decision — only in workspace administration.
 
 **The workspace is its own template.** There is no separate template object.
 A workspace *carries* the config a template used to carry — machine type,
-environment, agent rules, repo list, workspace credentials — and "new
+agent rules, repo list, workspace credentials — and "new
 workspace from existing" clones that config. The `workspace_templates`,
 `workspace_template_folders`, `workspace_template_repos`, and
 `workspace_template_connections` tables are deleted; recipes re-point their
@@ -48,14 +48,14 @@ workspaces (
   owner_membership_id  TEXT NOT NULL REFERENCES memberships(id), -- creator; first admin
   default_machine_type_id TEXT NOT NULL,  -- a default, never a restriction (§1a)
   auto_provision       INTEGER NOT NULL DEFAULT 1,  -- provision + start machine on member add
-  environment          TEXT,              -- existing shape (0017)
   agent_rule_id        TEXT REFERENCES agent_rules(id),
   created_at           INTEGER NOT NULL,
   updated_at           INTEGER NOT NULL
 )
 -- dropped from workspaces: phase, vm_id, volume_id, ssh_*, phone_home_*,
 -- tunnel_id/tunnel_hostname/dns_record_id, compute_credential_source,
--- box_update_*, org_share_role (replaced by workspace_members)
+-- box_update_*, org_share_role (replaced by workspace_members),
+-- environment (replaced by workspace_credentials)
 ```
 
 ### workspace_members — membership with a stored role
@@ -178,11 +178,9 @@ workspace file"); the reversal is intended and recorded here.
 workspace_credentials (
   id                        TEXT PRIMARY KEY,
   workspace_id              TEXT NOT NULL REFERENCES workspaces(id),
-  name                      TEXT NOT NULL,   -- 'stripe-test', 'sentry', ...
+  name                      TEXT NOT NULL,   -- the env var name: STRIPE_API_KEY, ...
   label                     TEXT,
   ciphertext                TEXT NOT NULL,
-  delivery                  TEXT NOT NULL CHECK (delivery IN ('env','header')),
-  env_name                  TEXT,            -- when delivery = 'env'
   created_by_membership_id  TEXT NOT NULL REFERENCES memberships(id),
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   revoked_at INTEGER
@@ -190,16 +188,21 @@ workspace_credentials (
 -- one live row per (workspace_id, name): partial unique index WHERE revoked_at IS NULL
 ```
 
-**The two deliveries map to mechanisms that exist.** `env` rides the
-workspace-environment path (`creds/env.d/*.sh`, sourced by shells, merged
-into chat turns): the value becomes an ambient variable named `env_name` on
-every member machine — but sealed in D1 and removable, unlike today's
-plaintext `workspaces.environment`. `header` is for HTTP API keys and is
-on-demand: the agent asks via `blitz-cred get|env <name>` at use time, the
-row records the header shape (the comment line `blitz-cred env` already
-prints), and with proxy custody the machine holds only a revocable lease
-token while the control plane swaps the real key into the header. Rule of
-thumb: `env` for tools that read the environment, `header` for API calls.
+**One store, two reads — this table replaces `workspaces.environment`.**
+Today's two half-systems (plaintext workspace env vars; sealed but
+org-scoped connections) unify here. A row is a name and a sealed value.
+
+1. *Ambient*: all live rows export as env vars on every member machine
+   through the existing `env.d` path. Programs and the agent read
+   `$STRIPE_API_KEY` like any variable. New sessions see changes at start;
+   running sessions keep their env — today's semantics, unchanged.
+2. *On demand*: `blitz-cred get <name>` serves the same value, behind the
+   §4 resolution rule (personal grant first).
+
+An add is available at once: machines re-sync `env.d` (the rules-sync
+pattern) and `blitz-cred` reads the store live. A revoke removes the row,
+the file entry, and the value from every new session. There is no delivery
+enum: one store, one name, both reads.
 
 ### Wire types
 
@@ -250,11 +253,10 @@ interface CreateWorkspaceRequest {
               machineTypeId?: string }[];
                                   // existing org members only, added immediately
                                   // machineTypeId: per-member override of the default
-  environment?: Record<string, string>;
   agentRuleId?: string;
   repos?: string[];
-  credentials?: { name: string; label?: string; value: string;
-                  delivery: 'env' | 'header'; envName?: string }[];
+  credentials?: { name: string; label?: string; value: string }[];
+                                  // name is the env var name
                                   // create-time only path where a value is sent;
                                   // the creator is the first workspace admin
   cloneFromWorkspaceId?: string;  // copy config (never credential values, never members)
@@ -301,7 +303,7 @@ Three workspace roles, one implicit reach. In one line each:
 
 | Action | WS admin | Member | Viewer |
 | --- | --- | --- | --- |
-| Workspace settings (name, default type, auto_provision, environment, rules, repos) | ✓ | — | — |
+| Workspace settings (name, default type, auto_provision, rules, repos) | ✓ | — | — |
 | Add / remove workspace members (active org members only) | ✓ | — | — |
 | Manage member roles | ✓ | — | — |
 | Machine lifecycle on any member machine (provision, stop, start, recreate, destroy) | ✓ | own stop/start | — |
@@ -366,7 +368,7 @@ becomes the workspace administration surface. Tabs:
    created-at; add/rotate/revoke for workspace admins. Values are
    write-only.
 3. **Settings** — name, machine type (with "applies to new machines" note),
-   auto_provision toggle, environment, agent rules, repos, clone action,
+   auto_provision toggle, agent rules, repos, clone action,
    delete.
 
 Today's Compute/Storage panels collapse into the per-member machine rows;
