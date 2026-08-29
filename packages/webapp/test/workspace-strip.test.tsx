@@ -74,10 +74,13 @@ describe("workspace strip", () => {
     expect(tiles[1]?.getAttribute("aria-current")).toBeNull();
     expect(tiles[1]?.className).toContain("shell-wtile--off");
     expect(tiles[2]?.getAttribute("aria-label")).toBe("Create workspace");
-    // Each workspace tile wears its own gradient; the create tile keeps the
+    // Each workspace tile wears its own solid pastel; the create tile keeps the
     // dashed outline the stylesheet gives it.
-    expect(tiles[0]?.style.background).toContain("linear-gradient");
-    expect(tiles[1]?.style.background).toContain("linear-gradient");
+    // jsdom normalizes hsl() to rgb() on read-back; assert solid + distinct.
+    expect(tiles[0]?.style.background).toMatch(/^rgb\(/u);
+    expect(tiles[1]?.style.background).toMatch(/^rgb\(/u);
+    expect(tiles[0]?.style.background).not.toContain("gradient");
+    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
     expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
     expect(tiles[2]?.style.background).toBe("");
     await view.unmount();
@@ -130,6 +133,10 @@ describe("workspace strip", () => {
 
     const menu = view.container.querySelector<HTMLElement>('[role="menu"][aria-label="Workspace design-team"]');
     expect(menu).not.toBeNull();
+    // The backdrop must never be a <button>: with no global button reset, a
+    // fullscreen button paints the UA's opaque button face over the whole app.
+    const backdrop = view.container.querySelector<HTMLElement>(".webapp-session-backdrop");
+    expect(backdrop?.tagName).toBe("DIV");
     expect(menu?.style.left).toBe("40px");
     expect(menu?.style.top).toBe("90px");
     const items = [...menu!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];

@@ -3,6 +3,7 @@ import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
 import { workspaceTileStyle } from './workspace-tile';
+import { squareAvatarUrl } from '../avatar-url';
 
 /** The tile legend: initials when the name has several words, otherwise its
  * first two letters. `design-team` reads DT and `engineering` reads EN, as the
@@ -253,11 +254,11 @@ export function WorkspaceStrip({
 
       {tileMenu !== null && menuWorkspace !== undefined && (
         <>
-          <button
+          {/* A div, not a button: with no global button reset, a fullscreen
+            * button paints the UA's opaque button face over the whole app.
+            * Same shape as WebAppHeader's tab-menu backdrop. */}
+          <div
             className="webapp-session-backdrop"
-            type="button"
-            aria-label="Close workspace menu"
-            tabIndex={-1}
             onMouseDown={() => setTileMenu(null)}
           />
           <div
@@ -316,11 +317,8 @@ export function WorkspaceStrip({
 
       {renaming !== null && (
         <>
-          <button
+          <div
             className="webapp-session-backdrop"
-            type="button"
-            aria-label="Close workspace rename"
-            tabIndex={-1}
             onMouseDown={finishRename}
           />
           <div
@@ -356,7 +354,7 @@ export function WorkspaceStrip({
           onClick={onOpenSettings}
         >
           {viewer?.identity.avatarUrl
-            ? <img className="shell-av__photo" src={viewer.identity.avatarUrl} alt="" referrerPolicy="no-referrer" />
+            ? <img className="shell-av__photo" src={squareAvatarUrl(viewer.identity.avatarUrl)} alt="" referrerPolicy="no-referrer" />
             : userLabel.trim().charAt(0).toUpperCase() || 'B'}
         </button>
       </div>
