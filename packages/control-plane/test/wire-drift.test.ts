@@ -142,11 +142,25 @@ const machine: SharedShape<wire.MachineView, schema.MachineView> = {
   state: "running",
   machineTypeId: "mv-2c2g@lab",
   volumeId: volume.id,
+  volumeUsedPercent: 62,
   membershipId: "membership",
   error: null,
   createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_005_000,
 };
+
+// A machine whose guest has not reported yet answers null, which covers
+// different ground than an integer does.
+const unreportedMachine: SharedShape<wire.MachineView, schema.MachineView> = {
+  ...machine,
+  id: "machine-unreported",
+  volumeUsedPercent: null,
+};
+
+const machineStats: SharedShape<
+  wire.MachineStatsRequest,
+  schema.MachineStatsRequest
+> = { diskUsedPercent: 62 };
 
 const workspaceMember: SharedShape<
   wire.WorkspaceMemberView,
@@ -660,6 +674,8 @@ const connectionsResponse: SharedShape<
 
 const fullFieldValues = [
   machine,
+  unreportedMachine,
+  machineStats,
   workspaceMember,
   viewerMember,
   workspaceCredential,
@@ -752,6 +768,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceMemberRole>().toEqualTypeOf<schema.WorkspaceMemberRole>();
     expectTypeOf<wire.MachineState>().toEqualTypeOf<schema.MachineState>();
     expectTypeOf<wire.MachineView>().toEqualTypeOf<schema.MachineView>();
+    expectTypeOf<wire.MachineStatsRequest>().toEqualTypeOf<schema.MachineStatsRequest>();
     expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
     expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
     expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();

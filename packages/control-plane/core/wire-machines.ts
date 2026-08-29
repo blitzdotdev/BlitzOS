@@ -33,10 +33,23 @@ export interface MachineView {
   /** This machine's type. The workspace holds only a default. */
   machineTypeId: string;
   volumeId: string | null;
+  /** How full the machine's persistent volume is, 0-100, as the guest last
+   * measured it. Null means the question has no answer yet: there is no
+   * volume, or no guest has reported one (every box image before the reporter
+   * shipped). Null is never 0 — an unmeasured disk is not an empty one. */
+  volumeUsedPercent: number | null;
   membershipId: string;
   error: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** The guest's own disk report (`POST /workspaces/self/machine-stats`).
+ * `diskUsedPercent` is an integer 0-100, the used percentage of the filesystem
+ * holding the state directory. Anything else is a 400: a machine reporting
+ * nonsense about its disk must not overwrite the last true figure. */
+export interface MachineStatsRequest {
+  diskUsedPercent: number;
 }
 
 export interface WorkspaceMemberView {

@@ -67,6 +67,7 @@ const me: WorkspaceMemberView = {
     state: 'running',
     machineTypeId: 'cx23@fsn1',
     volumeId: 'volume-one',
+    volumeUsedPercent: 62,
     membershipId: 'membership-2',
     error: null,
     createdAt: 1_700_000_000_000,
@@ -114,7 +115,9 @@ describe('MyMachineDialog', () => {
     expect(view.container.textContent).toContain('2 vCPU');
     expect(view.container.textContent).toContain('4 GB');
     expect(view.container.textContent).toContain('$6.49/mo');
-    expect(view.container.textContent).toContain('Attached');
+    // The volume row is a meter, never the bare word "Attached": what a member
+    // needs from it is how much room is left.
+    expect(view.container.textContent).toContain('62% full');
 
     const stop = buttons(view.container).find((button) => button.textContent === 'Stop');
     expect(stop?.disabled).toBe(false);
@@ -231,6 +234,54 @@ describe('MyMachineDialog', () => {
 
     const alert = view.container.querySelector('[role="alert"]');
     expect(alert?.textContent).toBe('The machine catalog could not be loaded.');
+    await view.unmount();
+  });
+
+  it('reports the volume as a meter, a pending state, or nothing at all', async () => {
+    const withMachine = (machine: WorkspaceMemberView['machine']) => ({
+      ...workspace,
+      members: [ada, { ...me, machine }],
+    });
+
+    const reported = await render(dialog({ workspace: withMachine(me.machine) }));
+    await settle();
+    expect(reported.container.querySelector('[role="meter"]')?.getAttribute('aria-valuenow'))
+      .toBe('62');
+    expect(reported.container.querySelector('.volume-meter-fill')?.getAttribute('style'))
+      .toContain('62%');
+    await reported.unmount();
+
+    // A guest from before the reporter shipped. The track is there and empty;
+    // 0% would claim a measurement nobody made.
+    const pending = await render(dialog({
+      workspace: withMachine({ ...me.machine!, volumeUsedPercent: null }),
+    }));
+    await settle();
+    expect(pending.container.textContent).toContain('usage not reported yet');
+    expect(pending.container.querySelector('[role="meter"]')).toBeNull();
+    expect(pending.container.querySelector('.volume-meter-track')).not.toBeNull();
+    await pending.unmount();
+
+    const none = await render(dialog({
+      workspace: withMachine({ ...me.machine!, volumeId: null, volumeUsedPercent: null }),
+    }));
+    await settle();
+    expect(none.container.textContent).toContain('Not attached');
+    expect(none.container.querySelector('.volume-meter-track')).toBeNull();
+    await none.unmount();
+  });
+
+  it('warns on its own colour once the volume is nearly full', async () => {
+    const view = await render(dialog({
+      workspace: {
+        ...workspace,
+        members: [ada, { ...me, machine: { ...me.machine!, volumeUsedPercent: 94 } }],
+      },
+    }));
+    await settle();
+
+    expect(view.container.querySelector('.volume-meter--warn')).not.toBeNull();
+    expect(view.container.textContent).toContain('94% full');
     await view.unmount();
   });
 

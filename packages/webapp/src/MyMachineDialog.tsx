@@ -11,6 +11,7 @@ import { ConfirmationDialog } from './ConfirmationDialog';
 import { monthlyPriceLabel } from './MachineCatalogGrid';
 import { MachineTypeSelect } from './MachineTypeSelect';
 import { ModalOverlay } from './ModalOverlay';
+import { VolumeMeter } from './VolumeMeter';
 import { machineActionsFor, type MachineAction } from './WorkspaceMembersEditor';
 import type { CloudWorkspaceModel } from './workspace-store';
 
@@ -220,10 +221,15 @@ export function MyMachineDialog({
                   <Detail label="Disk" value={`${String(type.diskGb)} GB`} />
                   <Detail label="Price" value={price ?? 'Unavailable'} />
                 </>}
-                <Detail
-                  label="Persistent volume"
-                  value={machine?.volumeId == null ? 'None' : 'Attached'}
-                />
+                <div>
+                  <dt>Persistent volume</dt>
+                  <dd>
+                    <VolumeMeter
+                      volumeId={machine?.volumeId ?? null}
+                      usedPercent={machine?.volumeUsedPercent ?? null}
+                    />
+                  </dd>
+                </div>
                 <Detail label="Created" value={machine === null ? 'Unavailable' : dateLabel(machine.createdAt)} />
               </dl>
               {type === undefined && machine !== null && (

@@ -50,6 +50,7 @@ const ada: WorkspaceMemberView = {
     state: 'running',
     machineTypeId: 'cx23@fsn1',
     volumeId: 'volume-one',
+    volumeUsedPercent: 62,
     membershipId: 'membership-1',
     error: null,
     createdAt: 1_700_000_000_000,
@@ -179,12 +180,15 @@ describe('WorkspaceDetailsDialog', () => {
     await settle();
 
     // Ada's machine already holds a volume, so her row reports the disk that
-    // exists rather than offering a choice this route cannot make.
-    const settled = view.container.querySelector<HTMLInputElement>(
+    // exists — how full it is — rather than offering a choice this route
+    // cannot make.
+    expect(view.container.querySelector(
       '[aria-label="Persistent volume for Ada Owner"]',
-    );
-    expect(settled?.checked).toBe(true);
-    expect(settled?.disabled).toBe(true);
+    )).toBeNull();
+    const meter = view.container.querySelector('.workspace-member-row [role="meter"]');
+    expect(meter?.getAttribute('aria-valuenow')).toBe('62');
+    expect(view.container.textContent).toContain('62% full');
+    expect(view.container.textContent).not.toContain('Attached');
 
     const toggle = view.container.querySelector<HTMLInputElement>(
       '[aria-label="Persistent volume for Grace Viewer"]',
@@ -485,6 +489,7 @@ describe('machineActionsFor', () => {
     state,
     machineTypeId: 'cx23@fsn1',
     volumeId: 'volume-one',
+    volumeUsedPercent: null,
     membershipId: 'membership-1',
     error: null,
     createdAt: 1,

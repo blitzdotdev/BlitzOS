@@ -7,6 +7,7 @@ import type {
 import { useEffect, useRef, useState } from 'react';
 import type { MemberView } from './api';
 import { DriveAvatar } from './files/DriveAvatar';
+import { VolumeMeter } from './VolumeMeter';
 import { MachineTypeSelect, WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
 import { WebAppSelectMenu } from './WebAppSelectMenu';
 
@@ -188,8 +189,9 @@ function MemberRow({
   // control over something that does not exist.
   const showMachine = role !== 'viewer';
   // The volume is created with the machine, so the toggle is a choice only
-  // while there is no machine. On a row that has one it reports the disk that
-  // exists rather than offering to change it, which this route cannot do.
+  // while there is no machine. On a row that has one the meter reports the disk
+  // that exists — how full it is — rather than offering to change it, which
+  // this route cannot do.
   const volumeDecided = machine !== null;
   // The pinned creator row of a draft has no choice to make: the workspace
   // creator's own machine is provisioned before any member row is read.
@@ -228,18 +230,22 @@ function MemberRow({
           onChange={onMachineTypeChange}
         />
       )}
-      {showVolume && (
+      {showVolume && (machine === null ? (
         <label className="workspace-member-volume">
           <input
             type="checkbox"
             aria-label={`Persistent volume for ${name}`}
-            checked={volumeDecided ? machine.volumeId !== null : persistentVolume}
-            disabled={readOnly || volumeDecided}
+            checked={persistentVolume}
+            disabled={readOnly}
             onChange={(event) => onPersistentVolumeChange(event.currentTarget.checked)}
           />
           <span>Persistent volume</span>
         </label>
-      )}
+      ) : (
+        // The disk exists, so the row reports it instead of offering a choice
+        // this route cannot make: how full it is, or that there is none.
+        <VolumeMeter volumeId={machine.volumeId} usedPercent={machine.volumeUsedPercent} />
+      ))}
       {showMachine && actions.length > 0 && (
         <WebAppSelectMenu
           ariaLabel={`Machine actions for ${name}`}

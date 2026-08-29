@@ -141,7 +141,7 @@ COPY packages/box/rootfs/ /
 RUN set -eux; \
     chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude /usr/local/bin/codex \
       /usr/local/bin/blitz-cred-claude /usr/local/bin/blitz-cred-codex \
-      /usr/local/bin/blitz-rules; \
+      /usr/local/bin/blitz-rules /usr/local/bin/blitz-machine-stats; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
