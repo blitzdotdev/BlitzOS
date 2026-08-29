@@ -653,7 +653,16 @@ export async function performWorkspaceCreate(
   for (const member of members) {
     const identity = await activeOrgMember(runtime, orgId, member.membershipId);
     if (identity === null) continue;
-    await addWorkspaceMember(runtime, workspace, membershipId, member, requestOrigin, identity);
+    try {
+      await addWorkspaceMember(runtime, workspace, membershipId, member, requestOrigin, identity);
+    } catch (error) {
+      // A quota refusal here is about one VM, not about the workspace. The
+      // membership is the durable thing and it is already written, so the
+      // member simply has no machine yet — which `machine: null` says on the
+      // view, and which a later provision fixes. Failing the whole create
+      // instead would throw away a team roster over one slot.
+      if (!(error instanceof HttpError && error.status === 409)) throw error;
+    }
   }
   const created = await workspaceById(runtime.db, id);
   if (created === null) throw new Error("workspace disappeared during create");

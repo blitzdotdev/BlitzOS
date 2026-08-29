@@ -64,7 +64,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/compute/microvm-hosts.js` imported by both |
 | dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
 | public preview links | box CLI state ↔ Go gateway ↔ browser | `fixtures/previews/` | `gateway/main_test.go`, `webapp/test/preview-v2.test.ts` |
-| workspace environment | `core/environment.ts` route ↔ `broker/internal/workspace/environment.go` ↔ `box/actor/src/credentials.ts` (`env` only) | `fixtures/workspace-environment/` | `test/workspace-environment-conformance.test.ts`, `broker` `environment_test.go`, `actor/test/workspace-environment.test.ts` |
+| workspace environment (RETIRING) | `core/environment.ts` route ↔ `broker/internal/workspace/environment.go` | `fixtures/workspace-environment/` | `test/workspace-environment-conformance.test.ts`, `broker` `environment_test.go` |
 | preview-focus | `blitz teenyapp open` CLI (`blitz preview` stays a silent alias; wire unchanged) ↔ Go gateway (`/preview-focus`) ↔ browser (`webapp/src/preview.ts` consumer, auto-opens the focus) | `fixtures/preview-focus/` | `box/actor/test/preview-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/preview-focus.test.ts` (browser consumer) |
 | connections-focus | `blitz connections open <provider>` CLI ↔ Go gateway (`/connections-focus`) ↔ browser (`webapp/src/connections-focus.ts` consumer via `use-workspace-connections-focus.ts`, opens the workspace connections panel with the provider selected) | `fixtures/connections-focus/` | `box/actor/test/connections-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/connections-focus.test.ts` (browser consumer) |
 | webApp ticket v1 | `core/webapp-tickets.ts` mint/verify ↔ `box/gateway/main.go` ↔ `box/actor/src/auth.ts` | `fixtures/webapp-ticket/` | `test/webapp-ticket-conformance.test.ts`, `gateway/main_test.go` (ticket_conformance_test.go), `actor/test/auth-conformance.test.ts` |
@@ -72,7 +72,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | microVM agent protocol | `microvm-host/types.go` ↔ `core/compute/microvm-agent.ts` | none yet — add fixtures before changing either side | — |
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/actor/test/agent-rules-conformance.test.ts` (box) |
-| connection pull v1 | CP producer `core/connections/pull-wire.ts` (`GET /workspaces/self/connections`, `POST /workspaces/self/connections/:name/token`) ↔ Go consumer `broker/internal/workspace/connections.go`, printed by `blitz-cred list\|get\|env` | `fixtures/connection-pull/` | `test/connection-pull-conformance.test.ts` + `test/pull-credentials.test.ts` (CP), `broker/internal/workspace/connections_test.go` + `broker/cmd/blitz-cred/main_test.go` (box) |
+| connection pull v1 | CP producer `core/connections/pull-wire.ts`, routes in `core/connections/pull-routes.ts` (`GET /workspaces/self/connections`, `POST /workspaces/self/connections/:name/token`) ↔ Go consumer `broker/internal/workspace/connections.go`, printed by `blitz-cred list\|get\|env`. Carries BOTH credential planes: the member's own connection grant and the workspace credential store (plans/MEMBER-MACHINES.md §4) | `fixtures/connection-pull/` | `test/connection-pull-conformance.test.ts` + `test/pull-credentials.test.ts` + `test/member-machines.test.ts` (CP), `broker/internal/workspace/connections_test.go` + `broker/cmd/blitz-cred/main_test.go` (box) |
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
 | recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ guest readers: `blitz-term` through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation`, plus the bootstrap-emitted chat sender's raw `prompt.txt` read (the sender never parses `invocation.env` — model/effort/permission are interpolated into its source at render time) | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/actor/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
 | box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`; cloud-VM path only — the microVM provider has its own guest lifecycle and no update path yet) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
@@ -80,6 +80,32 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 Legacy phone-home shapes are accepted ONLY inside
 `adaptLegacyPhoneHomeRequestForInFlightImages` in `core/workspaces.ts`.
 Do not add aliases anywhere else.
+
+## Member machines: what a workspace is now
+
+`plans/MEMBER-MACHINES.md` landed in migrations 0041-0044. Two invariants an
+agent must not undo:
+
+- **A workspace is configuration; a `machines` row is the VM.** The workspace
+  has no phase, no `vm_id`, and no environment. `WorkspaceView.phase` and
+  `.ssh` survive as a projection of the REQUESTING member's machine, so old
+  pollers keep converging — do not start storing them again.
+- **The acting principal is resolved at call time** from
+  `machines.membership_id` (`core/oauth.ts`, `core/connections/mint.ts`).
+  Nothing about who a guest acts as is stored beside its credential. The row
+  that used to hold it pinned the workspace owner, and that is the bug the
+  structure now prevents.
+
+Three compatibility surfaces are load-bearing and have no expiry date yet:
+`GET /boxes/:id/feed` (served from `machines`),
+`GET /workspaces/:id/environment` (a constant `{env:{}, startupScript:null,
+filesReady:true}`, because deployed brokers poll it every second at boot and
+wait for exactly those three fields), and the token families migration 0041
+copied hash-for-hash so no deployed guest had to re-enrol.
+
+Templates and Recipes are disabled product-wide (2026-08-29). Both
+registrations are commented out in `core/app.ts` with the reason; recipe code
+and rows are untouched.
 
 ## VM provider architecture (do not regress)
 
