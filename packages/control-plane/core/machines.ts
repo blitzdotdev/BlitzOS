@@ -43,7 +43,7 @@ export function providerForVmId(runtime: CoreRuntime, vmId: string): VmProvider 
   return provider;
 }
 
-export function providerOperationError(error: Error | unknown): string {
+export function providerOperationError(error: unknown): string {
   if (!(error instanceof Error)) return "provider operation failed";
   const detail = error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
   return detail === "" ? "provider operation failed" : `provider operation failed: ${detail}`;
