@@ -2,14 +2,13 @@ import { HARNESSES } from "./broker.js";
 
 /** The shared model → provider catalog.
  *
- * It mirrors the per-provider model and effort lists the box actor accepts
- * (`packages/box/actor/src/agent-config.ts`); "default" is expressed by
- * omitting the model or effort, so it is not listed. The providers are the
- * TUI harness list (`HARNESSES` in broker.ts) — one constant, derived, never
- * re-spelled. The control plane keeps a byte-identical copy in
- * `control-plane/core/wire.ts` (core code may not import packages);
- * `test/wire-drift.test.ts` holds the two together. Extend both copies and
- * the actor catalog in the same change. */
+ * It mirrors the per-provider model and effort lists the pinned harness CLIs
+ * accept; "default" is expressed by omitting the model or effort, so it is not
+ * listed. The providers are the TUI harness list (`HARNESSES` in broker.ts) —
+ * one constant, derived, never re-spelled. The control plane keeps a
+ * byte-identical copy in `control-plane/core/wire.ts` (core code may not
+ * import packages); `test/wire-drift.test.ts` holds the two together. Extend
+ * both copies in the same change. */
 export const AGENT_PROVIDERS = HARNESSES;
 
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];

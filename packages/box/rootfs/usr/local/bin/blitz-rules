@@ -145,7 +145,7 @@ async function main() {
 
   // Both canonical read paths: Claude reads ~/.claude/CLAUDE.md, Codex reads
   // ~/.codex/AGENTS.md. Written 0644 and owned by whoever runs this (the box
-  // uid, via s6-setuidgid at boot and the actor at session start).
+  // uid, via s6-setuidgid at boot).
   const targets = [
     path.join(home, '.claude', 'CLAUDE.md'),
     path.join(home, '.codex', 'AGENTS.md'),

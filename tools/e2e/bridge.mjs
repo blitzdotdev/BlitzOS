@@ -41,7 +41,6 @@ const boxImageTag = process.env.BOX_IMAGE_TAG ?? "blitz-box:local";
 const allowUnlistedPreferred = process.env.ALLOW_UNLISTED_PREFERRED_MACHINE === "1";
 const outerPort = Number(process.env.OUTER_TUNNEL_PORT ?? 12222);
 const terminalPort = Number(process.env.TERMINAL_TUNNEL_PORT ?? 17443);
-const acpPort = Number(process.env.ACP_TUNNEL_PORT ?? 17444);
 const filesPort = Number(process.env.FILES_TUNNEL_PORT ?? 17445);
 const imageUploadStreamCount = 4;
 const imagePartUploadTimeoutMs = 1_800_000;
@@ -70,7 +69,7 @@ const operatorKey = process.env.OPERATOR_API_KEY ?? readEnvValue("OPERATOR_API_K
 const sensitiveValues = [operatorKey].filter(Boolean);
 const timings = [];
 const errors = [];
-const webAppCodes = { terminal: null, acp: null, files: null };
+const webAppCodes = { terminal: null, files: null };
 const tunnels = [];
 
 let cookie = null;
@@ -195,7 +194,7 @@ function validateConfig() {
   if (!/^[A-Za-z0-9][A-Za-z0-9._/:@-]*$/u.test(boxImageTag)) {
     throw new Error("BOX_IMAGE_TAG must be a nonempty Docker image reference");
   }
-  for (const port of [outerPort, terminalPort, acpPort, filesPort]) {
+  for (const port of [outerPort, terminalPort, filesPort]) {
     if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`invalid local port: ${port}`);
   }
 }
@@ -738,11 +737,11 @@ async function startBox() {
     await sleep(3_000);
   }
   const logs = remoteSync("sudo docker logs blitz-box 2>&1 || true");
-  throw new Error(`s6 services did not listen on 22,7443,7444,7445\nss=${lastPorts}\nlogs=${logs}`);
+  throw new Error(`s6 services did not listen on 22,7443,7445\nss=${lastPorts}\nlogs=${logs}`);
 }
 
 function listeningPorts(ssOutput) {
-  return [22, 7443, 7444, 7445].filter((port) => new RegExp(`:${port}(?=\\s)`, "u").test(ssOutput));
+  return [22, 7443, 7445].filter((port) => new RegExp(`:${port}(?=\\s)`, "u").test(ssOutput));
 }
 
 async function capturePreTeardownEvidence() {
@@ -886,14 +885,11 @@ async function startInnerTunnel() {
     "-L",
     `127.0.0.1:${terminalPort}:127.0.0.1:7443`,
     "-L",
-    `127.0.0.1:${acpPort}:127.0.0.1:7444`,
-    "-L",
     `127.0.0.1:${filesPort}:127.0.0.1:7445`,
     "blitz@127.0.0.1",
   ];
   const child = launchTunnel(args, "inner");
   await waitForPort(terminalPort, child);
-  await waitForPort(acpPort, child);
   await waitForPort(filesPort, child);
 }
 
@@ -911,33 +907,11 @@ async function verifyWebApp() {
     ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", `http://127.0.0.1:${terminalPort}/`],
     "200",
   );
-  webAppCodes.acp = curlCode(
-    [
-      "-sS",
-      "-o",
-      "/dev/null",
-      "-w",
-      "%{http_code}",
-      "--http1.1",
-      "--max-time",
-      "3",
-      "-H",
-      "Connection: Upgrade",
-      "-H",
-      "Upgrade: websocket",
-      "-H",
-      "Sec-WebSocket-Version: 13",
-      "-H",
-      "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-      `http://127.0.0.1:${acpPort}/`,
-    ],
-    "101",
-  );
   webAppCodes.files = curlCode(
     ["-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", `http://127.0.0.1:${filesPort}/workspace/`],
     "200",
   );
-  console.log(`WEBAPP terminal=${webAppCodes.terminal} acp=${webAppCodes.acp} files=${webAppCodes.files}`);
+  console.log(`WEBAPP terminal=${webAppCodes.terminal} files=${webAppCodes.files}`);
 }
 
 async function stopTunnels() {
@@ -1040,7 +1014,7 @@ function writeResult(ok) {
 async function main() {
   mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
   validateConfig();
-  await Promise.all([outerPort, terminalPort, acpPort, filesPort].map(assertFreePort));
+  await Promise.all([outerPort, terminalPort, filesPort].map(assertFreePort));
   let succeeded = false;
   try {
     await timed("login", login);

@@ -176,7 +176,7 @@ describe("operator tokens", () => {
     expect((await tokenRow(minted.id)).last_used_at).toBeNull();
   });
 
-  it("refuses the agent port so an operator token cannot drive an agent", async () => {
+  it("refuses every port but 7445, and every unsafe method", async () => {
     const proxied: string[] = [];
     const app = tunnelledApp(proxied);
     const cookie = await operatorSession(app);
@@ -184,10 +184,10 @@ describe("operator tokens", () => {
     const minted = await (await mint(app, cookie)).json<MintedToken>();
     const headers = { Authorization: `Bearer ${minted.token}` };
 
-    // A GET the box surface list would otherwise allow: the operator token is
-    // refused on port 7444 before the proxy is reached.
-    const agent = await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers });
-    expect(agent.status).toBe(403);
+    // The operator scope names port 7445 alone, so a reserved port is refused
+    // by the scope check before the proxy is reached.
+    const reserved = await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers });
+    expect(reserved.status).toBe(403);
     expect(proxied).toEqual([]);
 
     const mutatedSurface = await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, {

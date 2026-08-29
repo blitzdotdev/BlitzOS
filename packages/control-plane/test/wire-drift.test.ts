@@ -104,7 +104,7 @@ const recipe: SharedShape<wire.RecipeView, schema.RecipeView> = {
   id: "recipe",
   name: "nightly evals",
   templateId: "template",
-  harness: "chat",
+  harness: "claude",
   model: "claude-sonnet-5",
   effort: "xhigh",
   prompt: "Aggregate usage and write evals.\n",

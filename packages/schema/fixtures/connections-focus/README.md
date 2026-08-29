@@ -26,7 +26,7 @@ catalog or connection row could carry is dropped before it renders.
 
 Conformance: the Go gateway reader is tested in
 `packages/box/gateway/main_test.go`; the CLI producer is tested in
-`packages/box/actor/test/connections-focus-conformance.test.ts`; the browser
+`packages/box/guest-tests/test/connections-focus-conformance.test.ts`; the browser
 consumer (`fetchWorkspaceConnectionsFocus` / `parseConnectionsFocus` in
 `packages/webapp/src/connections-focus.ts`) is tested in
 `packages/webapp/test/connections-focus.test.ts`.

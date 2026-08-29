@@ -22,31 +22,6 @@ COPY packages/schema/fixtures /src/packages/schema/fixtures
 RUN go test ./... \
     && CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" go build -trimpath -ldflags="-s -w" -o /out/blitz-box-gateway .
 
-FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS actor-build
-
-RUN set -eux; \
-    sed -i \
-      -e 's|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/20260811T000000Z|g' \
-      -e 's|http://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/20260811T000000Z|g' \
-      -e '/^Signed-By:/a Check-Valid-Until: no' \
-      /etc/apt/sources.list.d/debian.sources; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-      g++=4:12.2.0-3 \
-      make=4.3-4.1 \
-      python3=3.11.2-1+b1; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/*
-
-COPY tsconfig.base.json /src/tsconfig.base.json
-WORKDIR /src/packages/box/actor
-COPY packages/box/actor/package.json packages/box/actor/package-lock.json ./
-RUN npm ci
-COPY packages/box/actor/tsconfig.json ./
-COPY packages/box/actor/src ./src
-RUN npm run build \
-    && npm prune --omit=dev
-
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS vendors
 
 # Agents install into a prefix the runtime user owns, so `claude` can
@@ -132,10 +107,6 @@ COPY --from=artifacts /out/root/ /
 COPY --from=vendors /opt/blitz/npm/ /opt/blitz/npm/
 COPY --from=cred-build /out/blitz-cred /usr/local/bin/blitz-cred
 COPY --from=gateway-build /out/blitz-box-gateway /usr/local/bin/blitz-box-gateway
-COPY --from=actor-build /src/packages/box/actor/package.json /opt/blitz/actor/package.json
-COPY --from=actor-build /src/packages/box/actor/package-lock.json /opt/blitz/actor/package-lock.json
-COPY --from=actor-build /src/packages/box/actor/dist /opt/blitz/actor/dist
-COPY --from=actor-build /src/packages/box/actor/node_modules /opt/blitz/actor/node_modules
 COPY env.defaults /etc/blitz/env.defaults
 COPY packages/box/rootfs/ /
 RUN set -eux; \
@@ -151,7 +122,7 @@ RUN set -eux; \
 # /usr/local/bin/claude and /usr/local/bin/codex win over the real binaries they
 # exec — and so a copy a member installs into their own writable prefix cannot
 # shadow them. That shadowing is the single most common way a terminal ends up
-# signed out while the same box's chat is authenticated.
+# signed out while the same box holds a valid credential.
 #
 # DISABLE_AUTOUPDATER is set image-wide for the same reason: an auto-update
 # breaks the version pin above AND drops a second copy into the member's prefix.

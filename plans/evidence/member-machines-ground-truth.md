@@ -4,6 +4,10 @@ Recorded 2026-08-28 against `main` @ cbf9a1fb, by five parallel read-only
 sweeps (compute, identity, box/sessions, webapp, credentials). Facts below are
 file:line grounded; each section ends with the gaps that build must close.
 
+> Superseded in one place: the ACP actor, its journal and the native-chat
+> client this survey found were DELETED on 2026-08-29 (branch `lody-sessions`).
+> See `plans/LODY-SESSIONS.md`.
+
 ## Build 1 — member machines (compute + identity)
 
 **The workspace row is the VM record.** `vm_id`, `volume_id`, `ssh_*`,

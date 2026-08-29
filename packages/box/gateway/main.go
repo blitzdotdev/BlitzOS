@@ -33,9 +33,6 @@ const (
 	terminalAddress        = "127.0.0.1:7443"
 	terminalHost           = "localhost:7443"
 	terminalOrigin         = "http://localhost:7443"
-	actorAddress           = "127.0.0.1:7444"
-	actorHost              = "localhost:7444"
-	actorOrigin            = "http://localhost:7444"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
 	webAppTokenPath        = "/var/lib/blitz/webapp-token"
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
@@ -57,7 +54,7 @@ const (
 var excludedPorts = map[int]struct{}{
 	22:    {}, // sshd
 	7443:  {}, // ttyd
-	7444:  {}, // ACP actor
+	7444:  {}, // retired ACP actor; stays reserved for boxes in the field
 	7445:  {}, // this gateway
 	7446:  {}, // public dufs file server
 	17445: {}, // private dufs upstream
@@ -102,7 +99,6 @@ type gateway struct {
 	dufs                   *httputil.ReverseProxy
 	dufsAddress            string
 	terminal               *url.URL
-	actor                  *url.URL
 	controlPlaneOriginPath string
 	webAppTokenPath        string
 	workspaceIDPath        string
@@ -179,7 +175,6 @@ func main() {
 		dufs:                   dufsProxy,
 		dufsAddress:            dufsAddress,
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
-		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
 		controlPlaneOriginPath: controlPlaneOriginPath,
 		webAppTokenPath:        webAppTokenPath,
 		workspaceIDPath:        workspaceIDPath,
@@ -283,16 +278,6 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.serveTerminal(response, request)
 		return
 	}
-	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
-		// The actor has no role guard of its own, so an observer reaching it
-		// here would drive the agent.
-		if identity.Role == "viewer" {
-			deny(response, request, http.StatusForbidden, "viewers cannot drive the workspace agent", roleDetail(identity))
-			return
-		}
-		g.serveACP(response, request)
-		return
-	}
 	removeWebAppTokenHeader(request.Header)
 	if strings.HasPrefix(request.URL.Path, "/preview/") {
 		// A preview proxies straight into whatever the workspace is running,
@@ -380,25 +365,6 @@ func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Requ
 		previousRewrite(proxyRequest)
 		proxyRequest.Out.Host = terminalHost
 		proxyRequest.Out.Header.Set("Origin", terminalOrigin)
-	}
-	proxy.ServeHTTP(response, request)
-}
-
-func (g *gateway) serveACP(response http.ResponseWriter, request *http.Request) {
-	target := g.actor
-	if target == nil {
-		target = &url.URL{Scheme: "http", Host: actorAddress}
-	}
-	upstreamPath := strings.TrimPrefix(request.URL.Path, "/acp")
-	if upstreamPath == "" {
-		upstreamPath = "/"
-	}
-	proxy := g.reverseProxy(target, upstreamPath, "/acp", request)
-	previousRewrite := proxy.Rewrite
-	proxy.Rewrite = func(proxyRequest *httputil.ProxyRequest) {
-		previousRewrite(proxyRequest)
-		proxyRequest.Out.Host = actorHost
-		proxyRequest.Out.Header.Set("Origin", actorOrigin)
 	}
 	proxy.ServeHTTP(response, request)
 }
@@ -503,14 +469,13 @@ func (g *gateway) serveDiag(response http.ResponseWriter, request *http.Request,
 	}
 }
 
-// diagServices probes the three addresses this gateway proxies to, and always
-// all three: a box that reports two services is not a diagnosis anyone can act
-// on. main is the only place a gateway is built and it sets all three, so the
+// diagServices probes the two addresses this gateway proxies to, and always
+// both: a box that reports one service is not a diagnosis anyone can act on.
+// main is the only place a gateway is built and it sets both, so the
 // addresses are read straight off the struct.
 func (g *gateway) diagServices() []diagService {
-	services := make([]diagService, 0, 3)
+	services := make([]diagService, 0, 2)
 	for _, service := range []diagService{
-		{Name: "actor", Address: g.actor.Host},
 		{Name: "terminal", Address: g.terminal.Host},
 		{Name: "dufs", Address: g.dufsAddress},
 	} {

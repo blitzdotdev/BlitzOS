@@ -421,7 +421,6 @@ try {
     args.splice(args.length - 2, 0,
       "-N", "-o", "ExitOnForwardFailure=yes",
       "-L", "17443:127.0.0.1:7443",
-      "-L", "17444:127.0.0.1:7444",
       "-L", "17445:127.0.0.1:7445",
     );
     args.pop();
@@ -452,11 +451,6 @@ try {
       const probes = [
         { name: "ttyd", url: "http://127.0.0.1:17443/", expected: (code) => code === "200" },
         { name: "dufs", url: "http://127.0.0.1:17445/workspace/", expected: (code) => code === "200" },
-        {
-          name: "node-websocket", url: "http://127.0.0.1:17444/",
-          headers: ["Connection: Upgrade", "Upgrade: websocket", "Sec-WebSocket-Version: 13", "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=="],
-          expected: (code) => code === "101" || /^4\d\d$/u.test(code),
-        },
       ];
       const statuses = [];
       for (const probe of probes) {

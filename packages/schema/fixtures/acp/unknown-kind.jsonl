@@ -1,1 +1,0 @@
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-unknown","update":{"sessionUpdate":"future_update","content":{"type":"text","text":"Future ACP update"}}}}

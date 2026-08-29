@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 
-/** The control-plane half of the webApp ticket contract. The Go gateway and
- * the Node actor read the same corpus, so a claim one side starts enforcing
- * and another still ignores fails here instead of quietly changing who may do
- * what on a box. */
+/** The control-plane half of the webApp ticket contract. The Go gateway reads
+ * the same corpus, so a claim one side starts enforcing and the other still
+ * ignores fails here instead of quietly changing who may do what on a box. */
 
 interface TicketExpectation {
   valid: boolean;

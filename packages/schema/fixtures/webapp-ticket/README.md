@@ -1,11 +1,10 @@
 # webApp ticket v1 contract
 
-The control plane mints a ticket for every proxied request to a box, and two
-independent verifiers on the guest read it: the Go gateway (port 7445) and the
-Node actor (port 7444). Three hand-written parsers for one wire format is
-exactly the arrangement these fixtures exist to pin — a claim added on one
-side and missed on another does not fail loudly, it changes who is allowed to
-do what.
+The control plane mints a ticket for every proxied request to a box, and the
+Go gateway (port 7445) verifies it on the guest. Two hand-written parsers for
+one wire format is exactly the arrangement these fixtures exist to pin — a
+claim added on one side and missed on the other does not fail loudly, it
+changes who is allowed to do what.
 
 ## Format
 
@@ -39,4 +38,4 @@ a `note` saying what the case is for. `expect.valid` false means refuse;
 path.
 
 Conformance suites: `control-plane/test/webapp-ticket-conformance.test.ts`,
-`box/gateway/main_test.go`, `box/actor/test/auth-conformance.test.ts`.
+`box/gateway/main_test.go`.

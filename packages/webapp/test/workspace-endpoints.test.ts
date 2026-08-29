@@ -30,7 +30,6 @@ function record(id: string): V2WorkspaceRecord {
 const resolver = {
   resolve: (wire: V2WorkspaceRecord['wire']) => ({
     terminalUrl: `https://box.example/${wire.id}/terminal/?token=discarded#fragment`,
-    acpUrl: `wss://box.example/${wire.id}/acp`,
     filesBase: `https://box.example/${wire.id}/workspace/`,
   }),
   previewUrl: () => '',

@@ -5,7 +5,7 @@ import { appRequest, enrollBox, harness, operatorSession, resetDatabase } from "
 
 // Producer side of the `agent-rules` cross-runtime contract. The box consumer
 // (`blitz-rules sync`) is pinned against the same fixtures in
-// packages/box/actor/test/agent-rules-conformance.test.ts.
+// packages/box/guest-tests/test/agent-rules-conformance.test.ts.
 interface AgentRulesFixture {
   response: object;
   accepts: boolean;

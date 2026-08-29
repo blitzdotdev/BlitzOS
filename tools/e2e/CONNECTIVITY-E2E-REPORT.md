@@ -1,5 +1,8 @@
 # Connectivity e2e report — tunnel-per-workspace
 
+> Dated run record. The Chat/ACP row below covers a surface deleted on
+> 2026-08-29 (branch `lody-sessions`); the script no longer runs that step.
+
 Run: 2026-08-16T01:06–01:09Z, live against
 `https://blitz-control-plane.blitzapp.workers.dev` (worker version
 `cfc0509b`), box image `blitz-box:20260815d-amd64`, zone `blitzos.app`.

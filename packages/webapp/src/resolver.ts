@@ -2,7 +2,6 @@ import type { WorkspaceView } from "@blitzos/schema";
 
 export interface BoxEndpoints {
   terminalUrl: string;
-  acpUrl: string;
   filesBase: string;
 }
 
@@ -12,11 +11,10 @@ export interface EndpointResolver {
 }
 
 export interface StandalonePorts {
-  acp: number;
   files: number;
 }
 
-export const DEFAULT_PORTS: StandalonePorts = { acp: 7444, files: 7445 };
+export const DEFAULT_PORTS: StandalonePorts = { files: 7445 };
 
 /** The guest's dufs serves the workspace tree under this path and emits DAV
  * hrefs rooted at it — without the control-plane proxy prefix. WebDAV clients
@@ -31,11 +29,8 @@ export function standaloneResolver(
   const endpoints = (workspace: WorkspaceView): BoxEndpoints => {
     if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
     const prefix = `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp`;
-    const acp = new URL(`${prefix}/7444`);
-    acp.protocol = acp.protocol === "https:" ? "wss:" : "ws:";
     return {
       terminalUrl: `${prefix}/7445/terminal/`,
-      acpUrl: acp.toString(),
       filesBase: `${prefix}/7445${FILES_DAV_ROOT}/`,
     };
   };

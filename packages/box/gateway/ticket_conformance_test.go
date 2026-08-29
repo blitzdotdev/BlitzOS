@@ -11,9 +11,9 @@ import (
 )
 
 // The gateway's half of the webApp ticket contract. The control plane mints
-// against this same corpus and the actor verifies it too, so a claim one side
-// starts enforcing and another still ignores fails here rather than quietly
-// changing who may do what on a box.
+// against this same corpus, so a claim one side starts enforcing and the other
+// still ignores fails here rather than quietly changing who may do what on a
+// box.
 
 type ticketFixtureContext struct {
 	RootSecret     string `json:"rootSecret"`

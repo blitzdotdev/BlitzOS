@@ -52,19 +52,25 @@ Key session model facts:
 
 ## 2. What BlitzOS already has
 
-- A complete browser ACP client (`webapp/src/chat/`, `ChatPanel.tsx`) wired to
-  the box actor (`packages/box/actor`, WS on 7444, SQLite journal,
-  `session/list`, replay, permission fan-out). Disabled by
-  `NATIVE_CHAT_ENABLED = false`. `plans/COCKPIT-UI-RESTORATION.md` parks the
-  rest of that path "for a dedicated plan" — this plan is it.
+- **No chat surface at all.** BlitzOS used to carry a browser ACP client
+  (`webapp/src/chat/`, `ChatPanel.tsx`) wired to a box actor
+  (`packages/box/actor`, WS on 7444, SQLite journal, `session/list`, replay,
+  permission fan-out), dormant behind `NATIVE_CHAT_ENABLED = false`. All of it
+  was DELETED on this branch (2026-08-29): the client, the actor, the journal,
+  the `chat` tab type, the recipe `chat` harness, the bootstrap prompt sender,
+  and the ACP fixture corpus. Port 7444 stays reserved everywhere because boxes
+  already in the field still run the old actor; nothing in this tree listens on
+  it. Guest-side conformance tests moved to `packages/box/guest-tests/`.
+  `plans/COCKPIT-UI-RESTORATION.md` parked that path "for a dedicated plan" —
+  this plan is it, and the parked work is retired rather than resumed.
 - The rail: `shell/WorkspaceSessionRail.tsx` + `strip-rail.css` renders
   `aside.shell-rail > div.shell-list` as a flat projection of the tab list
   (`DriveRailSession`), built to survive a swap to real session rows.
 - Tabs are the primitive: `WorkspaceTabs` in `webapp_state` (D1, last-write
   wins), tab id = tmux session key on the box. Terminals ride ttyd through the
-  box gateway (7445); the actor rides 7444. Any new box path must be added in
-  `packages/schema/src/webapp-surface.ts` AND `packages/box/gateway/main.go`
-  (two-sided, drift-tested contract).
+  box gateway, which is now the ONLY proxied box port (7445). Any new box path
+  must be added in `packages/schema/src/webapp-surface.ts` AND
+  `packages/box/gateway/main.go` (two-sided, drift-tested contract).
 - Repos are cloned to `/workspace/<dir>` on the box (`workspace_repos` table).
   `git` and `gh` are in the image. No worktree feature exists anywhere.
 - Webapp styling: plain global CSS + `tokens.css`, dark-first, no Tailwind.
@@ -73,9 +79,9 @@ Key session model facts:
 ## 3. Decision: adopt Lody's session plane wholesale
 
 We adopt the Lody daemon as the session engine on the box, and the vendored
-Lody renderer packages as the session/chat surface in the webapp. The existing
-box-actor chat path stays untouched behind its flag during the transition and
-is retired at the end (§9).
+Lody renderer packages as the session/chat surface in the webapp. There is no
+transition to manage: the old box-actor chat path is already gone (§2), so the
+daemon arrives on empty ground.
 
 Why wholesale, not cherry-pick: the user goal is an upstream pin with
 automatic merges. That only stays cheap if we run their code with our
@@ -96,6 +102,8 @@ What we do NOT adopt:
   `blitz-cred`).
 - Electron surfaces (public browser panel, terminal dock, IDE launchers):
   already null-out in a browser.
+- Nothing from the deleted box actor: no ACP journal, no `chat-session.db`, no
+  7444 listener. The daemon owns session state end to end.
 
 ## 4. Transport: browser ⇄ daemon
 
@@ -130,8 +138,8 @@ box gateway (Go, 7445, ticket auth) ── proxies to ── lody daemon (s6 ser
   all machine calls — we add a "box websocket" plane there. This is one of the
   declared seam patches (§5.3).
 - Auth: both paths ride the existing webApp ticket (`X-Blitz-WebApp-Token`),
-  same as ttyd and the actor. Viewers get read-only or 403, same policy as
-  7444 today.
+  same as ttyd. Viewers get read-only or 403, the same policy the gateway
+  already applies to every 7445 surface.
 - Both routes go into `webapp-surface.ts` + `gateway/main.go` + both
   conformance tests (hard contract).
 
@@ -223,14 +231,14 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
 ## 6. Box changes
 
 1. Image: `npm i -g lody@<pin>` in `packages/box/Dockerfile` beside claude and
-   codex. Data dir on the state volume: `LODY_DATA_DIR=/var/lib/blitz/lody`
-   (survives VM replacement like `chat-session.db` does).
+   codex. Data dir on the state volume: `LODY_DATA_DIR=/var/lib/blitz/lody`,
+   which survives VM replacement like every other `/var/lib/blitz` path.
 2. s6 service `lody-daemon`: `lody daemon start` on loopback, plus the
    loro-websocket sync server (§4). Environment: `GIT_AUTHOR_*` from the
    member identity; agent credentials via the existing per-turn minting or
    `blitz-cred` shim — spike decides whether the bundled acp adapters accept
-   the same env the actor's adapters use (`CLAUDE_CODE_OAUTH_TOKEN`, codex
-   config).
+   the same env the shipped CLIs take (`CLAUDE_CODE_OAUTH_TOKEN`, codex
+   config), measured against those CLIs rather than against deleted code.
 3. Gateway: `/lody/sync` and `/lody/rpc` proxy routes, ticket-verified,
    viewer-restricted; entries in `webapp-surface.ts` + Go + both drift tests.
 4. Worktrees: configure Lody local projects for each `/workspace/<repo>` clone
@@ -239,7 +247,9 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
    `lody/<id12>` cut off the existing clone, placed under
    `/var/lib/blitz/lody/repos/...`. `ProjectRef.githubRepoFullName` is set so
    the sidebar groups these under GitHub Worktrees.
-5. The box actor (7444) keeps running untouched until §9.
+5. Port 7444 stays reserved and unused. Do not bind the daemon to it: boxes in
+   the field still run the old actor there, and the reserved-port fixture pins
+   the set on all three sides.
 
 ## 7. Webapp changes
 
@@ -305,23 +315,31 @@ Tailwind into the shell chrome):
   branch and a backup commit — surface that copy in the confirm dialog).
 
 `webapp_state` keeps owning terminal tabs and pane layout. Chat sessions are
-NOT tabs and never enter `WorkspaceTabs` (the dormant `type:'chat'` tab code
-is removed in §9).
+NOT tabs and never enter `WorkspaceTabs`. The old `type:'chat'` tab is already
+deleted from both parsers; a stored one is DROPPED on read, on both sides, so
+an old shared document still parses.
 
-## 9. Migration and retirement
+## 9. Migration
 
-Order of operations, each step shippable behind `LODY_SESSIONS_ENABLED`:
+Retirement happened FIRST, not last. Step 0 below is done on this branch, so
+nothing here waits on a dead surface being removed.
 
-1. Ship box daemon + gateway routes dark (no UI).
+0. **Done (2026-08-29).** The native-chat surface, the box actor, its journal,
+   the `chat` tab type, the recipe `chat` harness, the bootstrap prompt sender,
+   the ACP fixture corpus and the `NATIVE_CHAT_ENABLED` flag are deleted.
+   `plans/COCKPIT-UI-RESTORATION.md` carries a note pointing here. Recipes lost
+   their ACP delivery path with the sender: a recipe launch now writes
+   `/var/lib/blitz/recipe/{invocation.env,prompt.txt}` and `blitz-term` delivers
+   the prompt into the TUI session it creates. That is the only recipe
+   mechanism, and recipes themselves are product-disabled today.
+1. Ship box daemon + gateway routes dark (no UI), behind
+   `LODY_SESSIONS_ENABLED`.
 2. Ship `SessionSurface` + rail sections behind the flag; dogfood on canary.
 3. Flip the flag on canary; terminals unaffected.
-4. Retire: `NATIVE_CHAT_ENABLED`, `webapp/src/chat/*` (ChatPanel path),
-   `chat` tab type in `storage.ts` + `webapp-state.ts` mirror + `NewTabMenu`,
-   and eventually the actor's chat surface (the actor's ACP endpoint stays if
-   recipes still use it — recipes bootstrap speaks ACP to 7444; either port
-   recipes to the daemon or keep the actor for headless recipe runs only).
-5. Update `plans/COCKPIT-UI-RESTORATION.md` (its deferred-chat section is
-   superseded by this plan) and `packages/box/README.md` surface contract.
+4. Decide whether recipes move to the daemon (§12 question 1) or stay on the
+   `blitz-term` delivery they use today.
+5. Update `packages/box/README.md`'s surface contract when the daemon's routes
+   land.
 
 ## 10. Phases
 
@@ -356,16 +374,15 @@ Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
   must accept our minted tokens without Lody cloud login. Verified in Phase 1;
   if not, we run the adapters with env injection via a small daemon config, or
   patch at a declared seam in the npm package via `patch-package`.
-- **Two session engines during transition**: actor chat and daemon chat both
-  exist until §9 step 4. They never share state; the flag selects the surface.
 - **License hygiene**: Apache-2.0 both sides; carry `vendor/lody/LICENSE` and
   regenerate our third-party notices from their
   `THIRD_PARTY_NOTICES.md` + new deps.
 
 ## 12. Open questions (do not block Phase 0)
 
-1. Do recipes move to the daemon, or does the actor stay as the headless ACP
-   runner? (§9.4)
+1. Do recipes move to the daemon, or do they stay on the `blitz-term` prompt
+   delivery they use today? (§9.4. The old answer — "keep the actor as the
+   headless ACP runner" — is closed: the actor is deleted.)
 2. Cross-member visibility of chats on someone else's machine — v1 shows only
    your machine's sessions; is a read-only roster of other members' sessions
    needed sooner?

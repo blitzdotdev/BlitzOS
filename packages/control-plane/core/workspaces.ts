@@ -862,16 +862,10 @@ export function addWorkspaceRoutes(
     // one VM per member now, so "the workspace's VM" is not a thing that
     // exists; the ticket already names who is asking.
     const rawPort = context.req.param("port");
-    if (rawPort !== "7444" && rawPort !== "7445") {
-      throw new HttpError(400, "webApp port must be 7444 or 7445");
+    if (rawPort !== "7445") {
+      throw new HttpError(400, "webApp port must be 7445");
     }
-    const port: WebAppPort = rawPort === "7444" ? 7444 : 7445;
-    // The agent port is closed to viewers before any machine is resolved: a
-    // viewer may not drive an agent on anybody's machine, so there is nothing
-    // to look up.
-    if (access.role === "viewer" && port === 7444) {
-      throw new HttpError(403, "viewers cannot drive the workspace agent");
-    }
+    const port: WebAppPort = 7445;
     const machine = await machineForRequest(runtime, row, access.membershipId, access.role);
     const vmId = machine.vm_id;
     if (vmId === null) throw new HttpError(409, "workspace is not ready for webapp access");
@@ -884,7 +878,7 @@ export function addWorkspaceRoutes(
     assertWebSocketOrigin(context.req.raw, requestURL);
     const suffix = requestURL.pathname.slice(routePrefix.length);
     const path = suffix === "" ? "/" : suffix;
-    if (!isWebAppSurfacePath(port, path)) {
+    if (!isWebAppSurfacePath(path)) {
       throw new HttpError(403, "path is not a workspace webApp surface");
     }
     const pathAndQuery = `${path}${requestURL.search}`;

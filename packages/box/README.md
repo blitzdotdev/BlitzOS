@@ -1,12 +1,9 @@
 # BlitzOS box
 
 One OCI image is one complete agent workspace: key-only SSH, a ttyd + tmux
-terminal, the ACP session actor, WebDAV plus preview routing, and
-Docker-in-Docker. The state volume keeps host keys, broker client state, agent
-HOME, the actor's ACP session store, and box credentials. `/workspace` is a
-caller-owned bind mount. The ACP actor supports headless recipe execution and
-protocol compatibility; it is not currently exposed as a native cockpit Chat
-surface.
+terminal, WebDAV plus preview routing, and Docker-in-Docker. The state volume
+keeps host keys, broker client state, agent HOME, and box credentials.
+`/workspace` is a caller-owned bind mount.
 
 ## Install
 
@@ -52,8 +49,8 @@ docker run -d \
 The long `--mount` form fails when a bind-mount source is missing; short `-v`
 can silently create a directory instead.
 
-`--privileged` enables the inner Docker daemon. Without it, the other four
-webApp endpoints still start and dockerd reports a clean skip.
+`--privileged` enables the inner Docker daemon. Without it, the other webApp
+endpoints still start and dockerd reports a clean skip.
 
 The box works without BlitzOS accounts or a control plane. Sign in to an agent
 once over SSH with `claude login` or `codex login --device-auth`; HOME
@@ -84,7 +81,7 @@ docker exec blitz-box ssh-keygen -lf /var/lib/blitz/ssh/ssh_host_ed25519_key.pub
 ssh-keyscan -p 2222 127.0.0.1 2>/dev/null | ssh-keygen -lf -
 ```
 
-After the fingerprints match, save the scanned key and open the three
+After the fingerprints match, save the scanned key and open the two
 loopback-only tunnels:
 
 ```sh
@@ -93,13 +90,11 @@ ssh -p 2222 \
   -o UserKnownHostsFile="$HOME/.ssh/blitz-box-known_hosts" \
   -N \
   -L 7443:127.0.0.1:7443 \
-  -L 7444:127.0.0.1:7444 \
   -L 7445:127.0.0.1:7445 \
   blitz@127.0.0.1
 ```
 
-The terminal is then at `http://127.0.0.1:7443`, ACP at
-`ws://127.0.0.1:7444`, and workspace files at
+The terminal is then at `http://127.0.0.1:7443` and workspace files at
 `http://127.0.0.1:7445/workspace/`. The agent HOME is deliberately not
 published: it holds the agent's OAuth credentials. Port discovery and preview
 share the files origin, so they need no additional SSH forward or ingress
@@ -125,10 +120,9 @@ Recipe launches leave `/var/lib/blitz/recipe/{invocation.env,prompt.txt}`
 behind; the first `claude`/`codex` request whose type matches `HARNESS` and
 that CREATES its tmux session consumes them — model/effort flags plus the
 prompt as a final positional argument — renaming both files to `*.delivered`
-before tmux starts (once-only). Attach never re-injects, `ro` never consumes,
-and `HARNESS=chat` files belong to the headless recipe prompt sender, not a
-native cockpit Chat surface. Pinned by
-`schema/fixtures/recipe-invocation/` + `actor/test/recipe-invocation-guest.test.ts`.
+before tmux starts (once-only). Attach never re-injects and `ro` never
+consumes. Pinned by `schema/fixtures/recipe-invocation/` +
+`guest-tests/test/recipe-invocation-guest.test.ts`.
 
 ### Ports and preview URL contract
 
@@ -139,8 +133,9 @@ GET http://127.0.0.1:7445/ports
 => {"ports":[{"port":3000,"process":"node"}]}
 ```
 
-The list includes listening TCP ports and excludes SSH, ttyd, ACP, the public
-gateway, and its private dufs upstream. Use the same origin for preview URLs:
+The list includes listening TCP ports and excludes SSH, ttyd, the public
+gateway, its private dufs upstream, and the reserved port 7444. Use the same
+origin for preview URLs:
 
 ```text
 http://127.0.0.1:7445/preview/<port>/
@@ -154,22 +149,9 @@ authentication, and WebSocket handling remain those of that existing route.
 
 Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar saves are last-write-wins.
 
-## ACP session store
-
-The ACP actor persists ACP sessions used by headless recipes to the
-legacy-named `chat-session.db` on the state volume — two SQLite tables,
-`sessions` and `events`. This retained backend is not an available native
-cockpit Chat feature. It serves the ACP session list, replay, and resume, and
-nothing else: both journaled frame shapes
-(`session/update` and `blitz/permission_answered`) live in `events`, so replay
-keeps permission history. On open the actor adopts a pre-rename `journal.db`
-from a reused volume and drops the retired `turns`, `permissions`, and
-`participants` tables.
-
-Scope fence: this store is deliberately NOT an analytics, metering, or usage
-store. Usage and eval data comes from the native harness transcripts in the
-agent HOME (`~/.claude/projects/…`, `~/.codex/sessions/…`). Do not extend this
-store beyond its headless ACP session role.
+Scope fence: the box keeps deliberately NO analytics, metering, or usage store.
+Usage and eval data comes from the native harness transcripts in the agent HOME
+(`~/.claude/projects/…`, `~/.codex/sessions/…`).
 
 ## Stop and upgrade
 

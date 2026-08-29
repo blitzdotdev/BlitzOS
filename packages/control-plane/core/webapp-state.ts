@@ -26,7 +26,6 @@ type WebAppTabType =
   | "kimi"
   | "prime"
   | "terminal"
-  | "chat"
   | "file"
   | "preview"
   | "panel";
@@ -34,8 +33,6 @@ type WebAppTabType =
 interface WebAppTabV1 {
   id: number;
   type: WebAppTabType;
-  chatSessionId?: string;
-  chatProvider?: WebAppAgent;
   filePath?: string;
   port?: number;
   url?: string;
@@ -96,7 +93,6 @@ const TAB_TYPES: ReadonlySet<string> = new Set([
   "kimi",
   "prime",
   "terminal",
-  "chat",
   "file",
   "preview",
   "panel",
@@ -216,25 +212,9 @@ function parseTab(value: OptionalJsonValue, index: number): WebAppTabV1 {
     const title = boundedString(value.title, `tabs.tabs[${index}].title`, 256);
     return withRegion({ id, type, url, title }, region);
   }
-  if (type !== "chat") {
-    const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
-    const tab: WebAppTabV1 = { id, type };
-    if (title !== undefined) tab.title = title;
-    return withRegion(tab, region);
-  }
-  const tab: WebAppTabV1 = { id, type };
   const title = parseManagedTitle(value.title, `tabs.tabs[${index}].title`);
+  const tab: WebAppTabV1 = { id, type };
   if (title !== undefined) tab.title = title;
-  if (value.chatSessionId !== undefined) {
-    tab.chatSessionId = boundedString(
-      value.chatSessionId,
-      `tabs.tabs[${index}].chatSessionId`,
-      1_024,
-    );
-  }
-  if (value.chatProvider !== undefined) {
-    tab.chatProvider = parseAgent(value.chatProvider, `tabs.tabs[${index}].chatProvider`);
-  }
   return withRegion(tab, region);
 }
 
@@ -243,15 +223,22 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
     throw new HttpError(400, "tabs must be a version 1 tabs document");
   }
   if (value.tabs.length > 100) throw new HttpError(400, "tabs may contain at most 100 items");
-  const tabs = value.tabs.map(parseTab);
+  // "chat" tabs belonged to the retired native-chat surface. A stored one is
+  // dropped on read rather than invalidating the whole shared document.
+  const liveTabs = value.tabs.filter((tab) => !(isRecord(tab) && tab.type === "chat"));
+  const droppedLegacyTab = liveTabs.length !== value.tabs.length;
+  const tabs = liveTabs.map(parseTab);
   if (new Set(tabs.map(({ id }) => id)).size !== tabs.length) {
     throw new HttpError(400, "tabs must have unique ids");
   }
-  const activeId = value.activeId === null
+  let activeId = value.activeId === null
     ? null
     : positiveId(value.activeId, "tabs.activeId");
   if (activeId !== null && !tabs.some((tab) => tab.id === activeId && tab.region !== "side")) {
-    throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
+    if (!droppedLegacyTab) {
+      throw new HttpError(400, "tabs.activeId must identify a main-pane tab");
+    }
+    activeId = null;
   }
   const nextId = positiveId(value.nextId, "tabs.nextId");
   if (tabs.some(({ id }) => id >= nextId)) {
@@ -260,10 +247,11 @@ function parseTabs(value: OptionalJsonValue): WebAppTabsV1 {
   const parsed: WebAppTabsV1 = { version: 1, tabs, activeId, nextId };
   if (value.sideActiveId !== undefined) {
     const sideActiveId = positiveId(value.sideActiveId, "tabs.sideActiveId");
-    if (!tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {
+    if (tabs.some((tab) => tab.id === sideActiveId && tab.region === "side")) {
+      parsed.sideActiveId = sideActiveId;
+    } else if (!droppedLegacyTab) {
       throw new HttpError(400, "tabs.sideActiveId must identify a side-pane tab");
     }
-    parsed.sideActiveId = sideActiveId;
   }
   return parsed;
 }

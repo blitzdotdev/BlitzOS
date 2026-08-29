@@ -3,8 +3,8 @@ import { HARNESSES } from "./broker.js";
 /** A recipe is one row: a template reference plus an invocation — harness,
  * model, effort, prompt. Launching one creates a normal workspace from the
  * template and delivers the invocation to the box (plans/RECIPES.md).
- * The harness choices are the TUI harnesses plus the headless chat run. */
-export const RECIPE_HARNESSES = [...HARNESSES, "chat"] as const;
+ * The harness choices are the TUI harnesses. */
+export const RECIPE_HARNESSES = [...HARNESSES] as const;
 
 export type RecipeHarness = (typeof RECIPE_HARNESSES)[number];
 
@@ -13,8 +13,8 @@ export interface RecipeView {
   name: string;
   templateId: string;
   harness: RecipeHarness;
-  /** A catalog model (see agent-catalog.ts); absent means the harness default.
-   * Required for `chat`, whose model also selects the adapter provider. */
+  /** A catalog model (see agent-catalog.ts); absent means the harness
+   * default. */
   model?: string;
   effort?: string;
   prompt: string;

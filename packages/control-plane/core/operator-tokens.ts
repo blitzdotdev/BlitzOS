@@ -18,8 +18,7 @@ const MAX_TTL_DAYS = 30;
  *  - the method must be safe, which is what makes the credential read-only;
  *  - the path must be one of the three this token exists for — list the
  *    workspaces, read one workspace, read a box surface on port 7445, which
- *    serves files, ports and previews. Port 7444 is the agent, and an
- *    operator token must never be able to drive one.
+ *    serves files, ports and previews.
  *
  * Both lists name what is reachable rather than what is not, so a route added
  * tomorrow — or a third box port, if the box ever grows one — is out of scope

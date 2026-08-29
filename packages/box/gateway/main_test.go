@@ -116,22 +116,13 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 		t.Fatalf("viewer read-only terminal URI = %q", got)
 	}
 
-	// Viewers may look at a preview but not send to it, and the agent port
-	// is closed to them entirely.
+	// Viewers may look at a preview but not send to it.
 	previewWrite := httptest.NewRequest(http.MethodPost, "http://box/preview/3000/api", strings.NewReader("x"))
 	previewWrite.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
 	previewResponse := httptest.NewRecorder()
 	handler.ServeHTTP(previewResponse, previewWrite)
 	if previewResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer preview write status = %d, want %d", previewResponse.Code, http.StatusForbidden)
-	}
-
-	acpRequest := httptest.NewRequest(http.MethodGet, "http://box/acp", nil)
-	acpRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
-	acpResponse := httptest.NewRecorder()
-	handler.ServeHTTP(acpResponse, acpRequest)
-	if acpResponse.Code != http.StatusForbidden {
-		t.Fatalf("viewer acp status = %d, want %d", acpResponse.Code, http.StatusForbidden)
 	}
 
 	// Drain is the control plane's switch, not a user surface.
@@ -438,7 +429,6 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 	handler := &gateway{
 		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
 		terminal:               upstreamURL,
-		actor:                  upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, "https://blitz-control-plane.example"),
 		webAppTokenPath:        webAppPath,
 		tunnelTokenPath:        filepath.Join(authDir, "tunnel-token"),
@@ -458,7 +448,6 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 		{name: "ports", method: http.MethodGet, path: "/ports"},
 		{name: "dufs", method: http.MethodGet, path: "/workspace/file.txt"},
 		{name: "preview", method: http.MethodGet, path: "/preview/" + strconv.Itoa(upstreamPort) + "/"},
-		{name: "acp", method: http.MethodGet, path: "/acp"},
 		{
 			name:   "terminal websocket",
 			method: http.MethodGet,
@@ -581,7 +570,6 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 	handler := &gateway{
 		dufs:            httputil.NewSingleHostReverseProxy(upstreamURL),
 		terminal:        upstreamURL,
-		actor:           upstreamURL,
 		webAppTokenPath: webAppPath,
 		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
 		transport:       http.DefaultTransport,
@@ -592,11 +580,9 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		path        string
 		upstreamURI string
 		webSocket   bool
-		keepsToken  bool
 	}{
 		{name: "dufs", path: "/workspace/file.txt", upstreamURI: "/workspace/file.txt"},
 		{name: "preview", path: "/preview/" + strconv.Itoa(upstreamPort) + "/asset.js?x=1", upstreamURI: "/asset.js?x=1"},
-		{name: "acp", path: "/acp/v1/sessions?resume=true", upstreamURI: "/v1/sessions?resume=true", keepsToken: true},
 		{name: "terminal websocket", path: "/terminal/ws?arg=terminal", upstreamURI: "/ws?arg=terminal", webSocket: true},
 	}
 	for _, test := range tests {
@@ -617,8 +603,8 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 			if got.requestURI != test.upstreamURI {
 				t.Errorf("upstream request URI = %q, want %q", got.requestURI, test.upstreamURI)
 			}
-			if got.hasWebAppToken != test.keepsToken {
-				t.Errorf("upstream token presence = %v, want %v", got.hasWebAppToken, test.keepsToken)
+			if got.hasWebAppToken {
+				t.Errorf("upstream token presence = %v, want false", got.hasWebAppToken)
 			}
 		})
 	}
@@ -1029,144 +1015,6 @@ func TestTerminalProxyHandshakeContract(t *testing.T) {
 	}
 }
 
-func TestACPProxyHTTPAndWebSocketContract(t *testing.T) {
-	type observedRequest struct {
-		method      string
-		requestURI  string
-		host        string
-		origin      string
-		prefix      string
-		webSocket   bool
-		subprotocol string
-	}
-	observed := make(chan observedRequest, 2)
-	actor := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		observed <- observedRequest{
-			method:      request.Method,
-			requestURI:  request.URL.RequestURI(),
-			host:        request.Host,
-			origin:      request.Header.Get("Origin"),
-			prefix:      request.Header.Get("X-Forwarded-Prefix"),
-			webSocket:   isWebSocketUpgrade(request),
-			subprotocol: request.Header.Get("Sec-WebSocket-Protocol"),
-		}
-		response.WriteHeader(http.StatusNoContent)
-	}))
-	defer actor.Close()
-	actorURL, err := url.Parse(actor.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	const controlPlaneOrigin = "https://blitz-control-plane.example"
-	handler := &gateway{
-		actor:                  actorURL,
-		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
-		transport:              http.DefaultTransport,
-	}
-
-	httpRequest := httptest.NewRequest(http.MethodPost, "http://box/acp/v1/sessions?resume=true", strings.NewReader("prompt"))
-	httpRequest.Header.Set("Origin", controlPlaneOrigin)
-	httpResponse := httptest.NewRecorder()
-	handler.ServeHTTP(httpResponse, httpRequest)
-	if httpResponse.Code != http.StatusNoContent {
-		t.Fatalf("HTTP status = %d, want %d; body = %q", httpResponse.Code, http.StatusNoContent, httpResponse.Body.String())
-	}
-
-	webSocketRequest := httptest.NewRequest(http.MethodGet, "http://box/acp/socket?session=go-test", nil)
-	webSocketRequest.Header.Set("Connection", "Upgrade")
-	webSocketRequest.Header.Set("Upgrade", "websocket")
-	webSocketRequest.Header.Set("Origin", controlPlaneOrigin)
-	webSocketRequest.Header.Set("Sec-WebSocket-Protocol", "acp")
-	webSocketResponse := httptest.NewRecorder()
-	handler.ServeHTTP(webSocketResponse, webSocketRequest)
-	if webSocketResponse.Code != http.StatusNoContent {
-		t.Fatalf("WebSocket status = %d, want %d; body = %q", webSocketResponse.Code, http.StatusNoContent, webSocketResponse.Body.String())
-	}
-
-	httpObserved := <-observed
-	if httpObserved.method != http.MethodPost {
-		t.Errorf("HTTP upstream method = %q, want %q", httpObserved.method, http.MethodPost)
-	}
-	if httpObserved.requestURI != "/v1/sessions?resume=true" {
-		t.Errorf("HTTP upstream request URI = %q", httpObserved.requestURI)
-	}
-	if httpObserved.webSocket {
-		t.Error("HTTP upstream request unexpectedly upgraded")
-	}
-	assertACPUpstreamHeaders(t, httpObserved.host, httpObserved.origin, httpObserved.prefix)
-
-	webSocketObserved := <-observed
-	if webSocketObserved.requestURI != "/socket?session=go-test" {
-		t.Errorf("WebSocket upstream request URI = %q", webSocketObserved.requestURI)
-	}
-	if !webSocketObserved.webSocket {
-		t.Error("WebSocket upstream request lost upgrade headers")
-	}
-	if webSocketObserved.subprotocol != "acp" {
-		t.Errorf("WebSocket upstream subprotocol = %q, want acp", webSocketObserved.subprotocol)
-	}
-	assertACPUpstreamHeaders(t, webSocketObserved.host, webSocketObserved.origin, webSocketObserved.prefix)
-}
-
-func TestACPExactPathAndQueryRouteToActor(t *testing.T) {
-	actorRequests := make(chan string, 2)
-	actor := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		actorRequests <- request.URL.RequestURI()
-		response.WriteHeader(http.StatusNoContent)
-	}))
-	defer actor.Close()
-	actorURL, err := url.Parse(actor.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dufsRequests := make(chan string, 1)
-	dufs := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		dufsRequests <- request.URL.RequestURI()
-		response.WriteHeader(http.StatusAccepted)
-	}))
-	defer dufs.Close()
-	dufsURL, err := url.Parse(dufs.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	handler := &gateway{
-		dufs:      httputil.NewSingleHostReverseProxy(dufsURL),
-		actor:     actorURL,
-		transport: http.DefaultTransport,
-	}
-	for _, test := range []struct {
-		path        string
-		upstreamURI string
-	}{
-		{path: "/acp", upstreamURI: "/"},
-		{path: "/acp?x=1", upstreamURI: "/?x=1"},
-	} {
-		t.Run(test.path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "http://box"+test.path, nil)
-			response := httptest.NewRecorder()
-			handler.ServeHTTP(response, request)
-			if response.Code != http.StatusNoContent {
-				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
-			}
-			if got := <-actorRequests; got != test.upstreamURI {
-				t.Errorf("actor request URI = %q, want %q", got, test.upstreamURI)
-			}
-		})
-	}
-
-	request := httptest.NewRequest(http.MethodGet, "http://box/acpx?x=1", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusAccepted {
-		t.Fatalf("/acpx status = %d, want %d; body = %q", response.Code, http.StatusAccepted, response.Body.String())
-	}
-	if got := <-dufsRequests; got != "/acpx?x=1" {
-		t.Errorf("dufs request URI = %q, want %q", got, "/acpx?x=1")
-	}
-}
-
 func TestLoadControlPlaneOriginTrimsWhitespace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "origin")
 	if err := os.WriteFile(path, []byte("  https://blitz-control-plane.example\n\t"), 0o644); err != nil {
@@ -1504,7 +1352,7 @@ func TestServePreviewFocusEmptyAbsentAndMethod(t *testing.T) {
 
 // Reader side of the connections-focus cross-runtime contract. The CLI
 // producer is pinned against the same fixtures in
-// packages/box/actor/test/connections-focus-conformance.test.ts, the browser
+// packages/box/guest-tests/test/connections-focus-conformance.test.ts, the browser
 // consumer in packages/webapp/test/connections-focus.test.ts.
 func TestServeConnectionsFocusFixtures(t *testing.T) {
 	fixturesDirectory := filepath.Join("..", "..", "schema", "fixtures", "connections-focus")
@@ -1732,19 +1580,6 @@ func stringPointer(value string) *string {
 	return &value
 }
 
-func assertACPUpstreamHeaders(t *testing.T, host, origin, prefix string) {
-	t.Helper()
-	if host != actorHost {
-		t.Errorf("upstream Host = %q, want %q", host, actorHost)
-	}
-	if origin != actorOrigin {
-		t.Errorf("upstream Origin = %q, want %q", origin, actorOrigin)
-	}
-	if prefix != "/acp" {
-		t.Errorf("upstream X-Forwarded-Prefix = %q, want /acp", prefix)
-	}
-}
-
 func assertActualCORS(t *testing.T, header http.Header, origin string) {
 	t.Helper()
 	if got := header.Get("Access-Control-Allow-Origin"); got != origin {
@@ -1809,7 +1644,6 @@ func TestPolicyRefusalsExplainThemselves(t *testing.T) {
 	handler := &gateway{
 		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
 		terminal:               upstreamURL,
-		actor:                  upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
 		webAppTokenPath:        tokenPath,
 		workspaceIDPath:        workspacePath,
@@ -1873,12 +1707,6 @@ func TestPolicyRefusalsExplainThemselves(t *testing.T) {
 			credential: viewer(),
 			status:     http.StatusBadRequest, reason: "terminal requires a session type and key",
 			details: []string{`role "viewer"`, "got 1 positional arg values, want 2"},
-		},
-		{
-			name: "agent port for a viewer", method: http.MethodGet, target: "/acp",
-			credential: viewer(),
-			status:     http.StatusForbidden, reason: "viewers cannot drive the workspace agent",
-			details: []string{`role "viewer"`},
 		},
 		{
 			name: "preview write by a viewer", method: http.MethodPost, target: "/preview/3000/api",
@@ -2018,10 +1846,10 @@ func TestWebSocketOriginRefusalNamesBothOrigins(t *testing.T) {
 	})
 }
 
-// diagGateway builds a box whose every diagnosable fact is a fixture: a live
-// actor, a dufs that answers, a terminal address nothing listens on, a real
-// origin, a real workspace id, and an agent credential file holding a value
-// that must never leave the box.
+// diagGateway builds a box whose every diagnosable fact is a fixture: a dufs
+// that answers, a terminal address nothing listens on, a real origin, a real
+// workspace id, and an agent credential file holding a value that must never
+// leave the box.
 func diagGateway(t *testing.T, secret, workspaceID, controlPlaneOrigin, credentialContents string) (*gateway, string) {
 	t.Helper()
 	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
@@ -2042,7 +1870,6 @@ func diagGateway(t *testing.T, secret, workspaceID, controlPlaneOrigin, credenti
 	return &gateway{
 		dufsAddress:            liveURL.Host,
 		terminal:               &url.URL{Scheme: "http", Host: closedLoopbackAddress(t)},
-		actor:                  liveURL,
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
 		webAppTokenPath:        tokenPath,
 		workspaceIDPath:        workspacePath,
@@ -2156,10 +1983,10 @@ func TestDiagReportsTheStateThatDecidesRefusals(t *testing.T) {
 		t.Error("agentCredentialPresent = false while the credential file exists")
 	}
 
-	// A box always answers for all three services, in a fixed order, whether
+	// A box always answers for both services, in a fixed order, whether
 	// or not they answer: "the terminal is missing from the list" is not a
 	// diagnosis anyone can act on.
-	wantNames := []string{"actor", "terminal", "dufs"}
+	wantNames := []string{"terminal", "dufs"}
 	gotNames := make([]string, 0, len(report.Services))
 	for _, service := range report.Services {
 		gotNames = append(gotNames, service.Name)
@@ -2167,7 +1994,7 @@ func TestDiagReportsTheStateThatDecidesRefusals(t *testing.T) {
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("services = %v, want %v", gotNames, wantNames)
 	}
-	reachable := map[string]bool{"actor": true, "terminal": false, "dufs": true}
+	reachable := map[string]bool{"terminal": false, "dufs": true}
 	for _, service := range report.Services {
 		if service.Reachable != reachable[service.Name] {
 			t.Errorf("%s reachable = %v, want %v (address %s, error %q)",

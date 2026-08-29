@@ -946,7 +946,7 @@ describe("microVM pool provider", () => {
     });
   });
 
-  it("pipes WebSocket messages in both directions through the agent fetch", async () => {
+  it("pipes WebSocket messages in both directions through the guest agent fetch", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/v1/vms") && init?.method === "POST") {
@@ -956,7 +956,7 @@ describe("microVM pool provider", () => {
           ssh_port: 22_001,
         }, { status: 201 });
       }
-      if (url.endsWith("/vms/vm-1-abcdef123456/webapp/7444/?arg=kept")) {
+      if (url.endsWith("/vms/vm-1-abcdef123456/webapp/7445/terminal/ws?arg=kept")) {
         const headers = new Headers(init?.headers);
         expect(headers.get("authorization")).toBe(`Bearer ${LAB_TOKEN}`);
         expect(headers.get("cookie")).toBeNull();
@@ -965,11 +965,11 @@ describe("microVM pool provider", () => {
         const upstreamServer = pair[1];
         upstreamServer.accept();
         upstreamServer.addEventListener("message", (event) => {
-          upstreamServer.send(`agent:${String(event.data)}`);
+          upstreamServer.send(`terminal:${String(event.data)}`);
         });
         return new Response(null, {
           status: 101,
-          headers: { "Sec-WebSocket-Protocol": "acp" },
+          headers: { "Sec-WebSocket-Protocol": "tty" },
           webSocket: pair[0],
         });
       }
@@ -990,7 +990,7 @@ describe("microVM pool provider", () => {
 
     const response = await appRequest(
       app,
-      `/workspaces/${workspace.id}/webapp/7444?arg=kept`,
+      `/workspaces/${workspace.id}/webapp/7445/terminal/ws?arg=kept`,
       {
         headers: {
           Cookie: cookie,
@@ -999,12 +999,12 @@ describe("microVM pool provider", () => {
           Origin: "https://cp.example",
           Connection: "Upgrade",
           Upgrade: "websocket",
-          "Sec-WebSocket-Protocol": "acp",
+          "Sec-WebSocket-Protocol": "tty",
         },
       },
     );
     expect(response.status).toBe(101);
-    expect(response.headers.get("sec-websocket-protocol")).toBe("acp");
+    expect(response.headers.get("sec-websocket-protocol")).toBe("tty");
     const socket = response.webSocket;
     if (socket === null) throw new Error("control-plane response omitted its WebSocket");
     socket.accept();
@@ -1016,7 +1016,7 @@ describe("microVM pool provider", () => {
       });
     });
     socket.send("hello");
-    await expect(message).resolves.toBe("agent:hello");
+    await expect(message).resolves.toBe("terminal:hello");
     socket.close(1000, "done");
   });
 

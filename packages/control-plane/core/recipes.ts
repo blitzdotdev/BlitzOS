@@ -70,7 +70,7 @@ function parseRecipe(value: JsonValue): CreateRecipeRequest {
   // Legacy name, workspace id. See RecipeRow.source_workspace_id.
   const templateId = requiredString(value.templateId, "templateId", 256);
   if (!isRecipeHarness(value.harness)) {
-    throw new HttpError(400, "harness must be claude, codex, or chat");
+    throw new HttpError(400, "harness must be claude or codex");
   }
   const prompt = requiredString(value.prompt, "prompt", RECIPE_PROMPT_MAX_BYTES);
   if (new TextEncoder().encode(prompt).byteLength > RECIPE_PROMPT_MAX_BYTES) {
@@ -94,26 +94,19 @@ function parseRecipe(value: JsonValue): CreateRecipeRequest {
     result.effort = effort;
   }
   // Write-time harness ↔ model pairing (plans/RECIPES.md): a claude recipe
-  // pins a claude model, codex a codex model; chat pins any catalog model and
-  // must pin one, because that model selects the adapter provider at launch.
+  // pins a claude model, codex a codex model.
   const provider = result.model === undefined ? null : agentProviderForModel(result.model);
   if (result.model !== undefined && provider === null) {
     throw new HttpError(400, "model is not in the agent catalog");
   }
-  if (result.harness === "chat") {
-    if (provider === null) {
-      throw new HttpError(400, "a chat recipe must pin a catalog model to select its provider");
-    }
-  } else if (provider !== null && provider !== result.harness) {
+  if (provider !== null && provider !== result.harness) {
     throw new HttpError(400, `a ${result.harness} recipe may only pin a ${result.harness} model`);
   }
   // Effort ↔ catalog gate: the shell-safety pattern above bounds the bytes;
   // this bounds the value to the pinned model's effective effort list, or to
-  // the provider base when no model is pinned. Chat always has a provider
-  // here — the model requirement above already threw without one.
-  const effortProvider = result.harness === "chat" ? provider : result.harness;
-  if (result.effort !== undefined && effortProvider !== null) {
-    const efforts = agentEffortsForModel(effortProvider, result.model);
+  // the harness base when no model is pinned.
+  if (result.effort !== undefined) {
+    const efforts = agentEffortsForModel(result.harness, result.model);
     if (!efforts.includes(result.effort)) {
       throw new HttpError(400, `effort must be one of: ${efforts.join(", ")}`);
     }

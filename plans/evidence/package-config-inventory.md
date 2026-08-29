@@ -23,11 +23,9 @@ by the resolution rules.
 
 | Name | Read or surface | Classification | Declaration / reason |
 | --- | --- | --- | --- |
-| `BLITZ_AGENT` | `actor/src/main.ts` | declared env | `string`, default `claude`, enum `claude`/`codex` |
-| `BLITZ_ALLOWED_ORIGINS` | `actor/src/config.ts` | declared env | Optional comma-separated string; empty intentionally means no extra origins |
 | `BLITZ_CP_ORIGIN` | `rootfs/usr/local/libexec/blitz-init-state` | declared env | Optional control-plane origin written to the box state directory |
 | `BLITZ_GID` | `rootfs/usr/local/libexec/blitz-init-state`, smoke launch | declared env | `integer`, default 1000, range 1–60000 |
-| `BLITZ_STATE_DIR` | actor, init/enroll/register/profile scripts, s6 child environments; `blitz-cred` reads it | declared env | `string`, default `/var/lib/blitz` |
+| `BLITZ_STATE_DIR` | init/enroll/register/profile scripts, s6 child environments; `blitz-cred` reads it | declared env | `string`, default `/var/lib/blitz` |
 | `BLITZ_UID` | `rootfs/usr/local/libexec/blitz-init-state`, smoke launch | declared env | `integer`, default 1000, range 1–60000 |
 | `S6_KEEP_ENV` | s6-overlay service launcher | declared env | `boolean`, default 1 so empty values injected by Docker remain present for box services |
 | `HOME`, `USER`, `LANG`, `LC_ALL` | Docker and s6 fixed child environments | non-env | Runtime OS identity/locale; system users are outside the package contract |

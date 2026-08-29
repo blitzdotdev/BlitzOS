@@ -381,11 +381,11 @@ test("no image path changed means no rebuild", () => {
 
 test("a box change requires a rebuild", () => {
   const decision = boxImageDecision("abc1234", [
-    "packages/box/actor/src/actor.ts",
+    "packages/box/gateway/main.go",
     "packages/webapp/src/App.tsx",
   ]);
   assert.equal(decision.rebuild, true);
-  assert.deepEqual(decision.paths, ["packages/box/actor/src/actor.ts"]);
+  assert.deepEqual(decision.paths, ["packages/box/gateway/main.go"]);
 });
 
 test("a broker change requires a rebuild", () => {

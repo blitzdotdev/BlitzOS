@@ -8,7 +8,7 @@ import {
 } from './WebAppIcons';
 import type { TerminalAgent } from './protocol';
 
-export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview' | 'panel';
+export type WebAppSessionType = TerminalAgent | 'terminal' | 'file' | 'preview' | 'panel';
 
 /** One glyph per session kind. Tab strips, the session rail and the new-tab
  * menu all draw a session through this, so a kind looks the same everywhere. */
@@ -31,7 +31,6 @@ export function SessionTypeIcon({
       ? <GenericProviderIcon className={className} />
       : <FolderIcon className={className} />;
   }
-  if (type === 'chat') return <span className={`${className} mi-chat`} aria-hidden="true" />;
   if (type === 'claude') return <span className={`${className} mi-claude`} aria-hidden="true" />;
   if (type === 'opencode') return <span className={`${className} mi-opencode`} aria-hidden="true" />;
   if (type === 'pi') return <span className={`${className} mi-pi`} aria-hidden="true" />;

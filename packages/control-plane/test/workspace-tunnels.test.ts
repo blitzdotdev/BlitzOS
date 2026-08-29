@@ -64,13 +64,12 @@ describe("workspace tunnels", () => {
     expect(userData.indexOf("/var/lib/blitz/webapp-token"))
       .toBeLessThan(userData.indexOf("/var/lib/blitz/tunnel-token"));
 
-    // The ACP client connects at the port root; deeper 7444 paths are not
-    // browser surfaces and the proxy allowlist refuses them.
-    const ports = await appRequest(app, `/workspaces/${workspace.id}/webapp/7444?x=1`, {
+    // 7445 is the only proxied port, and its path passes through unchanged.
+    const ports = await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports?x=1`, {
       headers: { Cookie: cookie },
     });
     expect(ports.status).toBe(200);
-    expect(proxied.request?.url).toBe(`https://ws-${machineId}.webapp.test/acp/?x=1`);
+    expect(proxied.request?.url).toBe(`https://ws-${machineId}.webapp.test/ports?x=1`);
     const credential = proxied.request?.headers.get("X-Blitz-WebApp-Token") ?? "";
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       credential,

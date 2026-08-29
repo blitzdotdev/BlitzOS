@@ -88,7 +88,8 @@ function writeEntries(entries) {
 
 // Mirrors packages/schema/src/preview.ts. The Go gateway keeps the same set in
 // `excludedPorts`; all three are pinned to
-// packages/schema/fixtures/preview-ports/reserved.json.
+// packages/schema/fixtures/preview-ports/reserved.json. 7444 belonged to the
+// retired ACP actor and stays reserved for boxes already in the field.
 const RESERVED_PORTS = new Set([22, 7443, 7444, 7445, 7446, 17445]);
 // The control plane refuses a longer `tabs.tabs[].path` outright, and a refused
 // write takes the whole tab layout down with it, so the producer never emits a

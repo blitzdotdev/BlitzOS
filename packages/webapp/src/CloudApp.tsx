@@ -54,7 +54,6 @@ import {
   clampDrawerWidth,
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
-  removeDismissedChatAuthProviders,
   tabRegion,
   withPreviewTabPath,
   type StorageNamespace,
@@ -91,7 +90,6 @@ import {
   selectControllableWorkspaceId,
   workspaceReducer,
 } from './workspace-store';
-import { NATIVE_CHAT_ENABLED } from './product-features';
 import {
   isPreviewPath,
   isPreviewPort,
@@ -226,7 +224,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
-  // opening every saved terminal, WebGL surface, and chat SDK connection.
+  // opening every saved terminal and WebGL surface.
   const retainedSessionIdsRef = useRef<{ workspaceId: string; ids: Set<string> }>({
     workspaceId: '',
     ids: new Set(),
@@ -703,9 +701,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     void api.deleteWorkspace(workspaceId)
       .then(() => {
-        if (storageNamespace) {
-          removeDismissedChatAuthProviders(storageNamespace, workspaceId);
-        }
         workspaceEndpoints.current.delete(workspaceId);
       })
       .catch((cause: unknown) => {
@@ -716,7 +711,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         });
         setError(`Could not delete “${workspace.title}”: ${caughtErrorMessage(cause, 'The control plane request failed.')}`);
       });
-  }, [api, navigateToWorkspacePage, storageNamespace]);
+  }, [api, navigateToWorkspacePage]);
 
   const selectWorkspace = useCallback((workspaceId: string) => {
     if (!store.workspaces.some(({ id, canControl }) => id === workspaceId && canControl)) return;
@@ -928,8 +923,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           ? `:${session.port}`
           : previewLinkLabel(session.url, session.title)
         : (
-          session.type === 'chat'
-          || session.type === 'claude'
+          session.type === 'claude'
           || session.type === 'codex'
           || session.type === 'terminal'
             ? session.title ?? SPAWN_SESSION_LABELS[session.type]
@@ -1035,7 +1029,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setFocusedRegion(region);
   }, [updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
-    if (type === 'chat' && !NATIVE_CHAT_ENABLED) return;
     addWorkspaceTab((id) => ({ id, type }));
   };
   const selectTtydSession = useCallback((id: string) => {

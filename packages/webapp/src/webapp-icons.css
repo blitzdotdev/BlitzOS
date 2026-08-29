@@ -1,6 +1,5 @@
 .mi-box,
 .mi-claude,
-.mi-chat,
 .mi-enter,
 .mi-keyboard,
 .mi-kimi,
@@ -65,11 +64,6 @@
 .mi-preview {
   -webkit-mask-image: url('./assets/icons/browser-window-mask.svg');
   mask-image: url('./assets/icons/browser-window-mask.svg');
-}
-
-.mi-chat {
-  -webkit-mask-image: url('./assets/icons/message-bubble-mask.svg');
-  mask-image: url('./assets/icons/message-bubble-mask.svg');
 }
 
 .mi-trash {

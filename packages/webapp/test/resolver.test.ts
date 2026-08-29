@@ -9,13 +9,12 @@ const workspace: WorkspaceView = workspaceViewFixture({ id: "one", name: "brave-
 describe("standalone endpoint resolver", () => {
   it("routes all workspace surfaces through the control-plane origin", () => {
     const resolver = standaloneResolver(
-      { acp: 8444, files: 8445 },
+      { files: 8445 },
       "https://cp.example.test/",
     );
     const target = { ...workspace, id: "workspace one/two" };
     expect(resolver.resolve(target)).toEqual({
       terminalUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/terminal/",
-      acpUrl: "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7444",
       filesBase: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/workspace/",
     });
     expect(resolver.previewUrl(target, 3000)).toBe(

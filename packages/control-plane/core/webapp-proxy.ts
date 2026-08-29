@@ -33,7 +33,6 @@ export function rewriteWebDavDestination(
     || destination.search !== ""
     || destination.hash !== ""
     || path === null
-    || port !== 7445
     || (path !== "/workspace" && !path.startsWith("/workspace/"))
   ) {
     throw new HttpError(400, "WebDAV Destination must stay on this workspace surface");

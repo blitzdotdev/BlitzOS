@@ -2,6 +2,10 @@
 
 Target buyer: platform teams at ~100–500-eng companies (Duolingo/Zocdoc/Faire tier). Not DoorDash-class builders. Source: 2026-08-12 GTM research + this week's e2e state + v2 identity scan.
 
+> **Stale since 2026-08-29 (branch `lody-sessions`).** The box actor, its ACP
+> endpoint and its session journal are deleted. Every "actor" and "ACP layer"
+> mention below is history; `plans/LODY-SESSIONS.md` carries the replacement.
+
 ## A. Distribution — the locked front door (first, mostly owner keys)
 
 Gap: ghcr images private; `teenybase@0.0.15` unpublished; platform PR #11 unmerged. A stranger cannot install anything today.

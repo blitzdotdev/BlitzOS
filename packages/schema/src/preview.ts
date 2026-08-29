@@ -15,7 +15,8 @@
  */
 
 /** Ports the box runs its own services on. A preview may never claim one:
- * 22 sshd, 7443 ttyd, 7444 the ACP actor, 7445 this gateway, 7446 the public
+ * 22 sshd, 7443 ttyd, 7444 (kept for boxes in the field that still run the
+ * retired ACP actor), 7445 this gateway, 7446 the public
  * dufs file server, 17445 the private dufs upstream. */
 export const RESERVED_PREVIEW_PORTS: readonly number[] = [22, 7443, 7444, 7445, 7446, 17445];
 

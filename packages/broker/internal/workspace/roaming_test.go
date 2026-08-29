@@ -249,10 +249,10 @@ func TestWireInventsNoModelProviderTheMemberNeverSet(t *testing.T) {
 // TestTokenStripsTheMintReplysLineTerminator pins the Go half of the
 // trailing-newline chain. `blitz-broker mint` ends its reply with fmt.Fprintln,
 // and everything downstream copies these bytes into CLAUDE_CODE_OAUTH_TOKEN
-// verbatim — the actor's options.env among them, where a newline reaches the
-// vendor inside an Authorization header and is rejected with an error naming
-// nothing on this box. The terminal shim only ever survived because $(...)
-// strips it by accident.
+// verbatim — including callers that set the variable directly, where a newline
+// reaches the vendor inside an Authorization header and is rejected with an
+// error naming nothing on this box. The terminal shim only ever survived
+// because $(...) strips it by accident.
 func TestTokenStripsTheMintReplysLineTerminator(t *testing.T) {
 	stateDir := seedBrokerWiring(t)
 	fakeSSH(t, "printf '%s\\n' 'sk-ant-oat01-live'\n")

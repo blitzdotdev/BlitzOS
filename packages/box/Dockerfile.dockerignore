@@ -1,7 +1,6 @@
 **/node_modules
 .git
 .idea
-packages/box/actor/dist
 # Never ship local secrets or dev clutter into the build context.
 # (env.defaults is a tracked template and is NOT matched by these.)
 .env
