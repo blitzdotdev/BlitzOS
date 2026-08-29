@@ -1013,9 +1013,19 @@ export function addWorkspaceRoutes(
         break;
       }
     }
-    if (row === undefined) throw new HttpError(401, "invalid phone_home capability");
-    if (row.phone_home_used === 1) {
-      throw new HttpError(409, "phone_home capability already used");
+    if (row === undefined) {
+      // A spent capability keeps no hash, so a second presentation of one
+      // cannot be matched. "Already used" is still the honest answer, and it
+      // is the answer this route has always given: a machine that has burnt
+      // its capability says so rather than reading as a bad token.
+      const spent = await first<{ id: string }>(db, {
+        q: `SELECT id FROM machines
+            WHERE workspace_id = ?1 AND phone_home_used = 1 LIMIT 1`,
+        v: [id],
+      });
+      throw spent === null
+        ? new HttpError(401, "invalid phone_home capability")
+        : new HttpError(409, "phone_home capability already used");
     }
     if (row.state !== "provisioning") throw new HttpError(409, "machine is not provisioning");
     const machineId = row.id;

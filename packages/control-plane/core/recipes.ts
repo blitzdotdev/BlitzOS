@@ -301,6 +301,24 @@ export function addRecipeRoutes(
       "recipe launch is unavailable while recipes re-point from templates to workspace clones",
     );
   });
+}
+
+/** Org-wide agent-usage capture. It rides in this file because the corpus it
+ * fills is the recipe corpus, but it is not a recipe surface: it stays
+ * registered while recipes are hidden. */
+export function addOrgUsageCaptureRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
+): void {
+  async function memberFor(context: CoreContext): Promise<Principal & { orgId: string }> {
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    // SAFETY: orgId was null-checked immediately above; the intersection only narrows that one property.
+    return principal as Principal & { orgId: string };
+  }
 
   async function requireAdmin(context: CoreContext): Promise<Principal & { orgId: string }> {
     const principal = await memberFor(context);

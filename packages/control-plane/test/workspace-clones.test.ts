@@ -61,25 +61,22 @@ describe("workspace clones and repos", () => {
   beforeEach(resetDatabase);
   afterEach(() => vi.restoreAllMocks());
 
-  it("retires the template surface and still validates a create", async () => {
+  it("unmounts the template surface and still validates a create", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
 
-    // The list stays and answers empty: a deployed client polls it and has to
-    // be able to render "no templates" instead of an error.
-    const listed = await appRequest(app, "/workspace-templates", { headers: { Cookie: owner } });
-    expect(listed.status).toBe(200);
-    await expect(listed.json()).resolves.toEqual({ templates: [] });
-
-    // Every write says what replaced it rather than 404ing.
-    const write = await appRequest(app, "/workspace-templates", {
-      ...json({ name: "nope", machineTypeId: "small", folderIds: [] }),
-      headers: { Cookie: owner, "Content-Type": "application/json" },
-    });
-    expect(write.status).toBe(400);
-    await expect(write.json()).resolves.toMatchObject({
-      error: expect.stringContaining("cloneFromWorkspaceId"),
-    });
+    // Templates are disabled product-wide (2026-08-29): the routes are not
+    // registered, so the API answers 404 rather than an empty list.
+    for (const [path, init] of [
+      ["/workspace-templates", { headers: { Cookie: owner } }],
+      ["/workspace-templates/anything", { headers: { Cookie: owner } }],
+      ["/workspace-templates", {
+        ...json({ name: "nope", machineTypeId: "small", folderIds: [] }),
+        headers: { Cookie: owner, "Content-Type": "application/json" },
+      }],
+    ] as const) {
+      expect((await appRequest(app, path, init)).status, path).toBe(404);
+    }
 
     // A create that names a template is refused rather than quietly ignored.
     const templated = await appRequest(app, "/workspaces", {

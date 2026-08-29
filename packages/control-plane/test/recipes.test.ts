@@ -1,25 +1,14 @@
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { RecipeView, WorkspaceView } from "@blitzos/schema";
-import { recipeInvocationEnvFile, shellQuote } from "../core/bootstrap.js";
 import {
   appRequest,
   harness,
   operatorSession,
   resetDatabase,
   sameOrgSession,
-  userSession,
 } from "./helpers.js";
 
-interface RecipeEnvelope {
-  recipe: RecipeView;
-}
-
-interface WorkspaceEnvelope {
-  workspace: WorkspaceView;
-}
-
-function json(body: object, method = "POST") {
+function json(body: { enabled: boolean }, method = "POST") {
   return {
     method,
     headers: { "Content-Type": "application/json" },
@@ -27,264 +16,66 @@ function json(body: object, method = "POST") {
   };
 }
 
-/** A recipe's launch source is a WORKSPACE now (migration 0043). The wire
- * field keeps its legacy `templateId` name and carries a workspace id. */
-async function createTemplate(
-  app: ReturnType<typeof harness>["app"],
-  cookie: string,
-  name = "web analysis",
-): Promise<string> {
-  const response = await appRequest(app, "/workspaces", {
-    ...json({ name, machineTypeId: "small" }),
-    headers: { Cookie: cookie, "Content-Type": "application/json" },
-  });
-  expect(response.status).toBe(201);
-  return (await response.json<{ workspace: { id: string } }>()).workspace.id;
-}
-
-async function createRecipe(
-  app: ReturnType<typeof harness>["app"],
-  cookie: string,
-  body: object,
-): Promise<Response> {
-  return appRequest(app, "/workspace-recipes", {
-    ...json(body),
-    headers: { Cookie: cookie, "Content-Type": "application/json" },
-  });
-}
-
-describe("recipes", () => {
+describe("recipes (disabled 2026-08-29, feature hidden)", () => {
   beforeEach(resetDatabase);
 
-  it("creates, lists, reads, updates, and deletes a recipe", async () => {
+  // The recipe code and the `recipes` rows are untouched; only the routes are
+  // unmounted (see the commented registration in core/app.ts). What this pins
+  // is that the whole surface is absent, launch included, so nothing reaches a
+  // launch source it can no longer resolve.
+  it("answers 404 on every recipe route, launch included", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
-    const templateId = await createTemplate(app, cookie);
-
-    const created = await createRecipe(app, cookie, {
-      name: "nightly evals",
-      templateId,
-      harness: "chat",
-      model: "claude-sonnet-5",
-      effort: "xhigh",
-      prompt: "Aggregate usage and write evals.\n",
-    });
-    expect(created.status).toBe(201);
-    const recipe = (await created.json<RecipeEnvelope>()).recipe;
-    expect(recipe).toEqual({
-      id: recipe.id,
-      name: "nightly evals",
-      templateId,
-      harness: "chat",
-      model: "claude-sonnet-5",
-      effort: "xhigh",
-      prompt: "Aggregate usage and write evals.\n",
-    });
-
-    const listed = await appRequest(app, "/workspace-recipes", { headers: { Cookie: cookie } });
-    expect(listed.status).toBe(200);
-    expect((await listed.json<{ recipes: RecipeView[] }>()).recipes).toEqual([recipe]);
-
-    const read = await appRequest(app, `/workspace-recipes/${recipe.id}`, {
-      headers: { Cookie: cookie },
-    });
-    expect((await read.json<RecipeEnvelope>()).recipe).toEqual(recipe);
-
-    const updated = await appRequest(app, `/workspace-recipes/${recipe.id}`, {
-      ...json({
-        name: "weekly evals",
-        templateId,
-        harness: "claude",
-        prompt: "Write evals.\n",
-      }, "PUT"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    expect(updated.status).toBe(200);
-    const replaced = (await updated.json<RecipeEnvelope>()).recipe;
-    expect(replaced.name).toBe("weekly evals");
-    expect(replaced.harness).toBe("claude");
-    // Full replacement: the cleared model and effort disappear from the view.
-    expect("model" in replaced).toBe(false);
-    expect("effort" in replaced).toBe(false);
-
-    expect((await appRequest(app, `/workspace-recipes/${recipe.id}`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    })).status).toBe(204);
-    expect((await appRequest(app, `/workspace-recipes/${recipe.id}`, {
-      headers: { Cookie: cookie },
-    })).status).toBe(404);
-  });
-
-  it("leaves the SPA's /recipes paths unrouted, exactly like /templates", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const templateId = await createTemplate(app, cookie);
-    const created = await createRecipe(app, cookie, {
-      name: "shell check",
-      templateId,
+    const body = {
+      name: "routine",
+      templateId: "any-workspace",
       harness: "claude",
       prompt: "Go.\n",
-    });
-    const recipe = (await created.json<RecipeEnvelope>()).recipe;
+    };
 
-    // The API lives under /workspace-recipes; the SPA keeps /recipes,
-    // /recipes/new, and /recipes/:id/edit as pure UI paths. In production
-    // those fall through to the asset layer's SPA fallback (they are not in
-    // run_worker_first / API_PREFIXES); this harness has no asset layer, so
-    // the observable contract is that the router does not claim them — every
-    // one produces the same unrouted notFound body /templates does.
-    const htmlAccept = "text/html,application/xhtml+xml";
-    const templatesPage = await appRequest(app, "/templates", {
-      headers: { Cookie: cookie, Accept: htmlAccept },
-    });
-    expect(templatesPage.status).toBe(404);
-    const unroutedBody = await templatesPage.text();
-    const pages = ["/recipes", "/recipes/new", `/recipes/${recipe.id}`, `/recipes/${recipe.id}/edit`];
-    for (const path of pages) {
-      const response = await appRequest(app, path, {
-        headers: { Cookie: cookie, Accept: htmlAccept },
-      });
-      expect(response.status, path).toBe(404);
-      expect(await response.text(), path).toBe(unroutedBody);
-    }
-
-    // The JSON API answers JSON regardless of the Accept header — no shell
-    // branches survive on the API namespace.
-    const listed = await appRequest(app, "/workspace-recipes", {
-      headers: { Cookie: cookie, Accept: htmlAccept },
-    });
-    expect(listed.status).toBe(200);
-    expect(listed.headers.get("content-type")).toContain("application/json");
-    expect((await listed.json<{ recipes: RecipeView[] }>()).recipes).toEqual([recipe]);
-    const read = await appRequest(app, `/workspace-recipes/${recipe.id}`, {
-      headers: { Cookie: cookie, Accept: htmlAccept },
-    });
-    expect(read.headers.get("content-type")).toContain("application/json");
-    expect((await read.json<RecipeEnvelope>()).recipe).toEqual(recipe);
-    // "new" is just an unknown :id on the API namespace.
-    const asNew = await appRequest(app, "/workspace-recipes/new", {
-      headers: { Cookie: cookie },
-    });
-    expect(asNew.status).toBe(404);
-    expect(await asNew.json()).toEqual({ error: "recipe not found", retryAction: null });
-  });
-
-  it("enforces the write-time harness, model, and effort gates", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const templateId = await createTemplate(app, cookie);
-    const base = { name: "gated", templateId, prompt: "Go.\n" };
-
-    const cases: Array<[object, number, string]> = [
-      [{ ...base, harness: "vim" }, 400, "unknown harness"],
-      [{ ...base, harness: "chat" }, 400, "chat requires a model"],
-      [{ ...base, harness: "chat", model: "claude-opus-99" }, 400, "model outside the catalog"],
-      [{ ...base, harness: "claude", model: "gpt-5.6-sol" }, 400, "claude recipe with a codex model"],
-      [{ ...base, harness: "codex", model: "claude-opus-5" }, 400, "codex recipe with a claude model"],
-      [{ ...base, harness: "claude", effort: "hi gh" }, 400, "effort with whitespace"],
-      [{ ...base, harness: "claude", effort: "x'high" }, 400, "effort with a quote"],
-      // Shell-safe but outside the catalog: agentEffortsForModel gates the
-      // value against the pinned model, or the provider base without one.
-      [{ ...base, harness: "claude", effort: "ultra" }, 400, "no claude model has ultra"],
-      [{ ...base, harness: "codex", effort: "max" }, 400, "max needs a gpt-5.6 model pinned"],
-      [{ ...base, harness: "codex", model: "gpt-5.5", effort: "ultra" }, 400, "ultra outside gpt-5.5's efforts"],
-      [{ ...base, harness: "codex", model: "gpt-5.6-luna", effort: "ultra" }, 400, "ultra is sol/terra only"],
-      [{ ...base, harness: "chat", model: "gpt-5.6-luna", effort: "ultra" }, 400, "chat gates on the pinned model too"],
-      [{ ...base, harness: "claude", templateId: "missing" }, 404, "unknown source workspace"],
-      [{ ...base, harness: "claude", prompt: "" }, 400, "empty prompt"],
+    const routes: Array<[string, RequestInit]> = [
+      ["/workspace-recipes", { headers: { Cookie: cookie } }],
+      ["/workspace-recipes/some-id", { headers: { Cookie: cookie } }],
+      ["/workspace-recipes", {
+        method: "POST",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }],
+      ["/workspace-recipes/some-id", {
+        method: "PUT",
+        headers: { Cookie: cookie, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }],
+      ["/workspace-recipes/some-id", { method: "DELETE", headers: { Cookie: cookie } }],
+      ["/workspace-recipes/some-id/launch", { method: "POST", headers: { Cookie: cookie } }],
     ];
-    for (const [body, status, label] of cases) {
-      expect((await createRecipe(app, cookie, body)).status, label).toBe(status);
+    for (const [path, init] of routes) {
+      const response = await appRequest(app, path, init);
+      expect(response.status, `${init.method ?? "GET"} ${path}`).toBe(404);
+      await expect(response.json(), path).resolves.toEqual({
+        error: "not found",
+        retryAction: null,
+      });
     }
-
-    // Valid pairings pass: harness-matching model, and codex/claude models on chat.
-    expect((await createRecipe(app, cookie, { ...base, harness: "claude", model: "claude-fable-5" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "claude", model: "claude-opus-5" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5.6-sol", effort: "low" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5.6-sol" })).status).toBe(201);
-    // Extended tiers pass exactly where the model grants them.
-    expect((await createRecipe(app, cookie, { ...base, harness: "codex", effort: "xhigh" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5.6-terra", effort: "ultra" })).status).toBe(201);
-    expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5.6-luna", effort: "max" })).status).toBe(201);
-
-    // Another org can neither see this org's recipes nor build on its workspace.
-    const stranger = await userSession("stranger");
-    expect((await createRecipe(app, stranger, { ...base, harness: "claude" })).status).toBe(404);
-    const listed = await appRequest(app, "/workspace-recipes", { headers: { Cookie: stranger } });
-    expect((await listed.json<{ recipes: RecipeView[] }>()).recipes).toEqual([]);
   });
 
-  it("limits edits to the admin or the creator, like templates", async () => {
+  // The rows survive the surface. A recipe written before the feature was
+  // hidden is still in D1, and turning the routes back on has to find it.
+  it("leaves recipe rows in the database untouched", async () => {
     const { app } = harness();
-    const admin = await operatorSession(app);
-    const author = await sameOrgSession("author");
-    const bystander = await sameOrgSession("bystander");
-    const templateId = await createTemplate(app, admin);
+    await operatorSession(app);
+    const now = Date.now();
+    await env.DB.prepare(
+      `INSERT INTO recipes
+       (id, org_id, name, source_workspace_id, harness, model, effort, prompt,
+        created_by_membership_id, created_at, updated_at)
+       VALUES ('kept', 'personal', 'nightly evals', NULL, 'codex', NULL, NULL,
+               'Go.\n', 'personal', ?1, ?1)`,
+    ).bind(now).run();
 
-    const created = await createRecipe(app, author.cookie, {
-      name: "mine",
-      templateId,
-      harness: "claude",
-      prompt: "Go.\n",
-    });
-    expect(created.status).toBe(201);
-    const id = (await created.json<RecipeEnvelope>()).recipe.id;
-    const edit = json({ name: "hijack", templateId, harness: "claude", prompt: "Go.\n" }, "PUT");
-
-    expect((await appRequest(app, `/workspace-recipes/${id}`, {
-      ...edit,
-      headers: { Cookie: bystander.cookie, "Content-Type": "application/json" },
-    })).status).toBe(403);
-    expect((await appRequest(app, `/workspace-recipes/${id}`, {
-      method: "DELETE",
-      headers: { Cookie: bystander.cookie },
-    })).status).toBe(403);
-    expect((await appRequest(app, `/workspace-recipes/${id}`, {
-      ...edit,
-      headers: { Cookie: author.cookie, "Content-Type": "application/json" },
-    })).status).toBe(200);
-    expect((await appRequest(app, `/workspace-recipes/${id}`, {
-      ...json({ name: "admin edit", templateId, harness: "claude", prompt: "Go.\n" }, "PUT"),
-      headers: { Cookie: admin, "Content-Type": "application/json" },
-    })).status).toBe(200);
-  });
-
-  // Launch is parked. A recipe used to launch a workspace from a template;
-  // templates are gone and the replacement — clone the source workspace, then
-  // deliver the invocation to the clone's machine — is a bigger change than
-  // the retirement it rides on. The route says so rather than launching from a
-  // source it can no longer resolve. See the TODO in core/recipes.ts.
-  it("refuses a launch while recipes re-point from templates to workspace clones", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const templateId = await createTemplate(app, cookie);
-    const created = await createRecipe(app, cookie, {
-      name: "chat routine",
-      templateId,
-      harness: "chat",
-      model: "gpt-5.6-sol",
-      effort: "low",
-      prompt: "Summarize the datasets folder.\n",
-    });
-    const recipe = (await created.json<RecipeEnvelope>()).recipe;
-    expect(recipe.templateId).toBe(templateId);
-
-    const launched = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
-      method: "POST",
-      headers: { Cookie: cookie },
-    });
-    expect(launched.status).toBe(400);
-    await expect(launched.json()).resolves.toMatchObject({
-      error: expect.stringContaining("workspace clones"),
-    });
-
-    // An unknown recipe is still a 404, so the park does not swallow the
-    // ordinary not-found answer.
-    expect((await appRequest(app, "/workspace-recipes/missing/launch", {
-      method: "POST",
-      headers: { Cookie: cookie },
-    })).status).toBe(404);
+    expect((await appRequest(app, "/workspace-recipes/kept")).status).toBe(404);
+    await expect(env.DB.prepare("SELECT id, name FROM recipes WHERE id = 'kept'").first())
+      .resolves.toMatchObject({ id: "kept", name: "nightly evals" });
   });
 
   it("gates usage capture behind the org admin and lazy-creates the folder once", async () => {

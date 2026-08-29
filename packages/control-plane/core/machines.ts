@@ -453,6 +453,10 @@ export async function destroyMachine(
 
   await transaction(runtime.db, [
     revokeMachineLeasesQuery(machine.id),
+    // The guest's authorized_keys lines go with the VM. Destroy stays the
+    // revocation path for the broker: the keys leave, and the member's account
+    // survives because the feed is driven by `broker_members`, not by keys.
+    { q: "DELETE FROM broker_keys WHERE machine_id = ?1", v: [machine.id] },
     {
       q: `UPDATE machines
           SET state = ?1, vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
