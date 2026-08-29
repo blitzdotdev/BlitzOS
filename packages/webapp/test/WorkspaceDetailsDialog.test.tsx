@@ -74,6 +74,8 @@ const workspace = workspaceModelFixture({
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
+    listWorkspaceRepos: vi.fn().mockResolvedValue({ repos: [] }),
+    listAgentRules: vi.fn().mockResolvedValue({ rules: [] }),
     listMembers: vi.fn().mockResolvedValue({
       members: [
         { id: 'membership-1', email: 'ada@example.com', name: 'Ada Owner', avatarUrl: null, role: 'admin', status: 'active' },
@@ -175,13 +177,97 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => tab(view.container, 'Settings')?.click());
 
     expect(view.container.textContent).toContain('Shared x86');
-    expect(view.container.textContent).toContain('applies to new machines');
+    expect(view.container.textContent).toContain('Applies to new machines');
 
     const buttons = [...view.container.querySelectorAll<HTMLButtonElement>('button')];
     await act(async () => buttons.find((b) => b.textContent === 'New workspace from this one')?.click());
     await act(async () => buttons.find((b) => b.textContent === 'Delete workspace')?.click());
     expect(onClone).toHaveBeenCalledOnce();
     expect(onDelete).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it('writes only the settings fields that actually changed', async () => {
+    const updateWorkspace = vi.fn().mockResolvedValue({ workspace: {} });
+    const view = await render(dialog({ client: client({ updateWorkspace }) }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    const save = () => [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Save settings');
+    // Nothing has moved yet, so there is nothing to say to the server.
+    expect(save()?.disabled).toBe(true);
+
+    const name = view.container.querySelector<HTMLInputElement>('[aria-label="Workspace name"]');
+    if (name === null) throw new Error('the settings tab has no name field');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(name, 'renamed-workspace');
+      name.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const toggle = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Provision a machine when a member is added"]',
+    );
+    await act(async () => toggle?.click());
+
+    expect(save()?.disabled).toBe(false);
+    await act(async () => save()?.click());
+    // The default machine type and the agent rule were never touched, so they
+    // travel as absent fields rather than as a restatement of what is stored.
+    expect(updateWorkspace).toHaveBeenCalledWith(workspace.id, {
+      name: 'renamed-workspace',
+      autoProvision: false,
+    });
+    await view.unmount();
+  });
+
+  it('adds and removes a repository from Settings', async () => {
+    const addWorkspaceRepo = vi.fn().mockResolvedValue({
+      repos: [{ repo: 'acme/tools', private: false }],
+    });
+    const removeWorkspaceRepo = vi.fn().mockResolvedValue(undefined);
+    const view = await render(dialog({
+      client: client({ addWorkspaceRepo, removeWorkspaceRepo }),
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    const field = view.container.querySelector<HTMLInputElement>('[aria-label="Repository"]');
+    if (field === null) throw new Error('the settings tab has no repository field');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')
+        ?.set?.call(field, 'acme/tools');
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const button = (label: string) =>
+      [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+        .find((candidate) => candidate.textContent === label);
+    await act(async () => button('Add repository')?.click());
+    expect(addWorkspaceRepo).toHaveBeenCalledWith(workspace.id, { repo: 'acme/tools' });
+    // The answer is the list the server holds, so the row appears without a
+    // second read.
+    expect(view.container.textContent).toContain('acme/tools');
+
+    const remove = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Remove acme/tools"]',
+    );
+    await act(async () => remove?.click());
+    expect(removeWorkspaceRepo).toHaveBeenCalledWith(workspace.id, 'acme/tools');
+    expect(view.container.querySelector('button[aria-label="Remove acme/tools"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('shows a member the settings without the controls that write them', async () => {
+    const view = await render(dialog({
+      workspace: { ...workspace, myRole: 'member' },
+    }));
+    await settle();
+    await act(async () => tab(view.container, 'Settings')?.click());
+
+    expect(view.container.textContent).toContain('Shared x86');
+    expect(view.container.querySelector('[aria-label="Workspace name"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Default machine type"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Repository"]')).toBeNull();
     await view.unmount();
   });
 

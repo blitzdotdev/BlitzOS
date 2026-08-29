@@ -1,6 +1,9 @@
 import type {
   AddWorkspaceMemberRequest,
+  AddWorkspaceRepoRequest,
   ApiError,
+  ListWorkspaceReposResponse,
+  UpdateWorkspaceRequest,
   ListAgentRulesResponse,
   ListWorkspaceCredentialsResponse,
   MachineResponse,
@@ -168,6 +171,19 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
     input: UpdateWorkspaceMemberRequest,
   ): Promise<WorkspaceMemberResponse>;
   removeWorkspaceMember(workspaceId: string, membershipId: string): Promise<void>;
+  /** The workspace settings write. Absent fields are left alone, and a new
+   * default machine type moves only what is provisioned after it. */
+  updateWorkspace(
+    workspaceId: string,
+    input: UpdateWorkspaceRequest,
+  ): Promise<CreateWorkspaceResponse>;
+  /** The workspace's own clone list; a change lands on the next provision. */
+  listWorkspaceRepos(workspaceId: string): Promise<ListWorkspaceReposResponse>;
+  addWorkspaceRepo(
+    workspaceId: string,
+    input: AddWorkspaceRepoRequest,
+  ): Promise<ListWorkspaceReposResponse>;
+  removeWorkspaceRepo(workspaceId: string, repo: string): Promise<void>;
   provisionMachine(machineId: string): Promise<MachineResponse>;
   stopMachine(machineId: string): Promise<MachineResponse>;
   startMachine(machineId: string): Promise<MachineResponse>;
@@ -603,6 +619,23 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     ),
     removeWorkspaceMember: (workspaceId, membershipId) => request<void>(
       `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+    ),
+    updateWorkspace: (workspaceId, input) => request<CreateWorkspaceResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}`,
+      { method: "PATCH", headers: jsonHeaders, body: JSON.stringify(input) },
+    ),
+    listWorkspaceRepos: (workspaceId) => request<ListWorkspaceReposResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/repos`,
+    ),
+    addWorkspaceRepo: (workspaceId, input) => request<ListWorkspaceReposResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/repos`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
+    ),
+    // "owner/name" is two path segments, because a slash inside one parameter
+    // is not something the router hands back intact.
+    removeWorkspaceRepo: (workspaceId, repo) => request<void>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/repos/${repo.split("/").map(encodeURIComponent).join("/")}`,
       { method: "DELETE" },
     ),
     provisionMachine: (machineId) => machineAction(machineId, "provision"),

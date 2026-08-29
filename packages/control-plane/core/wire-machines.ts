@@ -82,6 +82,22 @@ export interface WorkspaceMemberResponse {
   member: WorkspaceMemberView;
 }
 
+/**
+ * The workspace settings write (§3, first matrix row). Every field is
+ * optional and an absent one is left alone, so a caller who edits the name
+ * does not have to restate the rest.
+ *
+ * `defaultMachineTypeId` is a default, never a restriction: changing it moves
+ * FUTURE provisions and touches no existing machine (§1a). `agentRuleId` takes
+ * an explicit null to fall back to the built-in doc.
+ */
+export interface UpdateWorkspaceRequest {
+  name?: string;
+  defaultMachineTypeId?: string;
+  autoProvision?: boolean;
+  agentRuleId?: string | null;
+}
+
 /** Add or rotate: one live row per (workspace, name), so a second write to a
  * live name replaces its value. */
 export interface PutWorkspaceCredentialRequest {

@@ -35,6 +35,7 @@ export type CloudWorkspaceModel = {
   credentials: WorkspaceCredentialView[];
   defaultMachineTypeId: string;
   autoProvision: boolean;
+  agentRuleId: string | null;
   myRole: WorkspaceMemberRole | null;
   agentDefault: Agent;
 };
@@ -88,6 +89,7 @@ function createWorkspaceModel(
     credentials: record.credentials,
     defaultMachineTypeId: record.defaultMachineTypeId,
     autoProvision: record.autoProvision,
+    agentRuleId: record.agentRuleId,
     myRole: record.myRole,
     agentDefault: preference?.agentDefault ?? 'claude',
   };

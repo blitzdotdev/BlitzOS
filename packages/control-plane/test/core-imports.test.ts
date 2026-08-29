@@ -99,6 +99,7 @@ const expected = [
   "workspace-members.ts",
   "workspace-projection.ts",
   "workspace-records.ts",
+  "workspace-settings.ts",
   "workspace-tunnels.ts",
   "workspace-volumes.ts",
   "types.ts",
@@ -128,6 +129,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(103);
+    expect(expected).toHaveLength(104);
   });
 });

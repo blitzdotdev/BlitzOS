@@ -20,6 +20,38 @@ function optionDescription(machine: MachineType): string {
 }
 
 /**
+ * The catalog as select options, grouped by provider and location exactly as
+ * `MachineCatalogGrid` groups its cards.
+ *
+ * `volumeLocation` is the live-machine case: a provider attaches a volume only
+ * inside its own location, so types elsewhere stay visible and go disabled —
+ * a member who cannot find their type assumes a bug, and one who reads "the
+ * volume is in fsn1" does not. Null means nothing constrains the list, which
+ * is what picking a workspace DEFAULT does.
+ */
+export function machineTypeOptions(
+  machines: readonly MachineType[],
+  volumeLocation: string | null = null,
+): CockpitSelectOption[] {
+  const options: CockpitSelectOption[] = [];
+  for (const group of groupMachineTypes(machines)) {
+    for (const machine of group.machines) {
+      const elsewhere = volumeLocation !== null && locationOf(machine) !== volumeLocation;
+      options.push({
+        value: machine.id,
+        label: machine.name || machine.id,
+        group: group.label,
+        description: elsewhere
+          ? `the volume is in ${volumeLocation}`
+          : optionDescription(machine),
+        disabled: elsewhere,
+      });
+    }
+  }
+  return options;
+}
+
+/**
  * The compact per-member machine-type picker (plan §6b, new component 1).
  *
  * `MachineCatalogGrid` stays the picker for the workspace default — a grid of
@@ -55,21 +87,7 @@ export function MachineTypeSelect({
     value: WORKSPACE_DEFAULT_MACHINE_TYPE,
     label: `Workspace default (${defaultMachine?.name || defaultMachineTypeId})`,
     description: defaultMachine === undefined ? undefined : optionDescription(defaultMachine),
-  }];
-  for (const group of groupMachineTypes(machines)) {
-    for (const machine of group.machines) {
-      const elsewhere = volumeLocation !== null && locationOf(machine) !== volumeLocation;
-      options.push({
-        value: machine.id,
-        label: machine.name || machine.id,
-        group: group.label,
-        description: elsewhere
-          ? `the volume is in ${volumeLocation}`
-          : optionDescription(machine),
-        disabled: elsewhere,
-      });
-    }
-  }
+  }, ...machineTypeOptions(machines, volumeLocation)];
   return (
     <WebAppSelectMenu
       ariaLabel={ariaLabel}

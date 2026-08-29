@@ -4,18 +4,19 @@ import type {
   ListMachineTypesResponse,
   MachineType,
   PutWorkspaceCredentialRequest,
+  TemplateRepoView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient, MemberView } from './api';
 import { ConfirmationDialog } from './ConfirmationDialog';
-import { machineTypeLabel } from './MachineCatalogGrid';
 import { ModalOverlay } from './ModalOverlay';
 import { WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
 import {
   WorkspaceMembersEditor,
   type MachineAction,
 } from './WorkspaceMembersEditor';
+import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel } from './workspace-store';
 
 export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
@@ -164,72 +165,6 @@ function CredentialsTab({
   );
 }
 
-function SettingsTab({
-  workspace,
-  machines,
-  canManage,
-  onClone,
-  onDelete,
-}: {
-  workspace: CloudWorkspaceModel;
-  machines: MachineType[];
-  canManage: boolean;
-  onClone: (() => void) | null;
-  onDelete: (() => void) | null;
-}) {
-  const defaultMachine = machines.find(({ id }) => id === workspace.defaultMachineTypeId);
-  return (
-    <section
-      id="workspace-details-settings-panel"
-      role="tabpanel"
-      aria-label="Settings"
-      className="workspace-details-settings"
-    >
-      <dl className="workspace-details-list">
-        <div><dt>Name</dt><dd>{workspace.serverName}</dd></div>
-        <div>
-          <dt>Default machine type</dt>
-          <dd>
-            {defaultMachine?.name ?? machineTypeLabel(workspace.defaultMachineTypeId)}
-            <small> — applies to new machines; each member's type is their own.</small>
-          </dd>
-        </div>
-        <div>
-          <dt>Provision on add</dt>
-          <dd>{workspace.autoProvision ? 'On' : 'Off'}</dd>
-        </div>
-        <div><dt>Your role</dt><dd>{workspace.myRole ?? 'Organization admin'}</dd></div>
-        <div><dt>Connections</dt><dd>{workspace.connections.length}</dd></div>
-        <div><dt>Created</dt><dd>{dateLabel(workspace.createdAt)}</dd></div>
-        <div><dt>Updated</dt><dd>{dateLabel(workspace.updatedAt)}</dd></div>
-      </dl>
-      {canManage && (
-        // TODO(member-machines): the settings write needs a workspace update
-        // route. The control plane has no PATCH /workspaces/:id, so name,
-        // default machine type, auto_provision, agent rules and repos are
-        // read-only here rather than controls that silently do nothing.
-        <p className="workspace-details-note">
-          Editing these settings needs a workspace update route, which the
-          control plane does not serve yet. Clone this workspace to start one
-          with different settings.
-        </p>
-      )}
-      <div className="workspace-details-settings-actions">
-        {onClone && (
-          <button className="webapp-action" type="button" onClick={onClone}>
-            New workspace from this one
-          </button>
-        )}
-        {onDelete && (
-          <button className="workspace-details-delete" type="button" onClick={onDelete}>
-            Delete workspace
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
-
 /**
  * The workspace administration surface (plans/MEMBER-MACHINES.md §6).
  *
@@ -258,6 +193,10 @@ export function WorkspaceDetailsDialog({
   const closeButton = useRef<HTMLButtonElement>(null);
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [orgMembers, setOrgMembers] = useState<MemberView[]>([]);
+  // The repo list is not on `WorkspaceView`: it is settings a poll has no
+  // reason to carry, so the dialog reads it once and keeps what each write
+  // answers with.
+  const [repos, setRepos] = useState<TemplateRepoView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WorkspaceDetailsTab>(initialTab);
@@ -267,16 +206,22 @@ export function WorkspaceDetailsDialog({
   // column through implicit reach, which the wire reports as a null role on a
   // workspace they can still open (§3).
   const canManage = workspace.myRole === 'admin' || workspace.myRole === null;
+  const workspaceId = workspace.id;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void Promise.all([listMachineTypes(), client.listMembers()])
-      .then(([machineResponse, memberResponse]) => {
+    void Promise.all([
+      listMachineTypes(),
+      client.listMembers(),
+      client.listWorkspaceRepos(workspaceId),
+    ])
+      .then(([machineResponse, memberResponse, repoResponse]) => {
         if (cancelled) return;
         setMachines(machineResponse.machineTypes);
         setOrgMembers(memberResponse.members);
+        setRepos(repoResponse.repos);
         setError(null);
       })
       .catch((caught: Error) => {
@@ -284,7 +229,7 @@ export function WorkspaceDetailsDialog({
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [client, listMachineTypes]);
+  }, [client, listMachineTypes, workspaceId]);
 
   /** Every write reports its own failure and leaves the poll to refresh the
    * rows, so no edit invents a row the server has not agreed to. */
@@ -302,6 +247,24 @@ export function WorkspaceDetailsDialog({
     if (action === 'start') run(client.startMachine(machine.id));
     if (action === 'recreate') run(client.recreateMachine(machine.id));
     if (action === 'destroy') run(client.destroyMachine(machine.id));
+  };
+
+  /** A repo write answers with the list it produced, so the panel shows what
+   * the server holds rather than what the browser hoped for. A remove answers
+   * 204, and the row the server agreed to delete is the one dropped here. */
+  const addRepo = (repo: string) => {
+    void client.addWorkspaceRepo(workspaceId, { repo })
+      .then((response) => { setRepos(response.repos); setError(null); })
+      .catch((caught: Error) => setError(caught.message));
+  };
+
+  const removeRepo = (repo: string) => {
+    void client.removeWorkspaceRepo(workspaceId, repo)
+      .then(() => {
+        setRepos((current) => current.filter((entry) => entry.repo !== repo));
+        setError(null);
+      })
+      .catch((caught: Error) => setError(caught.message));
   };
 
   const changeMachineType = (member: WorkspaceMemberView, machineTypeId: string) => {
@@ -379,10 +342,15 @@ export function WorkspaceDetailsDialog({
             />
           )}
           {tab === 'settings' && (
-            <SettingsTab
+            <WorkspaceSettingsTab
+              client={client}
               workspace={workspace}
               machines={machines}
+              repos={repos}
               canManage={canManage}
+              onSave={(input) => run(client.updateWorkspace(workspaceId, input))}
+              onAddRepo={addRepo}
+              onRemoveRepo={removeRepo}
               onClone={onClone}
               onDelete={onDelete}
             />

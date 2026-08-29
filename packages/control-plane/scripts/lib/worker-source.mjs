@@ -61,6 +61,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/template-repos.ts",
   "core/workspace-access.ts", "core/workspace-credentials.ts", "core/workspace-members.ts",
   "core/workspace-names.ts", "core/workspace-projection.ts", "core/workspace-records.ts",
+  "core/workspace-settings.ts",
   "core/workspace-tunnels.ts",
   "core/workspace-volumes.ts",
   "core/workspaces.ts",

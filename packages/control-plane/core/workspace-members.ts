@@ -8,10 +8,9 @@ import {
 } from "./machines.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
-import { requireWorkspaceAdmin } from "./workspace-access.js";
+import { workspaceForAdminWrite } from "./workspace-access.js";
 import {
   machineView,
-  workspaceById,
   type MachineRow,
   type WorkspaceRow,
 } from "./workspace-records.js";
@@ -140,25 +139,6 @@ export async function addWorkspaceMember(
   };
 }
 
-async function workspaceForMemberWrite(
-  runtime: CoreRuntime,
-  principal: Principal,
-  id: string,
-): Promise<WorkspaceRow & { org_id: string }> {
-  const workspace = await workspaceById(runtime.db, id);
-  if (
-    workspace === null
-    || workspace.org_id === null
-    || workspace.org_id !== principal.orgId
-    || workspace.deleted_at !== null
-  ) {
-    throw new HttpError(404, "workspace not found");
-  }
-  await requireWorkspaceAdmin(runtime.db, principal, workspace);
-  // SAFETY: org_id was null-checked immediately above; the intersection only narrows that one property.
-  return workspace as WorkspaceRow & { org_id: string };
-}
-
 export function addWorkspaceMemberRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -167,7 +147,7 @@ export function addWorkspaceMemberRoutes(
   router.post("/workspaces/:id/members", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
-    const workspace = await workspaceForMemberWrite(runtime, principal, context.req.param("id"));
+    const workspace = await workspaceForAdminWrite(runtime.db, principal, context.req.param("id"));
     const input = parseAddWorkspaceMember(await readJson(context.req.raw, 4 * 1024));
     const member = await activeOrgMember(runtime, workspace.org_id, input.membershipId);
     if (member === null) {
@@ -195,7 +175,7 @@ export function addWorkspaceMemberRoutes(
   router.patch("/workspaces/:id/members/:membershipId", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
-    const workspace = await workspaceForMemberWrite(runtime, principal, context.req.param("id"));
+    const workspace = await workspaceForAdminWrite(runtime.db, principal, context.req.param("id"));
     const membershipId = context.req.param("membershipId");
     const input = parseUpdateWorkspaceMember(await readJson(context.req.raw, 4 * 1024));
     const member = await activeOrgMember(runtime, workspace.org_id, membershipId);
@@ -248,7 +228,7 @@ export function addWorkspaceMemberRoutes(
   router.delete("/workspaces/:id/members/:membershipId", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
-    const workspace = await workspaceForMemberWrite(runtime, principal, context.req.param("id"));
+    const workspace = await workspaceForAdminWrite(runtime.db, principal, context.req.param("id"));
     const membershipId = context.req.param("membershipId");
     if (membershipId === workspace.owner_membership_id) {
       throw new HttpError(409, "the workspace owner cannot be removed");

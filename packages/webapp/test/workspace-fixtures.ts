@@ -68,6 +68,7 @@ export function workspaceModelFixture(
     credentials: [],
     defaultMachineTypeId: 'cx23@fsn1',
     autoProvision: true,
+    agentRuleId: null,
     myRole: 'admin',
     agentDefault: 'claude',
     ...overrides,

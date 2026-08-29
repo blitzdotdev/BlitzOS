@@ -1,10 +1,11 @@
 import type {
+  ListWorkspaceReposResponse,
   MachineResponse,
   WorkspaceMemberResponse,
   WorkspaceView,
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   appRequest,
   boxTokenFor,
@@ -461,5 +462,228 @@ describe("member machines", () => {
     await expect(refused.json()).resolves.toMatchObject({
       error: expect.stringContaining("no machine in this workspace"),
     });
+  });
+});
+
+describe("workspace settings", () => {
+  beforeEach(resetDatabase);
+
+  it("edits the settings a workspace admin owns and leaves live machines alone", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const machineId = await machineIdFor(workspace.id);
+    const path = `/workspaces/${workspace.id}`;
+
+    const rule = await appRequest(app, "/agent-rules/rule-one", {
+      ...json({ name: "House rules", content: "# House rules\n" }, "PUT"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(rule.status).toBe(201);
+
+    const patched = await appRequest(app, path, {
+      ...json({ name: "engineering", autoProvision: false, agentRuleId: "rule-one" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(patched.status).toBe(200);
+    const updated = (await patched.json<CreatedWorkspace>()).workspace;
+    expect(updated.name).toBe("engineering");
+    expect(updated.autoProvision).toBe(false);
+    expect(updated.agentRuleId).toBe("rule-one");
+    // The revision is the counter every poller watches, and a workspace has no
+    // lifecycle of its own — so a settings write has to move it.
+    expect(updated.revision).toBeGreaterThan(workspace.revision);
+    // A default is a default: the type change below moves what a FUTURE
+    // machine takes, and this one keeps the type it was provisioned with.
+    expect((await machineRow(workspace.id, "personal"))?.machine_type_id).toBe("small");
+    expect((await machineRow(workspace.id, "personal"))?.id).toBe(machineId);
+
+    // An absent field is left alone rather than reset.
+    const single = await appRequest(app, path, {
+      ...json({ name: "renamed" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    await expect(single.json<CreatedWorkspace>()).resolves.toMatchObject({
+      workspace: { name: "renamed", autoProvision: false, agentRuleId: "rule-one" },
+    });
+
+    // An explicit null is the way back to the built-in doc.
+    await expect(appRequest(app, path, {
+      ...json({ agentRuleId: null }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    }).then((response) => response.json<CreatedWorkspace>())).resolves.toMatchObject({
+      workspace: { agentRuleId: null },
+    });
+  });
+
+  it("refuses a default machine type no provider claims, and an agent rule of another org", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}`;
+
+    const unknownType = await appRequest(app, path, {
+      ...json({ defaultMachineTypeId: "not-a-type" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(unknownType.status).toBe(400);
+    await expect(unknownType.json()).resolves.toMatchObject({
+      error: expect.stringContaining("unknown machine type"),
+    });
+    expect((await appRequest(app, path, {
+      ...json({ agentRuleId: "no-such-rule" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(404);
+    expect((await appRequest(app, path, {
+      ...json({ autoProvision: "yes" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(400);
+
+    // A refused write leaves the row exactly as it was.
+    await expect(appRequest(app, path, { headers: { Cookie: cookie } })
+      .then((response) => response.json<CreatedWorkspace>())).resolves.toMatchObject({
+        workspace: { defaultMachineTypeId: "small", revision: workspace.revision },
+      });
+  });
+
+  it("gates the settings write on workspace admin, and org admins pass implicitly", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const member = await sameOrgSession("settings-member");
+    const other = await sameOrgSession("settings-admin", "admin");
+    const created = await appRequest(app, "/workspaces", {
+      ...json({
+        machineTypeId: "small",
+        members: [{ membershipId: member.membershipId, role: "member" }],
+      }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const workspace = (await created.json<CreatedWorkspace>()).workspace;
+    const path = `/workspaces/${workspace.id}`;
+
+    expect((await appRequest(app, path, {
+      ...json({ name: "not yours" }, "PATCH"),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+    // Another org's admin never sees the workspace at all, so 404 rather than
+    // 403: a refusal that names the row leaks what the organization holds.
+    expect((await appRequest(app, "/workspaces/no-such-workspace", {
+      ...json({ name: "nowhere" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(404);
+    expect((await appRequest(app, path, {
+      ...json({ name: "org admin reach" }, "PATCH"),
+      headers: { Cookie: other.cookie, "Content-Type": "application/json" },
+    })).status).toBe(200);
+  });
+});
+
+describe("workspace repositories", () => {
+  beforeEach(resetDatabase);
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("adds and removes a repository after create", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const member = await sameOrgSession("repo-member");
+    const created = await appRequest(app, "/workspaces", {
+      ...json({
+        machineTypeId: "small",
+        members: [{ membershipId: member.membershipId, role: "member" }],
+      }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const workspace = (await created.json<CreatedWorkspace>()).workspace;
+    const path = `/workspaces/${workspace.id}/repos`;
+    // Reachable anonymously, so every probe reads public and no grant is owed.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+
+    await expect(appRequest(app, path, { headers: { Cookie: cookie } })
+      .then((response) => response.json<ListWorkspaceReposResponse>()))
+      .resolves.toEqual({ repos: [] });
+
+    const added = await appRequest(app, path, {
+      ...json({ repo: "acme/tools" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(added.status).toBe(201);
+    await expect(added.json<ListWorkspaceReposResponse>()).resolves.toEqual({
+      repos: [{ repo: "acme/tools", private: false }],
+    });
+
+    // Working in the workspace is enough to read what it clones; changing the
+    // list is workspace-admin work (§3).
+    await expect(appRequest(app, path, { headers: { Cookie: member.cookie } })
+      .then((response) => response.json<ListWorkspaceReposResponse>()))
+      .resolves.toEqual({ repos: [{ repo: "acme/tools", private: false }] });
+    expect((await appRequest(app, path, {
+      ...json({ repo: "acme/other" }),
+      headers: { Cookie: member.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+
+    // The path carries "owner/name" as two segments: a slash inside one
+    // parameter is not something a router hands back intact.
+    expect((await appRequest(app, `${path}/acme/tools`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(204);
+    await expect(appRequest(app, path, { headers: { Cookie: cookie } })
+      .then((response) => response.json<ListWorkspaceReposResponse>()))
+      .resolves.toEqual({ repos: [] });
+    expect((await appRequest(app, `${path}/acme/tools`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(404);
+  });
+
+  it("applies the create-time repository rules to one added row", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    const path = `/workspaces/${workspace.id}/repos`;
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 200 }));
+    const add = (repo: unknown) => appRequest(app, path, {
+      ...json({ repo }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+
+    for (const bad of ["no-slash", "owner/name/extra", "owner/", "/name", "owner/na me"]) {
+      expect((await add(bad)).status, bad).toBe(400);
+    }
+    expect((await add("acme/tools")).status).toBe(201);
+    expect((await add("acme/tools")).status).toBe(409);
+    // Every repo clones into /workspace/<name>, so two of one name would fight
+    // over one directory — the same rule create validates the whole list on.
+    const collision = await add("blitz/tools");
+    expect(collision.status).toBe(400);
+    await expect(collision.json()).resolves.toMatchObject({
+      error: expect.stringContaining("clone into the same directory"),
+    });
+
+    for (let index = 1; index < 16; index += 1) {
+      expect((await add(`acme/repo-${String(index)}`)).status, String(index)).toBe(201);
+    }
+    const full = await add("acme/one-too-many");
+    expect(full.status).toBe(400);
+    await expect(full.json()).resolves.toMatchObject({
+      error: expect.stringContaining("at most 16 repositories"),
+    });
+  });
+
+  it("refuses a private repository the caller cannot prove they reach", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const workspace = await createWorkspace(app, cookie);
+    // Hidden to an anonymous probe, and the caller holds no GitHub grant: the
+    // clone would fail ten minutes into bootstrap, so it is refused now.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 404 }));
+
+    const refused = await appRequest(app, `/workspaces/${workspace.id}/repos`, {
+      ...json({ repo: "acme/private" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(refused.status).toBe(400);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_repos")
+      .first<number>("count")).toBe(0);
   });
 });

@@ -40,6 +40,9 @@ export type WorkspaceRecord = {
   credentials: WorkspaceCredentialView[];
   defaultMachineTypeId: string;
   autoProvision: boolean;
+  /** The org agent-rules document this workspace hands its agents; null on the
+   * built-in doc. Editable from the details dialog's Settings tab. */
+  agentRuleId: string | null;
   /** Null where the viewer reaches this workspace only as an org admin. */
   myRole: WorkspaceMemberRole | null;
 };

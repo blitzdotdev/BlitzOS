@@ -105,6 +105,31 @@ export async function requireWorkspaceAdmin(
   return access;
 }
 
+/** The live workspace an administrative write names, gated by §3.
+ *
+ * Every workspace-admin route starts here: a workspace in another org, or one
+ * already tombstoned, is 404 rather than 403, so nothing leaks about what the
+ * organization holds. The `org_id` narrowing is what lets the caller look up
+ * the org roster without re-checking it. */
+export async function workspaceForAdminWrite(
+  db: Db,
+  principal: Principal,
+  id: string,
+): Promise<WorkspaceRow & { org_id: string }> {
+  const workspace = await workspaceById(db, id);
+  if (
+    workspace === null
+    || workspace.org_id === null
+    || workspace.org_id !== principal.orgId
+    || workspace.deleted_at !== null
+  ) {
+    throw new HttpError(404, "workspace not found");
+  }
+  await requireWorkspaceAdmin(db, principal, workspace);
+  // SAFETY: org_id was null-checked immediately above; the intersection only narrows that one property.
+  return workspace as WorkspaceRow & { org_id: string };
+}
+
 export interface WebAppWorkspaceAccess {
   workspace: WorkspaceRow;
   userId: string;

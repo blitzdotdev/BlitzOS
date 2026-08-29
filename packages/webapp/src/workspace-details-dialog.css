@@ -73,6 +73,21 @@
 .workspace-credential-added { color: var(--faint); font-size: 10px; white-space: nowrap; }
 .workspace-credential-add { display: grid; gap: 10px; margin-top: 18px; }
 
+/* The settings form and the clone list. Both borrow the credential-row
+ * geometry: one list of rows, an add control under it. */
+.workspace-settings-form { display: grid; gap: 14px; margin-bottom: 18px; }
+.workspace-settings-form small { color: var(--faint); font-size: 10px; }
+.workspace-settings-toggle { display: flex; align-items: center; gap: 8px; }
+.workspace-settings-toggle input { width: auto; }
+.workspace-repos { margin-top: 18px; }
+.workspace-repos h2 { margin: 0 0 6px; font-size: 12px; font-weight: 550; }
+.workspace-repo-rows { border-top: 1px solid var(--rule); }
+.workspace-repo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-repo-name { display: grid; min-width: 0; gap: 2px; }
+.workspace-repo-name strong { font-size: 11px; font-weight: 550; }
+.workspace-repo-name small { color: var(--faint); font-size: 10px; }
+.workspace-repo-add { display: grid; gap: 10px; margin-top: 14px; }
+
 .workspace-details-note { margin: 0 0 14px; color: var(--faint); font-size: 11px; }
 .workspace-details-settings-actions { display: flex; gap: 10px; margin-top: 18px; }
 

@@ -134,6 +134,7 @@ export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord |
     credentials: workspace.credentials,
     defaultMachineTypeId: workspace.defaultMachineTypeId,
     autoProvision: workspace.autoProvision,
+    agentRuleId: workspace.agentRuleId,
     myRole: workspace.myRole,
     ingressLabel: workspace.id,
     sessionUrl: null,

@@ -201,6 +201,24 @@ const updateWorkspaceMemberRequest: SharedShape<
   schema.UpdateWorkspaceMemberRequest
 > = { role: "viewer" };
 
+// Every settings field at once. `agentRuleId` also travels as an explicit
+// null — the way back to the built-in doc — which is different ground than a
+// string, so it gets its own row below.
+const updateWorkspaceRequest: SharedShape<
+  wire.UpdateWorkspaceRequest,
+  schema.UpdateWorkspaceRequest
+> = {
+  name: "engineering",
+  defaultMachineTypeId: machineType.id,
+  autoProvision: false,
+  agentRuleId: "rule",
+};
+
+const clearAgentRuleRequest: SharedShape<
+  wire.UpdateWorkspaceRequest,
+  schema.UpdateWorkspaceRequest
+> = { agentRuleId: null };
+
 const workspaceMemberResponse: SharedShape<
   wire.WorkspaceMemberResponse,
   schema.WorkspaceMemberResponse
@@ -260,6 +278,16 @@ const templateRepo: SharedShape<
   wire.TemplateRepoView,
   schema.TemplateRepoView
 > = { repo: "blitzdotdev/blitz-core", private: true };
+
+const addWorkspaceRepoRequest: SharedShape<
+  wire.AddWorkspaceRepoRequest,
+  schema.AddWorkspaceRepoRequest
+> = { repo: templateRepo.repo };
+
+const listWorkspaceReposResponse: SharedShape<
+  wire.ListWorkspaceReposResponse,
+  schema.ListWorkspaceReposResponse
+> = { repos: [templateRepo] };
 
 const githubInstallation: SharedShape<
   wire.GithubInstallationView,
@@ -636,6 +664,8 @@ const fullFieldValues = [
   setMachineTypeRequest,
   addWorkspaceMemberRequest,
   updateWorkspaceMemberRequest,
+  updateWorkspaceRequest,
+  clearAgentRuleRequest,
   workspaceMemberResponse,
   putWorkspaceCredentialRequest,
   listWorkspaceCredentialsResponse,
@@ -655,6 +685,8 @@ const fullFieldValues = [
   workspace,
   templateConnection,
   templateRepo,
+  addWorkspaceRepoRequest,
+  listWorkspaceReposResponse,
   githubInstallation,
   listGithubInstallations,
   githubRepository,
@@ -723,6 +755,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceCredentialView>().toEqualTypeOf<schema.WorkspaceCredentialView>();
     expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();
     expectTypeOf<wire.UpdateWorkspaceMemberRequest>().toEqualTypeOf<schema.UpdateWorkspaceMemberRequest>();
+    expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
     expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
     expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
     expectTypeOf<wire.ListWorkspaceCredentialsResponse>().toEqualTypeOf<schema.ListWorkspaceCredentialsResponse>();
@@ -743,6 +776,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
     expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
+    expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
+    expectTypeOf<wire.ListWorkspaceReposResponse>().toEqualTypeOf<schema.ListWorkspaceReposResponse>();
     expectTypeOf<wire.GithubInstallationView>().toEqualTypeOf<schema.GithubInstallationView>();
     expectTypeOf<wire.ListGithubInstallationsResponse>().toEqualTypeOf<schema.ListGithubInstallationsResponse>();
     expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();

@@ -186,6 +186,7 @@ export {
   type PutWorkspaceCredentialRequest,
   type SetMachineTypeRequest,
   type UpdateWorkspaceMemberRequest,
+  type UpdateWorkspaceRequest,
   type WorkspaceCredentialView,
   type WorkspaceMemberResponse,
   type WorkspaceMemberRole,
@@ -320,6 +321,20 @@ export interface TemplateConnectionView {
 export interface TemplateRepoView {
   repo: string;
   private: boolean;
+}
+
+/** One repo to add to a live workspace ("owner/name"). The server derives
+ * `private` with the caller's own GitHub credential, exactly as create does —
+ * privacy is provider truth, not a client assertion. */
+export interface AddWorkspaceRepoRequest {
+  repo: string;
+}
+
+/** The workspace's own clone list. A change lands on the machines provisioned
+ * after it: the box clones at boot, so an existing machine keeps what it
+ * already has until it is recreated. */
+export interface ListWorkspaceReposResponse {
+  repos: TemplateRepoView[];
 }
 
 export interface GithubInstallationView {
