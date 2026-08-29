@@ -375,3 +375,21 @@
 @media (prefers-reduced-motion: reduce) {
   .shell-nav { transition: none; }
 }
+
+/* The tile's context menu, in the tab strip's own menu chrome
+   (.webapp-session-menu). Only the rename field is new: the tile is two
+   letters wide, so the name is edited in the popover the menu opened at. */
+.shell-wmenu { font: 13px/1.3 var(--font-ui); }
+
+.shell-wmenu--rename { width: 220px; }
+
+.shell-wmenu--rename input {
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-item);
+  color: var(--ink);
+  background: var(--paper);
+  font: 13px/1.3 var(--font-ui);
+}

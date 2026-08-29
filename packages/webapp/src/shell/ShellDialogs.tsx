@@ -36,8 +36,14 @@ export type ShellDialogsProps = {
   onCancelCreateWorkspace: () => void;
   onCreateWorkspace: (input: CreateWorkspaceDialogInput) => void;
   /** Which workspace the details dialog is about, and which tab it opens on.
-   * The rail's people icon opens Members; the ⋯ icon opens the default. */
-  details: { workspaceId: string; tab: WorkspaceDetailsTab } | null;
+   * The rail's people icon opens Members; the ⋯ icon opens the default.
+   * `focusAddMember` is the tile menu's Invite, which lands on Members with
+   * the picker ready to type into. */
+  details: {
+    workspaceId: string;
+    tab: WorkspaceDetailsTab;
+    focusAddMember?: boolean;
+  } | null;
   onCloseDetails: () => void;
   onCloneWorkspace: (workspaceId: string) => void;
   onRequestDeleteWorkspace: (workspaceId: string) => void;
@@ -108,6 +114,7 @@ export function ShellDialogs({
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
           initialTab={details.tab}
+          focusAddMember={details.focusAddMember ?? false}
           onClose={onCloseDetails}
           onClone={() => onCloneWorkspace(detailsWorkspace.id)}
           onDelete={canManageDetails

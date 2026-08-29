@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
@@ -21,11 +21,25 @@ function stateLabel(workspace: CloudWorkspaceModel): string {
   return workspace.lifecycleStatus;
 }
 
+/** The context menu's own geometry, in viewport coordinates, and the
+ * workspace it belongs to. Clamped when it opens, exactly as the tab strip's
+ * menu is. */
+type TileMenu = { workspaceId: string; left: number; top: number };
+
+const TILE_MENU_WIDTH = 190;
+const TILE_MENU_HEIGHT = 140;
+
 export type WorkspaceStripProps = {
   workspaces: CloudWorkspaceModel[];
   viewer: TenantMe | null;
   activeWorkspaceId: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
+  /** The three verbs the tile's context menu offers. Rename writes the name
+   * through the same PATCH the settings tab uses; the other two open the
+   * details dialog on the tab that answers them. */
+  onRenameWorkspace: (workspaceId: string, name: string) => void;
+  onOpenWorkspaceSettings: (workspaceId: string) => void;
+  onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
@@ -43,6 +57,9 @@ export function WorkspaceStrip({
   viewer,
   activeWorkspaceId,
   onSelectWorkspace,
+  onRenameWorkspace,
+  onOpenWorkspaceSettings,
+  onInviteToWorkspace,
   onCreateWorkspace,
   onSwitchOrg,
   onCreateOrg,
@@ -51,6 +68,11 @@ export function WorkspaceStrip({
   onCloseDrawer,
 }: WorkspaceStripProps) {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
+  const [tileMenu, setTileMenu] = useState<TileMenu | null>(null);
+  const [renaming, setRenaming] = useState<
+    { workspaceId: string; value: string; left: number; top: number } | null
+  >(null);
+  const renameInput = useRef<HTMLInputElement>(null);
   const orgLabel = viewer?.org.name || viewer?.org.slug || 'Organization';
   const userLabel = viewer?.identity.name || viewer?.identity.email || 'BlitzOS';
 
@@ -62,6 +84,50 @@ export function WorkspaceStrip({
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [orgMenuOpen]);
+
+  useEffect(() => {
+    if (tileMenu === null && renaming === null) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setTileMenu(null);
+      setRenaming(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [renaming, tileMenu]);
+
+  useEffect(() => {
+    renameInput.current?.focus();
+    renameInput.current?.select();
+  }, [renaming?.workspaceId]);
+
+  // Workspace admin, or an org admin reaching in implicitly (§3): the wire
+  // reports the second as a null stored role on a workspace they can open.
+  const menuWorkspace = tileMenu === null
+    ? undefined
+    : workspaces.find(({ id }) => id === tileMenu.workspaceId);
+  const canManage = menuWorkspace?.myRole === 'admin' || menuWorkspace?.myRole === null;
+
+  const openTileMenu = (event: ReactMouseEvent, workspace: CloudWorkspaceModel) => {
+    event.preventDefault();
+    setRenaming(null);
+    setOrgMenuOpen(false);
+    setTileMenu({
+      workspaceId: workspace.id,
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - TILE_MENU_WIDTH)),
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - TILE_MENU_HEIGHT)),
+    });
+  };
+
+  const finishRename = () => {
+    if (renaming === null) return;
+    const name = renaming.value.trim();
+    const current = workspaces.find(({ id }) => id === renaming.workspaceId);
+    setRenaming(null);
+    if (name !== '' && current !== undefined && name !== current.title) {
+      onRenameWorkspace(renaming.workspaceId, name);
+    }
+  };
 
   return (
     <aside className="shell-strip" aria-label="Cloud workspaces">
@@ -158,6 +224,7 @@ export function WorkspaceStrip({
                 ? `${workspace.title} — ${stateLabel(workspace)}`
                 : `${workspace.title} — shared by ${owner}`}
               onClick={() => onSelectWorkspace(workspace.id)}
+              onContextMenu={(event) => openTileMenu(event, workspace)}
             >{workspaceCode(workspace.title)}</button>
           );
         })}
@@ -183,6 +250,102 @@ export function WorkspaceStrip({
       </nav>
 
       <div className="shell-strip__sep" role="presentation" />
+
+      {tileMenu !== null && menuWorkspace !== undefined && (
+        <>
+          <button
+            className="webapp-session-backdrop"
+            type="button"
+            aria-label="Close workspace menu"
+            tabIndex={-1}
+            onMouseDown={() => setTileMenu(null)}
+          />
+          <div
+            className="webapp-session-menu shell-wmenu"
+            role="menu"
+            aria-label={`Workspace ${menuWorkspace.title}`}
+            style={{ left: tileMenu.left, top: tileMenu.top }}
+          >
+            {/* A member reads the settings and cannot administer the
+              * workspace, so Rename and Invite are not offered to them (§3). */}
+            {canManage && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setRenaming({
+                    workspaceId: menuWorkspace.id,
+                    value: menuWorkspace.title,
+                    left: tileMenu.left,
+                    top: tileMenu.top,
+                  });
+                  setTileMenu(null);
+                }}
+              >
+                <span className="codicon codicon-edit" aria-hidden="true" />
+                <span>Rename</span>
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setTileMenu(null);
+                onOpenWorkspaceSettings(menuWorkspace.id);
+              }}
+            >
+              <span className="codicon codicon-settings-gear" aria-hidden="true" />
+              <span>Settings</span>
+            </button>
+            {canManage && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setTileMenu(null);
+                  onInviteToWorkspace(menuWorkspace.id);
+                }}
+              >
+                <span className="codicon codicon-person-add" aria-hidden="true" />
+                <span>Invite</span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {renaming !== null && (
+        <>
+          <button
+            className="webapp-session-backdrop"
+            type="button"
+            aria-label="Close workspace rename"
+            tabIndex={-1}
+            onMouseDown={finishRename}
+          />
+          <div
+            className="webapp-session-menu shell-wmenu shell-wmenu--rename"
+            style={{ left: renaming.left, top: renaming.top }}
+          >
+            <input
+              ref={renameInput}
+              aria-label="Workspace name"
+              maxLength={64}
+              value={renaming.value}
+              onChange={(event) => setRenaming({
+                ...renaming,
+                value: event.currentTarget.value,
+              })}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  finishRename();
+                }
+              }}
+            />
+          </div>
+        </>
+      )}
 
       <div className="shell-strip__account">
         <button

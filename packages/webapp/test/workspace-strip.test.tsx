@@ -34,6 +34,9 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
       viewer={viewer}
       activeWorkspaceId="workspace-one"
       onSelectWorkspace={() => undefined}
+      onRenameWorkspace={() => undefined}
+      onOpenWorkspaceSettings={() => undefined}
+      onInviteToWorkspace={() => undefined}
       onCreateWorkspace={() => undefined}
       onSwitchOrg={() => undefined}
       onCreateOrg={() => undefined}
@@ -103,6 +106,84 @@ describe("workspace strip", () => {
     expect(surfaces.map((button) => button.getAttribute("aria-label"))).toEqual(["Drive"]);
     await act(async () => surfaces[0]?.click());
     expect(onOpenDrive).toHaveBeenCalledOnce();
+    await view.unmount();
+  });
+
+  it("opens a context menu on a tile, clamped to the viewport", async () => {
+    const onOpenWorkspaceSettings = vi.fn();
+    const onInviteToWorkspace = vi.fn();
+    const onSelectWorkspace = vi.fn();
+    const view = await render(strip({
+      onOpenWorkspaceSettings,
+      onInviteToWorkspace,
+      onSelectWorkspace,
+    }));
+    const tile = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="design-team"]',
+    );
+    await act(async () => tile?.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 40,
+      clientY: 90,
+    })));
+
+    const menu = view.container.querySelector<HTMLElement>('[role="menu"][aria-label="Workspace design-team"]');
+    expect(menu).not.toBeNull();
+    expect(menu?.style.left).toBe("40px");
+    expect(menu?.style.top).toBe("90px");
+    const items = [...menu!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
+    expect(items.map((item) => item.textContent)).toEqual(["Rename", "Settings", "Invite"]);
+
+    await act(async () => items[2]?.click());
+    expect(onInviteToWorkspace).toHaveBeenCalledWith("workspace-one");
+    // Right-clicking is not left-clicking: the tile was never selected.
+    expect(onSelectWorkspace).not.toHaveBeenCalled();
+    expect(view.container.querySelector('[role="menu"][aria-label="Workspace design-team"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it("offers a non-admin Settings alone, and renames through the caller's PATCH", async () => {
+    const onRenameWorkspace = vi.fn();
+    const view = await render(strip({
+      workspaces: [workspace({ myRole: "member" })],
+      onRenameWorkspace,
+    }));
+    const openMenu = async () => {
+      await act(async () => view.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="design-team"]',
+      )?.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      })));
+      const menu = view.container.querySelector('[role="menu"][aria-label="Workspace design-team"]');
+      return [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])];
+    };
+    // A member reads the settings and administers nothing (§3).
+    expect((await openMenu()).map((item) => item.textContent)).toEqual(["Settings"]);
+
+    await act(async () => view.root.render(strip({
+      workspaces: [workspace()],
+      onRenameWorkspace,
+    })));
+    const rename = (await openMenu()).find((item) => item.textContent === "Rename");
+    await act(async () => rename?.click());
+
+    const field = view.container.querySelector<HTMLInputElement>('[aria-label="Workspace name"]');
+    expect(field?.value).toBe("design-team");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
+        ?.set?.call(field, "renamed-team");
+      field?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => field?.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    })));
+    expect(onRenameWorkspace).toHaveBeenCalledWith("workspace-one", "renamed-team");
+    expect(view.container.querySelector('[aria-label="Workspace name"]')).toBeNull();
     await view.unmount();
   });
 

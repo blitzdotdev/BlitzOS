@@ -186,6 +186,7 @@ export function WorkspaceDetailsDialog({
   workspace,
   listMachineTypes,
   initialTab = 'members',
+  focusAddMember = false,
   onClose,
   onClone,
   onDelete,
@@ -194,6 +195,8 @@ export function WorkspaceDetailsDialog({
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   initialTab?: WorkspaceDetailsTab;
+  /** Opens with the add-member field focused, for the tile menu's Invite. */
+  focusAddMember?: boolean;
   onClose: () => void;
   onClone: (() => void) | null;
   onDelete: (() => void) | null;
@@ -216,7 +219,9 @@ export function WorkspaceDetailsDialog({
   const canManage = workspace.myRole === 'admin' || workspace.myRole === null;
   const workspaceId = workspace.id;
 
-  useEffect(() => { closeButton.current?.focus(); }, []);
+  // Invite lands on the picker rather than on the close button: the one thing
+  // it opened the dialog to do is type a teammate's name.
+  useEffect(() => { if (!focusAddMember) closeButton.current?.focus(); }, [focusAddMember]);
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -353,6 +358,7 @@ export function WorkspaceDetailsDialog({
                 orgMembers={orgMembers}
                 machines={machines}
                 defaultMachineTypeId={workspace.defaultMachineTypeId}
+                autoFocusAdd={focusAddMember}
               />
             </section>
           )}

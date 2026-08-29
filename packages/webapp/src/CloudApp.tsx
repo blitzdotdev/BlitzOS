@@ -187,7 +187,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
    * blank create. Cleared with the dialog. */
   const [cloneFromWorkspaceId, setCloneFromWorkspaceId] = useState<string | null>(null);
   const [details, setDetails] = useState<
-    { workspaceId: string; tab: WorkspaceDetailsTab } | null
+    { workspaceId: string; tab: WorkspaceDetailsTab; focusAddMember?: boolean } | null
   >(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
@@ -814,6 +814,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     });
   }, []);
 
+  /** The tile's inline rename. The name is the workspace's own settings field,
+   * so it goes through the same PATCH the settings tab writes; the tile shows
+   * the new name at once and the next poll agrees. */
+  const renameWorkspace = useCallback((workspaceId: string, name: string) => {
+    dispatch({ type: 'workspace_renamed', workspaceId, title: name });
+    void client.updateWorkspace(workspaceId, { name })
+      .catch((caught: Error) => setError(caught.message));
+  }, [client]);
+
   const retryWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
     if (workspace?.retryAction === 'destroy') {
@@ -1365,6 +1374,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       previewLinks={orderedPreviewLinks}
       drawerOpen={drawerOpen}
       onSelectWorkspace={selectWorkspace}
+      onRenameWorkspace={renameWorkspace}
+      onOpenWorkspaceSettings={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetails({ workspaceId, tab: 'settings' });
+      }}
+      onInviteToWorkspace={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetails({ workspaceId, tab: 'members', focusAddMember: true });
+      }}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());

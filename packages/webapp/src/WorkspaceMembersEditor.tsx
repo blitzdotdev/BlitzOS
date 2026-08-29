@@ -4,7 +4,7 @@ import type {
   WorkspaceMemberRole,
   WorkspaceMemberView,
 } from '@blitzos/schema';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { MemberView } from './api';
 import { DriveAvatar } from './files/DriveAvatar';
 import { MachineTypeSelect, WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
@@ -76,13 +76,18 @@ function MachineStateChip({ machine }: { machine: MachineView | null }) {
  * who are not on the list yet, filtered by name or email. */
 function AddMemberSearch({
   candidates,
+  autoFocus,
   onAdd,
 }: {
   candidates: MemberView[];
+  /** The tile menu's Invite opens the dialog to do exactly this. */
+  autoFocus: boolean;
   onAdd: (member: MemberView) => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (autoFocus) field.current?.focus(); }, [autoFocus]);
   const trimmed = query.trim().toLowerCase();
   const matches = candidates
     .filter((member) => trimmed === ''
@@ -92,6 +97,7 @@ function AddMemberSearch({
   return (
     <div className="workspace-members-search">
       <input
+        ref={field}
         className="drive-field"
         type="text"
         autoComplete="off"
@@ -303,6 +309,7 @@ export function WorkspaceMembersEditor({
   orgMembers,
   machines,
   defaultMachineTypeId,
+  autoFocusAdd = false,
   viewerName = 'You',
   viewerAvatarUrl = null,
 }: {
@@ -310,6 +317,8 @@ export function WorkspaceMembersEditor({
   orgMembers: MemberView[];
   machines: readonly MachineType[];
   defaultMachineTypeId: string;
+  /** Opens with the add-member field focused. */
+  autoFocusAdd?: boolean;
   /** Draft mode pins the creator as the first workspace admin. Live mode
    * reads the owner off the member rows, so it never needs this. */
   viewerName?: string;
@@ -333,6 +342,7 @@ export function WorkspaceMembersEditor({
       {!readOnly && (
         <AddMemberSearch
           candidates={candidates}
+          autoFocus={autoFocusAdd}
           onAdd={(member) => {
             if (mode.kind === 'draft') {
               mode.onChange([...mode.members, {

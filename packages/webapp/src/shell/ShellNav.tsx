@@ -21,6 +21,9 @@ export type ShellNavProps = {
   previewLinks: PreviewLink[];
   drawerOpen: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
+  onRenameWorkspace: (workspaceId: string, name: string) => void;
+  onOpenWorkspaceSettings: (workspaceId: string) => void;
+  onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
@@ -50,6 +53,9 @@ export function ShellNav({
   previewLinks,
   drawerOpen,
   onSelectWorkspace,
+  onRenameWorkspace,
+  onOpenWorkspaceSettings,
+  onInviteToWorkspace,
   onCreateWorkspace,
   onSwitchOrg,
   onCreateOrg,
@@ -71,6 +77,9 @@ export function ShellNav({
           viewer={viewer}
           activeWorkspaceId={activeWorkspaceId}
           onSelectWorkspace={onSelectWorkspace}
+          onRenameWorkspace={onRenameWorkspace}
+          onOpenWorkspaceSettings={onOpenWorkspaceSettings}
+          onInviteToWorkspace={onInviteToWorkspace}
           onCreateWorkspace={onCreateWorkspace}
           onSwitchOrg={onSwitchOrg}
           onCreateOrg={onCreateOrg}
