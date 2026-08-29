@@ -178,13 +178,6 @@ class SessionActor {
         stopReason = "cancelled";
         return { stopReason };
       }
-      // Workspace variables are optional configuration: this call degrades to
-      // the actor's own environment rather than failing the prompt.
-      const environment = await this.credentials.environment();
-      if (abort.signal.aborted) {
-        stopReason = "cancelled";
-        return { stopReason };
-      }
       try {
         const output = await this.adapter.runTurn({
           sessionId: this.id,
@@ -194,7 +187,9 @@ class SessionActor {
           resumeId: this.resumeId,
           signal: abort.signal,
           token,
-          environment,
+          // The actor's own environment, and nothing added. Every credential a
+          // turn may use is pulled at the moment of use with `blitz-cred get`.
+          environment: process.env,
           config: this.config,
           emit: (update) => this.emit(update, identity),
           requestPermission: (request) => this.requestPermission(request, identity),

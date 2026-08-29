@@ -47,8 +47,9 @@ codex_authenticated() {
     return 0
   fi
 
-  # 2. A plain API key from creds/env.d. codex reads these itself; its own
-  #    status check ignores them (enable_codex_api_key_env is false there).
+  # 2. A plain API key the member exported themselves. codex reads these
+  #    itself; its own status check ignores them
+  #    (enable_codex_api_key_env is false there).
   if [ -n "${CODEX_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ]; then
     return 0
   fi

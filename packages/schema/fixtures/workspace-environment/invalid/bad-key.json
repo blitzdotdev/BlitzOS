@@ -1,7 +1,0 @@
-{
-  "env": {
-    "BAD-KEY": "value"
-  },
-  "startupScript": null,
-  "filesReady": true
-}

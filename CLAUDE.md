@@ -64,7 +64,6 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | MICROVM_HOSTS | runtime + deploy share ONE parser | n/a (shared code) | `core/compute/microvm-hosts.js` imported by both |
 | dufs WebDAV listing | `core/files/sync.ts` parser ↔ dufs in the box image | `fixtures/dav-listing/` | `test/dav-listing-fixtures.test.ts` (TS side; guest side revalidates at box-image rebuild) |
 | public preview links | box CLI state ↔ Go gateway ↔ browser | `fixtures/previews/` | `gateway/main_test.go`, `webapp/test/preview-v2.test.ts` |
-| workspace environment (RETIRING) | `core/environment.ts` route ↔ `broker/internal/workspace/environment.go` | `fixtures/workspace-environment/` | `test/workspace-environment-conformance.test.ts`, `broker` `environment_test.go` |
 | preview-focus | `blitz teenyapp open` CLI (`blitz preview` stays a silent alias; wire unchanged) ↔ Go gateway (`/preview-focus`) ↔ browser (`webapp/src/preview.ts` consumer, auto-opens the focus) | `fixtures/preview-focus/` | `box/actor/test/preview-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/preview-focus.test.ts` (browser consumer) |
 | connections-focus | `blitz connections open <provider>` CLI ↔ Go gateway (`/connections-focus`) ↔ browser (`webapp/src/connections-focus.ts` consumer via `use-workspace-connections-focus.ts`, opens the workspace connections panel with the provider selected) | `fixtures/connections-focus/` | `box/actor/test/connections-focus-conformance.test.ts` (producer), `gateway/main_test.go` (reader), `webapp/test/connections-focus.test.ts` (browser consumer) |
 | webApp ticket v1 | `core/webapp-tickets.ts` mint/verify ↔ `box/gateway/main.go` ↔ `box/actor/src/auth.ts` | `fixtures/webapp-ticket/` | `test/webapp-ticket-conformance.test.ts`, `gateway/main_test.go` (ticket_conformance_test.go), `actor/test/auth-conformance.test.ts` |
@@ -76,6 +75,11 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
 | recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ guest readers: `blitz-term` through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation`, plus the bootstrap-emitted chat sender's raw `prompt.txt` read (the sender never parses `invocation.env` — model/effort/permission are interpolated into its source at render time) | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/actor/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
 | box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`; cloud-VM path only — the microVM provider has its own guest lifecycle and no update path yet) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
+
+Retired: the `workspace environment` contract (`GET /workspaces/self/environment`
+→ `creds/env.d/00-workspace.sh`). Workspace credentials serve through
+`blitz-cred` alone — see `plans/MEMBER-MACHINES.md` §1. The route stays only for
+box images already in the field, which tolerate an empty answer.
 
 Legacy phone-home shapes are accepted ONLY inside
 `adaptLegacyPhoneHomeRequestForInFlightImages` in `core/workspaces.ts`.
@@ -102,6 +106,11 @@ Three compatibility surfaces are load-bearing and have no expiry date yet:
 filesReady:true}`, because deployed brokers poll it every second at boot and
 wait for exactly those three fields), and the token families migration 0041
 copied hash-for-hash so no deployed guest had to re-enrol.
+
+The `workspace environment` cross-runtime contract is retired with its fixtures
+and both conformance tests: no runtime reads the route any more, so what remains
+is that constant three-field shim, pinned alone by
+`control-plane/test/workspace-environment.test.ts`.
 
 Templates and Recipes are disabled product-wide (2026-08-29). Both
 registrations are commented out in `core/app.ts` with the reason; recipe code
