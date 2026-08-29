@@ -1,0 +1,376 @@
+# Lody sessions: first-class chats and GitHub worktrees
+
+Vendor Lody's chat and git-worktree features into BlitzOS. Keep an upstream pin.
+Merge from upstream on a schedule. Demote harness TUI tabs; make sessions the
+primary primitive. Replace the flat tab list in the rail with Chats and
+GitHub Worktrees sections.
+
+Upstream: https://github.com/LodyAI/Lody (Apache-2.0). Local mirror during
+planning: `/workspace/lody-upstream`.
+
+## 1. What Lody is, in BlitzOS terms
+
+Lody is a local-first workspace for coding agents. Three parts matter to us:
+
+1. **Renderer** (`packages/components`, 1213 files): the chat UI, the session
+   pages, the sidebar with Chats / GitHub Worktrees sections. React 19 +
+   Tailwind v4 + Jotai + Loro CRDT mirrors. 62 of 1213 files touch Electron,
+   all behind one seam (`lib/electron-ipc-client.ts` returns `null` in a
+   browser). A 209-story Storybook proves the leaves render in a plain browser.
+2. **Daemon** (`apps/cli`, npm package `lody`, latest 0.88.1): runs ACP agents
+   as stdio child processes, owns session CRDT docs in SQLite, owns the
+   `WorktreeManager` (1804 lines: create, archive-with-backup-commit, safe
+   delete, per-repo file locks, speculative pre-warm). Runs headless via
+   `lody daemon start`. This is the box-side half.
+3. **Transport**: the renderer and the daemon share Loro CRDT documents. The
+   renderer writes session meta + user turns; the daemon's dispatch watcher
+   picks them up (durable pointer, not a bus). Desktop uses Electron IPC.
+   Browser uses "Loro Streams" — a hosted gateway that is **not** in the public
+   tree. See §4 for our replacement.
+
+Key session model facts:
+
+- A session doc holds `history`, a message queue, and ~60 meta fields
+  (`SessionMeta`: `title`, `project`, `isWorktree`, `branchName`, `diffStats`,
+  `pullRequestState`, `machineId`, `parentSessionId`, ...).
+- Worktrees live at `<dataDir>/repos/<repoId>/worktrees/<sessionId>`. Branch
+  names: `session/<id8>` (GitHub source) or `lody/<id12>` (local source).
+  Two sources: `github` (bare mirror clone) and `local-shared` (worktrees cut
+  off an existing local repo — no network needed).
+- Lody never pushes or merges itself. UI chips ("Commit & Push", "Create PR",
+  "Resolve Conflicts") send natural-language prompts to the agent, which uses
+  `gh`. PR merge is one GitHub REST call from the client. PR discovery is
+  `gh pr list` inside the worktree.
+- Archive auto-commits dirty work (`chore: archive backup for session ...`,
+  author `Lody Archive <archive@lody.ai>`) and keeps the branch. Delete
+  refuses dirty local-shared worktrees and keeps them on disk.
+- The ACP harness contract is plain ACP plus optional `_meta.lody` extensions
+  (usage, rate limits, steering, fork, tasks). A vanilla ACP agent works.
+  Adapters for claude/codex live in separate public repos, pinned as git
+  submodules (`acp-extension-core` MIT, `-claude`/`-codex` Apache-2.0). The
+  npm `lody` package bundles them prebuilt.
+
+## 2. What BlitzOS already has
+
+- A complete browser ACP client (`webapp/src/chat/`, `ChatPanel.tsx`) wired to
+  the box actor (`packages/box/actor`, WS on 7444, SQLite journal,
+  `session/list`, replay, permission fan-out). Disabled by
+  `NATIVE_CHAT_ENABLED = false`. `plans/COCKPIT-UI-RESTORATION.md` parks the
+  rest of that path "for a dedicated plan" — this plan is it.
+- The rail: `shell/WorkspaceSessionRail.tsx` + `strip-rail.css` renders
+  `aside.shell-rail > div.shell-list` as a flat projection of the tab list
+  (`DriveRailSession`), built to survive a swap to real session rows.
+- Tabs are the primitive: `WorkspaceTabs` in `webapp_state` (D1, last-write
+  wins), tab id = tmux session key on the box. Terminals ride ttyd through the
+  box gateway (7445); the actor rides 7444. Any new box path must be added in
+  `packages/schema/src/webapp-surface.ts` AND `packages/box/gateway/main.go`
+  (two-sided, drift-tested contract).
+- Repos are cloned to `/workspace/<dir>` on the box (`workspace_repos` table).
+  `git` and `gh` are in the image. No worktree feature exists anywhere.
+- Webapp styling: plain global CSS + `tokens.css`, dark-first, no Tailwind.
+  npm workspaces, Vite 8, React 19.2.8, TS 7.
+
+## 3. Decision: adopt Lody's session plane wholesale
+
+We adopt the Lody daemon as the session engine on the box, and the vendored
+Lody renderer packages as the session/chat surface in the webapp. The existing
+box-actor chat path stays untouched behind its flag during the transition and
+is retired at the end (§9).
+
+Why wholesale, not cherry-pick: the user goal is an upstream pin with
+automatic merges. That only stays cheap if we run their code with our
+modifications confined to declared seams (§5.3). Their session management,
+dispatch, worktree lifecycle, and chat UI are one coupled system (CRDT schema
+↔ daemon watcher ↔ UI atoms); extracting halves of it creates a permanent
+hand-maintained fork, which is the outcome to avoid.
+
+What we do NOT adopt:
+
+- Lody cloud (Convex, better-auth, billing, telemetry): capability-gated off.
+  `PlatformCapabilities` = empty set is a supported first-class mode.
+- The hosted Loro Streams gateway: replaced by the open-source
+  `loro-websocket` server proxied through our box gateway (§4).
+- Lody's GitHub token broker: worktrees use the `local-shared` source against
+  our existing `/workspace/<repo>` clones, so worktree creation needs no
+  network. Push/PR auth stays on the existing box mechanism (`gh` +
+  `blitz-cred`).
+- Electron surfaces (public browser panel, terminal dock, IDE launchers):
+  already null-out in a browser.
+
+## 4. Transport: browser ⇄ daemon
+
+The gap: in browser mode Lody routes every CRDT room and all machine RPC over
+the hosted Streams service (`create-workspace-runtime.ts` `syncMode:'cloud'`).
+That service is private. The replacement, verified against published packages:
+
+- `loro-repo@0.20.0` (MIT) exports `./transport/websocket` alongside
+  `./transport/streams`. The transport is pluggable.
+- `loro-websocket@0.6.2` (upstream Loro project) ships a `SimpleServer` for
+  syncing CRDTs over plain WebSocket.
+
+Target shape, one new box service and two gateway routes:
+
+```
+browser (vendored Lody renderer)
+  loro-repo transport/websocket ──wss /workspaces/:id/webapp/7445/lody/sync──┐
+  machine-rpc shim            ──wss /workspaces/:id/webapp/7445/lody/rpc──┐  │
+                                                                          ▼  ▼
+box gateway (Go, 7445, ticket auth) ── proxies to ── lody daemon (s6 service)
+                                                       ├ loro-websocket server
+                                                       ├ machine-rpc (exists:
+                                                       │   unix socket HTTP)
+                                                       └ ACP child processes
+```
+
+- Sync: run a `loro-websocket` server inside or beside the daemon, bound to
+  loopback, attached to the daemon's LoroRepo. Gateway proxies `/lody/sync`.
+- RPC: the daemon already serves machine RPC on a local socket
+  (`LOCAL_MACHINE_RPC_PATH`). Gateway proxies `/lody/rpc` to it. In the
+  renderer, `workspace-machine-rpc-facade.ts` is the single routing seam for
+  all machine calls — we add a "box websocket" plane there. This is one of the
+  declared seam patches (§5.3).
+- Auth: both paths ride the existing webApp ticket (`X-Blitz-WebApp-Token`),
+  same as ttyd and the actor. Viewers get read-only or 403, same policy as
+  7444 today.
+- Both routes go into `webapp-surface.ts` + `gateway/main.go` + both
+  conformance tests (hard contract).
+
+**Phase-0 spike must prove this pair end to end** before anything else builds
+on it. If `loro-websocket`'s server cannot attach to the daemon's repo without
+invasive daemon changes, fallback: adapt the Electron `loro-data-plane-relay`
+protocol (already in the public tree) to a WebSocket listener — a larger but
+bounded shim.
+
+Scope rule for v1: sessions are per member machine, like terminals today. The
+browser connects to the requesting member's box; a member sees their own
+machine's sessions. Cross-member session sharing is out of scope (revisit with
+a control-plane relay later).
+
+## 5. Vendoring mechanics
+
+### 5.1 Layout
+
+```
+vendor/lody/                  # git subtree of LodyAI/Lody, squashed
+vendor/lody/UPSTREAM.md       # pinned upstream SHA + npm lody version + date
+vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
+```
+
+- Add: `git subtree add --prefix vendor/lody <url> <sha> --squash`.
+- The three ACP extension submodule dirs stay empty in the subtree; we do not
+  build `apps/cli` from source. The box installs the prebuilt npm `lody`
+  package, which bundles the adapters. Pin the npm version in the Dockerfile
+  next to the pinned `claude`/`codex` binaries.
+- Renderer packages we import from the subtree source (their `exports` maps
+  point at raw `.ts/.tsx` — no build step upstream either):
+  `@lody/components`, `@lody/shared`, `@lody/platform`,
+  `@lody/loro-streams-rpc`, plus the root `locales/` (the components package
+  imports `../../../../locales/en.json` — preserve that relative depth or
+  alias it).
+- Exclude from our build: `apps/*`, `packages/turn-diff-store` (Node-only;
+  diff evidence arrives over RPC), `code-review-*`, `cli-supervisor`,
+  `site-docs`, `packages/ignore`.
+
+### 5.2 Dependencies (npm ↔ pnpm bridge)
+
+- Add Lody's renderer dependencies to `@blitzos/webapp`'s `package.json`,
+  resolved from their `pnpm-workspace.yaml` catalog (loro stack, jotai, virtua,
+  streamdown, radix set, tailwindcss v4, i18next, ...). React dedupes to our
+  19.2.x via a Vite alias, as their Electron config already does.
+- Their `patchedDependencies` (8 patches: `@pierre/diffs`, `react-photo-view`,
+  `loro-repo`, `mdast-util-gfm-autolink-literal`, `remend`, ...) port to npm
+  via `patch-package` in a postinstall, with the patch files copied from
+  `vendor/lody/patches/`. Audit each patch at every upstream merge.
+- Vite plugins to copy into our webapp config: wasm + top-level-await
+  handling, `vite-emojibase-assets`, the mermaid lazy-boundary guard, and the
+  bundle aliases (`shiki/bundle/full` → `shiki`). Their
+  `apps/electron/electron.vite.config.ts:127-147` is the reference.
+
+### 5.3 Patch policy (what keeps auto-merge cheap)
+
+- Never edit `vendor/lody` except at declared seams. Current seam list:
+  1. `providers/create-workspace-runtime.ts` — construct with the websocket
+     transport instead of Streams.
+  2. `providers/workspace-machine-rpc-facade.ts` — add the box-websocket RPC
+     plane.
+  3. `lib/electron-ipc-client.ts` — no change expected (returns `null`), listed
+     for awareness.
+- Everything else BlitzOS-specific lives OUTSIDE `vendor/`:
+  `webapp/src/lody/` holds our `BlitzPlatformProvider`, transport adapters,
+  token ports, style overlay, and mount points.
+- Style and design changes go through theming, not source edits: a CSS overlay
+  maps our `tokens.css` values onto Lody's theme custom properties (their
+  VS Code theme engine compiles themes to CSS variables at runtime — we ship a
+  "Blitz" theme instead of patching component classes).
+- Record every seam patch in `BLITZ-PATCHES.md` with file, upstream anchor,
+  and reason. The merge agent treats this file as its conflict manual.
+
+### 5.4 Scheduled upstream merge
+
+- Cadence: every few days, an agent runs:
+  1. `git subtree pull --prefix vendor/lody <url> <ref> --squash` on a fresh
+     branch.
+  2. Re-resolve the dependency catalog into `package.json`; re-check the 8
+     patches; bump the npm `lody` pin to the release matching the subtree SHA
+     (renderer and daemon must move together — the CRDT mirrors tolerate
+     unknown fields, but do not bank on skew).
+  3. Build, typecheck, run the Lody smoke stories + our tests.
+  4. Open a PR; never merge to main unattended.
+- The routine is a checked-in doc (`docs/LODY-MERGE.md`) so any agent can run
+  it; wire it to a scheduled cloud agent once the first two manual merges go
+  clean.
+
+## 6. Box changes
+
+1. Image: `npm i -g lody@<pin>` in `packages/box/Dockerfile` beside claude and
+   codex. Data dir on the state volume: `LODY_DATA_DIR=/var/lib/blitz/lody`
+   (survives VM replacement like `chat-session.db` does).
+2. s6 service `lody-daemon`: `lody daemon start` on loopback, plus the
+   loro-websocket sync server (§4). Environment: `GIT_AUTHOR_*` from the
+   member identity; agent credentials via the existing per-turn minting or
+   `blitz-cred` shim — spike decides whether the bundled acp adapters accept
+   the same env the actor's adapters use (`CLAUDE_CODE_OAUTH_TOKEN`, codex
+   config).
+3. Gateway: `/lody/sync` and `/lody/rpc` proxy routes, ticket-verified,
+   viewer-restricted; entries in `webapp-surface.ts` + Go + both drift tests.
+4. Worktrees: configure Lody local projects for each `/workspace/<repo>` clone
+   (registration happens daemon-side; drive it from box bootstrap using the
+   `workspace_repos` list). Worktree source is `local-shared`, so branches are
+   `lody/<id12>` cut off the existing clone, placed under
+   `/var/lib/blitz/lody/repos/...`. `ProjectRef.githubRepoFullName` is set so
+   the sidebar groups these under GitHub Worktrees.
+5. The box actor (7444) keeps running untouched until §9.
+
+## 7. Webapp changes
+
+1. Mount: a new `SessionSurface` component renders the vendored Lody session
+   UI (landing, session page, conversation stream) inside
+   `section.webapp-workspace-view` when the active rail selection is a chat
+   session. Terminals, files, previews render exactly as today.
+2. Providers: `webapp/src/lody/platform.ts` implements `PlatformProvider`
+   (`kind:'cloud'`-shaped identity from our auth, capabilities = empty set +
+   `remoteMachines`, cloudApi = unavailable stubs). `webapp/src/lody/runtime.ts`
+   builds the workspace runtime with the websocket transport against the
+   resolver's `/lody/sync` URL.
+3. Router: Lody routes are TanStack-based; mount them under a memory-history
+   router inside `SessionSurface` (the Storybook preview proves this pattern),
+   bridged to our `sessions-page-state.ts` routing. Do not adopt TanStack for
+   the rest of the app.
+4. Styling: import their Tailwind entry scoped to the session surface. Two
+   defenses, in order: (a) wrap their stylesheet in a cascade layer below our
+   global CSS and confine preflight with `@source`/selector scoping;
+   (b) if bleed proves unmanageable in the spike, isolate `SessionSurface` in
+   an iframe served from our own origin (rail stays native either way).
+   The Blitz theme overlay (§5.3) makes it match `tokens.css`.
+5. i18n: initialize their i18next instance with `en` only; keep `zh_CN` files
+   in the vendor tree unloaded.
+
+## 8. The rail: sessions become first-class
+
+Rename, then restructure (`shell/WorkspaceSessionRail.tsx` →
+`shell/SessionRail.tsx`; CSS prefix `shell-` stays, classes gain a
+`session-rail` root; the DOM path the product knows —
+`aside.shell-rail > div.shell-list` — becomes `aside.session-rail >
+div.session-list`).
+
+Structure copied from Lody's sidebar (their `LoroSidebar` is pure and
+props-driven; we re-render its structure with our CSS rather than importing
+Tailwind into the shell chrome):
+
+```
+┌ rail ──────────────────────────┐
+│ workspace head (unchanged)     │
+│ [ + New session ]              │  ← creates a chat session (Lody startSession)
+│ Chats                        ▾ │  ← sessions with no project
+│   ● fix the login redirect     │     rows: title, relative time, live dot
+│   ○ yesterday's refactor       │     (.shell-s__a / --live already exist)
+│ GitHub Worktrees             ▾ │  ← sessions with repoFullName, grouped by repo
+│   blitzdotdev/BlitzOS          │     row badges: diff ±, PR state, dirty
+│     ● lody/ab12 – rail swap    │
+│ Terminals                    ▾ │  ← today's TUI tabs, demoted to a section
+│   claude · tab 1               │
+└────────────────────────────────┘
+```
+
+- "+ New session" opens a new chat session (Lody landing/composer). The
+  existing "+ New tab" menu survives as a secondary control in the tab strip
+  and in the Terminals section header: Claude Code TUI, Codex TUI, terminal —
+  unchanged tmux/ttyd path.
+- Data: Chats and GitHub Worktrees sections read Lody session meta from the
+  runtime (`sessionMetaCacheAtom` equivalent via a thin hook in
+  `webapp/src/lody/`); Terminals section keeps reading `webapp_state` tabs.
+- Selection: rail selection drives which pane shows — a chat session mounts
+  `SessionSurface`; a terminal row activates its tab as today.
+- Archive/delete/rename actions call Lody session actions (archive keeps the
+  branch and a backup commit — surface that copy in the confirm dialog).
+
+`webapp_state` keeps owning terminal tabs and pane layout. Chat sessions are
+NOT tabs and never enter `WorkspaceTabs` (the dormant `type:'chat'` tab code
+is removed in §9).
+
+## 9. Migration and retirement
+
+Order of operations, each step shippable behind `LODY_SESSIONS_ENABLED`:
+
+1. Ship box daemon + gateway routes dark (no UI).
+2. Ship `SessionSurface` + rail sections behind the flag; dogfood on canary.
+3. Flip the flag on canary; terminals unaffected.
+4. Retire: `NATIVE_CHAT_ENABLED`, `webapp/src/chat/*` (ChatPanel path),
+   `chat` tab type in `storage.ts` + `webapp-state.ts` mirror + `NewTabMenu`,
+   and eventually the actor's chat surface (the actor's ACP endpoint stays if
+   recipes still use it — recipes bootstrap speaks ACP to 7444; either port
+   recipes to the daemon or keep the actor for headless recipe runs only).
+5. Update `plans/COCKPIT-UI-RESTORATION.md` (its deferred-chat section is
+   superseded by this plan) and `packages/box/README.md` surface contract.
+
+## 10. Phases
+
+| Phase | Deliverable | Exit test |
+|---|---|---|
+| 0 spike | Subtree added; Lody `SessionChatStream` + composer render inside our shell from fixture data; Tailwind containment verdict; loro-websocket ⇄ loro-repo round trip in a test | story-grade render, no style bleed into Finder/terminals; CRDT echo test green |
+| 1 box | `lody` pinned in image, s6 service, sync+rpc gateway routes, surface contract updated | `wscat` through gateway with ticket reaches daemon; drift tests green |
+| 2 runtime | BlitzPlatformProvider, websocket transport seam patch, RPC plane shim | create session from browser console; turn dispatched; reply streams |
+| 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box |
+| 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works |
+| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; PR/diff chips | worktree session edits code on a branch; archive backs up dirty state; agent opens PR via gh |
+| 6 retire + automate | flag flip, dead code removal, `docs/LODY-MERGE.md`, first two upstream merges done by hand | one scheduled merge PR lands clean |
+
+Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
+
+## 11. Risks
+
+- **Transport spike fails** (loro-websocket server cannot attach to the
+  daemon's repo): fall back to a WS port of the public
+  `loro-data-plane-relay` protocol; bounded but bigger. Do not start Phase 2
+  until Phase 0 settles this.
+- **npm `lody` vs public tree skew**: npm is at 0.88.1; the public tree's
+  `apps/cli` says 0.76.0. The public tree may lag releases. Pin both sides to
+  a verified-compatible pair at every merge; the CRDT `ignoreUnknownProperties`
+  rule absorbs small skew.
+- **Tailwind preflight vs our global CSS**: the single biggest UI risk; hence
+  the layered-CSS-then-iframe ladder in §7.4 and a Phase 0 exit test.
+- **Dependency weight**: ~100 new renderer deps incl. wasm (loro, sqlite-wasm)
+  and heavy lazy chunks (mermaid, monaco, three). Enforce lazy boundaries
+  (their vite guards do this) and measure bundle size in Phase 0.
+- **Credential path for bundled adapters**: the daemon's claude/codex adapters
+  must accept our minted tokens without Lody cloud login. Verified in Phase 1;
+  if not, we run the adapters with env injection via a small daemon config, or
+  patch at a declared seam in the npm package via `patch-package`.
+- **Two session engines during transition**: actor chat and daemon chat both
+  exist until §9 step 4. They never share state; the flag selects the surface.
+- **License hygiene**: Apache-2.0 both sides; carry `vendor/lody/LICENSE` and
+  regenerate our third-party notices from their
+  `THIRD_PARTY_NOTICES.md` + new deps.
+
+## 12. Open questions (do not block Phase 0)
+
+1. Do recipes move to the daemon, or does the actor stay as the headless ACP
+   runner? (§9.4)
+2. Cross-member visibility of chats on someone else's machine — v1 shows only
+   your machine's sessions; is a read-only roster of other members' sessions
+   needed sooner?
+3. Worktree base for the GitHub Worktrees flow: always the `/workspace` clone
+   (`local-shared`), or offer Lody's `github` bare-mirror source once a token
+   bridge exists?
+4. Does "+ New session" default to Claude or to the workspace `agentDefault`
+   from `webapp_state`?
