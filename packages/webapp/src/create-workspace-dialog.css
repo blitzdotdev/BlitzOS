@@ -745,8 +745,8 @@
   gap: 6px;
 }
 
-/* Sits with the filters because a member reaches for it mid-selection, once
-   they notice an account missing. */
+/* Sits under the list, on its right edge: a member reaches for it after
+   reading the list and finding an account missing. */
 .tplf-repos-refresh {
   border: 1px solid var(--rule);
   border-radius: var(--r-item);
@@ -759,8 +759,11 @@
   text-decoration: none;
 }
 
-.tplf-repos-refresh {
-  justify-self: end;
+.tplf-repos-listfoot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .tplf-repos-controls input,
