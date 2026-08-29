@@ -217,10 +217,16 @@
   gap: 10px;
   min-height: 38px;
   padding: 0 12px;
+  /* Self-sufficient reset: this menu mounts under the tab strip AND the
+   * session rail. Without its own border/background reset it wears the UA
+   * button chrome wherever no ancestor resets it. */
+  border: 0;
   border-radius: var(--r-item);
   color: var(--ink);
+  background: none;
   font-size: 13.5px;
   text-align: left;
+  cursor: pointer;
 }
 
 .webapp-agent-menu button:hover,

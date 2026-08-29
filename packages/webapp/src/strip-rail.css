@@ -35,17 +35,21 @@
   border-bottom: 0;
 }
 
+/* The org mark and the workspace tiles share one size so they can never
+   drift apart (user ruling 2026-08-29). */
+.shell-strip { --strip-tile: 35px; }
+
 .shell-orgmark {
   display: grid;
-  width: 22px;
-  height: 22px;
+  width: var(--strip-tile);
+  height: var(--strip-tile);
   flex: none;
   place-items: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: 10px;
   color: var(--paper);
   background: var(--accent);
-  font: 700 11px/1 var(--font-ui);
+  font: 700 13px/1 var(--font-ui);
   cursor: pointer;
 }
 
@@ -78,8 +82,8 @@
   display: grid;
   /* Same footprint as the org mark at the top of the strip (user ruling
      2026-08-29). */
-  width: 35px;
-  height: 35px;
+  width: var(--strip-tile);
+  height: var(--strip-tile);
   flex: none;
   place-items: center;
   border: 0;
