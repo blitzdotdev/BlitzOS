@@ -3,9 +3,10 @@ import { NewTabMenu, type SpawnSessionType } from '../NewTabMenu';
 import { SessionTypeIcon } from '../SessionTypeIcon';
 import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import { BoxGlyph } from '../files/DriveIcons';
+// The Drive page's own share icon, so one glyph means "share" everywhere.
+import { BoxGlyph, ShareGlyph } from '../files/DriveIcons';
 import type { DriveRailSession } from './rail-sessions';
-import { PlusGlyph, ShareGlyph } from './StripIcons';
+import { PlusGlyph } from './StripIcons';
 
 export type WorkspaceSessionRailProps = {
   workspace: CloudWorkspaceModel | undefined;
