@@ -134,30 +134,17 @@ describe("workspace strip", () => {
     await view.unmount();
   });
 
-  it("reaches Drive and settings from the account menu", async () => {
-    const onOpenDrive = vi.fn();
+  it("goes straight to settings from the avatar, with no menu in between", async () => {
     const onOpenSettings = vi.fn();
-    const view = await render(strip({ onOpenDrive, onOpenSettings }));
-    const menu = () => view.container.querySelector<HTMLElement>(
-      '[role="menu"][aria-label="Account"]',
+    const view = await render(strip({ onOpenSettings }));
+    const avatar = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Settings"]',
     );
-    expect(menu()?.hidden).toBe(true);
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Account: Person"]',
-    )?.click());
-    expect(menu()?.hidden).toBe(false);
-
-    const items = [...menu()!.querySelectorAll<HTMLElement>('[role="menuitem"]')];
-    expect(items.map(({ textContent }) => textContent))
-      .toEqual(["Drive", "Settings", "Ask us on Discord"]);
-    await act(async () => items[0]?.click());
-    expect(onOpenDrive).toHaveBeenCalledOnce();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Account: Person"]',
-    )?.click());
-    await act(async () => menu()!.querySelectorAll<HTMLElement>('[role="menuitem"]')[1]?.click());
+    expect(avatar?.title).toBe("Person");
+    expect(avatar?.getAttribute("aria-haspopup")).toBeNull();
+    await act(async () => avatar?.click());
     expect(onOpenSettings).toHaveBeenCalledOnce();
+    expect(view.container.querySelector('[role="menu"][aria-label="Account"]')).toBeNull();
     await view.unmount();
   });
 });

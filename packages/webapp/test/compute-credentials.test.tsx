@@ -71,6 +71,12 @@ describe('compute credential settings', () => {
       <SettingsPage {...common} viewer={viewer} section="profile" />,
     );
     expect(memberView.container.textContent).not.toContain('Compute');
+    // The Discord link left the strip's account menu; settings navigation
+    // carries it now.
+    const discord = memberView.container.querySelector<HTMLAnchorElement>(
+      '.settings-side a[href^="https://discord.gg/"]',
+    );
+    expect(discord?.textContent).toBe('Ask us on Discord');
     await memberView.unmount();
 
     const adminView = await render(

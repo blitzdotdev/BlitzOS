@@ -35,8 +35,9 @@ export type WorkspaceStripProps = {
 };
 
 /** Column one of the shell (plans/mockups/session-rail.html `#strip`): the org
- * mark, one tile per workspace, the create tile, Drive, and the account menu
- * on the bottom edge. The workspace panels are the right icon strip's job. */
+ * mark, one tile per workspace, the create tile, Drive, and the avatar on the
+ * bottom edge, which goes straight to settings. The workspace panels are the
+ * right icon strip's job. */
 export function WorkspaceStrip({
   workspaces,
   viewer,
@@ -50,20 +51,17 @@ export function WorkspaceStrip({
   onCloseDrawer,
 }: WorkspaceStripProps) {
   const [orgMenuOpen, setOrgMenuOpen] = useState(false);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const orgLabel = viewer?.org.name || viewer?.org.slug || 'Organization';
   const userLabel = viewer?.identity.name || viewer?.identity.email || 'BlitzOS';
 
   useEffect(() => {
-    if (!orgMenuOpen && !accountMenuOpen) return;
+    if (!orgMenuOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      setOrgMenuOpen(false);
-      setAccountMenuOpen(false);
+      if (event.key === 'Escape') setOrgMenuOpen(false);
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [accountMenuOpen, orgMenuOpen]);
+  }, [orgMenuOpen]);
 
   return (
     <aside className="shell-strip" aria-label="Cloud workspaces">
@@ -83,10 +81,7 @@ export function WorkspaceStrip({
           aria-haspopup="menu"
           aria-expanded={orgMenuOpen}
           aria-controls="webapp-org-menu"
-          onClick={() => {
-            setAccountMenuOpen(false);
-            setOrgMenuOpen((open) => !open);
-          }}
+          onClick={() => setOrgMenuOpen((open) => !open)}
         >{orgLabel.trim().charAt(0).toUpperCase() || 'B'}</button>
         {orgMenuOpen && (
           <button
@@ -193,62 +188,14 @@ export function WorkspaceStrip({
         <button
           className="shell-av"
           type="button"
-          aria-label={`Account: ${userLabel}`}
+          aria-label="Settings"
           title={userLabel}
-          aria-haspopup="menu"
-          aria-expanded={accountMenuOpen}
-          onClick={() => {
-            setOrgMenuOpen(false);
-            setAccountMenuOpen((open) => !open);
-          }}
+          onClick={onOpenSettings}
         >
           {viewer?.identity.avatarUrl
             ? <img className="shell-av__photo" src={viewer.identity.avatarUrl} alt="" referrerPolicy="no-referrer" />
             : userLabel.trim().charAt(0).toUpperCase() || 'B'}
         </button>
-        {accountMenuOpen && (
-          <button
-            className="webapp-org-backdrop"
-            type="button"
-            aria-label="Close account menu"
-            tabIndex={-1}
-            onMouseDown={() => setAccountMenuOpen(false)}
-          />
-        )}
-        <div
-          className="webapp-org-menu shell-strip__menu shell-strip__menu--account"
-          role="menu"
-          aria-label="Account"
-          hidden={!accountMenuOpen}
-        >
-          <div className="webapp-org-menu-label">{userLabel}</div>
-          <button
-            className="webapp-org-menu-create"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setAccountMenuOpen(false);
-              onOpenDrive();
-            }}
-          ><span>Drive</span></button>
-          <button
-            className="webapp-org-menu-create"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setAccountMenuOpen(false);
-              onOpenSettings();
-            }}
-          ><span>Settings</span></button>
-          <a
-            className="webapp-org-menu-create"
-            role="menuitem"
-            href="https://discord.gg/VsywH6GNhB"
-            target="_blank"
-            rel="noreferrer"
-            onClick={() => setAccountMenuOpen(false)}
-          ><span>Ask us on Discord</span></a>
-        </div>
       </div>
     </aside>
   );
