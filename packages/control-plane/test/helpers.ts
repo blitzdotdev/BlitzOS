@@ -538,6 +538,21 @@ export async function enrollBox(
   return token.json<BoxCredential>();
 }
 
+/** Boots a workspace's first machine far enough to hold a guest access token,
+ * which is the only identity the `/workspaces/self/*` routes accept. */
+export async function boxTokenFor(
+  app: TestApp,
+  providers: FakeProviders,
+  workspaceId: string,
+): Promise<string> {
+  const ready = await appRequest(app, new URL(phoneHomeUrl(providers, workspaceId)).pathname, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
+  });
+  return (await ready.json<{ access_token: string }>()).access_token;
+}
+
 export async function resetDatabase(): Promise<void> {
   // Ordered children-first because D1 enforces foreign keys: machines sit
   // between workspaces and everything keyed on a guest (token families,

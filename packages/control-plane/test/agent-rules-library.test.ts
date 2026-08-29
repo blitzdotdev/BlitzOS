@@ -2,7 +2,6 @@ import type {
   AgentRulesResponse,
   AgentRuleView,
   ListAgentRulesResponse,
-  WorkspaceTemplateView,
   WorkspaceView,
 } from "@blitzos/schema";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -13,9 +12,9 @@ import {
 } from "../core/agent-rules.js";
 import {
   appRequest,
+  boxTokenFor,
   harness,
   operatorSession,
-  phoneHomeUrl,
   resetDatabase,
   sameOrgSession,
   userSession,
@@ -54,21 +53,6 @@ async function listRules(app: TestApp, cookie: string): Promise<AgentRuleView[]>
   const response = await appRequest(app, "/agent-rules", { headers: { Cookie: cookie } });
   expect(response.status).toBe(200);
   return (await response.json<ListAgentRulesResponse>()).rules;
-}
-
-/** Boots a workspace far enough to hold a box access token, which is the only
- * identity `GET /workspaces/self/agent-rules` accepts. */
-async function boxTokenFor(
-  app: TestApp,
-  providers: FakeProviders,
-  workspaceId: string,
-): Promise<string> {
-  const ready = await appRequest(app, new URL(phoneHomeUrl(providers, workspaceId)).pathname, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
-  });
-  return (await ready.json<{ access_token: string }>()).access_token;
 }
 
 describe("agent rule library", () => {
@@ -227,30 +211,19 @@ describe("agent rule library", () => {
     expect((await appRequest(app, "/agent-rules")).status).toBe(401);
   });
 
-  it("resolves the workspace rule ahead of the template rule and the built-in", async () => {
+  // A workspace is its own template now, so the clone source is what a create
+  // inherits a rule from (plans/MEMBER-MACHINES.md §0).
+  it("resolves the workspace rule ahead of the clone source's rule and the built-in", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     await putRule(app, cookie, "rule-template", {
-      name: "Template rules",
+      name: "Source rules",
       content: "# from the template\n",
     });
     await putRule(app, cookie, "rule-workspace", {
       name: "Workspace rules",
       content: "# from the workspace\n",
     });
-
-    const templateResponse = await appRequest(app, "/workspace-templates", {
-      ...json({
-        name: "ruled",
-        machineTypeId: "small",
-        folderIds: [],
-        agentRuleId: "rule-template",
-      }, "POST"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    expect(templateResponse.status).toBe(201);
-    const template = (await templateResponse.json<{ template: WorkspaceTemplateView }>()).template;
-    expect(template.agentRuleId).toBe("rule-template");
 
     const create = async (body: object): Promise<WorkspaceView> => {
       const response = await appRequest(app, "/workspaces", {
@@ -277,21 +250,25 @@ describe("agent rule library", () => {
     expect(plain.agentRuleId).toBeNull();
     expect((await served(plain.id)).content).toBe(AGENT_RULES_DOC);
 
-    // 2. From the template: the template's rule.
-    const inherited = await create({ templateId: template.id });
+    // The clone source carries the rule a clone inherits.
+    const source = await create({ machineTypeId: "small", agentRuleId: "rule-template" });
+    expect(source.agentRuleId).toBe("rule-template");
+
+    // 2. From the clone source: the source's rule.
+    const inherited = await create({ cloneFromWorkspaceId: source.id });
     expect(inherited.agentRuleId).toBe("rule-template");
     expect((await served(inherited.id)).content).toBe("# from the template\n");
 
-    // 3. The request beats the template.
+    // 3. The request beats the clone source.
     const overridden = await create({
-      templateId: template.id,
+      cloneFromWorkspaceId: source.id,
       agentRuleId: "rule-workspace",
     });
     expect(overridden.agentRuleId).toBe("rule-workspace");
     expect((await served(overridden.id)).content).toBe("# from the workspace\n");
 
-    // 4. An explicit null on a templated create drops back to the built-in.
-    const cleared = await create({ templateId: template.id, agentRuleId: null });
+    // 4. An explicit null on a cloned create drops back to the built-in.
+    const cleared = await create({ cloneFromWorkspaceId: source.id, agentRuleId: null });
     expect(cleared.agentRuleId).toBeNull();
     expect((await served(cleared.id)).content).toBe(AGENT_RULES_DOC);
 
@@ -300,68 +277,6 @@ describe("agent rule library", () => {
     expect((await served(cleared.id)).version).toBe(builtInVersion);
     expect((await served(inherited.id)).version).not.toBe(builtInVersion);
     expect((await served(inherited.id)).version).toMatch(/^[0-9a-f]{16}$/u);
-  });
-
-  // A PUT that validated `agentRuleId` and then wrote only name/machine dropped
-  // the caller's choice in silence. The rule is replaced when the request
-  // carries the key and left alone when it does not — the edit form does not
-  // render the picker, and blanking a stored rule because a field was absent is
-  // not an edit anyone asked for.
-  it("replaces a template's agent rule on PUT only when the request carries it", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const outsider = await userSession("outsider");
-    await putRule(app, cookie, "rule-a", { name: "A", content: "# a\n" });
-    await putRule(app, cookie, "rule-b", { name: "B", content: "# b\n" });
-    await putRule(app, outsider, "rule-other", { name: "Theirs", content: "# theirs\n" });
-
-    const created = await appRequest(app, "/workspace-templates", {
-      ...json({
-        name: "ruled", machineTypeId: "small", folderIds: [], agentRuleId: "rule-a",
-      }, "POST"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    expect(created.status).toBe(201);
-    const id = (await created.json<{ template: WorkspaceTemplateView }>()).template.id;
-
-    const put = async (body: object): Promise<Response> => appRequest(
-      app,
-      `/workspace-templates/${id}`,
-      { ...json(body), headers: { Cookie: cookie, "Content-Type": "application/json" } },
-    );
-    const stored = async (): Promise<string | null> => {
-      const response = await appRequest(app, "/workspace-templates", { headers: { Cookie: cookie } });
-      const templates = (await response.json<{ templates: WorkspaceTemplateView[] }>()).templates;
-      return templates.find((template) => template.id === id)?.agentRuleId ?? null;
-    };
-
-    // Absent: kept.
-    expect((await put({ name: "renamed", machineTypeId: "small", folderIds: [] })).status).toBe(200);
-    expect(await stored()).toBe("rule-a");
-
-    // Present: replaced.
-    expect((await put({
-      name: "renamed", machineTypeId: "small", folderIds: [], agentRuleId: "rule-b",
-    })).status).toBe(200);
-    expect(await stored()).toBe("rule-b");
-
-    // Explicit null: cleared.
-    expect((await put({
-      name: "renamed", machineTypeId: "small", folderIds: [], agentRuleId: null,
-    })).status).toBe(200);
-    expect(await stored()).toBeNull();
-
-    // Another org's rule, and one that does not exist, are 404s — and the 404
-    // lands before any write, so the rest of the edit does not half-apply.
-    expect((await put({
-      name: "reverted", machineTypeId: "small", folderIds: [], agentRuleId: "rule-a",
-    })).status).toBe(200);
-    for (const agentRuleId of ["rule-other", "missing"]) {
-      expect((await put({
-        name: "clobbered", machineTypeId: "small", folderIds: [], agentRuleId,
-      })).status, agentRuleId).toBe(404);
-    }
-    expect(await stored()).toBe("rule-a");
   });
 
   it("rejects a rule from another org on create and frees references on delete", async () => {
@@ -380,30 +295,11 @@ describe("agent rule library", () => {
         headers: { Cookie: cookie, "Content-Type": "application/json" },
       })).status).toBe(404);
     }
-    expect((await appRequest(app, "/workspace-templates", {
-      ...json({
-        name: "cross org",
-        machineTypeId: "small",
-        folderIds: [],
-        agentRuleId: "rule-other",
-      }, "POST"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    })).status).toBe(404);
     expect((await appRequest(app, "/workspaces", {
       ...json({ machineTypeId: "small", agentRuleId: 7 }, "POST"),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     })).status).toBe(400);
 
-    const templateResponse = await appRequest(app, "/workspace-templates", {
-      ...json({
-        name: "ruled",
-        machineTypeId: "small",
-        folderIds: [],
-        agentRuleId: "rule-1",
-      }, "POST"),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const template = (await templateResponse.json<{ template: WorkspaceTemplateView }>()).template;
     const workspaceResponse = await appRequest(app, "/workspaces", {
       ...json({ machineTypeId: "small", agentRuleId: "rule-1" }, "POST"),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
@@ -428,11 +324,11 @@ describe("agent rule library", () => {
     });
     expect((await served.json<AgentRulesResponse>()).content).toBe(AGENT_RULES_DOC);
 
-    const templates = await appRequest(app, "/workspace-templates", {
-      headers: { Cookie: cookie },
+    // The workspace that held the rule falls back to the built-in too: the
+    // delete nulls every reference rather than refusing.
+    const listed = await appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: cookie, Accept: "application/json" },
     });
-    const listedTemplate = (await templates.json<{ templates: WorkspaceTemplateView[] }>())
-      .templates.find(({ id }) => id === template.id);
-    expect(listedTemplate?.agentRuleId).toBeNull();
+    expect((await listed.json<{ workspace: WorkspaceView }>()).workspace.agentRuleId).toBeNull();
   });
 });

@@ -12,9 +12,17 @@ import {
   testRuntime,
 } from "./helpers.js";
 
+/** The org-wide share became a stored workspace role per member
+ * (plans/MEMBER-MACHINES.md §1): editor → member, viewer → viewer. */
 async function setOrgShareRole(workspaceId: string, role: "editor" | "viewer"): Promise<void> {
-  await env.DB.prepare("UPDATE workspaces SET org_share_role = ?1 WHERE id = ?2")
-    .bind(role, workspaceId).run();
+  await env.DB.prepare(
+    `INSERT INTO workspace_members
+     (workspace_id, membership_id, role, added_by_membership_id, added_at)
+     SELECT ?1, m.id, ?2, 'personal', ?3
+     FROM memberships m
+     WHERE m.org_id = 'personal' AND m.status = 'active' AND m.id != 'personal'
+     ON CONFLICT(workspace_id, membership_id) DO UPDATE SET role = excluded.role`,
+  ).bind(workspaceId, role === "editor" ? "member" : "viewer", Date.now()).run();
 }
 
 const workspaceDoc = {
@@ -524,7 +532,7 @@ describe("server-side webApp state", () => {
     expect((await put(`/${"x".repeat(4_095)}`)).status).toBe(200);
   });
 
-  it("deletes per-workspace state when the orphan sweep finishes destroy", async () => {
+  it("keeps per-workspace state through a machine destroy and drops it with the workspace", async () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
@@ -533,11 +541,25 @@ describe("server-side webApp state", () => {
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify(workspaceDoc),
     });
+    // The workspace doc is workspace-wide, so a machine finishing its destroy
+    // must not take it: another member may still be working. Deleting it is
+    // the WORKSPACE delete's job, and only once every machine is gone.
     await env.DB.prepare(
-      "UPDATE workspaces SET phase = 'destroying' WHERE id = ?1",
+      "UPDATE machines SET state = 'destroying' WHERE workspace_id = ?1",
     ).bind(workspace.id).run();
 
     expect(await runOrphanSweep(testRuntime(providers))).toBe(1);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM webapp_state WHERE workspace_id = ?1",
+      ).bind(workspace.id).first<number>("count"),
+    ).toBe(1);
+
+    const destroyed = await appRequest(app, `/workspaces/${workspace.id}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    });
+    expect(destroyed.status).toBe(200);
     expect(
       await env.DB.prepare(
         "SELECT COUNT(*) AS count FROM webapp_state WHERE workspace_id = ?1",
