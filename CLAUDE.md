@@ -112,9 +112,22 @@ and both conformance tests: no runtime reads the route any more, so what remains
 is that constant three-field shim, pinned alone by
 `control-plane/test/workspace-environment.test.ts`.
 
-Templates and Recipes are disabled product-wide (2026-08-29). Both
-registrations are commented out in `core/app.ts` with the reason; recipe code
-and rows are untouched.
+Every field of `WorkspaceView` is required, including `members`,
+`credentials`, `myRole`, `defaultMachineTypeId` and `autoProvision`. The only
+client is `packages/webapp`, built from `packages/schema` in this tree, so a
+server that drops a field fails `test/wire-drift.test.ts` rather than the
+browser. Do not make one optional to spare a fixture.
+
+Templates and Recipes are disabled product-wide (2026-08-29), on both sides:
+
+- Control plane: the two registrations are commented out in `core/app.ts`.
+- Webapp: the `/templates*` and `/recipes*` branches are commented out in
+  `sessions-page-state.ts`, so those addresses fall through to Drive, and
+  `shell/SecondaryRoutes.tsx` no longer renders them.
+
+The page components (`TemplatesHome`, `RecipesHome`, `CreateTemplateScreen`,
+`CreateRecipeScreen`), the client methods and the recipe rows are untouched
+and unreachable. Restoring a surface means restoring both branches.
 
 ## VM provider architecture (do not regress)
 

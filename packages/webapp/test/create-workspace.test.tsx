@@ -46,6 +46,21 @@ function rulesClient(
   };
 }
 
+/** React owns the value of a controlled input, so assigning `.value` is
+ * discarded on the next render. The native setter is what a real keystroke
+ * reaches, and it is what makes React see the change. */
+async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
+  const setInputValue = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  if (setInputValue === undefined) throw new Error("input value setter is unavailable");
+  await act(async () => {
+    setInputValue.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 const orgMembers = [
   { id: "membership-1", email: "ada@example.com", name: "Ada Park", avatarUrl: null, role: "admin" as const, status: "active" as const },
   { id: "membership-2", email: "nia@example.com", name: "Nia Newcomer", avatarUrl: null, role: "member" as const, status: "active" as const },
@@ -483,6 +498,209 @@ describe("create workspace dialog", () => {
     );
     expect(view.container.querySelector('input[type="password"]')).toBeNull();
     expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+    await view.unmount();
+  });
+  it("labels the grid the default machine type and adds members with a per-row type", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        viewerName="Ada Park"
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    // The grid picks a default, never a restriction (plan §1a).
+    expect(view.container.textContent).toContain("Default machine type");
+    // The creator is pinned as the first workspace admin and has no remove.
+    expect(view.container.textContent).toContain("Ada Park (you)");
+    expect(view.container.querySelector('button[aria-label="Remove Ada Park (you)"]')).toBeNull();
+
+    const search = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]')!;
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(new Event("focus", { bubbles: true }));
+    });
+    const suggestion = [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+      .find((button) => button.textContent?.includes("Nia Newcomer"))!;
+    await act(async () => suggestion.click());
+
+    // "Workspace default" is the first option and names what it resolves to.
+    const typeSelect = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Machine type for Nia Newcomer"]',
+    )!;
+    await act(async () => typeSelect.click());
+    const options = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options[0]?.textContent).toContain("Workspace default (CX23)");
+    await act(async () => options.find((o) => o.textContent?.includes("Lab 2C/2G"))?.click());
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      machineTypeId: "cx23@fsn1",
+      members: [{ membershipId: "membership-2", role: "member", machineTypeId: "mv-2c2g@lab" }],
+    }));
+    await view.unmount();
+  });
+
+  it("hides the machine type on a viewer row and omits an unchosen type from the body", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const search = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]')!;
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(new Event("focus", { bubbles: true }));
+    });
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+      .find((button) => button.textContent?.includes("Nia Newcomer"))?.click());
+
+    const roleSelect = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Role for Nia Newcomer"]',
+    )!;
+    await act(async () => roleSelect.click());
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((option) => option.textContent?.includes("Viewer"))?.click());
+
+    // A viewer never holds a machine (§2.2), so the row has no type to pick.
+    expect(view.container.querySelector('[aria-label="Machine type for Nia Newcomer"]')).toBeNull();
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    // No machineTypeId: "workspace default" travels as an absent field, not as
+    // an empty string the server would read as a type id.
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      members: [{ membershipId: "membership-2", role: "viewer" }],
+    }));
+    await view.unmount();
+  });
+
+  it("sends credential names and values once, and drops an incomplete row", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const addCredential = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Add credential")!;
+    await act(async () => addCredential.click());
+    await act(async () => addCredential.click());
+
+    const field = (label: string) =>
+      view.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+    await typeInto(field("Credential 1 name"), "STRIPE_API_KEY");
+    await typeInto(field("Credential 1 label"), "billing");
+    await typeInto(field("Credential 1 value"), "sk-live-x");
+    // Row two is named but has no value, so it is not a credential yet.
+    await typeInto(field("Credential 2 name"), "UNFINISHED");
+    expect(view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Credential 1 value"]',
+    )?.type).toBe("password");
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: [{ name: "STRIPE_API_KEY", label: "billing", value: "sk-live-x" }],
+    }));
+    await view.unmount();
+  });
+
+  it("tells a member that creating a workspace is an org-admin power", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin={false}
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain("Only an admin at acme can create a workspace.");
+    await view.unmount();
+  });
+
+  it("names the clone source and drops the repo picker under one", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        client={rulesClient()}
+        cloneFromWorkspaceId="workspace-source"
+        cloneFromWorkspaceName="engineering"
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.textContent).toContain('New workspace from “engineering”');
+    // A clone carries its source's repo list, and a body naming both is a 400.
+    expect(view.container.querySelector(".tplf-repos")).toBeNull();
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      cloneFromWorkspaceId: "workspace-source",
+    }));
     await view.unmount();
   });
 });
