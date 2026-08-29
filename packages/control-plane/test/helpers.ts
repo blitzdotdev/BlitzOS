@@ -593,5 +593,12 @@ export async function resetDatabase(): Promise<void> {
     "users",
     "principals",
   ];
-  await env.DB.batch(tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
+  // workspaces and recipes point at each other — a workspace stamps the
+  // recipe that launched it, and a recipe names the workspace it clones — so
+  // both pointers are cleared before either table is emptied.
+  await env.DB.batch([
+    env.DB.prepare("UPDATE workspaces SET recipe_id = NULL"),
+    env.DB.prepare("UPDATE recipes SET source_workspace_id = NULL"),
+    ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
+  ]);
 }

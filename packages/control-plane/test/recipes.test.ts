@@ -27,18 +27,19 @@ function json(body: object, method = "POST") {
   };
 }
 
+/** A recipe's launch source is a WORKSPACE now (migration 0043). The wire
+ * field keeps its legacy `templateId` name and carries a workspace id. */
 async function createTemplate(
   app: ReturnType<typeof harness>["app"],
   cookie: string,
   name = "web analysis",
-  folderIds: string[] = [],
 ): Promise<string> {
-  const response = await appRequest(app, "/workspace-templates", {
-    ...json({ name, machineTypeId: "small", folderIds }),
+  const response = await appRequest(app, "/workspaces", {
+    ...json({ name, machineTypeId: "small" }),
     headers: { Cookie: cookie, "Content-Type": "application/json" },
   });
   expect(response.status).toBe(201);
-  return (await response.json<{ template: { id: string } }>()).template.id;
+  return (await response.json<{ workspace: { id: string } }>()).workspace.id;
 }
 
 async function createRecipe(
@@ -190,7 +191,7 @@ describe("recipes", () => {
       [{ ...base, harness: "codex", model: "gpt-5.5", effort: "ultra" }, 400, "ultra outside gpt-5.5's efforts"],
       [{ ...base, harness: "codex", model: "gpt-5.6-luna", effort: "ultra" }, 400, "ultra is sol/terra only"],
       [{ ...base, harness: "chat", model: "gpt-5.6-luna", effort: "ultra" }, 400, "chat gates on the pinned model too"],
-      [{ ...base, harness: "claude", templateId: "missing" }, 404, "unknown template"],
+      [{ ...base, harness: "claude", templateId: "missing" }, 404, "unknown source workspace"],
       [{ ...base, harness: "claude", prompt: "" }, 400, "empty prompt"],
     ];
     for (const [body, status, label] of cases) {
@@ -207,7 +208,7 @@ describe("recipes", () => {
     expect((await createRecipe(app, cookie, { ...base, harness: "codex", model: "gpt-5.6-terra", effort: "ultra" })).status).toBe(201);
     expect((await createRecipe(app, cookie, { ...base, harness: "chat", model: "gpt-5.6-luna", effort: "max" })).status).toBe(201);
 
-    // Another org can neither see this org's recipes nor build on its template.
+    // Another org can neither see this org's recipes nor build on its workspace.
     const stranger = await userSession("stranger");
     expect((await createRecipe(app, stranger, { ...base, harness: "claude" })).status).toBe(404);
     const listed = await appRequest(app, "/workspace-recipes", { headers: { Cookie: stranger } });
@@ -249,68 +250,15 @@ describe("recipes", () => {
     })).status).toBe(200);
   });
 
-  it("refuses to delete a referenced template, naming the blocking recipes", async () => {
+  // Launch is parked. A recipe used to launch a workspace from a template;
+  // templates are gone and the replacement — clone the source workspace, then
+  // deliver the invocation to the clone's machine — is a bigger change than
+  // the retirement it rides on. The route says so rather than launching from a
+  // source it can no longer resolve. See the TODO in core/recipes.ts.
+  it("refuses a launch while recipes re-point from templates to workspace clones", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const templateId = await createTemplate(app, cookie);
-    const created = await createRecipe(app, cookie, {
-      name: "holder",
-      templateId,
-      harness: "codex",
-      prompt: "Go.\n",
-    });
-    const id = (await created.json<RecipeEnvelope>()).recipe.id;
-
-    // One blocker: singular message with the recipe's name.
-    const refusedOnce = await appRequest(app, `/workspace-templates/${templateId}`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    });
-    expect(refusedOnce.status).toBe(409);
-    expect(await refusedOnce.json()).toEqual({
-      error: "delete the 1 recipe using this template first: holder",
-      retryAction: null,
-    });
-
-    // Two blockers: the count and every name, in creation order.
-    const second = await createRecipe(app, cookie, {
-      name: "second holder",
-      templateId,
-      harness: "claude",
-      prompt: "Go.\n",
-    });
-    const secondId = (await second.json<RecipeEnvelope>()).recipe.id;
-    const refusedTwice = await appRequest(app, `/workspace-templates/${templateId}`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    });
-    expect(refusedTwice.status).toBe(409);
-    expect(await refusedTwice.json()).toEqual({
-      error: "delete the 2 recipes using this template first: holder, second holder",
-      retryAction: null,
-    });
-
-    for (const recipeId of [id, secondId]) {
-      expect((await appRequest(app, `/workspace-recipes/${recipeId}`, {
-        method: "DELETE",
-        headers: { Cookie: cookie },
-      })).status).toBe(204);
-    }
-    expect((await appRequest(app, `/workspace-templates/${templateId}`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    })).status).toBe(204);
-  });
-
-  it("launches through the existing create path and shapes the bootstrap", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    const folderResponse = await appRequest(app, "/folders", {
-      ...json({ name: "datasets" }),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const folderId = (await folderResponse.json<{ folder: { id: string } }>()).folder.id;
-    const templateId = await createTemplate(app, cookie, "web analysis", [folderId]);
     const created = await createRecipe(app, cookie, {
       name: "chat routine",
       templateId,
@@ -320,96 +268,23 @@ describe("recipes", () => {
       prompt: "Summarize the datasets folder.\n",
     });
     const recipe = (await created.json<RecipeEnvelope>()).recipe;
+    expect(recipe.templateId).toBe(templateId);
 
     const launched = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
       method: "POST",
       headers: { Cookie: cookie },
     });
-    expect(launched.status).toBe(201);
-    const workspace = (await launched.json<WorkspaceEnvelope>()).workspace;
-    // Template flows: machine-type default and the template-derived name.
-    expect(workspace.machineTypeId).toBe("small");
-    expect(workspace.name).toBe("web analysis");
-    expect(workspace.recipeId).toBe(recipe.id);
-
-    // Provenance survives the poll view too.
-    const read = await appRequest(app, `/workspaces/${workspace.id}`, {
-      headers: { Cookie: cookie },
+    expect(launched.status).toBe(400);
+    await expect(launched.json()).resolves.toMatchObject({
+      error: expect.stringContaining("workspace clones"),
     });
-    expect((await read.json<WorkspaceEnvelope>()).workspace.recipeId).toBe(recipe.id);
 
-    // The launcher's readable template folders attach, launcher as principal.
-    const attachments = await env.DB.prepare(
-      "SELECT folder_id FROM folder_attachments WHERE workspace_id = ?1",
-    ).bind(workspace.id).all<{ folder_id: string }>();
-    expect(attachments.results.map(({ folder_id }) => folder_id)).toEqual([folderId]);
-
-    // Bootstrap shaping: chat maps BLITZ_AGENT to the model's provider, the
-    // invocation files land, and the sender is emitted.
-    const userData = providers.userData.get(workspace.id) ?? "";
-    expect(userData).toContain("-e BLITZ_AGENT='codex' \\");
-    expect(userData).toContain(
-      `printf '%s' ${shellQuote("Summarize the datasets folder.\n")} >/var/lib/blitz/recipe/prompt.txt`,
-    );
-    expect(userData).toContain(
-      `printf '%s' ${shellQuote(recipeInvocationEnvFile({
-        harness: "chat",
-        agentProvider: "codex",
-        model: "gpt-5.6-sol",
-        effort: "low",
-        prompt: "",
-      }))} >/var/lib/blitz/recipe/invocation.env`,
-    );
-    expect(userData).toContain("<<'RECIPE_SENDER'");
-
-    // An ordinary create in the same org keeps the pre-recipe bytes.
-    const plain = await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small" }),
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-    });
-    const plainWorkspace = (await plain.json<WorkspaceEnvelope>()).workspace;
-    expect("recipeId" in plainWorkspace).toBe(false);
-    const plainUserData = providers.userData.get(plainWorkspace.id) ?? "";
-    expect(plainUserData).not.toContain("BLITZ_AGENT");
-    expect(plainUserData).not.toContain("/var/lib/blitz/recipe");
-  });
-
-  it("emits no sender and no BLITZ_AGENT for TUI harnesses and passes the vm_limit 409 through", async () => {
-    const { app, providers } = harness();
-    const cookie = await operatorSession(app);
-    const templateId = await createTemplate(app, cookie);
-    const created = await createRecipe(app, cookie, {
-      name: "tui routine",
-      templateId,
-      harness: "claude",
-      prompt: "Refactor the repo.\n",
-    });
-    const recipe = (await created.json<RecipeEnvelope>()).recipe;
-
-    const launched = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
+    // An unknown recipe is still a 404, so the park does not swallow the
+    // ordinary not-found answer.
+    expect((await appRequest(app, "/workspace-recipes/missing/launch", {
       method: "POST",
       headers: { Cookie: cookie },
-    });
-    expect(launched.status).toBe(201);
-    const workspace = (await launched.json<WorkspaceEnvelope>()).workspace;
-    const userData = providers.userData.get(workspace.id) ?? "";
-    // TUI recipes never pin the actor's adapter: the invocation files land,
-    // but the box keeps the image-default BLITZ_AGENT for its chat tab.
-    expect(userData).not.toContain("BLITZ_AGENT");
-    expect(userData).toContain(
-      `printf '%s' ${shellQuote(recipeInvocationEnvFile({
-        harness: "claude",
-        prompt: "",
-      }))} >/var/lib/blitz/recipe/invocation.env`,
-    );
-    expect(userData).not.toContain("RECIPE_SENDER");
-
-    await env.DB.prepare("UPDATE orgs SET vm_limit = 1 WHERE id = 'personal'").run();
-    const refused = await appRequest(app, `/workspace-recipes/${recipe.id}/launch`, {
-      method: "POST",
-      headers: { Cookie: cookie },
-    });
-    expect(refused.status).toBe(409);
+    })).status).toBe(404);
   });
 
   it("gates usage capture behind the org admin and lazy-creates the folder once", async () => {
