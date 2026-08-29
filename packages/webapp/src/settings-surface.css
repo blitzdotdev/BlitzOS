@@ -1,0 +1,318 @@
+/**
+ * SETTINGS SURFACE STYLE — the one system for every settings-shaped screen.
+ * ==========================================================================
+ *
+ * This file is canon. Every settings surface — the workspace-details dialog
+ * and its three tabs, "My machine", the account settings page and its panels,
+ * and the section headings of the create-workspace dialog — dresses itself
+ * from the `cfg-` vocabulary below. Do not add a second set of section
+ * headings, micro-labels or dividers somewhere else: extend this file, or use
+ * what is already here. The scatter this replaced was six different heading
+ * treatments across four stylesheets.
+ *
+ * THE RULES (anchors — do not relitigate)
+ * ---------------------------------------
+ * 1. THE FRAME NEVER RESIZES. A tabbed settings dialog has ONE fixed height,
+ *    sized to its tallest tab. The body scrolls; switching tabs never moves
+ *    the frame. (Enforced in workspace-details-dialog.css, which sets
+ *    `height`, not `max-height`, on `.workspace-details-dialog`.)
+ *
+ * 2. SECTION HEADERS ARE SENTENCE CASE, NEVER ALL-CAPS, AND ALWAYS INK WHITE.
+ *    The colour and size are the ones the "Agent rules" heading carried in the
+ *    Settings tab, lifted verbatim out of the old blueprint heading CSS and
+ *    tokenized below as `--cfg-title-*`. Section descriptions take the colour
+ *    and size of that heading's paragraph, tokenized as `--cfg-desc-*`.
+ *
+ * 3. FIELD MICRO-LABELS ARE SENTENCE CASE TOO. The "NAME" / "DEFAULT MACHINE
+ *    TYPE" tracking-out-uppercase style is gone. A label is a quiet line of
+ *    text above its control, not a sign.
+ *
+ * 4. EXACTLY ONE THIN DIVIDER BETWEEN TWO ADJACENT SECTIONS, AND DIVIDERS
+ *    APPEAR NOWHERE ELSE. The line is drawn by `.cfg-section ~ .cfg-section`
+ *    and by nothing else — never by a heading, never by a definition list,
+ *    never by a one-off `border-top` on the first row of something. Card
+ *    outlines and list-row separators are structure, not dividers, and are not
+ *    covered by this rule. If you want a line, you want a section boundary.
+ *
+ * 5. NO NEW COLOURS. Everything here resolves to a token already in
+ *    tokens.css: --ink, --muted, --faint, --rule, --accent, --ansi-red,
+ *    --paper, --r-control, --font-ui.
+ *
+ * THE VOCABULARY
+ * --------------
+ *   .cfg-section          One section. Stack them; the system draws the line.
+ *   .cfg-section-head     Title + description, grouped.
+ *   .cfg-title            Section title. Sentence case, ink, anchor size.
+ *   .cfg-desc             Section description. Muted, anchor size.
+ *   .cfg-label            Field micro-label, standalone (label + htmlFor).
+ *   .cfg-field            Field row: micro-label above its control.
+ *   .cfg-field--inline    Checkbox/switch row: control then label, one line.
+ *   .cfg-field--compact   In a row of fields, this one takes only what it needs.
+ *   .cfg-help             Inline help under a control, or a note in a section.
+ *   .cfg-actions          The row a Save / Add / lifecycle verb sits in.
+ *   .cfg-meta             Read-only fact list (a <dl> of label/value rows).
+ *   .cfg-danger           Danger zone: what it destroys, and the verb.
+ *   .cfg-danger-copy      The danger zone's name + consequence.
+ *   .cfg-danger-action    The destructive button. Outlined red, filled on hover.
+ *   .cfg-footer           A settings dialog's footer bar.
+ */
+
+:root {
+  /* Anchor 2, extracted from `.blueprint-selection__heading h2`, which is what
+   * the "Agent rules" heading wore. */
+  --cfg-title-color: var(--ink);
+  --cfg-title-font: 700 15px/1.6 var(--font-ui);
+  --cfg-title-tracking: -.01em;
+  /* Anchor 2, extracted from `.blueprint-selection__heading p`. */
+  --cfg-desc-color: var(--muted);
+  --cfg-desc-size: 11.5px;
+  /* Anchor 4: the only line the system draws. */
+  --cfg-divider: 1px solid var(--rule);
+  /* One control height for every settings input, so a field row and the
+   * button beside it agree. */
+  --cfg-control-height: 36px;
+}
+
+/* ---------------------------------------------------------------- section */
+
+.cfg-section {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+}
+
+/* Anchor 4. `~` rather than `+` so a stray actions row or notice between two
+ * sections does not lose the boundary — every section after the first gets
+ * exactly one line above it, and nothing else in the system draws one. */
+.cfg-section ~ .cfg-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: var(--cfg-divider);
+}
+
+.cfg-section-head {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cfg-title {
+  margin: 0;
+  color: var(--cfg-title-color);
+  font: var(--cfg-title-font);
+  letter-spacing: var(--cfg-title-tracking);
+  text-transform: none;
+}
+
+.cfg-desc {
+  margin: 0;
+  color: var(--cfg-desc-color);
+  font-size: var(--cfg-desc-size);
+  line-height: 1.5;
+}
+
+/* ----------------------------------------------------------------- fields */
+
+.cfg-label,
+.cfg-field {
+  min-width: 0;
+  color: var(--faint);
+  font: 600 11px/1.5 var(--font-ui);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.cfg-field {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 6px;
+}
+
+.cfg-field--compact {
+  flex: 0 1 140px;
+}
+
+.cfg-field input,
+.cfg-field select,
+.cfg-field textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--cfg-control-height);
+  padding: 0 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  color: var(--ink);
+  background: var(--paper);
+  outline: 0;
+  font: 12.5px var(--font-ui);
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.cfg-field textarea {
+  padding: 8px 10px;
+  line-height: 1.6;
+}
+
+.cfg-field input:focus,
+.cfg-field select:focus,
+.cfg-field textarea:focus {
+  border-color: var(--accent);
+}
+
+.cfg-field select:disabled,
+.cfg-field input:disabled {
+  color: var(--faint);
+}
+
+/* A checkbox reads left to right: the box, then the sentence it agrees to. */
+.cfg-field--inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cfg-field--inline input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* ------------------------------------------------------------------- help */
+
+.cfg-help {
+  margin: 0;
+  color: var(--faint);
+  font: 11px/1.55 var(--font-ui);
+}
+
+/* ---------------------------------------------------------------- actions */
+
+.cfg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.cfg-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+/* ------------------------------------------------------------- meta lists */
+
+/* Read-only facts. Anchor 4: no rules between the rows, and none above the
+ * first one either — the section boundary is the only line on the surface. */
+.cfg-meta {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+}
+
+.cfg-meta > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 1.25fr);
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.cfg-meta dt {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.cfg-meta dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ danger zone */
+
+.cfg-danger {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cfg-danger-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cfg-danger-copy strong {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.cfg-danger-copy span {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.cfg-danger-action {
+  display: inline-flex;
+  flex: none;
+  min-height: var(--cfg-control-height);
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid color-mix(in oklab, var(--ansi-red) 55%, var(--rule));
+  border-radius: var(--r-control);
+  color: var(--ansi-red);
+  background: transparent;
+  cursor: pointer;
+  font: 650 11.5px/1 var(--font-ui);
+}
+
+.cfg-danger-action:hover:not(:disabled),
+.cfg-danger-action:focus-visible:not(:disabled) {
+  color: var(--paper);
+  background: var(--ansi-red);
+  outline: 0;
+}
+
+.cfg-danger-action:disabled {
+  cursor: not-allowed;
+  opacity: .5;
+}
+
+/* ----------------------------------------------------------------- footer */
+
+/* A settings dialog's footer. It carries the surface-wide verbs, which is why
+ * it is not a section: nothing above it is "adjacent" to it. */
+.cfg-footer {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 620px) {
+  .cfg-danger {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cfg-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cfg-footer > * {
+    width: 100%;
+  }
+}
