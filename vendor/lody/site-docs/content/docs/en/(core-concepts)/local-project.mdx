@@ -1,0 +1,90 @@
+---
+title: Local Projects
+description: Add local working directories to Lody so desktop, web, and mobile clients can sync project chat history, file diffs, branches, and worktrees.
+---
+
+# Local Projects
+
+Lody supports adding any local working directory as a project. We recommend using the desktop app
+for this workflow. After a local project is added, Lody keeps it in sync across devices in real
+time, including chat history, file-diff views, Git branches, and per-session worktrees.
+
+## Add a Local Project
+
+Lody supports multiple ways to add one:
+
+- In the desktop app, click the add button next to `My Projects`. This opens the local file picker,
+  where you can choose a directory to add.
+- In non-desktop environments such as servers, use the [CLI project commands](/docs/cli#project-commands),
+  for example `npx lody project add [path]`.
+
+## Local-first availability
+
+On the desktop app, projects and sessions already available on the local machine remain usable when
+the network is unavailable. You can open them from the local workspace catalog, read their history,
+and continue working. Changes made locally are retained and sync when the connection returns.
+
+Cloud-only actions, such as opening a project on another machine or fetching new GitHub data, still
+need a network connection. Removing a project from a different device also requires its owning
+machine to be online.
+
+## Worktrees on Local Projects
+
+Local projects now use the same worktree workflow as GitHub-linked projects:
+
+- Each session gets its own isolated worktree, created automatically on demand.
+- When the session is archived, the worktree is reclaimed automatically.
+
+See [Worktrees](/docs/worktrees) for the full layout and rationale.
+
+## Sync Code Agent History (Codex, Claude Code, and more)
+
+If you have been using Codex or Claude Code directly on a local project, Lody can pull that
+existing conversation history in and continue it from any device.
+
+- Open **Settings → Projects**, pick the local project, and trigger a manual sync to import
+  history for the agents Lody detects on that machine.
+- Once a project is synced, new conversations started in Lody are mirrored back to the
+  corresponding CLI (Claude Code, Codex, and other supported ACP-based agents), so both sides
+  stay in step.
+- Opening an imported conversation refreshes its latest content on demand, so you always see
+  what the underlying CLI has.
+
+## Team Visibility for Non-GitHub Projects
+
+Local projects are private by default — only you can see them, even after joining a workspace.
+
+To collaborate on a project that does not live on GitHub:
+
+1. Open **Settings → Projects**.
+2. Pick the local project.
+3. Toggle team visibility on.
+
+Teammates can then see the project in their sidebar and start sessions against it. As with
+[shared machines](/docs/team#team-machine-visibility), only the project owner can change the
+visibility setting, and turning it off immediately hides the project from other members.
+
+## Remote Access to Local Projects
+
+From a different device (web, mobile, or another desktop) you can inspect a local project on its
+owning machine without having to be in front of it:
+
+- Browse the current Git branch state of the project.
+- Start a worktree on the remote machine directly, then continue the work from wherever you are.
+
+This makes phone-driven and laptop-on-the-go workflows work the same way for local projects as
+they do for GitHub-linked ones.
+
+## Remove a Project from Another Device
+
+You can remove one of your local projects from desktop or mobile even when the folder belongs to a
+different device.
+
+The owning device must be online because Lody sends the delete request to that machine. Before
+removing the project, Lody archives its sessions and asks the owning machine to clean up the
+project's worktree setup. Removing a project from Lody does not delete the original project folder.
+
+## Current Limitations
+
+- Local projects cannot push to remote branches directly yet, but you can still ask the agent to
+  handle the related Git operations for you.

@@ -1,0 +1,81 @@
+---
+title: GitHub 集成
+description: 将 GitHub 仓库连接到 Lody，以支持项目克隆、Issue 和 PR 上下文、worktree 会话、CI 状态和评论同步。
+---
+
+# GitHub 集成
+
+为了移动端体验和工作流的流畅性，Lody 当前将 GitHub 集成作为工作流的一部分。通过为你的仓库安装 Lody GitHub App，Lody 可以帮你在任意设备上克隆你的项目随时开始工作，可以获取到 Issue 和 PR 信息，为你提供更便捷的工作流。
+
+## 设置
+
+你可以通过 **设置**-**GitHub 集成**-**管理** 按钮来跳转到 GitHub App 的安装管理界面，此界面你可以选中需要 Lody 使用的仓库，确认后会跳转回到 Lody。你选中的仓库将会显示在 **可添加到工作区的仓库** 的列表中。选择必要的仓库添加到当前工作区。
+
+Lody 支持单个仓库被多个工作区共享，对于其他工作区，已安装过 GitHub App 的仓库可以直接被选中添加到当前工作区。
+
+### 在已授权列表中找不到某个仓库？
+
+如果你已经授权过的仓库没有出现在 **已授权仓库** 列表里，通常是 GitHub App 安装时没有勾选到它（例如安装时漏选了对应仓库，或仓库所在的组织需要管理员审批）。
+
+最简单的修复方式是重新走一遍授权：
+
+1. 打开 [github.com/settings/installations](https://github.com/settings/installations)（个人仓库），或在所属组织的 **Settings → GitHub Apps → Lody → Configure** 页面。
+2. 卸载 **Lody** GitHub App。
+3. 回到 Lody，打开 **设置 → GitHub → 管理** 重新安装应用，这次记得勾选所有需要 Lody 访问的仓库。
+
+重新安装完成后，回到设置页面就可以看到对应仓库出现在列表中，并可以添加到工作区。
+
+## 个人 GitHub 身份
+
+GitHub App 安装用于授权仓库访问。个人 GitHub 身份是独立且可选的能力：只有当你希望 PR 评论、Review 操作和合并等动作显示为你自己的 GitHub 用户时，才需要开启。你可以在 **设置**-**GitHub 集成** 中开启 **Act as you for PRs, comments, and merges**，然后完成 GitHub 账号授权。
+
+授权后，设置页会显示已连接的 GitHub 账号。该选项不会改变 Lody 可访问哪些仓库；仓库访问仍由 GitHub App 安装决定。如果之后希望只使用 workspace 的 GitHub App 身份执行操作，也可以关闭该选项。
+
+## 选择仓库进行对话
+
+点击主页，在对话框的左上角可以选择已经被添加到工作区的仓库，选中后旁边会列出对应仓库的所有分支，选择你所需要开始进行开发的分支。
+
+<img src="/_docs-assets/lody-main-github-select.png" alt="" />
+
+创建对话后，Lody 会在对应的 CLI 机器上对对应的仓库进行克隆初始化，并且以你选择的分支来创建新的 [worktree](/zh/docs/worktrees)，所有的对话都会在对应的分支上指挥 AI 进行开发，而不会影响到其他对话。
+
+## 从 Issue 和 Pull Request 开始
+
+在主页选中仓库之后，你可以使用 `#` 符号来提及当前仓库的 Issue 和 Pull Request 列表。
+
+<img src="/_docs-assets/mention-issue.png" alt="" />
+
+可以使用 ↑ ↓ 方向键进行选择，使用回车选中，对应的 Issue 或 PR 信息会加入到 Prompt 中，Agent 可以自行进行对应信息的读取，来完成类似 `修复 #12 的问题`， `review #56 PR 的功能实现` 的工作。
+
+## PR 状态和 CI 同步
+
+当 session 关联到 GitHub PR 后，Lody 会在会话界面显示 PR 编号、打开/关闭/已合并状态，以及 CI 检查结果。CI 运行中、通过或失败时，状态会同步更新到 session UI，不需要频繁切回 GitHub 页面确认构建结果。
+
+如果你在 Lody 中基于某个分支继续开发，Lody 也会尝试识别该分支对应的 PR，并把它绑定到当前 session。
+
+## 在 Lody 中操作 PR
+
+点击已关联会话顶部的 PR 徽标，可以打开 PR 面板。你可以在 Lody 中查看 PR 标题、描述、分支、CI、评论和 Review，不必频繁切回 GitHub 页面。
+
+Draft PR 会在 PR 面板中显示 **Ready for review** 操作。PR 就绪且可合并后，也可以直接在 Lody 中合并，并在 GitHub 分支仍存在时删除合并后的分支。
+
+## 自动归档已完成 PR 会话
+
+你可以在 **设置**-**通用** 中开启 PR 关联会话的自动归档规则：
+
+- PR merged 后自动归档
+- PR closed 后自动归档
+
+自动归档会把已完成的 PR 工作从活跃侧边栏中移走，同时保留对话和 worktree。只有在归档列表中永久删除会话时，才会释放对应资源。
+
+## PR 关联后的提交和推送
+
+对于已经关联 PR 的 GitHub 仓库 session，Agent 完成一轮工作后，如果工作区还有未提交改动或本地提交尚未推送，Lody 会尝试让 Agent 自动提交并推送到对应分支。
+
+你仍然可以在会话界面手动触发 **Commit & Push**，或在 PR 有 review 评论时使用 **Fix PR Comments** 继续处理。
+
+## Review 评论同步
+
+在 Lody 的 [Diff 行评论](/zh/docs/diff-comments) 中，如果当前 session 已关联 GitHub PR，新增评论时可以勾选 **Sync to GitHub**。勾选后，评论会同步为 GitHub PR Review 的行评论。
+
+GitHub 上已有的 PR Review 行评论也会显示在 Lody 的 diff 中，并可以直接回复回 GitHub。这样你可以在同一个会话里看改动、处理评论、继续让 Agent 修复问题。

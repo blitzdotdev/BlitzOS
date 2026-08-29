@@ -1,0 +1,17 @@
+---
+title: '20260320'
+version: 0.39.0
+date: 2026-03-20
+description: 新增聊天 slash 命令、动态 Agent 配置选项，并修复 Windows 登录与本地 CLI 连接恢复问题。
+---
+### 新功能与能力
+
+- 聊天输入框支持 `/` 斜杠命令，输入 `/` 即可发现并插入 Agent 提供的可用命令（如 review、compact、undo 等）
+<img src="/_docs-assets/slash.png" alt="" />
+- Agent 配置项改为动态获取，支持展示所有模式与模型选项，升级后建议在 Agent Config 页进行刷新
+
+
+### 稳定性与修复
+
+- 修复 Windows 桌面端邮箱输入白屏问题
+- 修复本地 CLI 服务器连接过期后无法恢复的问题

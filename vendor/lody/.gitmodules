@@ -1,0 +1,18 @@
+[submodule "packages/acp-extension-codex"]
+	path = packages/acp-extension-codex
+	url = https://github.com/LodyAI/acp-extension-codex.git
+[submodule "packages/acp-extension-claude"]
+	path = packages/acp-extension-claude
+	url = https://github.com/LodyAI/acp-extension-claude.git
+[submodule "packages/acp-extension-core"]
+	path = packages/acp-extension-core
+	url = https://github.com/LodyAI/acp-extension-core.git
+[submodule "packages/acp-extension-grok"]
+	path = packages/acp-extension-grok
+	url = https://github.com/LodyAI/acp-extension-grok.git
+[submodule "packages/acp-extension-kimi"]
+	path = packages/acp-extension-kimi
+	url = https://github.com/LodyAI/acp-extension-kimi.git
+[submodule "packages/acp-extension-dsh"]
+	path = packages/acp-extension-dsh
+	url = https://github.com/LodyAI/acp-extension-dsh.git

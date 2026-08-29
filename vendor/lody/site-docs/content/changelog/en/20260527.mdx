@@ -1,0 +1,22 @@
+---
+title: '20260527'
+version: 0.54.0
+date: 2026-05-27
+description: Browse changes by file type, edit and reorder queued messages, rename workspaces from Settings, and get fixes for startup, navigation, session state, theming, and Markdown rendering.
+---
+### New
+
+- The Changes view can now group changed files by type, and the session sidebar can count only code changes.
+- Queued messages can now be edited in place and reordered by drag and drop.
+- Workspaces can now be renamed from Settings.
+
+### Fixes and Improvements
+
+- Fixed image uploads on newly opened tab conversation pages.
+- Fixed a startup white screen on older browsers such as iOS Safari 16.0, where unsupported regex lookbehind could break app initialization; Lody now guides affected users to upgrade their browser.
+- Fixed desktop and mobile startup white screens.
+- Fixed in-flight message sending being interrupted during cross-page navigation.
+- Fixed preview session status not staying in sync.
+- Fixed activity from child tabs not rolling up to the parent session, which made parent-session sorting and unread state inaccurate.
+- Fixed the app not following the system theme setting.
+- Polished Markdown rendering: single-line code blocks are vertically centered, block spacing and heading scale are preserved, list items have visible spacing, and horizontal rules are visible again.

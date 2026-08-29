@@ -1,0 +1,126 @@
+{
+  "create": [
+    {
+      "terminalId": "e6ae78e6-ecde-4991-b3f9-b3c6cceb7b03",
+      "command": "echo \"Hello World\"",
+      "args": []
+    },
+    {
+      "terminalId": "197a8b80-4337-420d-ad4b-a0f623a9aa41",
+      "command": "echo -e \"Line1\\nLine2\\nLine3\"",
+      "args": []
+    },
+    {
+      "terminalId": "6689f210-b3fc-4c3c-83c9-7dadec896e4b",
+      "command": "printf \"\\033[31mRed Text\\033[0m\\n\"",
+      "args": []
+    },
+    {
+      "terminalId": "098a6873-27f5-4d6a-a8e8-685f7352b008",
+      "command": "seq 1 5",
+      "args": []
+    },
+    {
+      "terminalId": "834f07dd-e3d4-418e-b5e5-59ee551aba9a",
+      "command": "ls -la",
+      "args": []
+    }
+  ],
+  "output": [
+    {
+      "terminalId": "e6ae78e6-ecde-4991-b3f9-b3c6cceb7b03",
+      "outputLen": 12,
+      "truncated": false,
+      "exitStatus": {
+        "exitCode": 0
+      },
+      "outputPreview": "Hello World\n"
+    },
+    {
+      "terminalId": "197a8b80-4337-420d-ad4b-a0f623a9aa41",
+      "outputLen": 18,
+      "truncated": false,
+      "exitStatus": {
+        "exitCode": 0
+      },
+      "outputPreview": "Line1\nLine2\nLine3\n"
+    },
+    {
+      "terminalId": "6689f210-b3fc-4c3c-83c9-7dadec896e4b",
+      "outputLen": 18,
+      "truncated": false,
+      "exitStatus": {
+        "exitCode": 0
+      },
+      "outputPreview": "\u001b[31mRed Text\u001b[0m\n"
+    },
+    {
+      "terminalId": "098a6873-27f5-4d6a-a8e8-685f7352b008",
+      "outputLen": 10,
+      "truncated": false,
+      "exitStatus": {
+        "exitCode": 0
+      },
+      "outputPreview": "1\n2\n3\n4\n5\n"
+    },
+    {
+      "terminalId": "834f07dd-e3d4-418e-b5e5-59ee551aba9a",
+      "outputLen": 102,
+      "truncated": false,
+      "exitStatus": {
+        "exitCode": 0
+      },
+      "outputPreview": "total 24\ndrwxr-xr-x   2 zx   zx    4096 Jan  7 14:08 .\ndrwxrwxrwt 261 root root 20480 Jan  7 14:08 ..\n"
+    }
+  ],
+  "wait": [
+    {
+      "terminalId": "e6ae78e6-ecde-4991-b3f9-b3c6cceb7b03",
+      "exitStatus": {
+        "exitCode": 0
+      }
+    },
+    {
+      "terminalId": "197a8b80-4337-420d-ad4b-a0f623a9aa41",
+      "exitStatus": {
+        "exitCode": 0
+      }
+    },
+    {
+      "terminalId": "6689f210-b3fc-4c3c-83c9-7dadec896e4b",
+      "exitStatus": {
+        "exitCode": 0
+      }
+    },
+    {
+      "terminalId": "098a6873-27f5-4d6a-a8e8-685f7352b008",
+      "exitStatus": {
+        "exitCode": 0
+      }
+    },
+    {
+      "terminalId": "834f07dd-e3d4-418e-b5e5-59ee551aba9a",
+      "exitStatus": {
+        "exitCode": 0
+      }
+    }
+  ],
+  "release": [
+    {
+      "terminalId": "e6ae78e6-ecde-4991-b3f9-b3c6cceb7b03"
+    },
+    {
+      "terminalId": "197a8b80-4337-420d-ad4b-a0f623a9aa41"
+    },
+    {
+      "terminalId": "6689f210-b3fc-4c3c-83c9-7dadec896e4b"
+    },
+    {
+      "terminalId": "098a6873-27f5-4d6a-a8e8-685f7352b008"
+    },
+    {
+      "terminalId": "834f07dd-e3d4-418e-b5e5-59ee551aba9a"
+    }
+  ],
+  "kill": []
+}

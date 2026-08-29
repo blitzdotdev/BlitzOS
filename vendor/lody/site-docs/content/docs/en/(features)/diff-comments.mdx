@@ -1,0 +1,37 @@
+---
+title: Diff Comments
+description: Add line-level comments in Lody diffs, reply in threads, and sync review comments to GitHub.
+---
+
+# Diff Comments
+
+Diff comments let you review code directly where the change happened. Use them for team review, or send a specific line back into the chat so the agent can explain, fix, or revisit it.
+
+## Add a comment
+
+1. Open a session diff from the current turn or from the `Changes` sidebar.
+2. Hover a commentable line and click the `+` beside the line number.
+3. Write your comment. Markdown is supported.
+4. Click **Comment**, or press `Ctrl+Enter` / `Cmd+Enter`.
+
+On mobile, tap a commentable diff line to open the comment box.
+
+## Reply and resolve
+
+Comments appear as threads under the diff line. You can:
+
+- reply in the same thread
+- edit or delete your own comments
+- click **Resolve** when the thread is done
+- click **Unresolve** to reopen it
+- collapse a thread when you only need the summary
+
+## Send a thread to the agent
+
+Use the send button on a comment thread to reference it in the current chat. Then ask the agent to address the comment, explain the tradeoff, or make the requested fix.
+
+## Sync with GitHub
+
+When the session is linked to a GitHub PR, new Lody comments can be synced as GitHub PR Review line comments by enabling **Sync to GitHub**.
+
+Lody also loads existing GitHub PR Review threads into the diff. You can read them in context and reply from Lody; replies are posted back to GitHub.

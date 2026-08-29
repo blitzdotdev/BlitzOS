@@ -1,0 +1,2859 @@
+/* Underwater point-cloud landing
+   --------------------------------
+   A self-contained dark "deep sea" world. The page owns its own palette
+   (independent of the site light/dark toggle) because the WebGL scene is
+   inherently a dark blue volume. The nav reads off the `--landing-*` tokens,
+   so we redefine those here to a deep-ocean set and it darkens automatically. */
+
+.underwater-landing {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  min-height: 100dvh;
+  flex-direction: column;
+  /* Clip both axes: the contain-scaled 1120×760 demo shell is position:absolute
+     and must not expand document scrollable overflow past the footer. */
+  overflow-x: clip;
+  overflow-y: clip;
+  isolation: isolate;
+  transition: color 0.5s ease;
+
+  /* LIGHT theme (sky blue): dark ink for strong contrast on the saturated blue. */
+  color: hsl(209 55% 14%);
+  --landing-ink: 209 55% 14%;
+  --landing-ink-muted: 207 38% 24%;
+  --landing-border: 205 45% 38%;
+  --landing-surface-1: 190 52% 97%;
+  --landing-surface-2: 190 42% 93%;
+  --landing-surface-3: 190 36% 88%;
+  --landing-primary: 192 74% 40%;
+  --landing-primary-contrast: 0 0% 100%;
+  --landing-shadow-soft: 0 20px 50px hsl(200 40% 30% / 0.18);
+
+  --ocean-aqua: 205 95% 28%;
+  --ocean-ice: 208 45% 20%;
+}
+
+.dark .underwater-landing {
+  /* DARK theme (deep abyss): light ink on deep navy. */
+  color: hsl(205 100% 96%);
+  --landing-ink: 205 100% 96%;
+  --landing-ink-muted: 203 38% 78%;
+  --landing-border: 200 70% 72%;
+  --landing-surface-1: 213 62% 9%;
+  --landing-surface-2: 211 56% 14%;
+  --landing-surface-3: 209 52% 20%;
+  --landing-primary: 195 100% 64%;
+  --landing-primary-contrast: 213 80% 8%;
+  --landing-shadow-soft: 0 20px 50px hsl(210 90% 4% / 0.55);
+
+  --ocean-aqua: 195 100% 66%;
+  --ocean-ice: 200 100% 90%;
+}
+
+/* ---- Native scrollbar --------------------------------------------------------
+   The docs shell hides the scrollbar globally (html { scrollbar-width: none } +
+   ::-webkit-scrollbar { width: 0 }); the landing inherits that hidden bar (the
+   dive is still ordinary vertical scroll, just with no visible scrollbar). The
+   `.underwater-landing-page` class on <html> is retained ONLY to scope the
+   portaled-dropdown token overrides. */
+
+/* ---- WebGL background ------------------------------------------------------ */
+
+.underwater-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  width: 100%;
+  /* Prefer the *large* viewport height so Safari/iOS chrome show/hide during
+     scroll does not resize this layer. `inset: 0` / `100dvh` thrash mid-gesture
+     and re-frame the portrait camera (janky pan). Fallback chain: old 100vh,
+     then lvh when supported; min-height covers short first paint. */
+  height: 100vh;
+  height: 100lvh;
+  min-height: 100%;
+  pointer-events: none;
+  /* CSS fallback shown before the canvas paints (e.g. during a bfcache-restore
+     rebuild) or when WebGL is unavailable. Kept in sync with the BG shader's
+     light gradient (white surface -> pale water blue) so a rebuild never flashes
+     a mismatched colour. */
+  background: linear-gradient(
+    to bottom,
+    rgb(248, 251, 255) 0%,
+    rgb(184, 210, 240) 52%,
+    rgb(144, 182, 232) 100%
+  );
+}
+
+.dark .underwater-bg {
+  /* The BG shader's dark gradient (dTop -> dMid -> dBot) AS DISPLAYED: the shader
+     outputs pow(col, 2.2) and three.js sRGB-encodes it, which darkens the deep
+     navies well below their raw values, so these are the post-encode RGBs. */
+  background: linear-gradient(to bottom, rgb(0, 2, 6) 0%, rgb(2, 7, 16) 50%, rgb(0, 1, 4) 100%);
+}
+
+.underwater-bg__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Legibility + fog + vignette painted on top of the canvas. The lower edge
+   follows the active theme so it fades softly into the page in either mode. */
+.underwater-bg__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    hsl(0 0% 100% / 0.72) 0%,
+    hsl(0 0% 100% / 0.18) 12%,
+    hsl(0 0% 100% / 0) 30%
+  );
+}
+
+.dark .underwater-bg__overlay {
+  background:
+    linear-gradient(
+      to bottom,
+      hsl(214 84% 7% / 0.66) 0%,
+      hsl(214 84% 7% / 0.14) 12%,
+      hsl(214 84% 7% / 0) 28%
+    ),
+    radial-gradient(110% 92% at 23% 33%, hsl(214 86% 5% / 0.5) 0%, hsl(214 86% 5% / 0) 60%),
+    linear-gradient(
+      to top,
+      hsl(216 88% 5% / 0.55) 0%,
+      hsl(216 88% 5% / 0.16) 12%,
+      hsl(216 88% 5% / 0) 30%
+    ),
+    radial-gradient(150% 135% at 50% 48%, transparent 62%, hsl(216 90% 4% / 0.45) 100%);
+}
+
+/* Product stage is an ordinary in-flow section (no reveal spacer / rest pin /
+   wheel lock). See underwater-experience.tsx. */
+
+/* Skip link: first focusable control for keyboard / AT users. */
+.uw-skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 100;
+  padding: 0.55rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--landing-border) / 0.4);
+  background: hsl(var(--landing-surface-1));
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+  transform: translateY(-160%);
+  transition: transform 120ms ease;
+}
+
+.uw-skip-link:focus,
+.uw-skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid hsl(var(--ocean-aqua));
+  outline-offset: 2px;
+}
+
+/* Document main wraps hero + post-demo for a single content landmark. */
+.underwater-main {
+  display: block;
+  position: relative;
+}
+
+/* ---- Hero ------------------------------------------------------------------ */
+
+/* Full first screen on all breakpoints so the product demo never peeks under
+   the fold of the hero. Scroll hint: desktop absolute bottom-left; mobile keeps
+   the same pin once min-height is 100dvh again. */
+.underwater-hero {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: clamp(1.35rem, 3vh, 2rem);
+  min-height: 100vh;
+  min-height: 100dvh;
+  /* Horizontal gutters come from --site-content-width (same rail as nav). */
+  padding: clamp(5.25rem, 11vh, 7.5rem) 0 clamp(1.5rem, 3.5vh, 2.5rem);
+  text-align: left;
+}
+
+.underwater-hero__inner {
+  display: flex;
+  width: var(--site-content-width);
+  margin-inline: auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: clamp(1rem, 2.4vh, 1.7rem);
+}
+
+.underwater-hero__eyebrow {
+  margin: 0;
+  color: hsl(var(--landing-ink-muted));
+  font-size: clamp(0.82rem, 1.45vw, 0.95rem);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.underwater-hero__title {
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  font-family: var(--lody-docs-font-heading);
+  font-size: clamp(2.2rem, 4.4vw, 3.6rem);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: hsl(var(--landing-ink));
+  text-wrap: balance;
+  text-shadow: 0 1px 2px hsl(210 50% 14% / 0.16);
+  transition:
+    color 0.5s ease,
+    text-shadow 0.5s ease;
+}
+
+.dark .underwater-hero__title {
+  text-shadow: 0 2px 24px hsl(214 90% 4% / 0.6);
+}
+
+.underwater-hero__title .rw-word {
+  color: hsl(var(--ocean-aqua));
+  /* Tiny shadow only: a large glow would get clipped by the rotating-word
+     viewport's overflow:hidden and read as a rectangular box behind the text. */
+  text-shadow: 0 1px 2px hsl(214 92% 6% / 0.5);
+}
+
+/* Keep the prefix ("Run your agents") atomic so it never breaks mid-phrase, but
+   let it flow inline with the rotating word: one line when it fits, wrapping at
+   the phrase boundary (prefix | word) only when space runs out. */
+.underwater-hero__title .rw-prefix:not(:empty) {
+  white-space: nowrap;
+  /* The prefix already ends in a non-breaking space; drop the extra gap. */
+  margin-right: 0;
+}
+
+/* Left-align the rotating word with the line above it, and span the full title
+   width. As inline-flex the shared .rw shrinks to its widest item, which forced
+   the word to wrap onto its own line even with room to spare; a full-width flex
+   row wraps only when the content genuinely doesn't fit. */
+.underwater-hero__title .rw {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* zh uses rw-align-end (word right-justified in a viewport sized to the WIDEST
+   word), which left-pads shorter words. Force the word to the left edge so every
+   rotating word lines up with the line below it. */
+.underwater-hero__title .rw-item {
+  justify-content: flex-start;
+}
+
+.underwater-hero__lead {
+  margin: 0;
+  max-width: 100%;
+  font-size: clamp(1rem, 2.2vw, 1.22rem);
+  line-height: 1.6;
+  color: hsl(var(--landing-ink-muted));
+  text-shadow: none;
+  transition: color 0.5s ease;
+}
+
+.dark .underwater-hero__lead {
+  color: hsl(203 46% 86% / 0.92);
+  text-shadow: 0 1px 16px hsl(214 90% 4% / 0.55);
+}
+
+.underwater-hero__cta-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-top: clamp(0.4rem, 1.5vh, 1rem);
+}
+
+.underwater-hero__cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.85rem;
+}
+
+.underwater-hero__cta-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+}
+
+.underwater-hero__more {
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.underwater-hero__more:hover {
+  color: hsl(var(--landing-ink));
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.underwater-hero__link-dot {
+  color: hsl(var(--landing-ink-muted) / 0.65);
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.underwater-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.9rem;
+  padding: 0 1.5rem;
+  border-radius: 10px;
+  font-size: 0.97rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  transition:
+    opacity 0.18s ease,
+    background 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease;
+}
+
+/* Primary: a flat, solid, inverted-ink button (dark-on-light in light mode,
+   light-on-dark in dark mode) — high contrast, no gloss/glow/lift, to match the
+   refined point-cloud scene. */
+.underwater-btn--primary {
+  background: hsl(var(--landing-ink));
+  color: hsl(var(--landing-surface-1));
+  border-color: hsl(var(--landing-ink));
+}
+
+.underwater-btn--primary:hover {
+  opacity: 0.88;
+}
+
+/* Secondary: a flat ghost — transparent fill, thin border, ink text. */
+.underwater-btn--ghost {
+  color: hsl(var(--landing-ink));
+  background: transparent;
+  border-color: hsl(var(--landing-border) / 0.55);
+}
+
+.underwater-btn--ghost:hover {
+  background: hsl(var(--landing-ink) / 0.06);
+  border-color: hsl(var(--landing-border) / 0.9);
+}
+
+/* ---- Scroll hint ----------------------------------------------------------- */
+
+/* Pinned to the first-screen bottom-left (hero is always ≥100dvh).
+   Left edge tracks the shared content rail so it stays under the nav. */
+.underwater-hero__scroll-hint {
+  position: absolute;
+  left: max(0px, calc((100% - var(--site-content-width)) / 2));
+  bottom: clamp(1.75rem, 5vh, 3.25rem);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: hsl(var(--landing-ink-muted));
+  /* Scrolls off with the hero — no dive fade. */
+}
+
+.underwater-hero__scroll-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 18px;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+.underwater-hero__scroll-icon {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+}
+
+.underwater-hero__scroll-chevron {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  animation: underwater-bob 1.8s ease-in-out infinite;
+}
+
+@keyframes underwater-bob {
+  0%,
+  100% {
+    transform: rotate(45deg) translate(-1.5px, -1.5px);
+    opacity: 0.55;
+  }
+  50% {
+    transform: rotate(45deg) translate(1.5px, 1.5px);
+    opacity: 1;
+  }
+}
+
+/* ---- App preview stage (in-flow page section) ------------------------------ */
+
+/* Ordinary document section under the hero — free scroll, always painted.
+   Roughly one viewport tall so the product mock reads as a full beat. */
+.underwater-reveal {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  /* Horizontal rail matches nav; vertical pad only. */
+  padding: clamp(5rem, 13vh, 9rem) 0 clamp(2.5rem, 7vh, 4.5rem);
+  pointer-events: auto;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  /* Contain absolute demo shells so their design-size boxes don't inflate page scroll. */
+  overflow: hidden;
+}
+
+/* data-active only gates demo scripts (IO); the section itself stays visible. */
+.underwater-reveal[data-active='true'],
+.underwater-reveal[data-active='false'] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+/* Glow removed — atmospheric halo was pure decoration over the point cloud. */
+.underwater-reveal__glow {
+  display: none;
+}
+
+/* Full-size frame from the first paint of the stage — no scale-up, no dots. */
+.underwater-reveal__frame {
+  position: relative;
+  /* Cap to the shared content rail so the mock aligns with nav on ultrawide. */
+  width: 100%;
+  max-width: 100%;
+  border-radius: 12px;
+  transform: none;
+  opacity: 1;
+  -webkit-mask-image: none;
+  mask-image: none;
+  /* Display-only for the user: nested chat/scroll areas must not trap wheel or
+     touch. Ghost demos still drive the tree via dispatchEvent. Tabs stay live
+     (pointer-events: auto on `.underwater-tabs`). */
+  pointer-events: none;
+  touch-action: none;
+  overflow: hidden;
+}
+
+/* The product mock fills the frame; its own shell owns the rounded border/shadow. */
+.underwater-reveal__frame .lody-app-preview {
+  width: 100%;
+  border-radius: 12px;
+  pointer-events: none;
+  /* Kill nested scroll steal even if a child re-enables pointer events. */
+  overscroll-behavior: none;
+}
+
+.underwater-reveal__frame .lody-app-preview,
+.underwater-reveal__frame .lody-app-preview * {
+  overscroll-behavior: none;
+}
+
+/* Nested scrollports: don't take the wheel/touch — page scroll owns the gesture. */
+.underwater-reveal__frame .lody-app-preview [data-slot='scroll-area'],
+.underwater-reveal__frame .lody-app-preview .chat-scrollbar,
+.underwater-reveal__frame .lody-app-preview .overflow-y-auto,
+.underwater-reveal__frame .lody-app-preview .overflow-auto {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+
+/* Kill the outer card plate on the ocean stage. Without this, switching into
+   the mobile tab briefly paints a full-size `bg-background` rect that then
+   clears — a dark rectangular flash. The phone frame / desktop shell still
+   paint their own chrome inside. */
+.underwater-reveal .lody-app-preview {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Phone stage must not inherit a plate either (wide intermediate was 100%×760). */
+.underwater-reveal .landing-phone-stage {
+  background: transparent;
+}
+
+/* ---- Feature tabs (onboarding indicator above the surfacing app) -----------
+   Quiet editorial strip — no segmented-control capsule, no active fill chip.
+   Hierarchy is type weight + a hairline progress rail only. */
+
+/* Stack the tabs above the app frame, centered together in the reveal. */
+.underwater-reveal__stack {
+  display: flex;
+  width: var(--site-content-width);
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(0.65rem, 2vh, 1.25rem);
+}
+
+.underwater-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: clamp(0.85rem, 2.4vw, 1.85rem);
+  /* Stay inside the padded stack (not 94vw — that ignores reveal padding). */
+  box-sizing: border-box;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: auto;
+  opacity: 1;
+  transform: none;
+}
+
+.underwater-tabs__tab {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: center;
+  /* Allow shrink below label intrinsic width so long zh/en titles don't blow
+     past the stack (default flex min-width:auto was the overflow). */
+  min-width: 0;
+  gap: 0.55rem;
+  padding: 0.2rem 0.1rem 0.05rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  /* Deep muted — sits into the abyss instead of reading as chrome UI. */
+  color: hsl(var(--landing-ink-muted) / 0.52);
+  font-family: var(--lody-docs-font-sans);
+  font-size: clamp(0.72rem, 1.1vw, 0.86rem);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  line-height: 1.15;
+  cursor: pointer;
+  transition: color 0.28s ease;
+}
+
+.dark .underwater-tabs__tab {
+  color: hsl(205 14% 48%);
+}
+
+.underwater-tabs__label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.underwater-tabs__tab:hover {
+  color: hsl(var(--landing-ink-muted) / 0.88);
+}
+
+.dark .underwater-tabs__tab:hover {
+  color: hsl(200 18% 68%);
+}
+
+.underwater-tabs__tab.is-active {
+  color: hsl(var(--landing-ink));
+  background: transparent;
+  font-weight: 600;
+}
+
+.dark .underwater-tabs__tab.is-active {
+  /* Ice-white, not pure #fff — keeps the deep-ocean cast. */
+  color: hsl(200 35% 92%);
+}
+
+.underwater-tabs__track {
+  position: relative;
+  width: 100%;
+  max-width: 3.25rem;
+  height: 1px;
+  overflow: hidden;
+  border-radius: 0;
+  /* Only the active tab shows a rail — inactive stay clean text. */
+  background: transparent;
+}
+
+.underwater-tabs__tab.is-active .underwater-tabs__track {
+  background: hsl(var(--landing-ink) / 0.1);
+}
+
+.dark .underwater-tabs__tab.is-active .underwater-tabs__track {
+  background: hsl(200 20% 70% / 0.16);
+}
+
+.underwater-tabs__fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  transform-origin: left center;
+  transform: scaleX(0);
+  /* Desaturated ice, not neon aqua — one restrained accent. */
+  background: hsl(200 28% 42%);
+  animation-name: underwater-tabs-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.dark .underwater-tabs__fill {
+  background: hsl(195 38% 58%);
+}
+
+.underwater-tabs__fill.is-static {
+  transform: scaleX(1);
+  animation: none;
+}
+
+/* ---- Ghost touch indicator (scripted feature demos) -----------------------
+   iPad-style fingertip: a soft translucent disc centered on the target, with a
+   brief ripple on tap. Portaled to <body> so it sits above portaled popovers. */
+
+.lody-demo-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2147483000;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  opacity: 0;
+  /* Ease the disc between targets so phone + desktop demos read as a
+     continuous pointer path, not teleportation. */
+  transition:
+    transform 0.55s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.3s ease;
+}
+
+/* One-frame snaps (e.g. post-zoom re-sync to a live element rect) skip the
+   glide so a tiny correction does not look like a second move. */
+.lody-demo-cursor[data-instant='true'] {
+  transition:
+    opacity 0.2s ease,
+    transform 0s;
+}
+
+.lody-demo-cursor[data-visible='true'] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lody-demo-cursor {
+    transition: opacity 0.15s ease;
+  }
+}
+
+.lody-demo-cursor__dot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  /* Center the disc on the transform point (target mid). */
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.42);
+  border: 1.5px solid rgb(255 255 255 / 0.78);
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.18),
+    0 1px 6px rgb(0 0 0 / 0.28),
+    inset 0 1px 1px rgb(255 255 255 / 0.45);
+  backdrop-filter: saturate(140%) blur(2px);
+  -webkit-backdrop-filter: saturate(140%) blur(2px);
+}
+
+/* Tap ripple: soft ring expanding from the contact point. Remounted per click. */
+.lody-demo-cursor__pulse {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 2px solid hsl(var(--ocean-aqua, 195 100% 66%) / 0.85);
+  background: hsl(var(--ocean-aqua, 195 100% 66%) / 0.12);
+  opacity: 0;
+  animation: lody-demo-click 0.48s ease-out;
+}
+
+@keyframes lody-demo-click {
+  0% {
+    transform: translate(-50%, -50%) scale(0.45);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.85);
+    opacity: 0;
+  }
+}
+
+@keyframes underwater-tabs-fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .underwater-tabs__fill {
+    animation: none;
+    transform: scaleX(1);
+  }
+}
+
+/* ---- Footer ---------------------------------------------------------------- */
+
+.underwater-footer {
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+  padding: 1rem 0 calc(clamp(1.1rem, 3vh, 1.6rem) + env(safe-area-inset-bottom, 0px));
+}
+
+.underwater-footer__inner {
+  display: flex;
+  width: var(--site-content-width);
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin: 0 auto;
+  padding-top: 1rem;
+  border-top: 1px solid hsl(var(--landing-border) / 0.28);
+}
+
+.underwater-footer__rights {
+  margin: 0;
+  font-size: 0.82rem;
+  color: hsl(var(--landing-ink-muted) / 0.85);
+}
+
+.underwater-footer__rights a {
+  color: hsl(var(--ocean-aqua) / 0.95);
+  text-decoration: none;
+}
+
+.underwater-footer__rights a:hover {
+  text-decoration: underline;
+}
+
+.underwater-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+}
+
+.underwater-footer__links a {
+  color: hsl(var(--landing-ink-muted));
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.18s ease;
+}
+
+.underwater-footer__links a:hover {
+  color: hsl(var(--landing-ink));
+}
+
+/* ---- Nav tuning over the dark scene --------------------------------------- */
+
+/* Immersive first-screen nav: no divider, and a background that fades from the
+   nav surface at the top down to transparent, so the bar melts into the scene
+   instead of reading as a frosted band. */
+.underwater-landing .site-nav {
+  border-bottom: 0;
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--landing-surface-1) / 0.82),
+    hsl(var(--landing-surface-1) / 0)
+  );
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition:
+    background 0.4s ease,
+    border-color 0.4s ease,
+    -webkit-backdrop-filter 0.4s ease,
+    backdrop-filter 0.4s ease;
+}
+
+/* Open menu: solid frosted sheet over the point cloud (matches marketing). */
+.underwater-landing .site-nav[data-open='true'] {
+  background: hsl(var(--landing-surface-1) / 0.9);
+  -webkit-backdrop-filter: saturate(1.2) blur(18px);
+  backdrop-filter: saturate(1.2) blur(18px);
+}
+
+.underwater-landing .site-nav__menu {
+  background: hsl(var(--landing-surface-1) / 0.9);
+  box-shadow:
+    0 1px 0 hsl(var(--landing-border) / 0.25) inset,
+    0 20px 48px hsl(214 80% 4% / 0.35);
+  -webkit-backdrop-filter: saturate(1.2) blur(18px);
+  backdrop-filter: saturate(1.2) blur(18px);
+}
+
+.dark .underwater-landing .site-nav[data-open='true'],
+.dark .underwater-landing .site-nav__menu {
+  background: hsl(214 55% 7% / 0.92);
+}
+
+/* ---- Tuning panel (only mounted with ?tune in the URL) -------------------- */
+
+.uw-tuner {
+  position: fixed;
+  top: 76px;
+  right: 16px;
+  z-index: 9999;
+  pointer-events: auto;
+  font-family: var(--lody-docs-font-sans);
+  color: hsl(200 100% 92%);
+}
+
+.uw-tuner__toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid hsl(195 80% 70% / 0.3);
+  border-radius: 10px;
+  background: hsl(213 60% 10% / 0.85);
+  color: hsl(200 100% 92%);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+.uw-tuner__panel {
+  width: 290px;
+  max-height: 80vh;
+  margin-top: 42px;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
+  border: 1px solid hsl(195 80% 70% / 0.25);
+  border-radius: 12px;
+  background: hsl(213 62% 8% / 0.92);
+  box-shadow: 0 20px 50px hsl(210 90% 4% / 0.6);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.uw-tuner__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.uw-tuner__actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.uw-tuner__head button {
+  padding: 3px 8px;
+  border: 1px solid hsl(195 80% 70% / 0.28);
+  border-radius: 7px;
+  background: hsl(210 60% 16% / 0.6);
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.uw-tuner__group-title {
+  margin: 12px 0 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.uw-tuner__row {
+  display: grid;
+  grid-template-columns: 76px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+  margin: 5px 0;
+  font-size: 12px;
+}
+
+.uw-tuner__row input[type='range'] {
+  width: 100%;
+  accent-color: hsl(195 100% 60%);
+}
+
+.uw-tuner__row em {
+  font-style: normal;
+  text-align: right;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Responsive ------------------------------------------------------------ */
+
+/*
+ * Compact stage: tablet, small laptop (~1000px wide), and short viewports.
+ * 1120×760 design canvas + nav/tabs needs ~960px+; size the in-flow section to
+ * one viewport and contain-scale (see global.css `.landing-desktop-demo-shell`).
+ * Phone-only chrome (tighter padding) stays in max-width:768. Keep the
+ * breakpoint pair in sync with global.css.
+ */
+@media (max-width: 1200px), (max-height: 960px) {
+  /* One-viewport in-flow beat; stack is a column so the demo slot flex-shrinks
+     under the feature tabs instead of overflowing. */
+  .underwater-reveal {
+    align-items: stretch;
+    justify-content: flex-start;
+    box-sizing: border-box;
+    min-height: 100dvh;
+    height: 100dvh;
+    max-height: 100dvh;
+    padding: clamp(4.25rem, 10vh, 5.5rem) clamp(0.65rem, 2vw, 1.25rem) 0.65rem;
+    overflow: hidden;
+  }
+
+  .underwater-reveal__stack {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.45rem;
+    /* Still cap to the content rail on ultrawide short viewports. */
+    width: min(var(--site-content-max), 100%);
+    max-width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
+  /* Remaining height after tabs = full playback slot (width + height).
+     No solid fill — letterbox gutters around contain-scaled demos show the
+     point cloud. */
+  .underwater-reveal__frame {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-self: stretch;
+    align-items: stretch;
+    justify-content: flex-start;
+    width: 100%;
+    max-width: 100%;
+    min-height: 0;
+    container-type: size;
+    container-name: reveal-frame;
+    background: transparent !important;
+    border-radius: 0;
+  }
+
+  .underwater-reveal__frame .lody-app-preview {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+    min-height: 0;
+    background: transparent !important;
+    border-color: transparent;
+    box-shadow: none;
+    border-radius: 0;
+  }
+
+  /* Feature tabs stay on one row; shrink + ellipsis (base styles) — scroll
+     only if a label still cannot fit after min padding. */
+  .underwater-tabs {
+    flex: 0 0 auto;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+
+  .underwater-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .underwater-tabs {
+    gap: clamp(0.65rem, 3vw, 1.15rem);
+  }
+
+  .underwater-tabs__tab {
+    padding: 0.15rem 0.05rem 0;
+    font-size: clamp(0.7rem, 1.45vw, 0.8rem);
+    letter-spacing: 0.015em;
+  }
+
+  .underwater-tabs__track {
+    max-width: 2.5rem;
+  }
+
+  /* Fit the design phone into the reveal-frame container while keeping AR.
+     100cqw/cqh resolve against `.underwater-reveal__frame`. Needed on tablet
+     and short laptops too — the design phone canvas overflows otherwise. */
+  .landing-phone-stage--narrowed,
+  .landing-phone-stage--wide {
+    /* Binding constraint: width-limited OR height-limited, never both past. */
+    --lp-fit: min(var(--lp-phone-w), 100cqw, calc(100cqh * var(--lp-phone-ar, 0.489)));
+    width: var(--lp-fit);
+    height: calc(var(--lp-fit) / var(--lp-phone-ar, 0.489));
+    max-width: 100%;
+    max-height: 100%;
+  }
+
+  .landing-phone-stage__device {
+    left: 0;
+    /* Same fit expression → scale design canvas into the fitted stage box. */
+    --lp-scale: calc(var(--lp-fit) / var(--lp-phone-w));
+    transform: scale(var(--lp-scale));
+    transform-origin: top left;
+  }
+
+  /* Browsers without container size queries: fall back to viewport math. */
+  @supports not (width: 1cqw) {
+    .landing-phone-stage--narrowed,
+    .landing-phone-stage--wide {
+      --lp-fit: min(
+        var(--lp-phone-w),
+        calc(100vw - 1.5rem),
+        calc((100dvh - 8.5rem) * var(--lp-phone-ar, 0.489))
+      );
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .underwater-hero {
+    justify-content: flex-start;
+    /* Keep a full-viewport hero so the product demo never peeks on first paint. */
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-top: clamp(4.75rem, 12vh, 6.25rem);
+    padding-bottom: 1.35rem;
+    gap: 1.15rem;
+  }
+
+  .underwater-hero__inner {
+    gap: 0.85rem;
+  }
+
+  .underwater-hero__title {
+    letter-spacing: -0.02em;
+    font-size: clamp(1.85rem, 7.2vw, 2.35rem);
+  }
+
+  .underwater-hero__lead {
+    font-size: 0.98rem;
+    line-height: 1.55;
+  }
+
+  .underwater-hero__cta-wrap {
+    margin-top: 0.2rem;
+    gap: 0.5rem;
+  }
+
+  /* No scroll chevron on phones — free scroll only, no auto-snap cue. */
+  .underwater-hero__scroll-hint {
+    display: none;
+  }
+
+  .underwater-btn {
+    height: 2.85rem;
+    padding: 0 1.35rem;
+  }
+
+  .underwater-footer__inner {
+    justify-content: center;
+    text-align: center;
+  }
+
+  /*
+   * Phone stage: center the tabs + demo as one cluster (not tabs glued under
+   * the nav with a huge empty gap). Shrink the playback slot so the shell
+   * contain-scales smaller and sits mid-viewport.
+   */
+  .underwater-reveal {
+    align-items: center;
+    justify-content: center;
+    padding: clamp(3.25rem, 9vh, 4.25rem) 0.65rem clamp(1.1rem, 3.5vh, 1.75rem);
+  }
+
+  .underwater-reveal__stack {
+    flex: 0 1 auto;
+    height: auto;
+    max-height: calc(100dvh - 4.75rem);
+    width: min(var(--site-content-max), 100%);
+    max-width: 100%;
+    gap: 0.55rem;
+    justify-content: center;
+  }
+
+  /* 2×2 grid so zh/en labels fit without horizontal scroll or ellipsis. */
+  .underwater-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.45rem 0.75rem;
+    width: min(100%, 20.5rem);
+    max-width: min(100%, 20.5rem);
+    overflow: visible;
+  }
+
+  .underwater-tabs__tab {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    padding: 0.15rem 0.25rem 0.05rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.01em;
+  }
+
+  .underwater-tabs__label {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+    text-align: center;
+    text-wrap: balance;
+    line-height: 1.25;
+  }
+
+  .underwater-tabs__track {
+    max-width: 2.75rem;
+  }
+
+  .underwater-reveal__frame {
+    flex: 0 0 auto;
+    align-self: center;
+    width: min(92vw, 100%);
+    /* Smaller play area → desktop shell / phone stage scale down together. */
+    height: min(50dvh, 360px);
+    max-height: min(50dvh, 360px);
+  }
+
+  .underwater-reveal__frame .lody-app-preview {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .underwater-btn {
+    transition: none;
+  }
+
+  .underwater-btn:hover {
+    transform: none;
+  }
+
+  .underwater-hero__scroll-chevron {
+    animation: none;
+  }
+}
+
+/* ---- Section 3: every coding agent ----------------------------------------
+   Borderless by construction. Separation comes from surface tint, spacing and a
+   single accent (--ocean-aqua) — no outlines anywhere, including the matrix.
+   The section sits in ordinary flow above the fixed WebGL world, which keeps
+   scrolling behind it.
+
+   Budget: TWO blocks + the bottom marquee, sized to land inside one screen at a
+   typical desktop height. */
+
+.uw-agents {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  /* Bottom padding reserves room for the larger agent tile strip. */
+  padding: clamp(3.5rem, 8vh, 5.5rem) clamp(1.25rem, 5vw, 4.5rem) clamp(5.5rem, 12vh, 8rem);
+  /* Isolate so the banner stacking can't leak onto the hero. */
+  isolation: isolate;
+  overflow: clip;
+}
+
+/* Bottom marquees: square logo tiles in a seamless CSS loop. */
+.uw-agents__banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(0.9rem, 2.4vh, 1.65rem);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Inline variant: flows in normal layout (subscriptions ACP logo wall). */
+.uw-agents__banner--inline {
+  position: static;
+  inset: auto;
+  z-index: auto;
+}
+
+.uw-agents__banner-viewport {
+  overflow: hidden;
+  /* Soft edge fade so the loop doesn't hard-cut at the section bounds. */
+  mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 5%, #000 95%, transparent 100%);
+}
+
+.uw-agents__banner-track {
+  display: flex;
+  width: max-content;
+  animation: uw-agents-marquee 70s linear infinite;
+  will-change: transform;
+}
+
+.uw-agents__banner-row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: clamp(0.65rem, 1.1vw, 0.95rem);
+  padding-inline: clamp(0.65rem, 1.1vw, 0.95rem);
+  margin: 0;
+  list-style: none;
+}
+
+/* Square logo cards — not pills. Reads as a product strip, not a token pile. */
+.uw-agents__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 0.45rem;
+  width: clamp(5.5rem, 9.5vw, 7.25rem);
+  min-height: clamp(4.6rem, 8vw, 5.85rem);
+  padding: 0.7rem 0.55rem 0.65rem;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--landing-border) / 0.22);
+  background: hsl(var(--landing-surface-1) / 0.42);
+  color: hsl(var(--landing-ink) / 0.72);
+  box-shadow:
+    0 1px 2px hsl(210 40% 18% / 0.04),
+    0 6px 14px hsl(214 45% 16% / 0.04);
+}
+
+.dark .uw-agents__tile {
+  border-color: hsl(210 35% 28% / 0.35);
+  background: hsl(212 48% 12% / 0.38);
+  color: hsl(203 55% 90% / 0.8);
+  box-shadow:
+    0 1px 0 hsl(210 40% 40% / 0.06) inset,
+    0 8px 18px hsl(214 90% 3% / 0.22);
+}
+
+.uw-agents__glyph {
+  display: grid;
+  place-items: center;
+  width: clamp(1.65rem, 2.6vw, 2.1rem);
+  height: clamp(1.65rem, 2.6vw, 2.1rem);
+  flex-shrink: 0;
+}
+
+.uw-agents__glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.uw-agents__tile-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--lody-docs-font-sans);
+  font-size: clamp(0.68rem, 1.05vw, 0.78rem);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  text-align: center;
+  color: inherit;
+  opacity: 0.88;
+}
+
+@keyframes uw-agents-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    /* Track is two identical rows; -50% lands exactly on the seam. */
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+.uw-agents__inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: var(--site-content-width);
+  margin: 0 auto;
+  flex-direction: column;
+  gap: clamp(1rem, 2.6vh, 1.75rem);
+}
+
+/* ---- Multi-agent plate ----
+   `--uw-agents-art` is the background-image slot for the illustration that gets
+   dropped in later; until then the plate paints the procedural field below. */
+
+.uw-agents__plate {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: clamp(15rem, 33vh, 22rem);
+  padding: clamp(2rem, 5vh, 3.4rem) clamp(1.5rem, 4vw, 3.5rem);
+  border-radius: 22px;
+  overflow: hidden;
+  background: hsl(var(--landing-ink) / 0.045);
+}
+
+.dark .uw-agents__plate {
+  background: hsl(206 60% 12% / 0.5);
+}
+
+/* The art slot. Swap the illustration in by setting the custom property:
+     <div className="uw-agents__plate" style={{ '--uw-agents-art': "url(/landing/multi-agent.png)" }}>
+   The procedural fallback is a quiet orbital field — one core, many satellites —
+   which is the same idea the illustration will carry. */
+.uw-agents__art {
+  position: absolute;
+  inset: 0;
+  background-image: var(--uw-agents-art, none);
+  background-size: cover;
+  background-position: center;
+}
+
+.uw-agents__art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(44% 72% at 50% 48%, hsl(var(--ocean-aqua) / 0.13), transparent 72%),
+    repeating-radial-gradient(
+      circle at 50% 48%,
+      hsl(var(--ocean-aqua) / 0.055) 0 1px,
+      transparent 1px 92px
+    );
+  -webkit-mask-image: radial-gradient(76% 100% at 50% 48%, #000 12%, transparent 82%);
+  mask-image: radial-gradient(76% 100% at 50% 48%, #000 12%, transparent 82%);
+}
+
+/* A supplied illustration replaces the procedural field entirely. */
+.uw-agents__plate[style*='--uw-agents-art'] .uw-agents__art::after {
+  content: none;
+}
+
+.uw-agents__plate-copy {
+  position: relative;
+  display: flex;
+  max-width: 46ch;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(0.55rem, 1.4vh, 0.9rem);
+  text-align: center;
+}
+
+.uw-agents__eyebrow {
+  margin: 0;
+  color: hsl(var(--landing-ink-muted));
+  font-size: clamp(0.8rem, 1.35vw, 0.92rem);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-transform: none;
+}
+
+/* Count + headline are one lockup: an oversized tabular figure carrying the
+   phrase that follows it, so "40+" is read as part of the sentence. */
+.uw-agents__title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(0.1rem, 0.6vh, 0.4rem);
+  margin: 0;
+  font-family: var(--lody-docs-font-heading);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+  color: hsl(var(--landing-ink));
+  text-wrap: balance;
+}
+
+.dark .uw-agents__title {
+  text-shadow: 0 2px 26px hsl(214 90% 4% / 0.55);
+}
+
+.uw-agents__count {
+  font-size: clamp(3.1rem, 8vw, 5.4rem);
+  line-height: 0.9;
+  letter-spacing: -0.05em;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--ocean-aqua));
+}
+
+.uw-agents__title-rest {
+  font-size: clamp(1.5rem, 3.1vw, 2.35rem);
+}
+
+.uw-agents__body {
+  margin: 0;
+  font-size: clamp(0.94rem, 1.75vw, 1.05rem);
+  line-height: 1.62;
+  color: hsl(var(--landing-ink-muted));
+  text-wrap: pretty;
+}
+
+.dark .uw-agents__body {
+  color: hsl(203 46% 86% / 0.9);
+}
+
+/* ---- Built-in runtime matrix ---- */
+
+.uw-agents__matrix {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(0.7rem, 1.8vh, 1.15rem);
+  padding: clamp(1rem, 2.6vw, 1.75rem) clamp(0.9rem, 2.2vw, 1.6rem);
+  border-radius: 22px;
+  background: hsl(var(--landing-ink) / 0.045);
+}
+
+.dark .uw-agents__matrix {
+  background: hsl(206 60% 12% / 0.5);
+}
+
+.uw-agents__matrix-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem 0.85rem;
+  padding-inline: clamp(0.25rem, 1vw, 0.7rem);
+}
+
+.uw-agents__matrix-title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: hsl(var(--landing-ink));
+}
+
+.uw-agents__matrix-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: hsl(var(--landing-ink-muted) / 0.9);
+}
+
+.uw-agents__table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.uw-agents__table th,
+.uw-agents__table td {
+  padding: clamp(0.5rem, 1.3vh, 0.78rem) clamp(0.5rem, 1.4vw, 1rem);
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* Row labels stay left; agent columns share the remaining width equally. */
+.uw-agents__table thead th:first-child,
+.uw-agents__table tbody th {
+  width: 34%;
+  text-align: left;
+}
+
+.uw-agents__table tbody th {
+  font-size: clamp(0.88rem, 1.65vw, 0.98rem);
+  font-weight: 500;
+  color: hsl(var(--landing-ink));
+}
+
+.uw-agents__col {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.uw-agents__col-mark {
+  display: block;
+  width: 1.05rem;
+  height: 1.05rem;
+  color: hsl(var(--landing-ink) / 0.75);
+}
+
+.uw-agents__col-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.uw-agents__col-name {
+  font-size: clamp(0.82rem, 1.5vw, 0.93rem);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: hsl(var(--landing-ink));
+  white-space: nowrap;
+}
+
+/* Zebra wash instead of rules. The radius on the row's outer cells keeps the
+   band from reading as a bordered box. */
+.uw-agents__table tbody tr:nth-child(odd) th,
+.uw-agents__table tbody tr:nth-child(odd) td {
+  background: hsl(var(--landing-ink) / 0.04);
+}
+
+.dark .uw-agents__table tbody tr:nth-child(odd) th,
+.dark .uw-agents__table tbody tr:nth-child(odd) td {
+  background: hsl(203 60% 80% / 0.05);
+}
+
+.uw-agents__table tbody tr th:first-child {
+  border-start-start-radius: 10px;
+  border-end-start-radius: 10px;
+}
+
+.uw-agents__table tbody tr td:last-child {
+  border-start-end-radius: 10px;
+  border-end-end-radius: 10px;
+}
+
+.uw-agents__check {
+  display: inline-block;
+  width: 1.1rem;
+  height: 1.1rem;
+  color: hsl(var(--ocean-aqua));
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 860px) {
+  .uw-agents {
+    /* Larger square tiles need more room under the matrix. */
+    padding-bottom: clamp(7.5rem, 16vh, 10rem);
+  }
+
+  .uw-agents__tile {
+    width: clamp(4.75rem, 28vw, 6rem);
+    min-height: clamp(4.15rem, 24vw, 5.1rem);
+  }
+
+  .uw-agents__col-mark {
+    display: none;
+  }
+
+  /* Agent names wrap rather than collide — at this width three nowrap columns
+     overlap each other well before they overflow the table. */
+  .uw-agents__col-name {
+    white-space: normal;
+    text-align: center;
+    text-wrap: balance;
+  }
+
+  .uw-agents__table thead th:first-child,
+  .uw-agents__table tbody th {
+    width: 30%;
+  }
+
+  .uw-agents__table th,
+  .uw-agents__table td {
+    padding-inline: 0.35rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uw-agents__banner-track {
+    animation: none;
+  }
+}
+
+/* ---- Post-demo scroll stack (subs → orch → cli → power → mobile → cta) ---
+   Ordinary flow under the fixed stage. Shared spacing + type tokens so each
+   section has room to breathe — not a tight marketing strip. */
+
+.uw-content {
+  /* Section rhythm — generous vertical pad, one shared type scale.
+     Adjacent sections each own pad-y, so content-to-content ≈ 2× this value.
+     Horizontal max matches nav via --site-content-width (no extra pad-x). */
+  --uw-section-pad-y: clamp(4.85rem, 12vh, 8rem);
+  --uw-section-pad-x: 0;
+  --uw-section-max: var(--site-content-max);
+  --uw-title-size: clamp(1.9rem, 3.85vw, 2.75rem);
+  --uw-title-lh: 1.12;
+  --uw-body-size: clamp(1.02rem, 1.55vw, 1.16rem);
+  --uw-body-lh: 1.65;
+  --uw-eyebrow-size: 0.78rem;
+  --uw-header-gap: clamp(0.85rem, 1.8vh, 1.2rem);
+  --uw-header-mb: clamp(2.35rem, 5.5vh, 3.65rem);
+  --uw-stack-gap: clamp(2rem, 4.5vh, 3.15rem);
+  --uw-card-gap: clamp(1.5rem, 3vw, 2.15rem);
+}
+
+.uw-post-demo {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+  /* Extra air after the demo stage before the first section. */
+  padding-top: clamp(2rem, 5vh, 3.5rem);
+  padding-bottom: clamp(1.25rem, 3vh, 2.25rem);
+}
+
+/* A theme-aware veil settles quickly over the point-cloud during the product
+   stage, spans the content stack, then ends before the closing CTA. */
+.uw-middle-door {
+  position: relative;
+  isolation: isolate;
+}
+
+.uw-middle-door::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  content: '';
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgb(252 254 255 / 0) 0%,
+    rgb(248 252 255 / 0.62) 2%,
+    rgb(244 250 255 / 0.86) 7%,
+    rgb(244 250 255 / 0.86) 78%,
+    rgb(244 250 255 / 0.42) 94%,
+    rgb(252 254 255 / 0) 100%
+  );
+}
+
+.dark .uw-middle-door::before {
+  background: linear-gradient(
+    to bottom,
+    rgb(1 7 12 / 0) 0%,
+    rgb(1 7 12 / 0.55) 2%,
+    rgb(1 7 12 / 0.85) 7%,
+    rgb(1 7 12 / 0.85) 78%,
+    rgb(1 7 12 / 0.36) 94%,
+    rgb(1 7 12 / 0) 100%
+  );
+}
+
+.uw-media-placeholder {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-height: clamp(10rem, 28vh, 16rem);
+  overflow: hidden;
+  border-radius: 16px;
+  background: hsl(var(--landing-surface-1) / 0.5);
+  border: 1px solid hsl(var(--landing-border) / 0.22);
+}
+
+.dark .uw-media-placeholder {
+  border-color: hsl(210 35% 28% / 0.35);
+  background: hsl(214 50% 9% / 0.7);
+}
+
+.uw-media-placeholder--phone {
+  aspect-ratio: 9 / 16;
+  max-width: min(17.5rem, 72vw);
+  min-height: 0;
+  margin-inline: auto;
+  border-radius: 1.65rem;
+}
+
+.uw-media-placeholder__label {
+  max-width: 18ch;
+  padding: 0.5rem 0.75rem;
+  border-radius: 999px;
+  background: hsl(var(--landing-surface-1) / 0.55);
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.72rem;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.dark .uw-media-placeholder__label {
+  background: hsl(212 40% 14% / 0.75);
+  color: hsl(205 30% 72%);
+}
+
+/* Real product screenshots (power grid, Dynamic Island, etc.) */
+.uw-media {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--landing-border) / 0.22);
+  background: hsl(var(--landing-surface-2) / 0.45);
+}
+
+.dark .uw-media {
+  border-color: hsl(210 35% 28% / 0.4);
+  background: hsl(214 50% 8% / 0.85);
+}
+
+.uw-media img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Dynamic Island still is a landscape phone crop — keep it wide, not 9:16. */
+.uw-media--island {
+  max-width: min(32rem, 100%);
+  margin-inline: auto;
+  border-radius: 0;
+}
+
+/* Bare product still: no card border / fill — the photo sits on the ocean. */
+.uw-media--bare {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+
+.dark .uw-media--bare {
+  border: 0;
+  background: transparent;
+}
+
+/* Shared section chrome for team / power / mobile-deep (+ orch/cli/subs below) */
+.uw-team,
+.uw-power,
+.uw-mobile-deep {
+  position: relative;
+  z-index: 10;
+  padding: var(--uw-section-pad-y) var(--uw-section-pad-x);
+}
+
+.uw-team__inner,
+.uw-power__inner,
+.uw-mobile-deep__inner {
+  width: var(--site-content-width);
+  margin-inline: auto;
+}
+
+.uw-team__header,
+.uw-power__header {
+  display: flex;
+  max-width: 44rem;
+  flex-direction: column;
+  gap: var(--uw-header-gap);
+  margin-bottom: var(--uw-header-mb);
+}
+
+.uw-team__eyebrow,
+.uw-power__eyebrow,
+.uw-mobile-deep__eyebrow {
+  margin: 0;
+  color: hsl(var(--ocean-aqua));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-eyebrow-size);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.uw-team__title,
+.uw-power__title,
+.uw-mobile-deep__title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: var(--uw-title-size);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: var(--uw-title-lh);
+  text-wrap: balance;
+}
+
+.uw-team__body,
+.uw-power__body,
+.uw-mobile-deep__body {
+  margin: 0;
+  max-width: 52ch;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-body-size);
+  line-height: var(--uw-body-lh);
+}
+
+/* Team beats under power header — plain list, not chips or a second banner. */
+.uw-power__points {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-width: 44ch;
+}
+
+.uw-power__points li {
+  position: relative;
+  padding-left: 1.1rem;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: clamp(0.95rem, 1.35vw, 1.05rem);
+  line-height: 1.55;
+}
+
+.uw-power__points li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 0.35rem;
+  height: 0.35rem;
+  border-radius: 50%;
+  background: hsl(var(--ocean-aqua) / 0.85);
+}
+
+/* §2 Team */
+.uw-team__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--uw-card-gap);
+}
+
+@media (min-width: 860px) {
+  .uw-team__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.uw-team__card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.15rem;
+}
+
+.uw-team__card-title,
+.uw-power__card-title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: clamp(1.12rem, 1.8vw, 1.28rem);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.3;
+}
+
+.uw-team__card-body,
+.uw-power__card-body {
+  margin: 0.55rem 0 0;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: clamp(0.95rem, 1.35vw, 1.04rem);
+  line-height: 1.6;
+}
+
+/* §3 Power features — usage + PR (diff review lives in the play stage) */
+.uw-power__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--uw-card-gap);
+}
+
+@media (min-width: 760px) {
+  .uw-power__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.uw-power__card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.05rem;
+  min-width: 0;
+}
+
+/* Live product demos (Stats + PR tab) — themed frame, not screenshots.
+   Usage + PR share the same fixed height so the two-up grid lines up. */
+.uw-power__demo {
+  position: relative;
+  height: clamp(22rem, 56vh, 32rem);
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--landing-border) / 0.28);
+  background: hsl(var(--background));
+}
+
+@media (min-width: 760px) {
+  .uw-power__demo {
+    height: clamp(28rem, 64vh, 40rem);
+  }
+}
+
+@media (min-width: 1100px) {
+  .uw-power__demo {
+    height: clamp(32rem, 68vh, 44rem);
+  }
+}
+
+.uw-power__demo-inner {
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+  scrollbar-width: none;
+}
+
+/* Usage keeps native scrolling: once this viewport reaches either boundary,
+   the browser's default scroll chain continues on the document. */
+.uw-power__demo--manual-scroll {
+  /* The app-preview theme does not inherit the product Tailwind chart tokens.
+     Heatmap cells and every donut segment resolve through this palette. */
+  --chart-1: 210 90% 62%;
+  --chart-2: 197 85% 58%;
+  --chart-3: 261 84% 70%;
+  --chart-4: 28 88% 62%;
+  --chart-5: 154 68% 52%;
+  pointer-events: auto;
+}
+
+.uw-power__demo--manual-scroll .uw-power__demo-inner {
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+}
+
+/* The 7-day matrix has 24 columns. In this narrow preview its flex items can
+   become narrower than the inline dot size, so let height follow the final
+   constrained width instead of stretching circles into capsules. */
+.uw-power__demo--manual-scroll [role='gridcell'] > span.rounded-full {
+  aspect-ratio: 1;
+  height: auto !important;
+  max-width: 100%;
+}
+
+.uw-power__demo-inner::-webkit-scrollbar {
+  display: none;
+}
+
+/* PrTabView owns a nested Radix viewport. It is moved by the same page-scroll
+   coordinator and its scrollbar stays hidden so the frame reads as a scene. */
+.uw-power__demo [data-pr-content-scroll-area] [data-orientation='vertical'] {
+  opacity: 0;
+}
+
+/* Children fill the frame; PR uses flex+ScrollArea, Usage scrolls the inner. */
+.uw-power__demo-inner > .flex.h-full,
+.uw-power__demo-inner > .flex.min-h-0 {
+  height: 100%;
+  min-height: 100%;
+}
+
+/* Usage stack inset — roomy enough that KPI tiles and charts don't feel glued. */
+.uw-power__demo-inner > .space-y-4 {
+  padding: 1.1rem 1.15rem 1.35rem;
+  box-sizing: border-box;
+}
+
+/* PR tab: extra outer breathing room (especially top) inside the shared frame. */
+.uw-power__demo-inner > .flex.h-full.min-h-0.flex-col {
+  padding: 0.65rem 0.55rem 0.55rem;
+  box-sizing: border-box;
+}
+
+/* Compact the decorative PR composer so it fits under the thread. */
+.uw-power__demo textarea.min-h-\[72px\] {
+  min-height: 3.25rem;
+}
+
+/* SSR fallback before power demos hydrate — real text for crawlers / no-JS. */
+.uw-power__demo--ssr {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 1.1rem 1.15rem;
+  box-sizing: border-box;
+}
+
+.uw-power__demo-ssr-title {
+  margin: 0;
+  color: hsl(var(--foreground) / 0.92);
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.uw-power__demo-ssr-body {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+/* Underwater landing: nudge app tokens toward the deep navy stage so demos
+   sit in the same family as the hero, not a separate product chrome. */
+html.underwater-landing-page.dark .uw-power__demo.lody-app-preview {
+  --background: 214 64% 3.5%;
+  --card: 214 52% 7%;
+  --card-foreground: 205 30% 92%;
+  --foreground: 205 30% 92%;
+  --muted: 214 40% 10%;
+  --muted-foreground: 210 18% 68%;
+  --border: 214 32% 16%;
+  --secondary: 214 38% 12%;
+  --popover: 214 52% 7%;
+  --input: 214 32% 16%;
+  /* Pull the product accents into the ocean palette so demo actions (the
+     comment/ready buttons that ride on --primary) read as part of the hero,
+     not GitHub blue. The merge button hardcodes --status-success, so it is
+     recolored separately below. */
+  --primary: 194 90% 60%;
+  --primary-foreground: 210 84% 8%;
+  --ring: 194 90% 60%;
+}
+
+/* Merge/Squash split button uses --status-success + white text in-app; on the
+   underwater stage recolor it to the bright ocean aqua with dark ink so it
+   matches the hero instead of clashing emerald against the navy. */
+html.underwater-landing-page.dark .uw-power__demo.lody-app-preview [data-pr-merge-action] > button {
+  background-color: hsl(194 90% 60%);
+  color: hsl(210 84% 8%);
+  border-color: transparent;
+}
+html.underwater-landing-page.dark
+  .uw-power__demo.lody-app-preview
+  [data-pr-merge-action]
+  > button:hover {
+  background-color: hsl(194 90% 54%);
+}
+html.underwater-landing-page.dark
+  .uw-power__demo.lody-app-preview
+  [data-pr-merge-action]
+  > button:last-child {
+  border-left-color: hsl(210 84% 8% / 0.24);
+}
+
+/* Usage chart legend: neutral agent / member marks; series color is on the label. */
+.uw-usage-marker {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 999px;
+  background: hsl(var(--muted) / 0.7);
+  color: hsl(var(--foreground) / 0.88);
+}
+
+.uw-usage-marker__glyph,
+.uw-usage-marker__glyph svg {
+  display: block;
+  width: 0.68rem;
+  height: 0.68rem;
+}
+
+.uw-usage-marker__fallback {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.45);
+}
+
+.uw-usage-marker__avatar {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  font-family: var(--lody-docs-font-sans, ui-sans-serif, system-ui, sans-serif);
+  font-size: 0.55rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+/* §4 Mobile deep / Dynamic Island — island still above title + body (stacked). */
+.uw-mobile-deep__inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(1.75rem, 4vh, 2.75rem);
+  text-align: center;
+}
+
+.uw-mobile-deep__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--uw-header-gap);
+  max-width: 40rem;
+}
+
+.uw-mobile-deep__title,
+.uw-mobile-deep__body {
+  max-width: 36ch;
+  text-wrap: balance;
+}
+
+.uw-mobile-deep__body {
+  /* Override shared body left-align / wider measure for this centered section. */
+  margin-inline: auto;
+}
+
+.uw-mobile-deep__points {
+  margin: 0.85rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.uw-mobile-deep__points li {
+  position: relative;
+  padding-left: 1.2rem;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: clamp(0.95rem, 1.35vw, 1.05rem);
+  line-height: 1.55;
+}
+
+.uw-mobile-deep__points li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: hsl(var(--ocean-aqua) / 0.85);
+}
+
+.uw-mobile-deep__media {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+  width: 100%;
+}
+
+.uw-mobile-deep__media-note {
+  margin: 0;
+  max-width: 30ch;
+  color: hsl(var(--landing-ink-muted) / 0.85);
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* Agents section sits last inside .uw-post-demo; drop extra isolation min-height
+   double-padding clash by keeping its own min-height. */
+.uw-post-demo .uw-agents {
+  z-index: 11;
+}
+
+/* ---- One agent runs the others (copy + fan-out visual; no MCP tool diagram) - */
+
+.uw-orch {
+  position: relative;
+  z-index: 10;
+  padding: var(--uw-section-pad-y) var(--uw-section-pad-x);
+}
+
+.uw-orch__inner {
+  width: var(--site-content-width);
+  margin-inline: auto;
+}
+
+.uw-orch__layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: clamp(2rem, 4.5vw, 3.5rem);
+  align-items: center;
+}
+
+@media (min-width: 900px) {
+  .uw-orch__layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: clamp(2.5rem, 5vw, 4rem);
+  }
+}
+
+.uw-orch__copy {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.5rem, 3vh, 2.15rem);
+  min-width: 0;
+}
+
+.uw-orch__header {
+  display: flex;
+  max-width: 38rem;
+  flex-direction: column;
+  gap: var(--uw-header-gap);
+}
+
+.uw-orch__title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: var(--uw-title-size);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: var(--uw-title-lh);
+  text-wrap: balance;
+}
+
+.uw-orch__body {
+  margin: 0;
+  max-width: 46ch;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-body-size);
+  line-height: var(--uw-body-lh);
+}
+
+.uw-orch__cases {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 30rem;
+}
+
+.uw-orch__case {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 1rem 1.15rem;
+  border-radius: 14px;
+  border: 1px solid hsl(var(--landing-border) / 0.22);
+  background: hsl(var(--landing-surface-1) / 0.4);
+}
+
+.dark .uw-orch__case {
+  border-color: hsl(210 35% 28% / 0.38);
+  background: hsl(214 52% 8% / 0.55);
+}
+
+.uw-orch__case-title {
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.98rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.uw-orch__case-body {
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+/* Fan-out: hub → bar → three session chips */
+.uw-orch__visual {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+  padding: clamp(1.45rem, 3vw, 2rem);
+  border-radius: 18px;
+  border: 1px solid hsl(var(--landing-border) / 0.24);
+  background: hsl(var(--landing-surface-1) / 0.42);
+}
+
+.dark .uw-orch__visual {
+  border-color: hsl(210 35% 28% / 0.4);
+  background: hsl(214 52% 8% / 0.65);
+}
+
+.uw-orch__hub {
+  display: flex;
+  justify-content: center;
+}
+
+.uw-orch__hub-label {
+  padding: 0.5rem 1.15rem;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--ocean-aqua) / 0.45);
+  background: hsl(var(--ocean-aqua) / 0.1);
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.uw-orch__fan {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 18rem;
+  padding: 0.55rem 0 0.75rem;
+}
+
+.uw-orch__fan-stem {
+  display: block;
+  width: 1px;
+  height: 1.05rem;
+  background: hsl(var(--ocean-aqua) / 0.45);
+}
+
+.uw-orch__fan-bar {
+  display: block;
+  width: min(100%, 16rem);
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    hsl(var(--ocean-aqua) / 0.35) 12%,
+    hsl(var(--ocean-aqua) / 0.35) 88%,
+    transparent 100%
+  );
+}
+
+.uw-orch__sessions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 520px) {
+  .uw-orch__sessions {
+    /* minmax(0,1fr) was crushing labels; give each chip real room to wrap. */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+  }
+}
+
+.uw-orch__session {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-width: 0;
+  height: 100%;
+  padding: 0.85rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--landing-border) / 0.22);
+  background: hsl(0 0% 0% / 0.22);
+}
+
+.dark .uw-orch__session {
+  border-color: hsl(210 35% 30% / 0.42);
+  background: hsl(214 45% 6% / 0.85);
+}
+
+.uw-orch__session-mark {
+  display: grid;
+  place-items: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  margin-top: 0.1rem;
+  flex-shrink: 0;
+  color: hsl(var(--landing-ink) / 0.9);
+}
+
+.uw-orch__session-glyph,
+.uw-orch__session-glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.uw-orch__session-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.uw-orch__session-task {
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.uw-orch__session-agent {
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.68rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* ---- CLI: scripts, CI, external systems (own section + terminal) ----------- */
+
+.uw-cli {
+  position: relative;
+  z-index: 10;
+  padding: var(--uw-section-pad-y) var(--uw-section-pad-x);
+}
+
+.uw-cli__inner {
+  width: var(--site-content-width);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--uw-stack-gap);
+}
+
+.uw-cli__header {
+  display: flex;
+  max-width: 42rem;
+  flex-direction: column;
+  gap: var(--uw-header-gap);
+}
+
+.uw-cli__title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: var(--uw-title-size);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: var(--uw-title-lh);
+  text-wrap: balance;
+}
+
+.uw-cli__body {
+  margin: 0;
+  max-width: 52ch;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-body-size);
+  line-height: var(--uw-body-lh);
+}
+
+.uw-cli__terminal {
+  width: min(50rem, 100%);
+  margin-inline: auto;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid hsl(var(--landing-border) / 0.28);
+  background: #070b12;
+}
+
+.dark .uw-cli__terminal {
+  border-color: hsl(210 35% 26% / 0.5);
+}
+
+.uw-cli__chrome {
+  display: flex;
+  align-items: center;
+  padding: 0.7rem 1.1rem;
+  border-bottom: 1px solid hsl(210 30% 22% / 0.55);
+  background: hsl(214 40% 10% / 0.95);
+}
+
+.uw-cli__chrome-title {
+  color: hsl(205 18% 58%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.uw-cli__body-term {
+  margin: 0;
+  padding: 1.25rem 1.3rem 1.4rem;
+  overflow-x: auto;
+}
+
+.uw-cli__body-term code {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: clamp(0.8rem, 1.5vw, 0.9rem);
+  line-height: 1.55;
+}
+
+.uw-cli__group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* Says WHERE the next command runs (remote machine vs. anywhere). Prose, so it
+   must escape the `pre` white-space it would otherwise inherit — on a phone the
+   caption is wider than the terminal and would be clipped. */
+.uw-cli__caption {
+  color: hsl(205 16% 52%);
+  user-select: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.uw-cli__group + .uw-cli__group:has(.uw-cli__caption) {
+  margin-top: 0.6rem;
+}
+
+.uw-cli__line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.55rem 0.65rem;
+  min-width: min(36rem, 100%);
+}
+
+.uw-cli__prompt {
+  color: hsl(168 55% 48%);
+  font-weight: 600;
+  user-select: none;
+}
+
+.uw-cli__cmd {
+  min-width: 0;
+  color: hsl(210 25% 90%);
+  white-space: pre;
+}
+
+@media (max-width: 639px) {
+  .uw-cli__cmd {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ---- Subscriptions / bring-your-own accounts -------------------------------- */
+
+.uw-subs {
+  position: relative;
+  z-index: 10;
+  padding: var(--uw-section-pad-y) var(--uw-section-pad-x);
+}
+
+.uw-subs__inner {
+  width: var(--site-content-width);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--uw-stack-gap);
+}
+
+.uw-subs__header {
+  display: flex;
+  max-width: 44rem;
+  flex-direction: column;
+  gap: var(--uw-header-gap);
+}
+
+.uw-subs__eyebrow {
+  margin: 0;
+  color: hsl(var(--ocean-aqua));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-eyebrow-size);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.uw-subs__title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: var(--uw-title-size);
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: var(--uw-title-lh);
+  text-wrap: balance;
+}
+
+.uw-subs__body {
+  margin: 0;
+  max-width: 52ch;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-body-size);
+  line-height: var(--uw-body-lh);
+}
+
+.uw-subs__providers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(1rem, 2.4vw, 1.35rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 760px) {
+  .uw-subs__providers {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.uw-subs__provider {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: clamp(1.2rem, 2.5vw, 1.55rem);
+  border-radius: 16px;
+  background: hsl(var(--landing-ink) / 0.04);
+}
+
+.dark .uw-subs__provider {
+  background: hsl(206 55% 12% / 0.42);
+}
+
+.uw-subs__provider-mark {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 11px;
+  background: hsl(var(--landing-surface-1) / 0.55);
+  color: hsl(var(--landing-ink) / 0.88);
+}
+
+.dark .uw-subs__provider-mark {
+  background: hsl(212 40% 14% / 0.7);
+  color: hsl(205 45% 90% / 0.9);
+}
+
+.uw-subs__provider-glyph {
+  display: grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.uw-subs__provider-glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.uw-subs__provider-fallback {
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+
+.uw-subs__provider-label {
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.uw-subs__provider-hint {
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+/* ACP logo wall: "any coding agent that speaks ACP plugs in". */
+.uw-subs__wall {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.35rem, 3vh, 1.85rem);
+  padding-top: clamp(2rem, 4.5vh, 2.85rem);
+  margin-top: clamp(0.35rem, 1vh, 0.75rem);
+  border-top: 1px solid hsl(var(--landing-border) / 0.18);
+}
+
+.dark .uw-subs__wall {
+  border-top-color: hsl(210 35% 28% / 0.3);
+}
+
+.uw-subs__wall-head {
+  display: flex;
+  max-width: 56ch;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.uw-subs__wall-title {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: clamp(1.2rem, 2.15vw, 1.5rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.uw-subs__wall-body {
+  margin: 0;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-body-size);
+  line-height: var(--uw-body-lh);
+}
+
+.uw-subs__note {
+  margin: 0;
+  max-width: 54ch;
+  color: hsl(var(--landing-ink-muted) / 0.9);
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.95rem;
+  line-height: 1.55;
+}
+
+/* ---- Closing CTA (slogan + platform download) ------------------------------ */
+
+.uw-cta {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 10;
+  display: flex;
+  min-height: 100svh;
+  align-items: center;
+  padding: clamp(6rem, 16vh, 10rem) var(--uw-section-pad-x) clamp(4.5rem, 12vh, 7.5rem);
+}
+
+.uw-cta__inner {
+  width: min(42rem, var(--site-content-width));
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.15rem;
+  text-align: center;
+}
+
+.uw-cta__slogan {
+  margin: 0;
+  color: hsl(var(--landing-ink));
+  font-family: var(--lody-docs-font-heading);
+  font-size: clamp(2.05rem, 4.6vw, 3rem);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+.uw-cta__lead {
+  margin: 0;
+  max-width: 38ch;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: var(--uw-body-size);
+  line-height: var(--uw-body-lh);
+}
+
+.uw-cta__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+  margin-top: 1.15rem;
+  width: 100%;
+}
+
+.uw-cta__primary {
+  min-width: min(18rem, 100%);
+  justify-content: center;
+  text-decoration: none;
+}
+
+/* Ghost button under the primary CTA — same width so the pair reads as one stack. */
+.uw-cta__book-call {
+  min-width: min(18rem, 100%);
+  justify-content: center;
+  text-decoration: none;
+}
+
+.uw-cta__secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem 0.7rem;
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.92rem;
+}
+
+.uw-cta__secondary a {
+  color: hsl(var(--landing-ink-muted));
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.uw-cta__secondary a:hover {
+  color: hsl(var(--ocean-aqua));
+}
+
+.uw-cta__dot {
+  color: hsl(var(--landing-ink-muted) / 0.55);
+}

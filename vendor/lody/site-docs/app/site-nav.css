@@ -1,0 +1,359 @@
+.site-nav {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 50;
+  height: 64px;
+  border-bottom: 1px solid hsl(var(--landing-border, 214 32% 91%) / 0.72);
+  background: hsl(var(--landing-surface-1, 0 0% 100%) / 0.86);
+  color: hsl(var(--landing-ink, 0 0% 10%));
+  backdrop-filter: saturate(1.3) blur(12px);
+}
+
+.site-nav__inner {
+  display: flex;
+  align-items: center;
+  width: var(--site-content-width);
+  height: 100%;
+  margin: 0 auto;
+}
+
+.site-nav__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-right: auto;
+  color: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.site-nav__brand img {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.site-nav__right,
+.site-nav__links,
+.site-nav__actions {
+  display: flex;
+  align-items: center;
+}
+
+.site-nav__right {
+  justify-content: flex-end;
+  gap: 1.25rem;
+  margin-left: auto;
+}
+
+.site-nav__links,
+.site-nav__actions {
+  gap: 1.25rem;
+}
+
+@media (max-width: 1100px) {
+  .site-nav__right,
+  .site-nav__links,
+  .site-nav__actions {
+    gap: 0.9rem;
+  }
+}
+
+.site-nav__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--landing-ink-muted, 215 16% 38%));
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+/* Single-icon theme toggle: a clipped window with a vertical icon track that
+   slides on click (sun <-> moon), to match the minimal, flat nav. */
+.site-nav__theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--landing-ink-muted, 215 16% 38%));
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.site-nav__theme-toggle:hover {
+  color: hsl(var(--landing-ink, 0 0% 10%));
+  background: hsl(var(--landing-ink, 0 0% 10%) / 0.06);
+}
+
+.site-nav__theme-window {
+  display: block;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+}
+
+.site-nav__theme-track {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.42s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.site-nav__theme-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+/* Light shows the sun (top); dark slides the track up to reveal the moon. */
+.site-nav__theme-toggle[data-theme='dark'] .site-nav__theme-track {
+  transform: translateY(-18px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-nav__theme-track {
+    transition: none;
+  }
+}
+
+.site-nav__link:hover {
+  color: hsl(var(--landing-ink, 0 0% 10%));
+}
+
+/* Icon-only social link (Discord). The svg fills with currentColor and inherits
+   the muted/hover link colors above. */
+.site-nav__social svg {
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.site-nav__divider {
+  width: 1px;
+  height: 18px;
+  background: hsl(var(--landing-border, 214 32% 91%));
+}
+
+/* Mobile menu primitives — hidden on desktop, revealed at <= 768px. */
+.site-nav__toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid hsl(var(--landing-border, 214 32% 91%));
+  border-radius: 10px;
+  background: hsl(var(--landing-surface-2, 210 40% 98%) / 0.72);
+  color: hsl(var(--landing-ink, 0 0% 10%));
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.site-nav__toggle:hover {
+  border-color: hsl(var(--landing-primary, 217 91% 60%) / 0.45);
+}
+
+.site-nav__toggle svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.site-nav__menu,
+.site-nav__backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .site-nav__links,
+  .site-nav__desktop {
+    display: none;
+  }
+
+  .site-nav__toggle {
+    display: inline-flex;
+  }
+
+  .site-nav__right {
+    gap: 0.6rem;
+  }
+
+  .site-nav__actions {
+    gap: 0.55rem;
+  }
+
+  /* When open: bar + panel read as one frosted sheet (no hard double-band). */
+  .site-nav[data-open='true'] {
+    border-bottom-color: transparent;
+    background: hsl(var(--landing-surface-1, 0 0% 100%) / 0.88);
+    -webkit-backdrop-filter: saturate(1.25) blur(18px);
+    backdrop-filter: saturate(1.25) blur(18px);
+  }
+
+  /* Dropdown panel — continuous with the bar, soft bottom edge. */
+  .site-nav__menu {
+    position: absolute;
+    inset: 100% 0 auto;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0.25rem 0.75rem 1rem;
+    border: 0;
+    border-radius: 0 0 18px 18px;
+    background: hsl(var(--landing-surface-1, 0 0% 100%) / 0.88);
+    box-shadow:
+      0 1px 0 hsl(var(--landing-border, 214 32% 91%) / 0.35) inset,
+      0 18px 40px hsl(210 40% 8% / 0.14);
+    -webkit-backdrop-filter: saturate(1.25) blur(18px);
+    backdrop-filter: saturate(1.25) blur(18px);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-6px);
+    transition:
+      opacity 0.22s ease,
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      visibility 0.22s ease;
+  }
+
+  .site-nav__menu[data-open='true'] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  .site-nav__menu-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .site-nav__menu-link {
+    display: flex;
+    align-items: center;
+    padding: 0.85rem 0.9rem;
+    border-radius: 12px;
+    color: hsl(var(--landing-ink, 0 0% 10%));
+    font-size: 1.02rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    text-decoration: none;
+    transition:
+      background 0.18s ease,
+      color 0.18s ease;
+  }
+
+  .site-nav__menu-link:hover,
+  .site-nav__menu-link:active {
+    background: hsl(var(--landing-ink, 0 0% 10%) / 0.05);
+    color: hsl(var(--landing-primary, 217 91% 60%));
+  }
+
+  .site-nav__menu-footer {
+    display: flex;
+    align-items: center;
+    gap: 1.35rem;
+    margin-top: 0.35rem;
+    padding: 0.75rem 0.9rem 0.15rem;
+    border-top: 1px solid hsl(var(--landing-border, 214 32% 91%) / 0.45);
+  }
+
+  .site-nav__menu-secondary {
+    color: hsl(var(--landing-ink-muted, 215 16% 38%));
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: color 0.18s ease;
+  }
+
+  .site-nav__menu-secondary:hover {
+    color: hsl(var(--landing-ink, 0 0% 10%));
+  }
+
+  .site-nav__menu-social {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .site-nav__menu-social svg {
+    width: 1.35rem;
+    height: 1.35rem;
+  }
+
+  /*
+   * Scrim under the sheet: blur the page, soft vertical wash — not a flat
+   * ink slab that hard-cuts the hero. Outside the header; top: 64px clears the bar.
+   */
+  .site-nav__backdrop {
+    position: fixed;
+    inset: 64px 0 0;
+    z-index: 45;
+    display: block;
+    padding: 0;
+    border: 0;
+    cursor: pointer;
+    background: linear-gradient(
+      to bottom,
+      hsl(214 40% 8% / 0.28) 0%,
+      hsl(214 40% 8% / 0.18) 35%,
+      hsl(214 40% 8% / 0.08) 100%
+    );
+    -webkit-backdrop-filter: blur(10px) saturate(0.95);
+    backdrop-filter: blur(10px) saturate(0.95);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      opacity 0.22s ease,
+      visibility 0.22s ease;
+  }
+
+  .site-nav__backdrop[data-open='true'] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+  }
+}
+
+/* Light theme: cooler wash so the scrim doesn't go muddy-grey. */
+html:not(.dark) .site-nav__backdrop {
+  background: linear-gradient(
+    to bottom,
+    hsl(210 30% 20% / 0.16) 0%,
+    hsl(210 30% 20% / 0.1) 40%,
+    hsl(210 30% 20% / 0.04) 100%
+  );
+}
+
+html.dark .site-nav__backdrop {
+  background: linear-gradient(
+    to bottom,
+    hsl(214 55% 4% / 0.45) 0%,
+    hsl(214 55% 4% / 0.28) 40%,
+    hsl(214 55% 4% / 0.12) 100%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-nav__link,
+  .site-nav__toggle,
+  .site-nav__menu,
+  .site-nav__menu-link,
+  .site-nav__menu-secondary,
+  .site-nav__backdrop {
+    transition: none;
+  }
+}

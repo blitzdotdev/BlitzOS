@@ -1,0 +1,26 @@
+---
+title: '20260707'
+version: 0.67.2
+date: 2026-07-07
+description: Added Claude Code fast mode, background and scheduled tasks, a GLM Claude Code provider preset, a settings cache reset, a new Codex/Claude binary management scheme, and a faster send/stop pipeline.
+---
+### New
+
+- Claude Code now supports fast mode.
+- Claude Code now supports background tasks and scheduled tasks.
+- Added a GLM Claude Code provider preset.
+- Added a Clear Cache option in Settings to reset local data anomalies that may occur during version migrations.
+
+### Fixes and Improvements
+
+- New binary management scheme for Codex and Claude, reducing usage issues caused by environment differences. Please refresh again under Settings → Agent.
+- Optimized the send and stop message pipeline — it's faster now.
+- Improved the data sync strategy.
+- Fixed an issue where viewing a diff or file sometimes failed.
+- Fixed the Add button being unclickable for overly long project paths.
+- On Windows, the app title bar color now follows the theme.
+- Fixed the keyboard not being dismissible in the mobile web version.
+- Fixed images in conversations that sometimes could not be opened.
+- Added a bug report entry to the mobile Settings page.
+- Fixed a failed redirect when signing in on Linux.
+- Opening an already-open project in Zed now focuses the existing window instead of opening a new one.

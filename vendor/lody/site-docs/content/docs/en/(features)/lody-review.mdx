@@ -1,0 +1,68 @@
+---
+title: Lody Review
+description: Turn an agent-generated code review into an interactive, shareable HTML report with lody review, without signing in to Lody.
+---
+
+# Lody Review
+
+`lody review` turns a structured code review into a self-contained HTML report. It runs locally
+against your Git repository, does not require a Lody account, and opens the result directly from a
+`file://` URL without starting a server.
+
+## Create a review
+
+The simplest workflow is to ask a coding agent to run the whole process:
+
+```text
+Use `npx lody review` to help me review <pull-request-url>.
+```
+
+The underlying steps are:
+
+1. Print the authoritative review format:
+
+   ```bash
+   npx lody review prompt
+   ```
+
+2. Ask the agent to inspect the target branch or pull request and write a `.review.md` file that
+   follows the printed format.
+3. Render and open the report:
+
+   ```bash
+   npx lody review <name>.review.md
+   ```
+
+By default, the generated `.review.html` is written under the system temporary directory so it
+does not accidentally become part of the repository. The CLI prints its absolute path so you can
+reopen, move, or share the file.
+
+## What the report contains
+
+The report groups related changes, renders file diffs, links findings to their relevant lines, and
+supports severity levels and review checklists. You can also add comments while reading the report
+and copy them as Markdown.
+
+## Requirements
+
+- Run the command inside the reviewed Git working tree, or pass `--repo <dir>`.
+- Commits referenced by the review must exist locally. Fetch or check out the pull request branch
+  before rendering.
+- A `.review.md` file is resolved against the local repository in read-only mode.
+- A previously exported `.review.json`, `.review.json.gz`, or `.review.json.br` snapshot is
+  self-contained and can be rendered without Git.
+
+The first render may download the matching review viewer. Lody verifies it and caches it locally
+for later use.
+
+## Options
+
+```bash
+npx lody review <file> --repo <dir>
+npx lody review <file> --output <report.html>
+npx lody review <file> --no-open
+```
+
+- `--repo` selects the repository used to resolve a `.review.md`.
+- `--output` overrides the generated HTML path.
+- `--no-open` writes the report without opening the browser.

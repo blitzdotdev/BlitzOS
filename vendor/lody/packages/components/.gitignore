@@ -1,0 +1,6 @@
+.env
+
+# Playwright outputs
+test-results/
+playwright-report/
+playwright/.cache/

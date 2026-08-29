@@ -1,0 +1,109 @@
+[
+  {
+    "id": "ceb01fb5-8e18-4670-aae1-532a2e29de44",
+    "role": "user",
+    "items": [
+      {
+        "type": "text",
+        "text": "Please do these three things in order:\n1. Run `echo \"hello from kimi\"` in the shell\n2. Read the file greeting.txt\n3. Replace \"Hello World\" with \"Hello Kimi\" in greeting.txt"
+      }
+    ],
+    "timestamp": "2026-04-15T05:44:53.271Z",
+    "read": true,
+    "userId": "user-1",
+    "fileDiff": []
+  },
+  {
+    "id": "a799cb00-0517-4b2c-ae4b-1d5368411b71",
+    "role": "assistant",
+    "items": [
+      {
+        "type": "tool_call",
+        "toolCallId": "9af4aaf7-028a-400d-8244-14282267c6f0/tool_cd154YnhE1jLMo9rKvqjMcQz",
+        "title": "Shell: echo \"hello from kimi\"",
+        "kind": "execute",
+        "status": "failed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "echo \"hello from kimi\"",
+            "args": []
+          },
+          {
+            "type": "terminal_output",
+            "output": "Error running tool: Internal error",
+            "stream": "combined"
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "9af4aaf7-028a-400d-8244-14282267c6f0/tool_tFStxxDEdMxe0Bpj76AtDyfg",
+        "title": "ReadFile: greeting.txt",
+        "kind": "read",
+        "status": "completed",
+        "locations": [
+          {
+            "path": "greeting.txt"
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "9af4aaf7-028a-400d-8244-14282267c6f0/tool_GkWOyZzc4cAMfXiKKCQF2hD7",
+        "title": "Shell: echo \"hello from kimi\"",
+        "kind": "execute",
+        "status": "failed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "echo \"hello from kimi\"",
+            "args": []
+          },
+          {
+            "type": "terminal_output",
+            "output": "Error running tool: Internal error",
+            "stream": "combined"
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "9af4aaf7-028a-400d-8244-14282267c6f0/tool_zgsUD7XBH2VwhNa1uutAdgs9",
+        "title": "StrReplaceFile: greeting.txt",
+        "kind": "edit",
+        "status": "completed",
+        "locations": [
+          {
+            "path": "/tmp/lody-e2e-kimi-story-1776231878674/greeting.txt"
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "9af4aaf7-028a-400d-8244-14282267c6f0/tool_0eYjxUnUR3wSWsDfmAvI319l",
+        "title": "Shell: echo \"hello from kimi\"",
+        "kind": "execute",
+        "status": "failed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "echo \"hello from kimi\"",
+            "args": []
+          },
+          {
+            "type": "terminal_output",
+            "output": "Error running tool: Internal error",
+            "stream": "combined"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "I was able to read `greeting.txt` and replace \"Hello World\" with \"Hello Kimi\". However, the `Shell` tool is currently failing with an internal error, so I couldn't run `echo \"hello from kimi\"`. The file edit succeeded, so `greeting.txt` now starts with \"Hello Kimi\"."
+      }
+    ],
+    "timestamp": "2026-04-15T05:44:53.301Z",
+    "fileDiff": []
+  }
+]

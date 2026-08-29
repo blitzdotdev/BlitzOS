@@ -1,0 +1,978 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'fumadocs-ui/css/ocean.css';
+@import 'fumadocs-ui/css/preset.css';
+@import './site-nav.css';
+@import './landing.css';
+@import './underwater.css';
+@import './control-plane.css';
+@import './marketing-shell.css';
+@import './download.css';
+@import './changelog.css';
+@import './blog.css';
+@import './reading-theme.css';
+
+@source '../../packages/components/src/**/*.{ts,tsx}';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-hover: hsl(var(--hover));
+  --color-hover-foreground: hsl(var(--hover-foreground));
+  --color-selection: hsl(var(--selection));
+  --color-selection-foreground: hsl(var(--selection-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-input-foreground: hsl(var(--input-foreground));
+  --color-input-placeholder: hsl(var(--input-placeholder));
+  --color-input-border: hsl(var(--input-border));
+  --color-ring: hsl(var(--ring));
+  --color-sidebar-background: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-foreground-muted: hsl(var(--sidebar-foreground-muted));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-hover: hsl(var(--sidebar-hover));
+  --color-sidebar-hover-foreground: hsl(var(--sidebar-hover-foreground));
+  --color-sidebar-selection: hsl(var(--sidebar-selection));
+  --color-sidebar-selection-foreground: hsl(var(--sidebar-selection-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  --color-button-secondary: hsl(var(--button-secondary));
+  --color-button-secondary-foreground: hsl(var(--button-secondary-foreground));
+  --color-button-secondary-hover: hsl(var(--button-secondary-hover));
+  --color-bottom-bar: hsl(var(--bottom-bar));
+  --color-bottom-bar-foreground: hsl(var(--bottom-bar-foreground));
+  --color-tab-bar: hsl(var(--tab-bar));
+  --color-tab-active: hsl(var(--tab-active));
+  --color-tab-active-foreground: hsl(var(--tab-active-foreground));
+  --color-tab-inactive: hsl(var(--tab-inactive));
+  --color-tab-inactive-foreground: hsl(var(--tab-inactive-foreground));
+  --color-tab-hover: hsl(var(--tab-hover));
+  --color-tab-hover-foreground: hsl(var(--tab-hover-foreground));
+  --color-tab-border: hsl(var(--tab-border));
+  --color-tab-active-accent: hsl(var(--tab-active-accent));
+  --color-status-info: hsl(var(--status-info));
+  --color-status-success: hsl(var(--status-success));
+  --color-status-warning: hsl(var(--status-warning));
+  --color-status-danger: hsl(var(--status-danger));
+  --color-status-merged: hsl(var(--status-merged));
+  --color-github-open: hsl(var(--github-open));
+  --color-github-merged: hsl(var(--github-merged));
+  --color-github-closed: hsl(var(--github-closed));
+  --color-github-addition: hsl(var(--github-addition));
+  --color-github-deletion: hsl(var(--github-deletion));
+  --color-code-added: hsl(var(--code-added));
+  --color-code-removed: hsl(var(--code-removed));
+  --color-landing-ink: hsl(var(--landing-ink));
+  --color-landing-ink-muted: hsl(var(--landing-ink-muted));
+  --color-landing-border: hsl(var(--landing-border));
+  --color-landing-surface-1: hsl(var(--landing-surface-1));
+  --color-landing-surface-2: hsl(var(--landing-surface-2));
+  --color-landing-surface-3: hsl(var(--landing-surface-3));
+  --color-landing-primary: hsl(var(--landing-primary));
+  --color-landing-primary-contrast: hsl(var(--landing-primary-contrast));
+  --font-body: var(--lody-docs-font-sans);
+  --font-heading: var(--lody-docs-font-heading);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+:root {
+  color-scheme: dark;
+  /* Shared content rail — matches `.site-nav__inner` left/right edges. */
+  --site-content-max: 1200px;
+  --site-content-width: min(var(--site-content-max), 92vw);
+  --lody-docs-font-sans:
+    Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --lody-docs-font-heading: Sora, var(--lody-docs-font-sans);
+  --lody-docs-font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    monospace;
+  --background: 222 55% 9.6%;
+  --foreground: 210 40% 96%;
+  --card: 220 54% 11.5%;
+  --card-foreground: 210 40% 96%;
+  --popover: 220 54% 11.5%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 210 90% 62%;
+  --primary-foreground: 220 50% 12%;
+  --secondary: 222 40% 16%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 220 38% 14%;
+  --muted-foreground: 216 18% 70%;
+  --hover: 220 44% 14%;
+  --hover-foreground: var(--foreground);
+  --selection: 220 44% 20%;
+  --selection-foreground: var(--foreground);
+  --destructive: 0 72% 52%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 220 32% 18%;
+  --input: 220 32% 18%;
+  --input-foreground: var(--foreground);
+  --input-placeholder: var(--muted-foreground);
+  --input-border: var(--border);
+  --ring: 210 90% 62%;
+  --sidebar-background: 222 55% 9.6%;
+  --sidebar-foreground: 210 40% 96%;
+  --sidebar-foreground-muted: 216 18% 70%;
+  --sidebar-primary: 210 90% 62%;
+  --sidebar-primary-foreground: 220 50% 12%;
+  --sidebar-hover: 220 44% 14%;
+  --sidebar-hover-foreground: var(--sidebar-foreground);
+  --sidebar-selection: 220 44% 20%;
+  --sidebar-selection-foreground: var(--sidebar-foreground);
+  --sidebar-border: 220 32% 18%;
+  --sidebar-ring: 210 90% 62%;
+  --button-secondary: var(--secondary);
+  --button-secondary-foreground: var(--secondary-foreground);
+  --button-secondary-hover: var(--hover);
+  --bottom-bar: 222 40% 12%;
+  --bottom-bar-foreground: 210 40% 96%;
+  --tab-bar: var(--muted);
+  --tab-active: var(--background);
+  --tab-active-foreground: var(--foreground);
+  --tab-inactive: var(--muted);
+  --tab-inactive-foreground: var(--muted-foreground);
+  --tab-hover: var(--hover);
+  --tab-hover-foreground: var(--foreground);
+  --tab-border: var(--border);
+  --tab-active-accent: var(--primary);
+  --status-info: var(--primary);
+  --status-success: 151 60% 52%;
+  --status-warning: 43 96% 56%;
+  --status-danger: var(--destructive);
+  --status-merged: 262 90% 74%;
+  --github-open: 128 49% 49%;
+  --github-merged: 262 89% 71%;
+  --github-closed: 3 93% 63%;
+  --github-addition: var(--github-open);
+  --github-deletion: var(--github-closed);
+  --code-added: var(--github-addition);
+  --code-removed: var(--github-deletion);
+  --radius: 0.25rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --shadow-xs: 0px 2px 4px 0px hsl(0 0% 0% / 0.05);
+  --shadow-sm: 0px 2px 4px 0px hsl(0 0% 0% / 0.1), 0px 1px 2px -1px hsl(0 0% 0% / 0.1);
+  --shadow-md: 0px 2px 4px 0px hsl(0 0% 0% / 0.1), 0px 2px 4px -1px hsl(0 0% 0% / 0.1);
+  --shadow-lg: 0px 2px 4px 0px hsl(0 0% 0% / 0.1), 0px 4px 6px -1px hsl(0 0% 0% / 0.1);
+  --z-dialog-overlay: 70;
+  --z-dialog: 80;
+  --z-command-palette: 85;
+  --z-tooltip: 90;
+  --z-toast: 100;
+}
+
+/* ---- Embedded product preview theme ---------------------------------------
+   The Hero/feature previews render REAL app components, which expect the app's
+   own design tokens. Scope those tokens to `.lody-app-preview` so they never
+   leak into (or collide with) the landing's `--landing-*` system, and key the
+   dark set off the page-level `.dark` class so the preview tracks the site theme
+   toggle. Values mirror packages/components/src/tailwind/index.css. */
+.lody-app-preview,
+.lody-app-preview-portal-light {
+  color-scheme: light;
+  --background: 0 0% 100%;
+  --foreground: 0 0% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 10%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 0 0% 10%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 38%;
+  --hover: 212 100% 95%;
+  --hover-foreground: var(--foreground);
+  --selection: 212 100% 90%;
+  --selection-foreground: var(--foreground);
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 214 32% 91%;
+  --input: 0 0% 100%;
+  --input-foreground: var(--foreground);
+  --input-placeholder: var(--muted-foreground);
+  --input-border: var(--border);
+  --ring: 217 91% 60%;
+  --sidebar-background: 0 0% 100%;
+  --sidebar-foreground: 0 0% 10%;
+  --sidebar-foreground-muted: 215 16% 38%;
+  --sidebar-primary: 217 91% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-hover: 212 100% 95%;
+  --sidebar-hover-foreground: var(--sidebar-foreground);
+  --sidebar-selection: 212 100% 90%;
+  --sidebar-selection-foreground: var(--sidebar-foreground);
+  --sidebar-border: 214 32% 91%;
+  --sidebar-ring: 217 91% 60%;
+  --button-secondary: var(--secondary);
+  --button-secondary-foreground: var(--secondary-foreground);
+  --button-secondary-hover: var(--hover);
+  --bottom-bar: 210 40% 98%;
+  --bottom-bar-foreground: 0 0% 10%;
+  --tab-bar: var(--muted);
+  --tab-active: var(--background);
+  --tab-active-foreground: var(--foreground);
+  --tab-inactive: var(--muted);
+  --tab-inactive-foreground: var(--muted-foreground);
+  --tab-hover: var(--hover);
+  --tab-hover-foreground: var(--foreground);
+  --tab-border: var(--border);
+  --tab-active-accent: var(--primary);
+  --status-info: var(--primary);
+  --status-success: 151 55% 42%;
+  --status-warning: 38 92% 50%;
+  --status-danger: var(--destructive);
+  --status-merged: 262 83% 58%;
+  --github-open: 137 66% 30%;
+  --github-merged: 261 69% 59%;
+  --github-closed: 356 72% 47%;
+  --github-addition: var(--github-open);
+  --github-deletion: var(--github-closed);
+  --code-added: var(--github-addition);
+  --code-removed: var(--github-deletion);
+}
+
+.dark .lody-app-preview,
+.lody-app-preview-portal-dark {
+  color-scheme: dark;
+  --background: 222 55% 9.6%;
+  --foreground: 210 40% 96%;
+  --card: 220 54% 11.5%;
+  --card-foreground: 210 40% 96%;
+  --popover: 220 54% 11.5%;
+  --popover-foreground: 210 40% 96%;
+  --primary: 210 90% 62%;
+  --primary-foreground: 220 50% 12%;
+  --secondary: 222 40% 16%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 220 38% 14%;
+  --muted-foreground: 216 18% 70%;
+  --hover: 220 44% 14%;
+  --hover-foreground: var(--foreground);
+  --selection: 220 44% 20%;
+  --selection-foreground: var(--foreground);
+  --destructive: 0 72% 52%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 220 32% 18%;
+  --input: 220 32% 18%;
+  --input-foreground: var(--foreground);
+  --input-placeholder: var(--muted-foreground);
+  --input-border: var(--border);
+  --ring: 210 90% 62%;
+  --sidebar-background: 222 55% 9.6%;
+  --sidebar-foreground: 210 40% 96%;
+  --sidebar-foreground-muted: 216 18% 70%;
+  --sidebar-primary: 210 90% 62%;
+  --sidebar-primary-foreground: 220 50% 12%;
+  --sidebar-hover: 220 44% 14%;
+  --sidebar-hover-foreground: var(--sidebar-foreground);
+  --sidebar-selection: 220 44% 20%;
+  --sidebar-selection-foreground: var(--sidebar-foreground);
+  --sidebar-border: 220 32% 18%;
+  --sidebar-ring: 210 90% 62%;
+  --button-secondary: var(--secondary);
+  --button-secondary-foreground: var(--secondary-foreground);
+  --button-secondary-hover: var(--hover);
+  --bottom-bar: 222 40% 12%;
+  --bottom-bar-foreground: 210 40% 96%;
+  --tab-bar: var(--muted);
+  --tab-active: var(--background);
+  --tab-active-foreground: var(--foreground);
+  --tab-inactive: var(--muted);
+  --tab-inactive-foreground: var(--muted-foreground);
+  --tab-hover: var(--hover);
+  --tab-hover-foreground: var(--foreground);
+  --tab-border: var(--border);
+  --tab-active-accent: var(--primary);
+  --status-info: var(--primary);
+  --status-success: 151 60% 52%;
+  --status-warning: 43 96% 56%;
+  --status-danger: var(--destructive);
+  --status-merged: 262 90% 74%;
+  --github-open: 128 49% 49%;
+  --github-merged: 262 89% 71%;
+  --github-closed: 3 93% 63%;
+  --github-addition: var(--github-open);
+  --github-deletion: var(--github-closed);
+  --code-added: var(--github-addition);
+  --code-removed: var(--github-deletion);
+}
+
+/* Landing dive: deepen the embedded preview into the deep-ocean palette so it
+   reads as part of the abyssal scene (the mirror tokens above are too light/slate
+   to sit inside the point cloud) and retune its accent to the scene's
+   bioluminescent cyan. Scoped to the landing so the mirror tokens stay intact. */
+.dark .underwater-reveal .lody-app-preview {
+  --background: 214 64% 3.5%;
+  --card: 213 54% 5.5%;
+  --card-foreground: 205 45% 94%;
+  --popover: 213 54% 5.5%;
+  --secondary: 211 44% 9%;
+  --secondary-foreground: 205 45% 92%;
+  --muted: 211 42% 8%;
+  --muted-foreground: 205 22% 66%;
+  --hover: 206 46% 9.5%;
+  --selection: 200 55% 16%;
+  --border: 209 36% 11%;
+  --input: 209 36% 9.5%;
+  --primary: 197 95% 60%;
+  --primary-foreground: 213 60% 8%;
+  --ring: 197 95% 60%;
+  --sidebar-background: 215 68% 2%;
+  --sidebar-foreground-muted: 205 22% 64%;
+  --sidebar-primary: 197 95% 60%;
+  --sidebar-hover: 206 46% 8.5%;
+  --sidebar-selection: 200 55% 15%;
+  --sidebar-border: 209 36% 9%;
+  --bottom-bar: 214 52% 4%;
+}
+
+/* Landing dive: Radix portals that DON'T carry the `.lody-app-preview-portal-*`
+   class (e.g. the real WorkdirModeSelector's DropdownMenuContent) still need the
+   app tokens, since they mount at <body> outside the scoped preview. Provide
+   defaults on the popper wrapper; classed popovers override them one level down. */
+html.underwater-landing-page [data-radix-popper-content-wrapper] {
+  --z-popover: 60;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 10%;
+  --background: 0 0% 100%;
+  --foreground: 0 0% 10%;
+  --border: 214 32% 91%;
+  --hover: 212 100% 95%;
+  --hover-foreground: 0 0% 10%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 38%;
+}
+
+/* Menus use menuSurfaceStyle → hsl(var(--background)). Keep --background in
+   lockstep with the power-demo ocean surface so merge-method (and other) menus
+   match the PR card instead of the docs-shell slate. */
+html.underwater-landing-page.dark [data-radix-popper-content-wrapper] {
+  --background: 214 64% 3.5%;
+  --foreground: 205 30% 92%;
+  --popover: 214 52% 7%;
+  --popover-foreground: 205 30% 92%;
+  --card: 214 52% 7%;
+  --card-foreground: 205 30% 92%;
+  --border: 214 32% 16%;
+  --hover: 214 40% 12%;
+  --hover-foreground: 205 30% 92%;
+  --muted: 214 40% 10%;
+  --muted-foreground: 210 18% 68%;
+  --primary: 194 90% 60%;
+  --primary-foreground: 210 84% 8%;
+  --ring: 194 90% 60%;
+  --destructive: 0 72% 55%;
+  --destructive-foreground: 0 0% 98%;
+  --status-danger: 0 72% 55%;
+}
+
+/* Landing dive: the classed selector popovers (BranchSelector, model/machine
+   selectors) carry `.lody-app-preview-portal-dark`, whose slate tokens are too
+   light to sit in the abyss. Deepen them to the same deep-ocean palette as the
+   embedded preview so the dropdowns match the app. Scoped to the landing page.
+   Also apply without requiring html.dark — power demos force a dark shell even
+   when the marketing page is light. */
+html.underwater-landing-page.dark .lody-app-preview-portal-dark,
+html.underwater-landing-page .lody-app-preview-portal-dark {
+  --background: 214 64% 3.5%;
+  --foreground: 205 30% 92%;
+  --card: 214 52% 7%;
+  --card-foreground: 205 30% 92%;
+  --popover: 214 52% 7%;
+  --popover-foreground: 205 30% 92%;
+  --primary: 194 90% 60%;
+  --primary-foreground: 210 84% 8%;
+  --secondary: 214 38% 12%;
+  --secondary-foreground: 205 30% 92%;
+  --muted: 214 40% 10%;
+  --muted-foreground: 210 18% 68%;
+  --hover: 214 40% 12%;
+  --hover-foreground: 205 30% 92%;
+  --selection: 200 55% 16%;
+  --selection-foreground: 205 30% 92%;
+  --border: 214 32% 16%;
+  --input: 214 32% 16%;
+  --input-border: 214 32% 16%;
+  --ring: 194 90% 60%;
+  --destructive: 0 72% 55%;
+  --destructive-foreground: 0 0% 98%;
+  --status-danger: 0 72% 55%;
+}
+
+/* Landing preview conversation scroller: keep scroll-pro behavior, but make
+   the native scrollbar fully transparent and zero-width so it never steals
+   layout space inside the embedded session view. */
+.lody-app-preview .chat-scrollbar {
+  overscroll-behavior: contain;
+  scrollbar-gutter: auto !important;
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+.lody-app-preview .chat-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+.lody-app-preview .chat-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.lody-app-preview .chat-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.lody-app-preview .chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: transparent;
+}
+
+.lody-app-preview .chat-scrollbar::-webkit-scrollbar-thumb:active {
+  background: transparent;
+}
+
+/* Landing preview mobile shell: MobileHomeScreen is a real app component whose
+   full app build gets these mobile-home rules from @lody/components/tailwind.
+   Keep only the embed-specific subset here, scoped to the preview. */
+
+/* Desktop-session embeds have no real notch — zero Konsta safe-area vars.
+   Inside the phone frame those vars are set on [data-landing-phone-frame]
+   and must cascade into .safe-areas (see override below). */
+.lody-app-preview .safe-areas {
+  --k-safe-area-top: 0px;
+  --k-safe-area-bottom: 0px;
+  --k-safe-area-left: 0px;
+  --k-safe-area-right: 0px;
+}
+
+.lody-app-preview [data-landing-phone-frame] .safe-areas {
+  --k-safe-area-top: inherit;
+  --k-safe-area-bottom: inherit;
+  --k-safe-area-left: inherit;
+  --k-safe-area-right: inherit;
+  --safe-area-top: inherit;
+  --safe-area-bottom: inherit;
+}
+
+.lody-app-preview .pt-safe-2 {
+  padding-top: calc(0.5rem + var(--k-safe-area-top, 0px));
+}
+
+.lody-app-preview .ps-safe-3 {
+  padding-inline-start: calc(0.75rem + var(--k-safe-area-left, 0px));
+}
+
+.lody-app-preview .pe-safe-3 {
+  padding-inline-end: calc(0.75rem + var(--k-safe-area-right, 0px));
+}
+
+.lody-app-preview .mobile-home-app {
+  --mobile-tabbar-height: 3.75rem;
+  --mobile-home-header-height: calc(3.25rem + var(--k-safe-area-top, 0px));
+}
+
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+  .lody-app-preview .mobile-home-glass {
+    background: hsl(var(--background) / 0.72);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+  }
+}
+
+@supports not ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
+  .lody-app-preview .mobile-home-glass {
+    background: hsl(var(--background) / 0.96);
+  }
+}
+
+.lody-app-preview .mobile-home-shell .hide-scrollbar {
+  scrollbar-width: none;
+}
+
+.lody-app-preview .mobile-home-shell .hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.lody-app-preview .mobile-tabbar-glass {
+  background: hsl(var(--card) / 0.72) !important;
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid hsl(var(--border) / 0.55);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 12px 32px -16px rgba(0, 0, 0, 0.22) !important;
+}
+
+@supports not ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
+  .lody-app-preview .mobile-tabbar-glass {
+    background: hsl(var(--card) / 0.96) !important;
+  }
+}
+
+/* Real app dock is `position: fixed` for the Capacitor shell. Inside the
+   landing phone / preview it must pin to the screen box — otherwise the FAB
+   paints against the full-width reveal frame and hangs outside the phone. */
+.lody-app-preview .mobile-workspace-dock,
+[data-landing-phone-frame] .mobile-workspace-dock {
+  position: absolute !important;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 30;
+}
+
+.lody-app-preview .mobile-home-shell button:focus-visible,
+.lody-app-preview .mobile-home-shell [role='button']:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+/* Desktop demos (worktree / diff / design): fixed design canvas 1120×760.
+   On roomy desktops the stage is that size and the shell is fluid. On phone,
+   tablet, and short laptops the stage fills the reveal slot and the shell is
+   contain-scaled so letterbox gutters stay transparent (point cloud shows
+   through) and the middle of the app is never cropped at rest. */
+.landing-app-preview-stage {
+  --ld-design-w: 1120px;
+  --ld-design-h: 760px;
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  height: var(--ld-design-h);
+  overflow: hidden;
+}
+
+.landing-desktop-demo-shell {
+  width: 100%;
+  height: 100%;
+}
+
+/*
+ * Compact stage breakpoint — keep in sync with underwater.css
+ * `@media (max-width: 1200px), (max-height: 960px)`.
+ * ~1000px-wide laptops and short viewports cannot host 1120×760 + chrome.
+ */
+@media (max-width: 1200px), (max-height: 960px) {
+  /*
+   * Playback chrome: no card fill / border / shadow — the whole vertical slot
+   * is the play area; letterbox gutters must show the underwater scene, not a
+   * solid --background slab.
+   */
+  .lody-app-preview.landing-app-preview--stage-demo {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-width: 100%;
+    background: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+  }
+
+  /* Full slot = play area (not a smaller AR-boxed rect floating mid-card). */
+  .lody-app-preview.landing-app-preview--stage-demo .landing-app-preview-stage,
+  .landing-app-preview-stage {
+    container-type: size;
+    flex: 1 1 auto;
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-width: none;
+    max-height: none;
+    overflow: hidden;
+    background: transparent !important;
+  }
+
+  /*
+   * Contain scale: fit 1120×760 fully inside the stage (no crop at rest).
+   * JS sets --ld-focus-tx/ty/total-s for Ken-Burns zoom with edge clamp.
+   * Pure-CSS fallback also centers the letterbox (not top-left 0,0) so the
+   * first paint before ResizeObserver matches the settled camera.
+   *
+   * Divisors MUST be lengths (`1120px`, not unitless `1120`): length/length
+   * yields a unitless number for `scale()`. length/number stays a length and
+   * invalidates the whole `transform` (computed as none) — which used to make
+   * tablet / ~1000px viewports clip instead of contain-scale. Phone demos
+   * masked the bug because JS always injected a numeric --ld-focus-total-s.
+   */
+  .landing-desktop-demo-shell {
+    --ld-base-s: min(calc(100cqw / 1120px), calc(100cqh / 760px));
+    --ld-total-s: var(--ld-focus-total-s, var(--ld-base-s));
+    /* Center letterbox: (stage - design·s) / 2 on each axis. */
+    --ld-tx: var(--ld-focus-tx, calc((100cqw - 1120px * var(--ld-base-s)) / 2));
+    --ld-ty: var(--ld-focus-ty, calc((100cqh - 760px * var(--ld-base-s)) / 2));
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: var(--ld-design-w);
+    height: var(--ld-design-h);
+    transform: translate(var(--ld-tx), var(--ld-ty)) scale(var(--ld-total-s));
+    transform-origin: top left;
+    transition: transform 0.85s cubic-bezier(0.22, 0.61, 0.36, 1);
+    will-change: transform;
+    /* Shell paint is the app chrome only — no outer fill. */
+    background: transparent;
+  }
+
+  .landing-app-preview-stage[data-focus-zoom='true'] .landing-desktop-demo-shell {
+    transition-timing-function: cubic-bezier(0.33, 0.1, 0.25, 1);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .landing-desktop-demo-shell {
+      transition: none;
+    }
+  }
+}
+
+/* ---- Landing phone stage (feature-tab mobile demo) -------------------------
+   Design canvas is ~372×760 (same height as the desktop 1120×760 stage). Desktop
+   keeps that size; on short/narrow viewports the stage is fitted into the
+   reveal-frame container (container query units) while preserving aspect ratio,
+   and the design canvas is transform-scaled into the fitted box so chrome + UI
+   stay pixel-consistent. */
+.landing-phone-stage {
+  --lp-scale: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Desktop morph: full-width shell → design-size phone. */
+.landing-phone-stage--wide {
+  width: 100%;
+  height: var(--lp-phone-h);
+}
+
+.landing-phone-stage--narrowed {
+  width: var(--lp-phone-w);
+  height: var(--lp-phone-h);
+}
+
+.landing-phone-stage__device {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%) scale(var(--lp-scale));
+  transform-origin: top center;
+}
+
+/* Phone-slot fitting lives under the compact-stage media query with the reveal
+   layout — see underwater.css (`max-width: 1200px` / `max-height: 960px`;
+   `.underwater-reveal__frame` becomes a size container). */
+
+/* Root scrolling drives docs page height.
+   Rejected: scrollbar-gutter keeps a permanent gutter, so content is still narrower. */
+html {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+html.lody-landing,
+.landing-page-root,
+.download-page,
+.lody-blog-shell,
+.lody-changelog-shell {
+  color-scheme: light;
+  --landing-bg: 0 0% 100%;
+  --landing-ink: 0 0% 10%;
+  --landing-ink-muted: 215 16% 38%;
+  --landing-border: 214 32% 91%;
+  --landing-surface-1: 0 0% 100%;
+  --landing-surface-2: 210 40% 98%;
+  --landing-surface-3: 210 40% 96%;
+  --landing-surface-4: 214 50% 97%;
+  --landing-surface-5: 216 50% 98%;
+  --landing-primary: 217 91% 60%;
+  --landing-primary-contrast: 0 0% 100%;
+  --landing-glow-1: 217 91% 60%;
+  --landing-glow-2: 199 89% 48%;
+  --landing-shadow: 0 32px 80px hsl(0 0% 0% / 0.12);
+  --landing-shadow-soft: 0 18px 36px hsl(0 0% 0% / 0.12);
+  --landing-shadow-button: 0 20px 40px hsl(217 91% 60% / 0.25);
+  --landing-hero-sun-opacity: 0.52;
+  --landing-hero-caustics-opacity: 0.24;
+  --landing-hero-sun-blend-mode: multiply;
+  --landing-hero-caustics-blend-mode: soft-light;
+}
+
+html.lody-landing.dark,
+.dark .landing-page-root,
+.dark .download-page,
+.dark .lody-blog-shell,
+.dark .lody-changelog-shell {
+  color-scheme: dark;
+  --landing-bg: 222 55% 9.6%;
+  --landing-ink: 210 40% 96%;
+  --landing-ink-muted: 216 18% 70%;
+  --landing-border: 220 32% 18%;
+  --landing-surface-1: 222 55% 9.6%;
+  --landing-surface-2: 220 54% 11.5%;
+  --landing-surface-3: 222 40% 16%;
+  --landing-surface-4: 219 80% 7%;
+  --landing-surface-5: 218 70% 12%;
+  --landing-primary: 210 90% 62%;
+  --landing-primary-contrast: 220 50% 12%;
+  --landing-glow-1: 210 90% 62%;
+  --landing-glow-2: 197 85% 58%;
+  --landing-shadow: 0 32px 80px hsl(0 0% 0% / 0.6);
+  --landing-shadow-soft: 0 18px 36px hsl(0 0% 0% / 0.45);
+  --landing-shadow-button: 0 20px 40px hsl(210 90% 62% / 0.35);
+  --landing-hero-sun-opacity: 0.52;
+  --landing-hero-caustics-opacity: 0.22;
+  --landing-hero-sun-blend-mode: screen;
+  --landing-hero-caustics-blend-mode: screen;
+}
+
+/* Marketing surfaces (price / download / changelog) always use the homepage
+   abyss brand — higher specificity than the generic landing-page-root tokens. */
+.landing-page-root.marketing-shell,
+.download-page.marketing-shell,
+.lody-changelog-shell.marketing-shell,
+.cl-shell.marketing-shell {
+  color-scheme: dark;
+  /* Let MarketingAtmosphere own the field (not a flat solid). */
+  background: transparent;
+  background-color: transparent;
+}
+
+/* While a marketing page is mounted, body matches atmosphere theme. */
+html.marketing-atmosphere-active body {
+  background-color: rgb(158, 199, 234);
+}
+
+html.marketing-atmosphere-active.dark body,
+html.dark.marketing-atmosphere-active body {
+  background-color: rgb(7, 24, 43);
+}
+
+html.lody-landing body {
+  background-color: hsl(var(--landing-bg));
+  overflow-x: clip;
+}
+
+/* Landing: clamp rubber-band past the footer; demo shells must not inflate height. */
+html.underwater-landing-page {
+  overscroll-behavior-y: none;
+}
+
+html.underwater-landing-page body {
+  overflow-x: clip;
+  overscroll-behavior-y: none;
+}
+
+body {
+  margin: 0;
+  font-family: var(--lody-docs-font-sans);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--lody-docs-font-heading);
+  letter-spacing: -0.025em;
+}
+
+.lody-landing-shell {
+  position: relative;
+  overflow: hidden;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      920px 520px at 12% -4%,
+      color-mix(in oklab, var(--color-fd-primary) 30%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      820px 420px at 88% 8%,
+      color-mix(in oklab, var(--color-fd-accent) 30%, transparent),
+      transparent 62%
+    ),
+    var(--color-fd-background);
+}
+
+.lody-landing-shell::before {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  background-image:
+    linear-gradient(
+      color-mix(in oklab, var(--color-fd-foreground) 7%, transparent) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--color-fd-foreground) 7%, transparent) 1px,
+      transparent 1px
+    );
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, black, transparent 72%);
+}
+
+.lody-landing-shell > * {
+  position: relative;
+}
+
+.lody-landing-glow-card {
+  position: relative;
+}
+
+.lody-landing-glow-card::before {
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  content: '';
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--color-fd-primary) 45%, transparent),
+    transparent 42%,
+    color-mix(in oklab, var(--color-fd-accent) 34%, transparent)
+  );
+  filter: blur(22px);
+  opacity: 0.65;
+}
+
+/* ---------------------------------------------------------------------------
+ * Docs sidebar footer — quiet community links + sliding theme toggle.
+ * Replaces fumadocs' default dual sun/moon control strip.
+ * ------------------------------------------------------------------------- */
+.docs-sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 2.25rem;
+  padding-top: 0.15rem;
+}
+
+.docs-sidebar-footer__links {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.docs-sidebar-footer__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  color: var(--color-fd-muted-foreground);
+  text-decoration: none;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.docs-sidebar-footer__link:hover {
+  color: var(--color-fd-foreground);
+  background: color-mix(in oklab, var(--color-fd-foreground) 6%, transparent);
+}
+
+.docs-sidebar-footer__link:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 1px;
+}
+
+.docs-sidebar-footer__link svg {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.docs-sidebar-footer__theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--color-fd-muted-foreground);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.docs-sidebar-footer__theme:hover {
+  color: var(--color-fd-foreground);
+  background: color-mix(in oklab, var(--color-fd-foreground) 6%, transparent);
+}
+
+.docs-sidebar-footer__theme:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 1px;
+}
+
+.docs-sidebar-footer__theme-window {
+  display: block;
+  width: 1.05rem;
+  height: 1.05rem;
+  overflow: hidden;
+}
+
+.docs-sidebar-footer__theme-track {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.42s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.docs-sidebar-footer__theme-icon {
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+/* Light shows sun (top); dark slides up to reveal moon. */
+.docs-sidebar-footer__theme[data-theme='dark'] .docs-sidebar-footer__theme-track {
+  transform: translateY(-1.05rem);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docs-sidebar-footer__theme-track {
+    transition: none;
+  }
+}

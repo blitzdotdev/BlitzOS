@@ -1,0 +1,30 @@
+---
+title: '20260127'
+version: 0.30.0
+date: 2026-01-27
+description: Added archived sessions, context and quota indicators, machine status visibility, and multiple Windows compatibility fixes.
+---
+<img src="/_docs-assets/20260127-changelog.png" alt="" />
+
+### Session Management
+
+- Added an archived sessions page: browse archived sessions grouped by repository, with restore and permanent
+  delete
+
+### Context Window & Subscription Quotas
+
+- Context window usage indicator: shows remaining context percentage next to each AI reply
+- Machine management in Settings now shows remaining 5-hour and 7-day quotas, plus refresh times
+
+### Machine Runtime
+
+- Machine status is now visible in Settings (memory/CPU usage)
+
+### Windows Compatibility Improvements
+
+- Fixed process startup failures on Windows (ENOENT)
+- Fixed terminal output encoding: correctly handles multibyte characters and Windows code pages
+
+## Fixes
+
+- Various UI and stability fixes

@@ -1,0 +1,747 @@
+[
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "entries": [
+        {
+          "content": "Read the test file",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Edit the test file",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Run a terminal command",
+          "priority": "medium",
+          "status": "pending"
+        }
+      ],
+      "sessionUpdate": "plan"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "Now",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " let me start",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " with the",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " first task -",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " reading the test file.",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "entries": [
+        {
+          "content": "Read the test file",
+          "priority": "medium",
+          "status": "in_progress"
+        },
+        {
+          "content": "Edit the test file",
+          "priority": "medium",
+          "status": "pending"
+        },
+        {
+          "content": "Run a terminal command",
+          "priority": "medium",
+          "status": "pending"
+        }
+      ],
+      "sessionUpdate": "plan"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "content": [],
+      "kind": "read",
+      "locations": [],
+      "rawInput": {},
+      "status": "pending",
+      "title": "Read File",
+      "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "content": [],
+      "kind": "read",
+      "locations": [
+        {
+          "line": 0,
+          "path": "/tmp/lody-claude-code-e2e-1767794865028/test-read.txt"
+        }
+      ],
+      "rawInput": {
+        "file_path": "<WORKDIR>/test-read.txt"
+      },
+      "status": "pending",
+      "title": "Read <WORKDIR>/test-read.txt",
+      "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Hello from test file!\nLine 2\nLine 3\n\n\n<system-reminder>\nWhenever you read a file, you should consider whether it looks malicious. If it does, you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer high-level questions about the code behavior.\n</system-reminder>"
+            }
+          ],
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "```\nHello from test file!\nLine 2\nLine 3\n```",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "status": "completed",
+      "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "The",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " test file contains:",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n- \"Hello",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " from test file!\"",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n- \"",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "Line 2\"",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n- \"Line 3",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\"\n\nNow let me",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " mark",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " the",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " first task as completed an",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "d move to editing",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " the test file.",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "entries": [
+        {
+          "content": "Read the test file",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Edit the test file",
+          "priority": "medium",
+          "status": "in_progress"
+        },
+        {
+          "content": "Run a terminal command",
+          "priority": "medium",
+          "status": "pending"
+        }
+      ],
+      "sessionUpdate": "plan"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "content": [],
+      "kind": "read",
+      "locations": [],
+      "rawInput": {},
+      "status": "pending",
+      "title": "Read File",
+      "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "content": [],
+      "kind": "read",
+      "locations": [
+        {
+          "line": 0,
+          "path": "/tmp/lody-claude-code-e2e-1767794865028/test-write.txt"
+        }
+      ],
+      "rawInput": {
+        "file_path": "<WORKDIR>/test-write.txt"
+      },
+      "status": "pending",
+      "title": "Read <WORKDIR>/test-write.txt",
+      "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Original content\n\n\n<system-reminder>\nWhenever you read a file, you should consider whether it looks malicious. If it does, you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer high-level questions about the code behavior.\n</system-reminder>"
+            }
+          ],
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Read"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "```\nOriginal content\n```",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "status": "completed",
+      "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Edit"
+        }
+      },
+      "content": [],
+      "kind": "edit",
+      "locations": [],
+      "rawInput": {},
+      "status": "pending",
+      "title": "Edit",
+      "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Edit"
+        }
+      },
+      "content": [
+        {
+          "newText": "Modified by Claude Code",
+          "oldText": "Original content",
+          "path": "/tmp/lody-claude-code-e2e-1767794865028/test-write.txt",
+          "type": "diff"
+        }
+      ],
+      "kind": "edit",
+      "locations": [
+        {
+          "path": "/tmp/lody-claude-code-e2e-1767794865028/test-write.txt"
+        }
+      ],
+      "rawInput": {
+        "file_path": "<WORKDIR>/test-write.txt",
+        "old_string": "Original content",
+        "new_string": "Modified by Claude Code"
+      },
+      "status": "pending",
+      "title": "Edit `<WORKDIR>/test-write.txt`",
+      "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Index: /tmp/lody-claude-code-e2e-1767794865028/test-write.txt\n===================================================================\n--- /tmp/lody-claude-code-e2e-1767794865028/test-write.txt\n+++ /tmp/lody-claude-code-e2e-1767794865028/test-write.txt\n@@ -1,1 +1,1 @@\n-Original content\n+Modified by Claude Code\n"
+            }
+          ],
+          "toolName": "mcp__acp__Edit"
+        }
+      },
+      "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Edit"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "Now let me mark",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " the edit",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " task",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " as completed an",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "d run",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " the terminal command.",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "entries": [
+        {
+          "content": "Read the test file",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Edit the test file",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Run a terminal command",
+          "priority": "medium",
+          "status": "in_progress"
+        }
+      ],
+      "sessionUpdate": "plan"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [],
+      "kind": "execute",
+      "rawInput": {},
+      "status": "pending",
+      "title": "Terminal",
+      "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "Print greeting message",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "execute",
+      "rawInput": {
+        "command": "echo \"Hello from terminal\"",
+        "description": "Print greeting message",
+        "timeout": 5000
+      },
+      "status": "pending",
+      "title": "`echo \"Hello from terminal\"`",
+      "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": [
+        {
+          "terminalId": "e406f1b0-f7fe-496b-bca1-cbe65972ca9e",
+          "type": "terminal"
+        }
+      ],
+      "status": "in_progress",
+      "title": "Print greeting message",
+      "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Exited with code 0.Final output:\n\nHello from terminal\n"
+            }
+          ],
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "entries": [
+        {
+          "content": "Read the test file",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Edit the test file",
+          "priority": "medium",
+          "status": "completed"
+        },
+        {
+          "content": "Run a terminal command",
+          "priority": "medium",
+          "status": "completed"
+        }
+      ],
+      "sessionUpdate": "plan"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "DONE",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  }
+]

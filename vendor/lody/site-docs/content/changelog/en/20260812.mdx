@@ -1,0 +1,22 @@
+---
+title: '20260812'
+version: 0.78.0
+date: 2026-08-12
+description: Added the official Grok runtime and a unified two-level @ menu, with improvements to memory checks, CLI installation, and the desktop experience.
+---
+
+Version 0.78.0
+
+### ✨ New
+
+- Added support for the official Grok runtime, including interaction and permission controls, context usage, and rate limits in Lody.
+- A new two-level `@` menu brings files, issues, pull requests, skills, sessions, and commands into one place, including direct references to other sessions.
+
+### 🐛 Fixes and Improvements
+
+- Improved memory pressure checks on macOS and Linux, reducing cases where session startup was incorrectly blocked while the system still had usable resources.
+- Restored the zoom-out shortcut in the Electron desktop app.
+- Pull request descriptions can now be expanded, and Agent responses use more consistent alignment.
+- Fixed multibyte text, including Chinese characters, becoming corrupted when it crossed local connection data chunks.
+- Fixed Lody CLI installation through npm or npx failing when dependency versions were not resolved correctly.
+- Improved the website landing page's loading speed, asset size, and accessibility.

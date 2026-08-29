@@ -1,0 +1,52 @@
+---
+title: Skills
+description: Browse project and machine-global Skills in Lody, inspect their SKILL.md instructions, and mention them in prompts with $.
+---
+
+# Skills
+
+Lody discovers Agent Skills from supported project and machine-global skill directories. A Skill
+is a directory containing a `SKILL.md` file with reusable instructions for a coding agent.
+
+Skills in Lody are read-only: Lody can discover, display, and reference them, but it does not
+install, edit, or synchronize Skill files.
+
+## Browse Skills
+
+On desktop, open **Settings** -> **Projects**, select a project, and switch to the **Skills** tab.
+
+On mobile, open the project, switch to **Settings**, and choose **Project skills**.
+
+The list is grouped by source path and shows available metadata such as name, description, version,
+author, scope, and symlink status. Open a Skill to read the rendered body of its `SKILL.md`.
+
+## Project and global Skills
+
+- **Project Skills** come from recognized Skill directories inside a local project or the default
+  branch of a GitHub project.
+- **Global Skills** come from recognized directories for the current OS user on the machine running
+  the agent, such as `~/.codex/skills` or `~/.claude/skills`.
+
+Global Skills are machine-specific. GitHub project settings show repository Skills, while a chat
+can also offer compatible global Skills from the machine selected for that session.
+
+## Mention a Skill
+
+1. Select a project and Agent Config for the conversation.
+2. Type `$` in the composer.
+3. Continue typing to filter by Skill name.
+4. Use the arrow keys and press `Enter`, or click the Skill.
+
+The composer keeps a readable `$skill-name` token. When the message is sent, Lody expands the
+reference with the relevant `SKILL.md` path so the selected agent can load and follow it.
+
+The menu is filtered for the current ACP provider where directory support differs between agents.
+
+## Refresh and offline behavior
+
+Lody caches Skill metadata on the current device and refreshes it in the background. If the project
+or owning machine is temporarily unavailable, previously cached results can remain visible with a
+stale or unavailable state.
+
+Symlinks are supported when they remain inside the allowed project or user-home boundary. Unsafe or
+dangling links are skipped.

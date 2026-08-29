@@ -1,0 +1,50 @@
+User-agent: *
+Content-signal: search=yes, ai-input=yes, ai-train=no
+Allow: /
+
+# Search and retrieval crawlers may index public Lody content.
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+# User-triggered fetchers may retrieve pages on behalf of a user.
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /
+
+User-agent: Google-Other
+Allow: /
+
+# Training crawlers are blocked while search and user retrieval remain available.
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: CCBot
+Disallow: /
+
+User-agent: Meta-ExternalAgent
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+
+User-agent: Applebot-Extended
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
+
+Sitemap: https://lody.ai/sitemap.xml

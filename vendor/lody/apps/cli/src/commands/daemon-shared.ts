@@ -1,0 +1,282 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import type { Readable } from 'node:stream';
+import os from 'node:os';
+import { z } from 'zod';
+import {
+  LODY_SUPERVISOR_CONTRACT_ENV,
+  LODY_SUPERVISOR_INSTANCE_ID_ENV,
+  LODY_SUPERVISOR_PID_ENV,
+  LODY_SUPERVISOR_TOKEN_ENV,
+} from '@lody/shared/node/local-cli-supervisor';
+import { getLodyDataDir } from '@lody/shared/node/installation-profile';
+import { calculateWorkerMaxOldSpaceMiB } from '@lody/cli-supervisor';
+export { LODY_LOG_DIR } from '@/utils/log-retention';
+
+export const DAEMON_PID_FILE = path.join(getLodyDataDir(), 'daemon.pid');
+
+// Keep the watchdog small and reserve the proportional heap budget for the
+// long-lived Worker. The worker limit is intentionally machine-relative so an
+// 8GB Mac cannot claim the same V8 heap as a 32GB development machine.
+export const DAEMON_WATCHDOG_MAX_OLD_SPACE_MB = 512;
+export const DAEMON_WORKER_MAX_OLD_SPACE_MB = calculateWorkerMaxOldSpaceMiB(os.totalmem());
+
+// `<active installation data root>/daemon.pid` is the daemon Supervisor control record: diagnostics
+// plus the private Host-control token `lody daemon stop` authenticates with.
+// It is never an ownership lock — the Host lease is. Only the complete v1 JSON
+// shape is accepted; PID liveness must not be derived from this file.
+const DaemonPidRecordSchema = z.object({
+  version: z.literal(1),
+  pid: z.number().int().positive(),
+  instanceId: z.string().min(1),
+  controlToken: z.string().min(1),
+  startedAtMs: z.number().finite(),
+});
+
+export type DaemonPidRecord = z.infer<typeof DaemonPidRecordSchema>;
+
+export function readPidFileRecord(filePath: string = DAEMON_PID_FILE): DaemonPidRecord | null {
+  try {
+    const parsed = DaemonPidRecordSchema.safeParse(JSON.parse(fs.readFileSync(filePath, 'utf8')));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Atomically publishes diagnostics after the caller has acquired the Host lease. */
+export function writePidFile(
+  pid: number,
+  instanceId: string,
+  controlToken: string,
+  filePath: string = DAEMON_PID_FILE
+): DaemonPidRecord {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const record = {
+    version: 1,
+    pid,
+    instanceId,
+    controlToken,
+    startedAtMs: Date.now(),
+  } satisfies DaemonPidRecord;
+  const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const fd = fs.openSync(tmpPath, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(record)}\n`, 'utf8');
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(tmpPath, filePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      // Preserve the original atomic publish failure.
+    }
+    throw error;
+  }
+  return record;
+}
+
+/** Removes the record only if it still belongs to the expected owner. */
+export function removePidFile(
+  expected?: DaemonPidRecord,
+  filePath: string = DAEMON_PID_FILE
+): boolean {
+  try {
+    if (expected) {
+      const current = readPidFileRecord(filePath);
+      if (!current || current.pid !== expected.pid || current.instanceId !== expected.instanceId) {
+        return false;
+      }
+    }
+    fs.unlinkSync(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveLodyBin(): string {
+  // In bundled mode, process.argv[1] points to the lody entry (dist/index.js)
+  return process.argv[1] ?? 'lody';
+}
+
+// --- Daemon runner readiness handshake -------------------------------------
+//
+// `lody daemon start` (and the watchdog upgrade handoff) spawn a detached
+// `daemon-runner` with an extra pipe on fd 3. The runner writes exactly one
+// JSON line describing its launch outcome, then closes the fd. The launcher
+// therefore learns success/failure deterministically instead of polling the
+// Host endpoint and PID record on a timer.
+
+export const DAEMON_RUNNER_READY_FD_ENV = 'LODY_DAEMON_RUNNER_READY_FD';
+const DAEMON_RUNNER_READY_FD = 3;
+const DAEMON_RUNNER_READY_TIMEOUT_MS = 30_000;
+const DAEMON_RUNNER_READY_MAX_BUFFER = 8 * 1024;
+
+const DaemonRunnerLaunchOutcomeSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('ready'),
+    pid: z.number().int().positive(),
+    instanceId: z.string().min(1),
+  }),
+  z.object({
+    status: z.literal('occupied'),
+    ownerMode: z.string().optional(),
+    ownerPid: z.number().int().positive().optional(),
+  }),
+  z.object({ status: z.literal('error'), message: z.string() }),
+]);
+
+export type DaemonRunnerLaunchOutcome = z.infer<typeof DaemonRunnerLaunchOutcomeSchema>;
+
+/**
+ * One-shot: reports the runner's launch outcome to the launcher, then closes
+ * the channel and drops the env value so children never inherit it. Safe to
+ * call when the runner was started without a launcher (env absent).
+ */
+export function reportDaemonRunnerLaunchOutcome(outcome: DaemonRunnerLaunchOutcome): void {
+  const fdRaw = process.env[DAEMON_RUNNER_READY_FD_ENV];
+  delete process.env[DAEMON_RUNNER_READY_FD_ENV];
+  if (!fdRaw) return;
+  const fd = Number.parseInt(fdRaw, 10);
+  if (!Number.isInteger(fd) || fd < DAEMON_RUNNER_READY_FD) return;
+  try {
+    fs.writeSync(fd, `${JSON.stringify(outcome)}\n`);
+  } catch {
+    // The launcher may already be gone; readiness reporting is best-effort.
+  }
+  try {
+    fs.closeSync(fd);
+  } catch {
+    // Already closed.
+  }
+}
+
+export type SpawnDaemonRunnerResult =
+  | { status: 'ready'; pid: number; instanceId: string }
+  | {
+      status: 'occupied';
+      runnerPid: number;
+      ownerMode?: string | undefined;
+      ownerPid?: number | undefined;
+    }
+  | { status: 'error'; runnerPid: number; message: string }
+  | { status: 'missing_child_pid' }
+  | { status: 'runner_exited'; runnerPid: number }
+  | { status: 'timeout'; runnerPid: number };
+
+/**
+ * Spawns a detached daemon runner with a scrubbed environment and waits for
+ * its readiness report. The runner keeps running after this resolves; only the
+ * handshake pipe is torn down.
+ */
+export async function spawnDaemonRunnerAndAwaitReady(
+  passthroughArgs: string[],
+  options: { timeoutMs?: number } = {}
+): Promise<SpawnDaemonRunnerResult> {
+  const bin = resolveLodyBin();
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    [DAEMON_RUNNER_READY_FD_ENV]: String(DAEMON_RUNNER_READY_FD),
+  };
+  delete env.LODY_DAEMON_SUPERVISED;
+  delete env.LODY_ELECTRON_BOOTSTRAP;
+  delete env.ELECTRON_RUN_AS_NODE;
+  delete env[LODY_SUPERVISOR_PID_ENV];
+  delete env[LODY_SUPERVISOR_INSTANCE_ID_ENV];
+  delete env[LODY_SUPERVISOR_TOKEN_ENV];
+  delete env[LODY_SUPERVISOR_CONTRACT_ENV];
+
+  const child = spawn(
+    process.execPath,
+    [
+      `--max-old-space-size=${DAEMON_WATCHDOG_MAX_OLD_SPACE_MB}`,
+      bin,
+      'daemon-runner',
+      ...passthroughArgs,
+    ],
+    {
+      detached: true,
+      // On Windows a detached child would otherwise get its own visible
+      // console window.
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+      env,
+    }
+  );
+  const runnerPid = child.pid;
+  if (runnerPid === undefined) {
+    child.unref();
+    return { status: 'missing_child_pid' };
+  }
+
+  const readyPipe = (child.stdio[DAEMON_RUNNER_READY_FD] ?? null) as Readable | null;
+  const result = await new Promise<SpawnDaemonRunnerResult>((resolve) => {
+    let settled = false;
+    let buffer = '';
+    const finish = (outcome: SpawnDaemonRunnerResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(outcome);
+    };
+    const timeout = setTimeout(
+      () => finish({ status: 'timeout', runnerPid }),
+      options.timeoutMs ?? DAEMON_RUNNER_READY_TIMEOUT_MS
+    );
+    timeout.unref?.();
+    if (!readyPipe) {
+      finish({ status: 'error', runnerPid, message: 'readiness channel unavailable' });
+      return;
+    }
+    readyPipe.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8');
+      const newline = buffer.indexOf('\n');
+      if (newline < 0) {
+        if (buffer.length > DAEMON_RUNNER_READY_MAX_BUFFER) {
+          finish({ status: 'error', runnerPid, message: 'invalid readiness report' });
+        }
+        return;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(buffer.slice(0, newline));
+      } catch {
+        finish({ status: 'error', runnerPid, message: 'invalid readiness report' });
+        return;
+      }
+      const outcome = DaemonRunnerLaunchOutcomeSchema.safeParse(parsed);
+      if (!outcome.success) {
+        finish({ status: 'error', runnerPid, message: 'invalid readiness report' });
+        return;
+      }
+      if (outcome.data.status === 'ready') {
+        finish({ status: 'ready', pid: runnerPid, instanceId: outcome.data.instanceId });
+      } else if (outcome.data.status === 'occupied') {
+        finish({
+          status: 'occupied',
+          runnerPid,
+          ownerMode: outcome.data.ownerMode,
+          ownerPid: outcome.data.ownerPid,
+        });
+      } else {
+        finish({ status: 'error', runnerPid, message: outcome.data.message });
+      }
+    });
+    // EOF without a report means the runner exited before claiming ownership.
+    readyPipe.once('end', () => finish({ status: 'runner_exited', runnerPid }));
+    readyPipe.once('error', () => finish({ status: 'runner_exited', runnerPid }));
+  });
+
+  readyPipe?.removeAllListeners();
+  readyPipe?.destroy();
+  child.unref();
+  return result;
+}

@@ -1,0 +1,45 @@
+---
+title: 'Lody Is Now Open Source: A Shared Workspace for Teams and Coding Agents'
+date: 2026-08-26
+author: Lody Team
+authorLink: https://lody.ai
+description: Lody helps teams understand the context behind software decisions. We are moving Lody toward local-first, with the goal of making that context durable, portable, and ultimately controlled by the team
+image: /lody-open-source.jpg
+tag: Announcement
+sidebar: false
+aside: false
+---
+
+Lody is a collaborative workspace for Coding Agents. It brings conversations, runtime state, and code changes scattered across team members, Agents, and machines into one space. Team members can open one another’s conversations and continue the discussion. They can also start a task on an online machine from a browser or phone, and add instructions while it is running.
+
+Lody’s CLI and local desktop client are now open source. The source is available at [github.com/lodyai/lody](https://github.com/lodyai/lody).
+
+But the problem we want to solve goes beyond this.
+
+The complexity of a software system does not exist only in its code. A piece of code may come from a business rule, a production incident, a compatibility requirement for an important customer, or a technical limitation that has since disappeared. As a project evolves, these decisions accumulate layer by layer and eventually form the system as it exists today. Code preserves the result, but it does not always preserve the reasons that produced it.
+
+Those reasons are scattered across design documents, pull requests, issues, meetings, Agent conversations, and team members’ memories. When someone takes over a module, reviews a change, or prepares a refactor, the hard part is often not simply reading the code. It is reconstructing the business rules, domain concepts, design tradeoffs, and historical decisions behind it.
+
+We want Lody to become a shared understanding layer for software teams and Coding Agents: connecting conversations, code, tasks, documents, and past decisions so teams can trace why a system became what it is today and determine which existing constraints a new change may affect.
+
+Conversation is only the starting point for understanding a project. Lody will develop task management, documentation, and code review around that understanding. In the future, we want to explore plugins that let users define tools suited to their teams, connect the data from those tools with the rest of the project context, and keep it synchronized across the team.
+
+## How Lody syncs
+
+Lody uses a local-first sync engine built on the Loro Stack. Most collaboration state is represented with [Loro](https://loro.dev/) and [Flock](https://www.npmjs.com/package/@loro-dev/flock-wasm), and synchronized across devices through Loro Streams. Loro and Flock are based on CRDTs, allowing replicas to change independently and merge after reconnecting.
+
+We chose CRDTs first and foremost because we want project context to be [local-first](https://www.inkandswitch.com/essay/local-first/): each device has a local copy it can use directly, and synchronizes changes after the network returns.
+
+Applications can be replaced, but data should outlast the application. Agents and tools will keep changing; the project context a team has accumulated should not disappear with them. Open data formats and implementations also reduce the risk of that context becoming trapped in a single application.
+
+Loro’s general-purpose data structures can also represent the collaborative state required by comments, rich-text documents, whiteboards, and other tools. This gives the same sync engine the potential to support different forms of interaction and provides a shared data foundation for future community plugins.
+
+Lody does not yet support end-to-end encryption, and cross-device collaboration still depends on Lody’s hosted sync service. We have completed the first design for end-to-end encrypted workspaces.
+
+Our direction is for the project context accumulated by teams and Agents to ultimately remain under the team’s control.
+
+## Get started
+
+You can [download Lody](/download) here.
+
+We are looking for software teams of twenty people or fewer to try Lody and help improve it. If you are interested in how teams can understand, review, and continue an Agent’s work, [talk to us](https://calendar.notion.so/meet/remch183/hqic3xqu?utm_source=blog).
