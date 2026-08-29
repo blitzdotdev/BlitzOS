@@ -34,7 +34,10 @@
 
 .workspace-details-body { min-height: 280px; overflow-y: auto; padding: 20px 22px 8px; }
 .workspace-details-list { margin: 0; }
-.workspace-details-list > div { display: grid; grid-template-columns: minmax(105px, 1fr) minmax(0, 1.25fr); gap: 12px; padding: 6px 0; border-top: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+/* One separator under the section heading; none between rows (user ruling
+   2026-08-29: keep the divider between the heading and the fields only). */
+.workspace-details-list > div { display: grid; grid-template-columns: minmax(105px, 1fr) minmax(0, 1.25fr); gap: 12px; padding: 6px 0; }
+.workspace-details-list > div:first-child { border-top: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
 .workspace-details-list dt { color: var(--faint); font-size: 11px; }
 .workspace-details-list dd { min-width: 0; margin: 0; overflow: hidden; font-size: 11px; text-align: right; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
 

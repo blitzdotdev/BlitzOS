@@ -244,6 +244,10 @@
   position: fixed;
   z-index: 199;
   inset: 0;
+  /* Explicit: a fullscreen element with the UA's default button face would
+   * paint over the entire app. Keep this class safe on any element. */
+  border: 0;
+  background: transparent;
 }
 
 .webapp-session-menu {
