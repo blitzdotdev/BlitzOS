@@ -17,3 +17,6 @@ AllowAgentForwarding yes
 PermitUserEnvironment no
 PrintMotd no
 Subsystem sftp internal-sftp
+# Places every session under the user memory ceiling. See
+# /usr/local/libexec/blitz-ssh-session for why this is a ForceCommand.
+ForceCommand /usr/local/libexec/blitz-ssh-session

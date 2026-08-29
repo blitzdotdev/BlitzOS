@@ -20,6 +20,6 @@ while [ ! -s "$state_dir/broker.json" ]; do
 	sleep 5
 done
 
-exec /command/s6-setuidgid blitz /usr/bin/env \
+exec /usr/local/bin/blitz-cgroup enter system -- /command/s6-setuidgid blitz /usr/bin/env \
 	HOME="$state_dir/home" USER=blitz \
 	/usr/local/bin/blitz-cred watch

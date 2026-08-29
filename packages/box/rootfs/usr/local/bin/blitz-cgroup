@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+# blitz-cgroup — the box's memory boundary.
+#
+# WHY THIS EXISTS: the box container used to be one flat memory pool. A build,
+# an agent, an inner Docker container and cloudflared all competed as equals,
+# and the kernel picked a victim by resident size alone. Two failures followed.
+# Under a slow squeeze the whole VM entered direct reclaim and cloudflared
+# stalled while still alive — the box went quiet with no OOM line anywhere.
+# Under a fast squeeze the OOM killer could take dockerd, the actor, or PID 1,
+# and a PID 1 kill restarted the whole container and lost every session.
+#
+# The fix is two cgroups. The services that carry the box to its user get a
+# memory reservation the kernel must not reclaim; user work gets a ceiling, a
+# throttle band below that ceiling, and swap. Neither knob replaces the other:
+# memory.min stops the stall, and memory.max plus oom.group decides the victim.
+#
+# VERBS
+#   init          build the tree, move PID 1 into it, apply every knob
+#   enter G -- C  create leaf G, join it, then exec command C
+#   report        print one line of state per cgroup, for the test harness
+#
+# EVERY KNOB IS AN ENVIRONMENT VARIABLE with a default below. The load harness
+# overrides them per run, and BLITZ_CG_ENABLE=0 turns the whole boundary off so
+# one image produces both the baseline and the treatment. That is deliberate:
+# a matrix that compares two images cannot tell a cgroup effect from a build
+# difference.
+set -uo pipefail
+
+readonly ROOT=/sys/fs/cgroup
+readonly SYSTEM_SLICE="$ROOT/blitz-system.slice"
+readonly USER_SLICE="$ROOT/blitz-user.slice"
+
+log() { printf 'blitz-cgroup: %s\n' "$*" >&2; }
+
+# ---- knobs -----------------------------------------------------------------
+# Sizes accept the kernel's own suffixes via to_bytes below: 384M, 2G, or a
+# plain byte count. "max" and "0" pass through untouched.
+enabled=${BLITZ_CG_ENABLE:-1}
+system_min=${BLITZ_CG_SYSTEM_MIN:-256M}
+system_low=${BLITZ_CG_SYSTEM_LOW:-384M}
+system_pids=${BLITZ_CG_SYSTEM_PIDS:-512}
+system_oom_adj=${BLITZ_CG_SYSTEM_OOM_ADJ:--900}
+user_swap=${BLITZ_CG_USER_SWAP:-2G}
+user_pids=${BLITZ_CG_USER_PIDS:-4096}
+# Left empty on purpose: the defaults are computed from the container's own
+# limit in size_defaults, because the VM's RAM is not known at build time.
+user_max=${BLITZ_CG_USER_MAX:-}
+user_high=${BLITZ_CG_USER_HIGH:-}
+docker_max=${BLITZ_CG_DOCKER_MAX:-}
+headroom=${BLITZ_CG_HEADROOM:-256M}
+high_gap=${BLITZ_CG_HIGH_GAP:-500M}
+
+to_bytes() {
+  local value=$1
+  case "$value" in
+    max | "") printf '%s' "$value"; return 0 ;;
+  esac
+  local number=${value%[KMGkmg]}
+  local suffix=${value#"$number"}
+  case "$suffix" in
+    K | k) printf '%s' $((number * 1024)) ;;
+    M | m) printf '%s' $((number * 1024 * 1024)) ;;
+    G | g) printf '%s' $((number * 1024 * 1024 * 1024)) ;;
+    "") printf '%s' "$number" ;;
+    *) log "unparsable size: $value"; return 1 ;;
+  esac
+}
+
+# The container's own ceiling, in bytes. `docker run --memory` writes it to the
+# cgroup this process sees as its root. An unlimited container reads "max", and
+# then MemTotal is the only real ceiling there is.
+container_limit_bytes() {
+  local limit
+  limit=$(cat "$ROOT/memory.max" 2>/dev/null || echo max)
+  if [ "$limit" != max ]; then
+    printf '%s' "$limit"
+    return 0
+  fi
+  local kib
+  kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+  printf '%s' $((kib * 1024))
+}
+
+size_defaults() {
+  local total system_min_b headroom_b high_gap_b
+  total=$(container_limit_bytes)
+  system_min_b=$(to_bytes "$system_min")
+  headroom_b=$(to_bytes "$headroom")
+  high_gap_b=$(to_bytes "$high_gap")
+
+  if [ -z "$user_max" ]; then
+    user_max=$((total - system_min_b - headroom_b))
+  else
+    user_max=$(to_bytes "$user_max")
+  fi
+  if [ -z "$user_high" ]; then
+    user_high=$((user_max - high_gap_b))
+  else
+    user_high=$(to_bytes "$user_high")
+  fi
+  if [ -z "$docker_max" ]; then
+    docker_max=$((user_max / 2))
+  else
+    docker_max=$(to_bytes "$docker_max")
+  fi
+
+  # A box small enough to make these negative is a box the boundary cannot
+  # help. Fall through with the boundary off rather than write a nonsense
+  # ceiling that makes every allocation fail.
+  if [ "$user_max" -lt 268435456 ] || [ "$user_high" -lt 134217728 ]; then
+    log "container limit $total is too small for a boundary; staying flat"
+    return 1
+  fi
+  return 0
+}
+
+write_knob() {
+  local path=$1 value=$2
+  [ -n "$value" ] || return 0
+  if ! printf '%s\n' "$value" 2>/dev/null >"$path"; then
+    log "could not write $value to $path"
+    return 1
+  fi
+  return 0
+}
+
+usable() {
+  [ "$enabled" = 1 ] || return 1
+  [ -w "$ROOT/cgroup.procs" ] || return 1
+  grep -q '^0::' /proc/self/cgroup 2>/dev/null || return 1
+  return 0
+}
+
+# ---- init ------------------------------------------------------------------
+
+# cgroup v2 forbids a cgroup from holding processes AND controller-enabled
+# children at the same time. The container root is not the kernel's real root,
+# so that rule applies here: every process must leave the root before a
+# controller may be enabled below it. This is why the move comes first and the
+# subtree_control write comes second. The reverse order fails with EBUSY, and
+# it fails at boot, where it is hardest to see.
+drain_root() {
+  # Emptiness is judged by READING the file, never by stat: kernfs files
+  # always stat as size zero, so `-s` cannot tell drained from full. And a
+  # read that fails outright (threaded or invalid cgroup semantics) means the
+  # drain cannot be verified at all — that is a bail, not a success.
+  local attempt remaining pid
+  for attempt in 1 2 3 4 5; do
+    if ! remaining=$(cat "$ROOT/cgroup.procs" 2>/dev/null); then
+      log "cannot read the root cgroup.procs; the drain is unverifiable"
+      return 1
+    fi
+    [ -z "$remaining" ] && return 0
+    for pid in $remaining; do
+      # A pid that exits between the read and the write is normal, not an
+      # error. Anything that persists shows up on the next pass.
+      printf '%s\n' "$pid" 2>/dev/null >"$SYSTEM_SLICE/cgroup.procs" || :
+    done
+  done
+  remaining=$(cat "$ROOT/cgroup.procs" 2>/dev/null || printf x)
+  if [ -n "$remaining" ]; then
+    log "root cgroup still holds pids after 5 drain passes: $remaining"
+    return 1
+  fi
+  return 0
+}
+
+cmd_init() {
+  if ! usable; then
+    log "boundary disabled or cgroup2 is not writable; the box stays flat"
+    return 0
+  fi
+  if ! size_defaults; then
+    return 0
+  fi
+
+  mkdir -p "$SYSTEM_SLICE" || { log "cannot create the system slice"; return 0; }
+  if ! drain_root; then
+    log "drain failed; the box stays flat rather than half-configured"
+    rmdir "$SYSTEM_SLICE" 2>/dev/null || :
+    return 0
+  fi
+  if ! write_knob "$ROOT/cgroup.subtree_control" "+memory +pids"; then
+    log "cannot enable controllers; the box stays flat"
+    rmdir "$SYSTEM_SLICE" 2>/dev/null || :
+    return 0
+  fi
+
+  # The reservation the kernel must not reclaim. memory.low is the softer
+  # second line: reclaim may cross it, but only when nothing else is left.
+  write_knob "$SYSTEM_SLICE/memory.min" "$(to_bytes "$system_min")" || :
+  write_knob "$SYSTEM_SLICE/memory.low" "$(to_bytes "$system_low")" || :
+  write_knob "$SYSTEM_SLICE/pids.max" "$system_pids" || :
+
+  # PID 1 carries the score every service inherits, so this one write covers
+  # the whole supervision tree — including services s6 starts minutes later.
+  # `enter` resets the score on the user side, so inheritance never leaks
+  # protection to a build.
+  write_knob /proc/1/oom_score_adj "$system_oom_adj" || :
+  local pid
+  while read -r pid; do
+    [ -n "$pid" ] || continue
+    printf '%s\n' "$system_oom_adj" 2>/dev/null >"/proc/$pid/oom_score_adj" || :
+  done <"$SYSTEM_SLICE/cgroup.procs"
+
+  mkdir -p "$USER_SLICE" || { log "cannot create the user slice"; return 0; }
+  # DELEGATION, AND WHY IT IS NARROW.
+  #
+  # A terminal tab and an ssh session both run as uid 1000. Neither can migrate
+  # itself into a cgroup unless it can write the destination cgroup.procs AND
+  # the cgroup.procs of the common ancestor of source and destination. ttyd and
+  # sshd live in the system slice, so that common ancestor is the container
+  # root. Hence two chowns, and only two.
+  #
+  # Handing uid 1000 the root cgroup.procs does NOT let it reach the system
+  # slice: that destination stays root-owned, and the kernel checks the
+  # destination as well. Nor can it park a process in the container root — a
+  # root cgroup with controller-enabled children refuses processes outright.
+  # So the grant means exactly one thing: uid 1000 may move work between
+  # cgroups it already owns.
+  chown 1000:1000 "$ROOT/cgroup.procs" 2>/dev/null || :
+  chown 1000:1000 "$USER_SLICE" "$USER_SLICE/cgroup.procs" \
+    "$USER_SLICE/cgroup.subtree_control" 2>/dev/null || :
+  # memory.high throttles; memory.max kills. The gap between them is the band
+  # where a runaway slows down and can still be seen and stopped by hand.
+  write_knob "$USER_SLICE/memory.max" "$user_max" || :
+  write_knob "$USER_SLICE/memory.high" "$user_high" || :
+  write_knob "$USER_SLICE/memory.swap.max" "$(to_bytes "$user_swap")" || :
+  write_knob "$USER_SLICE/pids.max" "$user_pids" || :
+  write_knob "$USER_SLICE/cgroup.subtree_control" "+memory +pids" || :
+
+  # DinD creates container cgroups at the root of the mount unless it is told
+  # otherwise. Without this slice and the daemon's --cgroup-parent, every inner
+  # container lands outside the boundary and the user ceiling means nothing.
+  mkdir -p "$USER_SLICE/docker.slice" || :
+  write_knob "$USER_SLICE/docker.slice/memory.max" "$docker_max" || :
+  # oom.group here, and not on the daemon's own scope, is what keeps Docker
+  # usable after a bomb: the kill takes every inner container at once and the
+  # daemon in dockerd.scope serves the next `docker run` unharmed.
+  write_knob "$USER_SLICE/docker.slice/memory.oom.group" 1 || :
+  # The daemon creates one cgroup per container underneath this slice, so the
+  # slice must be able to carry controllers. It holds no process of its own —
+  # dockerd lives in dockerd.scope beside it — so the write is legal.
+  write_knob "$USER_SLICE/docker.slice/cgroup.subtree_control" "+memory +pids" || :
+
+  log "boundary up: system.min=$(to_bytes "$system_min") user.high=$user_high user.max=$user_max docker.max=$docker_max"
+  return 0
+}
+
+# ---- enter -----------------------------------------------------------------
+
+cmd_enter() {
+  local group=$1
+  shift
+  [ "${1:-}" = -- ] && shift
+  [ "$#" -gt 0 ] || { log "enter needs a command"; return 2; }
+
+  # A passthrough is the correct behaviour whenever the boundary is off, the
+  # container is unprivileged, or init decided the box was too small. The
+  # caller must not have to know which of those is true.
+  if ! usable || [ ! -d "$SYSTEM_SLICE" ]; then
+    exec "$@"
+  fi
+
+  local path adjust=0 oom_group=0
+  case "$group" in
+    system)
+      path=$SYSTEM_SLICE
+      adjust=$system_oom_adj
+      ;;
+    user/*)
+      local leaf=${group#user/}
+      case "$leaf" in
+        "" | */* | . | ..) log "bad user leaf: $leaf"; exec "$@" ;;
+        *[!A-Za-z0-9._-]*) log "bad user leaf: $leaf"; exec "$@" ;;
+      esac
+      path="$USER_SLICE/$leaf"
+      # One kill takes the whole leaf. A half-killed agent that leaves a live
+      # child holding its memory is the failure this prevents.
+      oom_group=1
+      ;;
+    *)
+      log "unknown group: $group"
+      exec "$@"
+      ;;
+  esac
+
+  mkdir -p "$path" 2>/dev/null || :
+  [ "$oom_group" = 1 ] && printf '1\n' 2>/dev/null >"$path/memory.oom.group" || :
+  printf '%s\n' "$$" 2>/dev/null >"$path/cgroup.procs" ||
+    log "could not join $path; the command runs where it is"
+  printf '%s\n' "$adjust" 2>/dev/null >/proc/self/oom_score_adj || :
+  exec "$@"
+}
+
+# ---- report ----------------------------------------------------------------
+
+cmd_report() {
+  local cg
+  for cg in "$ROOT" "$SYSTEM_SLICE" "$USER_SLICE" "$USER_SLICE"/*; do
+    [ -d "$cg" ] || continue
+    [ -r "$cg/memory.current" ] || continue
+    printf '%s current=%s high=%s max=%s min=%s procs=%s events=[%s]\n' \
+      "${cg#"$ROOT"}" \
+      "$(cat "$cg/memory.current" 2>/dev/null || echo -)" \
+      "$(cat "$cg/memory.high" 2>/dev/null || echo -)" \
+      "$(cat "$cg/memory.max" 2>/dev/null || echo -)" \
+      "$(cat "$cg/memory.min" 2>/dev/null || echo -)" \
+      "$(wc -l <"$cg/cgroup.procs" 2>/dev/null || echo 0)" \
+      "$(tr '\n' ' ' <"$cg/memory.events" 2>/dev/null || echo -)"
+  done
+}
+
+case "${1:-}" in
+  init) cmd_init ;;
+  enter) shift; cmd_enter "$@" ;;
+  report) cmd_report ;;
+  *)
+    printf 'usage: blitz-cgroup init | enter <system|user/LEAF> -- <cmd...> | report\n' >&2
+    exit 2
+    ;;
+esac

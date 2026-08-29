@@ -14,7 +14,10 @@ plain_shell() {
     exit 1
   fi
   cd "$workspace"
-  exec "$shell" -l
+  # A bare connection still runs user work, so it belongs under the user
+  # ceiling. Its own leaf, keyed by pid, so one runaway plain shell cannot
+  # take another one down with it.
+  exec /usr/local/bin/blitz-cgroup enter "user/tab-plain-$$" -- "$shell" -l
 }
 
 if [ "$#" -eq 0 ]; then
@@ -114,5 +117,25 @@ case "$session_type" in
     fi
     ;;
 esac
+
+# THE CGROUP WRAPPER GOES ON THE PANE COMMAND, NOT ON THIS SCRIPT. tmux forks
+# every pane from its long-lived server process, so this script's own cgroup is
+# not what a pane inherits. Wrapping the command tmux execs is the one place
+# the join lands in the right process.
+#
+# One leaf per session name. A runaway agent in one tab is killed as a group,
+# and every other tab, the tmux server, and ttyd itself keep running — that is
+# the whole point of a per-tab leaf over a single shared user scope.
+#
+# `new-session -A` ignores the command when it attaches to a live session, so
+# an attach keeps the leaf the session already had.
+if [ "${#session_cmd[@]}" -eq 0 ]; then
+  pane_shell=${SHELL:-}
+  if [ -z "$pane_shell" ]; then
+    pane_shell=$(getent passwd "$(id -u)" | cut -d: -f7)
+  fi
+  session_cmd=("$pane_shell" -l)
+fi
+session_cmd=(/usr/local/bin/blitz-cgroup enter "user/tab-$session" -- "${session_cmd[@]}")
 
 exec tmux -u new-session -A -s "$session" -c "$workspace" "${session_env[@]}" "${session_cmd[@]}"

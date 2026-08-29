@@ -1,6 +1,6 @@
 #!/command/with-contenv bash
 set -euo pipefail
-exec /command/s6-setuidgid blitz /usr/bin/env \
+exec /usr/local/bin/blitz-cgroup enter system -- /command/s6-setuidgid blitz /usr/bin/env \
   HOME=/var/lib/blitz/home USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
   /usr/local/bin/ttyd --interface 127.0.0.1 --port 7443 --writable --check-origin --url-arg \
   /usr/local/libexec/blitz-term
