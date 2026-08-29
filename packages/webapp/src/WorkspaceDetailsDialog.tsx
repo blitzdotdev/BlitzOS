@@ -89,6 +89,7 @@ function CredentialsTab({
       aria-label="Credentials"
       className="workspace-details-credentials"
     >
+      <h2>Credentials</h2>
       <p className="workspace-details-note">
         Workspace credentials reach every member machine through{' '}
         <code>blitz-cred</code>. A value is write-only: it never comes back out
@@ -172,6 +173,10 @@ function CredentialsTab({
  * the workspace credential names, and the settings. The old Compute and
  * Storage panels are gone — a workspace has no single machine to describe,
  * so those facts live on the member rows instead.
+ *
+ * The chrome is the pre-#106 one: the header names the workspace, the tab row
+ * sits under it, and the two workspace-wide verbs live in the footer rather
+ * than at the bottom of one tab.
  */
 export function WorkspaceDetailsDialog({
   client,
@@ -290,7 +295,7 @@ export function WorkspaceDetailsDialog({
         aria-label={`Workspace details for ${workspace.title}`}
       >
         <header className="workspace-details-header">
-          <h1>Workspace <em>“{workspace.title}”</em></h1>
+          <h1>Workspace details <em>“{workspace.title}”</em></h1>
           <button ref={closeButton} type="button" aria-label="Close workspace details" onClick={onClose}>×</button>
         </header>
         <div className="workspace-details-tabs" role="tablist" aria-label="Workspace detail views">
@@ -317,6 +322,7 @@ export function WorkspaceDetailsDialog({
               aria-label="Members"
               className="workspace-details-members"
             >
+              <h2>Who has access</h2>
               <WorkspaceMembersEditor
                 mode={{
                   kind: 'live',
@@ -355,11 +361,23 @@ export function WorkspaceDetailsDialog({
               onSave={(input) => run(client.updateWorkspace(workspaceId, input))}
               onAddRepo={addRepo}
               onRemoveRepo={removeRepo}
-              onClone={onClone}
-              onDelete={onDelete}
             />
           )}
         </div>
+        {(onClone !== null || onDelete !== null) && (
+          <footer className="workspace-details-footer">
+            {onClone && (
+              <button className="webapp-action" type="button" onClick={onClone}>
+                New workspace from this one
+              </button>
+            )}
+            {onDelete && (
+              <button className="workspace-details-delete" type="button" onClick={onDelete}>
+                Delete workspace
+              </button>
+            )}
+          </footer>
+        )}
       </section>
       {pendingTypeChange !== null && (
         <ConfirmationDialog

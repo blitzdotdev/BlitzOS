@@ -11,11 +11,14 @@
   font-family: var(--font-ui);
 }
 
-.workspace-details-header {
+.workspace-details-header,
+.workspace-details-footer {
   display: flex;
   flex: none;
   align-items: center;
-  justify-content: space-between; padding: 20px 18px 6px 22px; }
+}
+
+.workspace-details-header { justify-content: space-between; padding: 20px 18px 6px 22px; }
 .workspace-details-header h1 { min-width: 0; margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
 .workspace-details-header h1 em { font-style: normal; }
 .workspace-details-header button { flex: none; width: 34px; height: 34px; border: 0; border-radius: 50%; color: var(--faint); background: transparent; font-size: 20px; }
@@ -39,6 +42,7 @@
 .workspace-details-members,
 .workspace-details-credentials,
 .workspace-details-settings { min-width: 0; min-height: 240px; }
+.workspace-details-members h2,
 .workspace-details-credentials h2,
 .workspace-details-settings h2 { margin: 0 0 9px; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
 
@@ -46,7 +50,7 @@
 .workspace-members-rows { border-top: 1px solid var(--rule); }
 .workspace-members-empty { margin: 14px 0; color: var(--faint); font-size: 11px; }
 
-.workspace-member-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto auto auto 28px; align-items: center; gap: 8px; min-height: 52px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-member-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto auto 28px; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
 .workspace-member-name { display: grid; min-width: 0; gap: 2px; }
 .workspace-member-name strong,
 .workspace-member-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -89,7 +93,7 @@
 .workspace-repo-add { display: grid; gap: 10px; margin-top: 14px; }
 
 .workspace-details-note { margin: 0 0 14px; color: var(--faint); font-size: 11px; }
-.workspace-details-settings-actions { display: flex; gap: 10px; margin-top: 18px; }
+.workspace-details-footer { justify-content: flex-start; gap: 10px; padding: 14px 18px 18px; }
 
 .workspace-details-status,
 .workspace-details-error { margin: 0 0 14px; font-size: 11px; }
@@ -104,8 +108,8 @@
   .workspace-details-dialog { max-height: calc(100dvh - 24px); }
   /* The row keeps the avatar, the name and the remove control; the selects
    * and the chip wrap under them rather than squeeze. */
-  .workspace-member-row { grid-template-columns: 32px minmax(0, 1fr) 28px; }
-  .workspace-details-settings-actions { flex-direction: column; }
+  .workspace-member-row { grid-template-columns: 28px minmax(0, 1fr) 28px; }
+  .workspace-details-footer { flex-direction: column; }
   .workspace-details-delete { width: 100%; }
 }
 

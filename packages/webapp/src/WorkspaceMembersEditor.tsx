@@ -177,7 +177,7 @@ function MemberRow({
   const actions = onMachineAction === null ? [] : machineActionsFor(machine);
   return (
     <div className="workspace-member-row">
-      <DriveAvatar name={name} avatarUrl={avatarUrl} size="lg" />
+      <DriveAvatar name={name} avatarUrl={avatarUrl} size="md" />
       <span className="workspace-member-name">
         <strong>{name}</strong>
         {pinned && <small>Workspace owner</small>}

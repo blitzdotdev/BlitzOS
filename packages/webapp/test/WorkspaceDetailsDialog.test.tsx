@@ -191,17 +191,24 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
-  it('offers clone and delete from Settings, and names the default machine type', async () => {
+  it('offers clone and delete from the footer, and names the default machine type', async () => {
     const onClone = vi.fn();
     const onDelete = vi.fn();
     const view = await render(dialog({ onClone, onDelete }));
     await settle();
-    await act(async () => tab(view.container, 'Settings')?.click());
 
+    // The pre-#106 chrome: the header names the workspace and the two
+    // workspace-wide verbs live in the footer, under every tab.
+    expect(view.container.querySelector('.workspace-details-header h1')?.textContent)
+      .toBe('Workspace details “Details test”');
+    const footer = view.container.querySelector('.workspace-details-footer');
+    expect(footer).not.toBeNull();
+
+    await act(async () => tab(view.container, 'Settings')?.click());
     expect(view.container.textContent).toContain('Shared x86');
     expect(view.container.textContent).toContain('Applies to new machines');
 
-    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>('button')];
+    const buttons = [...footer!.querySelectorAll<HTMLButtonElement>('button')];
     await act(async () => buttons.find((b) => b.textContent === 'New workspace from this one')?.click());
     await act(async () => buttons.find((b) => b.textContent === 'Delete workspace')?.click());
     expect(onClone).toHaveBeenCalledOnce();
