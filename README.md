@@ -1,6 +1,6 @@
 <h1 align="center">BlitzOS</h1>
 
-<p align="center"><strong>AI workspace for teams. Create and share fully configured AI work environments with teammates.</strong></p>
+<p align="center"><strong>AI workspace for teams. Create and share fully configured AI work environments</strong></p>
 
 <p align="center">
   <a href="#what-you-can-do-with-blitzos">What you can do</a> •
