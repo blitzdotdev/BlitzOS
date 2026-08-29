@@ -1,11 +1,18 @@
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { loadEnv, type ServerOptions } from "vite";
+import wasm from "vite-plugin-wasm";
 import { defineConfig } from "vitest/config";
 import {
   deriveCoreRoutePaths,
   devProxyPatterns,
 } from "../control-plane/scripts/lib/worker-first-routes.mjs";
+import {
+  lodyCascadeLayerPlugin,
+  lodyVendorAliases,
+  loroWasmUrlWorkaround,
+} from "./src/lody/vendor-bridge.js";
 
 // Every first-party control-plane route the dev server must forward to the
 // control plane instead of serving the SPA shell.
@@ -43,11 +50,31 @@ export default defineConfig(({ command, mode }) => {
   }
   return {
     envDir: "../..",
-    plugins: [react()],
+    // The vendored Lody renderer (plans/LODY-SESSIONS.md §5.2) needs four
+    // things our own surface never did: its pnpm workspace links resolved as
+    // aliases, Tailwind v4, WASM (loro/flock), and top-level await in the
+    // modules that load it. React is deduped so the vendored components share
+    // our 19.2.x instance instead of getting a second copy through the alias.
+    resolve: {
+      alias: lodyVendorAliases(),
+      dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    },
+    plugins: [tailwindcss(), lodyCascadeLayerPlugin(), loroWasmUrlWorkaround(), react(), wasm()],
+    // Ported from their renderer config: the vendored workers reach WASM
+    // through top-level await, which Vite's default `iife` worker format
+    // cannot express.
+    worker: {
+      format: "es",
+      plugins: () => [loroWasmUrlWorkaround(), wasm()],
+    },
     server: target === "" ? {} : { proxy: controlPlaneProxy(target) },
     test: {
       environment: "jsdom",
       setupFiles: ["./test/setup.ts"],
+      // Only the Lody surface entry is processed: the Tailwind containment
+      // test reads the compiled sheet through the same plugin pipeline the
+      // app builds with, and every other CSS import stays a cheap no-op.
+      css: { include: [/lody-surface\.css/] },
     },
   };
 });
