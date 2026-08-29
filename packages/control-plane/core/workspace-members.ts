@@ -8,7 +8,7 @@ import {
 } from "./machines.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
-import { workspaceForAdminWrite } from "./workspace-access.js";
+import { storedRole, workspaceForAdminWrite } from "./workspace-access.js";
 import {
   machineView,
   type MachineRow,
@@ -17,6 +17,7 @@ import {
 import {
   WORKSPACE_MEMBER_ROLES,
   type AddWorkspaceMemberRequest,
+  type ProvisionMemberMachineRequest,
   type UpdateWorkspaceMemberRequest,
   type WorkspaceMemberResponse,
   type WorkspaceMemberRole,
@@ -34,6 +35,15 @@ export function parseAddWorkspaceMember(value: JsonValue): AddWorkspaceMemberReq
     throw new HttpError(400, "role must be admin, member, or viewer");
   }
   const result: AddWorkspaceMemberRequest = { membershipId, role: value.role };
+  if (value.machineTypeId !== undefined && value.machineTypeId !== null) {
+    result.machineTypeId = requiredString(value.machineTypeId, "machineTypeId", 256);
+  }
+  return result;
+}
+
+function parseProvisionMemberMachine(value: JsonValue): ProvisionMemberMachineRequest {
+  if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
+  const result: ProvisionMemberMachineRequest = {};
   if (value.machineTypeId !== undefined && value.machineTypeId !== null) {
     result.machineTypeId = requiredString(value.machineTypeId, "machineTypeId", 256);
   }
@@ -213,6 +223,56 @@ export function addWorkspaceMemberRoutes(
         machine: machine === null || machine.state === "destroyed" ? null : machineView(machine),
       },
     });
+  });
+
+  /**
+   * Provisions the machine a member row does not hold yet (§2.1).
+   *
+   * Two ways to get here: the workspace has `auto_provision` off, so adding
+   * somebody wrote the row and nothing else; or their machine was destroyed
+   * and the row survives with its volume. Both land on the same act, and the
+   * old row is reused where there is one, so the member comes back on their
+   * own disk rather than an empty one.
+   *
+   * A viewer is refused rather than quietly given one: a viewer never holds a
+   * machine (§2.2), and the way to give them one is the role write. A member
+   * who already has a live machine is refused too — this route creates, and
+   * `start` and `recreate` are the verbs for one that exists.
+   *
+   * The body is `{}` where the machine takes the workspace default.
+   */
+  router.post("/workspaces/:id/members/:membershipId/machine", async (context) => {
+    const principal = await requirePrincipal(context);
+    const runtime = runtimeFactory(context);
+    const workspace = await workspaceForAdminWrite(runtime.db, principal, context.req.param("id"));
+    const membershipId = context.req.param("membershipId");
+    const input = parseProvisionMemberMachine(await readJson(context.req.raw, 4 * 1024));
+    const member = await activeOrgMember(runtime, workspace.org_id, membershipId);
+    const role = await storedRole(runtime.db, workspace.id, membershipId);
+    if (member === null || role === null) throw new HttpError(404, "workspace member not found");
+    if (role === "viewer") {
+      throw new HttpError(409, "a viewer never holds a machine; change their role first");
+    }
+    const existing = await machineFor(runtime.db, workspace.id, membershipId);
+    if (existing !== null && existing.state !== "destroyed") {
+      throw new HttpError(409, `this member already has a machine; it is ${existing.state}`);
+    }
+    const machine = await provisionMachine(runtime, memberProvisionInput(
+      workspace,
+      membershipId,
+      input.machineTypeId ?? existing?.machine_type_id ?? workspace.default_machine_type_id,
+      new URL(context.req.url).origin,
+      existing,
+    ));
+    return context.json<WorkspaceMemberResponse>({
+      member: {
+        membershipId,
+        name: member.name,
+        avatarUrl: member.avatar_url,
+        role,
+        machine: machineView(machine),
+      },
+    }, 201);
   });
 
   /**

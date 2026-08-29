@@ -201,6 +201,11 @@ const updateWorkspaceMemberRequest: SharedShape<
   schema.UpdateWorkspaceMemberRequest
 > = { role: "viewer" };
 
+const provisionMemberMachineRequest: SharedShape<
+  wire.ProvisionMemberMachineRequest,
+  schema.ProvisionMemberMachineRequest
+> = { machineTypeId: pricedMachineType.id };
+
 // Every settings field at once. `agentRuleId` also travels as an explicit
 // null — the way back to the built-in doc — which is different ground than a
 // string, so it gets its own row below.
@@ -664,6 +669,7 @@ const fullFieldValues = [
   setMachineTypeRequest,
   addWorkspaceMemberRequest,
   updateWorkspaceMemberRequest,
+  provisionMemberMachineRequest,
   updateWorkspaceRequest,
   clearAgentRuleRequest,
   workspaceMemberResponse,
@@ -755,6 +761,7 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceCredentialView>().toEqualTypeOf<schema.WorkspaceCredentialView>();
     expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();
     expectTypeOf<wire.UpdateWorkspaceMemberRequest>().toEqualTypeOf<schema.UpdateWorkspaceMemberRequest>();
+    expectTypeOf<wire.ProvisionMemberMachineRequest>().toEqualTypeOf<schema.ProvisionMemberMachineRequest>();
     expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
     expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
     expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();

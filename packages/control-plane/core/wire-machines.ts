@@ -78,6 +78,14 @@ export interface UpdateWorkspaceMemberRequest {
   role: WorkspaceMemberRole;
 }
 
+/** Provisions a machine for a member row that holds none — the manual half of
+ * §2.1, for a workspace whose `autoProvision` is off or a member whose machine
+ * was destroyed. A viewer is refused: they never hold one (§2.2). */
+export interface ProvisionMemberMachineRequest {
+  /** Overrides the workspace default for this one machine (§1a). */
+  machineTypeId?: string;
+}
+
 export interface WorkspaceMemberResponse {
   member: WorkspaceMemberView;
 }

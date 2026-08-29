@@ -2,6 +2,7 @@ import type {
   AddWorkspaceMemberRequest,
   AddWorkspaceRepoRequest,
   ApiError,
+  ProvisionMemberMachineRequest,
   ListWorkspaceReposResponse,
   UpdateWorkspaceRequest,
   ListAgentRulesResponse,
@@ -171,6 +172,13 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
     input: UpdateWorkspaceMemberRequest,
   ): Promise<WorkspaceMemberResponse>;
   removeWorkspaceMember(workspaceId: string, membershipId: string): Promise<void>;
+  /** Provisions the machine a member row does not hold yet: the workspace does
+   * not auto-provision, or theirs was destroyed. A viewer is refused. */
+  provisionMemberMachine(
+    workspaceId: string,
+    membershipId: string,
+    input: ProvisionMemberMachineRequest,
+  ): Promise<WorkspaceMemberResponse>;
   /** The workspace settings write. Absent fields are left alone, and a new
    * default machine type moves only what is provisioned after it. */
   updateWorkspace(
@@ -637,6 +645,10 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     removeWorkspaceRepo: (workspaceId, repo) => request<void>(
       `/workspaces/${encodeURIComponent(workspaceId)}/repos/${repo.split("/").map(encodeURIComponent).join("/")}`,
       { method: "DELETE" },
+    ),
+    provisionMemberMachine: (workspaceId, membershipId, input) => request<WorkspaceMemberResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(membershipId)}/machine`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
     ),
     provisionMachine: (machineId) => machineAction(machineId, "provision"),
     stopMachine: (machineId) => machineAction(machineId, "stop"),

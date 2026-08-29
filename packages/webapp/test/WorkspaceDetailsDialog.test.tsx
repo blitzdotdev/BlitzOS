@@ -148,6 +148,28 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
+  it('provisions a machine for a member row that holds none', async () => {
+    const provisionMemberMachine = vi.fn().mockResolvedValue({ member: grace });
+    const view = await render(dialog({
+      client: client({ provisionMemberMachine }),
+      // A viewer never holds a machine, so the row that can be provisioned is
+      // a member whose workspace did not auto-provision one.
+      workspace: { ...workspace, members: [ada, { ...grace, role: 'member' }] },
+    }));
+    await settle();
+
+    const menu = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Machine actions for Grace Viewer"]',
+    );
+    await act(async () => menu?.click());
+    const options = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options.map((option) => option.textContent)).toEqual(['Provision']);
+    await act(async () => options[0]?.click());
+
+    expect(provisionMemberMachine).toHaveBeenCalledWith(workspace.id, grace.membershipId, {});
+    await view.unmount();
+  });
+
   it('lists credential names, never a value, and revokes one', async () => {
     const revokeWorkspaceCredential = vi.fn().mockResolvedValue(undefined);
     const view = await render(dialog({ client: client({ revokeWorkspaceCredential }) }));
@@ -346,11 +368,11 @@ describe('machineActionsFor', () => {
     updatedAt: 1,
   });
 
-  it('offers nothing without a machine, because there is no id to act on', () => {
-    // The wire sends null for a destroyed or absent machine, and every
-    // lifecycle route is keyed by machine id. A member gets one through the
-    // role write, not through this menu.
-    expect(machineActionsFor(null)).toEqual([]);
+  it('offers provision without a machine, which is the one verb that applies', () => {
+    // The wire sends null where the workspace does not auto-provision, or
+    // where the machine was destroyed. That row is keyed by the membership,
+    // not by a machine id, which is why provision took its own route.
+    expect(machineActionsFor(null)).toEqual(['provision']);
   });
 
   it('offers nothing to a machine that is going somewhere', () => {

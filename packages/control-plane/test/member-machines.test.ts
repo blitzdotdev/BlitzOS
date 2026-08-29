@@ -315,6 +315,121 @@ describe("member machines", () => {
     });
   });
 
+  it("provisions a machine for a member row that holds none", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const teammate = await sameOrgSession("manual-member");
+    const watcher = await sameOrgSession("manual-viewer");
+    const created = await appRequest(app, "/workspaces", {
+      ...json({
+        machineTypeId: "small",
+        autoProvision: false,
+        members: [
+          { membershipId: teammate.membershipId, role: "member" },
+          { membershipId: watcher.membershipId, role: "viewer" },
+        ],
+      }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const workspace = (await created.json<CreatedWorkspace>()).workspace;
+    const path = (membershipId: string) =>
+      `/workspaces/${workspace.id}/members/${membershipId}/machine`;
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM machines")
+      .first<number>("count")).toBe(0);
+
+    const provisioned = await appRequest(app, path(teammate.membershipId), {
+      ...json({}),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(provisioned.status).toBe(201);
+    await expect(provisioned.json<WorkspaceMemberResponse>()).resolves.toMatchObject({
+      member: {
+        membershipId: teammate.membershipId,
+        role: "member",
+        machine: { state: "provisioning", machineTypeId: "small" },
+      },
+    });
+
+    // This route creates. A machine that exists has `start` and `recreate`.
+    const again = await appRequest(app, path(teammate.membershipId), {
+      ...json({}),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(again.status).toBe(409);
+    await expect(again.json()).resolves.toMatchObject({
+      error: expect.stringContaining("already has a machine"),
+    });
+
+    // A viewer never holds one (§2.2); the way to give them a machine is the
+    // role write, not this route.
+    const viewer = await appRequest(app, path(watcher.membershipId), {
+      ...json({}),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(viewer.status).toBe(409);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM machines")
+      .first<number>("count")).toBe(1);
+
+    // Somebody who is not in this workspace has no machine to provision.
+    expect((await appRequest(app, path("no-such-membership"), {
+      ...json({}),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(404);
+    // Provisioning somebody's machine is workspace-admin work (§3).
+    expect((await appRequest(app, path(watcher.membershipId), {
+      ...json({}),
+      headers: { Cookie: teammate.cookie, "Content-Type": "application/json" },
+    })).status).toBe(403);
+  });
+
+  it("brings a destroyed member machine back on its own disk, at the type asked for", async () => {
+    const { app } = harness();
+    const cookie = await operatorSession(app);
+    const teammate = await sameOrgSession("returning-member");
+    const created = await appRequest(app, "/workspaces", {
+      ...json({
+        machineTypeId: "small",
+        members: [{ membershipId: teammate.membershipId, role: "member" }],
+      }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const workspace = (await created.json<CreatedWorkspace>()).workspace;
+    const machineId = await machineIdFor(workspace.id, teammate.membershipId);
+    const volumeId = (await machineRow(workspace.id, teammate.membershipId))?.volume_id;
+    const path = `/workspaces/${workspace.id}/members/${teammate.membershipId}/machine`;
+
+    expect((await appRequest(app, `/machines/${machineId}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+    expect((await machineRow(workspace.id, teammate.membershipId))?.state).toBe("destroyed");
+
+    const back = await appRequest(app, path, {
+      ...json({}),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(back.status).toBe(201);
+    // The row and its disk are the durable machine, so the member comes back
+    // on what they had rather than on an empty one.
+    const after = await machineRow(workspace.id, teammate.membershipId);
+    expect(after?.id).toBe(machineId);
+    expect(after?.volume_id).toBe(volumeId ?? null);
+
+    // A type no provider claims is refused before anything is created: the
+    // registry is the only authority on what a type id means.
+    const ownerMachine = await machineIdFor(workspace.id);
+    expect((await appRequest(app, `/machines/${ownerMachine}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+    const unknown = await appRequest(app, `/workspaces/${workspace.id}/members/personal/machine`, {
+      ...json({ machineTypeId: "not-a-type" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(unknown.status).toBe(400);
+    expect((await machineRow(workspace.id, "personal"))?.state).toBe("destroyed");
+  });
+
   it("counts machines against vm_limit, not workspaces", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);

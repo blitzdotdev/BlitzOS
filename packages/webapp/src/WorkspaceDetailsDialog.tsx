@@ -238,10 +238,14 @@ export function WorkspaceDetailsDialog({
   }, []);
 
   const machineAction = (member: WorkspaceMemberView, action: MachineAction) => {
-    // `machineActionsFor` offers nothing without a machine, so the menu that
-    // called this always names one.
     const machine = member.machine;
-    if (machine === null) return;
+    // A member with no machine has no id to act on, so their one verb goes to
+    // the route keyed by the membership instead. The row's type select shows
+    // the workspace default until a machine exists, so nothing overrides it.
+    if (machine === null) {
+      if (action === 'provision') run(client.provisionMemberMachine(workspaceId, member.membershipId, {}));
+      return;
+    }
     if (action === 'provision') run(client.provisionMachine(machine.id));
     if (action === 'stop') run(client.stopMachine(machine.id));
     if (action === 'start') run(client.startMachine(machine.id));

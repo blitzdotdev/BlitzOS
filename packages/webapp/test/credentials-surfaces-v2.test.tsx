@@ -33,6 +33,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     createInvite: vi.fn(async () => { throw new Error('unused'); }),
     revokeInvite: vi.fn(async () => undefined),
     addWorkspaceMember: vi.fn(async () => { throw new Error('unused'); }),
+    provisionMemberMachine: vi.fn(async () => { throw new Error('unused'); }),
     updateWorkspace: vi.fn(async () => { throw new Error('unused'); }),
     listWorkspaceRepos: vi.fn(async () => ({ repos: [] })),
     addWorkspaceRepo: vi.fn(async () => { throw new Error('unused'); }),

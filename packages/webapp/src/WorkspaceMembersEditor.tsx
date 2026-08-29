@@ -43,17 +43,17 @@ const MACHINE_ACTION_LABELS = {
 /**
  * Which verbs this machine's state can accept.
  *
- * A member with no machine gets none: the wire sends `machine: null` for a
- * destroyed or absent one, so there is no id to act on, and every lifecycle
- * route is keyed by machine id. The way a member gets a machine is the role
- * write, which provisions one where the workspace auto-provisions.
+ * A member with no machine gets exactly one: `provision`. The wire sends
+ * `machine: null` where the workspace does not auto-provision, or where theirs
+ * was destroyed, and that row is keyed by the membership rather than by a
+ * machine id — which is why it took its own route.
  *
- * `provision` appears only on an error row, which is the one reachable state
- * whose VM may be missing. A machine that is going somewhere accepts nothing
- * until it arrives.
+ * `provision` appears again on an error row, the one reachable state whose VM
+ * may be missing. A machine that is going somewhere accepts nothing until it
+ * arrives.
  */
 export function machineActionsFor(machine: MachineView | null): MachineAction[] {
-  if (machine === null) return [];
+  if (machine === null) return ['provision'];
   if (machine.state === 'provisioning' || machine.state === 'destroying') return [];
   if (machine.state === 'stopped') return ['start', 'destroy'];
   if (machine.state === 'error') return ['provision', 'recreate', 'destroy'];

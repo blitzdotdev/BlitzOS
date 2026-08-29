@@ -183,6 +183,7 @@ export {
   type MachineResponse,
   type MachineState,
   type MachineView,
+  type ProvisionMemberMachineRequest,
   type PutWorkspaceCredentialRequest,
   type SetMachineTypeRequest,
   type UpdateWorkspaceMemberRequest,
