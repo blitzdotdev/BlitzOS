@@ -3,6 +3,7 @@ import { NewTabMenu, type SpawnSessionType } from '../NewTabMenu';
 import { SessionTypeIcon } from '../SessionTypeIcon';
 import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
+import { BoxGlyph } from '../files/DriveIcons';
 import type { DriveRailSession } from './rail-sessions';
 import { PlusGlyph, ShareGlyph } from './StripIcons';
 
@@ -20,6 +21,8 @@ export type WorkspaceSessionRailProps = {
    * the details dialog on its Members tab. */
   onOpenMembers: (workspaceId: string) => void;
   onOpenDetails: (workspaceId: string) => void;
+  /** The member's own machine in this workspace (§2.1). */
+  onOpenMachine: (workspaceId: string) => void;
 };
 
 /** Column two of the shell (plans/mockups/session-rail.html `#rail`): the
@@ -38,6 +41,7 @@ export function WorkspaceSessionRail({
   onOpenPreviewLink,
   onOpenMembers,
   onOpenDetails,
+  onOpenMachine,
 }: WorkspaceSessionRailProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -74,6 +78,15 @@ export function WorkspaceSessionRail({
             title={`Members of ${workspace.title}`}
             onClick={() => onOpenMembers(workspace.id)}
           ><ShareGlyph className="shell-ib__glyph" /></button>
+        )}
+        {workspace.canControl && (
+          <button
+            className="shell-ib"
+            type="button"
+            aria-label={`My machine in ${workspace.title}`}
+            title={`My machine in ${workspace.title}`}
+            onClick={() => onOpenMachine(workspace.id)}
+          ><BoxGlyph className="shell-ib__glyph" /></button>
         )}
         {workspace.canControl && (
           <button

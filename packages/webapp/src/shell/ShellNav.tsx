@@ -35,6 +35,7 @@ export type ShellNavProps = {
   onOpenPreviewLink: (url: string, title: string) => void;
   onOpenWorkspaceMembers: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
+  onOpenWorkspaceMachine: (workspaceId: string) => void;
   onCloseDrawer: () => void;
 };
 
@@ -67,6 +68,7 @@ export function ShellNav({
   onOpenPreviewLink,
   onOpenWorkspaceMembers,
   onOpenWorkspaceDetails,
+  onOpenWorkspaceMachine,
   onCloseDrawer,
 }: ShellNavProps) {
   return (
@@ -100,6 +102,7 @@ export function ShellNav({
             onOpenPreviewLink={onOpenPreviewLink}
             onOpenMembers={onOpenWorkspaceMembers}
             onOpenDetails={onOpenWorkspaceDetails}
+            onOpenMachine={onOpenWorkspaceMachine}
           />
         )}
       </div>

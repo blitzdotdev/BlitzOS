@@ -2,9 +2,10 @@
  * surface stays self-contained; every icon inherits currentColor. */
 
 function glyph(path: React.ReactNode, filled = false) {
-  return function Icon() {
+  return function Icon({ className }: { className?: string } = {}) {
     return (
       <svg
+        className={className}
         viewBox="0 0 24 24"
         fill={filled ? 'currentColor' : 'none'}
         stroke={filled ? undefined : 'currentColor'}

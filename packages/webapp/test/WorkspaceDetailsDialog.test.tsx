@@ -403,6 +403,7 @@ describe('WorkspaceSessionRail', () => {
         onOpenPreviewLink={() => undefined}
         onOpenMembers={onOpenMembers}
         onOpenDetails={onOpenDetails}
+        onOpenMachine={() => undefined}
       />,
     );
 
@@ -433,6 +434,7 @@ describe('WorkspaceSessionRail', () => {
         onOpenPreviewLink={() => undefined}
         onOpenMembers={onOpenMembers}
         onOpenDetails={onOpenDetails}
+        onOpenMachine={() => undefined}
       />,
     ));
     expect(view.container.querySelector('button[aria-label="Members of Details test"]')).toBeNull();
@@ -458,6 +460,7 @@ describe('WorkspaceSessionRail', () => {
         onOpenPreviewLink={() => undefined}
         onOpenMembers={() => undefined}
         onOpenDetails={() => undefined}
+        onOpenMachine={() => undefined}
       />,
     );
 

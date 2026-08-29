@@ -129,3 +129,13 @@
 /* No machine at all: the member is a viewer, or the workspace does not
  * auto-provision and their role has not been written since. */
 .machine-chip--none { border-style: dashed; }
+
+/* "My machine" wears the same chrome with no tab row, so the body starts
+   under the header rather than under a rule. */
+.my-machine-dialog { width: min(520px, 100%); }
+.my-machine-dialog .workspace-details-body { padding-top: 14px; }
+.my-machine-panel { min-width: 0; min-height: 240px; }
+.my-machine-panel h2 { margin: 18px 0 9px; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.my-machine-panel h2:first-child { margin-top: 0; }
+.my-machine-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.my-machine-actions button:disabled { cursor: not-allowed; opacity: .5; }

@@ -189,6 +189,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [details, setDetails] = useState<
     { workspaceId: string; tab: WorkspaceDetailsTab; focusAddMember?: boolean } | null
   >(null);
+  const [machineWorkspaceId, setMachineWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -1402,6 +1403,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         if (mobileWebApp) setDrawerOpen(false);
         setDetails({ workspaceId, tab: 'members' });
       }}
+      onOpenWorkspaceMachine={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setMachineWorkspaceId(workspaceId);
+      }}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
@@ -1431,6 +1436,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCreateWorkspace={(input) => { void createWorkspace(input); }}
       details={details}
       onCloseDetails={() => setDetails(null)}
+      machineWorkspaceId={machineWorkspaceId}
+      onCloseMachine={() => setMachineWorkspaceId(null)}
       onCloneWorkspace={(workspaceId) => {
         // "New workspace from existing" IS the template now (§0): the create
         // dialog opens carrying the source, and the server copies its config.

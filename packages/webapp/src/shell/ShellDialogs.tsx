@@ -11,6 +11,7 @@ import {
   WorkspaceDetailsDialog,
   type WorkspaceDetailsTab,
 } from '../WorkspaceDetailsDialog';
+import { MyMachineDialog } from '../MyMachineDialog';
 import type { CloudWorkspaceModel } from '../workspace-store';
 
 /** The workspace this dialog stack is about to delete, and the name the
@@ -45,6 +46,9 @@ export type ShellDialogsProps = {
     focusAddMember?: boolean;
   } | null;
   onCloseDetails: () => void;
+  /** The workspace whose "My machine" panel is open, or null. */
+  machineWorkspaceId: string | null;
+  onCloseMachine: () => void;
   onCloneWorkspace: (workspaceId: string) => void;
   onRequestDeleteWorkspace: (workspaceId: string) => void;
   confirmation: WebAppConfirmation | null;
@@ -70,6 +74,8 @@ export function ShellDialogs({
   onCreateWorkspace,
   details,
   onCloseDetails,
+  machineWorkspaceId,
+  onCloseMachine,
   onCloneWorkspace,
   onRequestDeleteWorkspace,
   confirmation,
@@ -82,6 +88,9 @@ export function ShellDialogs({
   const detailsWorkspace = details === null
     ? undefined
     : workspaces.find(({ id }) => id === details.workspaceId);
+  const machineWorkspace = machineWorkspaceId === null
+    ? undefined
+    : workspaces.find(({ id }) => id === machineWorkspaceId);
   // Workspace admin, or an org admin reaching in implicitly (§3): the wire
   // reports the second as a null stored role on a workspace they can open.
   const canManageDetails = detailsWorkspace?.myRole === 'admin'
@@ -120,6 +129,15 @@ export function ShellDialogs({
           onDelete={canManageDetails
             ? () => onRequestDeleteWorkspace(detailsWorkspace.id)
             : null}
+        />
+      )}
+      {machineWorkspace !== undefined && (
+        <MyMachineDialog
+          client={client}
+          workspace={machineWorkspace}
+          membershipId={viewer?.membership.id ?? null}
+          listMachineTypes={listMachineTypes}
+          onClose={onCloseMachine}
         />
       )}
       {confirmation && (
