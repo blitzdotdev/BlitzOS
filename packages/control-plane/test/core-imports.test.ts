@@ -33,6 +33,7 @@ const expected = [
   "connections/minters/oauth.ts",
   "connections/minters/static.ts",
   "connections/proxy.ts",
+  "connections/pull-routes.ts",
   "connections/pull-wire.ts",
   "connections/registry.ts",
   "connections/requests.ts",
@@ -56,7 +57,6 @@ const expected = [
   "files/usage-push.ts",
   "http.ts",
   "identity/google.ts",
-  "identity/grants.ts",
   "identity/invites.ts",
   "identity/members.ts",
   "oauth-state.ts",
@@ -64,6 +64,7 @@ const expected = [
   "identity/routes.ts",
   "index.ts",
   "janitors.ts",
+  "machines.ts",
   "oauth.ts",
   "operator-tokens.ts",
   "preview.ts",
@@ -95,6 +96,9 @@ const expected = [
   "workspace-names.ts",
   "workspace-access.ts",
   "workspace-templates.ts",
+  "workspace-credentials.ts",
+  "workspace-members.ts",
+  "workspace-projection.ts",
   "workspace-records.ts",
   "workspace-tunnels.ts",
   "workspace-volumes.ts",
@@ -104,6 +108,7 @@ const expected = [
   "webapp-proxy.ts",
   "webapp-surface.ts",
   "webapp-tickets.ts",
+  "wire-machines.ts",
   "wire.ts",
   "workspaces.ts",
 ] as const;
@@ -124,6 +129,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(99);
+    expect(expected).toHaveLength(104);
   });
 });

@@ -140,6 +140,7 @@ run_worker_first = [
   "/invites/*",
   "/leases/*",
   "/machine-types",
+  "/machines/*",
   "/me",
   "/members",
   "/members/*",

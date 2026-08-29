@@ -21,25 +21,25 @@ const expectedTables = [
   "sessions",
   "agent_rules",
   "workspaces",
+  "machines",
+  "workspace_members",
+  "workspace_credentials",
   "invites",
   "volume_ownership",
-  "workspace_grants",
   "folders",
   "folder_grants",
   "folder_attachments",
-  "workspace_templates",
-  "workspace_template_folders",
   "recipes",
   "webapp_state",
   "device_authorizations",
   "boxes",
   "box_token_families",
+  "machine_token_families",
   "broker_boxes",
   "broker_keys",
   "broker_members",
   "connections",
   "user_oauth_grants",
-  "workspace_template_connections",
   "provider_health",
   "credential_leases",
   "credential_events",
@@ -99,10 +99,17 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspaces")).toMatchObject({
       fields: expect.arrayContaining([
         expect.objectContaining({
-          name: "machine_type_id",
+          name: "default_machine_type_id",
           notNull: true,
           default: { l: "unknown" },
         }),
+        expect.objectContaining({
+          name: "auto_provision",
+          type: "bool",
+          default: { l: 1 },
+          check: "auto_provision IN (0, 1)",
+        }),
+        expect.objectContaining({ name: "deleted_at", type: "integer" }),
         expect.objectContaining({
           name: "org_id",
           foreignKey: { table: "orgs", column: "id" },
@@ -111,7 +118,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
           name: "owner_membership_id",
           foreignKey: { table: "memberships", column: "id" },
         }),
-        expect.objectContaining({ name: "environment", type: "text" }),
         expect.objectContaining({
           name: "files_ready",
           type: "bool",
@@ -126,10 +132,74 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
           name: "recipe_id",
           foreignKey: { table: "recipes", column: "id" },
         }),
+      ]),
+    });
+    // The VM columns the workspace shed. One machine per (workspace, member),
+    // and the pair is unique (plans/MEMBER-MACHINES.md §1).
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "machines")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({
+          name: "workspace_id",
+          notNull: true,
+          foreignKey: { table: "workspaces", column: "id" },
+        }),
+        expect.objectContaining({
+          name: "membership_id",
+          notNull: true,
+          foreignKey: { table: "memberships", column: "id" },
+        }),
+        expect.objectContaining({
+          name: "state",
+          notNull: true,
+          check: "state IN ('provisioning', 'running', 'stopped', 'error', 'destroying', 'destroyed')",
+        }),
+        expect.objectContaining({ name: "machine_type_id", notNull: true }),
         expect.objectContaining({
           name: "compute_credential_source",
+          notNull: true,
           check: "compute_credential_source IN ('org', 'deployment')",
         }),
+        expect.objectContaining({ name: "vm_id", type: "text" }),
+        expect.objectContaining({ name: "volume_id", type: "text" }),
+        expect.objectContaining({ name: "phone_home_hash", type: "text" }),
+        expect.objectContaining({ name: "tunnel_hostname", type: "text" }),
+      ]),
+      indexes: expect.arrayContaining([
+        { name: "identity", unique: true, fields: ["workspace_id", "membership_id"] },
+      ]),
+    });
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_members")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({
+          name: "role",
+          notNull: true,
+          check: "role IN ('admin', 'member', 'viewer')",
+        }),
+      ]),
+      indexes: expect.arrayContaining([
+        { name: "identity", unique: true, fields: ["workspace_id", "membership_id"] },
+      ]),
+    });
+    // Sealed values only: the ciphertext column is NOT NULL and nothing here
+    // stores a plaintext value.
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_credentials")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({ name: "name", notNull: true }),
+        expect.objectContaining({ name: "ciphertext", notNull: true }),
+        expect.objectContaining({ name: "revoked_at", type: "integer" }),
+      ]),
+    });
+    // The machine's own credential. `box_token_families` beside it is what is
+    // left of the old table: brokers and device-code enrolments.
+    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "machine_token_families")).toMatchObject({
+      fields: expect.arrayContaining([
+        expect.objectContaining({
+          name: "machine_id",
+          primary: true,
+          foreignKey: { table: "machines", column: "id", onDelete: "CASCADE" },
+        }),
+        expect.objectContaining({ name: "vm_id", type: "text" }),
+        expect.objectContaining({ name: "access_hash", notNull: true, unique: true }),
       ]),
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "org_compute_credentials")).toMatchObject({
@@ -173,9 +243,8 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         }),
         expect.objectContaining({ name: "name", notNull: true }),
         expect.objectContaining({
-          name: "template_id",
-          notNull: true,
-          foreignKey: { table: "workspace_templates", column: "id" },
+          name: "source_workspace_id",
+          foreignKey: { table: "workspaces", column: "id" },
         }),
         expect.objectContaining({
           name: "harness",
@@ -193,7 +262,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       ],
       indexes: [
         { name: "org", fields: ["org_id", "created_at"] },
-        { name: "template", fields: "template_id" },
+        { name: "source_workspace", fields: "source_workspace_id" },
       ],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "agent_rules")).toMatchObject({
@@ -239,16 +308,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         }),
       ]),
     });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_grants")).toMatchObject({
-      fields: expect.arrayContaining([
-        expect.objectContaining({ name: "role", check: "role IN ('editor', 'viewer')" }),
-      ]),
-      indexes: [{
-        name: "identity",
-        unique: true,
-        fields: ["workspace_id", "membership_id"],
-      }],
-    });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "folders")).toMatchObject({
       fields: [
         expect.objectContaining({ name: "id" }),
@@ -260,29 +319,6 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
         expect.objectContaining({ name: "org_role", check: "org_role IN ('editor', 'viewer')" }),
       ],
       indexes: [{ name: "org", fields: ["org_id", "created_at"] }],
-    });
-    expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_templates")).toMatchObject({
-      fields: expect.arrayContaining([
-        expect.objectContaining({ name: "machine_type_id", notNull: true }),
-        expect.objectContaining({ name: "environment", type: "text" }),
-        expect.objectContaining({
-          name: "agent_rule_id",
-          foreignKey: { table: "agent_rules", column: "id", onDelete: "SET NULL" },
-        }),
-        expect.objectContaining({
-          name: "created_by_membership_id",
-          foreignKey: { table: "memberships", column: "id" },
-        }),
-      ]),
-      indexes: [{ name: "org", fields: ["org_id", "created_at"] }],
-    });
-    expect(
-      BLITZDEV_CONFIG.tables.find(({ name }) => name === "workspace_template_folders"),
-    ).toMatchObject({
-      indexes: [
-        { name: "identity", unique: true, fields: ["template_id", "folder_id"] },
-        { name: "folder", fields: ["folder_id", "template_id"] },
-      ],
     });
     expect(BLITZDEV_CONFIG.tables.find(({ name }) => name === "folder_grants")).toMatchObject({
       fields: [
@@ -363,22 +399,24 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_sessions_expires_at",
       "idx_agent_rules_identity",
       "idx_workspaces_owner",
-      "idx_workspaces_phase",
-      "idx_workspace_grants_identity",
+      "idx_workspaces_org",
+      "idx_machines_identity",
+      "idx_machines_workspace",
+      "idx_machines_state",
+      "idx_workspace_members_identity",
+      "idx_workspace_members_membership",
+      "idx_workspace_credentials_workspace",
       "idx_folders_org",
       "idx_folder_grants_identity",
       "idx_folder_grants_membership",
       "idx_folder_attachments_identity",
       "idx_folder_attachments_folder",
-      "idx_workspace_templates_org",
-      "idx_workspace_template_folders_identity",
-      "idx_workspace_template_folders_folder",
       "idx_recipes_org",
-      "idx_recipes_template",
+      "idx_recipes_source_workspace",
       "idx_webapp_state_identity",
       "idx_boxes_broker",
       "idx_boxes_principal",
-      "idx_broker_keys_box",
+      "idx_broker_keys_machine",
       "idx_broker_keys_identity",
       "idx_broker_members_box",
       "idx_broker_members_identity",
@@ -386,8 +424,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed schema [vendor-only
       "idx_connections_org",
       "idx_user_oauth_grants_live",
       "idx_user_oauth_grants_provider",
-      "idx_workspace_template_connections_provider",
-      "idx_credential_leases_workspace",
+            "idx_credential_leases_workspace",
       "idx_credential_leases_expiry",
       "idx_credential_leases_token",
       "idx_credential_leases_grant",

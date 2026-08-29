@@ -136,9 +136,9 @@ export interface ProvisionMachineInput {
 /**
  * Creates one member's VM and everything it needs.
  *
- * This is the one path from "a member should have a machine" to a booting
- * guest: workspace create, member add, provision, recreate, start after a
- * machine-type change. A provider failure lands the machine in `error` with
+ * This is the one path a member's machine is ever created on: workspace
+ * create, member add, provision, recreate, and the start that follows a
+ * machine-type change all land here. A provider failure lands the machine in `error` with
  * the detail on the row rather than throwing, exactly as the workspace create
  * path always did — except a 413 (user data too large) and a 503 (no
  * capacity), which are request-shaped and thrown so the caller can answer.
