@@ -72,6 +72,10 @@ export interface AddWorkspaceMemberRequest {
   role: WorkspaceMemberRole;
   /** Per-member override of the workspace default. */
   machineTypeId?: string;
+  /** Whether this member's machine gets its own persistent volume. Default
+   * true. False provisions the VM with no disk of its own, so nothing on it
+   * survives the VM — for a throwaway machine that has nothing to keep. */
+  persistentVolume?: boolean;
 }
 
 export interface UpdateWorkspaceMemberRequest {
@@ -84,6 +88,10 @@ export interface UpdateWorkspaceMemberRequest {
 export interface ProvisionMemberMachineRequest {
   /** Overrides the workspace default for this one machine (§1a). */
   machineTypeId?: string;
+  /** Whether this member's machine gets its own persistent volume. Default
+   * true. False provisions the VM with no disk of its own, so nothing on it
+   * survives the VM — for a throwaway machine that has nothing to keep. */
+  persistentVolume?: boolean;
 }
 
 export interface WorkspaceMemberResponse {

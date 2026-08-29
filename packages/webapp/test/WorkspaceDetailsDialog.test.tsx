@@ -170,6 +170,42 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
+  it('provisions without a volume when the row turns the toggle off', async () => {
+    const provisionMemberMachine = vi.fn().mockResolvedValue({ member: grace });
+    const view = await render(dialog({
+      client: client({ provisionMemberMachine }),
+      workspace: { ...workspace, members: [ada, { ...grace, role: 'member' }] },
+    }));
+    await settle();
+
+    // Ada's machine already holds a volume, so her row reports the disk that
+    // exists rather than offering a choice this route cannot make.
+    const settled = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Persistent volume for Ada Owner"]',
+    );
+    expect(settled?.checked).toBe(true);
+    expect(settled?.disabled).toBe(true);
+
+    const toggle = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Persistent volume for Grace Viewer"]',
+    );
+    expect(toggle?.checked).toBe(true);
+    await act(async () => toggle?.click());
+
+    const menu = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Machine actions for Grace Viewer"]',
+    );
+    await act(async () => menu?.click());
+    await act(async () => view.container.querySelector<HTMLButtonElement>('[role="option"]')?.click());
+
+    expect(provisionMemberMachine).toHaveBeenCalledWith(
+      workspace.id,
+      grace.membershipId,
+      { persistentVolume: false },
+    );
+    await view.unmount();
+  });
+
   it('lists credential names, never a value, and revokes one', async () => {
     const revokeWorkspaceCredential = vi.fn().mockResolvedValue(undefined);
     const view = await render(dialog({ client: client({ revokeWorkspaceCredential }) }));

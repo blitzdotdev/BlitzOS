@@ -303,7 +303,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
-  const listVolumes = useCallback(() => api.listVolumes(), [api]);
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
       const records = await api.listWorkspaces();
@@ -1405,7 +1404,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       createWorkspaceBusy={createWorkspaceBusy}
       createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
-      listVolumes={listVolumes}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
       onCancelCreateWorkspace={() => {
         if (createWorkspaceBusy) return;

@@ -128,6 +128,10 @@ export interface ProvisionMachineInput {
   /** A volume to reuse instead of creating one: a recreate or a machine-type
    * change keeps the member's disk. */
   volumeId?: string;
+  /** Whether this machine gets its own volume when it has none to reuse.
+   * Defaults to true; false skips the volume entirely, so the VM's disk is
+   * the only one it has and nothing on it outlives the VM. */
+  persistentVolume?: boolean;
   /** An existing machine row to bring back up, instead of inserting one. */
   machineId?: string;
   recipe?: RecipeBootstrap;
@@ -257,7 +261,9 @@ export async function provisionMachine(
     }
     // The member's own disk. It holds /var/lib/blitz, which is the docker
     // store and /workspace both, so a destroyed machine can come back on it.
-    const autoVolume = input.volumeId !== undefined
+    // A member row that asked for no persistent volume gets none: the VM's
+    // own disk is all there is, and it goes when the VM goes.
+    const autoVolume = input.volumeId !== undefined || input.persistentVolume === false
       ? null
       : await provisionWorkspaceVolume({
           db: runtime.db,

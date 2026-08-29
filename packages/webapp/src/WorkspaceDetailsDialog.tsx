@@ -41,6 +41,7 @@ function addMember(input: {
   membershipId: string;
   role: WorkspaceMemberRole;
   machineTypeId: string;
+  persistentVolume: boolean;
 }): AddWorkspaceMemberRequest {
   const request: AddWorkspaceMemberRequest = {
     membershipId: input.membershipId,
@@ -49,6 +50,8 @@ function addMember(input: {
   if (input.machineTypeId !== WORKSPACE_DEFAULT_MACHINE_TYPE) {
     request.machineTypeId = input.machineTypeId;
   }
+  // True is the server's default, so only the refusal travels.
+  if (!input.persistentVolume) request.persistentVolume = false;
   return request;
 }
 
@@ -242,13 +245,23 @@ export function WorkspaceDetailsDialog({
     void action.then(() => setError(null)).catch((caught: Error) => setError(caught.message));
   }, []);
 
-  const machineAction = (member: WorkspaceMemberView, action: MachineAction) => {
+  const machineAction = (
+    member: WorkspaceMemberView,
+    action: MachineAction,
+    options: { persistentVolume: boolean },
+  ) => {
     const machine = member.machine;
     // A member with no machine has no id to act on, so their one verb goes to
     // the route keyed by the membership instead. The row's type select shows
     // the workspace default until a machine exists, so nothing overrides it.
     if (machine === null) {
-      if (action === 'provision') run(client.provisionMemberMachine(workspaceId, member.membershipId, {}));
+      if (action === 'provision') {
+        run(client.provisionMemberMachine(
+          workspaceId,
+          member.membershipId,
+          options.persistentVolume ? {} : { persistentVolume: false },
+        ));
+      }
       return;
     }
     if (action === 'provision') run(client.provisionMachine(machine.id));

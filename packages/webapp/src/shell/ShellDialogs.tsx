@@ -1,4 +1,4 @@
-import type { ListMachineTypesResponse, Volume } from '@blitzos/schema';
+import type { ListMachineTypesResponse } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
@@ -31,7 +31,6 @@ export type ShellDialogsProps = {
   createWorkspaceBusy: boolean;
   createWorkspaceError: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  listVolumes: () => Promise<Volume[]>;
   /** The workspace a "new workspace from existing" copies, or null. */
   cloneFromWorkspaceId: string | null;
   onCancelCreateWorkspace: () => void;
@@ -60,7 +59,6 @@ export function ShellDialogs({
   createWorkspaceBusy,
   createWorkspaceError,
   listMachineTypes,
-  listVolumes,
   cloneFromWorkspaceId,
   onCancelCreateWorkspace,
   onCreateWorkspace,
@@ -97,7 +95,6 @@ export function ShellDialogs({
           saveComputeCredential={client.putComputeCredential}
           client={client}
           listMachineTypes={listMachineTypes}
-          listVolumes={listVolumes}
           cloneFromWorkspaceId={cloneFromWorkspaceId}
           cloneFromWorkspaceName={cloneSource?.title ?? null}
           viewerName={viewer?.identity.name || viewer?.identity.email || 'You'}

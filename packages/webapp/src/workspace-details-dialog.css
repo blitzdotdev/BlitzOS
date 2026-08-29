@@ -50,13 +50,18 @@
 .workspace-members-rows { border-top: 1px solid var(--rule); }
 .workspace-members-empty { margin: 14px 0; color: var(--faint); font-size: 11px; }
 
-.workspace-member-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto auto 28px; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-member-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto auto auto auto 28px; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
 .workspace-member-name { display: grid; min-width: 0; gap: 2px; }
 .workspace-member-name strong,
 .workspace-member-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-member-name strong { font-size: 11px; font-weight: 550; }
 .workspace-member-name small { color: var(--faint); font-size: 10px; }
 .workspace-member-role-static { color: var(--faint); font-size: 10px; text-transform: capitalize; }
+/* The per-member disk choice, next to the type select it applies to. A row
+ * whose machine exists shows the disk it has, disabled. */
+.workspace-member-volume { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 10px; white-space: nowrap; }
+.workspace-member-volume input { width: auto; margin: 0; }
+.workspace-member-volume input:disabled + span { opacity: .55; }
 .workspace-member-remove { width: 24px; height: 24px; border: 0; border-radius: 50%; color: var(--faint); background: transparent; font-size: 15px; }
 .workspace-member-remove:hover,
 .workspace-member-remove:focus-visible { color: var(--ansi-red); background: var(--hover); }

@@ -16,6 +16,9 @@ export type DraftWorkspaceMember = {
   membershipId: string;
   role: WorkspaceMemberRole;
   machineTypeId: string;
+  /** Default true. False provisions this member's machine with no volume of
+   * its own, so nothing on it outlives the VM. */
+  persistentVolume: boolean;
 };
 
 /** The lifecycle verbs of plan §6, in the order the menu lists them. */
@@ -145,6 +148,7 @@ function MemberRow({
   avatarUrl,
   role,
   machineTypeId,
+  persistentVolume,
   machine,
   machines,
   defaultMachineTypeId,
@@ -152,6 +156,7 @@ function MemberRow({
   readOnly,
   onRoleChange,
   onMachineTypeChange,
+  onPersistentVolumeChange,
   onMachineAction,
   onRemove,
 }: {
@@ -159,6 +164,7 @@ function MemberRow({
   avatarUrl: string | null;
   role: WorkspaceMemberRole;
   machineTypeId: string;
+  persistentVolume: boolean;
   /** Live mode only; null in draft mode, where no machine exists yet. */
   machine: MachineView | null;
   machines: readonly MachineType[];
@@ -168,12 +174,20 @@ function MemberRow({
   readOnly: boolean;
   onRoleChange: (role: WorkspaceMemberRole) => void;
   onMachineTypeChange: (machineTypeId: string) => void;
+  onPersistentVolumeChange: (persistentVolume: boolean) => void;
   onMachineAction: ((action: MachineAction) => void) | null;
   onRemove: () => void;
 }) {
   // A viewer never holds a machine (§2.2), so the type select would be a
   // control over something that does not exist.
   const showMachine = role !== 'viewer';
+  // The volume is created with the machine, so the toggle is a choice only
+  // while there is no machine. On a row that has one it reports the disk that
+  // exists rather than offering to change it, which this route cannot do.
+  const volumeDecided = machine !== null;
+  // The pinned creator row of a draft has no choice to make: the workspace
+  // creator's own machine is provisioned before any member row is read.
+  const showVolume = showMachine && (volumeDecided || !pinned);
   const actions = onMachineAction === null ? [] : machineActionsFor(machine);
   return (
     <div className="workspace-member-row">
@@ -207,6 +221,18 @@ function MemberRow({
           disabled={readOnly}
           onChange={onMachineTypeChange}
         />
+      )}
+      {showVolume && (
+        <label className="workspace-member-volume">
+          <input
+            type="checkbox"
+            aria-label={`Persistent volume for ${name}`}
+            checked={volumeDecided ? machine.volumeId !== null : persistentVolume}
+            disabled={readOnly || volumeDecided}
+            onChange={(event) => onPersistentVolumeChange(event.currentTarget.checked)}
+          />
+          <span>Persistent volume</span>
+        </label>
       )}
       {showMachine && actions.length > 0 && (
         <WebAppSelectMenu
@@ -246,10 +272,19 @@ export type WorkspaceMembersEditorMode =
     members: WorkspaceMemberView[];
     readOnly: boolean;
     ownerMembershipId: string | null;
-    onAdd: (input: { membershipId: string; role: WorkspaceMemberRole; machineTypeId: string }) => void;
+    onAdd: (input: {
+      membershipId: string;
+      role: WorkspaceMemberRole;
+      machineTypeId: string;
+      persistentVolume: boolean;
+    }) => void;
     onRoleChange: (membershipId: string, role: WorkspaceMemberRole) => void;
     onMachineTypeChange: (member: WorkspaceMemberView, machineTypeId: string) => void;
-    onMachineAction: (member: WorkspaceMemberView, action: MachineAction) => void;
+    onMachineAction: (
+      member: WorkspaceMemberView,
+      action: MachineAction,
+      options: { persistentVolume: boolean },
+    ) => void;
     onRemove: (member: WorkspaceMemberView) => void;
   };
 
@@ -280,6 +315,10 @@ export function WorkspaceMembersEditor({
   viewerName?: string;
   viewerAvatarUrl?: string | null;
 }) {
+  // What a live row asks the NEXT provision for. A draft row carries its own
+  // answer in the create request; a live row has nowhere to keep one until
+  // there is a machine, so the editor holds it until provision reads it.
+  const [volumeIntent, setVolumeIntent] = useState<Record<string, boolean>>({});
   const listed = new Set(mode.members.map(({ membershipId }) => membershipId));
   const readOnly = mode.kind === 'live' && mode.readOnly;
   const candidates = orgMembers.filter((member) =>
@@ -300,6 +339,7 @@ export function WorkspaceMembersEditor({
                 membershipId: member.id,
                 role: 'member',
                 machineTypeId: WORKSPACE_DEFAULT_MACHINE_TYPE,
+                persistentVolume: true,
               }]);
               return;
             }
@@ -307,6 +347,7 @@ export function WorkspaceMembersEditor({
               membershipId: member.id,
               role: 'member',
               machineTypeId: WORKSPACE_DEFAULT_MACHINE_TYPE,
+              persistentVolume: true,
             });
           }}
         />
@@ -318,6 +359,7 @@ export function WorkspaceMembersEditor({
             avatarUrl={viewerAvatarUrl}
             role="admin"
             machineTypeId={WORKSPACE_DEFAULT_MACHINE_TYPE}
+            persistentVolume
             machine={null}
             machines={machines}
             defaultMachineTypeId={defaultMachineTypeId}
@@ -325,6 +367,7 @@ export function WorkspaceMembersEditor({
             readOnly
             onRoleChange={() => undefined}
             onMachineTypeChange={() => undefined}
+            onPersistentVolumeChange={() => undefined}
             onMachineAction={null}
             onRemove={() => undefined}
           />
@@ -337,6 +380,7 @@ export function WorkspaceMembersEditor({
               avatarUrl={orgMembers.find(({ id }) => id === draft.membershipId)?.avatarUrl ?? null}
               role={draft.role}
               machineTypeId={draft.machineTypeId}
+              persistentVolume={draft.persistentVolume}
               machine={null}
               machines={machines}
               defaultMachineTypeId={defaultMachineTypeId}
@@ -346,6 +390,9 @@ export function WorkspaceMembersEditor({
                 at === index ? { ...current, role } : current))}
               onMachineTypeChange={(machineTypeId) => mode.onChange(mode.members.map((current, at) =>
                 at === index ? { ...current, machineTypeId } : current))}
+              onPersistentVolumeChange={(persistentVolume) => mode.onChange(
+                mode.members.map((current, at) =>
+                  at === index ? { ...current, persistentVolume } : current))}
               onMachineAction={null}
               onRemove={() => mode.onChange(mode.members.filter((_current, at) => at !== index))}
             />
@@ -357,6 +404,7 @@ export function WorkspaceMembersEditor({
               avatarUrl={member.avatarUrl}
               role={member.role}
               machineTypeId={member.machine?.machineTypeId ?? WORKSPACE_DEFAULT_MACHINE_TYPE}
+              persistentVolume={volumeIntent[member.membershipId] ?? true}
               machine={member.machine}
               machines={machines}
               defaultMachineTypeId={defaultMachineTypeId}
@@ -364,7 +412,13 @@ export function WorkspaceMembersEditor({
               readOnly={readOnly}
               onRoleChange={(role) => mode.onRoleChange(member.membershipId, role)}
               onMachineTypeChange={(machineTypeId) => mode.onMachineTypeChange(member, machineTypeId)}
-              onMachineAction={readOnly ? null : (action) => mode.onMachineAction(member, action)}
+              onPersistentVolumeChange={(persistentVolume) => setVolumeIntent((current) => ({
+                ...current,
+                [member.membershipId]: persistentVolume,
+              }))}
+              onMachineAction={readOnly ? null : (action) => mode.onMachineAction(member, action, {
+                persistentVolume: volumeIntent[member.membershipId] ?? true,
+              })}
               onRemove={() => mode.onRemove(member)}
             />
           ))}

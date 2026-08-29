@@ -81,7 +81,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -116,7 +115,7 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
-  it("includes optional SSH and volume fields only when selected", async () => {
+  it("includes the optional SSH key only when one is typed", async () => {
     const submit = vi.fn();
     const view = await render(
       <CreateWorkspaceDialog
@@ -125,14 +124,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => [{
-          id: "vol-1",
-          name: "home",
-          sizeGb: 50,
-          location: "fsn1",
-          status: "available",
-          attachedTo: null,
-        }]}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -140,12 +131,9 @@ describe("create workspace dialog", () => {
     await settle();
 
     const key = view.container.querySelector<HTMLTextAreaElement>('textarea[name="sshPublicKey"]')!;
-    const volume = view.container.querySelector<HTMLSelectElement>('select[name="volumeId"]')!;
     await act(async () => {
       key.value = "ssh-ed25519 AAAA operator@example";
       key.dispatchEvent(new Event("input", { bubbles: true }));
-      volume.value = "vol-1";
-      volume.dispatchEvent(new Event("change", { bubbles: true }));
       view.container.querySelector("form")?.dispatchEvent(
         new Event("submit", { bubbles: true, cancelable: true }),
       );
@@ -154,15 +142,13 @@ describe("create workspace dialog", () => {
     expect(submit).toHaveBeenCalledWith({
       machineTypeId: "cx23@fsn1",
       sshPublicKey: "ssh-ed25519 AAAA operator@example",
-      volumeId: "vol-1",
     });
     const completeRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(completeRequest).sort()).toEqual(["machineTypeId", "sshPublicKey", "volumeId"])
-    expect("sshPublicKey" in completeRequest).toBe(true);
-    expect("volumeId" in completeRequest).toBe(true);
-    expect(JSON.stringify(completeRequest)).toBe(
-      '{"machineTypeId":"cx23@fsn1","sshPublicKey":"ssh-ed25519 AAAA operator@example","volumeId":"vol-1"}',
-    );
+    expect(Object.keys(completeRequest).sort()).toEqual(["machineTypeId", "sshPublicKey"]);
+    // The workspace no longer picks a volume: each member's row does, and the
+    // `volumeId` field stays on the wire for a recreate alone.
+    expect("volumeId" in completeRequest).toBe(false);
+    expect(view.container.querySelector('select[name="volumeId"]')).toBeNull();
     await view.unmount();
   });
 
@@ -180,7 +166,6 @@ describe("create workspace dialog", () => {
             { providerId: "microvm", error: "no microVM hosts are reachable" },
           ],
         })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={() => undefined}
       />,
@@ -210,7 +195,6 @@ describe("create workspace dialog", () => {
             { providerId: "hetzner", error: "Hetzner API request failed with status 403" },
           ],
         })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={() => undefined}
       />,
@@ -236,7 +220,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: [], failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={() => undefined}
       />,
@@ -247,45 +230,6 @@ describe("create workspace dialog", () => {
     expect(view.container.textContent).not.toContain("hetzner:");
     await view.unmount();
   });
-
-  it("disables volume selection for a provider without volume support", async () => {
-    const submit = vi.fn();
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => [{
-          id: "vol-1",
-          name: "home",
-          sizeGb: 50,
-          location: "fsn1",
-          status: "available",
-          attachedTo: null,
-        }]}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-
-    const microvm = view.container.querySelector<HTMLInputElement>(
-      'input[value="mv-2c2g@lab"]',
-    );
-    await act(async () => {
-      microvm?.click();
-    });
-    const volume = view.container.querySelector<HTMLSelectElement>('select[name="volumeId"]');
-
-    expect(volume?.disabled).toBe(true);
-    expect(view.container.textContent).toContain(
-      "Volumes are not supported by this machine provider.",
-    );
-    await view.unmount();
-  });
-
 
   it("carries a repo selection with no template through the connect round trip", async () => {
     const client = rulesClient();
@@ -299,7 +243,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={client}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={vi.fn()}
       />,
@@ -338,7 +281,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -371,7 +313,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         client={rulesClient([BUILT_IN_RULE, orgRule])}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -439,7 +380,6 @@ describe("create workspace dialog", () => {
         saveComputeCredential={saveComputeCredential}
         client={rulesClient()}
         listMachineTypes={listMachineTypes}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={() => undefined}
       />,
@@ -485,7 +425,6 @@ describe("create workspace dialog", () => {
           failures: [],
           providerStatuses: [{ providerId: 'aws', access: 'credential-required' }],
         })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={() => undefined}
       />,
@@ -511,7 +450,6 @@ describe("create workspace dialog", () => {
         viewerName="Ada Park"
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -555,6 +493,54 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
+  it("sends a member's persistent-volume refusal, and nothing when it stays on", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        viewerName="Ada Park"
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const search = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]')!;
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(new Event("focus", { bubbles: true }));
+    });
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+      .find((button) => button.textContent?.includes("Nia Newcomer"))?.click());
+
+    const toggle = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Persistent volume for Nia Newcomer"]',
+    )!;
+    // Default ON: every member keeps their disk unless somebody says otherwise,
+    // and the other member tests show that default travelling as no field.
+    expect(toggle.checked).toBe(true);
+    await act(async () => toggle.click());
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      members: [{
+        membershipId: "membership-2",
+        role: "member",
+        persistentVolume: false,
+      }],
+    }));
+    await view.unmount();
+  });
+
   it("hides the machine type on a viewer row and omits an unchosen type from the body", async () => {
     const submit = vi.fn();
     const view = await render(
@@ -565,7 +551,6 @@ describe("create workspace dialog", () => {
         admin
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -614,7 +599,6 @@ describe("create workspace dialog", () => {
         admin
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
@@ -658,7 +642,6 @@ describe("create workspace dialog", () => {
         admin={false}
         client={rulesClient()}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={() => undefined}
       />,
@@ -681,7 +664,6 @@ describe("create workspace dialog", () => {
         cloneFromWorkspaceId="workspace-source"
         cloneFromWorkspaceName="engineering"
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
         onCancel={() => undefined}
         onSubmit={submit}
       />,
