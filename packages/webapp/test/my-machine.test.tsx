@@ -1,5 +1,9 @@
 import { act } from 'react';
-import type { MachineType, WorkspaceMemberView } from '@blitzos/schema';
+import type {
+  ListMachineTypesResponse,
+  MachineType,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import { MyMachineDialog } from '../src/MyMachineDialog.js';
@@ -21,6 +25,29 @@ const machineTypes: MachineType[] = [
     monthlyPrice: { amount: 6.49, currency: 'USD' },
   },
 ];
+
+/**
+ * `GET /machine-types` as `core/app.ts` serves it: the registry's
+ * `{ machineTypes, failures }` — each entry decorated with `providerId` and
+ * `supportsVolumes` by `core/compute/registry.ts` — spread beside
+ * `providerStatuses`. The suite fixture above predates the third field.
+ */
+const catalogResponse: ListMachineTypesResponse = {
+  machineTypes: [{
+    id: 'cx33@hel1',
+    providerId: 'hetzner',
+    supportsVolumes: true,
+    name: 'cx33',
+    cpuCores: 4,
+    memGb: 8,
+    diskGb: 80,
+    arch: 'x86',
+    location: 'hel1',
+    monthlyPrice: { amount: 9.99, currency: 'USD' },
+  }],
+  failures: [],
+  providerStatuses: [{ providerId: 'hetzner', access: 'deployment' }],
+};
 
 const ada: WorkspaceMemberView = {
   membershipId: 'membership-1',
@@ -122,6 +149,88 @@ describe('MyMachineDialog', () => {
     expect(buttons(view.container).every((button) => !button.disabled)).toBe(true);
     expect(view.container.querySelector('[aria-label="Change my machine type"]')).not.toBeNull();
     expect(view.container.textContent).not.toContain('Ask a workspace admin');
+    await view.unmount();
+  });
+
+  it('reads the size out of the response the control plane actually serves', async () => {
+    const view = await render(dialog({
+      workspace: {
+        ...workspace,
+        members: [ada, { ...me, machine: { ...me.machine!, machineTypeId: 'cx33@hel1' } }],
+      },
+      listMachineTypes: async () => catalogResponse,
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('4 vCPU');
+    expect(view.container.textContent).toContain('8 GB');
+    expect(view.container.textContent).toContain('80 GB');
+    expect(view.container.textContent).toContain('$9.99/mo');
+    expect(view.container.textContent).not.toContain('Unavailable');
+    await view.unmount();
+  });
+
+  /**
+   * The canary defect. The catalog is what an organization may create NOW:
+   * the Hetzner adapter drops deprecated types, drops locations reporting no
+   * availability, and keeps only the allowlisted ids, so a live machine's type
+   * can be absent from a catalog that is otherwise healthy. The panel used to
+   * answer that with four bare "Unavailable" rows and no reason at all.
+   */
+  it('says why a size is missing instead of printing “Unavailable” four times', async () => {
+    const view = await render(dialog({
+      workspace: {
+        ...workspace,
+        members: [ada, { ...me, machine: { ...me.machine!, machineTypeId: 'cx33@hel1' } }],
+      },
+      // A healthy catalog that no longer offers this machine's type.
+      listMachineTypes: async () => ({ machineTypes, failures: [] }),
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('The catalog no longer offers cx33@hel1');
+    expect(view.container.textContent).not.toContain('Unavailable');
+    // The type id stays readable, because it is the one fact that is known.
+    expect(view.container.textContent).toContain('cx33@hel1');
+    await view.unmount();
+  });
+
+  it('names the provider whose credential emptied the catalog', async () => {
+    const view = await render(dialog({
+      listMachineTypes: async () => ({
+        machineTypes: [],
+        failures: [],
+        providerStatuses: [{ providerId: 'hetzner', access: 'credential-required' }],
+      }),
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('hetzner needs an organization compute credential');
+    await view.unmount();
+  });
+
+  it('reports a provider failure the catalog answered 200 with', async () => {
+    const view = await render(dialog({
+      listMachineTypes: async () => ({
+        machineTypes: [],
+        failures: [{ providerId: 'hetzner', error: 'rate limited' }],
+      }),
+    }));
+    await settle();
+
+    expect(view.container.textContent).toContain('hetzner: rate limited');
+    await view.unmount();
+  });
+
+  it('shows a message when the catalog rejects with something that is not an Error', async () => {
+    const view = await render(dialog({
+      // A rejection that is not an Error, which is what a stray throw produces.
+      listMachineTypes: () => Promise.reject('boom'),
+    }));
+    await settle();
+
+    const alert = view.container.querySelector('[role="alert"]');
+    expect(alert?.textContent).toBe('The machine catalog could not be loaded.');
     await view.unmount();
   });
 
