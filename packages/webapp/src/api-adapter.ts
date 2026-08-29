@@ -126,10 +126,6 @@ export function workspaceFromWire(
     owner: workspace.owner,
     machineType: workspace.machineTypeId,
     volumeId: workspace.volumeId,
-    environmentConfigured: workspace.environment !== null
-      && Object.keys(workspace.environment.env).length > 0,
-    startupConfigured: workspace.environment?.startupScript !== null
-      && workspace.environment?.startupScript !== undefined,
     name: workspace.name,
     status: statusFromWire(workspace),
     errorDetail: workspace.error,

@@ -36,8 +36,6 @@ function workspace(overrides: Partial<CloudWorkspaceModel> = {}): CloudWorkspace
     title: "design-team",
     machineType: "cx23@fsn1",
     volumeId: null,
-    environmentConfigured: false,
-    startupConfigured: false,
     lifecycleStatus: "running",
     errorDetail: null,
     retryAction: null,

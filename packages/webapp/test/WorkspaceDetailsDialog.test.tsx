@@ -18,8 +18,6 @@ const workspace: CloudWorkspaceModel = {
   title: 'Details test',
   machineType: 'cx23@fsn1',
   volumeId: 'volume-private-id',
-  environmentConfigured: true,
-  startupConfigured: false,
   lifecycleStatus: 'running',
   errorDetail: null,
   retryAction: null,
@@ -84,8 +82,6 @@ describe('WorkspaceDetailsDialog', () => {
     expect(view.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Compute');
     expect(view.container.textContent).not.toContain('Everyone at Acme');
     expect(view.container.textContent).not.toContain('Grace Editor');
-    expect(view.container.textContent).toContain('Environment variablesYes');
-    expect(view.container.textContent).toContain('Startup scriptNo');
     expect(view.container.textContent).not.toContain('volume-private-id');
     expect(view.container.textContent).not.toContain('raw-vm-id');
     expect([...view.container.querySelectorAll('button')]

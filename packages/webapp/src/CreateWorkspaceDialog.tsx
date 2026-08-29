@@ -22,11 +22,6 @@ import { InlineComputeCredentialSetup } from './InlineComputeCredentialSetup';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
 import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
 import { TemplateRepoPicker } from './files/TemplateRepoPicker';
-import {
-  EMPTY_WORKSPACE_ENVIRONMENT,
-  EnvironmentEditor,
-  populatedEnvironment,
-} from './EnvironmentEditor';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
@@ -93,9 +88,6 @@ export function CreateWorkspaceDialog({
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [environment, setEnvironment] = useState(
-    restoredDraft?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT,
-  );
   const [agentRuleId, setAgentRuleId] = useState<string | null>(
     restoredDraft?.agentRuleId ?? null,
   );
@@ -141,7 +133,6 @@ export function CreateWorkspaceDialog({
     if (template === undefined) return;
     seededTemplate.current = true;
     setSelectedTemplateId(template.id);
-    setEnvironment(restoredDraft?.environment ?? template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
     setAgentRuleId(restoredDraft === null ? template.agentRuleId : restoredDraft.agentRuleId);
   }, [templates, restoredDraft, seededTemplateId]);
 
@@ -204,7 +195,6 @@ export function CreateWorkspaceDialog({
   // The blank tile and the toggle-off share this, so the two paths cannot drift.
   const clearTemplate = () => {
     setSelectedTemplateId(null);
-    setEnvironment(EMPTY_WORKSPACE_ENVIRONMENT);
     setAgentRuleId(null);
   };
   // The picker is hidden under a template, and the control plane refuses a
@@ -212,14 +202,12 @@ export function CreateWorkspaceDialog({
   // out of sight to be sent later.
   const selectTemplate = (template: WorkspaceTemplateView) => {
     setSelectedTemplateId(template.id);
-    setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
     setAgentRuleId(template.agentRuleId);
     setRepos([]);
   };
   const storeDraft = () => {
     storeWorkspaceConnectDraft({
       templateId: selectedTemplateId,
-      environment,
       agentRuleId,
       repos,
     });
@@ -238,9 +226,6 @@ export function CreateWorkspaceDialog({
         templateId: selectedTemplate.id,
         orgShareRole: 'editor',
       };
-      const configured = populatedEnvironment(environment);
-      if (configured !== undefined) input.environment = configured;
-      else if (selectedTemplate.environment !== null) input.environment = environment;
       // Sent whenever it differs from what the template already carries, so an
       // explicit "back to Default" is not read as "leave the template's rule".
       if (agentRuleId !== selectedTemplate.agentRuleId) input.agentRuleId = agentRuleId;
@@ -262,8 +247,6 @@ export function CreateWorkspaceDialog({
     if (volumeId) input.volumeId = volumeId;
     if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
     if (repos.length > 0) input.repos = repos;
-    const configured = populatedEnvironment(environment);
-    if (configured !== undefined) input.environment = configured;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
     onSubmit(input);
   };
@@ -540,11 +523,6 @@ export function CreateWorkspaceDialog({
           <details className="blueprint-advanced">
             <summary>Advanced</summary>
             <div className="blueprint-advanced__content">
-              <EnvironmentEditor
-                key={selectedTemplateId ?? 'workspace'}
-                initial={environment}
-                onChange={setEnvironment}
-              />
               <AgentRulesPicker
                 client={client}
                 value={agentRuleId}

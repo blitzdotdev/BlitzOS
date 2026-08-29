@@ -13,11 +13,6 @@ import { isComputeCredentialProvider } from '../ComputeCredentialFields';
 import { TemplateConnectionsSection } from './TemplateConnectionsSection';
 import type { FolderObjectView, FolderView } from '../file-library-api';
 import { AgentRulesPicker } from '../AgentRulesPicker';
-import {
-  EMPTY_WORKSPACE_ENVIRONMENT,
-  EnvironmentEditor,
-  populatedEnvironment,
-} from '../EnvironmentEditor';
 import { DriveAvatar } from './DriveAvatar';
 import { BackGlyph, CloseGlyph } from './DriveIcons';
 import { DocDuoIcon, FolderDuoIcon } from '../files-icons';
@@ -82,9 +77,6 @@ export function CreateTemplateScreen({
     setShareWithOrg,
     templateConnections,
     setTemplateConnections,
-    environment,
-    setEnvironment,
-    loadedEnvironment,
     agentRuleId,
     setAgentRuleId,
     isOrgDefault,
@@ -248,13 +240,8 @@ export function CreateTemplateScreen({
       // Only admins see the checkbox, so only admins speak about the org
       // default at all — absence leaves the org pointer untouched.
       if (isAdmin) request.isOrgDefault = isOrgDefault;
-      // The environment rides on both create and edit — the PUT handler
-      // replaces it, so an edit that cleared it has to send the empty one
-      // rather than omit the field. The agent rule rides only on create: the
-      // PUT handler leaves the stored value untouched.
-      const configured = populatedEnvironment(environment);
-      if (configured !== undefined) request.environment = configured;
-      else if (editTemplateId !== undefined) request.environment = EMPTY_WORKSPACE_ENVIRONMENT;
+      // The agent rule rides only on create: the PUT handler leaves the
+      // stored value untouched.
       if (editTemplateId === undefined && agentRuleId !== null) request.agentRuleId = agentRuleId;
       const { template } = editTemplateId === undefined
         ? await client.createWorkspaceTemplate(request)
@@ -637,22 +624,15 @@ export function CreateTemplateScreen({
             )}
           </section>
 
-          {loadedEnvironment !== null && (
+          {editTemplateId === undefined && (
             <details className="blueprint-advanced">
               <summary>Advanced</summary>
               <div className="blueprint-advanced__content">
-                <EnvironmentEditor
-                  key={editTemplateId ?? 'new'}
-                  initial={loadedEnvironment}
-                  onChange={setEnvironment}
+                <AgentRulesPicker
+                  client={client}
+                  value={agentRuleId}
+                  onChange={setAgentRuleId}
                 />
-                {editTemplateId === undefined && (
-                  <AgentRulesPicker
-                    client={client}
-                    value={agentRuleId}
-                    onChange={setAgentRuleId}
-                  />
-                )}
               </div>
             </details>
           )}

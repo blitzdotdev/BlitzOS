@@ -25,8 +25,6 @@ export type WorkspaceRecord = {
   orgShareRole?: 'editor' | 'viewer' | null;
   machineType?: string | null;
   volumeId?: string | null;
-  environmentConfigured?: boolean;
-  startupConfigured?: boolean;
   name: string;
   status: RestWorkspaceStatus;
   errorDetail?: string | null;
