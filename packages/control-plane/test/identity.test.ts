@@ -237,12 +237,15 @@ describe("identity phase 1", () => {
       ),
       env.DB.prepare(
         `INSERT INTO workspaces
-         (id, owner_id, machine_type_id, phase, revision, created_at, updated_at)
-         VALUES ('legacy-workspace', 'operator', 'small', 'ready', 1, ?1, ?1)`,
+         (id, owner_id, default_machine_type_id, auto_provision, revision,
+          created_at, updated_at)
+         VALUES ('legacy-workspace', 'operator', 'small', 1, 1, ?1, ?1)`,
       ).bind(now),
+      // The device-code box that predates identity. It is still a `boxes`
+      // row: only workspace guests became machines.
       env.DB.prepare(
         `INSERT INTO boxes (id, principal_id, workspace_id, is_broker, created_at)
-         VALUES ('legacy-box', 'operator', 'legacy-workspace', 0, ?1)`,
+         VALUES ('legacy-box', 'operator', NULL, 0, ?1)`,
       ).bind(now),
       env.DB.prepare(
         `INSERT INTO webapp_state (principal_id, workspace_id, doc, updated_at)

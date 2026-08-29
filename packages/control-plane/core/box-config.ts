@@ -5,7 +5,11 @@ import type { BoxIdentity } from "./types.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
 import { machineFor } from "./machines.js";
-import { requireWorkspaceAdmin } from "./workspace-access.js";
+import {
+  isWorkspaceAdmin,
+  isWorkspaceMember,
+  workspaceAccess,
+} from "./workspace-access.js";
 import { workspaceById } from "./workspace-records.js";
 import {
   BOX_UPDATE_OUTCOMES,
@@ -152,9 +156,20 @@ export function addBoxConfigRoutes(
     if (row === null || row.org_id !== principal.orgId || row.deleted_at !== null) {
       throw new HttpError(404, "workspace not found");
     }
-    await requireWorkspaceAdmin(runtime.db, principal, row);
-    // The caller's own machine. A workspace has no single box to update any
-    // more, and picking somebody else's would restart a colleague's work.
+    // A workspace has no single box to update any more. A workspace admin
+    // means "every box in this workspace", which is the whole point of asking
+    // at the workspace level; a plain member may only ask for their own,
+    // because replacing a container kills every process inside it.
+    const access = await workspaceAccess(runtime.db, principal, row);
+    if (isWorkspaceAdmin(access)) {
+      await changed(runtime.db, {
+        q: `UPDATE machines SET box_update_requested = 1, updated_at = ?1
+            WHERE workspace_id = ?2 AND state != 'destroyed' RETURNING id`,
+        v: [Date.now(), row.id],
+      });
+      return context.body(null, 204);
+    }
+    if (!isWorkspaceMember(access)) throw new HttpError(403, "forbidden");
     if (principal.membershipId === null) {
       throw new HttpError(403, "active membership required");
     }
