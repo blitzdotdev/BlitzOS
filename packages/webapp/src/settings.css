@@ -333,13 +333,6 @@
     font: 12.5px/1.5 var(--font-ui);
   }
 
-  .settings-section-select .webapp-select-menu {
-    top: calc(100% + 5px);
-    bottom: auto;
-    width: 100%;
-    max-width: none;
-  }
-
   .settings-section-select .webapp-select-chevron {
     transform: rotate(180deg);
   }

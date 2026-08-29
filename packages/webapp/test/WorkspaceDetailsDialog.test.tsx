@@ -206,6 +206,42 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
+  it('anchors every row popover to the viewport, so the dialog cannot clip it', async () => {
+    const view = await render(dialog({
+      workspace: { ...workspace, members: [ada, { ...grace, role: 'member' }] },
+    }));
+    await settle();
+
+    // The three the report named: the role listbox, the machine-type listbox
+    // and the lifecycle menu. Each sits inside `.workspace-details-body`,
+    // which scrolls, so an absolutely positioned popover was clipped by it.
+    // Ada is the workspace owner, so her role is a fact and not a control.
+    const labels = [
+      'Role for Grace Viewer',
+      'Machine type for Ada Owner',
+      'Machine actions for Ada Owner',
+    ];
+    for (const label of labels) {
+      const trigger = view.container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+      if (trigger === null) throw new Error(`no trigger for ${label}`);
+      // A row far enough down the viewport that the popover opens upward.
+      trigger.getBoundingClientRect = () => ({
+        x: 300, y: 500, left: 300, top: 500, right: 420, bottom: 530,
+        width: 120, height: 30, toJSON: () => ({}),
+      });
+      await act(async () => trigger.click());
+      const menu = view.container.querySelector<HTMLElement>(`[role="listbox"][aria-label="${label}"]`);
+      if (menu === null) throw new Error(`no popover for ${label}`);
+      expect(menu.style.left).toBe('300px');
+      // Anchored above the trigger, in viewport coordinates rather than in the
+      // scrolling body's.
+      expect(menu.style.bottom).toBe(`${String(window.innerHeight - 500 + 6)}px`);
+      expect(menu.style.top).toBe('');
+      await act(async () => trigger.click());
+    }
+    await view.unmount();
+  });
+
   it('lists credential names, never a value, and revokes one', async () => {
     const revokeWorkspaceCredential = vi.fn().mockResolvedValue(undefined);
     const view = await render(dialog({ client: client({ revokeWorkspaceCredential }) }));
