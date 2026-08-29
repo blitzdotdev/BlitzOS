@@ -54,7 +54,6 @@ export function workspaceModelFixture(
     shared: false,
     owner: { name: 'Ada Owner', avatarUrl: null },
     accessRole: 'owner',
-    orgShareRole: null,
     serverName: 'design-team',
     title: 'design-team',
     machineType: 'cx23@fsn1',

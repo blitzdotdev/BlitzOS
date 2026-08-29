@@ -80,7 +80,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     orgUsage: async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false }),
     billing: async () => { throw new Error('unused'); },
     putUsageCapture: async (enabled: boolean) => ({ enabled, folderId: null }),
-    setWorkspaceOrgRole: async () => undefined,
     deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => ({

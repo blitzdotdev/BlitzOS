@@ -222,7 +222,6 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   orgUsage(): Promise<OrgUsageResponse>;
   billing(): Promise<OrgBillingResponse>;
   putUsageCapture(enabled: boolean): Promise<OrgUsageCaptureResponse>;
-  setWorkspaceOrgRole(workspaceId: string, role: "editor" | "viewer" | null): Promise<void>;
   listMachineTypes(): Promise<ListMachineTypesResponse>;
   listVolumes(): Promise<ListVolumesResponse>;
   listConnections(signal?: AbortSignal): Promise<ListConnectionsResponse>;
@@ -727,12 +726,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
-      }),
-    setWorkspaceOrgRole: (workspaceId, role) =>
-      request<void>(`/workspaces/${encodeURIComponent(workspaceId)}/org-role`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role }),
       }),
     listMachineTypes: () => request<ListMachineTypesResponse>("/machine-types"),
     listVolumes: () => request<ListVolumesResponse>("/volumes"),

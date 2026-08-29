@@ -121,7 +121,6 @@ export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord |
     canControl: workspace.role !== null,
     shared: workspace.role === "editor" || workspace.role === "viewer",
     accessRole: workspace.role,
-    orgShareRole: workspace.orgShareRole,
     owner: workspace.owner,
     machineType: workspace.machineTypeId,
     volumeId: workspace.volumeId,

@@ -22,7 +22,6 @@ export type WorkspaceRecord = {
     avatarUrl: string | null;
   };
   accessRole?: WorkspaceRole | null;
-  orgShareRole?: 'editor' | 'viewer' | null;
   machineType?: string | null;
   volumeId?: string | null;
   name: string;
