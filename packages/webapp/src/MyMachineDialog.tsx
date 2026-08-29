@@ -208,87 +208,105 @@ export function MyMachineDialog({
             </p>
           ) : (
             <section className="my-machine-panel">
-              <h2>Machine</h2>
-              <dl className="workspace-details-list">
-                <Detail label="Status" value={machine === null ? 'No machine' : machine.state} />
-                <Detail
-                  label="Machine type"
-                  value={type?.name ?? machine?.machineTypeId ?? workspace.defaultMachineTypeId}
-                />
-                {type !== undefined && <>
-                  <Detail label="CPU" value={`${String(type.cpuCores)} vCPU`} />
-                  <Detail label="Memory" value={`${String(type.memGb)} GB`} />
-                  <Detail label="Disk" value={`${String(type.diskGb)} GB`} />
-                  <Detail label="Price" value={price ?? 'Unavailable'} />
-                </>}
-                <div>
-                  <dt>Persistent volume</dt>
-                  <dd>
-                    <VolumeMeter
-                      volumeId={machine?.volumeId ?? null}
-                      usedPercent={machine?.volumeUsedPercent ?? null}
-                    />
-                  </dd>
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Machine</h2>
                 </div>
-                <Detail label="Created" value={machine === null ? 'Unavailable' : dateLabel(machine.createdAt)} />
-              </dl>
-              {type === undefined && machine !== null && (
-                <p className="workspace-details-note">{catalogGap(catalog, machine.machineTypeId)}</p>
-              )}
-              {machine?.error != null && (
-                <p className="workspace-details-error" role="alert">{machine.error}</p>
-              )}
-
-              <h2>Machine type</h2>
-              {admin && machine !== null ? (
-                <MachineTypeSelect
-                  machines={machines}
-                  value={machine.machineTypeId}
-                  defaultMachineTypeId={workspace.defaultMachineTypeId}
-                  volumeLocation={volumeLocationOf(machine, machines)}
-                  ariaLabel="Change my machine type"
-                  onChange={(machineTypeId) => {
-                    if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
-                  }}
-                />
-              ) : (
-                <p className="workspace-details-note">
-                  {machine === null
-                    ? 'There is no machine to re-type yet.'
-                    : `Changing a machine's type is workspace-admin work. ${askLine(workspace.members)}`}
-                </p>
-              )}
-
-              <h2>Lifecycle</h2>
-              {actions.length === 0 && (
-                <p className="workspace-details-note">
-                  {machine === null
-                    ? 'You have no machine yet.'
-                    : `A machine that is ${machine.state} accepts nothing until it arrives.`}
-                </p>
-              )}
-              <div className="my-machine-actions">
-                {actions.map((action) => {
-                  const blocked = needsAdmin(action, machine) && !admin;
-                  return (
-                    <button
-                      className={action === 'destroy'
-                        ? 'workspace-details-delete'
-                        : 'webapp-action'}
-                      type="button"
-                      key={action}
-                      disabled={blocked}
-                      title={blocked ? askLine(workspace.members) : undefined}
-                      onClick={() => act(action)}
-                    >
-                      {ACTION_LABELS[action]}
-                    </button>
-                  );
-                })}
+                <dl className="cfg-meta">
+                  <div>
+                    <dt>Status</dt>
+                    {/* `MachineState` is a wire term shown to a person. */}
+                    <dd className="cfg-meta-term">
+                      {machine === null ? 'No machine' : machine.state}
+                    </dd>
+                  </div>
+                  <Detail
+                    label="Machine type"
+                    value={type?.name ?? machine?.machineTypeId ?? workspace.defaultMachineTypeId}
+                  />
+                  {type !== undefined && <>
+                    <Detail label="CPU" value={`${String(type.cpuCores)} vCPU`} />
+                    <Detail label="Memory" value={`${String(type.memGb)} GB`} />
+                    <Detail label="Disk" value={`${String(type.diskGb)} GB`} />
+                    <Detail label="Price" value={price ?? 'Unavailable'} />
+                  </>}
+                  <div>
+                    <dt>Persistent volume</dt>
+                    <dd>
+                      <VolumeMeter
+                        volumeId={machine?.volumeId ?? null}
+                        usedPercent={machine?.volumeUsedPercent ?? null}
+                      />
+                    </dd>
+                  </div>
+                  <Detail label="Created" value={machine === null ? 'Unavailable' : dateLabel(machine.createdAt)} />
+                </dl>
+                {type === undefined && machine !== null && (
+                  <p className="cfg-help">{catalogGap(catalog, machine.machineTypeId)}</p>
+                )}
+                {machine?.error != null && (
+                  <p className="workspace-details-error" role="alert">{machine.error}</p>
+                )}
               </div>
-              {refused.length > 0 && (
-                <p className="workspace-details-note">{askLine(workspace.members)}</p>
-              )}
+
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Machine type</h2>
+                </div>
+                {admin && machine !== null ? (
+                  <MachineTypeSelect
+                    machines={machines}
+                    value={machine.machineTypeId}
+                    defaultMachineTypeId={workspace.defaultMachineTypeId}
+                    volumeLocation={volumeLocationOf(machine, machines)}
+                    ariaLabel="Change my machine type"
+                    onChange={(machineTypeId) => {
+                      if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
+                    }}
+                  />
+                ) : (
+                  <p className="cfg-help">
+                    {machine === null
+                      ? 'There is no machine to re-type yet.'
+                      : `Changing a machine's type is workspace-admin work. ${askLine(workspace.members)}`}
+                  </p>
+                )}
+              </div>
+
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Lifecycle</h2>
+                </div>
+                {actions.length === 0 && (
+                  <p className="cfg-help">
+                    {machine === null
+                      ? 'You have no machine yet.'
+                      : `A machine that is ${machine.state} accepts nothing until it arrives.`}
+                  </p>
+                )}
+                <div className="cfg-actions">
+                  {actions.map((action) => {
+                    const blocked = needsAdmin(action, machine) && !admin;
+                    return (
+                      <button
+                        className={action === 'destroy'
+                          ? 'cfg-danger-action'
+                          : 'webapp-action'}
+                        type="button"
+                        key={action}
+                        disabled={blocked}
+                        title={blocked ? askLine(workspace.members) : undefined}
+                        onClick={() => act(action)}
+                      >
+                        {ACTION_LABELS[action]}
+                      </button>
+                    );
+                  })}
+                </div>
+                {refused.length > 0 && (
+                  <p className="cfg-help">{askLine(workspace.members)}</p>
+                )}
+              </div>
             </section>
           )}
         </div>

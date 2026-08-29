@@ -51,6 +51,8 @@
  *   .cfg-help             Inline help under a control, or a note in a section.
  *   .cfg-actions          The row a Save / Add / lifecycle verb sits in.
  *   .cfg-meta             Read-only fact list (a <dl> of label/value rows).
+ *   .cfg-meta-term        A fact whose value is a wire term (a state, a role):
+ *                         capitalized for the reader. Never on free text.
  *   .cfg-danger           Danger zone: what it destroys, and the verb.
  *   .cfg-danger-copy      The danger zone's name + consequence.
  *   .cfg-danger-action    The destructive button. Outlined red, filled on hover.
@@ -239,6 +241,12 @@
   font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A wire enum read by a person: "running", "admin". Only ever on a value the
+ * server chose the spelling of — an e-mail or a name must not be re-cased. */
+.cfg-meta-term {
+  text-transform: capitalize;
 }
 
 /* ------------------------------------------------------------ danger zone */

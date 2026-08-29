@@ -266,7 +266,11 @@ export function WorkspaceSettingsTab({
       )}
       <div className="cfg-section">
         <dl className="cfg-meta">
-          <div><dt>Your role</dt><dd>{workspace.myRole ?? 'Organization admin'}</dd></div>
+          <div>
+            <dt>Your role</dt>
+            {/* `WorkspaceMemberRole` is a wire term shown to a person. */}
+            <dd className="cfg-meta-term">{workspace.myRole ?? 'Organization admin'}</dd>
+          </div>
           <div><dt>Connections</dt><dd>{workspace.connections.length}</dd></div>
           <div><dt>Created</dt><dd>{dateLabel(workspace.createdAt)}</dd></div>
           <div><dt>Updated</dt><dd>{dateLabel(workspace.updatedAt)}</dd></div>

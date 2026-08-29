@@ -100,7 +100,9 @@ function dialog(overrides: Partial<Parameters<typeof MyMachineDialog>[0]> = {}) 
 }
 
 function buttons(container: HTMLElement): HTMLButtonElement[] {
-  return [...container.querySelectorAll<HTMLButtonElement>('.my-machine-actions button')];
+  // The lifecycle verbs sit in the settings-surface actions row
+  // (src/settings-surface.css); it is the only one in this dialog.
+  return [...container.querySelectorAll<HTMLButtonElement>('.cfg-actions button')];
 }
 
 describe('MyMachineDialog', () => {
