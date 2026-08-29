@@ -130,6 +130,29 @@ The page components (`TemplatesHome`, `RecipesHome`, `CreateTemplateScreen`,
 `CreateRecipeScreen`), the client methods and the recipe rows are untouched
 and unreachable. Restoring a surface means restoring both branches.
 
+## Settings surface style (webapp)
+
+`packages/webapp/src/settings-surface.css` is canon for every
+settings-shaped screen: the workspace-details dialog and its three tabs,
+"My machine", the account settings page and its panels, and the section
+headings of the create-workspace dialog. One class prefix, `cfg-`; the rules
+and the whole vocabulary are documented at the top of that file. Read it
+before restyling a settings surface, and extend it rather than starting a
+seventh heading treatment somewhere else.
+
+The four rules a change must not break:
+
+- The tabbed dialog has ONE fixed height. `.workspace-details-dialog` sets
+  `height`, not `max-height`; the body scrolls; switching tabs never moves
+  the frame.
+- Section titles are sentence case, never all-caps, always `--cfg-title-*`
+  (the ink white and size the "Agent rules" heading had). Descriptions are
+  `--cfg-desc-*`. Field micro-labels are sentence case too.
+- Exactly one thin divider between two adjacent sections, drawn by
+  `.cfg-section ~ .cfg-section` and by nothing else. Card outlines and
+  list-row separators are structure, not dividers.
+- No new colours: everything resolves to a token in `tokens.css`.
+
 ## VM provider architecture (do not regress)
 
 - The plugin contract is `VmProvider` in `core/compute/types.ts`:

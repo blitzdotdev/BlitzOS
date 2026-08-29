@@ -89,7 +89,6 @@
 .workspace-repo-name { display: grid; min-width: 0; gap: 2px; }
 .workspace-repo-name strong { font-size: 11px; font-weight: 550; }
 .workspace-repo-name small { color: var(--faint); font-size: 10px; }
-.workspace-repo-add { display: grid; gap: 10px; margin-top: 4px; }
 
 .workspace-details-footer { padding: 14px 18px 18px; }
 
@@ -124,7 +123,9 @@
    under the header rather than under a rule. It has no tabs either, so there
    is nothing for a fixed height to hold still: it takes its content's. */
 .my-machine-dialog { width: min(520px, 100%); height: auto; max-height: min(760px, calc(100dvh - 32px)); }
-.my-machine-dialog .workspace-details-body { padding-top: 14px; }
+/* Untabbed, so the floor that keeps it from collapsing lives here rather
+   than on the frame. */
+.my-machine-dialog .workspace-details-body { min-height: 240px; padding-top: 14px; }
 .my-machine-panel { min-width: 0; }
 
 /* How full the member's persistent volume is (plans/MEMBER-MACHINES.md §1).
