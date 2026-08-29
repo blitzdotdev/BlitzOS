@@ -1,0 +1,42 @@
+{
+  "name": "@lody/turn-diff-store",
+  "version": "0.0.1",
+  "description": "Content-defined, compressed SQLite storage for local turn diff snapshots.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./worker": {
+      "types": "./src/worker.ts",
+      "import": "./src/worker.ts"
+    },
+    "./sqlite": {
+      "types": "./src/sqlite.ts",
+      "import": "./src/sqlite.ts"
+    }
+  },
+  "scripts": {
+    "bench": "tsx benchmarks/store.bench.ts",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "better-sqlite3": "catalog:"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "catalog:",
+    "@types/node": "catalog:",
+    "tsx": "^4.23.5",
+    "typescript": "catalog:",
+    "vitest": "^3.2.4"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,143 @@
+{
+  "name": "@lody/shared",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "sideEffects": [
+    "./src/visual-annotation-inspector-global.ts"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    },
+    "./visual-annotation-inspector": {
+      "types": "./src/visual-annotation-inspector.ts",
+      "import": "./src/visual-annotation-inspector.ts"
+    },
+    "./visual-annotation-types": {
+      "types": "./src/visual-annotation-types.ts",
+      "import": "./src/visual-annotation-types.ts"
+    },
+    "./preview-comment-types": {
+      "types": "./src/preview-comment-types.ts",
+      "import": "./src/preview-comment-types.ts"
+    },
+    "./visual-annotation-inspector-global": {
+      "types": "./src/visual-annotation-inspector-global.ts",
+      "import": "./src/visual-annotation-inspector-global.ts"
+    },
+    "./electron-ipc": {
+      "types": "./src/electron-ipc.ts",
+      "import": "./src/electron-ipc.ts"
+    },
+    "./proxy-env": {
+      "types": "./src/proxy-env.ts",
+      "import": "./src/proxy-env.ts"
+    },
+    "./browser-url": {
+      "types": "./src/browser-url.ts",
+      "import": "./src/browser-url.ts"
+    },
+    "./local-loro-data-plane": {
+      "types": "./src/local-loro-data-plane.ts",
+      "import": "./src/local-loro-data-plane.ts"
+    },
+    "./local-loro-data-plane-server": {
+      "types": "./src/local-loro-data-plane-server.ts",
+      "import": "./src/local-loro-data-plane-server.ts"
+    },
+    "./local-loro-data-plane-scheduler": {
+      "types": "./src/local-loro-data-plane-scheduler.ts",
+      "import": "./src/local-loro-data-plane-scheduler.ts"
+    },
+    "./local-loro-transport": {
+      "types": "./src/local-loro-transport.ts",
+      "import": "./src/local-loro-transport.ts"
+    },
+    "./local-machine-rpc": {
+      "types": "./src/local-machine-rpc.ts",
+      "import": "./src/local-machine-rpc.ts"
+    },
+    "./message-schemas": {
+      "types": "./src/message-schemas.ts",
+      "import": "./src/message-schemas.ts"
+    },
+    "./terminal-protocol": {
+      "types": "./src/terminal-protocol.ts",
+      "import": "./src/terminal-protocol.ts"
+    },
+    "./ids": {
+      "types": "./src/ids.ts",
+      "import": "./src/ids.ts"
+    },
+    "./platform-kind": {
+      "types": "./src/platform-kind.ts",
+      "import": "./src/platform-kind.ts"
+    },
+    "./deepseek-harness": {
+      "types": "./src/deepseek-harness.ts",
+      "import": "./src/deepseek-harness.ts"
+    },
+    "./analytics": {
+      "types": "./src/analytics/index.ts",
+      "import": "./src/analytics/index.ts"
+    },
+    "./message": {
+      "types": "./src/message.ts",
+      "import": "./src/message.ts"
+    },
+    "./project": {
+      "types": "./src/project.ts",
+      "import": "./src/project.ts"
+    },
+    "./workspace-route": {
+      "types": "./src/workspace-route.ts",
+      "import": "./src/workspace-route.ts"
+    },
+    "./time-sync": {
+      "types": "./src/time-sync.ts",
+      "import": "./src/time-sync.ts"
+    },
+    "./layout": {
+      "types": "./src/layout.ts",
+      "import": "./src/layout.ts"
+    },
+    "./node/*": {
+      "types": "./src/node/*.ts",
+      "import": "./src/node/*.ts",
+      "require": "./src/node/*.cjs"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@bokuweb/zstd-wasm": "^0.0.27",
+    "@loro-dev/streams-crdt": "catalog:",
+    "acp-extension-dsh": "workspace:*",
+    "better-auth": "catalog:",
+    "cross-spawn": "^7.0.6",
+    "dockerode": "^4.0.9",
+    "effect": "catalog:",
+    "loro-mirror": "catalog:",
+    "@agentclientprotocol/sdk": "catalog:",
+    "acp-extension-core": "workspace:*",
+    "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "loro-crdt": "catalog:",
+    "loro-repo": "catalog:"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/dockerode": "^3.3.47",
+    "@types/node": "catalog:",
+    "loro-repo": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "^3.2.4"
+  }
+}

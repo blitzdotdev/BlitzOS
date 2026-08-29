@@ -1,0 +1,555 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Bundle JetBrains Mono so all monospace text (paths, SHAs, line numbers, the
+ * diff) renders in it consistently instead of falling back to the system mono. */
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
+@import '@fontsource/jetbrains-mono/700.css';
+
+@source "../**/*.{ts,tsx}";
+@source "../../index.html";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design tokens mirror @lody/components (HSL channels + `.dark` toggle) on
+ * purpose: when this renderer is embedded inside Lody, the host injects the
+ * same token names (`--background`, `--foreground`, `--primary`, `--border`,
+ * `--code-background`, `--syntax-*`, ...) from the active VS Code theme, so the
+ * UI adapts automatically without importing `@lody/components`. Standalone
+ * (Storybook / `review-helper view`) we ship our own dark + light defaults.
+ */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 10%;
+  --card: 210 33% 98.5%;
+  --card-foreground: 0 0% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 0 0% 10%;
+  --primary: 217 91% 55%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 0 0% 10%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 42%;
+  --accent: var(--primary, 212 100% 95%);
+  --accent-foreground: var(--primary-foreground, 217 50% 24%);
+  --destructive: 0 74% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 89%;
+  --input: 214 32% 89%;
+  --ring: 217 91% 55%;
+
+  --sidebar: var(--sidebar-background, 210 38% 97%);
+  --sidebar-foreground: 0 0% 14%;
+  --sidebar-border: 214 32% 89%;
+
+  /* Status colors are used as small text on subtle tints; tuned for >=4.5:1 (WCAG AA). */
+  --status-info: 217 75% 42%;
+  --status-success: 151 62% 28%;
+  --status-warning: 30 95% 32%;
+  --status-danger: var(--destructive);
+
+  --code-background: 210 33% 98.5%;
+  --code-foreground: 0 0% 12%;
+  --code-border: 214 32% 89%;
+
+  /* Diff addition/deletion colors follow GitHub's defaults (verified from
+   * github.githubassets.com/assets/dark-*.css / light-*.css). These are the
+   * foreground/text colors used for +N/-N stats and line tints. */
+  --github-addition: 137 66% 30%;
+  --github-deletion: 356 72% 47%;
+
+  --radius: 0.375rem;
+}
+
+.dark {
+  color-scheme: dark;
+  /* GitHub dark default diff foreground colors: addition #3fb950, deletion #f85149. */
+  --github-addition: 128 49% 49%;
+  --github-deletion: 3 93% 63%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+
+  --color-success: hsl(var(--status-success));
+  --color-warning: hsl(var(--status-warning));
+  --color-danger: hsl(var(--status-danger));
+  --color-info: hsl(var(--status-info));
+  --color-addition: hsl(var(--github-addition));
+  --color-deletion: hsl(var(--github-deletion));
+
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 6px);
+
+  --font-sans:
+    'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue',
+    Arial, 'Noto Sans SC', 'PingFang SC', sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, 'SF Mono', 'SFMono-Regular', 'Berkeley Mono', 'Menlo', 'Monaco',
+    'Consolas', 'Liberation Mono', monospace;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    margin: 0;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, hsl(var(--primary)) 28%, transparent);
+  }
+}
+
+.crh-shell {
+  min-height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  color-scheme: light;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  /* Each code block (header + diff body) shares this single elevated surface so
+   * it reads as one panel distinct from the page background. Derived from the
+   * active theme so it works under Vesper / any injected VS Code theme. */
+  --crh-surface: color-mix(in oklab, hsl(var(--foreground)) 6%, hsl(var(--background)));
+}
+
+.crh-shell.dark {
+  color-scheme: dark;
+}
+
+.crh-sidebar,
+.crh-main,
+.crh-panel {
+  min-width: 0;
+  max-width: 100%;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, hsl(var(--muted-foreground)) 32%, transparent) transparent;
+}
+
+.crh-main {
+  /* Intentionally no scroll-behavior: smooth. Panel-initiated navigation must
+   * jump instantly to the target file/line; smooth scrolling causes overshoot
+   * and fights the synchronous measurement/scroll loop. */
+  /* Sticky file headers offset below the toolbar; JS keeps this in sync with the
+   * real toolbar height (it can wrap on narrow widths). */
+  --crh-toolbar-h: 48px;
+}
+
+/* Standalone (Storybook / `review-helper view`): keep the document surface in
+ * sync with the dark default so rubber-band overscroll and the loading state
+ * don't flash a white background behind the shell. The `.dark` class still
+ * lives only on `.crh-shell`, preserving host VS Code theme adaptation. */
+.crh-empty {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-sans);
+}
+
+body:has(.crh-shell.dark) {
+  background: hsl(222 47% 9%);
+  color-scheme: dark;
+}
+
+.crh-group-section {
+  scroll-margin-top: 4.5rem;
+}
+
+/* The whole code block (border, header, diff body) shares one elevated surface
+ * so it reads as a single panel against the page background. */
+.crh-block {
+  background-color: var(--crh-surface);
+  /*
+   * Skip layout/paint/hit-test for blocks scrolled off-screen. Diffs are
+   * syntax-highlighted (thousands of colored spans) and, once lazy-mounted, stay
+   * in the DOM; without this the browser repaints the entire review every frame
+   * while scrolling (Paint/HitTest/Layout grew with total review size, not the
+   * viewport). `auto` makes the browser remember each block's real rendered size,
+   * so the scrollbar stays stable while on-screen blocks render normally.
+   */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
+}
+/*
+ * Two-layer sticky header. The outer layer paints the PAGE background and is
+ * fully opaque, so nothing scrolling behind the stuck header shows through. The
+ * inner layer carries the rounded top corners + the elevated surface color; its
+ * rounded corners reveal the outer page background (not the diff behind), so the
+ * sticky header never leaks the code block's color through its corners. The outer
+ * extends 1px upward to hide the sub-pixel seam against the group header above.
+ */
+.crh-block-header {
+  background-color: hsl(var(--background));
+  box-shadow: 0 -1px 0 0 hsl(var(--background));
+}
+.crh-block-header-inner {
+  background-color: var(--crh-surface);
+}
+
+/* Placeholder height for diffs not yet scrolled into view (lazy-mounted). */
+.crh-diff-placeholder {
+  min-height: 7rem;
+}
+
+/*
+ * Line annotations: @pierre/diffs projects annotations into a slot *below* the
+ * line. By default collapse that row to zero height and float the small marker
+ * up onto the right edge of its own line. When the annotation contains inline
+ * note content, expand the slot so the notes render as a readable block.
+ */
+.crh-pierre-diff div[slot^='annotation-'] {
+  height: 0;
+  overflow: visible;
+  position: relative;
+  z-index: 3;
+}
+
+.crh-pierre-diff div[slot^='annotation-']:has(.crh-line-annotation--inline) {
+  height: auto;
+  overflow: visible;
+  position: static;
+}
+
+.crh-line-annotation--inline {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  margin: 0.125rem 0;
+  border-left: 2px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.25);
+  border-radius: 0 0.25rem 0.25rem 0;
+}
+
+.crh-line-annotation--inline .crh-anno {
+  position: static;
+  justify-self: flex-end;
+}
+
+.crh-anno {
+  position: absolute;
+  right: 8px;
+  bottom: 1px;
+  cursor: pointer;
+}
+
+/* Draggable dividers between the three columns (desktop only). A wide hit area
+ * with a thin centered line that lights up on hover / drag / keyboard focus. */
+.crh-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 40;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.crh-resizer-left {
+  transform: translateX(-50%);
+}
+.crh-resizer-right {
+  transform: translateX(50%);
+}
+.crh-resizer::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background-color var(--dur-1, 120ms) ease;
+}
+.crh-resizer:hover::after,
+.crh-resizer:focus-visible::after,
+.crh-resizer-active::after {
+  background: hsl(var(--primary));
+  width: 2px;
+}
+
+/* Focus link between a diff-line marker and its right-panel thread item.
+ * Active state is communicated via opacity, so no accent-colored ring is needed. */
+.crh-thread-focused {
+  scroll-margin-block: 1rem;
+}
+
+/* Thin, flat scrollbars (WebKit) — IDE feel */
+.crh-sidebar::-webkit-scrollbar,
+.crh-main::-webkit-scrollbar,
+.crh-panel::-webkit-scrollbar,
+.crh-pierre-diff::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.crh-sidebar::-webkit-scrollbar-thumb,
+.crh-main::-webkit-scrollbar-thumb,
+.crh-panel::-webkit-scrollbar-thumb,
+.crh-pierre-diff::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, hsl(var(--muted-foreground)) 28%, transparent);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.crh-sidebar::-webkit-scrollbar-thumb:hover,
+.crh-main::-webkit-scrollbar-thumb:hover,
+.crh-panel::-webkit-scrollbar-thumb:hover,
+.crh-pierre-diff::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, hsl(var(--muted-foreground)) 48%, transparent);
+  background-clip: padding-box;
+}
+
+/*
+ * @pierre/diffs integration. Background / structure colors are driven from our
+ * tokens via override vars, so they flip automatically with the `.dark` class
+ * (and with the host VS Code theme when embedded). Only the Shiki syntax theme
+ * (`pierre-light` / `pierre-dark`) is switched from the component via options.
+ */
+.crh-pierre-diff {
+  --diffs-light-bg: var(--crh-surface);
+  --diffs-light: hsl(var(--code-foreground));
+  --diffs-dark-bg: var(--crh-surface);
+  --diffs-dark: hsl(var(--code-foreground));
+
+  --diffs-bg-context-override: var(--crh-surface);
+  --diffs-bg-buffer-override: var(--crh-surface);
+  --diffs-bg-separator-override: color-mix(in oklab, hsl(var(--muted)) 60%, var(--crh-surface));
+
+  --diffs-bg-addition-override: color-mix(
+    in oklab,
+    hsl(var(--github-addition)) 12%,
+    var(--crh-surface)
+  );
+  --diffs-bg-addition-number-override: color-mix(
+    in oklab,
+    hsl(var(--github-addition)) 18%,
+    var(--crh-surface)
+  );
+  --diffs-bg-addition-emphasis-override: color-mix(
+    in oklab,
+    hsl(var(--github-addition)) 28%,
+    var(--crh-surface)
+  );
+  --diffs-bg-addition-hover-override: color-mix(
+    in oklab,
+    hsl(var(--github-addition)) 16%,
+    var(--crh-surface)
+  );
+
+  --diffs-bg-deletion-override: color-mix(
+    in oklab,
+    hsl(var(--github-deletion)) 12%,
+    var(--crh-surface)
+  );
+  --diffs-bg-deletion-number-override: color-mix(
+    in oklab,
+    hsl(var(--github-deletion)) 18%,
+    var(--crh-surface)
+  );
+  --diffs-bg-deletion-emphasis-override: color-mix(
+    in oklab,
+    hsl(var(--github-deletion)) 28%,
+    var(--crh-surface)
+  );
+  --diffs-bg-deletion-hover-override: color-mix(
+    in oklab,
+    hsl(var(--github-deletion)) 16%,
+    var(--crh-surface)
+  );
+
+  --diffs-bg-hover-override: color-mix(in oklab, hsl(var(--primary)) 8%, var(--crh-surface));
+  --diffs-fg-number-override: color-mix(in oklab, hsl(var(--muted-foreground)) 80%, transparent);
+
+  --diffs-gap-inline: 10px;
+  --diffs-gap-block: 6px;
+  --diffs-tab-size: 2;
+  --diffs-font-family: var(--font-mono);
+  --diffs-font-size: 12.5px;
+
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  background: var(--crh-surface);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, hsl(var(--muted-foreground)) 32%, transparent) transparent;
+}
+
+.crh-pierre-diff > diffs-container {
+  display: block;
+}
+
+.crh-pierre-diff [data-type='split'][data-overflow='wrap'] {
+  overflow-x: auto;
+}
+
+.crh-pierre-diff [data-code] {
+  min-width: 0;
+}
+
+.crh-line-annotation {
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--font-sans);
+  white-space: normal;
+}
+
+/* Invisible scroll anchor for a `## Review` finding line (the finding has no visible
+ * diff marker). Zero-size so it adds no row. */
+.crh-finding-anchor {
+  display: block;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.crh-line-annotation > *,
+.crh-line-annotation strong,
+.crh-line-annotation span,
+.crh-line-annotation p {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.crh-markdown code {
+  border: 1px solid hsl(var(--code-border));
+  border-radius: var(--radius-sm);
+  background: var(--crh-surface);
+  padding: 0.5px 5px;
+  color: hsl(var(--foreground));
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+}
+
+.crh-markdown-code {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid hsl(var(--code-border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--code-background));
+  padding: 0.625rem 0.75rem;
+  color: hsl(var(--code-foreground));
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, hsl(var(--muted-foreground)) 32%, transparent) transparent;
+}
+
+.crh-markdown-code code {
+  display: block;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+}
+
+.crh-markdown-code::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.crh-markdown-code::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, hsl(var(--muted-foreground)) 28%, transparent);
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+@media (max-width: 860px) {
+  .crh-pierre-diff {
+    --diffs-gap-inline: 6px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .crh-shell {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .crh-sidebar {
+    height: 100vh;
+    position: sticky;
+    top: 0;
+  }
+
+  .crh-main {
+    height: 100vh;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .crh-pierre-diff-split > diffs-container {
+    min-width: 760px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crh-main {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

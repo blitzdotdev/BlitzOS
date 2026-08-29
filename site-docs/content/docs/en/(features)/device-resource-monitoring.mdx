@@ -1,0 +1,145 @@
+---
+title: Device Resource Monitoring
+description: Monitor device, Lody CLI, and resident ACP CPU and memory usage, inspect session processes, release ACP resources, and resume conversations later.
+---
+
+# Device Resource Monitoring
+
+Lody can show the current resource usage of each connected device and every ACP session that is
+resident on it. Use this view to find an agent that is consuming CPU or memory, open its session,
+or stop its ACP process without deleting the conversation.
+
+Open **Settings -> Devices**, then select an online device. The page starts sampling automatically;
+there is no manual refresh button.
+
+## What Is a Resident ACP Session?
+
+Each conversation uses an ACP process to communicate with its coding agent. That process can remain
+resident after a turn becomes idle, which makes the next turn faster but continues to use some
+memory. The ACP sessions table lists the conversations whose agent processes are currently present
+on the selected device.
+
+This is a process view, not a list of every saved conversation. A conversation whose ACP process
+has already stopped remains in Lody, but it no longer appears in this table.
+
+## Resource Summary
+
+The top of the page separates three scopes so their numbers are not accidentally added together:
+
+| Scope            | CPU                                                                                   | Memory                                                  |
+| ---------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| **CLI**          | The Lody CLI control process itself                                                   | Memory used by the Lody CLI control process             |
+| **ACP sessions** | Total CPU used by resident ACP session process trees                                  | Total memory used by resident ACP session process trees |
+| **Device info**  | CPU used by the entire device, including Lody, agents, the OS, and other applications | Used memory / effective total memory for the device     |
+
+**Device info is not the sum of CLI and ACP sessions.** It also includes every other process on the
+machine. Conversely, CLI and ACP values help identify how much of the device usage belongs to Lody.
+
+### CPU Percentage
+
+All three scopes use the same multi-core convention:
+
+- one fully utilized logical CPU core is `100%`
+- two fully utilized logical cores are `200%`
+- on an 8-core device, the practical device maximum is approximately `800%`
+
+For example, an ACP session using 1.5 cores displays `150%`. Small differences between the device,
+CLI, aggregate, and per-session values can occur because samples are collected over short windows
+and process-tree accounting is platform dependent.
+
+### Memory
+
+Memory is the current resident footprint, not cumulative allocation. The exact accounting method
+depends on the operating system: Lody uses cgroup accounting where available and otherwise measures
+the relevant process tree. On macOS, physical-footprint reporting can differ from values shown by
+tools that only sum RSS.
+
+The device value is shown as **used / effective total**. "Effective total" can be a container or
+cgroup memory limit rather than the host's installed RAM when Lody runs in a constrained
+environment. Available memory, caches, shared pages, and platform accounting can make a manual sum
+of the rows differ from the device total.
+
+### Why a Value Can Be `-`
+
+CPU usage is calculated from the change between two samples, so it is unavailable in the first
+sample after monitoring starts or the CLI restarts. A session can also show `-` for CPU, memory, or
+process count when the operating system cannot provide reliable accounting for its process tree.
+Wait for the next automatic sample first; if the value remains unavailable, verify that the device
+is online and that its Lody CLI is up to date.
+
+## ACP Session Table
+
+Each row identifies one resident conversation:
+
+| Column        | Meaning                                                                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Session**   | Conversation title, ACP name, and ACP logo. Select it to open the corresponding session and tab. Hover over a truncated title to see the full title. |
+| **Status**    | The current ACP lifecycle or activity state                                                                                                          |
+| **Memory**    | Current memory attributed to the session's ACP process tree                                                                                          |
+| **CPU**       | CPU used by that process tree, where one full logical core is `100%`                                                                                 |
+| **Processes** | Number of processes currently attributed to the session, including tracked child processes                                                           |
+
+The table shows up to 100 resident sessions. Measurements can briefly lag process creation or exit,
+especially on platforms where Lody estimates ownership from the process tree.
+
+### Status Reference
+
+| Status                     | Meaning                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| **Initializing**           | Lody is starting or connecting to the ACP process                                |
+| **Running**                | The agent is actively handling a turn                                            |
+| **Waiting for permission** | The agent is paused until a permission request is answered                       |
+| **Finalizing**             | The agent has finished its main work and Lody is completing final processing     |
+| **Idle**                   | The ACP process is resident but is not currently handling a turn                 |
+| **Stopping**               | A termination request is in progress and Lody is waiting for the process to exit |
+| **Failed**                 | The resident session or its ACP process encountered an error                     |
+
+## Release an ACP Session's Resources
+
+Select the stop icon at the end of a session row to terminate that session's ACP process. Stopping
+an idle process starts without confirmation. If the agent is running, initializing, waiting for
+permission, or finalizing, Lody asks for confirmation because the active turn will be interrupted.
+
+The stop icon shows a spinner until the ACP process has exited and device monitoring confirms that
+the session is no longer resident. If termination fails, Lody reports the error and leaves the
+session available for another attempt.
+
+Terminating an ACP process:
+
+- stops the current agent turn and its tracked child processes
+- releases the CPU and memory held by that resident process tree
+- keeps the conversation history, session metadata, branch, worktree, and project files
+- does not archive or delete the session and does not reclaim its disk space
+
+An interrupted command or file write is not rolled back automatically. Review the session's files
+and diff if you terminate an agent while it is actively making changes.
+
+## Continue the Conversation Later
+
+You can return to a terminated session at any time and send another message. Lody starts the ACP
+process again and resumes the conversation from its persisted session context. The first new turn
+can take longer while the agent runtime starts and reconnects, but the conversation and files remain
+available throughout.
+
+Process-local, unsaved state disappears when the ACP process is terminated. Durable context comes
+from the saved conversation, agent resume support, and the files in the session workspace. Use
+termination to release CPU and memory between periods of active work; use archive or delete only
+when you also want to change session visibility or reclaim disk space. See [Sessions](/docs/session)
+for archive, restore, and delete behavior.
+
+## Live, On-Demand Reporting
+
+Resource monitoring is intentionally ephemeral:
+
+- an online device reports and refreshes resource snapshots when someone is viewing its device page
+- the page updates automatically while it remains visible
+- snapshots expire and are not kept as a historical metrics timeline
+- when no one is observing, Lody stops requesting continuous resource samples
+
+If a device is shared with a workspace, workspace members who can access that device can see its
+current resource information. Terminating an ACP process on a shared device affects that session for
+everyone, so check the session status before stopping another member's active turn. The monitor is
+not a process command-line inspector or a replacement for operating-system profiling tools.
+
+When a device is offline, Lody cannot request a fresh sample or terminate its ACP processes. Bring
+the CLI online, reopen **Settings -> Devices**, and wait for the first sample.

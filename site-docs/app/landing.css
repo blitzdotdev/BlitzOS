@@ -1,0 +1,222 @@
+@import './legacy-landing.css';
+
+.landing-page-root {
+  min-height: 100vh;
+  background-color: hsl(var(--landing-bg));
+}
+
+/* The legacy fixed hero caustics can make <img> paints disappear in the Next bundle.
+   Keep the ocean effect and use the shot as a background while the <img> preserves sizing/alt text. */
+.landing .hero-media {
+  isolation: isolate;
+  transform: translateZ(0);
+  z-index: 5;
+}
+
+.landing .hero-shot {
+  background-color: #07111f;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.landing .hero-shot-image {
+  opacity: 0;
+  position: relative;
+  z-index: 6;
+}
+
+/* Hero product preview: real, interactive app shell replaces the static screenshot.
+   It fills the hero-media row and keeps the prior shot's gap below the CTA. */
+.landing .hero-media .lody-app-preview {
+  width: 100%;
+  margin-top: 72px;
+}
+
+.alpha-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid hsl(var(--landing-border));
+  border-radius: 999px;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--landing-surface-1) / 0.75),
+    hsl(var(--landing-surface-2) / 0.65)
+  );
+  box-shadow: var(--landing-shadow-soft);
+  color: hsl(var(--landing-ink));
+  cursor: default;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+  font-size: 0.88rem;
+  font-variant-ligatures: none;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-rendering: geometricPrecision;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
+  user-select: none;
+}
+
+.alpha-pill--command {
+  flex-wrap: nowrap;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.alpha-pill--command:hover {
+  box-shadow: var(--landing-shadow);
+  transform: translateY(-1px);
+}
+
+.alpha-pill--command:focus-visible {
+  outline: 2px solid hsl(var(--landing-primary) / 0.55);
+  outline-offset: 3px;
+}
+
+.alpha-pill__prompt {
+  color: hsl(var(--landing-primary));
+  font-weight: 700;
+}
+
+.alpha-pill__cmd {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 650;
+  user-select: text;
+}
+
+.alpha-pill__sep {
+  width: 1px;
+  height: 1.1em;
+  margin-right: 0.15rem;
+  margin-left: 0.35rem;
+  background: hsl(var(--landing-border));
+  opacity: 0.95;
+}
+
+.alpha-pill__copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.1rem 0.25rem;
+  color: hsl(var(--landing-ink-muted));
+  transition: color 0.2s ease;
+}
+
+.alpha-pill__copy-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
+.alpha-pill--command:hover .alpha-pill__copy {
+  color: hsl(var(--landing-ink));
+}
+
+.alpha-pill--command[data-copied='true'] .alpha-pill__copy {
+  color: hsl(var(--landing-primary));
+}
+
+.rw {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.rw-prefix,
+.rw-suffix {
+  min-width: 0;
+}
+
+.rw-prefix:not(:empty) {
+  margin-right: 0.35em;
+}
+
+.rw-viewport {
+  --rw-step: 1.18em;
+
+  position: relative;
+  display: inline-block;
+  height: var(--rw-step);
+  overflow: hidden;
+  vertical-align: baseline;
+}
+
+.rw-strip {
+  display: flex;
+  flex-direction: column;
+  transform: translateY(calc(var(--rw-index) * -1 * var(--rw-step)));
+  transition: transform 460ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  will-change: transform;
+}
+
+.rw-strip-static,
+.rw-strip-no-transition {
+  transition: none;
+}
+
+.rw-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: var(--rw-step);
+}
+
+.rw-align-end .rw-item {
+  justify-content: flex-end;
+}
+
+.rw-align-center .rw-item {
+  justify-content: center;
+}
+
+.rw-word {
+  color: hsl(var(--landing-primary));
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 768px) {
+  .landing .band.hero {
+    padding-top: clamp(7rem, 24vw, 9rem);
+  }
+
+  .rw-prefix:not(:empty) {
+    flex-basis: 100%;
+    margin-right: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alpha-pill {
+    transition: none;
+  }
+
+  .alpha-pill--command:hover {
+    transform: none;
+  }
+}

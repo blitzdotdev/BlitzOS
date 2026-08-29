@@ -1,0 +1,364 @@
+/* Download — shares the changelog design language (fonts, tokens, grid+glow shell,
+   monospace version tags) so the marketing surfaces read as one family. */
+
+.download-page {
+  --dl-bg: transparent;
+  --dl-ink: hsl(var(--landing-ink));
+  --dl-ink-muted: hsl(var(--landing-ink-muted));
+  --dl-border: hsl(var(--landing-border) / 0.7);
+  --dl-line: hsl(var(--landing-border) / 0.45);
+  --dl-surface-1: hsl(var(--landing-surface-1));
+  --dl-surface-2: hsl(var(--landing-surface-2));
+  --dl-surface-3: hsl(var(--landing-surface-3));
+  --dl-primary: hsl(var(--landing-primary));
+  --dl-mono:
+    var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', monospace;
+  --dl-nav-offset: 64px;
+
+  position: relative;
+  min-height: 100vh;
+  color: var(--dl-ink);
+  /* Field + ambient owned by .marketing-shell */
+  background: var(--dl-bg);
+  font-family: var(--font-body, var(--lody-docs-font-sans));
+  overflow-x: clip;
+  isolation: isolate;
+}
+
+/* Ambient owned by marketing-shell — keep page layout clean. */
+.download-page::before {
+  display: none;
+}
+
+/* ---------- Masthead ---------- */
+
+.download-hero {
+  position: relative;
+  isolation: isolate;
+  padding: calc(var(--dl-nav-offset) + 4rem) 0 clamp(2.5rem, 5vw, 4rem);
+}
+
+.download-hero__glow {
+  display: none;
+}
+
+.download-hero__content {
+  width: min(820px, 92vw);
+  margin: 0 auto;
+  text-align: center;
+}
+
+.download-eyebrow {
+  display: block;
+  width: fit-content;
+  margin: 0 auto 0.85rem;
+  color: var(--dl-ink-muted);
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.download-eyebrow__dot {
+  display: none;
+}
+
+.download-hero h1 {
+  margin: 0;
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: clamp(2.2rem, 4.2vw, 3rem);
+  font-weight: 650;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: var(--dl-ink);
+  text-wrap: balance;
+}
+
+.download-subtitle {
+  max-width: 38rem;
+  margin: 1.1rem auto 0;
+  color: var(--dl-ink-muted);
+  font-size: clamp(1rem, 1.5vw, 1.12rem);
+  line-height: 1.6;
+}
+
+.download-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  margin-top: 1.85rem;
+  font-size: 0.82rem;
+}
+
+.download-meta__version {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.34rem 0.7rem;
+  border: 1px solid var(--mkt-panel-border);
+  border-radius: 999px;
+  background: var(--mkt-panel-bg);
+  color: var(--dl-ink);
+  font-family: var(--dl-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  backdrop-filter: var(--mkt-panel-blur);
+  -webkit-backdrop-filter: var(--mkt-panel-blur);
+}
+
+.download-meta__version b {
+  color: var(--dl-primary);
+  font-weight: 700;
+}
+
+.download-meta__label {
+  color: var(--dl-ink-muted);
+  font-family: var(--font-body, var(--lody-docs-font-sans));
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+}
+
+.download-meta__dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: hsl(var(--landing-ink-muted) / 0.6);
+}
+
+.download-meta__date {
+  color: var(--dl-ink-muted);
+}
+
+/* ---------- Platform grid ---------- */
+
+.download-content {
+  width: min(1060px, 92vw);
+  margin: 0 auto;
+  padding: 0 0 clamp(5rem, 9vw, 7rem);
+}
+
+.download-group + .download-group {
+  margin-top: 2.5rem;
+}
+
+.download-group h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0 0 1.1rem;
+  color: var(--dl-ink-muted);
+  font-family: var(--dl-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.download-group h2::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--dl-primary);
+  content: '';
+}
+
+.download-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.download-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--mkt-panel-border);
+  border-radius: 10px;
+  padding: 1.25rem;
+  /* Same water-family panel as pricing — lower contrast vs atmosphere. */
+  background: var(--mkt-panel-bg);
+  box-shadow: none;
+  backdrop-filter: var(--mkt-panel-blur);
+  -webkit-backdrop-filter: var(--mkt-panel-blur);
+  transition: border-color 0.18s ease;
+}
+
+.download-card:hover {
+  border-color: hsl(var(--landing-border) / 0.62);
+  transform: none;
+  box-shadow: none;
+}
+
+.download-card[data-active='true'] {
+  border-color: var(--mkt-panel-border-strong);
+  background: var(--mkt-panel-bg-strong);
+  box-shadow: none;
+}
+
+.download-card__badge {
+  position: absolute;
+  top: 0.95rem;
+  right: 0.95rem;
+  z-index: 1;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: hsl(var(--landing-ink-muted));
+  font-family: var(--lody-docs-font-sans);
+  font-size: 0.68rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  max-width: 7.5rem;
+  text-align: right;
+  line-height: 1.25;
+}
+
+.download-card__header {
+  display: flex;
+  gap: 0.85rem;
+  /* Room for the absolute “detected” label without covering the title. */
+  padding-right: 5.5rem;
+}
+
+.download-card__header > svg {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0.45rem;
+  border: 1px solid var(--mkt-panel-border);
+  border-radius: 8px;
+  background: hsl(var(--landing-surface-2) / 0.55);
+  color: var(--dl-ink-muted);
+}
+
+.download-card h3 {
+  margin: 0;
+  font-family: var(--font-heading, var(--lody-docs-font-heading));
+  font-size: 1.15rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--dl-ink);
+}
+
+.download-card p {
+  margin: 0.4rem 0 0;
+  color: var(--dl-ink-muted);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.download-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 1.25rem;
+}
+
+.download-card__action {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  border: 1px solid hsl(var(--landing-border) / 0.55);
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+  background: hsl(var(--landing-surface-2) / 0.3);
+  color: var(--dl-ink);
+  font-size: 0.88rem;
+  font-weight: 550;
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.download-card__action:hover {
+  border-color: hsl(var(--ocean-aqua) / 0.4);
+  background: hsl(var(--landing-surface-3) / 0.4);
+  transform: none;
+}
+
+.download-card[data-active='true'] .download-card__action:first-child {
+  border-color: transparent;
+  background: hsl(var(--landing-ink));
+  color: hsl(var(--landing-primary-contrast));
+}
+
+.download-card[data-active='true'] .download-card__action:first-child:hover {
+  background: hsl(var(--landing-ink) / 0.88);
+  color: hsl(var(--landing-primary-contrast));
+}
+
+.download-card[data-active='true'] .download-card__action:first-child svg {
+  color: inherit;
+}
+
+.download-card__action svg {
+  width: 1rem;
+  height: 1rem;
+  margin-left: auto;
+  color: var(--dl-ink-muted);
+  transition: color 0.18s ease;
+}
+
+.download-card__action:hover svg {
+  color: var(--dl-primary);
+}
+
+@media (max-width: 860px) {
+  .download-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* On narrow screens surface the mobile/browser apps first, and float the
+     visitor's detected platform to the very top of its group, so a phone user
+     lands on their own download immediately. */
+  .download-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+  }
+
+  .download-group + .download-group {
+    margin-top: 0;
+  }
+
+  .download-group:last-child {
+    order: -1;
+  }
+
+  .download-card[data-active='true'] {
+    order: -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .download-hero {
+    padding-top: calc(var(--dl-nav-offset) + 2.5rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .download-back,
+  .download-card,
+  .download-card__action,
+  .download-card__action svg {
+    transition: none;
+  }
+
+  .download-card:hover,
+  .download-card__action:hover {
+    transform: none;
+  }
+}

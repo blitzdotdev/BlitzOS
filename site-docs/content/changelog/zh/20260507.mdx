@@ -1,0 +1,50 @@
+---
+title: '20260507'
+version: 0.49.0
+date: 2026-05-07
+description: 新增 Lody Preview、视觉标注、Codex Goal 与图像生成、Claude Code 提问交互，并改进侧边栏任务管理和 GitHub PR 工作流。
+---
+### Agent 体验
+
+- 支持 Codex Goal 能力。使用前需要先运行 `codex features enable goals` 开启。
+  <img src="/_docs-assets/20260507-goal.png" alt="" />
+- 支持 Codex Image Gen，生成的图片可以直接回到当前对话中。
+  <img src="/_docs-assets/20260507-codex-image-gen.png" alt="" />
+- Claude Code 的 AskUserQuestion 现在会以交互卡片展示，支持单选、多选和自定义回答。
+  <img src="/_docs-assets/20260507-ask-question.png" alt="" />
+- 新增小米 MiMo Claude Code 预设，并支持 Token Plan 配置模式。
+
+### 远程预览与视觉标注
+
+<img src="/_docs-assets/20260507-preview.png" alt="" />
+
+- 新增 Lody Preview 模式。你可以对 Agent 说 `启动 vite 开发服务器，使用 Lody Preview 预览` 来打开会话内实时预览。
+- Lody Preview 支持桌面、平板和手机视口，支持旋转、缩放、拖拽平移和必要时外部打开，更适合检查多端布局。
+- 支持视觉标注：在预览中的页面元素上添加评论，并将对应引用发送回对话。
+
+### 侧边栏与任务管理
+
+- 侧边栏新增 Updated 组织模式，按 Today / This week / Older 聚合 Chat、GitHub Worktree 和本地项目。
+- 会话右键菜单支持重命名、置顶、归档、复制会话 URL 和复制当前分支。
+- 置顶会话会固定显示，方便快速回到重点任务。
+- Web 侧边栏任务支持中键、Cmd / Ctrl 点击，在新标签页中打开。
+
+### 对话与输入体验
+
+- 粘贴长文本会变成内联占位块，不再挤满输入框；点击占位块可以查看和二次编辑。
+- 支持将图片拖拽到输入框直接上传。
+- 移动端图片预览支持长按唤起系统分享和保存。
+- 文件内容预览会自动换行，长行代码和日志更易读。
+
+### GitHub 与 PR
+
+- PR 页面支持将 Draft PR 标记为 Ready for review。
+- 可设置在 PR merged / closed 后自动归档对应会话。
+- 支持使用个人 GitHub 身份执行 PR、评论和合并等操作，并在设置页显示已连接的 GitHub 账号。
+
+### 修复与稳定性
+
+- 修复本地项目导入成功后仍误报失败 toast 的问题。
+- 修复预设 Agent 首轮聊天可能缺少标题生成配置的问题。
+- 修复若干侧边栏 UI 显示问题。
+- 修复移动端下拉菜单可能超出屏幕的问题。

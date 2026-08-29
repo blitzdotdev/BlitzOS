@@ -1,0 +1,1412 @@
+[
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "I'll run",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " all",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " five",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " commands for",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " you and show",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " you the output of",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " each.",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [],
+      "kind": "execute",
+      "rawInput": {},
+      "status": "pending",
+      "title": "Terminal",
+      "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "Print Hello World",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "execute",
+      "rawInput": {
+        "command": "echo \"Hello World\"",
+        "description": "Print Hello World",
+        "timeout": 5000
+      },
+      "status": "pending",
+      "title": "`echo \"Hello World\"`",
+      "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [],
+      "kind": "execute",
+      "rawInput": {},
+      "status": "pending",
+      "title": "Terminal",
+      "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "Print multiple lines",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "execute",
+      "rawInput": {
+        "command": "echo -e \"Line1\\nLine2\\nLine3\"",
+        "description": "Print multiple lines",
+        "timeout": 5000
+      },
+      "status": "pending",
+      "title": "`echo -e \"Line1\\nLine2\\nLine3\"`",
+      "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [],
+      "kind": "execute",
+      "rawInput": {},
+      "status": "pending",
+      "title": "Terminal",
+      "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "Print ANSI colored text",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "execute",
+      "rawInput": {
+        "command": "printf \"\\033[31mRed Text\\033[0m\\n\"",
+        "description": "Print ANSI colored text",
+        "timeout": 5000
+      },
+      "status": "pending",
+      "title": "`printf \"\\033[31mRed Text\\033[0m\\n\"`",
+      "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [],
+      "kind": "execute",
+      "rawInput": {},
+      "status": "pending",
+      "title": "Terminal",
+      "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "Print numbers 1 to 5",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "execute",
+      "rawInput": {
+        "command": "seq 1 5",
+        "description": "Print numbers 1 to 5",
+        "timeout": 5000
+      },
+      "status": "pending",
+      "title": "`seq 1 5`",
+      "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [],
+      "kind": "execute",
+      "rawInput": {},
+      "status": "pending",
+      "title": "Terminal",
+      "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "content": [
+        {
+          "content": {
+            "text": "List directory contents",
+            "type": "text"
+          },
+          "type": "content"
+        }
+      ],
+      "kind": "execute",
+      "rawInput": {
+        "command": "ls -la",
+        "description": "List directory contents",
+        "timeout": 5000
+      },
+      "status": "pending",
+      "title": "`ls -la`",
+      "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+      "sessionUpdate": "tool_call"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": [
+        {
+          "terminalId": "e6ae78e6-ecde-4991-b3f9-b3c6cceb7b03",
+          "type": "terminal"
+        }
+      ],
+      "status": "in_progress",
+      "title": "Print Hello World",
+      "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Exited with code 0.Final output:\n\nHello World\n"
+            }
+          ],
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": [
+        {
+          "terminalId": "197a8b80-4337-420d-ad4b-a0f623a9aa41",
+          "type": "terminal"
+        }
+      ],
+      "status": "in_progress",
+      "title": "Print multiple lines",
+      "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Exited with code 0.Final output:\n\nLine1\nLine2\nLine3\n"
+            }
+          ],
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": [
+        {
+          "terminalId": "6689f210-b3fc-4c3c-83c9-7dadec896e4b",
+          "type": "terminal"
+        }
+      ],
+      "status": "in_progress",
+      "title": "Print ANSI colored text",
+      "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Exited with code 0.Final output:\n\n\u001b[31mRed Text\u001b[0m\n"
+            }
+          ],
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": [
+        {
+          "terminalId": "098a6873-27f5-4d6a-a8e8-685f7352b008",
+          "type": "terminal"
+        }
+      ],
+      "status": "in_progress",
+      "title": "Print numbers 1 to 5",
+      "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Exited with code 0.Final output:\n\n1\n2\n3\n4\n5\n"
+            }
+          ],
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": [
+        {
+          "terminalId": "834f07dd-e3d4-418e-b5e5-59ee551aba9a",
+          "type": "terminal"
+        }
+      ],
+      "status": "in_progress",
+      "title": "List directory contents",
+      "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolResponse": [
+            {
+              "type": "text",
+              "text": "Exited with code 0.Final output:\n\ntotal 24\ndrwxr-xr-x   2 zx   zx    4096 Jan  7 14:08 .\ndrwxrwxrwt 261 root root 20480 Jan  7 14:08 ..\n"
+            }
+          ],
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "_meta": {
+        "claudeCode": {
+          "toolName": "mcp__acp__Bash"
+        }
+      },
+      "status": "completed",
+      "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+      "sessionUpdate": "tool_call_update"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "Here",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " are the results",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " of all five commands:",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n\n**1. `",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "echo \"Hello World\"`",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "**\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\nHello World\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n\n**2. `",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "echo -e \"Line",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "1\\nLine2",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\\nLine3\"`",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "**\n```\nLine",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "1\nLine2",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\nLine3\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n\n**3. `printf",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " \"\\033[31m",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "Red Text\\033",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "[0m\\n",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\"`**\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\nRed Text\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n(This",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " woul",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "d appear",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " in",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " re",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "d in",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " a",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " terminal that",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " supports ANSI colors",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": ")\n\n**4.",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " `seq 1 ",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "5`**\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n1\n2",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n3\n4\n5",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n```\n\n**5",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": ". `ls -la",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "`**\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\ntotal 24\ndr",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "wxr-x",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "r-x   2",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " zx   z",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "x    4096 ",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "Jan  7 14",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": ":08 .",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\ndrwxrw",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "xrwt ",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "261 root root ",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "20480 Jan  ",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "7 14:08",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " ..\n```",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n\n**Most",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " interesting output:**",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " The `ls -la",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "` command had the most",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " interesting output because",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " it reveals",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " actual",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " system",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " information",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " -",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " showing",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " this",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " is an",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " empty",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " directory owne",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "d by user",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " \"zx\",",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " with the",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " parent",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " being",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " a",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " worl",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "d-writable temp",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " directory (indicated by the",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " sticky",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " bit ",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "'t",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "' in the permissions).",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " It",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " also shows timestamps",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " and the",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " directory",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": " structure context",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": ".",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "\n\nTERMINAL_TEST_",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  },
+  {
+    "sessionId": "session-captured",
+    "update": {
+      "content": {
+        "text": "DONE",
+        "type": "text"
+      },
+      "sessionUpdate": "agent_message_chunk"
+    }
+  }
+]

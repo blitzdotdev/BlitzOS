@@ -1,0 +1,66 @@
+---
+title: '20260413'
+version: 0.42.0
+date: 2026-04-13
+description: 引入新的同步引擎、多标签会话、Diff 行评论、VSCode 主题、会话搜索以及迁移说明。
+---
+### 破坏性更新与迁移
+
+- 更新后你可能被动需要重新登录。
+- 如果你使用 GitHub Worktree，那么运行 Agent 的机器需要配置好你的 GitHub 身份，即 `gh auth`，否则我们默认将使用 lody 的身份创建 PR。
+- Lody 更换了新的同步引擎和数据结构，旧 workspace 将不再可用，你需要创建新的 workspace 来使用。
+- Lody 不再获取用户的 GitHub 个人身份权限，这导致我们不再提供同一个 GitHub 仓库一次授权但可被多个 workspace 共享的能力。现在一个仓库将只关联一个 workspace。
+
+### ✨ 多标签页会话
+
+现在你可以在一个会话中同时打开多个对话标签和文件查看器。就像 VSCode 的标签栏一样——左边跟 Agent 聊天，右边同时查看文件和 Diff，互不干扰。子标签继承父会话的工作目录，支持拖拽排序和重命名。
+
+<img src="/_docs-assets/20260413-multi-tab.png" alt="" />
+
+### 💬 Diff 行级评论
+
+现在可以在 Diff 查看器中添加评论。支持 Markdown、线程式回复、标记已解决，同步到 GitHub。还可以一键发送到对话窗口。
+
+<img src="/_docs-assets/20260413-diff-comment.png" alt="" />
+
+### 🎨 UI 界面优化与 VSCode 主题适配
+
+- 兼容了 VSCode Theme 的配置，并集成了多款优秀的开源 VSCode 主题（Vitesse、Gruvbox Material、Tokyo Night、One Dark Pro 等），感谢这些开源作者们的出色工作！
+  <img src="/_docs-assets/20260413-theme.png" alt="" />
+
+- 优化 Markdown 排版与 Diff 加载体验
+- 单个对话内容搜索
+  <img src="/_docs-assets/20260413-session-find.png" alt="" />
+
+### 🖥️ Daemon 常驻模式
+
+CLI 新增 Daemon 模式，让 Lody 在后台持续运行、自动重启：
+
+```bash
+lody daemon start     # 启动后台守护进程
+lody daemon status    # 查看运行状态
+lody daemon logs      # 查看日志
+lody daemon stop      # 停止
+```
+
+### 🔗 GitHub 集成增强
+
+- PR 的 CI 检查状态实时同步到会话界面，不用切到 GitHub 看构建结果
+- PR 关联的会话支持自动 commit 和 push
+
+### 🌐 同步与稳定性
+
+- 替换了同步引擎，提升同步可靠性
+- CLI 资源限制支持 cgroup 感知，防止 Linux 容器环境下卡死
+- ACP 空闲超时缩短至 30 分钟，减少资源占用
+- 会话内存压力自动回收
+
+### 🛠️ 修复与增强
+
+- 新增 Google、Apple、Discord 第三方登录。
+- 修复 Diff 加载和同步相关问题
+- 修复 GitHub 认证刷新时机
+- 修复 Safari < 16.4 启动崩溃
+- 修复多处移动端 UI 布局问题
+- 减少 CLI 日志噪音与磁盘占用
+- 会话标题默认使用 Prompt 开头，不再显示"Untitled"

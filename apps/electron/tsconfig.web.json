@@ -1,0 +1,37 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": [
+    "src/renderer/src/env.d.ts",
+    "src/renderer/src/**/*",
+    "src/renderer/src/**/*.tsx",
+    "src/preload/*.d.ts"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "experimentalDecorators": true,
+    "jsx": "react-jsx",
+    "noImplicitReturns": false,
+    "types": ["node"],
+    "paths": {
+      "*": ["./*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime"],
+      "@lody/components": ["../../packages/components/src"],
+      "@lody/components/*": ["../../packages/components/src/*"],
+      "@/ui": ["../../packages/components/src/ui"],
+      "@/ui/*": ["../../packages/components/src/ui/*"],
+      "@/components": ["../../packages/components/src/components"],
+      "@/components/*": ["../../packages/components/src/components/*"],
+      "@/lib": ["../../packages/components/src/lib"],
+      "@/lib/*": ["../../packages/components/src/lib/*"],
+      "@/hooks": ["../../packages/components/src/hooks"],
+      "@/hooks/*": ["../../packages/components/src/hooks/*"],
+      "@/atoms": ["../../packages/components/src/atoms"],
+      "@/atoms/*": ["../../packages/components/src/atoms/*"],
+      "@/i18n": ["../../packages/components/src/i18n"],
+      "@/theme-provider": ["../../packages/components/src/theme-provider"],
+      "@renderer/*": ["./src/renderer/src/*"]
+    }
+  }
+}

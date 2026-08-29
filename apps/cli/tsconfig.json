@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "outDir": "./dist",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // Strict type checking - ensures types align with runtime behavior
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true,
+    "alwaysStrict": true,
+
+    // Additional type safety checks
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+
+    // NOTE: exactOptionalPropertyTypes is too strict for current codebase
+    // Enable this incrementally after fixing existing issues
+    // "exactOptionalPropertyTypes": true,
+
+    // Keep skipLibCheck to avoid issues with third-party type definitions
+    // The primary type safety comes from our own code checks
+    "skipLibCheck": true,
+    "paths": {
+      "*": ["./*"],
+      "@/*": ["./src/*"],
+      "@/pkg": ["./package.json"],
+    },
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.spec.ts", "**/*.test-support.ts"],
+}

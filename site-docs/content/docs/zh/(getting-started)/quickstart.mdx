@@ -1,0 +1,113 @@
+---
+title: 快速开始
+description: 完成 Lody 的基础安装与初始化，包括桌面端启动、CLI 启动方式、GitHub 集成与后续配置。
+---
+
+import { MonitorDown, TabletSmartphone, Compass } from 'lucide-react';
+
+# 快速开始
+
+Lody 全面支持了所有平台浏览器访问和客户端应用，包括 macOS、Windows、Linux 桌面端，也可以在 iOS 和 Android 手机上使用移动端，或者在远程服务器上使用 CLI。
+
+<Cards>
+    <Card href="/zh/download" title="下载桌面客户端" icon={<MonitorDown />}>macOS, Windows, Linux</Card>
+    <Card href="/zh/download" title="下载移动客户端" icon={<TabletSmartphone />}>iOS, Android</Card>
+  <Card  href="/login" icon={<Compass />} title="登录 Lody" >
+    去 Web 端登录
+  </Card>
+</Cards>
+
+## 桌面端方式启动
+
+- 在[下载页](/zh/download)选择你的电脑平台对应的安装包，进行下载和安装
+- 启动时会跳转至浏览器进行账号的注册和登录
+- 桌面端启动时将自动启动 Lody 的本机 [CLI daemon](/zh/docs/cli#daemon-%E6%A8%A1%E5%BC%8F) 进程，CLI 是 Agent 真正被创建的进程。
+
+## CLI 方式启动
+
+### 前置条件
+
+- Node.js 22.14 或更高版本
+
+### 启动
+
+```bash tab="守护进程（推荐）"
+npx lody daemon start
+```
+```bash tab="前台运行"
+npx lody login
+npx lody start
+```
+
+`npx lody daemon start` 会先检查能否连上 Lody、以及这台机器是否已登录。如果没有登录，它会直接走 device code 流程：在浏览器中打开登录页面（headless 环境则打印登录链接），等你完成登录后再进入后台运行。接入远端机器也是这一条命令——通过 SSH 在服务器、云主机或另一台电脑上执行，那台机器就会出现在你的工作区里。
+
+守护进程会在 CLI 异常退出后自动恢复。如果你完全不方便访问浏览器，可以使用 `npx lody daemon start --auth <cli_token>` 直接启动，`cli_token` 可以在桌面端的 **设置** -> **账户** -> **CLI Token** 中查看和生成。如果你更习惯把登录作为单独一步，`npx lody login` 依然可用。
+
+
+<Callout title="将桌面端作为纯远程控制端">
+桌面端默认会启动内置的本地 CLI，以便在当前电脑运行 Agent。如果你只想控制其他机器上的 Agent，可以
+进入 **设置** -> **通用** -> **启动**，关闭 **运行本地 Agent**。
+
+关闭后，桌面端会停止自动管理的 CLI，并在下次启动时继续保持关闭；其他机器上运行的 Agent 不受影响。
+</Callout>
+
+
+## 添加项目
+
+### 添加本地项目
+
+<Accordions type="single">
+  <Accordion title="通过桌面端添加">
+  你可以在桌面端的 **设置** -> **项目** 中右上角的按钮添加本地项目，选择对应的机器后，Lody 将展示所有的目录，你可以选择一个目录作为项目的根目录。
+  </Accordion>
+    <Accordion title="通过移动端添加">
+    你可以在移动端的 **项目** 中右上角的按钮添加本地项目，选择对应的机器后，Lody 将展示所有的目录，你可以选择一个目录作为项目的根目录。
+    </Accordion>
+      <Accordion title="通过 CLI 添加">
+      你可以在 CLI 中使用 `npx lody project add <path>` 命令添加本地项目，`<path>` 是项目的根目录。
+      </Accordion>
+</Accordions>
+
+
+### 关联你的 GitHub 仓库
+
+在 web 端的左下角点击 **设置** → **GitHub 集成** → **管理** 按钮进行 GitHub 仓库的集成授权。完成后你将重定向回 Lody 将需要的仓库添加到 workspace 中来选择。[更多说明](/zh/docs/github)
+
+## 配置 Agent
+
+Lody 支持多种 Agent，包括 Claude Code、Codex、Grok、OpenCode、Kimi、自定义 ACP Agent，以及所有支持 [ACP Registry](https://agentclientprotocol.com/get-started/registry) 的 CLI。你可以在桌面端或移动端的 **设置** -> **Agent** 中添加和配置 Agent。
+
+其中 [Claude Code 和 Codex](/zh/docs/claude-codex-capabilities) 是 Lody 内置的自行维护的 Agent，有着超出 ACP 协议范围之外的完整能力，未来将支持自行维护更多的 Agent。
+
+### 常见问题
+
+<Accordions>
+  <Accordion title="没有我想要的 Agent">
+     我们支持自定义的 ACP Agent 的启动方式，如果你想要的 Agent 不在列表中，你可以在桌面端或移动端的 **设置** -> **Agent** 中选择 **自定义 Agent**，填写启动命令和参数即可。
+  </Accordion>
+  <Accordion title="选择 Agent 后没有看到最新的模型">
+      Lody 会在应用启动时和对话开始时自动刷新一次 Agent 的配置列表，如果当前模型列表中没有你期待的模型，可以先尝试点击 Agent 配置中的刷新按钮。如果是最新刚刚发布的模型，可能需要等待 Lody 进行更新支持。
+  </Accordion>
+</Accordions>
+
+## 文件位置
+
+| 内容     | 路径            |
+| -------- | --------------- |
+| 仓库目录 | `~/.lody/repos` |
+| 日志文件 | `~/.lody/logs`  |
+
+## 一直连接失败时，考虑重置本地缓存
+
+如果版本更新后出现数据陈旧或加载失败，可以打开 **设置** -> **缓存与存储**，使用 **清理本地缓存**。
+它会删除 Lody 在所有工作区的本地缓存（离线副本、同步数据缓存和图片缓存）并重新加载应用。你的账号和
+已同步的数据是安全的，会自动重新下载，登录状态也会保留。移动端在设置页也有同样的入口。
+
+## 下一步
+
+🎉 你已经完成了所有的基础配置，接下来可以了解更多 Lody 的功能
+
+- [CLI 命令](/zh/docs/cli) - 查看 `lody` 的全部命令和参数
+- [了解工作树](/zh/docs/worktrees) - 理解 Lody 如何隔离任务
+- [配置代理](/zh/docs/agents) - 设置 Claude Code、Codex 或 Claude 兼容端点
+- [移动端访问](/zh/docs/mobile) - 在手机上审查和批准更改

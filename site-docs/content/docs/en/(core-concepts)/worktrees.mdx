@@ -1,0 +1,109 @@
+---
+title: Worktrees
+description: Learn how Lody uses Git worktrees to isolate concurrent coding-agent tasks, sync changes, and avoid collisions.
+---
+
+# Worktrees
+
+Worktrees are the foundation of how Lody isolates and manages concurrent tasks.
+
+## What is a Worktree?
+
+A Git worktree is a linked working copy of your repository. Each worktree has its own working directory with a separate checked-out branch, but shares the same Git history with your main repository.
+
+## How Lody Uses Worktrees
+
+When you create a task in Lody, it automatically:
+
+1. **Creates a new branch** - Default name is `session/<shortSessionId>` (first 8 chars of `sessionId`; you can rename it)
+2. **Sets up a worktree** - An isolated directory where the agent works (one per session)
+3. **Runs the setup script** - Optional project-level commands such as installing dependencies or copying env templates
+4. **Syncs changes** - Real-time updates visible in the web UI
+
+```
+~/.lody/repos/<repoId>/
+├── bare.git/                # Bare Git repository (shared history)
+├── cache/                   # Build cache, etc.
+└── worktrees/
+    ├── <sessionId-1>/       # Worktree for session 1
+    └── <sessionId-2>/       # Worktree for session 2
+```
+
+## Benefits
+
+### Parallel Execution
+
+Each task gets its own worktree, so agents never step on each other's changes.
+
+### Clean Isolation
+
+- No uncommitted changes mixing between tasks
+- Easy to review, approve, or discard individual tasks
+- Simple PR creation per task
+
+### Automatic Cleanup
+
+Worktrees are reclaimed when their owning session is archived, so the `~/.lody/repos` tree stays
+in sync with the sessions you actually care about. If you need to nuke everything in one go, you
+can still remove `~/.lody/repos` manually.
+
+## Worktree Setup and Cleanup Scripts
+
+Project-level scripts let you prepare every new session consistently.
+
+Use a **setup script** for commands that should run after Lody creates the worktree and before the
+agent receives the first prompt, for example:
+
+```bash
+cp .env.example .env
+pnpm install
+```
+
+Use a **cleanup script** for commands that should run when a conversation is archived, before Lody
+removes the worktree from disk, for example:
+
+```bash
+rm -rf node_modules
+```
+
+### Configure Scripts
+
+1. Open **Settings** -> **Projects**.
+2. Select a local project or GitHub repository.
+3. Open **Worktree setup** and **Worktree cleanup**.
+4. Add the commands for the shell your project needs, then leave the editor to save.
+
+For local projects, Lody shows the shell used by that project's machine. Windows uses PowerShell;
+macOS, Linux, and WSL use Bash. For GitHub repositories, you can fill both Bash and PowerShell so
+sessions work across different machines.
+
+Scripts run in the worktree directory. Environment variables exported inside the script only live
+for that script process; if the agent itself needs an environment variable, set it in
+[Agent Config](/docs/agents).
+
+### Available Environment Variables
+
+Lody sets these environment variables for both setup and cleanup scripts:
+
+| Variable                     | Description                                           |
+| ---------------------------- | ----------------------------------------------------- |
+| `LODY_WORKSPACE_ID`          | Current workspace ID                                  |
+| `LODY_SESSION_ID`            | Current conversation/session ID                       |
+| `LODY_WORKTREE_PATH`         | Absolute path to the session worktree                 |
+| `LODY_WORKTREE_BRANCH`       | Branch checked out in the worktree                    |
+| `LODY_WORKTREE_SCRIPT_PHASE` | `setup` or `cleanup`                                  |
+| `LODY_GITHUB_REPO`           | GitHub repository full name, for GitHub projects only |
+| `LODY_LOCAL_PROJECT_ID`      | Local project ID, for local projects only             |
+
+The script process also starts with its current working directory set to `LODY_WORKTREE_PATH`, so
+commands can use either `pwd` or the explicit environment variable:
+
+```bash
+echo "$LODY_SESSION_ID"
+echo "$LODY_WORKTREE_PATH"
+pnpm install
+```
+
+## Next Steps
+
+- [Configure Agents](/docs/agents) - Set up your preferred AI coding agent

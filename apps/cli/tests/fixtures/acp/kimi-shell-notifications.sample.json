@@ -1,0 +1,232 @@
+[
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "available_commands_update",
+      "availableCommands": [
+        { "description": "Compact the context", "name": "compact" }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "kimi-session-sample/tool_shell_1",
+      "title": "Shell",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_shell_1",
+      "title": "Shell",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "{\"" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_shell_1",
+      "title": "Shell",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "{\"command\":" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_shell_1",
+      "title": "Shell: echo hello",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "{\"command\": \"echo hello world\"}" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_shell_1",
+      "title": "",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "hello world\n" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "agent_message_chunk",
+      "content": { "type": "text", "text": "The command ran successfully." }
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "kimi-session-sample/tool_shell_2",
+      "title": "Shell",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_shell_2",
+      "title": "Shell: ls -la",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "{\"command\": \"ls -la /tmp\"}" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_shell_2",
+      "title": "",
+      "status": "failed",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "Error running tool: Permission denied" }
+        }
+      ]
+    }
+  },
+
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "kimi-session-sample/tool_read_1",
+      "title": "ReadFile",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_read_1",
+      "title": "ReadFile: test.txt",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "{\"path\": \"test.txt\"}" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_read_1",
+      "title": "",
+      "status": "completed",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "     1\tHello World\n     2\tLine 2\n     3\tLine 3\n" }
+        }
+      ]
+    }
+  },
+
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call",
+      "toolCallId": "kimi-session-sample/tool_edit_1",
+      "title": "StrReplaceFile",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_edit_1",
+      "title": "StrReplaceFile: test.txt",
+      "status": "in_progress",
+      "content": [
+        {
+          "type": "content",
+          "content": { "type": "text", "text": "{\"path\": \"test.txt\", \"edit\": {\"old\":\"Hello World\",\"new\":\"Hello Kimi\"}}" }
+        }
+      ]
+    }
+  },
+  {
+    "sessionId": "kimi-session-sample",
+    "update": {
+      "sessionUpdate": "tool_call_update",
+      "toolCallId": "kimi-session-sample/tool_edit_1",
+      "title": "",
+      "status": "completed",
+      "content": [
+        {
+          "type": "diff",
+          "path": "/project/test.txt",
+          "oldText": "Hello World\nLine 2\nLine 3",
+          "newText": "Hello Kimi\nLine 2\nLine 3"
+        }
+      ]
+    }
+  }
+]

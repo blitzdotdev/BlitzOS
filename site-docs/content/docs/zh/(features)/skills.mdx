@@ -1,0 +1,49 @@
+---
+title: Skills
+description: 在 Lody 中查看项目与机器全局 Skills、阅读 SKILL.md 指令，并在 Prompt 中使用 $ 提及。
+---
+
+# Skills
+
+Lody 会从支持的项目目录和机器全局目录中发现 Agent Skills。每个 Skill 都是一个包含
+`SKILL.md` 的目录，用于向 Coding Agent 提供可复用的工作指令。
+
+Lody 中的 Skills 为只读功能：可以发现、展示和引用 Skill，但不会安装、编辑或同步 Skill 文件。
+
+## 查看 Skills
+
+桌面端进入 **设置** -> **项目**，选择项目后切换到 **Skills** 标签。
+
+移动端打开项目，切换到 **设置**，再选择 **项目技能**。
+
+列表会按照来源路径分组，并展示名称、描述、版本、作者、作用域和软链接状态等元数据。打开某个 Skill
+可以阅读渲染后的 `SKILL.md` 正文。
+
+## 项目 Skills 与全局 Skills
+
+- **项目 Skills**：来自本地项目中的已知 Skill 目录，或 GitHub 项目默认分支中的 Skill 目录。
+- **全局 Skills**：来自运行 Agent 的机器上当前系统用户的已知目录，例如 `~/.codex/skills` 或
+  `~/.claude/skills`。
+
+全局 Skills 与具体机器绑定。GitHub 项目设置页展示仓库中的 Skills，而聊天输入框还可以提供当前
+Session 所选机器上兼容的全局 Skills。
+
+## 提及 Skill
+
+1. 为对话选择项目和 Agent Config。
+2. 在输入框中输入 `$`。
+3. 继续输入 Skill 名称进行筛选。
+4. 使用方向键并按 `Enter`，或直接点击目标 Skill。
+
+输入框中会保留易读的 `$skill-name`。发送消息时，Lody 会将引用扩展为对应的 `SKILL.md` 路径，让
+所选 Agent 可以加载并遵循其中的指令。
+
+不同 Agent 支持的目录可能不同，因此候选菜单会根据当前 ACP Provider 进行筛选。
+
+## 刷新与离线行为
+
+Lody 会在当前设备缓存 Skill 元数据，并在后台刷新。如果项目或所属机器暂时不可用，之前的缓存仍可
+显示，同时标记为可能过期或暂不可用。
+
+只要软链接目标仍位于允许的项目目录或用户 Home 目录内，Lody 就可以读取；不安全或已经断开的软链接会
+被跳过。

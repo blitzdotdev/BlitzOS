@@ -1,0 +1,23 @@
+{
+  "extends": "../configs/tsconfig.extend.json",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "jsx": "react-jsx",
+    "types": ["node"],
+    "paths": {
+      "*": ["./*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react/jsx-dev-runtime": ["./node_modules/@types/react/jsx-dev-runtime"],
+      "@/*": ["./src/*"],
+      "@/lib/*": ["./src/lib/*"],
+      "@/ui/*": ["./src/ui/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/atoms/*": ["./src/atoms/*"],
+      "@/components/*": ["./src/components/*"],
+      "@pkg": ["../../package.json"],
+      "@lody/api": ["../../api/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

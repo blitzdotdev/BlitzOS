@@ -1,0 +1,12 @@
+export type AgentConfigId = string & { __brand: 'AgentConfigId' };
+export type AgentRoleId = string & { __brand: 'AgentRoleId' };
+export type MachineId = string & { __brand: 'MachineId' };
+export type McpServerId = string & { __brand: 'McpServerId' };
+export type ClientId = string & { __brand: 'ClientId' };
+export type BindingId = string & { __brand: 'BindingId' };
+export type AbsolutePath = string & { __brand: 'AbsolutePath' };
+export type RepoId = string & { __brand: 'RepoId' };
+export type SessionId = string & { __brand: 'SessionId' };
+export type TaskId = string & { __brand: 'TaskId' };
+export type ReviewRunId = string & { __brand: 'ReviewRunId' };
+export type WorkspaceId = string & { __brand: 'WorkspaceId' };

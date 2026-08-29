@@ -1,0 +1,38 @@
+---
+title: Session Tabs
+description: Keep the main chat, child chats, files, and diffs open inside one Lody session.
+---
+
+# Session Tabs
+
+Session tabs let one task branch into several working surfaces without losing the shared context. A session always keeps its main tab, and you can open child chats, file previews, and diff views next to it.
+
+## When to use tabs
+
+- Keep implementation running in the main tab while a child tab reviews the current changes.
+- Open a file or diff beside the chat so you can ask follow-up questions while reading code.
+- Split one branch into several angles, such as “summarize this change”, “look for risks”, and “fix the PR comments”.
+
+## Create a child chat
+
+1. Open a session and click `+` in the tab bar.
+2. The new tab inherits the parent session’s machine, project or repository, branch, agent config, model, and permission defaults.
+3. Send the first message in the new tab. Lody creates a child session for that conversation. The title starts from the first line of your prompt, and you can rename it later by double-clicking the tab.
+
+Child tabs share the same working-directory context as the parent, but each tab keeps its own conversation history. This makes them useful for parallel review and follow-up work around the same task.
+
+## File and diff tabs
+
+- Click a file path in the conversation to open a file preview tab.
+- Click a file in a round-level diff to open a diff tab.
+- Click files from the `Files` or `Changes` sidebar to open them as viewer tabs.
+
+On desktop, viewer tabs create a split workspace: chat stays on the left, while the active file or diff stays on the right. On mobile, the file or diff opens as the focused surface so it is easier to read on a small screen.
+
+## Manage tabs
+
+- Drag tabs to reorder them. The order is remembered in the current browser.
+- Double-click a chat tab to rename it.
+- Child chat tabs, file tabs, and diff tabs can be closed.
+- The main tab is pinned and cannot be closed.
+- Archived child tabs are available from the history button on the right side of the tab bar.

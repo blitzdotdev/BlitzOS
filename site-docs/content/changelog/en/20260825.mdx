@@ -1,0 +1,25 @@
+---
+title: '20260825'
+version: 0.86.2
+date: 2026-08-25
+description: Added Agent Roles, fuzzy model search, a unified attachment picker, HTML preview, full Markdown copying, Codex usage reset forecasts, and background agent runtime updates, with reliability improvements across sessions, tasks, local file preview, and supported platforms.
+---
+
+Version 0.86.2
+
+### ✨ New
+
+- Added Agent Roles for saving and sharing frequently used agent, model, permission, and other run settings, then quickly selecting or mentioning them in new and existing sessions.
+- Added fuzzy search to the model list and combined file and image attachments into a clearer unified picker.
+- Added previews for self-contained HTML files and full-copy actions for Markdown messages.
+- Added Codex usage reset forecasts.
+- Added background updates for built-in agent runtimes.
+
+### 🐛 Fixes and Improvements
+
+- Improved session creation, restoration, and task dispatch reliability, kept direct local sessions from creating unexpected branches, and automatically handled branch-name conflicts for new worktrees.
+- Fixed task bodies disappearing before saves were acknowledged, and made archiving a parent session archive its child sessions too.
+- Improved Electron local file browsing and preview while keeping local file reads on the device.
+- Fixed chat content shifting when the composer was resized.
+- Improved Claude and Grok model fallbacks, compatibility with legacy runtime caches, and usage chart labels.
+- Fixed Linux desktop icon associations and improved offline availability of the emoji picker on Web and mobile.

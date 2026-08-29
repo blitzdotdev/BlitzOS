@@ -1,0 +1,35 @@
+---
+title: '20260623'
+version: 0.63.0
+date: 2026-06-23
+description: Added customizable shortcuts, a command palette, Skills management, conversation font sizing, custom path launchers, arbitrary file attachments, and more.
+---
+### New
+
+- Added `lody review`, a local code review tool that lets you view review reports without signing in.
+- Sessions now support attachments of any file type, including previews. Agents can also read attachments and send files back.
+- Added a new command palette (⌘K) for searching commands and quickly switching sessions.
+- Added Keyboard Shortcuts settings, where every shortcut can be customized or rebound with conflict detection.
+- Added a desktop Quick Session window (⌘⇧N) with full keyboard control.
+- The desktop terminal now follows the app theme, with a VS Code-style bottom status bar.
+- The session “Open in” menu now supports Xcode, Sublime Text, and custom launchers.
+- Use `$` in the composer to mention a project Skill, and browse available Skills from the new Skills page.
+- Local projects can now be deleted from other devices.
+- Added a conversation font size setting.
+- Added the DeepSeek Reasonix provider.
+- Desktop users can disable automatic CLI startup and use Lody purely as a remote control.
+
+### Fixes and Improvements
+
+- Improved All Changes list performance.
+- Pull requests now display a Draft status badge.
+- Image uploads now work across the conversation interface.
+- Added caching for worktree scripts to avoid waiting for them to load.
+- Fixed the mobile keyboard covering the response UI when answering an AI question.
+- Improved the display of long model names on mobile.
+- Reduced stutter and device heat during streaming responses.
+- Fixed a black screen after pressing Cmd+W in full-screen mode on macOS.
+- Fixed clipped sidebar selection outlines and extra spacing before timestamps.
+- Changed the session search shortcut to ⌘F on macOS.
+- Long model names are easier to read in the mobile model picker, and its menu is no longer covered by the keyboard.
+- Manually stopping a task no longer triggers an incorrect “completed” notification.

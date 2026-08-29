@@ -1,0 +1,52 @@
+---
+title: '20260417'
+version: 0.44.0
+date: 2026-04-17
+description: Added Claude Opus 4.7 support, safer team machine sharing, non-interactive CLI auth, Full Access mode, and mobile keyboard fixes.
+---
+### 🧠 Claude Opus 4.7 Support
+
+### 👥 Safer Team Collaboration
+
+- New team machine visibility controls: your machines are **fully private by default** to other members — joining someone else's Workspace no longer means worrying that your own dev machine gets exposed or used
+- Explicitly share a machine with the team from Settings; un-shared machines never appear in other members' machine lists, and conversations on them never reach other members' sidebars
+- "Joining someone's Workspace" and "using your own machines" are now fully decoupled — invite teammates without second-guessing
+
+### 🔐 Sign In on Any Machine With One Command
+
+- Non-interactive CLI auth: `lody login --auth <api-key>` connects on any machine, or `lody start --auth <api-key>` to log in and start in one step
+- Electron desktop adds an account settings panel to generate and copy a CLI API key
+
+### 🆕 Full Access Mode
+
+- New Lody Full Access mode auto-approves permission requests for agents without a native full-access mode (e.g. Kimi, OpenCode)
+
+### 🤖 More Agent Integrations
+
+- Better integration with OpenCode and Kimi
+- Fixed parsing and display of Kimi terminal, file read, and edit notifications in history
+
+### 📱 Mobile Experience
+
+- Reworked soft-keyboard handling: the keyboard no longer pushes the whole UI up — only the input area floats, with a smooth transition
+- Mobile keyboards show a "Send" key on chat inputs that submits the message
+- Fixed iOS Safari clipping bottom controls, toast safe-area, and invite page safe-area
+
+### 🚀 Performance & Startup
+
+- Eliminated the white screen at startup for returning users; UI no longer blocked by network queries
+- Long-conversation search indexing is now lazy + incremental — no more jank when a conversation ends
+- Sync service caching added to reduce cold-start cost
+
+### 🌐 Browser Compatibility
+
+- Expanded support to Safari 14+ / Chrome 80+ / Firefox 78+; older browsers no longer white-screen due to regex or ESM loading failures
+
+### 🛠️ Other Fixes
+
+- Fixed Docker containers reusing the host machine ID causing event stream conflicts
+- Worktree creation now reuses the selected non-default branch
+- Desktop opens the GitHub install link in the external browser
+- Fixed workspace 404 when signing in again on Electron
+- Session sidebar toggle aligned with the header
+- Improved Switch toggle contrast across VS Code themes

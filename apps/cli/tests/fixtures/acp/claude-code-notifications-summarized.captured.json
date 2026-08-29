@@ -1,0 +1,376 @@
+[
+  {
+    "sessionUpdate": "plan",
+    "entries": [
+      {
+        "content": "Read the test file",
+        "priority": "medium",
+        "status": "pending"
+      },
+      {
+        "content": "Edit the test file",
+        "priority": "medium",
+        "status": "pending"
+      },
+      {
+        "content": "Run a terminal command",
+        "priority": "medium",
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "Now"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " let me start"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " with the"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " first task -"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " reading the test file."
+  },
+  {
+    "sessionUpdate": "plan",
+    "entries": [
+      {
+        "content": "Read the test file",
+        "priority": "medium",
+        "status": "in_progress"
+      },
+      {
+        "content": "Edit the test file",
+        "priority": "medium",
+        "status": "pending"
+      },
+      {
+        "content": "Run a terminal command",
+        "priority": "medium",
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+    "title": "Read File",
+    "status": "pending",
+    "kind": "read",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+    "title": "Read /tmp/lody-claude-code-e2e-1767794865028/test-read.txt",
+    "status": "pending",
+    "kind": "read",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "file_path"
+    ],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01C7kQFfw51V2VzwYFEYXq8Z",
+    "status": "completed",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "The"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " test file contains:"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n- \"Hello"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " from test file!\""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n- \""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "Line 2\""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\n- \"Line 3"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "\"\n\nNow let me"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " mark"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " the"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " first task as completed an"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "d move to editing"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " the test file."
+  },
+  {
+    "sessionUpdate": "plan",
+    "entries": [
+      {
+        "content": "Read the test file",
+        "priority": "medium",
+        "status": "completed"
+      },
+      {
+        "content": "Edit the test file",
+        "priority": "medium",
+        "status": "in_progress"
+      },
+      {
+        "content": "Run a terminal command",
+        "priority": "medium",
+        "status": "pending"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+    "title": "Read File",
+    "status": "pending",
+    "kind": "read",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+    "title": "Read /tmp/lody-claude-code-e2e-1767794865028/test-write.txt",
+    "status": "pending",
+    "kind": "read",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "file_path"
+    ],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_011XLm7et9WJHNYhEnwZoNm3",
+    "status": "completed",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+    "title": "Edit",
+    "status": "pending",
+    "kind": "edit",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+    "title": "Edit `/tmp/lody-claude-code-e2e-1767794865028/test-write.txt`",
+    "status": "pending",
+    "kind": "edit",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "file_path",
+      "old_string",
+      "new_string"
+    ],
+    "diffs": [
+      {
+        "path": "/tmp/lody-claude-code-e2e-1767794865028/test-write.txt",
+        "oldTextLen": 16,
+        "newTextLen": 23
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_01EgLCSwBLPWCQmpH4zj3hxo",
+    "status": "completed",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "Now let me mark"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " the edit"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " task"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " as completed an"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "d run"
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": " the terminal command."
+  },
+  {
+    "sessionUpdate": "plan",
+    "entries": [
+      {
+        "content": "Read the test file",
+        "priority": "medium",
+        "status": "completed"
+      },
+      {
+        "content": "Edit the test file",
+        "priority": "medium",
+        "status": "completed"
+      },
+      {
+        "content": "Run a terminal command",
+        "priority": "medium",
+        "status": "in_progress"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+    "title": "Terminal",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+    "title": "`echo \"Hello from terminal\"`",
+    "status": "pending",
+    "kind": "execute",
+    "terminalChunks": 0,
+    "rawInputKeys": [
+      "command",
+      "description",
+      "timeout"
+    ],
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+    "title": "Print greeting message",
+    "status": "in_progress",
+    "terminalChunks": 1,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "toolu_014Mob7XPq9drvucw23WMey1",
+    "status": "completed",
+    "terminalChunks": 0,
+    "diffs": []
+  },
+  {
+    "sessionUpdate": "plan",
+    "entries": [
+      {
+        "content": "Read the test file",
+        "priority": "medium",
+        "status": "completed"
+      },
+      {
+        "content": "Edit the test file",
+        "priority": "medium",
+        "status": "completed"
+      },
+      {
+        "content": "Run a terminal command",
+        "priority": "medium",
+        "status": "completed"
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": ""
+  },
+  {
+    "sessionUpdate": "agent_message_chunk",
+    "text": "DONE"
+  }
+]

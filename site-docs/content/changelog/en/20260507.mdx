@@ -1,0 +1,50 @@
+---
+title: '20260507'
+version: 0.49.0
+date: 2026-05-07
+description: Lody 0.49.0 adds live Preview with visual annotations, Codex Goals and image generation, interactive Claude Code questions, better sidebar task management, and richer GitHub PR workflows.
+---
+### Agent Workflow
+
+- Codex Goals are now surfaced in Lody. Enable the feature in Codex first with `codex features enable goals`.
+  <img src="/_docs-assets/20260507-goal.png" alt="" />
+- Codex image generation output now returns to the active conversation, so generated images stay alongside the prompt and follow-up instructions.
+  <img src="/_docs-assets/20260507-codex-image-gen.png" alt="" />
+- Claude Code AskUserQuestion prompts now appear as native interaction cards, with single-choice, multiple-choice, and free-form answer flows.
+  <img src="/_docs-assets/20260507-ask-question.png" alt="" />
+- Added a Xiaomi MiMo preset for Claude Code, including Token Plan configuration.
+
+### Remote Preview and Visual Feedback
+
+<img src="/_docs-assets/20260507-preview.png" alt="" />
+
+- Added Lody Preview, a session-scoped live preview for local development servers. For example, ask the agent: `Start the Vite dev server and use Lody Preview`.
+- Use the preview panel to switch between desktop, tablet, and mobile viewports, rotate screens, zoom, pan, or open the page in an external browser when needed.
+- Visual annotations let you click an element in the preview, leave a comment, and send that referenced feedback back into the conversation.
+
+### Sidebar and Task Management
+
+- Added the Updated sidebar organization mode, which groups Chat, GitHub Worktree, and Local Project sessions by recency: Today, This week, and Older.
+- Session context menus now include rename, pin, archive, copy session URL, and copy current branch.
+- Pinned sessions stay at the top of the list, making long-running or important work easier to revisit.
+- On the web, sidebar tasks now support middle-click and Cmd/Ctrl-click for opening in a new tab.
+
+### Conversation and Input
+
+- Long pasted text now collapses into an inline placeholder instead of filling the composer. Click the placeholder to review or edit the pasted content.
+- Images can be dragged directly into the composer for upload.
+- On mobile, long-pressing an image preview opens native share and save actions.
+- File previews wrap long lines automatically, which makes logs and dense generated output easier to read.
+
+### GitHub and Pull Requests
+
+- Draft PRs can be marked as Ready for review directly from the PR panel.
+- PR-linked sessions can be auto-archived when the PR is merged or closed.
+- PR comments, review actions, and merges can use your personal GitHub identity, and Settings now shows the connected account.
+
+### Fixes and Stability
+
+- Fixed a false failure toast after local project import succeeded.
+- Fixed preset agent first-turn chats sometimes missing title-generation configuration.
+- Fixed several sidebar display issues.
+- Fixed mobile dropdown menus that could extend beyond the screen.
