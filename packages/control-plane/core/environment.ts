@@ -1,4 +1,3 @@
-import { first } from "./db.js";
 import {
   HttpError,
   isBoolean,
@@ -14,8 +13,9 @@ import type {
 } from "./wire.js";
 
 const ENVIRONMENT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
-/** The box (Go) and the actor (TypeScript) re-declare these numbers in their
- * own runtimes; `schema/fixtures/workspace-environment/` pins all three. */
+/** Ceilings for the legacy `environment` field a create may still send. Its
+ * `env` entries become workspace credentials; nothing is stored under this
+ * shape any more. */
 export const ENVIRONMENT_MAX_KEYS = 50;
 export const ENVIRONMENT_MAX_BYTES = 8 * 1024;
 export const STARTUP_SCRIPT_MAX_BYTES = 64 * 1024;
@@ -137,9 +137,20 @@ export function parseWorkspaceEnvironmentResponse(
   return { ...environment, filesReady: value.filesReady };
 }
 
-/** The box's own view of its environment. Serving it through
- * `parseWorkspaceEnvironmentResponse` is what makes the shared fixture corpus
- * bind the bytes the box actually receives. */
+/**
+ * The legacy workspace-environment route.
+ *
+ * The feature is gone: values live in `workspace_credentials` and only
+ * `blitz-cred` reads them, and the startup script has no runner left. The
+ * route stays because DEPLOYED broker binaries poll it every second at boot
+ * and wait for a 200 carrying all three fields with `filesReady: true`. A 404
+ * or a missing field makes every already-deployed box poll forever, so this
+ * answers the empty set unconditionally — no workspace lookup, no readiness
+ * gate, nothing that can turn into a retry.
+ *
+ * It is a compatibility shim with an expiry: it can go once no box that polls
+ * it is still running.
+ */
 export function addWorkspaceEnvironmentRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -152,26 +163,13 @@ export function addWorkspaceEnvironmentRoutes(
       throw new HttpError(403, "box is not attached to a workspace");
     }
     const idParam = context.req.param("id");
-    const workspaceId = idParam === "self" ? box.workspaceId : idParam;
-    if (box.workspaceId !== workspaceId) {
+    if (idParam !== "self" && box.workspaceId !== idParam) {
       throw new HttpError(403, "a box may only read its own workspace environment");
     }
-    const workspace = await first<{
-      environment: string | null;
-      files_ready: number;
-      phase: string;
-    }>(runtime.db, {
-      q: "SELECT environment, files_ready, phase FROM workspaces WHERE id = ?1 LIMIT 1",
-      v: [workspaceId],
+    return context.json<WorkspaceEnvironmentResponse>({
+      env: {},
+      startupScript: null,
+      filesReady: true,
     });
-    if (workspace === null || workspace.phase !== "ready") {
-      throw new HttpError(409, "workspace environment is not ready");
-    }
-    const environment = workspaceEnvironmentFromJson(workspace.environment, runtime.reportError)
-      ?? { env: {}, startupScript: null };
-    return context.json<WorkspaceEnvironmentResponse>(parseWorkspaceEnvironmentResponse({
-      ...environment,
-      filesReady: workspace.files_ready === 1,
-    }));
   });
 }

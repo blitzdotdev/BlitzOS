@@ -2,7 +2,7 @@ import type { MachineType } from "./machine.js";
 import type { CredentialManifest } from "./credential.js";
 import type { WorkspaceEnvironment } from "./environment.js";
 import type { Volume } from "./volume.js";
-import type { RetryAction, WorkspaceView } from "./workspace.js";
+import type { RetryAction, WorkspaceMemberRole, WorkspaceView } from "./workspace.js";
 
 export interface MachineTypeProviderFailure {
   providerId: string;
@@ -23,11 +23,27 @@ export interface ListMachineTypesResponse {
 }
 
 export interface CreateWorkspaceRequest {
-  /** Required unless templateId is set; then the template's machine type is the default. */
+  /** Legacy spelling of `defaultMachineTypeId`; either satisfies the
+   * requirement, and `defaultMachineTypeId` wins when both are sent. */
   machineTypeId?: string;
-  /** Creates from a workspace template: its folders attach automatically. */
+  /** The default a machine takes when nothing else names one. */
+  defaultMachineTypeId?: string;
+  /** Provision and start a machine on every member add. Default true. */
+  autoProvision?: boolean;
+  /** Existing org members, added immediately. The creator is the first
+   * workspace admin and never needs a row here. */
+  members?: { membershipId: string; role: WorkspaceMemberRole; machineTypeId?: string }[];
+  /** The only path where a credential value is sent. */
+  credentials?: { name: string; label?: string; value: string }[];
+  /** Copies config — default machine type, agent rule, repos, credential
+   * NAMES are not copied and neither are members. The workspace is the
+   * template now, so this is "new workspace from existing". */
+  cloneFromWorkspaceId?: string;
+  /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
+   * one is refused rather than ignored. */
   templateId?: string;
-  /** Shares the new workspace with every active org member at this role. */
+  /** Adds every active org member at the matching workspace role:
+   * editor → member, viewer → viewer. */
   orgShareRole?: "editor" | "viewer";
   /** Optional display name; blank means the server picks a random one. */
   name?: string;
@@ -39,13 +55,15 @@ export interface CreateWorkspaceRequest {
   /** Providers to enable in the new workspace. The manifest stays the ceiling;
    * this is the provision list, and the ceiling wins on conflict. */
   connections?: string[];
+  /** Legacy. Its `env` entries become workspace credentials; the startup
+   * script is dropped, because nothing runs one any more. */
   environment?: WorkspaceEnvironment;
-  /** Overrides the template's rule; null (or absent) falls back to the
-   * template's rule and then the built-in doc. */
+  /** Overrides the clone source's rule; null (or absent) falls back to the
+   * source's rule and then the built-in doc. */
   agentRuleId?: string | null;
   /** GitHub repositories ("owner/name") the box clones into /workspace. Only
-   * for a create with no template: a template already carries its own list,
-   * and a request that names both is refused rather than merged. */
+   * for a create with no clone source: a cloned workspace already carries its
+   * own list, and a request that names both is refused rather than merged. */
   repos?: string[];
 }
 

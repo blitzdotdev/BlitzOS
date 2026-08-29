@@ -32,6 +32,11 @@ export interface ProviderCapabilities {
 
 export interface CreateVmInput {
   workspaceId: string;
+  /** The machine this VM is an incarnation of. It names the server, because a
+   * workspace holds one VM per member now and a provider that names servers
+   * after the workspace would collide on the second member. The workspace id
+   * stays as the label operators match resources by. */
+  machineId: string;
   machineTypeId: string;
   sshPublicKey?: string;
   phoneHomeUrl: string;

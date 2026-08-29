@@ -52,6 +52,19 @@ export {
 } from "./compute/org-credentials.js";
 export { WorkspaceTunnels, workspaceTunnelsFromEnv, WEBAPP_TOKEN_HEADER } from "./workspace-tunnels.js";
 export {
+  destroyMachine,
+  machineById,
+  machineFor,
+  provisionMachine,
+} from "./machines.js";
+export type { MachineRow, WorkspaceRow } from "./workspace-records.js";
+export { machineView, workspaceView } from "./workspace-records.js";
+export { projectWorkspace, projectWorkspaces } from "./workspace-projection.js";
+export {
+  putWorkspaceCredential,
+  workspaceCredentialValue,
+} from "./workspace-credentials.js";
+export {
   requireWorkspaceWebAppAuth,
   WEBAPP_TICKET_TTL_SECONDS,
   WorkspaceWebAppAuth,

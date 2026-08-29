@@ -137,6 +137,85 @@ const orgUsageCapture: SharedShape<
   schema.OrgUsageCaptureResponse
 > = { enabled: true, folderId: "folder" };
 
+const machine: SharedShape<wire.MachineView, schema.MachineView> = {
+  id: "machine",
+  state: "running",
+  machineTypeId: "mv-2c2g@lab",
+  volumeId: volume.id,
+  membershipId: "membership",
+  error: null,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_005_000,
+};
+
+const workspaceMember: SharedShape<
+  wire.WorkspaceMemberView,
+  schema.WorkspaceMemberView
+> = {
+  membershipId: machine.membershipId,
+  name: "Owner",
+  avatarUrl: null,
+  role: "admin",
+  machine,
+};
+
+// A viewer holds no machine, ever (plan §2.2). Null covers different ground
+// than an object, so it needs its own row.
+const viewerMember: SharedShape<
+  wire.WorkspaceMemberView,
+  schema.WorkspaceMemberView
+> = {
+  membershipId: "viewer-membership",
+  name: "Watcher",
+  avatarUrl: "https://avatars.example/watcher.png",
+  role: "viewer",
+  machine: null,
+};
+
+const workspaceCredential: SharedShape<
+  wire.WorkspaceCredentialView,
+  schema.WorkspaceCredentialView
+> = { name: "STRIPE_API_KEY", label: "live", createdAt: 6 };
+
+const machineResponse: SharedShape<
+  wire.MachineResponse,
+  schema.MachineResponse
+> = { machine };
+
+const setMachineTypeRequest: SharedShape<
+  wire.SetMachineTypeRequest,
+  schema.SetMachineTypeRequest
+> = { machineTypeId: pricedMachineType.id };
+
+const addWorkspaceMemberRequest: SharedShape<
+  wire.AddWorkspaceMemberRequest,
+  schema.AddWorkspaceMemberRequest
+> = {
+  membershipId: viewerMember.membershipId,
+  role: "member",
+  machineTypeId: pricedMachineType.id,
+};
+
+const updateWorkspaceMemberRequest: SharedShape<
+  wire.UpdateWorkspaceMemberRequest,
+  schema.UpdateWorkspaceMemberRequest
+> = { role: "viewer" };
+
+const workspaceMemberResponse: SharedShape<
+  wire.WorkspaceMemberResponse,
+  schema.WorkspaceMemberResponse
+> = { member: workspaceMember };
+
+const putWorkspaceCredentialRequest: SharedShape<
+  wire.PutWorkspaceCredentialRequest,
+  schema.PutWorkspaceCredentialRequest
+> = { name: workspaceCredential.name, label: "live", value: "sk_test_only" };
+
+const listWorkspaceCredentialsResponse: SharedShape<
+  wire.ListWorkspaceCredentialsResponse,
+  schema.ListWorkspaceCredentialsResponse
+> = { credentials: [workspaceCredential] };
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -163,6 +242,13 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   agentRuleId: agentRule.id,
   connections: ["linear"],
   recipeId: recipe.id,
+  orgId: "org",
+  ownerMembershipId: workspaceMember.membershipId,
+  defaultMachineTypeId: machineType.id,
+  autoProvision: true,
+  myRole: "admin",
+  members: [workspaceMember, viewerMember],
+  credentials: [workspaceCredential],
 };
 
 const templateConnection: SharedShape<
@@ -269,6 +355,11 @@ const createWorkspaceRequest: SharedShape<
   schema.CreateWorkspaceRequest
 > = {
   machineTypeId: machineType.id,
+  defaultMachineTypeId: machineType.id,
+  autoProvision: false,
+  members: [{ membershipId: viewerMember.membershipId, role: "member", machineTypeId: machineType.id }],
+  credentials: [{ name: workspaceCredential.name, label: "live", value: "sk_test_only" }],
+  cloneFromWorkspaceId: "workspace",
   sshPublicKey: "ssh-ed25519 AAAAcaller",
   volumeId: volume.id,
   userData: "#cloud-config\n",
@@ -537,6 +628,17 @@ const connectionsResponse: SharedShape<
 > = { connections: [connectionView] };
 
 const fullFieldValues = [
+  machine,
+  workspaceMember,
+  viewerMember,
+  workspaceCredential,
+  machineResponse,
+  setMachineTypeRequest,
+  addWorkspaceMemberRequest,
+  updateWorkspaceMemberRequest,
+  workspaceMemberResponse,
+  putWorkspaceCredentialRequest,
+  listWorkspaceCredentialsResponse,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -612,6 +714,18 @@ describe("local wire copies", () => {
     expectTypeOf<wire.Phase>().toEqualTypeOf<schema.Phase>();
     expectTypeOf<wire.RetryAction>().toEqualTypeOf<schema.RetryAction>();
     expectTypeOf<wire.WorkspaceRole>().toEqualTypeOf<schema.WorkspaceRole>();
+    expectTypeOf<wire.WorkspaceMemberRole>().toEqualTypeOf<schema.WorkspaceMemberRole>();
+    expectTypeOf<wire.MachineState>().toEqualTypeOf<schema.MachineState>();
+    expectTypeOf<wire.MachineView>().toEqualTypeOf<schema.MachineView>();
+    expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
+    expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
+    expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();
+    expectTypeOf<wire.WorkspaceCredentialView>().toEqualTypeOf<schema.WorkspaceCredentialView>();
+    expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();
+    expectTypeOf<wire.UpdateWorkspaceMemberRequest>().toEqualTypeOf<schema.UpdateWorkspaceMemberRequest>();
+    expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
+    expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
+    expectTypeOf<wire.ListWorkspaceCredentialsResponse>().toEqualTypeOf<schema.ListWorkspaceCredentialsResponse>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
@@ -711,6 +825,8 @@ describe("local wire copies", () => {
     }
     expect(wire.BOX_UPDATE_OUTCOMES).toEqual(schema.BOX_UPDATE_OUTCOMES);
     expect(wire.PHASES).toEqual(schema.PHASES);
+    expect(wire.WORKSPACE_MEMBER_ROLES).toEqual(schema.WORKSPACE_MEMBER_ROLES);
+    expect(wire.MACHINE_STATES).toEqual(schema.MACHINE_STATES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
     expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);

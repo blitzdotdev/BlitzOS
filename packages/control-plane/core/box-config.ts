@@ -4,7 +4,8 @@ import { authenticateBox } from "./oauth.js";
 import type { BoxIdentity } from "./types.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
-import { canControlWorkspace } from "./workspace-access.js";
+import { machineFor } from "./machines.js";
+import { requireWorkspaceAdmin } from "./workspace-access.js";
 import { workspaceById } from "./workspace-records.js";
 import {
   BOX_UPDATE_OUTCOMES,
@@ -65,15 +66,16 @@ export function parseBoxUpdateResult(value: JsonValue): BoxUpdateResultRequest {
   return { ref, outcome: boxUpdateOutcome(requiredString(value.outcome, "outcome", 64)) };
 }
 
-/** Arm the flag the host's next poll reads. Both request paths — the guest
- * verb with the box's own token and the session route — write it here, so the
- * one statement that means "update this box" has one home. */
-async function requestBoxUpdate(db: CoreRuntime["db"], workspaceId: string): Promise<void> {
+/** Arm the flag the host's next poll reads. The flag is per MACHINE now: a
+ * workspace holds one VM per member, so "update this box" names one of them.
+ * Both request paths — the guest verb with the machine's own token and the
+ * session route — write it here, so the one statement has one home. */
+async function requestBoxUpdate(db: CoreRuntime["db"], machineId: string): Promise<void> {
   await changed(db, {
-    q: `UPDATE workspaces
+    q: `UPDATE machines
         SET box_update_requested = 1, updated_at = ?1
         WHERE id = ?2 RETURNING id`,
-    v: [Date.now(), workspaceId],
+    v: [Date.now(), machineId],
   });
 }
 
@@ -84,7 +86,7 @@ async function requireWorkspaceBox(
   const box = await authenticateBox(context.req.raw, runtimeFactory(context).db);
   if (box === null) throw new HttpError(401, "invalid box access token");
   if (box.workspaceId === null) {
-    throw new HttpError(403, "only workspace boxes have a box config");
+    throw new HttpError(403, "only workspace machines have a box config");
   }
   return { ...box, workspaceId: box.workspaceId };
 }
@@ -100,10 +102,10 @@ export function addBoxConfigRoutes(
     const box = await requireWorkspaceBox(context, runtimeFactory);
     const runtime = runtimeFactory(context);
     const row = await first<{ box_update_requested: number }>(runtime.db, {
-      q: "SELECT box_update_requested FROM workspaces WHERE id = ?1 LIMIT 1",
-      v: [box.workspaceId],
+      q: "SELECT box_update_requested FROM machines WHERE id = ?1 LIMIT 1",
+      v: [box.id],
     });
-    if (row === null) throw new HttpError(404, "workspace not found");
+    if (row === null) throw new HttpError(404, "machine not found");
     const response: BoxConfigResponse = {
       boxImageRef: runtime.vars.boxImageRef,
       // The configured public origin when the deployment has one; otherwise
@@ -125,10 +127,10 @@ export function addBoxConfigRoutes(
     const box = await requireWorkspaceBox(context, runtimeFactory);
     const input = parseBoxUpdateResult(await readJson(context.req.raw, 4 * 1024));
     await changed(runtimeFactory(context).db, {
-      q: `UPDATE workspaces
+      q: `UPDATE machines
           SET box_update_requested = 0, box_image_reported = ?1, updated_at = ?2
           WHERE id = ?3 RETURNING id`,
-      v: [input.ref, Date.now(), box.workspaceId],
+      v: [input.ref, Date.now(), box.id],
     });
     return context.body(null, 204);
   });
@@ -137,7 +139,7 @@ export function addBoxConfigRoutes(
   // an agent inside the workspace may ask for its own box to be updated.
   router.post("/workspaces/self/box-update", async (context) => {
     const box = await requireWorkspaceBox(context, runtimeFactory);
-    await requestBoxUpdate(runtimeFactory(context).db, box.workspaceId);
+    await requestBoxUpdate(runtimeFactory(context).db, box.id);
     return context.body(null, 204);
   });
 
@@ -147,11 +149,18 @@ export function addBoxConfigRoutes(
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);
     const row = await workspaceById(runtime.db, context.req.param("id"));
-    if (row === null || row.org_id !== principal.orgId || row.phase === "destroyed") {
+    if (row === null || row.org_id !== principal.orgId || row.deleted_at !== null) {
       throw new HttpError(404, "workspace not found");
     }
-    if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
-    await requestBoxUpdate(runtime.db, row.id);
+    await requireWorkspaceAdmin(runtime.db, principal, row);
+    // The caller's own machine. A workspace has no single box to update any
+    // more, and picking somebody else's would restart a colleague's work.
+    if (principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    const machine = await machineFor(runtime.db, row.id, principal.membershipId);
+    if (machine === null) throw new HttpError(409, "you have no machine in this workspace");
+    await requestBoxUpdate(runtime.db, machine.id);
     return context.body(null, 204);
   });
 }

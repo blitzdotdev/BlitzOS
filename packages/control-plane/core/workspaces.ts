@@ -1,58 +1,65 @@
-import { boxHostname, type RecipeBootstrap } from "./bootstrap.js";
-import { buildUserData, type BootShaping } from "./cloud-init.js";
+import type { RecipeBootstrap } from "./bootstrap.js";
 import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
 import { checkGithubRepositories, probedRepos } from "./connections/github-repo-check.js";
 import { githubCallerCredential } from "./connections/github-repositories.js";
 import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
-import { mintWorkspaceConnection, workspaceForMint } from "./connections/mint.js";
-import { connectionByName } from "./connections/registry.js";
-import { hashSecret, matchesStoredHash, randomToken } from "./crypto.js";
+import { matchesStoredHash } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
-import { VM_SLOT_PHASES } from "./entitlements.js";
-import {
-  parseWorkspaceEnvironment,
-  workspaceEnvironmentFromJson,
-  storedWorkspaceEnvironment,
-  WORKSPACE_REQUEST_MAX_BYTES,
-} from "./environment.js";
+import { parseWorkspaceEnvironment, WORKSPACE_REQUEST_MAX_BYTES } from "./environment.js";
 import {
   HttpError,
+  isBoolean,
   isRecord,
   isString,
   isSshPublicKey,
   readJson,
   readText,
   requiredString,
+  type JsonValue,
 } from "./http.js";
-import { issueBoxTokens } from "./oauth.js";
+import {
+  destroyMachine,
+  liveMachines,
+  machineFor,
+  providerForVmId,
+  provisionMachine,
+  type ProvisionMachineInput,
+} from "./machines.js";
+import { issueMachineTokens } from "./oauth.js";
 import type { Principal } from "./principals.js";
-import { canControlWorkspace, webAppWorkspaceForRequest, workspaceRole } from "./workspace-access.js";
-import { workspaceById, workspaceView, type WorkspaceRow } from "./workspace-records.js";
+import {
+  isWorkspaceMember,
+  requireWorkspaceAdmin,
+  webAppWorkspaceForRequest,
+  workspaceAccess,
+} from "./workspace-access.js";
+import { projectWorkspace, projectWorkspaces } from "./workspace-projection.js";
+import {
+  machinesForWorkspaces,
+  workspaceById,
+  workspacesForOrg,
+  type MachineRow,
+  type WorkspaceRow,
+} from "./workspace-records.js";
 import { randomWorkspaceName } from "./workspace-names.js";
 import {
-  markVolumeAttachedQuery,
-  markVolumeDetachedQuery,
-  provisionWorkspaceVolume,
-} from "./workspace-volumes.js";
-import type { CreateVmInput, WebAppPort, VmProvider } from "./compute/types.js";
-import { resolveWorkspacePlacement } from "./compute/workspace-placement.js";
+  addWorkspaceMember,
+  activeOrgMember,
+  parseAddWorkspaceMember,
+} from "./workspace-members.js";
+import { putWorkspaceCredential } from "./workspace-credentials.js";
+import type { WebAppPort } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { rewriteWebDavDestination } from "./webapp-proxy.js";
 import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
 import {
   insertWorkspaceRepos,
   parseTemplateRepos,
-  templateRepos,
+  workspaceRepos,
   type TemplateRepo,
 } from "./template-repos.js";
-import {
-  attachTemplateFolders,
-  templateConnections,
-  templateWorkspaceName,
-  workspaceTemplateForCreate,
-} from "./workspace-templates.js";
 import { runReadyWorkspaceFileSync, scheduleSync } from "./files/sync.js";
 import {
   enforceRateLimit,
@@ -62,6 +69,7 @@ import {
   type RuntimeFactory,
 } from "./runtime.js";
 import type {
+  AddWorkspaceMemberRequest,
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   PollResponse,
@@ -105,23 +113,63 @@ export interface PhoneHomeResponse {
   webapp_token?: string;
 }
 
+type CreateWorkspaceCredential = NonNullable<CreateWorkspaceRequest["credentials"]>[number];
 
-function providerForVmId(runtime: CoreRuntime, vmId: string): VmProvider {
-  const provider = runtime.providers.vmRegistry.forVmId(vmId);
-  if (provider === undefined) {
-    throw new HttpError(409, `no VM provider owns VM ID ${vmId}`);
-  }
-  return provider;
+function parseCreateMembers(value: JsonValue): AddWorkspaceMemberRequest[] {
+  if (!Array.isArray(value)) throw new HttpError(400, "members must be an array");
+  return value.map((entry) => parseAddWorkspaceMember(entry));
+}
+
+function parseCreateCredentials(value: JsonValue): CreateWorkspaceCredential[] {
+  if (!Array.isArray(value)) throw new HttpError(400, "credentials must be an array");
+  return value.map((entry, index) => {
+    if (!isRecord(entry)) {
+      throw new HttpError(400, `credentials[${String(index)}] must be an object`);
+    }
+    const result: CreateWorkspaceCredential = {
+      name: requiredString(entry.name, `credentials[${String(index)}].name`, 128),
+      value: requiredString(entry.value, `credentials[${String(index)}].value`, 8 * 1024),
+    };
+    if (entry.label !== undefined && entry.label !== null) {
+      result.label = requiredString(entry.label, `credentials[${String(index)}].label`, 128);
+    }
+    return result;
+  });
 }
 
 function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const result: CreateWorkspaceRequest = {};
-  if (value.templateId !== undefined) {
-    result.templateId = requiredString(value.templateId, "templateId", 256);
+  if (value.templateId !== undefined && value.templateId !== null) {
+    // The template object is gone: a workspace is its own template, and "new
+    // workspace from existing" is `cloneFromWorkspaceId`. Refused rather than
+    // ignored, so a caller learns what happened instead of quietly getting a
+    // workspace with none of the config they asked for.
+    throw new HttpError(
+      400,
+      "workspace templates were replaced by workspace clones; send cloneFromWorkspaceId",
+    );
   }
-  if (value.machineTypeId !== undefined || result.templateId === undefined) {
-    result.machineTypeId = requiredString(value.machineTypeId, "machineTypeId", 256);
+  if (value.cloneFromWorkspaceId !== undefined && value.cloneFromWorkspaceId !== null) {
+    result.cloneFromWorkspaceId = requiredString(
+      value.cloneFromWorkspaceId,
+      "cloneFromWorkspaceId",
+      256,
+    );
+  }
+  const machineTypeId = value.defaultMachineTypeId ?? value.machineTypeId;
+  if (machineTypeId !== undefined || result.cloneFromWorkspaceId === undefined) {
+    result.defaultMachineTypeId = requiredString(machineTypeId, "defaultMachineTypeId", 256);
+  }
+  if (value.autoProvision !== undefined) {
+    if (!isBoolean(value.autoProvision)) {
+      throw new HttpError(400, "autoProvision must be a boolean");
+    }
+    result.autoProvision = value.autoProvision;
+  }
+  if (value.members !== undefined) result.members = parseCreateMembers(value.members);
+  if (value.credentials !== undefined) {
+    result.credentials = parseCreateCredentials(value.credentials);
   }
   if (value.orgShareRole !== undefined && value.orgShareRole !== null) {
     if (value.orgShareRole !== "editor" && value.orgShareRole !== "viewer") {
@@ -175,16 +223,14 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     result.agentRuleId = value.agentRuleId;
   }
   if (value.repos !== undefined) {
-    // Same validator the template save runs: "owner/name", a cap of sixteen,
-    // and no two repos that would clone into one /workspace directory.
     const repos = parseTemplateRepos(value.repos);
     if (repos.length > 0) {
-      if (result.templateId !== undefined) {
-        // Refused rather than resolved. A template's repos describe a starting
-        // point a team shares and a request's describe a one-off, so picking a
-        // winner here would turn one UI bug into a clone list nobody can
-        // explain from the request that produced it.
-        throw new HttpError(400, "repos cannot be combined with templateId");
+      if (result.cloneFromWorkspaceId !== undefined) {
+        // Refused rather than resolved, exactly as a template create was: a
+        // clone's repos describe the starting point a team shares and a
+        // request's describe a one-off, so picking a winner here would turn
+        // one UI bug into a clone list nobody can explain.
+        throw new HttpError(400, "repos cannot be combined with cloneFromWorkspaceId");
       }
       result.repos = repos;
     }
@@ -216,30 +262,6 @@ async function readOptionalJson(request: Request): Promise<RecreateOverrides> {
     throw new HttpError(400, "sshPublicKey must be an SSH public key");
   }
   return { sshPublicKey };
-}
-
-async function markCreateError(
-  db: Db,
-  id: string,
-  message: string,
-  now: number,
-): Promise<WorkspaceRow> {
-  await rows(db, {
-    q: `UPDATE workspaces
-        SET phase = 'error', error = ?1, phone_home_hash = NULL,
-            revision = revision + 1, updated_at = ?2
-        WHERE id = ?3 AND phase = 'creating'`,
-    v: [message, now, id],
-  });
-  const row = await workspaceById(db, id);
-  if (row === null) throw new Error("workspace disappeared during create");
-  return row;
-}
-
-function providerOperationError(error: unknown): string {
-  if (!(error instanceof Error)) return "provider operation failed";
-  const detail = error.message.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
-  return detail === "" ? "provider operation failed" : `provider operation failed: ${detail}`;
 }
 
 function canonicalFieldForLegacyHostKey(
@@ -392,27 +414,13 @@ export function createPhoneHomeResponse(
  *
  * A box writes the control-plane origin into /var/lib/blitz/origin once, at
  * creation, and never updates it. Its gateway then refuses a websocket whose
- * Origin does not equal that string exactly. Moving the app to a new domain
- * therefore broke every workspace created before the move: plain requests kept
- * working, because the gateway only downgrades CORS headers for those, while
- * every websocket answered 403. Terminals and chat hung with no server-side
- * error to find, because the box was behaving correctly.
- *
- * The gateway also accepts a localhost origin unconditionally, so the proxy
- * presents that instead of the browser's. The CSRF protection the box's check
- * provided is not lost — assertWebSocketOrigin below enforces it here, before
- * the request is ever forwarded, and it is stricter: it requires an exact
- * match where the old path accepted anything the box happened to be told.
+ * Origin does not equal that string exactly. The gateway also accepts a
+ * localhost origin unconditionally, so the proxy presents that instead of the
+ * browser's, and `assertWebSocketOrigin` below enforces the CSRF check here
+ * where it is stricter.
  */
 const BOX_ACCEPTED_ORIGIN = "http://localhost";
 
-/**
- * Rejects a websocket upgrade that did not come from this deployment.
- *
- * A websocket carries cookies cross-site and is not subject to CORS, so this
- * is the CSRF gate for every box surface reached through the proxy. It runs
- * before any credential is minted.
- */
 function assertWebSocketOrigin(request: Request, requestURL: URL): void {
   if (!isWebSocketUpgrade(request)) return;
   const origin = request.headers.get("origin");
@@ -431,8 +439,6 @@ function requestWithWebAppCredential(
   const headers = new Headers(request.headers);
   headers.set(WEBAPP_TOKEN_HEADER, credential);
   rewriteWebDavDestination(headers, requestURL, workspaceId, port);
-  // Only for the upgrade: a plain request needs no rewrite, and leaving its
-  // Origin alone keeps the box's CORS answer truthful.
   if (isWebSocketUpgrade(request)) headers.set("origin", BOX_ACCEPTED_ORIGIN);
   return new Request(request, { headers });
 }
@@ -449,14 +455,33 @@ export interface RecipeLaunch {
   bootstrap: RecipeBootstrap;
 }
 
-/** The one workspace-create path. POST /workspaces and POST
- * /workspace-recipes/:id/launch both land here, so a recipe launch rides the exact
- * template flows — machine-type default, environment, agent rule, folder
- * attach with the launcher as principal, and the vm_limit 409 — instead of a
- * parallel copy. Returns the created row, which may already be in phase
- * 'error' when the provider call failed; request-shaped failures (quota 409,
- * oversized user data 413, provider 503) throw exactly as the route always
- * has. */
+/** The workspace whose config a create clones, or null. Members and
+ * credential VALUES never come across (§ wire types): a clone is a template,
+ * not a copy of somebody else's team or secrets. */
+async function cloneSource(
+  db: Db,
+  cloneFromWorkspaceId: string | undefined,
+  orgId: string,
+): Promise<WorkspaceRow | null> {
+  if (cloneFromWorkspaceId === undefined) return null;
+  const source = await workspaceById(db, cloneFromWorkspaceId);
+  if (source === null || source.org_id !== orgId || source.deleted_at !== null) {
+    throw new HttpError(404, "workspace to clone was not found");
+  }
+  return source;
+}
+
+/**
+ * The one workspace-create path.
+ *
+ * It writes a configuration row and no VM. Machines come afterwards, one per
+ * member the request named plus the creator, each through `provisionMachine`
+ * and each subject to the `vm_limit` gate — which is why the quota now
+ * refuses the eleventh MACHINE rather than the eleventh workspace.
+ *
+ * Workspace creation is org-admin only for now (§3). A later revision can
+ * open it; opening it is a one-line change here and nowhere else.
+ */
 export async function performWorkspaceCreate(
   runtime: CoreRuntime,
   principal: Principal,
@@ -469,39 +494,24 @@ export async function performWorkspaceCreate(
   if (orgId === null || membershipId === null) {
     throw new HttpError(403, "active membership required");
   }
-  const template = input.templateId === undefined
-    ? null
-    : await workspaceTemplateForCreate(runtime.db, input.templateId, orgId);
-  // The template's machine type is the default; an explicit machineTypeId
-  // in the request still wins so a template create can be customized.
-  const machineTypeId = input.machineTypeId ?? template?.machine_type_id;
-  if (machineTypeId === undefined) {
-    throw new HttpError(400, "machineTypeId is required");
+  if (principal.role !== "admin") {
+    throw new HttpError(403, "organization admin required to create a workspace");
   }
-  const environment = input.environment
-    ?? workspaceEnvironmentFromJson(template?.environment ?? null);
-  // The request wins, then the template's rule, then null — which the box
-  // read resolves to the built-in doc. Resolved once, at create, so the
-  // workspace keeps the rule it started with even if the template moves on.
+  const source = await cloneSource(runtime.db, input.cloneFromWorkspaceId, orgId);
+  const defaultMachineTypeId = input.defaultMachineTypeId
+    ?? source?.default_machine_type_id;
+  if (defaultMachineTypeId === undefined) {
+    throw new HttpError(400, "defaultMachineTypeId is required");
+  }
   const agentRuleId = input.agentRuleId === undefined
-    ? template?.agent_rule_id ?? null
+    ? source?.agent_rule_id ?? null
     : await agentRuleIdForOrg(runtime.db, input.agentRuleId, orgId);
-  // Enablement, not provisioning: a template names providers, the creator
-  // supplies the identity, and the workspace ceiling records what may mint.
-  const templateConnectionList = template === null
-    ? []
-    : await templateConnections(runtime.db, template.id);
-  // A workspace clones the template's repos or the ones the request named,
-  // never a merge of the two — the request parser already refused a body that
-  // carried both, so this is a choice with nothing left to arbitrate. Template
-  // rows arrive with the privacy a save probed; a request list arrives as bare
-  // names, so its privacy is derived here rather than believed.
   const requestedRepos = input.repos ?? [];
   const requestCredential = requestedRepos.length === 0
     ? null
     : await githubCallerCredential(runtime, principal.id);
-  const repos: TemplateRepo[] = template !== null
-    ? await templateRepos(runtime.db, template.id)
+  const repos: TemplateRepo[] = source !== null
+    ? await workspaceRepos(runtime.db, source.id)
     : await probedRepos(requestedRepos, requestCredential?.token ?? null);
   const privateRepos = repos.filter((repo) => repo.private);
   if (privateRepos.length > 0) {
@@ -516,13 +526,11 @@ export async function performWorkspaceCreate(
         "connect GitHub through the App before creating a workspace with private repositories",
       );
     }
-    if (template !== null) {
-      // Only the template path still owes a probe. Its rows record a verdict
-      // some other member's credential produced, possibly months ago, so this
-      // member's own reach is still unproven. A request list was probed a few
-      // lines up with this same credential, and sixteen repos cost two
-      // subrequests each — asking GitHub twice would spend a Worker's whole
-      // subrequest allowance to learn nothing new.
+    if (source !== null) {
+      // Only the clone path still owes a probe. Its rows record a verdict some
+      // other member's credential produced, so this member's own reach is
+      // unproven; a request list was probed a few lines up with this same
+      // credential.
       const checks = await checkGithubRepositories(
         privateRepos.map(({ repo }) => repo),
         credential.token,
@@ -540,290 +548,136 @@ export async function performWorkspaceCreate(
       }
     }
   }
-  // Creation never mints a connection. The names land in the allow-list below,
-  // and an agent pulls a credential when it needs one. Minting here used to
-  // leave a live proxy lease token nobody held, which is a capability with no
-  // holder. A stipulated provider with no grant behind it still creates unless
-  // a private template repo requires GitHub during bootstrap.
   const requested = [...new Set([
-    ...templateConnectionList.map(({ provider }) => provider),
     ...(input.connections ?? []),
-    // Cloning reads through the baked git credential helper, which mints from
-    // the workspace ceiling. Naming repos therefore stipulates github, exactly
-    // as naming them on a template does — idempotent, since a template that
-    // carries repos already lists it.
     ...(repos.length > 0 ? ["github"] : []),
   ])];
-  const vmResolution = await resolveWorkspacePlacement(
-    runtime.db,
-    runtime.providers.vmRegistry,
-    orgId,
-    machineTypeId,
-    input.volumeId,
-  );
-  const vmProvider = vmResolution.provider;
-  const providerCapabilities = vmProvider.capabilities();
-  // Usage capture is an org switch, not a recipe one: every workspace of a
-  // capturing org boots with the transcript mounts so its runs join the
-  // corpus (plans/RECIPES.md, decision 4).
-  const orgCapture = await first<{ usage_capture: number }>(runtime.db, {
-    q: "SELECT usage_capture FROM orgs WHERE id = ?1 LIMIT 1",
-    v: [orgId],
-  });
-  const shaping: BootShaping = {
-    usageCapture: orgCapture?.usage_capture === 1,
-  };
-  // Ask the provider that will own this VM for its own bootstrap lines. A
-  // provider that answers nothing gets a script with no other provider's lines
-  // in it (plans/PROVIDER-BOOTSTRAP.md).
-  const providerAptSetup = vmProvider.bootstrapAptSetup?.();
-  if (providerAptSetup !== undefined) shaping.providerAptSetup = providerAptSetup;
-  if (recipe !== undefined) shaping.recipe = recipe.bootstrap;
-  // Template repos ride the bootstrap as a detached clone loop; an empty
-  // list stays absent so the emitted bytes match every pre-repo pin.
-  if (repos.length > 0) shaping.repos = repos.map(({ repo }) => repo);
   const id = crypto.randomUUID();
-  const capability = randomToken();
   const now = Date.now();
-  const phoneHomeUrl = `${requestOrigin}/workspaces/${id}/phone-home/${capability}`;
-  const name = input.name ?? (template === null
-    ? randomWorkspaceName()
-    : await templateWorkspaceName(runtime.db, orgId, template.name));
-  // Claude's Remote Control names its target after the box hostname. Give the
-  // box the workspace name. Without it every workspace shows the same hex
-  // container id in claude.ai/code, and a person cannot pick one. The boot
-  // script renders once, here. A later rename does not reach the box.
-  shaping.boxHostname = boxHostname(name, id);
-
-  const inserted = await rows(runtime.db, {
+  const name = input.name ?? randomWorkspaceName();
+  await rows(runtime.db, {
     q: `INSERT INTO workspaces
-        (id, name, owner_id, org_id, owner_membership_id, machine_type_id,
-         phase, revision, volume_id, phone_home_hash, manifest, org_share_role,
-         environment, agent_rule_id, recipe_id, compute_credential_source,
+        (id, name, owner_id, org_id, owner_membership_id, default_machine_type_id,
+         auto_provision, revision, manifest, agent_rule_id, recipe_id,
          created_at, updated_at)
-        SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'creating', 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15
-        WHERE (
-          SELECT COUNT(*) FROM workspaces
-          WHERE org_id = ?4 AND phase IN (${VM_SLOT_PHASES})
-        ) < (SELECT vm_limit FROM orgs WHERE id = ?4)
-        RETURNING id`,
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, ?9, ?10, ?11, ?11)`,
     v: [
       id,
       name,
       principal.id,
       orgId,
       membershipId,
-      machineTypeId,
-      input.volumeId ?? null,
-      await hashSecret(capability),
+      defaultMachineTypeId,
+      input.autoProvision === false ? 0 : 1,
       enablementManifestJson(input.manifest, requested),
-      input.orgShareRole ?? null,
-      storedWorkspaceEnvironment(environment ?? undefined),
       agentRuleId,
       recipe?.recipeId ?? null,
-      vmResolution.credentialSource,
       now,
     ],
   });
-  if (inserted.length !== 1) {
-    throw new HttpError(
-      409,
-      "organization workspace quota reached; destroy an existing workspace before creating another",
-    );
+  await insertWorkspaceRepos(runtime.db, id, repos);
+  // The creator is the first workspace admin, always, and never needs a row in
+  // members[] to say so.
+  await rows(runtime.db, {
+    q: `INSERT INTO workspace_members
+        (workspace_id, membership_id, role, added_by_membership_id, added_at)
+        VALUES (?1, ?2, 'admin', ?2, ?3)`,
+    v: [id, membershipId, now],
+  });
+  // The one path where a credential VALUE is sent. Written before any machine
+  // boots, so the first `blitz-cred get` inside the workspace already answers.
+  for (const credential of input.credentials ?? []) {
+    await putWorkspaceCredential(runtime, id, membershipId, credential, now);
   }
-  if (template !== null) {
-    await attachTemplateFolders(runtime.db, template.id, id, principal, now);
+  // Legacy `environment` converts to the same store. The startup script does
+  // not: nothing runs one any more (plans/MEMBER-MACHINES.md §1).
+  for (const [key, value] of Object.entries(input.environment?.env ?? {})) {
+    await putWorkspaceCredential(runtime, id, membershipId, { name: key, value }, now);
   }
-  // Declared out here so the catch below can reclaim a volume whose workspace
-  // never reached a VM. It bills monthly and nothing else can reach it.
-  let autoVolumeId: string | undefined;
-  try {
-    // The size check runs on a tunnel-less build so a 413 always fires
-    // before any Cloudflare resource exists (the deleted row then owes
-    // nothing). The token install part we append afterwards is small
-    // and ours; a razor-edge overflow webApps as a provider error and
-    // the janitor reclaims the tunnel.
-    const baseUserData = buildUserData(
-      input.sshPublicKey,
-      phoneHomeUrl,
-      runtime.vars.boxImageRef,
-      input.userData,
-      runtime.vars.boxImageTag,
-      runtime.vars.boxImageSha256,
-      undefined,
-      shaping,
-    );
-    const maxUserDataBytes = providerCapabilities.maxUserDataBytes ?? null;
-    if (maxUserDataBytes !== null) {
-      const encoder = new TextEncoder();
-      const callerBytes = encoder.encode(input.userData ?? "").byteLength;
-      const totalBytes = encoder.encode(baseUserData).byteLength;
-      const generatedBytes = totalBytes - callerBytes;
-      if (totalBytes > maxUserDataBytes) {
-        throw new HttpError(
-          413,
-          `userData exceeds the provider limit: caller UTF-8 bytes ${callerBytes} + generated bootstrap bytes ${generatedBytes} = ${totalBytes} > ${maxUserDataBytes}`,
-        );
+  const workspace = await workspaceById(runtime.db, id);
+  if (workspace === null) throw new Error("workspace disappeared during create");
+
+  const members: AddWorkspaceMemberRequest[] = [...(input.members ?? [])]
+    .filter((member) => member.membershipId !== membershipId);
+  if (input.orgShareRole !== undefined) {
+    // The org-wide share converts to one row per active member, at the
+    // matching workspace role. It is a bulk add now, not a stored default.
+    const roster = await rows<{ id: string }>(runtime.db, {
+      q: `SELECT id FROM memberships
+          WHERE org_id = ?1 AND status = 'active' AND id != ?2
+          ORDER BY id`,
+      v: [orgId, membershipId],
+    });
+    const role = input.orgShareRole === "editor" ? "member" : "viewer";
+    for (const entry of roster) {
+      if (!members.some((member) => member.membershipId === entry.id)) {
+        members.push({ membershipId: entry.id, role });
       }
     }
-    // The workspace's own disk. It holds /var/lib/blitz, which is the docker
-    // store and /workspace both, so a destroyed workspace can come back on it.
-    // An explicit volumeId from the caller wins. A provider that cannot place
-    // a volume answers null, and the workspace runs on the VM's own disk
-    // exactly as it did before.
-    const autoVolume = input.volumeId !== undefined
-      ? null
-      : await provisionWorkspaceVolume({
-          db: runtime.db,
-          provider: vmProvider,
-          createVolume: async (volumeName, sizeGb, location) => {
-            const resolved = await runtime.providers.volume.forOrg(
-              orgId,
-              vmResolution.credentialSource,
-            );
-            return resolved.provider.createVolume({
-              name: volumeName,
-              sizeGb,
-              location,
-            });
-          },
-          deleteVolume: async (volumeId) => {
-            const resolved = await runtime.providers.volume.forOrg(
-              orgId,
-              vmResolution.credentialSource,
-            );
-            await resolved.provider.deleteVolume(volumeId);
-          },
-          workspaceId: id,
-          workspaceName: name,
-          machineTypeId,
-          orgId,
-          membershipId,
-          credentialSource: vmResolution.credentialSource,
-          now: Date.now(),
-        });
-    if (autoVolume !== null) {
-      autoVolumeId = autoVolume.id;
-      await rows(runtime.db, {
-        q: `UPDATE workspaces SET volume_id = ?1, updated_at = ?2
-            WHERE id = ?3 AND phase = 'creating'`,
-        v: [autoVolume.id, Date.now(), id],
-      });
-    }
-    const volumeId = input.volumeId ?? autoVolume?.id;
-    // Providers that cannot proxy their own webApp endpoints (cloud VMs) get a
-    // per-workspace tunnel; identifiers persist onto the row before the
-    // VM exists so a crash can never orphan Cloudflare resources.
-    const workspaceTunnels = runtime.providers.workspaceTunnels;
-    const tunnel = workspaceTunnels !== undefined && vmProvider.proxyWebApp === undefined
-      ? await workspaceTunnels.provision(runtime.db, id)
-      : undefined;
-    const userData = tunnel === undefined
-      ? baseUserData
-      : buildUserData(
-          input.sshPublicKey,
-          phoneHomeUrl,
-          runtime.vars.boxImageRef,
-          input.userData,
-          runtime.vars.boxImageTag,
-          runtime.vars.boxImageSha256,
-          tunnel,
-          shaping,
-        );
-    // A provider that attaches during create hands the guest a disk that is
-    // already present at first boot. The bootstrap scans /dev/disk/by-id once,
-    // with no retry, so attaching afterwards raced that scan and could leave
-    // the box with no persistent disk and no error.
-    const attachesAtCreate = providerCapabilities.attachesVolumesAtCreate === true;
-    const createInput: CreateVmInput = {
-      workspaceId: id,
-      machineTypeId,
-      sshPublicKey: input.sshPublicKey,
-      phoneHomeUrl,
-      userData,
-    };
-    if (attachesAtCreate && volumeId !== undefined) createInput.volumeIds = [volumeId];
-    const vm = await vmProvider.createVm(createInput);
-    await rows(runtime.db, {
-      q: `UPDATE workspaces
-          SET vm_id = ?1, updated_at = ?2
-          WHERE id = ?3 AND phase = 'creating'`,
-      v: [vm.id, Date.now(), id],
-    });
-    if (volumeId !== undefined && !attachesAtCreate) {
-      const volume = await runtime.providers.volume.forOrg(
-        orgId,
-        vmResolution.credentialSource,
-      );
-      await volume.provider.attachVolume(volumeId, vm.id);
-    }
-    if (volumeId !== undefined) {
-      // A reused volume is live again, so its retention clock stops.
-      await rows(runtime.db, markVolumeAttachedQuery(volumeId));
-    }
-    await rows(runtime.db, {
-      q: `UPDATE workspaces
-          SET ssh_host = ?1, ssh_port = ?2, ssh_user = ?3,
-              revision = revision + 1, updated_at = ?4
-          WHERE id = ?5 AND phase = 'creating'`,
-      v: [vm.host, vm.port, vm.user, Date.now(), id],
-    });
-  } catch (error) {
-    // The workspace never got a VM, so its auto-created volume holds nothing
-    // and no later path can reach it. Leaving it behind bills every month.
-    if (autoVolumeId !== undefined) {
-      try {
-        const resolved = await runtime.providers.volume.forOrg(
-          orgId,
-          vmResolution.credentialSource,
-        );
-        await resolved.provider.deleteVolume(autoVolumeId);
-        await transaction(runtime.db, [
-          {
-            q: "DELETE FROM volume_ownership WHERE volume_id = ?1 AND org_id = ?2",
-            v: [autoVolumeId, orgId],
-          },
-          {
-            q: "UPDATE workspaces SET volume_id = NULL WHERE id = ?1",
-            v: [id],
-          },
-        ]);
-      } catch (cleanupError) {
-        // The volume outlives the failed create. Say so: it bills until an
-        // operator removes it, and silence here reads as a clean rollback.
-        runtime.reportError(
-          "workspace_create_volume_cleanup_failed",
-          cleanupError instanceof Error
-            ? cleanupError
-            : new Error(`volume ${autoVolumeId} survived a failed create`),
-        );
-      }
-    }
-    if (
-      error instanceof HttpError &&
-      (error.status === 503 || error.status === 413)
-    ) {
-      await rows(runtime.db, {
-        q: "DELETE FROM workspaces WHERE id = ?1 AND phase = 'creating' RETURNING id",
-        v: [id],
-      });
-      throw error;
-    }
-    return markCreateError(
-      runtime.db,
-      id,
-      providerOperationError(error),
-      Date.now(),
-    );
   }
 
-  // Recorded only once the VM exists. The 503 and 413 branches above delete
-  // the workspace row outright, and a child row would hold that delete open;
-  // an errored create never boots, so it has nothing to clone anyway.
-  await insertWorkspaceRepos(runtime.db, id, repos);
-  const row = await workspaceById(runtime.db, id);
-  if (row === null) throw new Error("workspace disappeared during create");
-  return row;
+  const creatorMachine: ProvisionMachineInput = {
+    workspace,
+    membershipId,
+    machineTypeId: defaultMachineTypeId,
+    requestOrigin,
+  };
+  if (input.sshPublicKey !== undefined) creatorMachine.sshPublicKey = input.sshPublicKey;
+  if (input.userData !== undefined) creatorMachine.userData = input.userData;
+  if (input.volumeId !== undefined) creatorMachine.volumeId = input.volumeId;
+  if (recipe !== undefined) creatorMachine.recipe = recipe.bootstrap;
+  try {
+    if (workspace.auto_provision === 1) {
+      await provisionMachine(runtime, creatorMachine);
+    }
+  } catch (error) {
+    // A quota, a 413 or a 503 means no machine was ever made. The workspace it
+    // was made for is config with nothing behind it, so it goes too and the
+    // caller sees the provider's own refusal rather than an empty shell.
+    await deleteWorkspaceRow(runtime.db, id);
+    throw error;
+  }
+
+  for (const member of members) {
+    const identity = await activeOrgMember(runtime, orgId, member.membershipId);
+    if (identity === null) continue;
+    await addWorkspaceMember(runtime, workspace, membershipId, member, requestOrigin, identity);
+  }
+  const created = await workspaceById(runtime.db, id);
+  if (created === null) throw new Error("workspace disappeared during create");
+  return created;
+}
+
+/** Removes a workspace that never got a machine, with its children. */
+async function deleteWorkspaceRow(db: Db, id: string): Promise<void> {
+  await transaction(db, [
+    { q: "DELETE FROM workspace_credentials WHERE workspace_id = ?1", v: [id] },
+    { q: "DELETE FROM workspace_members WHERE workspace_id = ?1", v: [id] },
+    { q: "DELETE FROM workspace_repos WHERE workspace_id = ?1", v: [id] },
+    { q: "DELETE FROM workspaces WHERE id = ?1", v: [id] },
+  ]);
+}
+
+/** The machine the requesting member reaches through the webApp proxy.
+ *
+ * The ticket already carries `membershipId`, so this is a lookup and not a
+ * choice. A viewer holds no machine at all, which is the refusal below. */
+async function machineForRequest(
+  runtime: CoreRuntime,
+  workspaceId: string,
+  membershipId: string,
+): Promise<MachineRow> {
+  const machine = await machineFor(runtime.db, workspaceId, membershipId);
+  if (machine === null || machine.state === "destroyed") {
+    throw new HttpError(
+      409,
+      "you have no machine in this workspace; a workspace admin provisions one",
+    );
+  }
+  if (machine.vm_id === null) {
+    throw new HttpError(409, "your machine in this workspace is not running");
+  }
+  return machine;
 }
 
 export function addWorkspaceRoutes(
@@ -845,7 +699,10 @@ export function addWorkspaceRoutes(
       new URL(context.req.url).origin,
       input,
     );
-    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
+    return context.json<CreateWorkspaceResponse>(
+      { workspace: await projectWorkspace(runtime.db, principal, row) },
+      201,
+    );
   });
 
   router.get("/workspaces", async (context) => {
@@ -854,29 +711,19 @@ export function addWorkspaceRoutes(
       throw new HttpError(403, "active membership required");
     }
     const runtime = runtimeFactory(context);
-    const result = await rows<WorkspaceRow>(runtime.db, {
-      q: `SELECT w.*, grant.role AS grant_role,
-                 owner_user.name AS owner_name,
-                 owner_user.avatar_url AS owner_avatar_url
-          FROM workspaces w
-          JOIN memberships owner ON owner.id = w.owner_membership_id
-          JOIN users owner_user ON owner_user.id = owner.user_id
-          LEFT JOIN workspace_grants grant
-            ON grant.workspace_id = w.id AND grant.membership_id = ?1
-          WHERE w.org_id = ?2 AND w.phase != 'destroyed'
-          ORDER BY w.created_at, w.id`,
-      v: [principal.membershipId, principal.orgId],
-    });
+    const all = await workspacesForOrg(runtime.db, principal.orgId);
+    const views = await projectWorkspaces(runtime.db, principal, all);
     return context.json<PollResponse>({
-      workspaces: result.map((row) =>
-        workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
+      // A member sees the workspaces they are in; an org admin sees every one
+      // of the organization's, which is the reach they already held.
+      workspaces: views.filter((view) => view.role !== null),
     });
   });
 
   /**
-   * Destroyed workspaces whose volume is still alive.
+   * Deleted workspaces whose machines still hold a volume.
    *
-   * This is the recreate history. `GET /workspaces` hides destroyed rows, so
+   * This is the recreate history. `GET /workspaces` hides deleted rows, so
    * without this list the disk that outlived a workspace is invisible and the
    * seven-day window passes unused. A row leaves the list when the janitor
    * reclaims its volume, which is the same moment the recreate stops working.
@@ -889,39 +736,34 @@ export function addWorkspaceRoutes(
       throw new HttpError(403, "active membership required");
     }
     const runtime = runtimeFactory(context);
-    const result = await rows<WorkspaceRow>(runtime.db, {
-      q: `SELECT w.*, grant.role AS grant_role,
-                 owner_user.name AS owner_name,
-                 owner_user.avatar_url AS owner_avatar_url
+    const deleted = await rows<WorkspaceRow>(runtime.db, {
+      q: `SELECT w.*, u.name AS owner_name, u.avatar_url AS owner_avatar_url
           FROM workspaces w
-          JOIN memberships owner ON owner.id = w.owner_membership_id
-          JOIN users owner_user ON owner_user.id = owner.user_id
-          JOIN volume_ownership vol ON vol.volume_id = w.volume_id
-          LEFT JOIN workspace_grants grant
-            ON grant.workspace_id = w.id AND grant.membership_id = ?1
-          WHERE w.org_id = ?2 AND w.phase = 'destroyed'
-            AND w.volume_id IS NOT NULL AND vol.org_id = ?2
+          LEFT JOIN memberships owner ON owner.id = w.owner_membership_id
+          LEFT JOIN users u ON u.id = owner.user_id
+          WHERE w.org_id = ?1 AND w.deleted_at IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM machines m
+              JOIN volume_ownership vol ON vol.volume_id = m.volume_id
+              WHERE m.workspace_id = w.id AND vol.org_id = ?1
+            )
           ORDER BY w.updated_at DESC, w.id
           LIMIT 100`,
-      v: [principal.membershipId, principal.orgId],
+      v: [principal.orgId],
     });
     return context.json<PollResponse>({
-      workspaces: result.map((row) =>
-        workspaceView(row, workspaceRole(principal, row), runtime.reportError)),
+      workspaces: await projectWorkspaces(runtime.db, principal, deleted),
     });
   });
 
   /**
-   * Brings a destroyed workspace back on its own volume.
+   * Brings a deleted workspace back on its owner's volume.
    *
    * The new workspace is a new row with a new id, because the old row is the
    * tombstone that proves the old VM is gone. It inherits the name, machine
-   * type, volume, environment, agent rule and share role of the row it came
-   * from. The machine type is inherited rather than chosen, because the volume
-   * only attaches inside its own location.
-   *
-   * The volume moves to the new row and the old row lets go of it, so one
-   * volume is never claimed by two workspaces.
+   * type and agent rule of the row it came from. The machine type is inherited
+   * rather than chosen, because the volume only attaches inside its own
+   * location.
    */
   router.post("/workspaces/:id/recreate", async (context) => {
     const principal = await requirePrincipal(context);
@@ -935,37 +777,32 @@ export function addWorkspaceRoutes(
     if (row === null || row.org_id !== principal.orgId) {
       throw new HttpError(404, "workspace not found");
     }
-    if (row.phase !== "destroyed") {
-      throw new HttpError(409, "only a destroyed workspace can be recreated");
+    if (row.deleted_at === null) {
+      throw new HttpError(409, "only a deleted workspace can be recreated");
     }
-    if (row.volume_id === null) {
+    const machines = await machinesForWorkspaces(runtime.db, [row.id]);
+    const owner = machines.find(
+      (machine) => machine.membership_id === row.owner_membership_id,
+    ) ?? machines[0];
+    if (owner?.volume_id == null) {
       throw new HttpError(409, "workspace kept no volume, so it cannot be recreated");
     }
     // The SSH key is the caller's, not the workspace's: the row never stored
-    // one, and a key from weeks ago may not be the key they hold now. Without
-    // this the recreated box came up with no authorized key at all and the
-    // owner could not reach their own restored disk. Proven on a real
-    // destroy/recreate pair on 2026-08-27.
+    // one, and a key from weeks ago may not be the key they hold now.
     const overrides = await readOptionalJson(context.req.raw);
     const request: CreateWorkspaceRequest = {
-      machineTypeId: row.machine_type_id,
-      volumeId: row.volume_id,
+      defaultMachineTypeId: owner.machine_type_id,
+      volumeId: owner.volume_id,
     };
     if (overrides.sshPublicKey !== undefined) request.sshPublicKey = overrides.sshPublicKey;
     if (row.name !== null) request.name = row.name;
     if (row.agent_rule_id !== null) request.agentRuleId = row.agent_rule_id;
-    if (row.org_share_role !== null && row.org_share_role !== undefined) {
-      request.orgShareRole = row.org_share_role;
-    }
-    const environment = workspaceEnvironmentFromJson(row.environment);
-    if (environment !== null) request.environment = environment;
     // The tombstone lets go first. A create that fails still leaves the volume
     // owned by the org, so the next attempt finds it; a create that succeeds
     // must never leave two rows pointing at one disk.
     await rows(runtime.db, {
-      q: `UPDATE workspaces SET volume_id = NULL, updated_at = ?1
-          WHERE id = ?2 AND phase = 'destroyed'`,
-      v: [Date.now(), id],
+      q: "UPDATE machines SET volume_id = NULL, updated_at = ?1 WHERE id = ?2",
+      v: [Date.now(), owner.id],
     });
     try {
       const created = await performWorkspaceCreate(
@@ -975,17 +812,16 @@ export function addWorkspaceRoutes(
         request,
       );
       return context.json<CreateWorkspaceResponse>(
-        { workspace: workspaceView(created, "owner") },
+        { workspace: await projectWorkspace(runtime.db, principal, created) },
         201,
       );
     } catch (error) {
       // Hand the volume back to the tombstone so the history row reappears and
-      // the operator can try again. Without this a failed recreate hides the
-      // disk until the retention clock deletes it.
+      // the operator can try again.
       await rows(runtime.db, {
-        q: `UPDATE workspaces SET volume_id = ?1, updated_at = ?2
-            WHERE id = ?3 AND phase = 'destroyed' AND volume_id IS NULL`,
-        v: [row.volume_id, Date.now(), id],
+        q: `UPDATE machines SET volume_id = ?1, updated_at = ?2
+            WHERE id = ?3 AND volume_id IS NULL`,
+        v: [owner.volume_id, Date.now(), owner.id],
       });
       throw error;
     }
@@ -994,8 +830,7 @@ export function addWorkspaceRoutes(
   router.get("/workspaces/:id", async (context) => {
     // The SPA's workspace page shares this path. A browser refresh navigates
     // here with an HTML accept; serve the app shell and keep JSON for fetch
-    // callers. Deeper /workspaces/:id/* paths (the webApp proxy) never take
-    // this branch.
+    // callers.
     const runtime = runtimeFactory(context);
     if (
       runtime.assets !== undefined
@@ -1005,20 +840,12 @@ export function addWorkspaceRoutes(
     }
     const principal = await requirePrincipal(context);
     const row = await workspaceById(runtime.db, context.req.param("id"));
-    if (row === null || row.org_id !== principal.orgId || row.phase === "destroyed") {
+    if (row === null || row.org_id !== principal.orgId || row.deleted_at !== null) {
       throw new HttpError(404, "workspace not found");
     }
-    const grant = principal.membershipId === null
-      ? null
-      : await first<{ role: "editor" | "viewer" }>(runtimeFactory(context).db, {
-          q: `SELECT role FROM workspace_grants
-              WHERE workspace_id = ?1 AND membership_id = ?2 LIMIT 1`,
-          v: [row.id, principal.membershipId],
-        });
-    row.grant_role = grant?.role ?? null;
-    const role = workspaceRole(principal, row);
-    if (role === null) throw new HttpError(403, "forbidden");
-    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, role) });
+    const view = await projectWorkspace(runtime.db, principal, row);
+    if (view.role === null) throw new HttpError(403, "forbidden");
+    return context.json<CreateWorkspaceResponse>({ workspace: view });
   });
 
   const webApp = async (context: CoreContext): Promise<Response> => {
@@ -1026,10 +853,13 @@ export function addWorkspaceRoutes(
     const runtime = runtimeFactory(context);
     const access = await webAppWorkspaceForRequest(runtime, requirePrincipal, context, id);
     const row = access.workspace;
-    if (row.vm_id === null) {
-      throw new HttpError(409, "workspace is not ready for webapp access");
-    }
-    const provider = providerForVmId(runtime, row.vm_id);
+    // The proxy routes to the REQUESTING member's machine. A workspace holds
+    // one VM per member now, so "the workspace's VM" is not a thing that
+    // exists; the ticket already names who is asking.
+    const machine = await machineForRequest(runtime, row.id, access.membershipId);
+    const vmId = machine.vm_id;
+    if (vmId === null) throw new HttpError(409, "workspace is not ready for webapp access");
+    const provider = providerForVmId(runtime, vmId);
     const rawPort = context.req.param("port");
     if (rawPort !== "7444" && rawPort !== "7445") {
       throw new HttpError(400, "webApp port must be 7444 or 7445");
@@ -1048,19 +878,16 @@ export function addWorkspaceRoutes(
     }
     const pathAndQuery = `${path}${requestURL.search}`;
     // Boxes boot the image pinned at their creation and never upgrade in
-    // place, and each provider ships its guest on its own release channel —
-    // so the cutoff comes from the provider that owns this VM, never from a
-    // single global date.
+    // place, and each provider ships its guest on its own release channel — so
+    // the cutoff comes from the provider that owns this VM, and it is compared
+    // against the MACHINE's creation, not the workspace's: a workspace outlives
+    // its VMs now, so its own age says nothing about the image in front of us.
     // TODO(identity-phase-4): drop the gate once every pre-ticket VM is gone.
     const capabilities = provider.capabilities();
     const ticketsSince = capabilities.webAppTicketsSinceMs;
-    const ticketCapable = ticketsSince !== undefined && row.created_at >= ticketsSince;
-    // A viewer needs a guest that actually holds the line: earlier images
-    // could be talked into a writable shell, and their observer path spawned
-    // sessions on demand. The agent port stays closed to viewers on every
-    // image — the actor still accepts any valid ticket once connected.
+    const ticketCapable = ticketsSince !== undefined && machine.created_at >= ticketsSince;
     const viewerGuardsSince = capabilities.webAppViewerGuardsSinceMs;
-    const viewerSafe = viewerGuardsSince !== undefined && row.created_at >= viewerGuardsSince;
+    const viewerSafe = viewerGuardsSince !== undefined && machine.created_at >= viewerGuardsSince;
     if (access.role === "viewer" && (port === 7444 || !viewerSafe)) {
       throw new HttpError(403, viewerSafe
         ? "viewers cannot drive the workspace agent"
@@ -1086,15 +913,10 @@ export function addWorkspaceRoutes(
     let upstream: Response | null;
     try {
       if (provider.proxyWebApp !== undefined) {
-        upstream = await provider.proxyWebApp(
-          row.vm_id,
-          port,
-          pathAndQuery,
-          authenticatedRequest,
-        );
-      } else if (workspaceTunnels !== undefined && row.tunnel_hostname !== null) {
+        upstream = await provider.proxyWebApp(vmId, port, pathAndQuery, authenticatedRequest);
+      } else if (workspaceTunnels !== undefined && machine.tunnel_hostname !== null) {
         upstream = await workspaceTunnels.proxy(
-          row.tunnel_hostname,
+          machine.tunnel_hostname,
           row.id,
           port,
           pathAndQuery,
@@ -1120,120 +942,93 @@ export function addWorkspaceRoutes(
   router.all("/workspaces/:id/webapp/:port", webApp);
   router.all("/workspaces/:id/webapp/:port/*", webApp);
 
+  /** Deletes the workspace: every machine destroys, then the row tombstones.
+   * Workspace admins and org admins only (§3). */
   router.delete("/workspaces/:id", async (context) => {
     const principal = await requirePrincipal(context);
     if (principal.orgId === null) throw new HttpError(403, "active membership required");
-    const orgId = principal.orgId;
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
-    let row = await workspaceById(runtime.db, id);
+    const row = await workspaceById(runtime.db, id);
     if (row === null || row.org_id !== principal.orgId) {
       throw new HttpError(404, "workspace not found");
     }
-    if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
-    if (row.phase === "destroyed") {
+    await requireWorkspaceAdmin(runtime.db, principal, row);
+    if (row.deleted_at !== null) {
       return context.json<CreateWorkspaceResponse>({
-        workspace: workspaceView(row, workspaceRole(principal, row)),
+        workspace: await projectWorkspace(runtime.db, principal, row),
       });
     }
-    const vmProvider = row.vm_id === null
-      ? undefined
-      : (await runtime.providers.vmRegistry.resolveVmId(
-          row.vm_id,
-          orgId,
-          row.compute_credential_source ?? "deployment",
-        ))?.provider;
-    if (row.vm_id !== null && vmProvider === undefined) {
-      throw new HttpError(409, `no VM provider owns VM ID ${row.vm_id}`);
+    let pending = false;
+    for (const machine of await liveMachines(runtime.db, id)) {
+      const destroyed = await destroyMachine(runtime, machine);
+      if (destroyed.state !== "destroyed") pending = true;
     }
-
-    await rows(runtime.db, {
-      q: `UPDATE workspaces
-          SET phase = 'destroying', error = NULL, phone_home_hash = NULL,
-              revision = revision + 1, updated_at = ?1
-          WHERE id = ?2 AND phase IN ('creating', 'ready', 'error')`,
-      v: [Date.now(), id],
-    });
-    row = await workspaceById(runtime.db, id);
-    if (row === null) throw new Error("workspace disappeared during destroy");
-
-    if (row.vm_id !== null && vmProvider !== undefined) {
-      if (row.volume_id !== null) {
-        await vmProvider.shutdown(row.vm_id);
-        const volume = await runtime.providers.volume.forOrg(
-          orgId,
-          row.compute_credential_source ?? "deployment",
-        );
-        await volume.provider.detachVolume(row.volume_id, row.vm_id);
-        // The retention clock starts here. The volume is the only copy of
-        // /workspace once the VM is gone, so the destroy stays reversible
-        // until the janitor reclaims it.
-        await rows(runtime.db, markVolumeDetachedQuery(row.volume_id, Date.now()));
-      }
-      await vmProvider.destroy(row.vm_id);
+    if (!pending) {
+      // Honest destroy: the tombstone is only written once the last machine is
+      // actually gone. A workspace whose Cloudflare cleanup is still failing
+      // stays live with its machines in `destroying` for the janitor to retry.
+      await transaction(runtime.db, [
+        revokeWorkspaceLeasesQuery(id),
+        { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [id] },
+        {
+          q: `UPDATE workspaces
+              SET deleted_at = ?1, revision = revision + 1, updated_at = ?1
+              WHERE id = ?2 AND deleted_at IS NULL`,
+          v: [Date.now(), id],
+        },
+      ]);
     }
-
-    const workspaceTunnels = runtime.providers.workspaceTunnels;
-    if (workspaceTunnels !== undefined) {
-      const cleanup = await workspaceTunnels.cleanup(runtime.db, row);
-      if (cleanup.errors.length > 0) {
-        // Honest destroy: the row stays in destroying with its remaining
-        // identifiers; the janitor retries until Cloudflare cleanup lands.
-        const pending = await workspaceById(runtime.db, id);
-        if (pending === null) throw new Error("workspace disappeared during destroy");
-        return context.json<CreateWorkspaceResponse>({
-          workspace: workspaceView(pending, workspaceRole(principal, pending)),
-        });
-      }
-    }
-
-    await transaction(runtime.db, [
-      revokeWorkspaceLeasesQuery(id),
-      { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [id] },
-      { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [id] },
-      {
-        q: `UPDATE workspaces
-            SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
-                ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
-                revision = revision + 1, updated_at = ?1
-            WHERE id = ?2 AND phase = 'destroying'`,
-        v: [Date.now(), id],
-      },
-    ]);
-    const destroyed = await workspaceById(runtime.db, id);
-    if (destroyed === null) throw new Error("workspace disappeared after destroy");
+    const after = await workspaceById(runtime.db, id);
+    if (after === null) throw new Error("workspace disappeared during destroy");
     return context.json<CreateWorkspaceResponse>({
-      workspace: workspaceView(destroyed, workspaceRole(principal, destroyed)),
+      workspace: await projectWorkspace(runtime.db, principal, after),
     });
   });
 
+  /**
+   * Enrollment. The capability is per machine and re-armed at every VM
+   * provision, so the machine is resolved by matching the token against the
+   * hashes this workspace's machines hold rather than by a workspace-level
+   * column. The URL keeps its workspace shape because every deployed guest
+   * holds one it was handed at creation and never updates it.
+   */
   router.post("/workspaces/:id/phone-home/:token", async (context) => {
     const id = context.req.param("id");
     const token = context.req.param("token");
     const runtime = runtimeFactory(context);
     const db = runtime.db;
-    const row = await workspaceById(db, id);
-    if (row === null) throw new HttpError(404, "workspace not found");
+    const workspace = await workspaceById(db, id);
+    if (workspace === null) throw new HttpError(404, "workspace not found");
+    const candidates = await rows<MachineRow>(db, {
+      q: `SELECT * FROM machines
+          WHERE workspace_id = ?1 AND phone_home_hash IS NOT NULL
+          ORDER BY created_at, id`,
+      v: [id],
+    });
+    let row: MachineRow | undefined;
+    for (const candidate of candidates) {
+      if (await matchesStoredHash(token, candidate.phone_home_hash ?? "")) {
+        row = candidate;
+        break;
+      }
+    }
+    if (row === undefined) throw new HttpError(401, "invalid phone_home capability");
     if (row.phone_home_used === 1) {
       throw new HttpError(409, "phone_home capability already used");
     }
-    if (
-      row.phone_home_hash === null ||
-      !(await matchesStoredHash(token, row.phone_home_hash))
-    ) {
-      throw new HttpError(401, "invalid phone_home capability");
-    }
-    if (row.phase !== "creating") throw new HttpError(409, "workspace is not creating");
+    if (row.state !== "provisioning") throw new HttpError(409, "machine is not provisioning");
+    const machineId = row.id;
     const phoneHome = await readPhoneHome(context);
     if (phoneHome.kind === "failure") {
       const consumed = await rows(db, {
-        q: `UPDATE workspaces
-            SET phase = 'error', error = ?1, phone_home_used = 1,
-                phone_home_hash = NULL, revision = revision + 1, updated_at = ?2
-            WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0
+        q: `UPDATE machines
+            SET state = 'error', error = ?1, phone_home_used = 1,
+                phone_home_hash = NULL, updated_at = ?2
+            WHERE id = ?3 AND state = 'provisioning' AND phone_home_used = 0
               AND phone_home_hash = ?4
             RETURNING id`,
-        v: [phoneHome.message, Date.now(), id, row.phone_home_hash],
+        v: [phoneHome.message, Date.now(), machineId, row.phone_home_hash],
       });
       if (consumed.length !== 1) {
         throw new HttpError(409, "phone_home capability already used");
@@ -1241,61 +1036,84 @@ export function addWorkspaceRoutes(
       return context.body(null, 204);
     }
     if (row.vm_id === null || row.ssh_host === null) {
-      throw new HttpError(409, "workspace provisioning is not recorded yet");
+      throw new HttpError(409, "machine provisioning is not recorded yet");
     }
 
     const hostKey = phoneHome.hostPublicKey;
-    const credentials = await issueBoxTokens();
-    const boxId = crypto.randomUUID();
+    const credentials = await issueMachineTokens();
     const now = Date.now();
     const results = await transaction(db, [
       {
-        q: `INSERT INTO boxes (id, principal_id, workspace_id, created_at)
-            SELECT ?1, owner_id, id, ?2 FROM workspaces
-            WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0 AND phone_home_hash = ?4`,
-        v: [boxId, now, id, row.phone_home_hash],
-      },
-      {
-        q: `INSERT INTO box_token_families
-            (box_id, access_hash, refresh_hash, access_issued_at, generation)
-            SELECT ?1, ?2, ?3, ?4, 1 FROM workspaces
-            WHERE id = ?5 AND phase = 'creating' AND phone_home_used = 0 AND phone_home_hash = ?6`,
+        // The stamp fences a guest that outlives its VM: a family minted for
+        // one incarnation stops matching the moment a new VM takes over.
+        q: `INSERT INTO machine_token_families
+            (machine_id, vm_id, access_hash, refresh_hash, access_issued_at, generation)
+            SELECT ?1, ?2, ?3, ?4, ?5, 1 FROM machines
+            WHERE id = ?1 AND state = 'provisioning' AND phone_home_used = 0
+              AND phone_home_hash = ?6
+            ON CONFLICT(machine_id) DO UPDATE SET
+              vm_id = excluded.vm_id, access_hash = excluded.access_hash,
+              refresh_hash = excluded.refresh_hash,
+              previous_refresh_hash = NULL, previous_rotated_at = NULL,
+              access_issued_at = excluded.access_issued_at,
+              generation = machine_token_families.generation + 1`,
         v: [
-          boxId,
+          machineId,
+          row.vm_id,
           credentials.accessHash,
           credentials.refreshHash,
           now,
-          id,
           row.phone_home_hash,
         ],
       },
       {
-        q: `UPDATE workspaces
-            SET phase = 'ready', ssh_host_public_key = ?1, phone_home_used = 1,
-                phone_home_hash = NULL, revision = revision + 1, updated_at = ?2
-            WHERE id = ?3 AND phase = 'creating' AND phone_home_used = 0 AND phone_home_hash = ?4
+        q: `UPDATE machines
+            SET state = 'running', ssh_host_public_key = ?1, phone_home_used = 1,
+                phone_home_hash = NULL, error = NULL, updated_at = ?2
+            WHERE id = ?3 AND state = 'provisioning' AND phone_home_used = 0
+              AND phone_home_hash = ?4
             RETURNING id`,
-        v: [hostKey, now, id, row.phone_home_hash],
+        v: [hostKey, now, machineId, row.phone_home_hash],
       },
     ]);
-    if (results[2]?.length !== 1) {
+    if (results[1]?.length !== 1) {
       throw new HttpError(409, "phone_home capability already used");
     }
+    await rows(db, {
+      q: `UPDATE workspaces SET revision = revision + 1, updated_at = ?1 WHERE id = ?2`,
+      v: [now, workspace.id],
+    });
     // The guest just came up: materialize its attached Drive folders now
-    // instead of waiting for the next scheduled sweep, retrying briefly while
-    // the tunnel finishes connecting.
+    // instead of waiting for the next scheduled sweep.
     scheduleSync(runtime, (syncRuntime) => runReadyWorkspaceFileSync(syncRuntime, id));
     const webAppToken = runtime.providers.webAppAuth === undefined
       ? undefined
       : await runtime.providers.webAppAuth.tokenFor(id);
     return context.json<PhoneHomeResponse>(createPhoneHomeResponse(
-      boxId,
+      machineId,
       credentials.accessToken,
       credentials.refreshToken,
       webAppToken === undefined ? undefined : id,
       webAppToken,
     ));
   });
+}
+
+/** Whether the caller may use this workspace's credentials and machines. */
+export async function canUseWorkspace(
+  runtime: CoreRuntime,
+  principal: Principal,
+  workspace: WorkspaceRow,
+): Promise<boolean> {
+  return isWorkspaceMember(await workspaceAccess(runtime.db, principal, workspace));
+}
+
+export async function workspaceMachineCount(db: Db, workspaceId: string): Promise<number> {
+  const row = await first<{ count: number }>(db, {
+    q: "SELECT COUNT(*) AS count FROM machines WHERE workspace_id = ?1 AND state != 'destroyed'",
+    v: [workspaceId],
+  });
+  return row?.count ?? 0;
 }
 
 function isWebSocketUpgrade(request: Request): boolean {

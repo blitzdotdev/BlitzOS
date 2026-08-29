@@ -6,6 +6,7 @@ import { addWorkspaceEnvironmentRoutes } from "./environment.js";
 import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./entitlements.js";
 import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
+import { addMachineRoutes } from "./machines.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
@@ -19,6 +20,8 @@ import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
+import { addWorkspaceCredentialRoutes } from "./workspace-credentials.js";
+import { addWorkspaceMemberRoutes } from "./workspace-members.js";
 import { addWorkspaceTemplateRoutes } from "./workspace-templates.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
 
@@ -90,7 +93,12 @@ export function installControlPlaneRoutes(
   // same reason; its one session route (/workspaces/:id/box-update) collides
   // with nothing.
   addBoxConfigRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Registered before addWorkspaceRoutes: /workspaces/:id/members and
+  // /workspaces/:id/credentials are literal paths under the same prefix.
+  addWorkspaceMemberRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addMachineRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addFilesRoutes(router, runtimeFactory, requireMembershipPrincipal);

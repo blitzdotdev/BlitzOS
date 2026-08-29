@@ -34,9 +34,9 @@ export function preferredVolumeName(workspaceName: string): string | null {
  * makes the name unique inside the project without a lookup. */
 export function uniqueVolumeName(
   workspaceName: string,
-  workspaceId: string,
+  machineId: string,
 ): string {
-  const suffix = workspaceId.slice(0, 8);
+  const suffix = machineId.slice(0, 8);
   const base = preferredVolumeName(workspaceName);
   if (base === null) return `blitz-${suffix}`;
   return `${base.slice(0, 64 - suffix.length - 1)}-${suffix}`;
@@ -51,6 +51,9 @@ export interface WorkspaceVolumeRequest {
    * so no later path can find it and it bills every month. */
   deleteVolume: (id: string) => Promise<void>;
   workspaceId: string;
+  /** The volume belongs to one member's machine, so the unique name and the
+   * ownership row are keyed on it — a workspace holds several now. */
+  machineId: string;
   workspaceName: string;
   machineTypeId: string;
   orgId: string;
@@ -81,7 +84,7 @@ export async function provisionWorkspaceVolume(
 
   const sizeGb = request.sizeGb ?? WORKSPACE_VOLUME_GB;
   const preferred = preferredVolumeName(request.workspaceName);
-  const unique = uniqueVolumeName(request.workspaceName, request.workspaceId);
+  const unique = uniqueVolumeName(request.workspaceName, request.machineId);
 
   // The workspace name is what the operator asked to see on the volume, so it
   // is tried first. A duplicate name is the expected failure, not a rare one,

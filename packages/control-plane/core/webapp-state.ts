@@ -350,17 +350,16 @@ async function workspaceState(
 ): Promise<StateRow | null> {
   // The workspace doc is shared state: every reader gets the newest row no
   // matter which principal wrote it, so all accounts see one tab set and
-  // attach the same guest sessions. Any share (grant or org-wide, viewer
-  // included) may read; writes stay editor-gated in the PUT below.
+  // attach the same guest sessions. Any workspace member may read, viewers
+  // included; writes stay gated on a non-viewer role in the PUT below.
   return first<StateRow>(db, {
     q: `SELECT s.doc, s.updated_at
         FROM workspaces w
         LEFT JOIN webapp_state s ON s.workspace_id = w.id
-        LEFT JOIN workspace_grants grant
-          ON grant.workspace_id = w.id AND grant.membership_id = ?2
+        LEFT JOIN workspace_members wm
+          ON wm.workspace_id = w.id AND wm.membership_id = ?2
         WHERE w.id = ?1 AND w.org_id = ?3
-          AND (w.owner_membership_id = ?2 OR ?4 = 'admin'
-            OR grant.role IS NOT NULL OR w.org_share_role IS NOT NULL)
+          AND (w.owner_membership_id = ?2 OR ?4 = 'admin' OR wm.role IS NOT NULL)
         ORDER BY s.updated_at DESC
         LIMIT 1`,
     v: [workspaceId, principal.membershipId, principal.orgId, principal.role],
@@ -397,7 +396,7 @@ async function throwWorkspaceAccessError(
   orgId: string | null,
 ): Promise<never> {
   const workspace = await first<{ org_id: string | null }>(db, {
-    q: "SELECT org_id FROM workspaces WHERE id = ?1 AND phase != 'destroyed' LIMIT 1",
+    q: "SELECT org_id FROM workspaces WHERE id = ?1 AND deleted_at IS NULL LIMIT 1",
     v: [workspaceId],
   });
   if (workspace === null || workspace.org_id !== orgId) {
@@ -463,15 +462,15 @@ export function addWebAppStateRoutes(
     doc.tabs.nextId = Math.max(doc.tabs.nextId, await storedNextId(db, context.req.param("id")));
     // Writes keep one row per (principal, workspace); readers take the newest
     // row, so the doc behaves as shared last-write-wins state with no schema
-    // change. Editors via a personal grant or org-wide sharing may write.
+    // change. A workspace admin or member may write; a viewer may not.
     const updated = await rows(db, {
       q: `INSERT INTO webapp_state (principal_id, workspace_id, doc, updated_at)
           SELECT ?1, w.id, ?3, ?4 FROM workspaces w
-          LEFT JOIN workspace_grants grant
-            ON grant.workspace_id = w.id AND grant.membership_id = ?5
-          WHERE w.id = ?2 AND w.org_id = ?6 AND w.phase != 'destroyed'
+          LEFT JOIN workspace_members wm
+            ON wm.workspace_id = w.id AND wm.membership_id = ?5
+          WHERE w.id = ?2 AND w.org_id = ?6 AND w.deleted_at IS NULL
             AND (w.owner_membership_id = ?5 OR ?7 = 'admin'
-              OR grant.role = 'editor' OR w.org_share_role = 'editor')
+              OR wm.role IN ('admin', 'member'))
           ON CONFLICT(principal_id, workspace_id) DO UPDATE
           SET doc = excluded.doc, updated_at = excluded.updated_at
           RETURNING principal_id`,

@@ -547,7 +547,7 @@ export class AwsProvider implements VmProvider, VolumeProvider {
     const diskGb = MACHINE_TYPES
       .find((machineType) => machineType.instanceType === selected.instanceType)
       ?.diskGb ?? DEFAULT_ROOT_DISK_GB;
-    const name = `blitz-${input.workspaceId.slice(0, 12)}`;
+    const name = `blitz-${input.machineId.slice(0, 12)}`;
     const document = await this.required("RunInstances", [
       ["ImageId", await this.imageId()],
       ["InstanceType", selected.instanceType],

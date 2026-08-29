@@ -9,7 +9,7 @@ import {
   usableByAllows,
 } from "./manifest.js";
 import { connectionByName } from "./registry.js";
-import { canControlWorkspace } from "../workspace-access.js";
+import { isWorkspaceAdmin, workspaceAccess } from "../workspace-access.js";
 
 type RequestState = "pending" | "approved" | "denied";
 
@@ -112,7 +112,11 @@ async function requestForResolution(
   if (request === null || request.org_id !== principal.orgId) {
     throw new HttpError(404, "credential request not found");
   }
-  if (!canControlWorkspace(principal, request)) throw new HttpError(403, "forbidden");
+  if (!isWorkspaceAdmin(await workspaceAccess(db, principal, {
+    id: request.workspace_id,
+    org_id: request.org_id,
+    owner_membership_id: request.owner_membership_id,
+  }))) throw new HttpError(403, "forbidden");
   if (request.state !== "pending") {
     throw new HttpError(409, "credential request is not pending");
   }

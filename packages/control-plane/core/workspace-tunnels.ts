@@ -18,6 +18,8 @@ export interface WorkspaceTunnelsEnv {
   WEBAPP_TOKEN_SECRET?: string;
 }
 
+/** A machine's Cloudflare identifiers. Named for the surface, not the table:
+ * the tunnel is still the workspace webApp surface, it is just per machine. */
 export interface WorkspaceTunnelRow {
   id: string;
   tunnel_id: string | null;
@@ -53,28 +55,31 @@ export class WorkspaceTunnels {
     this.fetcher = fetcher;
   }
 
-  hostnameFor(workspaceId: string): string {
-    return `ws-${workspaceId}.${this.zone}`;
+  hostnameFor(machineId: string): string {
+    return `ws-${machineId}.${this.zone}`;
   }
 
   async webAppTokenFor(workspaceId: string): Promise<string> {
     return this.auth.tokenFor(workspaceId);
   }
 
-  /** Creates tunnel + DNS for the workspace and persists the identifiers on
-   * its row immediately, so a later crash can never orphan them. */
-  async provision(db: Db, workspaceId: string): Promise<ProvisionedTunnel> {
-    const hostname = this.hostnameFor(workspaceId);
+  /** Creates tunnel + DNS for one MACHINE and persists the identifiers on its
+   * row immediately, so a later crash can never orphan them. The hostname is
+   * per machine because a workspace holds one VM per member and two of them
+   * cannot answer on one name; the webApp token stays per workspace, because
+   * that is what the guest gateway verifies against. */
+  async provision(db: Db, machineId: string, workspaceId: string): Promise<ProvisionedTunnel> {
+    const hostname = this.hostnameFor(machineId);
     const created = await this.client.createForWorkspace(
-      `ws-${workspaceId}`,
+      `ws-${machineId}`,
       hostname,
     );
     await rows(db, {
-      q: `UPDATE workspaces
+      q: `UPDATE machines
           SET tunnel_id = ?1, tunnel_hostname = ?2, dns_record_id = ?3,
               updated_at = ?4
           WHERE id = ?5`,
-      v: [created.tunnelId, hostname, created.dnsRecordId, Date.now(), workspaceId],
+      v: [created.tunnelId, hostname, created.dnsRecordId, Date.now(), machineId],
     });
     return {
       workspaceId,
@@ -102,7 +107,7 @@ export class WorkspaceTunnels {
     }
     if (assignments.length > 0) {
       await rows(db, {
-        q: `UPDATE workspaces SET ${assignments.join(", ")}, updated_at = ?1
+        q: `UPDATE machines SET ${assignments.join(", ")}, updated_at = ?1
             WHERE id = ?2`,
         v: [Date.now(), row.id],
       });

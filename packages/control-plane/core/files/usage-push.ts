@@ -53,8 +53,8 @@ async function usageWorkspaceRows(runtime: CoreRuntime): Promise<UsageWorkspaceR
   // orgs.usage_folder_id deliberately has no foreign key, so a dangling id
   // just yields no rows here and the export stops.
   return rows<UsageWorkspaceRow>(runtime.db, {
-    q: `SELECT workspace.id AS workspace_id, workspace.vm_id,
-               workspace.tunnel_hostname, workspace.org_id,
+    q: `SELECT workspace.id AS workspace_id, machine.vm_id,
+               machine.tunnel_hostname, workspace.org_id,
                workspace.recipe_id, workspace.name AS workspace_name,
                org.usage_folder_id, owner_user.name AS owner_name
         FROM workspaces workspace
@@ -65,7 +65,12 @@ async function usageWorkspaceRows(runtime: CoreRuntime): Promise<UsageWorkspaceR
         JOIN folders folder ON folder.id = org.usage_folder_id
         JOIN memberships owner ON owner.id = workspace.owner_membership_id
         JOIN users owner_user ON owner_user.id = owner.user_id
-        WHERE workspace.phase = 'ready' AND workspace.vm_id IS NOT NULL
+        JOIN machines machine
+          ON machine.workspace_id = workspace.id
+         AND machine.membership_id = workspace.owner_membership_id
+         AND machine.state = 'running'
+         AND machine.vm_id IS NOT NULL
+        WHERE workspace.deleted_at IS NULL
         ORDER BY workspace.created_at, workspace.id`,
     v: [],
   });

@@ -246,8 +246,8 @@ async function attachmentRows(
       : "";
   const value = filter.folderId ?? filter.workspaceId;
   return rows<SyncAttachmentRow>(runtime.db, {
-    q: `SELECT attachment.workspace_id, workspace.vm_id,
-               workspace.tunnel_hostname, attachment.folder_id,
+    q: `SELECT attachment.workspace_id, machine.vm_id,
+               machine.tunnel_hostname, attachment.folder_id,
                folder.name AS folder_name,
                attachment.attached_by_membership_id,
                attacher.user_id AS attacher_user_id,
@@ -258,8 +258,14 @@ async function attachmentRows(
         JOIN folders folder ON folder.id = attachment.folder_id
         JOIN workspaces workspace
           ON workspace.id = attachment.workspace_id
-         AND workspace.phase = 'ready'
-         AND workspace.vm_id IS NOT NULL
+         AND workspace.deleted_at IS NULL
+        -- The owner's machine. Drive folders are workspace-wide, so one guest
+        -- receives them; the owner's is the one that always exists.
+        JOIN machines machine
+          ON machine.workspace_id = workspace.id
+         AND machine.membership_id = workspace.owner_membership_id
+         AND machine.state = 'running'
+         AND machine.vm_id IS NOT NULL
         JOIN memberships attacher
           ON attacher.id = attachment.attached_by_membership_id
          AND attacher.status = 'active'

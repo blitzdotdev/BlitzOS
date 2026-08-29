@@ -173,7 +173,7 @@ export function addFolderRoutes(
           FROM folder_attachments attachment
           JOIN workspaces workspace
             ON workspace.id = attachment.workspace_id
-           AND workspace.phase != 'destroyed'
+           AND workspace.deleted_at IS NULL
           WHERE attachment.folder_id IN (${folderRows.map((_, index) => `?${index + 1}`).join(",")})
           ORDER BY attachment.created_at, attachment.workspace_id`,
       v: folderRows.map(({ id }) => id),
@@ -268,10 +268,6 @@ export function addFolderRoutes(
     });
     await rows(runtime.db, {
       q: "DELETE FROM folder_attachments WHERE folder_id = ?1",
-      v: [folder.id],
-    });
-    await rows(runtime.db, {
-      q: "DELETE FROM workspace_template_folders WHERE folder_id = ?1",
       v: [folder.id],
     });
     await deleteFolderObjects(

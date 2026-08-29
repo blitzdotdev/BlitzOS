@@ -47,6 +47,7 @@ interface BoxTokenRow {
   id: string;
   principal_id: string;
   workspace_id: string | null;
+  membership_id: string | null;
   is_broker: number;
   platform_operator: number;
 }
@@ -54,6 +55,9 @@ interface BoxTokenRow {
 interface RefreshRow extends BoxTokenRow {
   previous_refresh_hash: string | null;
   previous_rotated_at: number | null;
+  /** Set on a machine family only: which table the row came from, so the
+   * rotation writes back to the one that holds it. */
+  family: "machine" | "box";
 }
 
 export interface IssuedBoxTokens {
@@ -64,7 +68,7 @@ export interface IssuedBoxTokens {
   expiresIn: number;
 }
 
-export async function issueBoxTokens(): Promise<IssuedBoxTokens> {
+export async function issueMachineTokens(): Promise<IssuedBoxTokens> {
   const accessToken = randomToken();
   const refreshToken = randomToken();
   const [accessHash, refreshHash] = await Promise.all([
@@ -134,38 +138,36 @@ async function refreshGrant(
   const db = runtimeFactory(context).db;
   const oldHash = await hashSecret(refreshToken);
   const now = Date.now();
-  const row = await first<RefreshRow>(db, {
-    q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-               f.previous_refresh_hash, f.previous_rotated_at,
-               b.id, b.principal_id, b.workspace_id, b.is_broker
-        FROM box_token_families f JOIN boxes b ON b.id = f.box_id
-        WHERE f.refresh_hash = ?1 OR f.previous_refresh_hash = ?1 LIMIT 1`,
-    v: [oldHash],
-  });
+  // A machine and a box present the same kind of token, so both families are
+  // asked. The machine family is the workspace guest; `box_token_families` is
+  // what is left of the old table — brokers and device-code enrolments.
+  const row = await machineRefreshRow(db, oldHash) ?? await boxRefreshRow(db, oldHash);
   const slot = row === null ? null : await refreshSlot(refreshToken, row, now);
   if (row === null || slot === null) return oauthError(context, "invalid_grant");
 
-  const tokens = await issueBoxTokens();
+  const tokens = await issueMachineTokens();
   // The WHERE is a compare-and-swap on the hash this request read, so two
   // boxes racing the same rotation cannot both win it. The loser reads
   // invalid_grant and retries; by then the file it re-reads holds the winner's
   // pair, or its own token sits in the grace slot.
+  const table = row.family === "machine" ? "machine_token_families" : "box_token_families";
+  const key = row.family === "machine" ? "machine_id" : "box_id";
   const count = await changed(db, slot === "current"
     ? {
-      q: `UPDATE box_token_families
+      q: `UPDATE ${table}
           SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
               previous_refresh_hash = ?5, previous_rotated_at = ?3,
               generation = generation + 1
-          WHERE box_id = ?4 AND refresh_hash = ?5
-          RETURNING box_id`,
+          WHERE ${key} = ?4 AND refresh_hash = ?5
+          RETURNING ${key}`,
       v: [tokens.accessHash, tokens.refreshHash, now, row.id, row.refresh_hash],
     }
     : {
-      q: `UPDATE box_token_families
+      q: `UPDATE ${table}
           SET access_hash = ?1, refresh_hash = ?2, access_issued_at = ?3,
               generation = generation + 1
-          WHERE box_id = ?4 AND refresh_hash = ?5
-          RETURNING box_id`,
+          WHERE ${key} = ?4 AND refresh_hash = ?5
+          RETURNING ${key}`,
       v: [tokens.accessHash, tokens.refreshHash, now, row.id, row.refresh_hash],
     });
   if (count !== 1) return oauthError(context, "invalid_grant");
@@ -195,6 +197,44 @@ async function refreshSlot(
   return now - row.previous_rotated_at < REFRESH_GRACE_MS ? "previous" : null;
 }
 
+/** A machine family, joined to the identity the machine acts as RIGHT NOW.
+ *
+ * The acting principal is derived here, at call time, from
+ * `machines.membership_id`. It is never stored beside the credential: the row
+ * that used to hold it (`boxes.principal_id`) pinned the workspace OWNER, so
+ * every member's guest minted as one person and every audit row was written in
+ * that person's name. There is nothing left to go stale. */
+async function machineRefreshRow(db: Db, hash: string): Promise<RefreshRow | null> {
+  return first<RefreshRow>(db, {
+    q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
+               f.previous_refresh_hash, f.previous_rotated_at,
+               'machine' AS family, m.id, m.workspace_id, m.membership_id,
+               ms.user_id AS principal_id, 0 AS is_broker,
+               COALESCE(u.platform_operator, 0) AS platform_operator
+        FROM machine_token_families f
+        JOIN machines m ON m.id = f.machine_id
+        JOIN memberships ms ON ms.id = m.membership_id
+        LEFT JOIN users u ON u.id = ms.user_id
+        WHERE f.refresh_hash = ?1 OR f.previous_refresh_hash = ?1 LIMIT 1`,
+    v: [hash],
+  });
+}
+
+async function boxRefreshRow(db: Db, hash: string): Promise<RefreshRow | null> {
+  return first<RefreshRow>(db, {
+    q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
+               f.previous_refresh_hash, f.previous_rotated_at,
+               'box' AS family, b.id, b.principal_id, b.workspace_id,
+               NULL AS membership_id, b.is_broker,
+               COALESCE(u.platform_operator, 0) AS platform_operator
+        FROM box_token_families f
+        JOIN boxes b ON b.id = f.box_id
+        LEFT JOIN users u ON u.id = b.principal_id
+        WHERE f.refresh_hash = ?1 OR f.previous_refresh_hash = ?1 LIMIT 1`,
+    v: [hash],
+  });
+}
+
 export async function authenticateBox(
   request: Request,
   db: Db,
@@ -204,8 +244,18 @@ export async function authenticateBox(
   if (token === null) return null;
   const hash = await hashSecret(token);
   const row = await first<BoxTokenRow>(db, {
-    q: `SELECT f.access_hash, f.refresh_hash, f.access_issued_at,
-               b.id, b.principal_id, b.workspace_id, b.is_broker,
+    q: `SELECT f.access_hash, f.access_issued_at, m.id, m.workspace_id,
+               m.membership_id, ms.user_id AS principal_id, 0 AS is_broker,
+               COALESCE(u.platform_operator, 0) AS platform_operator
+        FROM machine_token_families f
+        JOIN machines m ON m.id = f.machine_id
+        JOIN memberships ms ON ms.id = m.membership_id
+        LEFT JOIN users u ON u.id = ms.user_id
+        WHERE f.access_hash = ?1 LIMIT 1`,
+    v: [hash],
+  }) ?? await first<BoxTokenRow>(db, {
+    q: `SELECT f.access_hash, f.access_issued_at, b.id, b.principal_id,
+               b.workspace_id, NULL AS membership_id, b.is_broker,
                COALESCE(u.platform_operator, 0) AS platform_operator
         FROM box_token_families f
         JOIN boxes b ON b.id = f.box_id
@@ -221,6 +271,7 @@ export async function authenticateBox(
     id: row.id,
     principalId: row.principal_id,
     workspaceId: row.workspace_id,
+    membershipId: row.membership_id,
     isBroker: row.is_broker === 1,
     platformOperator: row.platform_operator === 1,
   };
@@ -326,7 +377,7 @@ export function addOAuthRoutes(
     }
 
     const boxId = crypto.randomUUID();
-    const tokens = await issueBoxTokens();
+    const tokens = await issueMachineTokens();
     const results = await transaction(db, [
       {
         q: `INSERT INTO boxes (id, principal_id, workspace_id, created_at)

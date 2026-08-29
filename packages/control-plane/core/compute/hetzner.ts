@@ -58,6 +58,10 @@ interface CreateServerBody {
   user_data: string;
   labels: {
     "blitz-workspace": string;
+    /** The machine this server is an incarnation of. Operators match a server
+     * to a row by these two labels; the workspace one alone stopped being
+     * unique when a workspace grew a VM per member. */
+    "blitz-machine": string;
     "blitz-purpose": "workspace";
   };
   location?: string;
@@ -454,12 +458,13 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
     const selected = machineId(input.machineTypeId);
     const body: CreateServerBody = {
-      name: `blitz-${input.workspaceId.slice(0, 12)}`,
+      name: `blitz-${input.machineId.slice(0, 12)}`,
       server_type: selected.type,
       image: this.serverImage(selected.location),
       user_data: input.userData,
       labels: {
         "blitz-workspace": input.workspaceId,
+        "blitz-machine": input.machineId,
         "blitz-purpose": "workspace",
       },
     };

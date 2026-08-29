@@ -1,6 +1,6 @@
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { first, rows } from "../db.js";
+import { first, rows, type Db } from "../db.js";
 import { HttpError, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
 import { providerManifest, providerRedirectPath } from "./catalog/index.js";
@@ -28,7 +28,7 @@ import { mintFromGrant } from "./minters/grant.js";
 import { refreshedAccessToken } from "./minters/oauth.js";
 import { openRoot } from "./root-crypto.js";
 import { addProxyRoute } from "./proxy.js";
-import { mintResultBody, parseMintResult } from "./pull-wire.js";
+import { addBoxConnectionRoutes } from "./pull-routes.js";
 import { addRequestRoutes, fileRequest } from "./requests.js";
 import {
   addConnectionRoutes,
@@ -51,28 +51,44 @@ import {
   grantFor,
   openGrantSecret,
 } from "./user-grants.js";
-import { canControlWorkspace } from "../workspace-access.js";
+import {
+  isWorkspaceAdmin,
+  isWorkspaceMember,
+  workspaceAccess,
+} from "../workspace-access.js";
+import {
+  liveWorkspaceCredentials,
+  workspaceCredentialValue,
+} from "../workspace-credentials.js";
 
-export interface WorkspaceCredentialRow {
+/** The workspace fields a mint needs. `owner_id` is still read for the
+ * connect-grid path, which acts as the person clicking; a BOX mint resolves
+ * against its own machine's member instead (§4). */
+export interface MintWorkspaceRow {
   id: string;
   owner_id: string;
-  phase: string;
   manifest: string | null;
   org_id: string | null;
   owner_membership_id: string | null;
 }
 
-export function authorize(
+/** Whether this caller may use this connection in this workspace.
+ *
+ * Two gates, both required: the caller has to be somebody who may use the
+ * workspace's credentials at all — a workspace admin or member, never a
+ * viewer (§3) — and the request has to fit the workspace's stored ceiling. */
+export async function authorize(
+  db: Db,
   principal: Principal,
-  workspace: WorkspaceCredentialRow,
+  workspace: MintWorkspaceRow,
   connection: Connection,
   requestedScopes: readonly string[],
-): boolean {
-  const callerIsAdminOrOwner = canControlWorkspace(principal, workspace);
+): Promise<boolean> {
+  const access = await workspaceAccess(db, principal, workspace);
   const requestFitsCeiling =
     manifestAllows(workspace.manifest, connection.name, requestedScopes) &&
     usableByAllows(connection, principal.id);
-  return callerIsAdminOrOwner && requestFitsCeiling;
+  return isWorkspaceMember(access) && requestFitsCeiling;
 }
 
 async function recordDenied(
@@ -108,10 +124,11 @@ async function recordDenied(
   });
 }
 
-/** The workspace's identity spine is its owner: one disk, one env, one value
- * per variable. Every mint resolves against the owner's grants no matter which
- * member's box triggered it. */
-async function ownerGrantMint(
+/** Personal plane first (§4). The grant resolved here belongs to the member
+ * the mint is acting as — for a box mint that is the machine's own member, so
+ * an agent acts as the person whose machine it is running on and nothing is
+ * borrowed. */
+async function memberGrantMint(
   runtime: ReturnType<RuntimeFactory>,
   grant: GrantRow,
   connection: Connection,
@@ -191,10 +208,10 @@ export interface MintOutcome {
   lease: Lease;
 }
 
-interface MintOneInput {
-  workspace: WorkspaceCredentialRow;
-  /** Null when a person minted from the webApp rather than a box syncing. */
-  boxId: string | null;
+export interface MintOneInput {
+  workspace: MintWorkspaceRow;
+  /** Null when a person minted from the webApp rather than a machine syncing. */
+  machineId: string | null;
   principal: Principal;
   origin: string;
   connection: Connection;
@@ -202,11 +219,11 @@ interface MintOneInput {
   denied: "error" | "skip";
 }
 
-async function mintOne(
+export async function mintOne(
   runtime: ReturnType<RuntimeFactory>,
   input: MintOneInput,
 ): Promise<MintOutcome | null> {
-  const { workspace, boxId, principal, connection, denied } = input;
+  const { workspace, machineId, principal, connection, denied } = input;
   const now = Date.now();
   /** Both denials answer 403 and file a request: the box classifies by status,
    * and the inbox is how a person turns either one into a yes. A person who
@@ -217,47 +234,49 @@ async function mintOne(
     await recordDenied(
       runtime,
       workspace.id,
-      boxId,
+      machineId,
       connection.name,
       input.scopes,
       now,
       principal,
       reason,
     );
-    const requestId = boxId === null ? undefined : await fileRequest(
+    const requestId = machineId === null ? undefined : await fileRequest(
       runtime.db,
       workspace.id,
       connection.name,
       input.scopes,
-      { boxId, userId: principal.id },
+      { boxId: machineId, userId: principal.id },
       now,
     );
     throw new HttpError(403, message, requestId);
   };
-  if (!authorize(principal, workspace, connection, input.scopes)) {
+  if (!await authorize(runtime.db, principal, workspace, connection, input.scopes)) {
     return deny(
       "outside credential ceiling",
       `this workspace is not connected to ${connection.name}`,
     );
   }
-  const grant = await grantFor(runtime.db, workspace.owner_id, connection.name);
+  // The acting principal, not the workspace owner. A box mint arrives as the
+  // machine's own member, so the grant this finds is that person's.
+  const grant = await grantFor(runtime.db, principal.id, connection.name);
   const minter = grant === null ? resolveMinter(connection) : null;
   if (grant === null && (minter === null || connection.root_ciphertext === null)) {
     // The connection is declared but nobody's identity backs it. That is the
     // connect inbox, not a failure: 404 is the status the box turns into
     // "not configured", and it carries the request id the panel resolves.
     if (denied === "skip") return null;
-    const requestId = boxId === null ? undefined : await fileRequest(
+    const requestId = machineId === null ? undefined : await fileRequest(
       runtime.db,
       workspace.id,
       connection.name,
       input.scopes,
-      { boxId, userId: principal.id },
+      { boxId: machineId, userId: principal.id },
       now,
     );
     throw new HttpError(
       404,
-      `connection ${connection.name} has no grant for the workspace owner`,
+      `connection ${connection.name} has no grant for you`,
       requestId,
     );
   }
@@ -270,7 +289,7 @@ async function mintOne(
   const leaseId = crypto.randomUUID();
   const request: MintRequest = {
     workspaceId: workspace.id,
-    boxId,
+    boxId: machineId,
     principalId: principal.id,
     scopes,
     now,
@@ -279,7 +298,7 @@ async function mintOne(
   };
   const minted = grant === null
     ? await legacyRootMint(runtime, connection, request)
-    : await ownerGrantMint(runtime, grant, connection, request, scopes);
+    : await memberGrantMint(runtime, grant, connection, request, scopes);
   // Control-plane bookkeeping is stripped here: `tokenHash` is what the proxy
   // compares against and must never leave the control plane.
   const { tokenHash = null, grantedScopes, ...result } = minted;
@@ -295,10 +314,10 @@ async function mintOne(
   const lease = await createLease(runtime.db, {
     id: leaseId,
     workspaceId: workspace.id,
-    boxId,
+    machineId,
     connectionId: connection.id,
     connectionName: connection.name,
-    userId: workspace.owner_id,
+    userId: principal.id,
     grantId: grant?.id ?? null,
     scopes: grantedScopes ?? scopes,
     result,
@@ -316,7 +335,7 @@ async function mintOne(
 export async function mintWorkspaceConnection(
   runtime: ReturnType<RuntimeFactory>,
   input: {
-    workspace: WorkspaceCredentialRow;
+    workspace: MintWorkspaceRow;
     principal: Principal;
     origin: string;
     connection: Connection;
@@ -325,7 +344,7 @@ export async function mintWorkspaceConnection(
 ): Promise<MintOutcome | null> {
   return mintOne(runtime, {
     workspace: input.workspace,
-    boxId: null,
+    machineId: null,
     principal: input.principal,
     origin: input.origin,
     connection: input.connection,
@@ -357,7 +376,9 @@ async function connectAfterGrant(
   const workspace = await workspaceForMint(runtime, input.workspaceId);
   if (workspace === null || workspace.org_id === null
     || workspace.org_id !== input.principal.orgId) return false;
-  if (!canControlWorkspace(input.principal, workspace)) return false;
+  if (!isWorkspaceAdmin(await workspaceAccess(runtime.db, input.principal, workspace))) {
+    return false;
+  }
   const connection = await connectionByName(
     runtime.db,
     input.connectionName,
@@ -391,10 +412,10 @@ async function connectAfterGrant(
 export async function workspaceForMint(
   runtime: ReturnType<RuntimeFactory>,
   workspaceId: string,
-): Promise<WorkspaceCredentialRow | null> {
-  return first<WorkspaceCredentialRow>(runtime.db, {
-    q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
-        FROM workspaces WHERE id = ?1 LIMIT 1`,
+): Promise<MintWorkspaceRow | null> {
+  return first<MintWorkspaceRow>(runtime.db, {
+    q: `SELECT id, owner_id, manifest, org_id, owner_membership_id
+        FROM workspaces WHERE id = ?1 AND deleted_at IS NULL LIMIT 1`,
     v: [workspaceId],
   });
 }
@@ -439,7 +460,7 @@ async function controllableWorkspaceConnection(
   runtime: ReturnType<RuntimeFactory>,
   context: CoreContext,
   principal: Principal,
-): Promise<{ workspace: WorkspaceCredentialRow; name: string }> {
+): Promise<{ workspace: MintWorkspaceRow; name: string }> {
   const workspaceId = requiredString(context.req.param("id"), "id", 64);
   const name = requiredString(context.req.param("name"), "name", 256);
   const workspace = await workspaceForMint(runtime, workspaceId);
@@ -447,103 +468,10 @@ async function controllableWorkspaceConnection(
     || workspace.org_id !== principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
-  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
-  return { workspace, name };
-}
-
-/** A box asking on its own behalf. The box holds no person's session, so the
- * principal is assembled from the workspace's org membership: an agent inside
- * the box acts as the member who owns the box, and nothing wider. */
-interface BoxCaller {
-  workspace: WorkspaceCredentialRow;
-  boxId: string;
-  principal: Principal;
-}
-
-async function boxCaller(
-  runtime: ReturnType<RuntimeFactory>,
-  request: Request,
-): Promise<BoxCaller> {
-  const box = await authenticateBox(request, runtime.db);
-  if (box === null) throw new HttpError(401, "invalid box access token");
-  if (box.workspaceId === null) throw new HttpError(409, "box has no workspace");
-  const workspace = await first<WorkspaceCredentialRow>(runtime.db, {
-    q: `SELECT id, owner_id, phase, manifest, org_id, owner_membership_id
-        FROM workspaces WHERE id = ?1 LIMIT 1`,
-    v: [box.workspaceId],
-  });
-  if (workspace === null || workspace.phase !== "ready") {
-    throw new HttpError(409, "workspace is not ready for credential minting");
+  if (!isWorkspaceAdmin(await workspaceAccess(runtime.db, principal, workspace))) {
+    throw new HttpError(403, "forbidden");
   }
-  if (workspace.org_id === null) throw new HttpError(409, "workspace has no organization");
-  const membership = await first<{ id: string; role: "admin" | "member" }>(runtime.db, {
-    q: `SELECT id, role FROM memberships
-        WHERE user_id = ?1 AND org_id = ?2 AND status = 'active' LIMIT 1`,
-    v: [box.principalId, workspace.org_id],
-  });
-  return {
-    workspace,
-    boxId: box.id,
-    principal: {
-      id: box.principalId,
-      unixName: "blitz",
-      harnesses: [],
-      membershipId: membership?.id ?? null,
-      orgId: membership === null ? null : workspace.org_id,
-      role: membership?.role ?? null,
-      platformOperator: box.platformOperator,
-    },
-  };
-}
-
-/** What an agent inside a box may ask for, and how it asks.
- *
- * Nothing is delivered ahead of use. The box reads the allow-list to know what
- * it may ask for, and mints one credential at the moment it needs it. The
- * manifest is read on every call, so a Disconnect in the panel takes effect on
- * the very next pull rather than at the next sync cadence. */
-function addBoxConnectionRoutes(
-  router: CoreRouter,
-  runtimeFactory: RuntimeFactory,
-): void {
-  router.get("/workspaces/self/connections", async (context) => {
-    const runtime = runtimeFactory(context);
-    const { workspace } = await boxCaller(runtime, context.req.raw);
-    return context.json<WorkspaceConnectionsResponse>({
-      connections: manifestConnectionNames(workspace.manifest).sort(),
-    });
-  });
-
-  // 403 with a request id is the refusal an agent can act on: the id is the
-  // inbox row the member answers, and `blitz connections open <provider>` is
-  // how the agent sends them there.
-  router.post("/workspaces/self/connections/:name/token", async (context) => {
-    const runtime = runtimeFactory(context);
-    const { workspace, boxId, principal } = await boxCaller(runtime, context.req.raw);
-    const name = requiredString(context.req.param("name"), "name", 256);
-    const connection = await connectionByName(runtime.db, name, workspace.org_id ?? "");
-    if (connection === null) {
-      const requestId = await fileRequest(
-        runtime.db,
-        workspace.id,
-        name,
-        [],
-        { boxId, userId: principal.id },
-      );
-      throw new HttpError(404, `connection ${name} is not configured`, requestId);
-    }
-    const outcome = await mintOne(runtime, {
-      workspace,
-      boxId,
-      principal,
-      origin: new URL(context.req.url).origin,
-      connection,
-      scopes: connectionDefaultScopes(connection),
-      denied: "error",
-    });
-    if (outcome === null) throw new Error("box credential mint was skipped");
-    return context.json(parseMintResult(mintResultBody(outcome.result)));
-  });
+  return { workspace, name };
 }
 
 export function addCredentialRoutes(
@@ -560,7 +488,10 @@ export function addCredentialRoutes(
   addRequestRoutes(router, runtimeFactory, requirePrincipal);
   addProxyRoute(router, runtimeFactory);
 
-  addBoxConnectionRoutes(router, runtimeFactory);
+  // The guest side of the credential plane: what an agent may ask for, and how
+  // it asks. Split into its own module so this one stays under the 700-line
+  // warn (house rule: split on touch).
+  addBoxConnectionRoutes(router, runtimeFactory, mintOne);
 
   /** Connect, from the webApp. It writes the provider into this workspace's
    * manifest, then mints once so the person learns straight away whether the
