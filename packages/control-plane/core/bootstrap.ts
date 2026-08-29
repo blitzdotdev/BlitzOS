@@ -413,7 +413,7 @@ box_image="$BOX_IMAGE_REF"`;
 /** Compressed swap for the VM, emitted into the bootstrap.
  *
  * A Hetzner Ubuntu image ships no swap at all. With none, a workspace that
- * fills RAM goes straight from "fine" to direct reclaim: every process stalls,
+ * fills RAM skips every soft stage and lands in direct reclaim: every process stalls,
  * the tunnel stops answering its heartbeats, and the box reads as "connecting"
  * with no OOM line anywhere to explain it. That silent stall, not a kill, is
  * the failure this closes.
