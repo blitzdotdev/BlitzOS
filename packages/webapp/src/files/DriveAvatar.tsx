@@ -1,3 +1,4 @@
+import { squareAvatarUrl } from '../avatar-url';
 import { personInitial } from './drive-model';
 
 export function DriveAvatar({
@@ -17,7 +18,7 @@ export function DriveAvatar({
       title={name}
       aria-hidden="true"
     >
-      {avatarUrl ? <img src={avatarUrl} alt="" /> : personInitial(name)}
+      {avatarUrl ? <img src={squareAvatarUrl(avatarUrl)} alt="" /> : personInitial(name)}
     </span>
   );
 }
