@@ -89,7 +89,9 @@ cd /workspace || {
 }
 
 launch() {
-	exec /command/s6-setuidgid blitz /usr/bin/env \
+	# Remote Control drives a full agent, so it is user load and belongs under
+	# the user ceiling — not in the reservation that keeps the tunnel alive.
+	exec /usr/local/bin/blitz-cgroup enter user/rc.scope -- /command/s6-setuidgid blitz /usr/bin/env \
 		-u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY -u ANTHROPIC_BASE_URL \
 		HOME="$home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
 		/usr/bin/script -qec \

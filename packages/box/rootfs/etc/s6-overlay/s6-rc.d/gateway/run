@@ -1,5 +1,5 @@
 #!/command/with-contenv bash
 set -euo pipefail
-exec /command/s6-setuidgid blitz /usr/bin/env \
+exec /usr/local/bin/blitz-cgroup enter system -- /command/s6-setuidgid blitz /usr/bin/env \
   HOME=/var/lib/blitz/home USER=blitz \
   /usr/local/bin/blitz-box-gateway

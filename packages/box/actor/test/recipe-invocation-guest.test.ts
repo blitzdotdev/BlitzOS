@@ -227,6 +227,15 @@ function tmuxCreateArgv(session: string): string[] {
   ];
 }
 
+/** Every pane command rides through the memory boundary before it execs:
+ * tmux forks panes from its long-lived server, so blitz-term wraps the
+ * command it hands tmux rather than joining a cgroup itself. On boxes where
+ * the boundary cannot exist the wrapper execs straight through, so the argv
+ * is identical everywhere. */
+function cgroupWrapArgv(session: string): string[] {
+  return ["/usr/local/bin/blitz-cgroup", "enter", `user/tab-${session}`, "--"];
+}
+
 function harnessCommand(harness: TuiHarness): string[] {
   return harness === "claude"
     ? ["claude", "--dangerously-skip-permissions", "--permission-mode", "bypassPermissions"]
@@ -297,6 +306,7 @@ describe("blitz-term recipe delivery", () => {
       expect(created.status, `${invocation.name}: ${created.stderr}`).toBe(0);
       expect(recordedArgv(box, "new-session-argv"), invocation.name).toEqual([
         ...tmuxCreateArgv(`${harness}-run`),
+        ...cgroupWrapArgv(`${harness}-run`),
         ...harnessCommand(harness),
         ...recipeFlags(harness, invocation.descriptor),
         invocation.promptBytes,
@@ -317,6 +327,7 @@ describe("blitz-term recipe delivery", () => {
     expect(second.status, second.stderr).toBe(0);
     expect(recordedArgv(box, "new-session-argv")).toEqual([
       ...tmuxCreateArgv("claude-second"),
+      ...cgroupWrapArgv("claude-second"),
       ...harnessCommand("claude"),
     ]);
   });
@@ -332,6 +343,7 @@ describe("blitz-term recipe delivery", () => {
     expect(attach.status, attach.stderr).toBe(0);
     expect(recordedArgv(box, "new-session-argv")).toEqual([
       ...tmuxCreateArgv("claude-same"),
+      ...cgroupWrapArgv("claude-same"),
       ...harnessCommand("claude"),
     ]);
     // The re-planted files sit untouched for a genuinely new session to take.
@@ -368,6 +380,7 @@ describe("blitz-term recipe delivery", () => {
     expect((await runTerm(crossed, ["codex", "run"])).status).toBe(0);
     expect(recordedArgv(crossed, "new-session-argv")).toEqual([
       ...tmuxCreateArgv("codex-run"),
+      ...cgroupWrapArgv("codex-run"),
       ...harnessCommand("codex"),
     ]);
     expectPlanted(crossed, true);
@@ -381,6 +394,7 @@ describe("blitz-term recipe delivery", () => {
         expect(result.status, `${invocation.name}: ${result.stderr}`).toBe(0);
         expect(recordedArgv(box, "new-session-argv"), invocation.name).toEqual([
           ...tmuxCreateArgv(`${harness}-run`),
+          ...cgroupWrapArgv(`${harness}-run`),
           ...harnessCommand(harness),
         ]);
         expectPlanted(box, true);

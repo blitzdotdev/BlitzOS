@@ -141,7 +141,8 @@ COPY packages/box/rootfs/ /
 RUN set -eux; \
     chmod 0755 /usr/local/bin/blitz /usr/local/bin/claude /usr/local/bin/codex \
       /usr/local/bin/blitz-cred-claude /usr/local/bin/blitz-cred-codex \
-      /usr/local/bin/blitz-rules /usr/local/bin/blitz-machine-stats; \
+      /usr/local/bin/blitz-rules /usr/local/bin/blitz-cgroup \
+      /usr/local/bin/blitz-machine-stats; \
     chmod 0755 /usr/local/libexec/blitz-* /etc/s6-overlay/s6-rc.d/*/run; \
     install -d -m 0755 /workspace /var/lib/blitz /srv/blitz-files; \
     ln -s /workspace /srv/blitz-files/workspace; \
@@ -169,4 +170,10 @@ ENV HOME=/var/lib/blitz/home \
 VOLUME ["/var/lib/blitz"]
 EXPOSE 22 7443 7444 7445
 STOPSIGNAL SIGTERM
+# A running container is not a reachable box. The start period covers the s6
+# graph and the first tunnel connect; after that an unhealthy verdict means the
+# box stopped answering while it kept running, which is exactly the state that
+# used to be invisible.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+  CMD /usr/local/libexec/blitz-healthcheck
 ENTRYPOINT ["/init"]
