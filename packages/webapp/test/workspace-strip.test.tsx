@@ -71,6 +71,12 @@ describe("workspace strip", () => {
     expect(tiles[1]?.getAttribute("aria-current")).toBeNull();
     expect(tiles[1]?.className).toContain("shell-wtile--off");
     expect(tiles[2]?.getAttribute("aria-label")).toBe("Create workspace");
+    // Each workspace tile wears its own gradient; the create tile keeps the
+    // dashed outline the stylesheet gives it.
+    expect(tiles[0]?.style.background).toContain("linear-gradient");
+    expect(tiles[1]?.style.background).toContain("linear-gradient");
+    expect(tiles[0]?.style.background).not.toBe(tiles[1]?.style.background);
+    expect(tiles[2]?.style.background).toBe("");
     await view.unmount();
   });
 

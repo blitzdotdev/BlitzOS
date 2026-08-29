@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { TenantMe } from '../api-adapter';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import { DriveGlyph, PlusGlyph } from './StripIcons';
+import { workspaceTileStyle } from './workspace-tile';
 
 /** The tile legend: initials when the name has several words, otherwise its
  * first two letters. `design-team` reads DT and `engineering` reads EN, as the
@@ -157,6 +158,7 @@ export function WorkspaceStrip({
               aria-label={workspace.title}
               aria-current={active ? 'page' : undefined}
               disabled={!workspace.canControl}
+              style={workspaceTileStyle(workspace.id)}
               title={owner === null
                 ? `${workspace.title} — ${stateLabel(workspace)}`
                 : `${workspace.title} — shared by ${owner}`}
