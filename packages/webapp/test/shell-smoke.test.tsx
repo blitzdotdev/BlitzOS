@@ -11,6 +11,7 @@ import {
   type WorkspaceWebAppStateV1,
 } from "../src/storage.js";
 import { render, settle } from "./dom.js";
+import { workspaceViewFixture } from "./workspace-view.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
 const webAppHarness = vi.hoisted(() => ({
@@ -162,38 +163,19 @@ async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-const creating: WorkspaceView = {
+const creating: WorkspaceView = workspaceViewFixture({
   id: "workspace-one",
   name: "workspace-one-name",
-  machineTypeId: "cx23@fsn1",
   phase: "creating",
   retryAction: "poll",
   canObserve: false,
   launchable: false,
-  revision: 1,
-  createdAt: 1_700_000_000_000,
-  updatedAt: 1_700_000_000_000,
-  ssh: null,
-  volumeId: null,
-  error: null,
-  role: "owner",
-  orgShareRole: null,
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  connections: [],
-};
+});
 
-const running: WorkspaceView = {
+const running: WorkspaceView = workspaceViewFixture({
   id: "workspace-running",
   name: "workspace-running-name",
-  machineTypeId: "cx23@fsn1",
-  phase: "ready",
-  retryAction: null,
-  canObserve: true,
-  launchable: true,
   revision: 2,
-  createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_005_000,
   ssh: {
     host: "box.example.test",
@@ -201,15 +183,7 @@ const running: WorkspaceView = {
     user: "blitz",
     hostPublicKey: null,
   },
-  volumeId: null,
-  error: null,
-  role: "owner",
-  orgShareRole: null,
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  connections: [],
-};
+});
 
 const runningTwo: WorkspaceView = {
   ...running,

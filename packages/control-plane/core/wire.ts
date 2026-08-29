@@ -291,28 +291,26 @@ export interface WorkspaceView {
   connections: string[];
   /** Present when a recipe launch created this workspace (provenance). */
   recipeId?: string;
-  /** The member-machines fields. Every current server sends all of them.
+  /** The member-machines fields.
    *
-   * They are optional for the same reason `ListMachineTypesResponse.providerStatuses`
-   * is: this view is parsed by clients that ship on their own cadence, and a
-   * required field would break every one of them on the day the server grew
-   * it. A client that reads `members` still has to handle its absence, which
-   * is honest — a response from an older deployment genuinely does not carry
-   * one. */
-  orgId?: string | null;
-  ownerMembershipId?: string | null;
+   * The only client of this view is the webapp in this repository, and it is
+   * built from `packages/schema` — so these are required, and a server that
+   * drops one fails the wire-drift gate rather than the browser. */
+  orgId: string | null;
+  ownerMembershipId: string | null;
   /** A default for new machines, never a restriction: every machine carries
    * its own type and may be changed to another (§1a). */
-  defaultMachineTypeId?: string;
+  defaultMachineTypeId: string;
   /** Provision and start a machine the moment a member is added. */
-  autoProvision?: boolean;
+  autoProvision: boolean;
   /** The caller's stored workspace role, or null when they reach this
    * workspace only through implicit org-admin access. */
-  myRole?: WorkspaceMemberRole | null;
-  members?: WorkspaceMemberView[];
-  /** Names only. Present for members and admins; empty for a caller who may
+  myRole: WorkspaceMemberRole | null;
+  /** Empty for a caller who cannot open the workspace. */
+  members: WorkspaceMemberView[];
+  /** Names only. Populated for members and admins; empty for a caller who may
    * not use them. */
-  credentials?: WorkspaceCredentialView[];
+  credentials: WorkspaceCredentialView[];
 }
 
 export interface TemplateConnectionView {

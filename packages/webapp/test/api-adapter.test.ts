@@ -6,9 +6,10 @@ import {
 } from "../src/api-adapter.js";
 import type { ControlPlaneClient } from "../src/api.js";
 import { defaultGlobalWebAppState, defaultWorkspaceWebAppState } from "../src/storage.js";
+import { workspaceViewFixture } from "./workspace-view.js";
 
 function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["retryAction"]): WorkspaceView {
-  return {
+  return workspaceViewFixture({
     id: `workspace-${phase}`,
     name: `name-${phase}`,
     machineTypeId: "mv-2c2g@lab",
@@ -17,18 +18,9 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     canObserve: phase === "ready",
     launchable: phase === "ready",
     revision: 7,
-    createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_005_000,
-    ssh: null,
-    volumeId: null,
     error: phase === "error" ? "provider failed" : null,
-    role: "owner",
-    orgShareRole: null,
-    connections: [],
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  };
+  });
 }
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {

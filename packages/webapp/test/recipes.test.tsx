@@ -14,6 +14,7 @@ import { TemplatesHome } from '../src/files/TemplatesHome.js';
 import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
 import { render, settle } from './dom.js';
+import { workspaceViewFixture } from './workspace-view.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -448,27 +449,15 @@ const tenantMe: TenantMe = {
   }],
 };
 
-const launchedWorkspace: WorkspaceView = {
+const launchedWorkspace: WorkspaceView = workspaceViewFixture({
   id: 'workspace-new',
   name: 'weekly report',
-  machineTypeId: 'cx23@fsn1',
   phase: 'creating',
   retryAction: 'poll',
   canObserve: false,
   launchable: false,
-  revision: 1,
-  createdAt: 1_700_000_000_000,
-  updatedAt: 1_700_000_000_000,
-  ssh: null,
-  volumeId: null,
-  error: null,
-  role: 'owner',
-  orgShareRole: null,
   owner: { name: 'Ada Park', avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  connections: [],
-};
+});
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
