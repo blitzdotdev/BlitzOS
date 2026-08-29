@@ -8,6 +8,42 @@ GitHub Worktrees sections.
 Upstream: https://github.com/LodyAI/Lody (Apache-2.0). Local mirror during
 planning: `/workspace/lody-upstream`.
 
+## 0. Locked decisions (2026-08-30, user-confirmed)
+
+**Bias rule.** When Lody's UI or behavior and BlitzOS's conflict, vendor
+Lody's and drop ours. No structural re-renders, no hybrid components. Reskin
+later through the theme layer only. Every choice optimizes for cheap upstream
+merge and maximum feature carry-over. The reference bar: Lody's composer
+(machine chip, repo picker, branch picker + worktree pill, `/` commands, `@`
+mentions, `$` skills, `+` attachments, model·effort selector, permission-mode
+selector) must fully work in GitHub Worktree mode on a box.
+
+1. **Sharing v1**: full shared sessions inside a workspace, opt-in. Every
+   session defaults private to its member. Right-click share grants read-only
+   or read-write. Read-write is full co-driver: prompt, answer permission
+   requests (first response wins), cancel, steer. Owner and workspace admins
+   grant/revoke; workspace admins additionally hold implicit read-only on all
+   sessions in the workspace; workspace-role viewers can receive read-only
+   only. A share includes read access scoped to that session's worktree
+   (diffs and file views work); nothing else on the owner's box.
+2. **Chat surface**: vendor Lody's UI wholesale (landing, session detail,
+   stream, composer, dialogs) with a Blitz theme. Cascade-layer Tailwind
+   scoping first, iframe fallback if bleed is unmanageable.
+3. **Rail boundary**: the vendored zone is `div.shell-newbar` + `div.shell-list`
+   only — Lody's `LoroSidebar` body (sections, filters, pins, badges) mounts
+   there. `div.shell-rhead` (workspace title, Members / My machine / Details)
+   stays native. Lody's own sidebar header/footer are suppressed via props,
+   not source edits. The Terminals section is native rows injected through
+   their `afterSessionListContent` slot.
+4. **Default UX**: a fresh workspace opens the chat landing. TUI tabs are
+   opt-in via the `+` menu and the Terminals section.
+5. **Worktrees v1**: create + archive-with-backup + diff stats/badges. PR
+   chips, PR polling, and merge flows are deferred.
+6. **Agents v1**: claude and codex only. English only. Recipes stay on
+   `blitz-term` delivery and stay product-disabled.
+7. **Attachments**: the one adaptation — their cloud-upload fallback is
+   Lody-cloud; ours routes browser→box over the existing WebDAV surface.
+
 ## 1. What Lody is, in BlitzOS terms
 
 Lody is a local-first workspace for coding agents. Three parts matter to us:
@@ -149,10 +185,17 @@ invasive daemon changes, fallback: adapt the Electron `loro-data-plane-relay`
 protocol (already in the public tree) to a WebSocket listener — a larger but
 bounded shim.
 
-Scope rule for v1: sessions are per member machine, like terminals today. The
-browser connects to the requesting member's box; a member sees their own
-machine's sessions. Cross-member session sharing is out of scope (revisit with
-a control-plane relay later).
+Sharing architecture (implements §0.1): a session's rooms live on the owner's
+box. Share grants are rows in D1 (`session_shares`: workspace, session id,
+owner membership, grantee membership, level ro|rw). The control-plane proxy
+gains a route to a TARGET member's machine for shared sessions (today it
+routes only to the requester's own), and mints tickets whose claims carry the
+grant. The box sync server enforces per-room ACL from those claims: room
+`session-<id>` is readable under a grant or an admin ticket; read-only grants
+have their inbound updates dropped at the relay (a CRDT client cannot write
+what the relay refuses to apply). The RPC shim scopes grantees to the shared
+session's worktree RPCs only. Because CRDT replicas re-sync from their own
+state, the relay itself stays stateless.
 
 ## 5. Vendoring mechanics
 
@@ -283,9 +326,10 @@ Rename, then restructure (`shell/WorkspaceSessionRail.tsx` →
 `aside.shell-rail > div.shell-list` — becomes `aside.session-rail >
 div.session-list`).
 
-Structure copied from Lody's sidebar (their `LoroSidebar` is pure and
-props-driven; we re-render its structure with our CSS rather than importing
-Tailwind into the shell chrome):
+The list region is Lody's sidebar itself, per §0.3 — `LoroSidebar` is pure
+and props-driven, so we mount its body in the `shell-newbar`+`shell-list`
+zone, suppress its own header/footer via props, and inject Terminals through
+its `afterSessionListContent` slot. Target layout:
 
 ```
 ┌ rail ──────────────────────────┐
@@ -350,8 +394,9 @@ nothing here waits on a dead surface being removed.
 | 2 runtime | BlitzPlatformProvider, websocket transport seam patch, RPC plane shim | create session from browser console; turn dispatched; reply streams |
 | 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box |
 | 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works |
-| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; PR/diff chips | worktree session edits code on a branch; archive backs up dirty state; agent opens PR via gh |
-| 6 retire + automate | flag flip, dead code removal, `docs/LODY-MERGE.md`, first two upstream merges done by hand | one scheduled merge PR lands clean |
+| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode |
+| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access |
+| 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean |
 
 Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
 
@@ -381,13 +426,11 @@ Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
 ## 12. Open questions (do not block Phase 0)
 
 1. Do recipes move to the daemon, or do they stay on the `blitz-term` prompt
-   delivery they use today? (§9.4. The old answer — "keep the actor as the
-   headless ACP runner" — is closed: the actor is deleted.)
-2. Cross-member visibility of chats on someone else's machine — v1 shows only
-   your machine's sessions; is a read-only roster of other members' sessions
-   needed sooner?
+   delivery they use today? (§9.4. Deferred; recipes are product-disabled.)
+2. ~~Cross-member visibility~~ — RESOLVED by §0.1: opt-in per-session sharing
+   with RO/RW grants and admin implicit RO, in Phase 6.
 3. Worktree base for the GitHub Worktrees flow: always the `/workspace` clone
    (`local-shared`), or offer Lody's `github` bare-mirror source once a token
-   bridge exists?
+   bridge exists? (v1: always `local-shared`.)
 4. Does "+ New session" default to Claude or to the workspace `agentDefault`
-   from `webapp_state`?
+   from `webapp_state`? (Default until decided: `agentDefault`.)
