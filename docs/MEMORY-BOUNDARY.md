@@ -33,11 +33,11 @@ VM (Hetzner cloud server, Ubuntu 24.04)
     │  s6 oneshot `cgroups` runs blitz-cgroup init before anything else:
     │  drain every pid out of the container root, then delegate +memory +pids
     │
-    ├── blitz-system.slice        memory.min 384M · oom_score_adj -900 · pids 512
+    ├── blitz-system.slice        memory.min 256M (measured: no flip down to 128M; 256M is ~3x the protected set) · oom_score_adj -900 · pids 512
     │     s6 tree, cloudflared, gateway, sshd, dufs, ttyd, watch
     │     — the services that carry the box to its user
     │
-    └── blitz-user.slice          memory.max total-min-256M · high = max-500M
+    └── blitz-user.slice          memory.max total-min-headroom · high = max-500M
           pids 4096 · swap 2G      — everything a member's work can grow
           ├── tab-<session>        one per terminal tab      oom.group=1
           ├── ssh-<pid>            one per ssh session       oom.group=1

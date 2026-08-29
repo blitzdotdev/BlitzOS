@@ -155,6 +155,48 @@ for _ in range(5000):
     # THE CASE THAT KILLED THE REAL WORKSPACE. Ramp to just under the ceiling
     # and hold. No OOM fires; the box either keeps answering or it stalls.
     l8) box_ssh "python3 - $(( $(free -m | awk '/^Mem:/{print $2}') * 95 / 100 )) 200 600" <<<"$(allocator)" ;;
+    # l8 with a fixed target can overshoot real availability and resolve into
+    # a quick kill (measured on cx23: MemTotal*95% crosses MemAvailable and
+    # the kernel kills in seconds). l9 hunts the SUSTAINED stall instead: size
+    # from MemAvailable at launch, stop a sliver short, keep every page hot so
+    # reclaim cannot age the set out, and creep upward slowly while a dd
+    # stream keeps cache pressure on. The kill line is never quite crossed;
+    # the box either keeps answering or it sits in reclaim — the state that
+    # reads "connecting" in production.
+    l9)
+      box_ssh "nohup sh -c 'while :; do dd if=/dev/zero of=/workspace/.l9cache bs=1M count=6000 conv=fsync 2>/dev/null; rm -f /workspace/.l9cache; done' >/dev/null 2>&1 &
+python3 -" <<'L9HOLD'
+import time
+avail_kb = 0
+with open("/proc/meminfo") as f:
+    for line in f:
+        if line.startswith("MemAvailable:"):
+            avail_kb = int(line.split()[1])
+            break
+target_mb = max(256, avail_kb // 1024 - 150)
+chunks = []
+held = 0
+while held < target_mb:
+    block = bytearray(32 * 1024 * 1024)
+    for off in range(0, len(block), 4096):
+        block[off] = 1
+    chunks.append(block)
+    held += 32
+print(f"holding {held} MB of {avail_kb//1024} MB available", flush=True)
+i = 0
+while True:
+    hot = chunks[i % len(chunks)]
+    for off in range(0, len(hot), 4096):
+        hot[off] = (hot[off] + 1) % 250
+    i += 1
+    if i % 24 == 0:
+        creep = bytearray(4 * 1024 * 1024)
+        for off in range(0, len(creep), 4096):
+            creep[off] = 1
+        chunks.append(creep)
+    time.sleep(0.05)
+L9HOLD
+      ;;
     *) echo "unknown scenario: $1" >&2; return 2 ;;
   esac
 }
@@ -225,7 +267,7 @@ run_one() {
   verdict "$probe_log" "$sample_log" "$name" || true
   echo -e "$name\tP5_new_session_after=$recovered"
   # Leave the box clean for the next scenario.
-  box_ssh 'pkill -u blitz -f "python3 -" || true; docker rm -f $(docker ps -aq) 2>/dev/null || true' >/dev/null 2>&1 || true
+  box_ssh 'pkill -u blitz -f "python3 -" || true; pkill -u blitz -f ".l9cache" || true; rm -f /workspace/.l9cache; docker rm -f $(docker ps -aq) 2>/dev/null || true' >/dev/null 2>&1 || true
   sleep 10
 }
 

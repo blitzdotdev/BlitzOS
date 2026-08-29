@@ -17,7 +17,12 @@ for endpoint in '0.0.0.0:22' '127.0.0.1:7443' '127.0.0.1:7445'; do
   grep -Fq "$endpoint" <<<"$listeners" || fail "nothing listens on $endpoint"
 done
 
-pgrep -x cloudflared >/dev/null 2>&1 || fail "cloudflared is not running"
+# A box with no tunnel token yet is idle, not sick: the cloudflared service
+# deliberately waits for the control plane to deliver tokens, so the process
+# is absent by design in that state (and on lab boxes with no tunnel at all).
+if [ -s /var/lib/blitz/tunnel-token ]; then
+  pgrep -x cloudflared >/dev/null 2>&1 || fail "a tunnel token exists but cloudflared is not running"
+fi
 
 # The tunnel process can be alive and still stalled, so prove it is scheduled:
 # a request the gateway answers locally costs nothing and fails fast when the

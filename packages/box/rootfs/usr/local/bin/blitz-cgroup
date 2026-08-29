@@ -36,8 +36,8 @@ log() { printf 'blitz-cgroup: %s\n' "$*" >&2; }
 # Sizes accept the kernel's own suffixes via to_bytes below: 384M, 2G, or a
 # plain byte count. "max" and "0" pass through untouched.
 enabled=${BLITZ_CG_ENABLE:-1}
-system_min=${BLITZ_CG_SYSTEM_MIN:-384M}
-system_low=${BLITZ_CG_SYSTEM_LOW:-512M}
+system_min=${BLITZ_CG_SYSTEM_MIN:-256M}
+system_low=${BLITZ_CG_SYSTEM_LOW:-384M}
 system_pids=${BLITZ_CG_SYSTEM_PIDS:-512}
 system_oom_adj=${BLITZ_CG_SYSTEM_OOM_ADJ:--900}
 user_swap=${BLITZ_CG_USER_SWAP:-2G}

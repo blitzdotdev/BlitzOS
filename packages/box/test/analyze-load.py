@@ -17,10 +17,13 @@ import sys
 SCENARIOS = ["l1", "l2", "l3", "l4", "l5", "l6", "l7", "l8"]
 
 
-def read_tsv(path):
+def read_tsv(path, header=True):
+    """header=True skips line one. The windows file carries no header row —
+    reading it with the default silently ate the first scenario's window."""
     rows = []
     try:
-        for line in path.read_text().splitlines()[1:]:
+        lines = path.read_text().splitlines()
+        for line in lines[1:] if header else lines:
             if line:
                 rows.append(line.split("\t"))
     except OSError:
@@ -84,7 +87,7 @@ def main():
     if len(sys.argv) > 2:
         poll_rows = read_tsv(pathlib.Path(sys.argv[2]))
     if len(sys.argv) > 3:
-        windows = read_tsv(pathlib.Path(sys.argv[3]))
+        windows = read_tsv(pathlib.Path(sys.argv[3]), header=False)
     report = {}
     for tag_dir in sorted((root / "blitz-load").iterdir()):
         if not tag_dir.is_dir():
