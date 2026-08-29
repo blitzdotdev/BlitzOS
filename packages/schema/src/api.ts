@@ -39,7 +39,7 @@ export interface CreateWorkspaceRequest {
     persistentVolume?: boolean;
   }[];
   /** The only path where a credential value is sent. */
-  credentials?: { name: string; label?: string; value: string }[];
+  credentials?: { name: string; label?: string; comment?: string; value: string }[];
   /** Copies config — default machine type, agent rule, repos, credential
    * NAMES are not copied and neither are members. The workspace is the
    * template now, so this is "new workspace from existing". */

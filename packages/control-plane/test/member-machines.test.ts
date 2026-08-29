@@ -89,7 +89,7 @@ describe("member machines", () => {
     ]);
     // Names only: a value never comes back out of the store.
     expect(workspace.credentials).toEqual([
-      { name: "STRIPE_API_KEY", label: "live", createdAt: expect.any(Number) },
+      { name: "STRIPE_API_KEY", label: "live", comment: null, createdAt: expect.any(Number) },
     ]);
     expect(JSON.stringify(workspace)).not.toContain("sk_test_only");
   });

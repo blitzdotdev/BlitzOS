@@ -89,10 +89,13 @@ export interface WorkspaceMemberView {
 }
 
 /** A workspace credential, names only. A value never crosses the wire after
- * the write that created it. */
+ * the write that created it. The comment says what the key is FOR — it is
+ * shown wherever the name is, so an agent or a person can pick the right
+ * key without asking. */
 export interface WorkspaceCredentialView {
   name: string;
   label: string | null;
+  comment: string | null;
   createdAt: number;
 }
 
@@ -215,11 +218,45 @@ export interface UpdateWorkspaceRequest {
 }
 
 /** Add or rotate: one live row per (workspace, name), so a second write to a
- * live name replaces its value. */
+ * live name replaces its value.
+ *
+ * `comment` is tri-state: absent keeps the live row's comment across a
+ * rotation, an explicit null clears it, a string sets it. Rotation changes
+ * the secret, not what the secret is for. */
 export interface PutWorkspaceCredentialRequest {
   name: string;
   label?: string;
+  comment?: string | null;
   value: string;
+}
+
+/** A dotenv text to store key by key. `label` lands on every stored row —
+ * callers pass the file name, so a row remembers where it came from.
+ * `dryRun` parses and reports without writing; the webApp preview and
+ * `blitz-cred import --check` are both this flag. */
+export interface ImportWorkspaceCredentialsRequest {
+  text: string;
+  label?: string;
+  dryRun?: boolean;
+}
+
+/**
+ * What one KEY=value line became. Store-level facts only: `rotated` says a
+ * live row held this name and its value changed, never anything about the
+ * vendor behind the value. `unchanged` says the incoming value equals the
+ * stored one, so nothing was written. A refused line names its reason and the
+ * rest of the file still imports.
+ */
+export interface WorkspaceCredentialImportResult {
+  name: string;
+  line: number;
+  outcome: "stored" | "rotated" | "unchanged" | "refused";
+  reason?: string;
+}
+
+export interface ImportWorkspaceCredentialsResponse {
+  results: WorkspaceCredentialImportResult[];
+  linesRead: number;
 }
 
 export interface TemplateConnectionView {

@@ -13,6 +13,8 @@ import type {
   WorkspaceMemberResponse,
   PutAgentRuleRequest,
   PutAgentRuleResponse,
+  ImportWorkspaceCredentialsRequest,
+  ImportWorkspaceCredentialsResponse,
   MintWorkspaceConnectionResponse,
   ListCredentialEventsResponse,
   CredentialEventView,
@@ -204,6 +206,10 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
     workspaceId: string,
     input: PutWorkspaceCredentialRequest,
   ): Promise<void>;
+  importWorkspaceCredentials(
+    workspaceId: string,
+    input: ImportWorkspaceCredentialsRequest,
+  ): Promise<ImportWorkspaceCredentialsResponse>;
   revokeWorkspaceCredential(workspaceId: string, name: string): Promise<void>;
   getGlobalWebAppState(): Promise<WebAppStateResponse<GlobalWebAppStateV1>>;
   putGlobalWebAppState(
@@ -662,6 +668,10 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     putWorkspaceCredential: (workspaceId, input) => request<void>(
       `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
       { method: "PUT", headers: jsonHeaders, body: JSON.stringify(input) },
+    ),
+    importWorkspaceCredentials: (workspaceId, input) => request<ImportWorkspaceCredentialsResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/credentials/dotenv`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
     ),
     revokeWorkspaceCredential: (workspaceId, name) => request<void>(
       `/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(name)}`,

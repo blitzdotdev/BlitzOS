@@ -96,6 +96,7 @@ const expected = [
   "template-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
+  "workspace-credential-import.ts",
   "workspace-credentials.ts",
   "workspace-members.ts",
   "workspace-projection.ts",
@@ -130,6 +131,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(105);
+    expect(expected).toHaveLength(106);
   });
 });

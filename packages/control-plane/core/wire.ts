@@ -179,6 +179,8 @@ export {
   MACHINE_STATES,
   WORKSPACE_MEMBER_ROLES,
   type AddWorkspaceMemberRequest,
+  type ImportWorkspaceCredentialsRequest,
+  type ImportWorkspaceCredentialsResponse,
   type MachineResponse,
   type MachineState,
   type MachineStatsRequest,
@@ -188,6 +190,7 @@ export {
   type SetMachineTypeRequest,
   type UpdateWorkspaceMemberRequest,
   type UpdateWorkspaceRequest,
+  type WorkspaceCredentialImportResult,
   type WorkspaceCredentialView,
   type WorkspaceMemberResponse,
   type WorkspaceMemberRole,
@@ -563,7 +566,7 @@ export interface CreateWorkspaceRequest {
     persistentVolume?: boolean;
   }[];
   /** The only path where a credential value is sent. */
-  credentials?: { name: string; label?: string; value: string }[];
+  credentials?: { name: string; label?: string; comment?: string; value: string }[];
   /** Copies config — default machine type, agent rule, repos, credential
    * NAMES are not copied and neither are members. The workspace is the
    * template now, so this is "new workspace from existing". */

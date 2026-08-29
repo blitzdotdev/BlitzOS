@@ -165,6 +165,32 @@ func (c *Client) PostWorkspaceConnectionToken(ctx context.Context, name string) 
 	}, nil)
 }
 
+// PostWorkspaceCredentialImport stores each KEY=value line of a dotenv text
+// as a workspace credential. The caller owns and must close the returned
+// response body.
+func (c *Client) PostWorkspaceCredentialImport(ctx context.Context, body []byte) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodPost, func(string) string {
+		return "/workspaces/self/credentials/dotenv"
+	}, body)
+}
+
+// GetWorkspaceCredentials reads the workspace credential store: names and
+// comments, never values. The caller owns and must close the returned
+// response body.
+func (c *Client) GetWorkspaceCredentials(ctx context.Context) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodGet, func(string) string {
+		return "/workspaces/self/credentials"
+	}, nil)
+}
+
+// PutWorkspaceCredential stores one workspace credential. The caller owns
+// and must close the returned response body.
+func (c *Client) PutWorkspaceCredential(ctx context.Context, body []byte) (*http.Response, error) {
+	return c.authenticated(ctx, http.MethodPut, func(string) string {
+		return "/workspaces/self/credentials"
+	}, body)
+}
+
 func (c *Client) FetchFeed(ctx context.Context, etag string) ([]byte, string, bool, error) {
 	credential, err := store.LoadCredential(c.stateDir)
 	if err != nil {

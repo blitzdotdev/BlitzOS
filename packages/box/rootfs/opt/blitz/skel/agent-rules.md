@@ -105,6 +105,44 @@ Workspace sessions have no MCP servers and no claude.ai connectors. Ask for a
 token with `blitz-cred`, nothing else. `/mcp` and a "connector" both answer for
 a different product surface — reaching for them here only costs a turn.
 
+## Sharing secrets with the workspace
+
+A workspace credential is a named secret every member machine can pull.
+`blitz-cred list` shows workspace credentials next to providers; `get` and
+`env` serve them the same way.
+
+To move the keys in a dotenv file into the workspace store:
+
+```
+blitz-cred import .env             # store each KEY=value line
+blitz-cred import --check .env     # parse and report, store nothing
+```
+
+Each key becomes one credential, labeled with the file it came from.
+Importing an existing name rotates it: the old value is gone on the next
+pull. Only a workspace admin's machine can import. A value must be one
+line; base64-encode a PEM or JSON key first.
+
+Import exists to get secrets OUT of files. After a successful import,
+delete the file and pull keys at the moment of use:
+
+```
+( eval "$(blitz-cred env STRIPE_API_KEY)"; use it here )
+```
+
+A credential can carry a comment: one line that says what the key is for.
+`blitz-cred list` prints it after a `#` — read the comments before you
+pick a key. To store an important key WITH its comment, send the value on
+stdin:
+
+```
+printf '%s' "$VALUE" | blitz-cred put STRIPE_API_KEY --comment "test-mode key, safe for CI"
+```
+
+Import never reads or writes comments, and a rotation keeps the comment
+the name already has. When you store a key others will use, write the
+comment — it is what the next agent reads instead of asking.
+
 ## Never print a credential
 
 Never echo, print, log, or paste the value of a credential — not into a

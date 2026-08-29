@@ -21,7 +21,9 @@ import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
+import { addBoxCredentialRoutes } from "./connections/pull-routes.js";
 import { addWorkspaceCredentialRoutes } from "./workspace-credentials.js";
+import { addWorkspaceCredentialImportRoutes } from "./workspace-credential-import.js";
 import { addWorkspaceMemberRoutes } from "./workspace-members.js";
 import { addWorkspaceSettingsRoutes } from "./workspace-settings.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
@@ -112,7 +114,11 @@ export function installControlPlaneRoutes(
   // Registered before addWorkspaceRoutes: /workspaces/:id/members and
   // /workspaces/:id/credentials are literal paths under the same prefix.
   addWorkspaceMemberRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Box-authenticated (/workspaces/self/credentials), registered ahead of the
+  // session credential routes so "self" never binds as their :id.
+  addBoxCredentialRoutes(router, runtimeFactory);
   addWorkspaceCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceCredentialImportRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Same reason: /workspaces/:id/repos is a literal path under the prefix
   // addWorkspaceRoutes registers its parameterised routes on.
   addWorkspaceSettingsRoutes(router, runtimeFactory, requireMembershipPrincipal);

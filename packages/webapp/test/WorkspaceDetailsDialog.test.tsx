@@ -6,7 +6,7 @@ import type {
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../src/api.js';
-import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
+import { IMPORT_PREVIEW_DEBOUNCE_MS, WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
 import { WorkspaceSessionRail } from '../src/shell/WorkspaceSessionRail.js';
 import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
 import { describe, expect, it, vi } from 'vitest';
@@ -70,7 +70,12 @@ const workspace = workspaceModelFixture({
   serverName: 'details-test',
   title: 'Details test',
   members: [ada, grace],
-  credentials: [{ name: 'STRIPE_API_KEY', label: 'billing', createdAt: 1_700_000_000_000 }],
+  credentials: [{
+    name: 'STRIPE_API_KEY',
+    label: 'billing',
+    comment: 'test-mode key, safe for CI',
+    createdAt: 1_700_000_000_000,
+  }],
 });
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -253,7 +258,9 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => tab(view.container, 'Credentials')?.click());
 
     expect(view.container.textContent).toContain('STRIPE_API_KEY');
-    expect(view.container.textContent).toContain('billing');
+    // The comment outranks the label on the row: it says what the key is
+    // FOR, which is what a person picking one needs.
+    expect(view.container.textContent).toContain('test-mode key, safe for CI');
     // Write-only: the add field exists, but nothing reads a value back.
     const valueField = view.container.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
     expect(valueField?.type).toBe('password');
@@ -264,6 +271,53 @@ describe('WorkspaceDetailsDialog', () => {
     );
     await act(async () => revoke?.click());
     expect(revokeWorkspaceCredential).toHaveBeenCalledWith(workspace.id, 'STRIPE_API_KEY');
+    await view.unmount();
+  });
+
+  it('previews an env paste as a dry run, then imports the same text', async () => {
+    const importWorkspaceCredentials = vi.fn().mockResolvedValue({
+      results: [
+        { name: 'CF_TOKEN', line: 1, outcome: 'rotated' },
+        { name: 'NEW_KEY', line: 2, outcome: 'stored' },
+        {
+          name: 'GOOGLE_SA_JSON',
+          line: 3,
+          outcome: 'refused',
+          reason: 'value spans more than one line; base64-encode it first',
+        },
+      ],
+      linesRead: 3,
+    });
+    const view = await render(dialog({ client: client({ importWorkspaceCredentials }) }));
+    await settle();
+    await act(async () => tab(view.container, 'Credentials')?.click());
+
+    const text = 'CF_TOKEN=new\nNEW_KEY=x\nGOOGLE_SA_JSON="{\n';
+    const textarea = view.container.querySelector<HTMLTextAreaElement>('[aria-label="Env file text"]');
+    if (textarea === null) throw new Error('the credentials tab has no import textarea');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')
+        ?.set?.call(textarea, text);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, IMPORT_PREVIEW_DEBOUNCE_MS + 50));
+    });
+
+    // The preview IS the import request with `dryRun` set, so the rows it
+    // shows are the outcomes the button will produce.
+    expect(importWorkspaceCredentials).toHaveBeenCalledWith(workspace.id, { text, dryRun: true });
+    expect(view.container.textContent).toContain('base64-encode it first');
+    const importButton = [...view.container.querySelectorAll('button')]
+      .find((button) => button.textContent?.startsWith('Import'));
+    // Two keys will write: stored and rotated. The refused row never counts.
+    expect(importButton?.textContent).toBe('Import 2 keys');
+    expect(importButton?.disabled).toBe(false);
+
+    await act(async () => importButton?.click());
+    expect(importWorkspaceCredentials).toHaveBeenLastCalledWith(workspace.id, { text });
+    await settle();
+    expect(view.container.textContent).toContain('Imported');
     await view.unmount();
   });
 

@@ -39,6 +39,22 @@ export interface WorkspaceConnectionsResponse {
   connections: string[];
 }
 
+/** One workspace credential as an agent sees it: the name to ask for, and
+ * the comment that says what the key is for. No value — the token pull is
+ * the only door to one. `comment` is absent rather than null on the wire,
+ * so a line without one costs nothing. */
+export interface WorkspaceCredentialEntry {
+  name: string;
+  comment?: string;
+}
+
+/** The workspace credential store, names and comments only. `blitz-cred
+ * list` merges this with the connection allow-list and prints a
+ * credential's comment after a `#`. */
+export interface WorkspaceCredentialsResponse {
+  credentials: WorkspaceCredentialEntry[];
+}
+
 /** What a minter hands back. Everything beyond `MintResult` is control-plane
  * bookkeeping that `mintOne` consumes and strips before serialization — it can
  * never ride the frozen wire. */

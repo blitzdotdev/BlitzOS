@@ -120,6 +120,7 @@ const expected = [
   "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts",
+  "core/workspace-credential-import.ts",
   "core/workspace-credentials.ts",
   "core/workspace-members.ts",
   "core/workspace-names.ts",
