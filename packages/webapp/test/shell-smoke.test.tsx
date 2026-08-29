@@ -123,12 +123,6 @@ function navigationExpanded(container: HTMLElement): string | null {
     ?.getAttribute("aria-expanded") ?? null;
 }
 
-function selectedSessionId(container: HTMLElement): string | undefined {
-  return container.querySelector<HTMLElement>(
-    '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"][aria-selected="true"]',
-  )?.closest<HTMLElement>(".webapp-tab-cell")?.dataset.sessionId;
-}
-
 const realLocation = Object.getOwnPropertyDescriptor(window, "location")!;
 
 /** window.location.reload cannot be redefined in place, so the whole object is
@@ -453,6 +447,7 @@ describe("webapp shell smoke", () => {
   });
 
   it("returns to workspace details when workspace deletion is cancelled", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
     const wire = runningClient();
     const view = await render(
       <CloudApp
@@ -938,7 +933,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps file tabs out of the workspace session rail and collapsed count", async () => {
+  it("keeps file tabs out of the workspace session rail", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "claude" },
@@ -956,11 +951,6 @@ describe("webapp shell smoke", () => {
 
     expect(railSessionLabels(view.container)).toEqual(["Claude", "Terminal"]);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="3"]')).not.toBeNull();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Collapse sessions for workspace-running-name"]',
-    )?.click());
-    expect(view.container.textContent).toContain("2 sessions");
 
     await view.unmount();
   });

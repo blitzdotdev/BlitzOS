@@ -1,0 +1,396 @@
+/* ==========================================================================
+   Columns one and two (plans/mockups/session-rail.html). Dimensions, radii and
+   row sizes are the mockup's; the colours come from tokens.css, which already
+   declares the same --paper/--ink/--accent scale the mockup uses.
+   ========================================================================== */
+
+/* Above the breakpoint the wrapper is invisible to layout, so the strip and the
+   rail are real children of the shell grid. Below it, it is the drawer. */
+.shell-nav { display: contents; }
+
+.shell-nav-scrim,
+.shell-strip__close { display: none; }
+
+/* --------------------------------------------------------------- column 1 */
+.shell-strip {
+  z-index: 10;
+  display: flex;
+  grid-column: 1;
+  grid-row: 1 / 3;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0 10px;
+  gap: 6px;
+  border-right: 1px solid var(--rule);
+  background: var(--paper);
+  user-select: none;
+}
+
+/* The org popover keeps the shell's menu markup, so the wrapper drops the
+   rail header box it used to carry. */
+.shell-strip__orgwrap {
+  height: auto;
+  flex: none;
+  border-bottom: 0;
+}
+
+.shell-orgmark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--paper);
+  background: var(--accent);
+  font: 700 11px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.shell-strip__sep {
+  width: 20px;
+  flex: none;
+  margin: 3px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.shell-strip__tiles,
+.shell-strip__surfaces {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.shell-strip__tiles {
+  overflow-y: auto;
+  flex-shrink: 1;
+  scrollbar-width: none;
+}
+
+.shell-strip__tiles::-webkit-scrollbar { width: 0; }
+
+.shell-wtile {
+  position: relative;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--hover);
+  font: 700 11.5px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.shell-wtile:hover:not(:disabled) { color: var(--ink); }
+
+.shell-wtile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.shell-wtile--on {
+  color: var(--ink);
+  background: color-mix(in oklab, var(--accent) 34%, var(--paper));
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 45%, var(--paper));
+}
+
+.shell-wtile--off {
+  border: 1px dashed var(--rule);
+  color: var(--faint);
+  background: transparent;
+}
+
+.shell-wtile--off.shell-wtile--on {
+  color: var(--ink);
+  background: color-mix(in oklab, var(--accent) 20%, var(--paper));
+}
+
+.shell-wtile:disabled { cursor: default; }
+
+.shell-wtile__plus { width: 13px; height: 13px; }
+
+.shell-strip__spacer { flex: 1 1 auto; }
+
+.shell-ic {
+  position: relative;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-item);
+  color: var(--faint);
+  background: transparent;
+  cursor: pointer;
+}
+
+.shell-ic:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
+.shell-ic--on { color: var(--ink); background: var(--selected); }
+.shell-ic:disabled { opacity: .45; cursor: default; }
+.shell-ic__glyph { width: 15px; height: 15px; }
+
+.shell-ic__count {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: grid;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--paper);
+  background: var(--accent);
+  font: 700 9px/1 var(--font-ui);
+}
+
+.shell-strip__account { position: relative; flex: none; }
+
+.shell-av {
+  display: grid;
+  overflow: hidden;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: var(--paper);
+  background: var(--accent);
+  font: 700 10px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.shell-av__photo { width: 100%; height: 100%; object-fit: cover; }
+
+/* The org and account popovers reuse the shell's menu skin; only the anchor
+   changes, because the strip is 48px wide and they open beside it. */
+.shell-strip__menu {
+  top: 0;
+  right: auto;
+  left: calc(100% + 6px);
+  width: 220px;
+}
+
+.shell-strip__menu--account { top: auto; bottom: 0; }
+
+/* --------------------------------------------------------------- column 2 */
+.shell-rail {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--rule);
+  background: var(--paper);
+  user-select: none;
+}
+
+.shell-rhead {
+  display: flex;
+  height: 46px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 13px;
+}
+
+.shell-rhead b {
+  overflow: hidden;
+  flex: 1;
+  color: var(--ink);
+  font: 600 13.5px/1.5 var(--font-ui);
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-rhead__sub {
+  flex: none;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.shell-ib {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--faint);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.shell-ib:hover { color: var(--ink); background: var(--hover); }
+.shell-ib__glyph { width: 14px; height: 14px; }
+
+/* New session is an action, not a session: it holds its place while the list
+   scrolls under it. */
+.shell-newbar {
+  position: relative;
+  flex: none;
+  margin-bottom: 3px;
+  padding: 0 8px 5px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.shell-new {
+  display: flex;
+  width: 100%;
+  height: 31px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--r-item);
+  color: var(--muted);
+  background: transparent;
+  font: 13px/1.5 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell-new:hover { color: var(--ink); background: var(--hover); }
+.shell-new__plus { width: 12px; height: 12px; color: var(--accent); }
+
+.shell-newmenu {
+  top: 34px;
+  right: 8px;
+  left: 8px;
+}
+
+.shell-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+  scrollbar-color: var(--rule) transparent;
+  scrollbar-width: thin;
+}
+
+/* The row: gutter · title · time. Never more. */
+.shell-s {
+  display: flex;
+  width: 100%;
+  height: 31px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--r-item);
+  color: var(--soft-ink);
+  background: transparent;
+  font: 13px/1.5 var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.shell-s:hover { background: var(--hover); }
+.shell-s--on { color: var(--ink); background: var(--selected); }
+.shell-s--on .shell-s__t { font-weight: 600; }
+
+.shell-g {
+  display: grid;
+  width: 17px;
+  flex: none;
+  place-items: center;
+}
+
+.shell-g__glyph {
+  width: 12px;
+  height: 12px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.shell-s__t {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The time is the status, and green means running. Empty until Build 2. */
+.shell-s__a {
+  flex: none;
+  color: var(--faint);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shell-s__a--live { color: var(--live); font-weight: 600; }
+
+/* ------------------------------------------------------------- responsive */
+@media (max-width: 899px) {
+  .shell-nav {
+    position: fixed;
+    z-index: 400;
+    top: var(--mobile-viewport-top, 0);
+    left: 0;
+    display: flex;
+    width: min(88vw, 348px);
+    height: var(--mobile-viewport-height, 100dvh);
+    background: var(--paper);
+    transform: translateX(-102%);
+    transition: transform 140ms ease;
+  }
+
+  .shell-nav--open { transform: translateX(0); }
+
+  .shell-strip,
+  .shell-rail {
+    height: 100%;
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .shell-rail { flex: 1 1 auto; }
+
+  .shell-strip__close {
+    display: grid;
+    width: 32px;
+    min-height: 32px;
+    place-items: center;
+    border: 0;
+    color: var(--faint);
+    background: transparent;
+    font-size: 17px;
+    cursor: pointer;
+  }
+
+  .shell-wtile,
+  .shell-ic { min-height: 36px; }
+
+  .shell-new,
+  .shell-s { min-height: 40px; }
+
+  .shell-nav-scrim {
+    position: fixed;
+    z-index: 380;
+    inset: 0;
+    display: none;
+    border: 0;
+    background: color-mix(in oklab, var(--paper) 68%, transparent);
+  }
+
+  .shell-nav-scrim--open { display: block; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell-nav { transition: none; }
+}

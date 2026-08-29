@@ -6,134 +6,11 @@
   display: grid;
   width: 100%;
   height: 100%;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
   grid-template-rows: 64px minmax(0, 1fr);
   background: var(--paper);
   color: var(--ink);
 }
-
-/* ------------------------------------------------------------------- rail */
-/* The rail is Brandon's cockpit rail dropped into the drive grid; the Drive
- * block (New pill + locations) keeps its own look. */
-.drive-rail.webapp-rail {
-  grid-column: 1;
-  grid-row: 1 / 3;
-  min-height: 0;
-}
-
-.drive-rail.webapp-rail > .webapp-tree {
-  min-height: 0;
-  flex: 1;
-  overflow-y: auto;
-}
-
-.drive-rail-section .webapp-workspace-add {
-  width: 36px;
-  height: 36px;
-  margin: 0 0 0 auto;
-  border-radius: var(--r-control);
-}
-
-.drive-rail-section .webapp-workspace-add svg {
-  width: 17px;
-  height: 17px;
-}
-
-.drive-rail {
-  z-index: 10;
-  display: flex;
-  grid-column: 1;
-  grid-row: 1 / 3;
-  min-width: 0;
-  min-height: 0;
-  flex-direction: column;
-  padding: 0 8px 8px;
-  border-right: 1px solid var(--rule);
-  background: var(--paper);
-  user-select: none;
-}
-
-.drive-rail-nav {
-  display: grid;
-  flex: none;
-  gap: 2px;
-  padding-bottom: 10px;
-}
-
-.drive-rail-row {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  height: 36px;
-  align-items: center;
-  gap: 12px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: var(--r-control);
-  color: var(--ink);
-  background: transparent;
-  font: inherit;
-  font-size: 13.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.drive-rail-row svg { width: 17px; height: 17px; flex: none; color: var(--faint); }
-.drive-rail-row:hover { color: var(--ink); background: var(--hover); }
-.drive-rail-row:hover svg { color: var(--muted); }
-
-.drive-rail-row--active {
-  color: var(--ink);
-  background: var(--hover);
-  font-weight: 600;
-}
-
-.drive-rail-row--active svg { color: var(--accent); }
-
-.drive-rail-row span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drive-rail-nav--top { margin-top: 6px; }
-
-.drive-rail-divider {
-  height: 1px;
-  margin: 8px 12px 6px;
-  flex: none;
-  background: color-mix(in oklab, var(--ink) 12%, transparent);
-}
-
-.drive-rail-section {
-  display: flex;
-  min-height: 44px;
-  align-items: center;
-  padding: 4px 8px 4px 12px;
-  color: var(--ink);
-  font: 500 13.5px/1 var(--font-ui);
-  letter-spacing: normal;
-  text-transform: none;
-}
-
-.drive-rail-section button {
-  display: grid;
-  margin-left: auto;
-  place-items: center;
-  border: 1px solid transparent;
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.drive-rail-section button:hover,
-.drive-rail-section button:focus-visible {
-  border-color: var(--rule);
-  color: var(--ink);
-  outline: 0;
-}
-.drive-rail-section button svg { width: 17px; height: 17px; }
 
 /* ----------------------------------------------------------------- topbar */
 .drive-topbar {
@@ -196,42 +73,11 @@
 }
 
 /* ------------------------------------------------------------- responsive */
-.drive-rail-close,
-.drive-rail-scrim,
 .drive-topbar-menu { display: none; }
 
 @media (max-width: 899px) {
   .drive-shell { grid-template-columns: minmax(0, 1fr); }
   .drive-topbar, .drive-content, .drive-ws-frame { grid-column: 1; }
-
-  .drive-rail {
-    position: fixed;
-    z-index: 400;
-    top: 0;
-    left: 0;
-    width: min(86vw, 300px);
-    height: 100dvh;
-    transform: translateX(-102%);
-    transition: transform 140ms ease;
-  }
-
-  .drive-rail--open { transform: translateX(0); }
-
-  .drive-rail.webapp-rail > .webapp-tree {
-    flex: 0 1 auto;
-    padding-top: 4px;
-  }
-
-  .drive-rail-scrim {
-    position: fixed;
-    z-index: 380;
-    inset: 0;
-    display: none;
-    border: 0;
-    background: color-mix(in oklab, var(--paper) 68%, transparent);
-  }
-
-  .drive-rail-scrim--open { display: block; }
   .drive-topbar-menu { display: grid; }
   .drive-topbar { gap: 8px; padding: 0 14px; }
   .drive-page { padding: 4px 14px 40px; }
@@ -270,13 +116,13 @@
 .drive-shell--workspace {
   /* `auto` and not a literal 44px: the strip only exists once a workspace is
    * open, and an empty reserved column would show as a gap. */
-  grid-template-columns: 264px minmax(0, 1fr) auto;
+  grid-template-columns: 48px 252px minmax(0, 1fr) auto;
 }
 
-.drive-shell--workspace > .drive-ws-frame { grid-column: 2; }
+.drive-shell--workspace > .drive-ws-frame { grid-column: 3; }
 
 .drive-shell--workspace > .webapp-rail-strip {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1 / 3;
   height: 100%;
   min-height: 0;

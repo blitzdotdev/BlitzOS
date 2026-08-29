@@ -14,6 +14,9 @@
   --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
   --sunken: color-mix(in oklab, var(--ink) 5%, var(--paper));
   --selected: color-mix(in oklab, var(--accent) 20%, var(--paper));
+  /* Live green (plans/mockups/session-rail.html). The session rail's clock
+   * turns this colour when a session is running. */
+  --live: #7fd39b;
 
   /* Drive shape scale (plans/mockups/folders-v1-library.html). */
   --r-card: 12px;
@@ -84,6 +87,7 @@
     --ansi-bright-white: #1c1f26;
     --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
     --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
+    --live: #3f8156;
     --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
     color-scheme: light;
   }
@@ -95,6 +99,7 @@
   --accent: #7e95d7;
   --hover: color-mix(in oklab, var(--ink) 7%, var(--paper));
   --selected: color-mix(in oklab, var(--accent) 20%, var(--paper));
+  --live: #7fd39b;
   --lift: 0 10px 30px color-mix(in oklab, #000 34%, transparent);
   --terminal-selection: color-mix(in oklab, var(--accent) 25%, transparent);
   /* Forced dark on a light system: restore the dark ANSI ramp the
@@ -143,6 +148,7 @@
   --ansi-bright-white: #1c1f26;
   --hover: color-mix(in oklab, var(--ink) 6%, var(--paper));
   --selected: color-mix(in oklab, var(--accent) 16%, var(--paper));
+  --live: #3f8156;
   --lift: 0 10px 30px color-mix(in oklab, #000 16%, transparent);
   color-scheme: light;
 }

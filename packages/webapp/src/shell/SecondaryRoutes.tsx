@@ -5,7 +5,6 @@ import type { CreateWorkspaceDialogInput } from '../CreateWorkspaceDialog';
 import { CreateRecipeScreen } from '../files/CreateRecipeScreen';
 import { CreateTemplateScreen } from '../files/CreateTemplateScreen';
 import { DriveHome } from '../files/DriveHome';
-import type { DriveRailNav } from '../files/DriveRail';
 import { RecipesHome } from '../files/RecipesHome';
 import { TemplatesHome } from '../files/TemplatesHome';
 import { SettingsHeader, SettingsPage } from '../SettingsPage';
@@ -56,8 +55,8 @@ export type SecondaryRoutesProps = {
   client: ControlPlaneClient;
   viewer: TenantMe | null;
   loaded: boolean;
-  /** The shared rail, parameterized by which nav row is current. */
-  rail: (nav: DriveRailNav | null) => ReactNode;
+  /** The shell's own navigation columns, drawn on every page. */
+  rail: ReactNode;
   dialogs: ReactNode;
   updateNotice: ReactNode;
   error: string | null;
@@ -155,7 +154,7 @@ export function SecondaryRoutes({
   if (route.page === 'drive' || route.page === 'folder') {
     return (
       <main className="drive-shell" aria-busy={!loaded}>
-        {rail('drive')}
+        {rail}
         {loaded && viewer ? (
           <DriveHome
             client={client}
@@ -175,7 +174,7 @@ export function SecondaryRoutes({
   if (route.page === 'templates') {
     return (
       <main className="drive-shell" aria-busy={!loaded}>
-        {rail('templates')}
+        {rail}
         {loaded && viewer ? (
           <TemplatesHome
             client={client}
@@ -199,7 +198,7 @@ export function SecondaryRoutes({
   if (route.page === 'recipes') {
     return (
       <main className="drive-shell" aria-busy={!loaded}>
-        {rail('recipes')}
+        {rail}
         {loaded && viewer ? (
           <RecipesHome
             client={client}
@@ -222,7 +221,7 @@ export function SecondaryRoutes({
     const leaveToRecipes = () => onNavigate(recipesPath());
     return (
       <main className="drive-shell" aria-busy={!loaded}>
-        {rail('recipes')}
+        {rail}
         {loaded && viewer ? (
           <CreateRecipeScreen
             client={client}
@@ -240,7 +239,7 @@ export function SecondaryRoutes({
   const leaveToTemplates = () => onNavigate(templatesPath());
   return (
     <main className="drive-shell" aria-busy={!loaded}>
-      {rail('templates')}
+      {rail}
       {loaded && viewer ? (
         <CreateTemplateScreen
           client={client}

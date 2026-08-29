@@ -1,7 +1,7 @@
 import { act } from 'react';
 import type { ControlPlaneClient } from '../src/api.js';
 import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
-import { DriveRail } from '../src/files/DriveRail.js';
+import { WorkspaceSessionRail } from '../src/shell/WorkspaceSessionRail.js';
 import type { CloudWorkspaceModel } from '../src/workspace-store.js';
 import { describe, expect, it, vi } from 'vitest';
 import { render, settle } from './dom.js';
@@ -111,33 +111,18 @@ describe('WorkspaceDetailsDialog', () => {
     const onShare = vi.fn();
     const onDetails = vi.fn();
     const view = await render(
-      <DriveRail
-        workspaces={[workspace]}
-        activeWorkspaceId={workspace.id}
-        nav={null}
-        identity={null}
-        org={{ id: 'org-one', slug: 'acme', name: 'Acme', vmLimit: 10 }}
-        organizations={[]}
+      <WorkspaceSessionRail
+        workspace={workspace}
         sessions={[]}
         activeSessionId=""
         onSelectSession={() => undefined}
-        onOpenDrive={() => undefined}
-        onOpenTemplates={() => undefined}
-        onOpenRecipes={() => undefined}
-        onSelectWorkspace={() => undefined}
-        onCreateWorkspace={() => undefined}
-        onSwitchOrg={() => undefined}
-        onCreateOrg={() => undefined}
-        onOpenSettings={() => undefined}
-        onOpenWorkspaceShare={onShare}
-        onOpenWorkspaceDetails={onDetails}
-        drawerOpen={false}
-        onCloseDrawer={() => undefined}
+        onSpawnSession={() => undefined}
+        onOpenShare={onShare}
+        onOpenDetails={onDetails}
       />,
     );
 
     expect(view.container.querySelector('button[aria-label="Delete Details test"]')).toBeNull();
-    expect(view.container.textContent).toContain('cx23@fsn1');
     const share = view.container.querySelector<HTMLButtonElement>('button[aria-label="Share Details test"]');
     const details = view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Workspace details for Details test"]',
@@ -149,29 +134,17 @@ describe('WorkspaceDetailsDialog', () => {
     expect(onShare).toHaveBeenCalledWith(workspace.id);
     expect(onDetails).toHaveBeenCalledWith(workspace.id);
 
+    // An editor on a shared workspace still opens details; only an owner or an
+    // admin can hand the workspace to somebody else.
     await act(async () => view.root.render(
-      <DriveRail
-        workspaces={[{ ...workspace, accessRole: 'editor', shared: true }]}
-        activeWorkspaceId={workspace.id}
-        nav={null}
-        identity={null}
-        org={{ id: 'org-one', slug: 'acme', name: 'Acme', vmLimit: 10 }}
-        organizations={[]}
+      <WorkspaceSessionRail
+        workspace={{ ...workspace, accessRole: 'editor', shared: true }}
         sessions={[]}
         activeSessionId=""
         onSelectSession={() => undefined}
-        onOpenDrive={() => undefined}
-        onOpenTemplates={() => undefined}
-        onOpenRecipes={() => undefined}
-        onSelectWorkspace={() => undefined}
-        onCreateWorkspace={() => undefined}
-        onSwitchOrg={() => undefined}
-        onCreateOrg={() => undefined}
-        onOpenSettings={() => undefined}
-        onOpenWorkspaceShare={onShare}
-        onOpenWorkspaceDetails={onDetails}
-        drawerOpen={false}
-        onCloseDrawer={() => undefined}
+        onSpawnSession={() => undefined}
+        onOpenShare={onShare}
+        onOpenDetails={onDetails}
       />,
     ));
     expect(view.container.querySelector('button[aria-label="Share Details test"]')).toBeNull();

@@ -22,7 +22,7 @@ import {
   type SpawnSessionType,
 } from './WebAppHeader';
 import { FileIcon } from './WebAppIcons';
-import type { DriveRailNav, DriveRailSession } from './files/DriveRail';
+import type { DriveRailSession } from './shell/rail-sessions';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
@@ -38,19 +38,17 @@ import {
 } from './mobile-webapp';
 import { PasteCodeModal } from './shell/PasteCodeModal';
 import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
-import { ShellRail } from './shell/ShellRail';
+import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { WorkPanes } from './shell/WorkPanes';
 import {
   drivePath,
   folderPagePath,
   parseAppRoute,
-  recipesPath,
   settingsPath,
   workspacePath,
   type SettingsSection,
   templateNewPath,
-  templatesPath,
 } from './sessions-page-state';
 import {
   clampDrawerWidth,
@@ -787,6 +785,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     });
   }, [activeWorkspaceId, setWorkspaceTabs]);
 
+  /** The strip's surface icons focus a panel. They open, they never close:
+   * the right icon strip owns the toggle. */
+  const openWorkspacePanel = useCallback((panel: WorkspaceDrawerSegment) => {
+    if (!activeWorkspaceId) return;
+    updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
+    if (mobileWebApp) {
+      setDrawerOpen(false);
+      setFilesDrawerOpen(true);
+      return;
+    }
+    setFocusedRegion('side');
+  }, [activeWorkspaceId, mobileWebApp, updateWorkspaceTabs]);
+
   const toggleFiles = useCallback(() => {
     if (!activeWorkspaceId) return;
     if (mobileWebApp) {
@@ -1365,28 +1376,31 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     </div>
   );
 
-  const railFor = (nav: DriveRailNav | null, railActiveWorkspaceId: string | null) => (
-    <ShellRail
+  const shellNav = (railActiveWorkspaceId: string | null) => (
+    <ShellNav
       workspaces={store.workspaces}
       viewer={store.viewer}
       activeWorkspaceId={railActiveWorkspaceId}
-      nav={nav}
+      activeWorkspace={activeWorkspace}
+      showRail={railActiveWorkspaceId !== null || (mobileWebApp && activeWorkspace !== undefined)}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
         ? railSessions
         : []}
       activeSessionId={railActiveSessionId ?? ''}
+      openPanels={openPanels}
+      pendingRequestCount={activePendingRequests.length}
       drawerOpen={drawerOpen}
-      onSelectSession={selectTtydSession}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onOpenDrive={() => navigateTo(drivePath())}
-      onOpenTemplates={() => navigateTo(templatesPath())}
-      onOpenRecipes={() => navigateTo(recipesPath())}
+      onOpenPanel={openWorkspacePanel}
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());
       }}
       onCreateOrg={() => setShowCreateOrg(true)}
+      onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
+      onSelectSession={selectTtydSession}
+      onSpawnSession={spawnTtydSession}
       onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
       onOpenWorkspaceDetails={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
@@ -1458,7 +1472,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         client={client}
         viewer={store.viewer}
         loaded={loaded}
-        rail={(nav) => railFor(nav, null)}
+        rail={shellNav(null)}
         dialogs={railOverlays}
         updateNotice={updateNotice}
         error={error}
@@ -1530,7 +1544,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           {dropBusy ? 'Uploading…' : 'Drop to upload into this workspace'}
         </div>
       )}
-      {railFor(null, activeWorkspaceId)}
+      {shellNav(activeWorkspaceId)}
       {railOverlays}
 
       <div className="drive-ws-frame">
