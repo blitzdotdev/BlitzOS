@@ -1,4 +1,4 @@
-import type { ListMachineTypesResponse, Volume, WorkspaceTemplateView } from '@blitzos/schema';
+import type { ListMachineTypesResponse, Volume } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
@@ -7,8 +7,10 @@ import {
   CreateWorkspaceDialog,
   type CreateWorkspaceDialogInput,
 } from '../CreateWorkspaceDialog';
-import { ShareWorkspaceDialog } from '../ShareWorkspaceDialog';
-import { WorkspaceDetailsDialog } from '../WorkspaceDetailsDialog';
+import {
+  WorkspaceDetailsDialog,
+  type WorkspaceDetailsTab,
+} from '../WorkspaceDetailsDialog';
 import type { CloudWorkspaceModel } from '../workspace-store';
 
 /** The workspace this dialog stack is about to delete, and the name the
@@ -28,17 +30,17 @@ export type ShellDialogsProps = {
   showCreateWorkspace: boolean;
   createWorkspaceBusy: boolean;
   createWorkspaceError: string | null;
-  orgDefaultTemplateId: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
-  listTemplates: () => Promise<WorkspaceTemplateView[]>;
-  onNewTemplate: () => void;
+  /** The workspace a "new workspace from existing" copies, or null. */
+  cloneFromWorkspaceId: string | null;
   onCancelCreateWorkspace: () => void;
   onCreateWorkspace: (input: CreateWorkspaceDialogInput) => void;
-  shareWorkspaceId: string | null;
-  onCloseShare: () => void;
-  detailsWorkspaceId: string | null;
+  /** Which workspace the details dialog is about, and which tab it opens on.
+   * The rail's people icon opens Members; the ⋯ icon opens the default. */
+  details: { workspaceId: string; tab: WorkspaceDetailsTab } | null;
   onCloseDetails: () => void;
+  onCloneWorkspace: (workspaceId: string) => void;
   onRequestDeleteWorkspace: (workspaceId: string) => void;
   confirmation: WebAppConfirmation | null;
   onCancelConfirmation: () => void;
@@ -57,30 +59,29 @@ export function ShellDialogs({
   showCreateWorkspace,
   createWorkspaceBusy,
   createWorkspaceError,
-  orgDefaultTemplateId,
   listMachineTypes,
   listVolumes,
-  listTemplates,
-  onNewTemplate,
+  cloneFromWorkspaceId,
   onCancelCreateWorkspace,
   onCreateWorkspace,
-  shareWorkspaceId,
-  onCloseShare,
-  detailsWorkspaceId,
+  details,
   onCloseDetails,
+  onCloneWorkspace,
   onRequestDeleteWorkspace,
   confirmation,
   onCancelConfirmation,
   onConfirmDelete,
 }: ShellDialogsProps) {
-  const shareWorkspace = shareWorkspaceId === null
+  const cloneSource = cloneFromWorkspaceId === null
     ? undefined
-    : workspaces.find(({ id }) => id === shareWorkspaceId);
-  const detailsWorkspace = detailsWorkspaceId === null
+    : workspaces.find(({ id }) => id === cloneFromWorkspaceId);
+  const detailsWorkspace = details === null
     ? undefined
-    : workspaces.find(({ id }) => id === detailsWorkspaceId);
-  const canManageDetails = detailsWorkspace?.accessRole === 'owner'
-    || detailsWorkspace?.accessRole === 'admin';
+    : workspaces.find(({ id }) => id === details.workspaceId);
+  // Workspace admin, or an org admin reaching in implicitly (§3): the wire
+  // reports the second as a null stored role on a workspace they can open.
+  const canManageDetails = detailsWorkspace?.myRole === 'admin'
+    || detailsWorkspace?.myRole === null;
   return (
     <>
       {showCreateOrg && (
@@ -97,40 +98,21 @@ export function ShellDialogs({
           client={client}
           listMachineTypes={listMachineTypes}
           listVolumes={listVolumes}
-          listTemplates={listTemplates}
-          initialTemplateId={orgDefaultTemplateId}
-          // The template page draws this dialog too, since #40. Close it on the
-          // way out, or it covers the page it just opened.
-          onNewTemplate={onNewTemplate}
+          cloneFromWorkspaceId={cloneFromWorkspaceId}
+          cloneFromWorkspaceName={cloneSource?.title ?? null}
+          viewerName={viewer?.identity.name || viewer?.identity.email || 'You'}
           onCancel={onCancelCreateWorkspace}
           onSubmit={onCreateWorkspace}
         />
       )}
-      {shareWorkspace && (
-        <ShareWorkspaceDialog
-          client={client}
-          workspaceId={shareWorkspace.id}
-          workspaceName={shareWorkspace.title}
-          orgName={viewer?.org.name ?? 'your org'}
-          orgShareRole={shareWorkspace.orgShareRole}
-          owner={shareWorkspace.owner ?? (shareWorkspace.accessRole === 'owner' && viewer
-            ? {
-                name: viewer.identity.name || viewer.identity.email,
-                avatarUrl: viewer.identity.avatarUrl ?? null,
-              }
-            : null)}
-          viewerIsOwner={shareWorkspace.accessRole === 'owner'}
-          onClose={onCloseShare}
-        />
-      )}
-      {detailsWorkspace?.canControl && (
+      {detailsWorkspace?.canControl && details !== null && (
         <WorkspaceDetailsDialog
           client={client}
           workspace={detailsWorkspace}
-          orgName={viewer?.org.name ?? 'your org'}
           listMachineTypes={listMachineTypes}
-          listVolumes={listVolumes}
+          initialTab={details.tab}
           onClose={onCloseDetails}
+          onClone={() => onCloneWorkspace(detailsWorkspace.id)}
           onDelete={canManageDetails
             ? () => onRequestDeleteWorkspace(detailsWorkspace.id)
             : null}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceView } from "@blitzos/schema";
 import { endpointTarget, standaloneResolver, validPort } from "../src/resolver.js";
 import { terminalWebSocketUrl } from "../src/CloudApp.js";
-import { workspaceViewFixture } from "./workspace-view.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 const workspace: WorkspaceView = workspaceViewFixture({ id: "one", name: "brave-otter" });
 

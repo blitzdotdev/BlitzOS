@@ -3,9 +3,6 @@ import {
   drivePath,
   folderPagePath,
   parseAppRoute,
-  recipeEditPath,
-  recipeNewPath,
-  recipesPath,
   settingsPath,
 } from '../src/sessions-page-state.js';
 
@@ -53,17 +50,20 @@ describe('settings routes', () => {
     expect(settingsPath('usage')).toBe('/settings/usage');
   });
 
-  it('routes the recipes pages with new winning over the id match', () => {
-    expect(parseAppRoute('/recipes')).toEqual({ workspaceId: null, page: 'recipes' });
-    expect(parseAppRoute('/recipes/new')).toEqual({ workspaceId: null, page: 'recipe-new' });
-    expect(parseAppRoute('/recipes/r-1/edit')).toEqual({
-      workspaceId: null,
-      page: 'recipe-edit',
-      recipeId: 'r-1',
-    });
-    expect(recipesPath()).toBe('/recipes');
-    expect(recipeNewPath()).toBe('/recipes/new');
-    expect(recipeEditPath('r 1')).toBe('/recipes/r%201/edit');
+  it('sends the disabled template and recipe addresses to Drive', () => {
+    // Both surfaces are off product-wide (2026-08-29) and their control-plane
+    // routes are unmounted, so an old bookmark lands on Drive rather than on a
+    // page whose every request 404s.
+    for (const address of [
+      '/templates',
+      '/templates/new',
+      '/templates/t-1/edit',
+      '/recipes',
+      '/recipes/new',
+      '/recipes/r-1/edit',
+    ]) {
+      expect(parseAppRoute(address), address).toEqual({ workspaceId: null, page: 'drive' });
+    }
   });
 
   it('routes the drive home and folder pages, retiring the old shared address', () => {

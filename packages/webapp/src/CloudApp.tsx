@@ -38,6 +38,7 @@ import {
 } from './mobile-webapp';
 import { PasteCodeModal } from './shell/PasteCodeModal';
 import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
+import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { WorkPanes } from './shell/WorkPanes';
@@ -48,7 +49,6 @@ import {
   settingsPath,
   workspacePath,
   type SettingsSection,
-  templateNewPath,
 } from './sessions-page-state';
 import {
   clampDrawerWidth,
@@ -183,8 +183,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
-  const [shareWorkspaceId, setShareWorkspaceId] = useState<string | null>(null);
-  const [detailsWorkspaceId, setDetailsWorkspaceId] = useState<string | null>(null);
+  /** The workspace a "new workspace from existing" is copying, or null for a
+   * blank create. Cleared with the dialog. */
+  const [cloneFromWorkspaceId, setCloneFromWorkspaceId] = useState<string | null>(null);
+  const [details, setDetails] = useState<
+    { workspaceId: string; tab: WorkspaceDetailsTab } | null
+  >(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -300,18 +304,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
   const listVolumes = useCallback(() => api.listVolumes(), [api]);
-  // Every template load also refreshes which template is the org default, so
-  // the create dialog can preselect it (its own load runs through here).
-  const [orgDefaultTemplateId, setOrgDefaultTemplateId] = useState<string | null>(null);
-  const listTemplates = useCallback(
-    () => client.listWorkspaceTemplates().then(({ templates }) => {
-      setOrgDefaultTemplateId(
-        templates.find(({ isOrgDefault }) => isOrgDefault)?.id ?? null,
-      );
-      return templates;
-    }),
-    [client],
-  );
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
       const records = await api.listWorkspaces();
@@ -764,12 +756,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     (input: CreateWorkspaceDialogInput) => adoptCreatedWorkspace(() => api.createWorkspace(input)),
     [adoptCreatedWorkspace, api],
   );
-  // The launch failure (for example the vm-limit 409) surfaces through the
-  // same notice the create dialog uses, with the control plane's message.
-  const launchRecipe = useCallback(
-    (recipeId: string) => adoptCreatedWorkspace(() => api.launchRecipe(recipeId)),
-    [adoptCreatedWorkspace, api],
-  );
+  // A recipe launch has no caller while the recipes surface is disabled; the
+  // adapter keeps `launchRecipe`, so restoring the surface restores the flow.
 
   const setSidePaneWidth = useCallback((width: number) => {
     setWorkspaceFiles((current) => current.workspaceId === activeWorkspaceId
@@ -861,7 +849,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (!confirmation) return;
     const request = confirmation;
     setConfirmation(null);
-    setDetailsWorkspaceId((current) => current === request.workspaceId ? null : current);
+    setDetails((current) => current?.workspaceId === request.workspaceId ? null : current);
     deleteWorkspace(request.workspaceId);
   }, [confirmation, deleteWorkspace]);
 
@@ -1401,10 +1389,13 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onSpawnSession={spawnTtydSession}
-      onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
+      onOpenWorkspaceMembers={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetails({ workspaceId, tab: 'members' });
+      }}
       onOpenWorkspaceDetails={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
-        setDetailsWorkspaceId(workspaceId);
+        setDetails({ workspaceId, tab: 'members' });
       }}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
@@ -1425,22 +1416,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       showCreateWorkspace={showCreateWorkspace}
       createWorkspaceBusy={createWorkspaceBusy}
       createWorkspaceError={createWorkspaceError}
-      orgDefaultTemplateId={orgDefaultTemplateId}
       listMachineTypes={listMachineTypes}
       listVolumes={listVolumes}
-      listTemplates={listTemplates}
-      onNewTemplate={() => {
-        setShowCreateWorkspace(false);
-        navigateTo(templateNewPath());
-      }}
+      cloneFromWorkspaceId={cloneFromWorkspaceId}
       onCancelCreateWorkspace={() => {
-        if (!createWorkspaceBusy) setShowCreateWorkspace(false);
+        if (createWorkspaceBusy) return;
+        setShowCreateWorkspace(false);
+        setCloneFromWorkspaceId(null);
       }}
       onCreateWorkspace={(input) => { void createWorkspace(input); }}
-      shareWorkspaceId={shareWorkspaceId}
-      onCloseShare={() => setShareWorkspaceId(null)}
-      detailsWorkspaceId={detailsWorkspaceId}
-      onCloseDetails={() => setDetailsWorkspaceId(null)}
+      details={details}
+      onCloseDetails={() => setDetails(null)}
+      onCloneWorkspace={(workspaceId) => {
+        // "New workspace from existing" IS the template now (§0): the create
+        // dialog opens carrying the source, and the server copies its config.
+        setDetails(null);
+        setCloneFromWorkspaceId(workspaceId);
+        setShowCreateWorkspace(true);
+      }}
       onRequestDeleteWorkspace={requestDeleteWorkspace}
       confirmation={confirmation}
       onCancelConfirmation={cancelConfirmation}
@@ -1477,11 +1470,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         updateNotice={updateNotice}
         error={error}
         onDismissError={() => setError(null)}
-        createWorkspaceBusy={createWorkspaceBusy}
-        createWorkspaceError={createWorkspaceError}
-        onDismissCreateWorkspaceError={() => setCreateWorkspaceError(null)}
-        onCreateWorkspace={(input) => { void createWorkspace(input); }}
-        onLaunchRecipe={(recipeId) => { void launchRecipe(recipeId); }}
         onNavigate={navigateTo}
         onOpenRail={() => setDrawerOpen(true)}
         onNavigateToSettings={navigateToSettings}

@@ -1,6 +1,11 @@
 import type { TenantMe } from './api-adapter';
 import type { RetryAction } from '@blitzos/schema';
 import type {
+  WorkspaceCredentialView,
+  WorkspaceMemberRole,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
+import type {
   Agent,
   RestWorkspaceStatus,
   WorkspaceRecord,
@@ -26,6 +31,12 @@ export type CloudWorkspaceModel = {
   updatedAt: number;
   /** Stipulated connection names off the workspace ceiling. */
   connections: string[];
+  /** The member-machines view the details dialog administers (§1). */
+  members: WorkspaceMemberView[];
+  credentials: WorkspaceCredentialView[];
+  defaultMachineTypeId: string;
+  autoProvision: boolean;
+  myRole: WorkspaceMemberRole | null;
   agentDefault: Agent;
 };
 
@@ -75,6 +86,11 @@ function createWorkspaceModel(
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     connections: record.connections ?? [],
+    members: record.members,
+    credentials: record.credentials,
+    defaultMachineTypeId: record.defaultMachineTypeId,
+    autoProvision: record.autoProvision,
+    myRole: record.myRole,
     agentDefault: preference?.agentDefault ?? 'claude',
   };
 }
@@ -120,6 +136,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
           createdAt: record.createdAt,
           updatedAt: Math.max(existing.updatedAt, record.updatedAt),
           connections: record.connections ?? existing.connections,
+          members: record.members,
+          credentials: record.credentials,
+          defaultMachineTypeId: record.defaultMachineTypeId,
+          autoProvision: record.autoProvision,
+          myRole: record.myRole,
         };
       });
       const order = new Map(action.preferences.order.map((id, index) => [id, index]));
@@ -165,6 +186,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
             createdAt: record.createdAt,
             updatedAt: Math.max(workspace.updatedAt, record.updatedAt),
             connections: record.connections ?? workspace.connections,
+            members: record.members,
+            credentials: record.credentials,
+            defaultMachineTypeId: record.defaultMachineTypeId,
+            autoProvision: record.autoProvision,
+            myRole: record.myRole,
           }];
         }),
       };
@@ -178,6 +204,11 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         errorDetail: action.record.errorDetail ?? null,
         retryAction: action.record.retryAction,
         updatedAt: action.record.updatedAt,
+        // A machine act shows up here: the details dialog reads the rows this
+        // poll refreshes rather than tracking lifecycle of its own.
+        members: action.record.members,
+        credentials: action.record.credentials,
+        autoProvision: action.record.autoProvision,
       }));
     case 'workspace_resume_failed':
       return mapWorkspace(state, action.workspaceId, (workspace) => ({

@@ -1,6 +1,13 @@
 import type {
+  AddWorkspaceMemberRequest,
   ApiError,
   ListAgentRulesResponse,
+  ListWorkspaceCredentialsResponse,
+  MachineResponse,
+  PutWorkspaceCredentialRequest,
+  SetMachineTypeRequest,
+  UpdateWorkspaceMemberRequest,
+  WorkspaceMemberResponse,
   PutAgentRuleRequest,
   PutAgentRuleResponse,
   MintWorkspaceConnectionResponse,
@@ -122,21 +129,11 @@ export interface InviteView {
   org?: { id: string; name: string };
 }
 
-export interface WorkspaceGrantView {
-  id: string;
-  membershipId: string;
-  role: "editor" | "viewer";
-  createdAt: number;
-  member: { name: string; email: string; avatarUrl: string | null };
-}
-
 interface MemberListResponse { members: MemberView[] }
 interface MemberResponse { member: MemberView }
 interface InviteListResponse { invites: InviteView[]; ttlDays: number }
 interface CreatedInviteResponse { invite: InviteView; code: string; ttlDays: number }
 interface InviteStatusResponse { invite: InviteView; ttlDays: number }
-interface GrantListResponse { grants: WorkspaceGrantView[] }
-interface GrantResponse { grant: WorkspaceGrantView }
 
 export interface CreateOrgResponse {
   org: NonNullable<MeResponse["org"]>;
@@ -157,9 +154,36 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
   listInvites(): Promise<{ invites: InviteView[]; ttlDays: number }>;
   createInvite(input: { email?: string; role: "admin" | "member" }): Promise<{ invite: InviteView; code: string; ttlDays: number }>;
   revokeInvite(id: string): Promise<void>;
-  listWorkspaceGrants(workspaceId: string): Promise<{ grants: WorkspaceGrantView[] }>;
-  createWorkspaceGrant(workspaceId: string, membershipId: string, role: "editor" | "viewer"): Promise<{ grant: WorkspaceGrantView }>;
-  revokeWorkspaceGrant(workspaceId: string, grantId: string): Promise<void>;
+  /** Adds an active org member (plans/MEMBER-MACHINES.md §2.1). Where the
+   * workspace auto-provisions, the answer already carries their machine. */
+  addWorkspaceMember(
+    workspaceId: string,
+    input: AddWorkspaceMemberRequest,
+  ): Promise<WorkspaceMemberResponse>;
+  /** The role write and the machine act are one request: demoting to viewer
+   * destroys the machine, promoting a viewer provisions one. */
+  updateWorkspaceMember(
+    workspaceId: string,
+    membershipId: string,
+    input: UpdateWorkspaceMemberRequest,
+  ): Promise<WorkspaceMemberResponse>;
+  removeWorkspaceMember(workspaceId: string, membershipId: string): Promise<void>;
+  provisionMachine(machineId: string): Promise<MachineResponse>;
+  stopMachine(machineId: string): Promise<MachineResponse>;
+  startMachine(machineId: string): Promise<MachineResponse>;
+  recreateMachine(machineId: string): Promise<MachineResponse>;
+  /** Same-location only: the VM is replaced and the volume — the disk — stays.
+   * Another location is refused until the volume move lands (§5). */
+  setMachineType(machineId: string, input: SetMachineTypeRequest): Promise<MachineResponse>;
+  destroyMachine(machineId: string): Promise<MachineResponse>;
+  /** Names only; a workspace credential value never comes back out. */
+  listWorkspaceCredentials(workspaceId: string): Promise<ListWorkspaceCredentialsResponse>;
+  /** Add and rotate are the same write: one live row per (workspace, name). */
+  putWorkspaceCredential(
+    workspaceId: string,
+    input: PutWorkspaceCredentialRequest,
+  ): Promise<void>;
+  revokeWorkspaceCredential(workspaceId: string, name: string): Promise<void>;
   getGlobalWebAppState(): Promise<WebAppStateResponse<GlobalWebAppStateV1>>;
   putGlobalWebAppState(
     doc: GlobalWebAppStateV1,
@@ -257,6 +281,20 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     if (decode !== undefined) return decode(await response.text());
     // SAFETY: Legacy endpoint JSON is delegated to caller-selected T without validation. TODO(deslop-tier-c): decode each remaining endpoint response into its declared domain type.
     return (await response.json()) as T;
+  }
+
+  const jsonHeaders = { "Content-Type": "application/json" };
+
+  /** The four machine lifecycle verbs are one POST with no body and the same
+   * envelope back, so they share a call rather than four copies of it. */
+  function machineAction(
+    machineId: string,
+    action: "provision" | "stop" | "start" | "recreate",
+  ): Promise<MachineResponse> {
+    return request<MachineResponse>(
+      `/machines/${encodeURIComponent(machineId)}/${action}`,
+      { method: "POST" },
+    );
   }
 
   async function rawRequest(path: string, init: RequestInit = {}): Promise<Response> {
@@ -499,40 +537,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     return { invite: inviteView(object.invite ?? null, "invite status"), ttlDays: object.ttlDays };
   }
 
-  function grantView(value: JsonValue, label: string): WorkspaceGrantView {
-    const grant = asJsonObject(value);
-    const member = grant === null ? null : asJsonObject(grant.member);
-    if (
-      grant === null
-      || !isString(grant.id)
-      || !isString(grant.membershipId)
-      || (grant.role !== "editor" && grant.role !== "viewer")
-      || !isNumber(grant.createdAt)
-      || member === null
-      || !isString(member.name)
-      || !isString(member.email)
-      || !(member.avatarUrl === null || isString(member.avatarUrl))
-    ) throw new Error(`${label} returned an invalid grant`);
-    return {
-      id: grant.id,
-      membershipId: grant.membershipId,
-      role: grant.role,
-      createdAt: grant.createdAt,
-      member: { name: member.name, email: member.email, avatarUrl: member.avatarUrl },
-    };
-  }
-
-  function decodeGrants(json: string): GrantListResponse {
-    const object = parsedObject(json, "workspace grants");
-    if (!Array.isArray(object.grants)) throw new Error("workspace grants returned an invalid list");
-    return { grants: object.grants.map((grant) => grantView(grant, "workspace grants")) };
-  }
-
-  function decodeGrant(json: string): GrantResponse {
-    const object = parsedObject(json, "workspace grant");
-    return { grant: grantView(object.grant ?? null, "workspace grant") };
-  }
-
   function decodeCredentialEvents(json: string): ListCredentialEventsResponse {
     const object = parsedObject(json, "credential events");
     if (!Array.isArray(object.events)) throw new Error("credential events returned an invalid list");
@@ -590,19 +594,39 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
       body: JSON.stringify(input),
     }, decodeCreatedInvite),
     revokeInvite: (id) => request<void>(`/invites/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    listWorkspaceGrants: (workspaceId) => request<{ grants: WorkspaceGrantView[] }>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/grants`, {}, decodeGrants,
+    addWorkspaceMember: (workspaceId, input) => request<WorkspaceMemberResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/members`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
     ),
-    createWorkspaceGrant: (workspaceId, membershipId, role) => request<{ grant: WorkspaceGrantView }>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/grants`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ membershipId, role }),
-      }, decodeGrant,
+    updateWorkspaceMember: (workspaceId, membershipId, input) => request<WorkspaceMemberResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(membershipId)}`,
+      { method: "PATCH", headers: jsonHeaders, body: JSON.stringify(input) },
     ),
-    revokeWorkspaceGrant: (workspaceId, grantId) => request<void>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/grants/${encodeURIComponent(grantId)}`,
+    removeWorkspaceMember: (workspaceId, membershipId) => request<void>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+    ),
+    provisionMachine: (machineId) => machineAction(machineId, "provision"),
+    stopMachine: (machineId) => machineAction(machineId, "stop"),
+    startMachine: (machineId) => machineAction(machineId, "start"),
+    recreateMachine: (machineId) => machineAction(machineId, "recreate"),
+    setMachineType: (machineId, input) => request<MachineResponse>(
+      `/machines/${encodeURIComponent(machineId)}/machine-type`,
+      { method: "POST", headers: jsonHeaders, body: JSON.stringify(input) },
+    ),
+    destroyMachine: (machineId) => request<MachineResponse>(
+      `/machines/${encodeURIComponent(machineId)}`,
+      { method: "DELETE" },
+    ),
+    listWorkspaceCredentials: (workspaceId) => request<ListWorkspaceCredentialsResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+    ),
+    putWorkspaceCredential: (workspaceId, input) => request<void>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
+      { method: "PUT", headers: jsonHeaders, body: JSON.stringify(input) },
+    ),
+    revokeWorkspaceCredential: (workspaceId, name) => request<void>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/credentials/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     ),
     getGlobalWebAppState: () =>

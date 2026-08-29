@@ -29,7 +29,7 @@ export type ShellNavProps = {
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
-  onOpenWorkspaceShare: (workspaceId: string) => void;
+  onOpenWorkspaceMembers: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
   onCloseDrawer: () => void;
 };
@@ -57,7 +57,7 @@ export function ShellNav({
   onOpenSettings,
   onSelectSession,
   onSpawnSession,
-  onOpenWorkspaceShare,
+  onOpenWorkspaceMembers,
   onOpenWorkspaceDetails,
   onCloseDrawer,
 }: ShellNavProps) {
@@ -87,7 +87,7 @@ export function ShellNav({
             activeSessionId={activeSessionId}
             onSelectSession={onSelectSession}
             onSpawnSession={onSpawnSession}
-            onOpenShare={onOpenWorkspaceShare}
+            onOpenMembers={onOpenWorkspaceMembers}
             onOpenDetails={onOpenWorkspaceDetails}
           />
         )}

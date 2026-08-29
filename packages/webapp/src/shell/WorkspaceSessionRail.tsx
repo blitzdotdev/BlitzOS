@@ -24,7 +24,9 @@ export type WorkspaceSessionRailProps = {
   activeSessionId: string;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
-  onOpenShare: (workspaceId: string) => void;
+  /** Membership IS sharing now (plans/MEMBER-MACHINES.md §3), so this opens
+   * the details dialog on its Members tab. */
+  onOpenMembers: (workspaceId: string) => void;
   onOpenDetails: (workspaceId: string) => void;
 };
 
@@ -38,7 +40,7 @@ export function WorkspaceSessionRail({
   activeSessionId,
   onSelectSession,
   onSpawnSession,
-  onOpenShare,
+  onOpenMembers,
   onOpenDetails,
 }: WorkspaceSessionRailProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -72,9 +74,9 @@ export function WorkspaceSessionRail({
           <button
             className="shell-ib"
             type="button"
-            aria-label={`Share ${workspace.title}`}
-            title={`Share ${workspace.title}`}
-            onClick={() => onOpenShare(workspace.id)}
+            aria-label={`Members of ${workspace.title}`}
+            title={`Members of ${workspace.title}`}
+            onClick={() => onOpenMembers(workspace.id)}
           ><ShareGlyph className="shell-ib__glyph" /></button>
         )}
         {workspace.canControl && (

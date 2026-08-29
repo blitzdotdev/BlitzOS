@@ -99,6 +99,15 @@
   color: var(--ink);
 }
 
+/* A disabled option is shown, not hidden: a reader who cannot find their
+ * machine type assumes a bug, and one who reads the reason does not. */
+.webapp-select-option:disabled {
+  background: transparent;
+  color: var(--faint);
+  cursor: not-allowed;
+  opacity: .55;
+}
+
 .webapp-select-option-copy {
   display: grid;
   min-width: 0;

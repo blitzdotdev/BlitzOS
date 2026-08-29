@@ -11,7 +11,7 @@ import {
   type WorkspaceWebAppStateV1,
 } from "../src/storage.js";
 import { render, settle } from "./dom.js";
-import { workspaceViewFixture } from "./workspace-view.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
 const webAppHarness = vi.hoisted(() => ({
@@ -230,9 +230,18 @@ function client(): ControlPlaneClient {
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
     createInvite: vi.fn(async () => { throw new Error("unused"); }),
     revokeInvite: vi.fn(async () => undefined),
-    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
-    createWorkspaceGrant: vi.fn(async () => { throw new Error("unused"); }),
-    revokeWorkspaceGrant: vi.fn(async () => undefined),
+    addWorkspaceMember: vi.fn(async () => { throw new Error("unused"); }),
+    updateWorkspaceMember: vi.fn(async () => { throw new Error("unused"); }),
+    removeWorkspaceMember: vi.fn(async () => undefined),
+    provisionMachine: vi.fn(async () => { throw new Error("unused"); }),
+    stopMachine: vi.fn(async () => { throw new Error("unused"); }),
+    startMachine: vi.fn(async () => { throw new Error("unused"); }),
+    recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
+    setMachineType: vi.fn(async () => { throw new Error("unused"); }),
+    destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
+    listWorkspaceCredentials: vi.fn(async () => ({ credentials: [] })),
+    putWorkspaceCredential: vi.fn(async () => undefined),
+    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error("unused"); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -437,8 +446,12 @@ describe("webapp shell smoke", () => {
     );
     await act(async () => detailsButton?.click());
     await settle();
-    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.querySelector('[role="dialog"][aria-label^="Workspace details for"]')).not.toBeNull();
 
+    // Delete lives on the Settings tab now; the dialog opens on Members.
+    const settingsTab = [...view.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === "Settings");
+    await act(async () => settingsTab?.click());
     const deleteButton = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Delete workspace");
     await act(async () => deleteButton?.click());
@@ -448,7 +461,7 @@ describe("webapp shell smoke", () => {
       .find((button) => button.textContent === "No");
     await act(async () => cancelButton?.click());
     expect(view.container.textContent).not.toContain("Delete workspace?");
-    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.querySelector('[role="dialog"][aria-label^="Workspace details for"]')).not.toBeNull();
     expect(view.container.textContent).toContain("Delete workspace");
     expect(wire.destroy).not.toHaveBeenCalled();
 
@@ -495,38 +508,6 @@ describe("webapp shell smoke", () => {
 
     expect(createOrg).toHaveBeenCalledWith("Example");
     expect(view.container.querySelector('button[aria-label="workspace-running-name"]')).not.toBeNull();
-    await view.unmount();
-  });
-
-  it("closes the create-workspace dialog when it hands off to the template page", async () => {
-    window.history.replaceState({}, "", "/templates");
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Create workspace"]',
-    )?.click());
-    expect(view.container.querySelector('form[aria-label="Create workspace"]')).not.toBeNull();
-
-    const newTemplate = [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".template-grid > button",
-    )].find((tile) => tile.textContent?.includes("New template"))!;
-    await act(async () => newTemplate.click());
-    await settle();
-
-    // Every rail branch draws this dialog since #40, the template page too. It
-    // must leave, or it covers the page it just opened.
-    expect(window.location.pathname).toBe("/templates/new");
-    expect(view.container.querySelector('form[aria-label="Create workspace"]')).toBeNull();
-    expect(view.container.querySelector('form[aria-label="Create workspace template"]'))
-      .not.toBeNull();
-
     await view.unmount();
   });
 
@@ -1127,7 +1108,7 @@ describe("webapp shell smoke", () => {
     );
     await act(async () => detailsButton?.click());
     expect(navigationExpanded(view.container)).toBe("false");
-    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.querySelector('[role="dialog"][aria-label^="Workspace details for"]')).not.toBeNull();
 
     await view.unmount();
   });

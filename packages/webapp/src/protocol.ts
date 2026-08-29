@@ -34,6 +34,15 @@ export type WorkspaceRecord = {
   /** Connection names the workspace ceiling enables; the drawer's
    * connections panel draws a status row per name. */
   connections?: string[];
+  /** The member-machines view (plans/MEMBER-MACHINES.md §1). The workspace
+   * details dialog administers members, machines and credentials from these,
+   * so the poll keeps it current without a second fetch. */
+  members: WorkspaceMemberView[];
+  credentials: WorkspaceCredentialView[];
+  defaultMachineTypeId: string;
+  autoProvision: boolean;
+  /** Null where the viewer reaches this workspace only as an org admin. */
+  myRole: WorkspaceMemberRole | null;
 };
 
 export type IdentityRecord = {
@@ -55,4 +64,10 @@ export type OrgRecord = {
   name: string;
   vmLimit: number;
 };
-import type { RetryAction, WorkspaceRole } from '@blitzos/schema';
+import type {
+  RetryAction,
+  WorkspaceCredentialView,
+  WorkspaceMemberRole,
+  WorkspaceMemberView,
+  WorkspaceRole,
+} from '@blitzos/schema';

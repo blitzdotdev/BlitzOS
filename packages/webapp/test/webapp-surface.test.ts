@@ -4,7 +4,7 @@ import { connectionsFocusEndpointUrl } from "../src/connections-focus.js";
 import { previewFocusEndpointUrl } from "../src/preview.js";
 import { standaloneResolver } from "../src/resolver.js";
 import { terminalWebSocketUrl } from "../src/workspace-endpoints.js";
-import { workspaceViewFixture } from "./workspace-view.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 /** The control plane forwards only the paths in `isWebAppSurfacePath`, so a
  * URL this app builds that falls outside it is a feature that 403s in

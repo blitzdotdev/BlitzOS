@@ -5,6 +5,10 @@ export type CockpitSelectOption = {
   label: string;
   description?: string;
   group?: string;
+  /** Shown but not selectable. A machine type outside the volume's location
+   * is the case this exists for: hiding it would leave the reader guessing
+   * why their type is missing. */
+  disabled?: boolean;
 };
 
 type WebAppSelectMenuProps = {
@@ -80,6 +84,8 @@ export function WebAppSelectMenu({
                   className="webapp-select-option"
                   role="option"
                   aria-selected={option.value === value}
+                  aria-disabled={option.disabled}
+                  disabled={option.disabled}
                   onClick={() => {
                     onChange(option.value);
                     setOpen(false);

@@ -5,6 +5,7 @@ import type { TenantMe } from "../src/api-adapter.js";
 import type { CloudWorkspaceModel } from "../src/workspace-store.js";
 import type { WorkspaceDrawerSegment } from "../src/storage.js";
 import { render } from "./dom.js";
+import { workspaceModelFixture } from "./workspace-fixtures.js";
 
 const acme = { id: "org-one", slug: "acme", name: "Acme", vmLimit: 10 };
 const side = { id: "org-two", slug: "side", name: "Side", vmLimit: 10 };
@@ -24,27 +25,7 @@ const viewer: TenantMe = {
 };
 
 function workspace(overrides: Partial<CloudWorkspaceModel> = {}): CloudWorkspaceModel {
-  return {
-    id: "workspace-one",
-    ownerMembershipId: "member-owner",
-    canControl: true,
-    shared: false,
-    owner: { name: "Ada Owner", avatarUrl: null },
-    accessRole: "owner",
-    orgShareRole: null,
-    serverName: "design-team",
-    title: "design-team",
-    machineType: "cx23@fsn1",
-    volumeId: null,
-    lifecycleStatus: "running",
-    errorDetail: null,
-    retryAction: null,
-    createdAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_005_000,
-    connections: [],
-    agentDefault: "claude",
-    ...overrides,
-  };
+  return workspaceModelFixture(overrides);
 }
 
 function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
