@@ -132,25 +132,8 @@
   cursor: pointer;
 }
 
-.shell-ic:hover:not(:disabled) { color: var(--ink); background: var(--hover); }
-.shell-ic--on { color: var(--ink); background: var(--selected); }
-.shell-ic:disabled { opacity: .45; cursor: default; }
+.shell-ic:hover { color: var(--ink); background: var(--hover); }
 .shell-ic__glyph { width: 15px; height: 15px; }
-
-.shell-ic__count {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  display: grid;
-  min-width: 13px;
-  height: 13px;
-  padding: 0 3px;
-  place-items: center;
-  border-radius: 7px;
-  color: var(--paper);
-  background: var(--accent);
-  font: 700 9px/1 var(--font-ui);
-}
 
 .shell-strip__account { position: relative; flex: none; }
 

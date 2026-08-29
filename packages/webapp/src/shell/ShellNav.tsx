@@ -1,6 +1,5 @@
 import type { TenantMe } from '../api-adapter';
 import type { SpawnSessionType } from '../WebAppHeader';
-import type { WorkspaceDrawerSegment } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import type { DriveRailSession } from './rail-sessions';
 import { WorkspaceSessionRail } from './WorkspaceSessionRail';
@@ -17,12 +16,9 @@ export type ShellNavProps = {
   showRail: boolean;
   sessions: DriveRailSession[];
   activeSessionId: string;
-  openPanels: ReadonlySet<WorkspaceDrawerSegment>;
-  pendingRequestCount: number;
   drawerOpen: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onOpenPanel: (panel: WorkspaceDrawerSegment) => void;
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
   onOpenDrive: () => void;
@@ -45,12 +41,9 @@ export function ShellNav({
   showRail,
   sessions,
   activeSessionId,
-  openPanels,
-  pendingRequestCount,
   drawerOpen,
   onSelectWorkspace,
   onCreateWorkspace,
-  onOpenPanel,
   onSwitchOrg,
   onCreateOrg,
   onOpenDrive,
@@ -68,12 +61,8 @@ export function ShellNav({
           workspaces={workspaces}
           viewer={viewer}
           activeWorkspaceId={activeWorkspaceId}
-          openPanels={openPanels}
-          pendingRequestCount={pendingRequestCount}
-          surfacesEnabled={activeWorkspace !== undefined}
           onSelectWorkspace={onSelectWorkspace}
           onCreateWorkspace={onCreateWorkspace}
-          onOpenPanel={onOpenPanel}
           onSwitchOrg={onSwitchOrg}
           onCreateOrg={onCreateOrg}
           onOpenDrive={onOpenDrive}

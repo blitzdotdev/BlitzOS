@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { WorkspaceStrip, workspaceCode } from "../src/shell/WorkspaceStrip.js";
 import type { TenantMe } from "../src/api-adapter.js";
 import type { CloudWorkspaceModel } from "../src/workspace-store.js";
-import type { WorkspaceDrawerSegment } from "../src/storage.js";
 import { render } from "./dom.js";
 import { workspaceModelFixture } from "./workspace-fixtures.js";
 
@@ -34,12 +33,8 @@ function strip(overrides: Partial<Parameters<typeof WorkspaceStrip>[0]> = {}) {
       workspaces={[workspace()]}
       viewer={viewer}
       activeWorkspaceId="workspace-one"
-      openPanels={new Set<WorkspaceDrawerSegment>()}
-      pendingRequestCount={0}
-      surfacesEnabled
       onSelectWorkspace={() => undefined}
       onCreateWorkspace={() => undefined}
-      onOpenPanel={() => undefined}
       onSwitchOrg={() => undefined}
       onCreateOrg={() => undefined}
       onOpenDrive={() => undefined}
@@ -93,31 +88,15 @@ describe("workspace strip", () => {
     await view.unmount();
   });
 
-  it("focuses a workspace surface without closing it again", async () => {
-    const onOpenPanel = vi.fn();
-    const view = await render(strip({
-      onOpenPanel,
-      openPanels: new Set<WorkspaceDrawerSegment>(["files"]),
-      pendingRequestCount: 2,
-    }));
+  it("offers Drive alone where the panel toggles used to be", async () => {
+    const onOpenDrive = vi.fn();
+    const view = await render(strip({ onOpenDrive }));
     const surfaces = [...view.container.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Workspace surfaces"] button',
+      'nav[aria-label="Drive"] button',
     )];
-    expect(surfaces.map((button) => button.getAttribute("aria-label")))
-      .toEqual(["Files", "teenyapps", "Connections"]);
-    expect(surfaces[0]?.getAttribute("aria-pressed")).toBe("true");
-    expect(surfaces[2]?.textContent).toBe("2");
-    await act(async () => surfaces[1]?.click());
-    expect(onOpenPanel).toHaveBeenCalledWith("previews");
-    await view.unmount();
-  });
-
-  it("disables the surfaces when no workspace is open", async () => {
-    const view = await render(strip({ surfacesEnabled: false }));
-    const surfaces = [...view.container.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Workspace surfaces"] button',
-    )];
-    expect(surfaces.every((button) => button.disabled)).toBe(true);
+    expect(surfaces.map((button) => button.getAttribute("aria-label"))).toEqual(["Drive"]);
+    await act(async () => surfaces[0]?.click());
+    expect(onOpenDrive).toHaveBeenCalledOnce();
     await view.unmount();
   });
 

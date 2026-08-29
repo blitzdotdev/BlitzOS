@@ -773,19 +773,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     });
   }, [activeWorkspaceId, setWorkspaceTabs]);
 
-  /** The strip's surface icons focus a panel. They open, they never close:
-   * the right icon strip owns the toggle. */
-  const openWorkspacePanel = useCallback((panel: WorkspaceDrawerSegment) => {
-    if (!activeWorkspaceId) return;
-    updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
-    if (mobileWebApp) {
-      setDrawerOpen(false);
-      setFilesDrawerOpen(true);
-      return;
-    }
-    setFocusedRegion('side');
-  }, [activeWorkspaceId, mobileWebApp, updateWorkspaceTabs]);
-
   const toggleFiles = useCallback(() => {
     if (!activeWorkspaceId) return;
     if (mobileWebApp) {
@@ -1375,12 +1362,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         ? railSessions
         : []}
       activeSessionId={railActiveSessionId ?? ''}
-      openPanels={openPanels}
-      pendingRequestCount={activePendingRequests.length}
       drawerOpen={drawerOpen}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onOpenPanel={openWorkspacePanel}
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());
       }}

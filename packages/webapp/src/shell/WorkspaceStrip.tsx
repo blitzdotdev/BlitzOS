@@ -1,13 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { TenantMe } from '../api-adapter';
-import type { WorkspaceDrawerSegment } from '../storage';
 import type { CloudWorkspaceModel } from '../workspace-store';
-import {
-  ConnectionsGlyph,
-  FilesGlyph,
-  PlusGlyph,
-  PortsGlyph,
-} from './StripIcons';
+import { DriveGlyph, PlusGlyph } from './StripIcons';
 
 /** The tile legend: initials when the name has several words, otherwise its
  * first two letters. `design-team` reads DT and `engineering` reads EN, as the
@@ -18,18 +12,6 @@ export function workspaceCode(title: string): string {
   if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
   return words.slice(0, 3).map((word) => word[0]!).join('').toUpperCase();
 }
-
-/** The surfaces the strip can focus. They are the same three panels the right
- * icon strip toggles, under the same names, so one panel never has two. */
-const SURFACES: Array<{
-  id: WorkspaceDrawerSegment;
-  label: string;
-  Glyph: (props: { className?: string }) => React.ReactElement;
-}> = [
-  { id: 'files', label: 'Files', Glyph: FilesGlyph },
-  { id: 'previews', label: 'teenyapps', Glyph: PortsGlyph },
-  { id: 'connections', label: 'Connections', Glyph: ConnectionsGlyph },
-];
 
 function stateLabel(workspace: CloudWorkspaceModel): string {
   if (workspace.lifecycleStatus === 'creating') return 'creating';
@@ -42,14 +24,8 @@ export type WorkspaceStripProps = {
   workspaces: CloudWorkspaceModel[];
   viewer: TenantMe | null;
   activeWorkspaceId: string | null;
-  /** Panels already open in the work area; the strip rings the matching icon. */
-  openPanels: ReadonlySet<WorkspaceDrawerSegment>;
-  pendingRequestCount: number;
-  /** False on Drive and settings, where there is no box to open a panel on. */
-  surfacesEnabled: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onOpenPanel: (panel: WorkspaceDrawerSegment) => void;
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
   onOpenDrive: () => void;
@@ -58,18 +34,14 @@ export type WorkspaceStripProps = {
 };
 
 /** Column one of the shell (plans/mockups/session-rail.html `#strip`): the org
- * mark, one tile per workspace, the create tile, the workspace surfaces, and
- * the account menu on the bottom edge. */
+ * mark, one tile per workspace, the create tile, Drive, and the account menu
+ * on the bottom edge. The workspace panels are the right icon strip's job. */
 export function WorkspaceStrip({
   workspaces,
   viewer,
   activeWorkspaceId,
-  openPanels,
-  pendingRequestCount,
-  surfacesEnabled,
   onSelectWorkspace,
   onCreateWorkspace,
-  onOpenPanel,
   onSwitchOrg,
   onCreateOrg,
   onOpenDrive,
@@ -203,27 +175,14 @@ export function WorkspaceStrip({
 
       <div className="shell-strip__spacer" role="presentation" />
 
-      <nav className="shell-strip__surfaces" aria-label="Workspace surfaces">
-        {SURFACES.map(({ id, label, Glyph }) => (
-          <button
-            className={`shell-ic${openPanels.has(id) ? ' shell-ic--on' : ''}`}
-            type="button"
-            key={id}
-            aria-label={label}
-            title={label}
-            aria-pressed={openPanels.has(id)}
-            disabled={!surfacesEnabled}
-            onClick={() => onOpenPanel(id)}
-          >
-            <Glyph className="shell-ic__glyph" />
-            {id === 'connections' && pendingRequestCount > 0 && (
-              <span
-                className="shell-ic__count"
-                aria-label={`${pendingRequestCount} pending`}
-              >{pendingRequestCount}</span>
-            )}
-          </button>
-        ))}
+      <nav className="shell-strip__surfaces" aria-label="Drive">
+        <button
+          className="shell-ic"
+          type="button"
+          aria-label="Drive"
+          title="Drive"
+          onClick={onOpenDrive}
+        ><DriveGlyph className="shell-ic__glyph" /></button>
       </nav>
 
       <div className="shell-strip__sep" role="presentation" />
