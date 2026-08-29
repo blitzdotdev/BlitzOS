@@ -161,11 +161,11 @@ export function CreateRecipeScreen({
           )}
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Name</h2>
-              <p>Everyone in your organization sees this recipe on the Recipes page.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Name</h2>
+              <p className="cfg-desc">Everyone in your organization sees this recipe on the Recipes page.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Recipe name
               <input
                 aria-label="Recipe name"
@@ -178,11 +178,11 @@ export function CreateRecipeScreen({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Template</h2>
-              <p>Every run launches a workspace from this template — its machine, folders, environment, and agent rules.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Template</h2>
+              <p className="cfg-desc">Every run launches a workspace from this template — its machine, folders, environment, and agent rules.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Workspace template
               <select
                 aria-label="Workspace template"
@@ -206,11 +206,11 @@ export function CreateRecipeScreen({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Invocation</h2>
-              <p>The agent every run starts with. Chat runs headless in the workspace; the model picks its provider.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Invocation</h2>
+              <p className="cfg-desc">The agent every run starts with. Chat runs headless in the workspace; the model picks its provider.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Harness
               <select
                 aria-label="Harness"
@@ -227,7 +227,7 @@ export function CreateRecipeScreen({
                 ))}
               </select>
             </label>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Model
               <select
                 aria-label="Model"
@@ -263,7 +263,7 @@ export function CreateRecipeScreen({
                 A chat recipe must pin a model — the model selects its provider.
               </p>
             )}
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Effort
               <select
                 aria-label="Effort"
@@ -280,9 +280,9 @@ export function CreateRecipeScreen({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Prompt</h2>
-              <p>Delivered to the agent when the workspace boots. Runs are unattended by default — you can still open one and take over.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Prompt</h2>
+              <p className="cfg-desc">Delivered to the agent when the workspace boots. Runs are unattended by default — you can still open one and take over.</p>
             </div>
             <div className="blueprint-setup-script">
               <textarea

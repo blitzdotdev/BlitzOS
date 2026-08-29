@@ -227,11 +227,11 @@ export function CreateWorkspaceDialog({
           )}
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Name</h2>
-              <p>Optional. Leave blank to get a random name.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Name</h2>
+              <p className="cfg-desc">Optional. Leave blank to get a random name.</p>
             </div>
-            <label className="blueprint-field">
+            <label className="cfg-field">
               Workspace name
               <input
                 name="name"
@@ -246,9 +246,9 @@ export function CreateWorkspaceDialog({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Default machine type</h2>
-              <p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Default machine type</h2>
+              <p className="cfg-desc">
                 What a member's machine is unless their row names another one.
                 A machine type is never a restriction on this workspace.
               </p>
@@ -294,9 +294,9 @@ export function CreateWorkspaceDialog({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Members</h2>
-              <p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Members</h2>
+              <p className="cfg-desc">
                 Existing members of {orgName}. Each one gets their own machine
                 the moment the workspace exists; a viewer gets none.
               </p>
@@ -311,9 +311,9 @@ export function CreateWorkspaceDialog({
           </section>
 
           <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Credentials</h2>
-              <p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Credentials</h2>
+              <p className="cfg-desc">
                 Names and values every member machine reads with{' '}
                 <code>blitz-cred</code>. This is the only time a value is sent;
                 it never comes back out.
@@ -370,9 +370,9 @@ export function CreateWorkspaceDialog({
           {/* A clone already carries its source's repository list, and the two
             * sources never mix — a body naming both is refused with a 400. */}
           {cloneFromWorkspaceId === null && <section className="blueprint-selection tplf-repos">
-            <div className="blueprint-selection__heading">
-              <h2>Repositories</h2>
-              <p>GitHub repositories cloned into /workspace when this workspace starts.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Repositories</h2>
+              <p className="cfg-desc">GitHub repositories cloned into /workspace when this workspace starts.</p>
             </div>
             <TemplateRepoPicker
               client={client}
@@ -384,9 +384,9 @@ export function CreateWorkspaceDialog({
           </section>}
 
           <section className="blueprint-selection blueprint-setup-script">
-            <div className="blueprint-selection__heading">
-              <h2>SSH public key (optional)</h2>
-              <p>Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.</p>
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">SSH public key (optional)</h2>
+              <p className="cfg-desc">Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.</p>
             </div>
             <textarea
               name="sshPublicKey"
