@@ -246,6 +246,9 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
      plane.
   3. `lib/electron-ipc-client.ts` — no change expected (returns `null`), listed
      for awareness.
+  4. `components/loro-sidebar.tsx` — header/footer suppression props (§0.3):
+     upstream at 966623d0 has none. Open a props PR upstream; carry a seam
+     patch only until it merges. Recorded in BLITZ-PATCHES.md.
 - Everything else BlitzOS-specific lives OUTSIDE `vendor/`:
   `webapp/src/lody/` holds our `BlitzPlatformProvider`, transport adapters,
   token ports, style overlay, and mount points.
@@ -309,12 +312,16 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
    router inside `SessionSurface` (the Storybook preview proves this pattern),
    bridged to our `sessions-page-state.ts` routing. Do not adopt TanStack for
    the rest of the app.
-4. Styling: import their Tailwind entry scoped to the session surface. Two
-   defenses, in order: (a) wrap their stylesheet in a cascade layer below our
-   global CSS and confine preflight with `@source`/selector scoping;
-   (b) if bleed proves unmanageable in the spike, isolate `SessionSurface` in
-   an iframe served from our own origin (rail stays native either way).
-   The Blitz theme overlay (§5.3) makes it match `tokens.css`.
+4. Styling — Phase 0 verdict (plans/evidence/lody-phase0.md): cascade layer
+   holds every property our unlayered CSS declares; the residue is preflight
+   resets on bare elements (`button`, `h1`, `li`, `a`, `input` lose browser
+   defaults) plus margins/borders on `.shell-s` and `.files-tree-row`.
+   Decision: NO iframe. Ship a small compensation stylesheet on our side that
+   re-declares the affected defaults for native surfaces (our CSS is
+   unlayered, so it wins by rule, not specificity). Phase 3 also resolves the
+   five token-name collisions (`--font-mono`, `--hover`, `--muted`,
+   `--terminal-background`, `--terminal-selection`) as part of the Blitz
+   theme overlay (§5.3).
 5. i18n: initialize their i18next instance with `en` only; keep `zh_CN` files
    in the vendor tree unloaded.
 
