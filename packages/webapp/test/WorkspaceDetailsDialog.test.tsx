@@ -316,8 +316,12 @@ describe('WorkspaceSessionRail', () => {
         workspace={workspace}
         sessions={[]}
         activeSessionId=""
+        livePorts={[]}
+        previewLinks={[]}
         onSelectSession={() => undefined}
         onSpawnSession={() => undefined}
+        onOpenPreview={() => undefined}
+        onOpenPreviewLink={() => undefined}
         onOpenMembers={onOpenMembers}
         onOpenDetails={onOpenDetails}
       />,
@@ -342,8 +346,12 @@ describe('WorkspaceSessionRail', () => {
         workspace={{ ...workspace, accessRole: 'editor', shared: true }}
         sessions={[]}
         activeSessionId=""
+        livePorts={[]}
+        previewLinks={[]}
         onSelectSession={() => undefined}
         onSpawnSession={() => undefined}
+        onOpenPreview={() => undefined}
+        onOpenPreviewLink={() => undefined}
         onOpenMembers={onOpenMembers}
         onOpenDetails={onOpenDetails}
       />,
@@ -352,6 +360,39 @@ describe('WorkspaceSessionRail', () => {
     expect(view.container.querySelector(
       'button[aria-label="Workspace details for Details test"]',
     )).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('opens the same New tab menu the tab strip serves, live ports and all', async () => {
+    const onSpawnSession = vi.fn();
+    const onOpenPreview = vi.fn();
+    const view = await render(
+      <WorkspaceSessionRail
+        workspace={workspace}
+        sessions={[]}
+        activeSessionId=""
+        livePorts={[{ port: 3000, process: 'vite', firstSeenAt: 1 }]}
+        previewLinks={[]}
+        onSelectSession={() => undefined}
+        onSpawnSession={onSpawnSession}
+        onOpenPreview={onOpenPreview}
+        onOpenPreviewLink={() => undefined}
+        onOpenMembers={() => undefined}
+        onOpenDetails={() => undefined}
+      />,
+    );
+
+    const pinned = view.container.querySelector<HTMLButtonElement>('button[aria-label="New tab"]');
+    expect(pinned?.textContent).toContain('New tab');
+    await act(async () => pinned?.click());
+    const items = [...view.container.querySelectorAll<HTMLButtonElement>(
+      '.webapp-agent-menu.shell-newmenu [role="menuitem"]',
+    )];
+    expect(items.map((item) => item.textContent?.trim()))
+      .toEqual(['Claude', 'Codex', 'Terminal', ':3000vite']);
+    await act(async () => items[3]?.click());
+    expect(onOpenPreview).toHaveBeenCalledWith(3000);
+    expect(view.container.querySelector('.shell-newmenu')).toBeNull();
     await view.unmount();
   });
 });

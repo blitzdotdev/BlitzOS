@@ -1362,6 +1362,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         ? railSessions
         : []}
       activeSessionId={railActiveSessionId ?? ''}
+      livePorts={orderedLivePorts}
+      previewLinks={orderedPreviewLinks}
       drawerOpen={drawerOpen}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
@@ -1373,6 +1375,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onSpawnSession={spawnTtydSession}
+      onOpenPreview={(port) => { openPreviewPort(port); }}
+      onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
       onOpenWorkspaceMembers={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
         setDetails({ workspaceId, tab: 'members' });

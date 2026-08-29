@@ -1,29 +1,21 @@
 import { useEffect, useState } from 'react';
-import {
-  SessionTypeIcon,
-  SPAWN_SESSION_LABELS,
-  type SpawnSessionType,
-} from '../WebAppHeader';
-import { NATIVE_CHAT_ENABLED } from '../product-features';
+import { NewTabMenu, type SpawnSessionType } from '../NewTabMenu';
+import { SessionTypeIcon } from '../SessionTypeIcon';
+import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import type { DriveRailSession } from './rail-sessions';
 import { PlusGlyph, ShareGlyph } from './StripIcons';
-
-/** The same list the tab strip's "+" offers, from the same source of truth, so
- * the rail's pinned action and the strip's plus can never drift apart. */
-const SPAWN_SESSION_TYPES: SpawnSessionType[] = [
-  ...(NATIVE_CHAT_ENABLED ? ['chat' as const] : []),
-  'claude',
-  'codex',
-  'terminal',
-];
 
 export type WorkspaceSessionRailProps = {
   workspace: CloudWorkspaceModel | undefined;
   sessions: DriveRailSession[];
   activeSessionId: string;
+  livePorts: LivePort[];
+  previewLinks: PreviewLink[];
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
+  onOpenPreview: (port: number) => void;
+  onOpenPreviewLink: (url: string, title: string) => void;
   /** Membership IS sharing now (plans/MEMBER-MACHINES.md §3), so this opens
    * the details dialog on its Members tab. */
   onOpenMembers: (workspaceId: string) => void;
@@ -31,15 +23,19 @@ export type WorkspaceSessionRailProps = {
 };
 
 /** Column two of the shell (plans/mockups/session-rail.html `#rail`): the
- * workspace head, the pinned New session action, and one row per managed tab.
+ * workspace head, the pinned New tab action, and one row per managed tab.
  * The row is gutter · title · time, and never more — the time slot stays empty
  * until Build 2 gives a session a clock. */
 export function WorkspaceSessionRail({
   workspace,
   sessions,
   activeSessionId,
+  livePorts,
+  previewLinks,
   onSelectSession,
   onSpawnSession,
+  onOpenPreview,
+  onOpenPreviewLink,
   onOpenMembers,
   onOpenDetails,
 }: WorkspaceSessionRailProps) {
@@ -94,40 +90,41 @@ export function WorkspaceSessionRail({
         <button
           className="shell-new"
           type="button"
-          aria-label="New session"
+          aria-label="New tab"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
         >
           <span className="shell-g"><PlusGlyph className="shell-new__plus" /></span>
-          New session
+          New tab
         </button>
         {menuOpen && (
           <button
             className="webapp-org-backdrop"
             type="button"
-            aria-label="Close new session menu"
+            aria-label="Close new tab menu"
             tabIndex={-1}
             onMouseDown={() => setMenuOpen(false)}
           />
         )}
         {menuOpen && (
-        <div className="webapp-agent-menu shell-newmenu" role="menu" aria-label="New session types">
-          {SPAWN_SESSION_TYPES.map((agent) => (
-            <button
-              type="button"
-              role="menuitem"
-              key={agent}
-              onClick={() => {
-                setMenuOpen(false);
-                onSpawnSession(agent);
-              }}
-            >
-              <SessionTypeIcon type={agent} className="webapp-new-menu-icon" />
-              {SPAWN_SESSION_LABELS[agent]}
-            </button>
-          ))}
-        </div>
+          <NewTabMenu
+            className="shell-newmenu"
+            livePorts={livePorts}
+            previewLinks={previewLinks}
+            onSpawn={(agent) => {
+              setMenuOpen(false);
+              onSpawnSession(agent);
+            }}
+            onOpenPreview={(port) => {
+              setMenuOpen(false);
+              onOpenPreview(port);
+            }}
+            onOpenPreviewLink={(url, title) => {
+              setMenuOpen(false);
+              onOpenPreviewLink(url, title);
+            }}
+          />
         )}
       </div>
 

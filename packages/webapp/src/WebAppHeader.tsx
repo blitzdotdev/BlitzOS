@@ -6,41 +6,20 @@ import {
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import {
-  CodexIcon,
-  FileIcon,
-  FolderIcon,
-  GenericProviderIcon,
-  ShellIcon,
-} from './WebAppIcons';
-import { FileTypeIcon } from './FileTypeIcon';
-import { previewLinkLabel, type LivePort, type PreviewLink } from './preview';
-import { NATIVE_CHAT_ENABLED } from './product-features';
-import type { TerminalAgent } from './protocol';
+import { NewTabMenu, type SpawnSessionType } from './NewTabMenu';
+import { SessionTypeIcon, type WebAppSessionType } from './SessionTypeIcon';
+import type { LivePort, PreviewLink } from './preview';
 import { SESSION_TITLE_MAX_LENGTH } from './storage';
 
 export { SESSION_TITLE_MAX_LENGTH } from './storage';
-
-export type WebAppSessionType = TerminalAgent | 'terminal' | 'chat' | 'file' | 'preview' | 'panel';
-export type SpawnSessionType = 'claude' | 'codex' | 'terminal' | 'chat';
+export { SPAWN_SESSION_LABELS } from './NewTabMenu';
+export { SessionTypeIcon } from './SessionTypeIcon';
+export type { SpawnSessionType } from './NewTabMenu';
+export type { WebAppSessionType } from './SessionTypeIcon';
 
 function isManagedSessionTab(tab: WebAppTabModel): boolean {
   return tab.agent !== 'file' && tab.agent !== 'preview' && tab.agent !== 'panel';
 }
-
-export const SPAWN_SESSION_LABELS = {
-  chat: 'Chat',
-  claude: 'Claude',
-  codex: 'Codex',
-  terminal: 'Terminal',
-} satisfies Record<SpawnSessionType, string>;
-
-const SPAWN_SESSION_TYPES: SpawnSessionType[] = [
-  ...(NATIVE_CHAT_ENABLED ? ['chat' as const] : []),
-  'claude',
-  'codex',
-  'terminal',
-];
 
 export type WebAppTabModel = {
   id: string;
@@ -85,42 +64,6 @@ type WebAppHeaderProps = {
   insertBeforeId?: string | null;
   draggingSessionId?: string | null;
 };
-
-export function SessionTypeIcon({
-  type,
-  className,
-  filePath,
-  panel,
-}: {
-  type: WebAppSessionType | 'terminal';
-  className: string;
-  filePath?: string;
-  panel?: 'files' | 'previews' | 'connections';
-}) {
-  if (type === 'panel') {
-    if (panel === 'previews') {
-      return <span className={`${className} mi-preview`} aria-hidden="true" />;
-    }
-    return panel === 'connections'
-      ? <GenericProviderIcon className={className} />
-      : <FolderIcon className={className} />;
-  }
-  if (type === 'chat') return <span className={`${className} mi-chat`} aria-hidden="true" />;
-  if (type === 'claude') return <span className={`${className} mi-claude`} aria-hidden="true" />;
-  if (type === 'opencode') return <span className={`${className} mi-opencode`} aria-hidden="true" />;
-  if (type === 'pi') return <span className={`${className} mi-pi`} aria-hidden="true" />;
-  if (type === 'kimi') return <span className={`${className} mi-kimi`} aria-hidden="true" />;
-  if (type === 'prime') return <GenericProviderIcon className={className} />;
-  if (type === 'terminal') return <ShellIcon className={className} />;
-  if (type === 'preview') return <span className={`${className} mi-preview`} aria-hidden="true" />;
-  if (type === 'file') {
-    return filePath
-      ? <FileTypeIcon className={className} filePath={filePath} />
-      : <FileIcon className={className} />;
-  }
-  if (type === 'codex') return <CodexIcon className={className} />;
-  return <GenericProviderIcon className={className} />;
-}
 
 export function WebAppHeader({
   tabs,
@@ -372,43 +315,14 @@ export function WebAppHeader({
               >
                 <span aria-hidden="true">+</span>
               </button>
-              <div className="webapp-agent-menu" role="menu" hidden={!menuOpen}>
-                {SPAWN_SESSION_TYPES.map((agent) => (
-                  <button type="button" role="menuitem" key={agent} onClick={() => spawnSession(agent)}>
-                    <SessionTypeIcon type={agent} className="webapp-new-menu-icon" />
-                    {SPAWN_SESSION_LABELS[agent]}
-                  </button>
-                ))}
-                {(livePorts.length > 0 || previewLinks.length > 0) && (
-                  <>
-                    <div className="webapp-agent-menu__separator" role="separator" />
-                    {livePorts.map((entry) => (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        key={entry.port}
-                        onClick={() => openPreview(entry.port)}
-                      >
-                        <SessionTypeIcon type="preview" className="webapp-new-menu-icon" />
-                        <span>:{entry.port}</span>
-                        <span className="webapp-agent-menu__process">{entry.process}</span>
-                      </button>
-                    ))}
-                    {previewLinks.map((entry) => (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        key={entry.url}
-                        onClick={() => openPreviewLink(entry.url, entry.title)}
-                      >
-                        <SessionTypeIcon type="preview" className="webapp-new-menu-icon" />
-                        <span>{previewLinkLabel(entry.url, entry.title)}</span>
-                        <span className="webapp-agent-menu__process">link</span>
-                      </button>
-                    ))}
-                  </>
-                )}
-              </div>
+              <NewTabMenu
+                hidden={!menuOpen}
+                livePorts={livePorts}
+                previewLinks={previewLinks}
+                onSpawn={spawnSession}
+                onOpenPreview={openPreview}
+                onOpenPreviewLink={openPreviewLink}
+              />
             </div>}
           </>
         )}

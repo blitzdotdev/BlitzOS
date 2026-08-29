@@ -1,5 +1,6 @@
 import type { TenantMe } from '../api-adapter';
-import type { SpawnSessionType } from '../WebAppHeader';
+import type { SpawnSessionType } from '../NewTabMenu';
+import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import type { DriveRailSession } from './rail-sessions';
 import { WorkspaceSessionRail } from './WorkspaceSessionRail';
@@ -16,6 +17,8 @@ export type ShellNavProps = {
   showRail: boolean;
   sessions: DriveRailSession[];
   activeSessionId: string;
+  livePorts: LivePort[];
+  previewLinks: PreviewLink[];
   drawerOpen: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
@@ -25,6 +28,8 @@ export type ShellNavProps = {
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
+  onOpenPreview: (port: number) => void;
+  onOpenPreviewLink: (url: string, title: string) => void;
   onOpenWorkspaceMembers: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
   onCloseDrawer: () => void;
@@ -41,6 +46,8 @@ export function ShellNav({
   showRail,
   sessions,
   activeSessionId,
+  livePorts,
+  previewLinks,
   drawerOpen,
   onSelectWorkspace,
   onCreateWorkspace,
@@ -50,6 +57,8 @@ export function ShellNav({
   onOpenSettings,
   onSelectSession,
   onSpawnSession,
+  onOpenPreview,
+  onOpenPreviewLink,
   onOpenWorkspaceMembers,
   onOpenWorkspaceDetails,
   onCloseDrawer,
@@ -74,8 +83,12 @@ export function ShellNav({
             workspace={activeWorkspace}
             sessions={sessions}
             activeSessionId={activeSessionId}
+            livePorts={livePorts}
+            previewLinks={previewLinks}
             onSelectSession={onSelectSession}
             onSpawnSession={onSpawnSession}
+            onOpenPreview={onOpenPreview}
+            onOpenPreviewLink={onOpenPreviewLink}
             onOpenMembers={onOpenWorkspaceMembers}
             onOpenDetails={onOpenWorkspaceDetails}
           />
