@@ -101,6 +101,7 @@ const expected = [
   "core/identity/routes.ts",
   "core/janitors.ts",
   "core/machines.ts",
+  "core/machine-stats.ts",
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
@@ -155,7 +156,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(107);
+    expect(first.files).toHaveLength(108);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
