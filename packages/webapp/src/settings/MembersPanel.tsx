@@ -48,11 +48,11 @@ export function MembersPanel({
             setEmail('');
           }).catch((caught: Error) => setError(caught.message));
         }}>
-          <label className="settings-field">
+          <label className="cfg-field">
             <span>Email</span>
             <input type="email" required placeholder="person@example.com" value={email} onChange={(event) => setEmail(event.currentTarget.value)} />
           </label>
-          <label className="settings-field settings-field--compact">
+          <label className="cfg-field cfg-field--compact">
             <span>Role</span>
             <select value={role} onChange={(event) => setRole(event.currentTarget.value === 'admin' ? 'admin' : 'member')}><option value="member">Member</option><option value="admin">Admin</option></select>
           </label>
@@ -92,15 +92,15 @@ export function MembersPanel({
           </div>
         ))}
       </div>
-      <div className="settings-danger">
-        <div className="settings-danger-copy">
+      <div className="cfg-danger">
+        <div className="cfg-danger-copy">
           <strong>Leave {orgName}</strong>
           <span>{soleMember
             ? 'You are the only member. Add another member first, or create your own organization and leave this one.'
             : 'You lose access to this organization\u2019s workspaces, files and connections. An admin can invite you back.'}</span>
         </div>
         <button
-          className="webapp-action webapp-action--danger"
+          className="cfg-danger-action"
           type="button"
           disabled={soleMember || leaving}
           onClick={() => setConfirmLeave(true)}

@@ -174,13 +174,11 @@
   min-width: 0;
 }
 
+/* Anchor 2 reaches the panel eyebrow too: sentence case, never caps. */
 .settings-panel-header p {
   margin: 0 0 3px;
-  color: var(--faint);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .16em;
-  text-transform: uppercase;
+  color: var(--cfg-desc-color);
+  font-size: var(--cfg-desc-size);
 }
 
 .settings-panel-header h1 {
@@ -249,42 +247,6 @@
   color: var(--faint);
   font-family: var(--font-ui);
   font-size: 11.5px;
-}
-
-.settings-definition-list {
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-}
-
-.settings-definition-list > div {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(130px, .65fr) minmax(0, 1.35fr);
-  gap: 16px;
-  padding: 11px 13px;
-  border-top: 1px solid var(--rule);
-}
-
-.settings-definition-list > div:first-child {
-  border-top: 0;
-}
-
-.settings-definition-list dt {
-  color: var(--faint);
-  font-size: 11.5px;
-}
-
-.settings-definition-list dd {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .settings-custody-state,
@@ -383,7 +345,7 @@
     max-width: 250px;
   }
 
-  .settings-definition-list > div {
+  .cfg-meta > div {
     grid-template-columns: minmax(100px, .8fr) minmax(0, 1.2fr);
     gap: 10px;
   }}
@@ -405,10 +367,6 @@
   text-transform: uppercase;
 }
 
-.settings-credential-section + .settings-credential-section {
-  margin-top: 32px;
-}
-
 .settings-section-heading {
   display: flex;
   min-width: 0;
@@ -418,24 +376,8 @@
   margin-bottom: 10px;
 }
 
-.settings-section-heading p,
-.settings-section-heading h2 {
-  margin: 0;
-}
-
-.settings-section-heading p {
-  color: var(--faint);
-  font: 700 9.5px/1.5 var(--font-ui);
-  letter-spacing: .14em;
-  text-transform: uppercase;
-}
-
-.settings-section-heading h2 {
-  color: var(--ink);
-  font-size: 15px;
-  font-weight: 650;
-}
-
+/* The title and description come from settings-surface.css; this is only the
+ * row that puts a count beside them. */
 .settings-section-heading > span {
   color: var(--faint);
   font: 10px/1.5 var(--font-ui);
@@ -659,7 +601,7 @@
     max-width: 250px;
   }
 
-  .settings-definition-list > div {
+  .cfg-meta > div {
     grid-template-columns: minmax(100px, .8fr) minmax(0, 1.2fr);
     gap: 10px;
   }
@@ -688,22 +630,8 @@
 
 /* ================= blitz additions: appearance ============ */
 
-.settings-appearance {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid var(--rule);
-}
-
-.settings-appearance-label {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
-}
-
 .settings-appearance-options {
+  justify-self: start;
   display: flex;
   gap: 2px;
   padding: 3px;
@@ -731,11 +659,6 @@
   box-shadow: 0 1px 3px color-mix(in oklab, #000 20%, transparent);
 }
 
-.settings-appearance-note {
-  color: var(--faint);
-  font-size: 11px;
-}
-
 /* ================= blitz additions: members + invites ============ */
 
 .settings-form {
@@ -749,39 +672,14 @@
   background: var(--sunken);
 }
 
-.settings-field {
-  display: grid;
-  min-width: 0;
-  flex: 1 1 220px;
-  gap: 5px;
-  color: var(--faint);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.settings-field--compact {
-  flex: 0 1 140px;
-}
-
-.settings-field input,
-.settings-field select {
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--rule);
+/* The inline form's controls line up with the button beside them. */
+.settings-form .cfg-field input,
+.settings-form .cfg-field select {
   border-radius: var(--r-item);
-  color: var(--ink);
-  background: var(--paper);
-  font: 12.5px/1 var(--font-ui);
-  outline: 0;
-}
-
-.settings-field input:focus,
-.settings-field select:focus {
-  border-color: var(--accent);
 }
 
 .settings-form .webapp-action {
-  height: 32px;
+  min-height: var(--cfg-control-height);
 }
 
 /* The seat counter, above the invite form. It answers "how many can I add"
@@ -936,36 +834,12 @@
   white-space: nowrap;
 }
 
-.settings-danger {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+/* The account page frames its danger zone; the zone itself is the system's. */
+.settings-panel > .cfg-danger {
   margin-top: 24px;
+  padding: 14px 16px;
   border: 1px solid var(--rule);
   border-radius: 8px;
-  padding: 14px 16px;
-}
-
-.settings-danger-copy {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.settings-danger-copy strong {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.settings-danger-copy span {
-  color: var(--faint);
-  font-size: 11.5px;
-}
-
-.settings-danger .webapp-action[disabled] {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
 
 .settings-person-role {
@@ -1283,13 +1157,6 @@
 
 .connect-field--wide {
   grid-column: 1 / -1;
-}
-
-.connect-field__label {
-  color: var(--faint);
-  font: 700 9.5px/1.4 var(--font-ui);
-  letter-spacing: .1em;
-  text-transform: uppercase;
 }
 
 .connect-field input {
