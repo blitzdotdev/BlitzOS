@@ -120,6 +120,11 @@ export class FakeProviders implements VmProvider, VolumeProvider {
     this.sshPublicKeys.set(input.machineId, input.sshPublicKey);
     this.userData.set(input.machineId, input.userData);
     this.workspaceForMachine.set(input.machineId, input.workspaceId);
+    // Also keyed by workspace, so a single-machine suite can ask for the boot
+    // script it already has an id for. A multi-member suite asks per machine;
+    // this alias would only give it the last one written.
+    this.sshPublicKeys.set(input.workspaceId, input.sshPublicKey);
+    this.userData.set(input.workspaceId, input.userData);
     await this.onCreate?.(input.machineId);
     return { id: `vm-${input.machineId}`, host: "203.0.113.10", port: 22, user: "blitz" };
   }
@@ -483,12 +488,11 @@ export async function workspacePhoneHomeUrl(
   return phoneHomeUrl(providers, await machineIdFor(workspaceId, membershipId));
 }
 
-/** The phone-home URL baked into one machine's boot script. Keyed on the
- * MACHINE now: a workspace holds one VM per member, so the fake provider
- * records user data per machine. Callers that hold only a workspace id go
- * through `machineIdFor`. */
-export function phoneHomeUrl(providers: FakeProviders, machineId: string): string {
-  const data = providers.userData.get(machineId);
+/** The phone-home URL baked into one boot script. The fake provider records
+ * user data under the machine id and under the workspace id, so a suite with
+ * one machine per workspace can pass either. */
+export function phoneHomeUrl(providers: FakeProviders, id: string): string {
+  const data = providers.userData.get(id);
   const match = data?.match(/readonly PHONE_HOME_URL='([^']+)'/u);
   if (match?.[1] === undefined) throw new Error("phone-home URL not found");
   return match[1];

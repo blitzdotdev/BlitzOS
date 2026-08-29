@@ -112,7 +112,7 @@ async function capturingWorkspace(providers: UsageGuestProviders): Promise<{
   expect(enabled.status).toBe(200);
   const { folderId } = await enabled.json<{ folderId: string }>();
   const workspace = await createWorkspace(app, cookie);
-  await env.DB.prepare("UPDATE workspaces SET phase = 'ready' WHERE id = ?1")
+  await env.DB.prepare("UPDATE machines SET state = 'running' WHERE workspace_id = ?1")
     .bind(workspace.id).run();
   return { app, cookie, workspaceId: workspace.id, folderId };
 }
@@ -187,18 +187,15 @@ describe("agent-usage capture push", () => {
   it("stamps the launching recipe into meta.json", async () => {
     const providers = new UsageGuestProviders();
     const { app, cookie, workspaceId, folderId } = await capturingWorkspace(providers);
-    const template = await appRequest(app, "/workspace-templates", {
-      method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "usage", machineTypeId: "small", folderIds: [] }),
-    });
-    const templateId = (await template.json<{ template: { id: string } }>()).template.id;
+    // A recipe's launch source is a workspace now: the template object is
+    // gone (plans/MEMBER-MACHINES.md §0), and the wire field keeps its legacy
+    // `templateId` name while carrying a workspace id.
     const created = await appRequest(app, "/workspace-recipes", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "provenance",
-        templateId,
+        templateId: workspaceId,
         harness: "codex",
         prompt: "Go.\n",
       }),

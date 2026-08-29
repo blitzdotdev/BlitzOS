@@ -110,6 +110,7 @@ function provider(fake: FakeEc2, overrides: Partial<AwsProviderConfig> = {}): Aw
 function createInput(machineTypeId: string, userData = "#!/bin/bash\necho hi\n"): CreateVmInput {
   return {
     workspaceId: "workspace-id-0123456789",
+    machineId: "machine-id-0123456789",
     machineTypeId,
     phoneHomeUrl: PHONE_HOME_URL,
     userData,

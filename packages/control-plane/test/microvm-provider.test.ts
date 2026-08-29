@@ -57,6 +57,7 @@ function provider(
 function createInput(machineTypeId: string): CreateVmInput {
   return {
     workspaceId: "workspace-id",
+    machineId: "machine-id",
     machineTypeId,
     sshPublicKey: SSH_KEY,
     phoneHomeUrl: PHONE_HOME_URL,

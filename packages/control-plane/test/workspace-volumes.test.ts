@@ -23,6 +23,7 @@ const SERVER = { server: { id: 4242, public_net: { ipv4: { ip: "203.0.113.9" } }
 
 const CREATE = {
   workspaceId: "w-1",
+  machineId: "m-1",
   machineTypeId: "cx23@hel1",
   phoneHomeUrl: "https://cp.example/phone-home",
   userData: "#!/bin/bash",

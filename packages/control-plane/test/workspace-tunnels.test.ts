@@ -3,12 +3,13 @@ import { rows } from "../core/db.js";
 import { CloudflareTunnels } from "../core/compute/cloudflare-tunnels.js";
 import { WorkspaceTunnels } from "../core/workspace-tunnels.js";
 import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
-import type { WorkspaceRow } from "../core/workspaces.js";
+import type { MachineRow } from "../core/workspace-records.js";
 import type { WorkspaceView } from "../core/wire.js";
 import {
   appRequest,
   appWithVmProviders,
   FakeProviders,
+  machineIdFor,
   operatorSession,
   testRuntime,
 } from "./helpers.js";
@@ -48,6 +49,9 @@ describe("workspace tunnels", () => {
     });
     expect(created.status).toBe(201);
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
+    // The tunnel is per MACHINE: a workspace holds one VM per member, and two
+    // of them cannot answer on one hostname.
+    const machineId = await machineIdFor(workspace.id);
 
     expect(cfCalls).toEqual([
       "POST /client/v4/accounts/test-account/cfd_tunnel",
@@ -66,7 +70,7 @@ describe("workspace tunnels", () => {
       headers: { Cookie: cookie },
     });
     expect(ports.status).toBe(200);
-    expect(proxied.request?.url).toBe(`https://ws-${workspace.id}.webapp.test/acp/?x=1`);
+    expect(proxied.request?.url).toBe(`https://ws-${machineId}.webapp.test/acp/?x=1`);
     const credential = proxied.request?.headers.get("X-Blitz-WebApp-Token") ?? "";
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       credential,
@@ -82,8 +86,8 @@ describe("workspace tunnels", () => {
       headers: { Cookie: cookie },
     });
     expect((await destroyed.json<{ workspace: WorkspaceView }>()).workspace.phase).toBe("destroyed");
-    const row = (await rows<WorkspaceRow>(testRuntime(providers, workspaceTunnels).db, {
-      q: "SELECT * FROM workspaces WHERE id = ?1",
+    const row = (await rows<MachineRow>(testRuntime(providers, workspaceTunnels).db, {
+      q: "SELECT * FROM machines WHERE workspace_id = ?1",
       v: [workspace.id],
     }))[0];
     expect(row?.tunnel_id).toBeNull();
