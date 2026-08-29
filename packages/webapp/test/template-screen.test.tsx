@@ -873,6 +873,11 @@ describe('create template screen', () => {
     const listed = () => [...view.container.querySelectorAll('.tplf-repo')]
       .map((label) => label.textContent);
     expect(listed()).toEqual(['acme/app']);
+    // Refresh reads under the list, on its right edge — not in the filter row.
+    expect(view.container.querySelector('.tplf-repos-controls .tplf-repos-refresh')).toBeNull();
+    expect(view.container.querySelector(
+      '.tplf-repos-list + .tplf-repos-listfoot .tplf-repos-refresh',
+    )).not.toBeNull();
 
     installedSecond = true;
     await act(async () => {

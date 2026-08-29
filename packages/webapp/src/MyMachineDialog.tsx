@@ -1,0 +1,252 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type {
+  ListMachineTypesResponse,
+  MachineType,
+  MachineView,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
+import type { ControlPlaneClient } from './api';
+import { ConfirmationDialog } from './ConfirmationDialog';
+import { monthlyPriceLabel } from './MachineCatalogGrid';
+import { MachineTypeSelect } from './MachineTypeSelect';
+import { ModalOverlay } from './ModalOverlay';
+import { machineActionsFor, type MachineAction } from './WorkspaceMembersEditor';
+import type { CloudWorkspaceModel } from './workspace-store';
+
+const ACTION_LABELS = {
+  provision: 'Provision',
+  stop: 'Stop',
+  start: 'Start',
+  recreate: 'Recreate',
+  destroy: 'Destroy',
+} satisfies Record<MachineAction, string>;
+
+/**
+ * Who may run each verb on their OWN machine (plans/MEMBER-MACHINES.md §3).
+ *
+ * `stop` and `start` are a member's own business, and so is bringing a machine
+ * row that exists back up. Replacing, destroying and re-typing a machine
+ * interrupt work and belong to a workspace admin — as does provisioning where
+ * there is no machine row at all, which is the member-add route in disguise.
+ */
+function needsAdmin(action: MachineAction, machine: MachineView | null): boolean {
+  if (action === 'stop' || action === 'start') return false;
+  if (action === 'provision') return machine === null;
+  return true;
+}
+
+function dateLabel(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'Unavailable';
+  return new Intl.DateTimeFormat('en-US', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(timestamp));
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return <div><dt>{label}</dt><dd>{value}</dd></div>;
+}
+
+/** The volume's location, so a type change can refuse what cannot reach it.
+ * Derived from the machine's current type, because the volume was created in
+ * that type's location. */
+function volumeLocationOf(
+  machine: MachineView | null,
+  machines: readonly MachineType[],
+): string | null {
+  if (machine === null || machine.volumeId === null) return null;
+  const current = machines.find(({ id }) => id === machine.machineTypeId);
+  if (current === undefined) return null;
+  return current.location || current.id.split('@').at(-1) || null;
+}
+
+/** The people to ask for what this member may not do themselves. This is the
+ * whole of "request a change" for now: there is no request to file, so the
+ * refusal names who can act instead of pretending somebody was told. */
+function askLine(members: readonly WorkspaceMemberView[]): string {
+  const admins = members.filter(({ role }) => role === 'admin').map(({ name }) => name);
+  if (admins.length === 0) return 'Ask a workspace admin.';
+  return `Ask a workspace admin: ${admins.join(', ')}`;
+}
+
+/**
+ * The member's own machine, in the workspace-details chrome and without its
+ * tab row: there is one thing to read here.
+ *
+ * Everything it shows already exists on the wire — the member row of
+ * `WorkspaceView` carries the machine, and the catalog names its size. What it
+ * adds is the §3 matrix in the first person: a verb this member may not run is
+ * shown disabled with the admins to ask, rather than hidden or refused after
+ * the click.
+ */
+export function MyMachineDialog({
+  client,
+  workspace,
+  membershipId,
+  listMachineTypes,
+  onClose,
+}: {
+  client: ControlPlaneClient;
+  workspace: CloudWorkspaceModel;
+  /** The requesting member's membership, which is what keys a machine. */
+  membershipId: string | null;
+  listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  onClose: () => void;
+}) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const [machines, setMachines] = useState<MachineType[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingTypeId, setPendingTypeId] = useState<string | null>(null);
+
+  useEffect(() => { closeButton.current?.focus(); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    void listMachineTypes()
+      .then((response) => { if (!cancelled) setMachines(response.machineTypes); })
+      .catch((caught: Error) => { if (!cancelled) setError(caught.message); });
+    return () => { cancelled = true; };
+  }, [listMachineTypes]);
+
+  const run = useCallback((action: Promise<unknown>) => {
+    void action.then(() => setError(null)).catch((caught: Error) => setError(caught.message));
+  }, []);
+
+  const member = workspace.members.find((row) => row.membershipId === membershipId);
+  const machine = member?.machine ?? null;
+  // A workspace admin, or an org admin reaching in implicitly (§3).
+  const admin = workspace.myRole === 'admin' || workspace.myRole === null;
+  const type = machines.find(({ id }) => id === machine?.machineTypeId);
+  const price = monthlyPriceLabel(type?.monthlyPrice);
+
+  const act = (action: MachineAction) => {
+    if (machine === null) {
+      if (action === 'provision') {
+        run(client.provisionMemberMachine(workspace.id, membershipId ?? '', {}));
+      }
+      return;
+    }
+    if (action === 'provision') run(client.provisionMachine(machine.id));
+    if (action === 'stop') run(client.stopMachine(machine.id));
+    if (action === 'start') run(client.startMachine(machine.id));
+    if (action === 'recreate') run(client.recreateMachine(machine.id));
+    if (action === 'destroy') run(client.destroyMachine(machine.id));
+  };
+
+  const actions = member === undefined || member.role === 'viewer'
+    ? []
+    : machineActionsFor(machine);
+  const refused = actions.filter((action) => needsAdmin(action, machine) && !admin);
+
+  return (
+    <ModalOverlay onDismiss={onClose}>
+      <section
+        className="workspace-details-dialog my-machine-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`My machine in ${workspace.title}`}
+      >
+        <header className="workspace-details-header">
+          <h1>My machine <em>“{workspace.title}”</em></h1>
+          <button ref={closeButton} type="button" aria-label="Close my machine" onClick={onClose}>×</button>
+        </header>
+        <div className="workspace-details-body">
+          {error !== null && <p className="workspace-details-error" role="alert">{error}</p>}
+          {member === undefined ? (
+            <p className="workspace-members-empty">You are not a member of this workspace.</p>
+          ) : member.role === 'viewer' ? (
+            <p className="workspace-members-empty">
+              A viewer holds no machine. Viewers watch the workspace; they do not
+              run it. {askLine(workspace.members)} to change your role.
+            </p>
+          ) : (
+            <section className="my-machine-panel">
+              <h2>Machine</h2>
+              <dl className="workspace-details-list">
+                <Detail label="Status" value={machine === null ? 'No machine' : machine.state} />
+                <Detail
+                  label="Machine type"
+                  value={type?.name ?? machine?.machineTypeId ?? workspace.defaultMachineTypeId}
+                />
+                <Detail label="CPU" value={type === undefined ? 'Unavailable' : `${String(type.cpuCores)} vCPU`} />
+                <Detail label="Memory" value={type === undefined ? 'Unavailable' : `${String(type.memGb)} GB`} />
+                <Detail label="Disk" value={type === undefined ? 'Unavailable' : `${String(type.diskGb)} GB`} />
+                <Detail label="Price" value={price ?? 'Unavailable'} />
+                <Detail
+                  label="Persistent volume"
+                  value={machine?.volumeId == null ? 'None' : 'Attached'}
+                />
+                <Detail label="Created" value={machine === null ? 'Unavailable' : dateLabel(machine.createdAt)} />
+              </dl>
+              {machine?.error != null && (
+                <p className="workspace-details-error" role="alert">{machine.error}</p>
+              )}
+
+              <h2>Machine type</h2>
+              {admin && machine !== null ? (
+                <MachineTypeSelect
+                  machines={machines}
+                  value={machine.machineTypeId}
+                  defaultMachineTypeId={workspace.defaultMachineTypeId}
+                  volumeLocation={volumeLocationOf(machine, machines)}
+                  ariaLabel="Change my machine type"
+                  onChange={(machineTypeId) => {
+                    if (machineTypeId !== machine.machineTypeId) setPendingTypeId(machineTypeId);
+                  }}
+                />
+              ) : (
+                <p className="workspace-details-note">
+                  {machine === null
+                    ? 'There is no machine to re-type yet.'
+                    : `Changing a machine's type is workspace-admin work. ${askLine(workspace.members)}`}
+                </p>
+              )}
+
+              <h2>Lifecycle</h2>
+              {actions.length === 0 && (
+                <p className="workspace-details-note">
+                  {machine === null
+                    ? 'You have no machine yet.'
+                    : `A machine that is ${machine.state} accepts nothing until it arrives.`}
+                </p>
+              )}
+              <div className="my-machine-actions">
+                {actions.map((action) => {
+                  const blocked = needsAdmin(action, machine) && !admin;
+                  return (
+                    <button
+                      className={action === 'destroy'
+                        ? 'workspace-details-delete'
+                        : 'webapp-action'}
+                      type="button"
+                      key={action}
+                      disabled={blocked}
+                      title={blocked ? askLine(workspace.members) : undefined}
+                      onClick={() => act(action)}
+                    >
+                      {ACTION_LABELS[action]}
+                    </button>
+                  );
+                })}
+              </div>
+              {refused.length > 0 && (
+                <p className="workspace-details-note">{askLine(workspace.members)}</p>
+              )}
+            </section>
+          )}
+        </div>
+      </section>
+      {pendingTypeId !== null && machine !== null && (
+        <ConfirmationDialog
+          title="Change machine type?"
+          description={`This replaces your VM with a ${pendingTypeId} one. It keeps the disk — the volume and everything on it survives — but running sessions restart.`}
+          confirmLabel="Yes, change the type"
+          onCancel={() => setPendingTypeId(null)}
+          onConfirm={() => {
+            setPendingTypeId(null);
+            run(client.setMachineType(machine.id, { machineTypeId: pendingTypeId }));
+          }}
+        />
+      )}
+    </ModalOverlay>
+  );
+}

@@ -4,7 +4,6 @@ import type {
   MachineType,
   MachineTypeProviderFailure,
   MachineTypeProviderStatus,
-  Volume,
 } from '@blitzos/schema';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
@@ -47,7 +46,6 @@ type CreateWorkspaceDialogProps = {
     'connectStartUrl' | 'listGithubInstallations' | 'listGithubRepositories' | 'listMembers'
   >;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  listVolumes: () => Promise<Volume[]>;
   /** The workspace whose config this create copies — "new workspace from
    * existing", which replaced templates (§0). Members and credential values
    * are never copied. */
@@ -68,7 +66,6 @@ export function CreateWorkspaceDialog({
   saveComputeCredential,
   client,
   listMachineTypes,
-  listVolumes,
   cloneFromWorkspaceId = null,
   cloneFromWorkspaceName = null,
   viewerName = 'You',
@@ -80,7 +77,6 @@ export function CreateWorkspaceDialog({
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
-  const [volumes, setVolumes] = useState<Volume[]>([]);
   const [orgMembers, setOrgMembers] = useState<MemberView[]>([]);
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
@@ -92,8 +88,6 @@ export function CreateWorkspaceDialog({
   const [members, setMembers] = useState<DraftWorkspaceMember[]>([]);
   const [credentials, setCredentials] = useState<DraftCredential[]>([]);
   const submitted = useRef(false);
-  const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
-  const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
   const credentialRequiredProviders = providerStatuses.flatMap(({ providerId, access }) =>
     access === 'credential-required' && isComputeCredentialProvider(providerId)
       ? [providerId]
@@ -124,9 +118,8 @@ export function CreateWorkspaceDialog({
     setMachineFailures([]);
     void Promise.allSettled([
       listMachineTypes(),
-      listVolumes(),
       client.listMembers(),
-    ]).then(([machineResult, volumeResult, memberResult]) => {
+    ]).then(([machineResult, memberResult]) => {
       if (!mounted) return;
       setOrgMembers(memberResult.status === 'fulfilled' ? memberResult.value.members : []);
       if (machineResult.status === 'rejected') {
@@ -137,11 +130,10 @@ export function CreateWorkspaceDialog({
         return;
       }
       installMachineTypes(machineResult.value);
-      setVolumes(volumeResult.status === 'fulfilled' ? volumeResult.value : []);
       setLoading(false);
     });
     return () => { mounted = false; };
-  }, [client, installMachineTypes, listMachineTypes, listVolumes]);
+  }, [client, installMachineTypes, listMachineTypes]);
 
   const machineFailureItems = machineFailures.map((failure) => (
     <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
@@ -157,27 +149,28 @@ export function CreateWorkspaceDialog({
     const data = new FormData(event.currentTarget);
     const name = String(data.get('name') ?? '').trim();
     const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
-    const volumeId = String(data.get('volumeId') ?? '');
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
     };
     if (name) input.name = name;
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
-    if (volumeId) input.volumeId = volumeId;
     if (repos.length > 0) input.repos = repos;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
     if (cloneFromWorkspaceId !== null) input.cloneFromWorkspaceId = cloneFromWorkspaceId;
     if (members.length > 0) {
-      input.members = members.map((member) => (
-        member.machineTypeId === WORKSPACE_DEFAULT_MACHINE_TYPE
-          ? { membershipId: member.membershipId, role: member.role }
-          : {
-            membershipId: member.membershipId,
-            role: member.role,
-            machineTypeId: member.machineTypeId,
-          }
-      ));
+      input.members = members.map((member) => {
+        const row: NonNullable<CreateWorkspaceDialogInput['members']>[number] = {
+          membershipId: member.membershipId,
+          role: member.role,
+        };
+        if (member.machineTypeId !== WORKSPACE_DEFAULT_MACHINE_TYPE) {
+          row.machineTypeId = member.machineTypeId;
+        }
+        // True is the server's default, so only the refusal travels.
+        if (!member.persistentVolume) row.persistentVolume = false;
+        return row;
+      });
     }
     const namedCredentials = credentials.filter(
       (credential) => credential.name.trim() !== '' && credential.value !== '',
@@ -372,27 +365,6 @@ export function CreateWorkspaceDialog({
             >
               Add credential
             </button>
-          </section>
-
-          <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Volume</h2>
-              <p>Optionally attach an available volume.</p>
-            </div>
-            <label className="blueprint-field">
-              Volume
-              <select name="volumeId" defaultValue="" disabled={!supportsVolumes}>
-                <option value="">No volume</option>
-                {volumes.map((volume) => (
-                  <option key={volume.id} value={volume.id} disabled={volume.status !== 'available'}>
-                    {volume.name} · {volume.sizeGb} GB · {volume.location} · {volume.status}
-                  </option>
-                ))}
-              </select>
-              {!supportsVolumes && selectedMachine !== undefined && (
-                <span>Volumes are not supported by this machine provider.</span>
-              )}
-            </label>
           </section>
 
           {/* A clone already carries its source's repository list, and the two

@@ -127,6 +127,22 @@
   font-weight: 650;
 }
 
+.settings-nav-link {
+  display: block;
+  margin-top: 10px;
+  padding: 8px 9px;
+  border-top: 1px solid var(--rule);
+  color: var(--faint);
+  font: 12px/1.5 var(--font-ui);
+  text-decoration: none;
+}
+
+.settings-nav-link:hover,
+.settings-nav-link:focus-visible {
+  color: var(--ink);
+  outline: 0;
+}
+
 .settings-content {
   min-width: 0;
   min-height: 0;
@@ -315,13 +331,6 @@
     color: var(--ink);
     background: color-mix(in oklab, var(--ink) 4%, var(--paper));
     font: 12.5px/1.5 var(--font-ui);
-  }
-
-  .settings-section-select .webapp-select-menu {
-    top: calc(100% + 5px);
-    bottom: auto;
-    width: 100%;
-    max-width: none;
   }
 
   .settings-section-select .webapp-select-chevron {

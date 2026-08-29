@@ -194,6 +194,7 @@ const addWorkspaceMemberRequest: SharedShape<
   membershipId: viewerMember.membershipId,
   role: "member",
   machineTypeId: pricedMachineType.id,
+  persistentVolume: false,
 };
 
 const updateWorkspaceMemberRequest: SharedShape<
@@ -204,7 +205,7 @@ const updateWorkspaceMemberRequest: SharedShape<
 const provisionMemberMachineRequest: SharedShape<
   wire.ProvisionMemberMachineRequest,
   schema.ProvisionMemberMachineRequest
-> = { machineTypeId: pricedMachineType.id };
+> = { machineTypeId: pricedMachineType.id, persistentVolume: true };
 
 // Every settings field at once. `agentRuleId` also travels as an explicit
 // null — the way back to the built-in doc — which is different ground than a
@@ -383,7 +384,12 @@ const createWorkspaceRequest: SharedShape<
   machineTypeId: machineType.id,
   defaultMachineTypeId: machineType.id,
   autoProvision: false,
-  members: [{ membershipId: viewerMember.membershipId, role: "member", machineTypeId: machineType.id }],
+  members: [{
+    membershipId: viewerMember.membershipId,
+    role: "member",
+    machineTypeId: machineType.id,
+    persistentVolume: false,
+  }],
   credentials: [{ name: workspaceCredential.name, label: "live", value: "sk_test_only" }],
   cloneFromWorkspaceId: "workspace",
   sshPublicKey: "ssh-ed25519 AAAAcaller",

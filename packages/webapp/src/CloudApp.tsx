@@ -187,8 +187,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
    * blank create. Cleared with the dialog. */
   const [cloneFromWorkspaceId, setCloneFromWorkspaceId] = useState<string | null>(null);
   const [details, setDetails] = useState<
-    { workspaceId: string; tab: WorkspaceDetailsTab } | null
+    { workspaceId: string; tab: WorkspaceDetailsTab; focusAddMember?: boolean } | null
   >(null);
+  const [machineWorkspaceId, setMachineWorkspaceId] = useState<string | null>(null);
   const [createWorkspaceBusy, setCreateWorkspaceBusy] = useState(false);
   const [createWorkspaceError, setCreateWorkspaceError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
@@ -303,7 +304,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [api]);
   const listMachineTypes = useCallback(() => api.listMachineTypes(), [api]);
-  const listVolumes = useCallback(() => api.listVolumes(), [api]);
   const refreshWorkspaceRecords = useCallback(async () => {
     try {
       const records = await api.listWorkspaces();
@@ -773,19 +773,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     });
   }, [activeWorkspaceId, setWorkspaceTabs]);
 
-  /** The strip's surface icons focus a panel. They open, they never close:
-   * the right icon strip owns the toggle. */
-  const openWorkspacePanel = useCallback((panel: WorkspaceDrawerSegment) => {
-    if (!activeWorkspaceId) return;
-    updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
-    if (mobileWebApp) {
-      setDrawerOpen(false);
-      setFilesDrawerOpen(true);
-      return;
-    }
-    setFocusedRegion('side');
-  }, [activeWorkspaceId, mobileWebApp, updateWorkspaceTabs]);
-
   const toggleFiles = useCallback(() => {
     if (!activeWorkspaceId) return;
     if (mobileWebApp) {
@@ -827,6 +814,15 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       label: workspace.title,
     });
   }, []);
+
+  /** The tile's inline rename. The name is the workspace's own settings field,
+   * so it goes through the same PATCH the settings tab writes; the tile shows
+   * the new name at once and the next poll agrees. */
+  const renameWorkspace = useCallback((workspaceId: string, name: string) => {
+    dispatch({ type: 'workspace_renamed', workspaceId, title: name });
+    void client.updateWorkspace(workspaceId, { name })
+      .catch((caught: Error) => setError(caught.message));
+  }, [client]);
 
   const retryWorkspace = useCallback(async (workspaceId: string) => {
     const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
@@ -1375,12 +1371,20 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         ? railSessions
         : []}
       activeSessionId={railActiveSessionId ?? ''}
-      openPanels={openPanels}
-      pendingRequestCount={activePendingRequests.length}
+      livePorts={orderedLivePorts}
+      previewLinks={orderedPreviewLinks}
       drawerOpen={drawerOpen}
       onSelectWorkspace={selectWorkspace}
+      onRenameWorkspace={renameWorkspace}
+      onOpenWorkspaceSettings={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetails({ workspaceId, tab: 'settings' });
+      }}
+      onInviteToWorkspace={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setDetails({ workspaceId, tab: 'members', focusAddMember: true });
+      }}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
-      onOpenPanel={openWorkspacePanel}
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());
       }}
@@ -1389,6 +1393,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onOpenSettings={() => navigateToSettings('profile')}
       onSelectSession={selectTtydSession}
       onSpawnSession={spawnTtydSession}
+      onOpenPreview={(port) => { openPreviewPort(port); }}
+      onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
       onOpenWorkspaceMembers={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
         setDetails({ workspaceId, tab: 'members' });
@@ -1396,6 +1402,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onOpenWorkspaceDetails={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
         setDetails({ workspaceId, tab: 'members' });
+      }}
+      onOpenWorkspaceMachine={(workspaceId) => {
+        if (mobileWebApp) setDrawerOpen(false);
+        setMachineWorkspaceId(workspaceId);
       }}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
@@ -1417,7 +1427,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       createWorkspaceBusy={createWorkspaceBusy}
       createWorkspaceError={createWorkspaceError}
       listMachineTypes={listMachineTypes}
-      listVolumes={listVolumes}
       cloneFromWorkspaceId={cloneFromWorkspaceId}
       onCancelCreateWorkspace={() => {
         if (createWorkspaceBusy) return;
@@ -1427,6 +1436,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       onCreateWorkspace={(input) => { void createWorkspace(input); }}
       details={details}
       onCloseDetails={() => setDetails(null)}
+      machineWorkspaceId={machineWorkspaceId}
+      onCloseMachine={() => setMachineWorkspaceId(null)}
       onCloneWorkspace={(workspaceId) => {
         // "New workspace from existing" IS the template now (§0): the create
         // dialog opens carrying the source, and the server copies its config.

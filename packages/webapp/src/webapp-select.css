@@ -45,11 +45,13 @@
   font-size: 10px;
 }
 
+/* The popover takes the top stacking position, and takes it once: it is
+   fixed, so no scroll container between it and the page clips it and nothing
+   inside a dialog paints over it. WebAppSelectMenu writes `left` and one of
+   `top`/`bottom` from the trigger's viewport rect. */
 .webapp-select-menu {
-  position: absolute;
-  z-index: 40;
-  bottom: calc(100% + 6px);
-  left: 0;
+  position: fixed;
+  z-index: 900;
   width: max-content;
   min-width: 220px;
   max-width: min(320px, calc(100vw - 24px));

@@ -31,7 +31,13 @@ export interface CreateWorkspaceRequest {
   autoProvision?: boolean;
   /** Existing org members, added immediately. The creator is the first
    * workspace admin and never needs a row here. */
-  members?: { membershipId: string; role: WorkspaceMemberRole; machineTypeId?: string }[];
+  members?: {
+    membershipId: string;
+    role: WorkspaceMemberRole;
+    machineTypeId?: string;
+    /** Default true; false gives that member's machine no volume. */
+    persistentVolume?: boolean;
+  }[];
   /** The only path where a credential value is sent. */
   credentials?: { name: string; label?: string; value: string }[];
   /** Copies config — default machine type, agent rule, repos, credential

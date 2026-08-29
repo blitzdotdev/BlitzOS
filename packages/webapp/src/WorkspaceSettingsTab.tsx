@@ -136,7 +136,8 @@ function ReposEditor({
 
 /**
  * The Settings tab of plan §6: name, default machine type, auto-provision,
- * agent rules, repos, clone and delete.
+ * agent rules and repos. Clone and delete are workspace-wide verbs, so they
+ * sit in the dialog footer rather than at the bottom of this tab.
  *
  * Every field here is workspace-admin work (§3), so a member reads the values
  * and an admin edits them. The default machine type applies to machines
@@ -152,8 +153,6 @@ export function WorkspaceSettingsTab({
   onSave,
   onAddRepo,
   onRemoveRepo,
-  onClone,
-  onDelete,
 }: {
   client: AgentRulesApi;
   workspace: CloudWorkspaceModel;
@@ -163,8 +162,6 @@ export function WorkspaceSettingsTab({
   onSave: (input: UpdateWorkspaceRequest) => void;
   onAddRepo: (repo: string) => void;
   onRemoveRepo: (repo: string) => void;
-  onClone: (() => void) | null;
-  onDelete: (() => void) | null;
 }) {
   const [draft, setDraft] = useState<SettingsDraft>(() => draftFor(workspace));
   const changes = settingsChanges(workspace, draft);
@@ -176,6 +173,7 @@ export function WorkspaceSettingsTab({
       aria-label="Settings"
       className="workspace-details-settings"
     >
+      <h2>Workspace</h2>
       {canManage ? (
         <div className="workspace-settings-form">
           <label className="blueprint-field">
@@ -258,18 +256,6 @@ export function WorkspaceSettingsTab({
         onAdd={onAddRepo}
         onRemove={onRemoveRepo}
       />
-      <div className="workspace-details-settings-actions">
-        {onClone && (
-          <button className="webapp-action" type="button" onClick={onClone}>
-            New workspace from this one
-          </button>
-        )}
-        {onDelete && (
-          <button className="workspace-details-delete" type="button" onClick={onDelete}>
-            Delete workspace
-          </button>
-        )}
-      </div>
     </section>
   );
 }

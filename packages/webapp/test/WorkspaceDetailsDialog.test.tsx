@@ -170,6 +170,78 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
+  it('provisions without a volume when the row turns the toggle off', async () => {
+    const provisionMemberMachine = vi.fn().mockResolvedValue({ member: grace });
+    const view = await render(dialog({
+      client: client({ provisionMemberMachine }),
+      workspace: { ...workspace, members: [ada, { ...grace, role: 'member' }] },
+    }));
+    await settle();
+
+    // Ada's machine already holds a volume, so her row reports the disk that
+    // exists rather than offering a choice this route cannot make.
+    const settled = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Persistent volume for Ada Owner"]',
+    );
+    expect(settled?.checked).toBe(true);
+    expect(settled?.disabled).toBe(true);
+
+    const toggle = view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Persistent volume for Grace Viewer"]',
+    );
+    expect(toggle?.checked).toBe(true);
+    await act(async () => toggle?.click());
+
+    const menu = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Machine actions for Grace Viewer"]',
+    );
+    await act(async () => menu?.click());
+    await act(async () => view.container.querySelector<HTMLButtonElement>('[role="option"]')?.click());
+
+    expect(provisionMemberMachine).toHaveBeenCalledWith(
+      workspace.id,
+      grace.membershipId,
+      { persistentVolume: false },
+    );
+    await view.unmount();
+  });
+
+  it('anchors every row popover to the viewport, so the dialog cannot clip it', async () => {
+    const view = await render(dialog({
+      workspace: { ...workspace, members: [ada, { ...grace, role: 'member' }] },
+    }));
+    await settle();
+
+    // The three the report named: the role listbox, the machine-type listbox
+    // and the lifecycle menu. Each sits inside `.workspace-details-body`,
+    // which scrolls, so an absolutely positioned popover was clipped by it.
+    // Ada is the workspace owner, so her role is a fact and not a control.
+    const labels = [
+      'Role for Grace Viewer',
+      'Machine type for Ada Owner',
+      'Machine actions for Ada Owner',
+    ];
+    for (const label of labels) {
+      const trigger = view.container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+      if (trigger === null) throw new Error(`no trigger for ${label}`);
+      // A row far enough down the viewport that the popover opens upward.
+      trigger.getBoundingClientRect = () => ({
+        x: 300, y: 500, left: 300, top: 500, right: 420, bottom: 530,
+        width: 120, height: 30, toJSON: () => ({}),
+      });
+      await act(async () => trigger.click());
+      const menu = view.container.querySelector<HTMLElement>(`[role="listbox"][aria-label="${label}"]`);
+      if (menu === null) throw new Error(`no popover for ${label}`);
+      expect(menu.style.left).toBe('300px');
+      // Anchored above the trigger, in viewport coordinates rather than in the
+      // scrolling body's.
+      expect(menu.style.bottom).toBe(`${String(window.innerHeight - 500 + 6)}px`);
+      expect(menu.style.top).toBe('');
+      await act(async () => trigger.click());
+    }
+    await view.unmount();
+  });
+
   it('lists credential names, never a value, and revokes one', async () => {
     const revokeWorkspaceCredential = vi.fn().mockResolvedValue(undefined);
     const view = await render(dialog({ client: client({ revokeWorkspaceCredential }) }));
@@ -191,17 +263,24 @@ describe('WorkspaceDetailsDialog', () => {
     await view.unmount();
   });
 
-  it('offers clone and delete from Settings, and names the default machine type', async () => {
+  it('offers clone and delete from the footer, and names the default machine type', async () => {
     const onClone = vi.fn();
     const onDelete = vi.fn();
     const view = await render(dialog({ onClone, onDelete }));
     await settle();
-    await act(async () => tab(view.container, 'Settings')?.click());
 
+    // The pre-#106 chrome: the header names the workspace and the two
+    // workspace-wide verbs live in the footer, under every tab.
+    expect(view.container.querySelector('.workspace-details-header h1')?.textContent)
+      .toBe('Workspace details “Details test”');
+    const footer = view.container.querySelector('.workspace-details-footer');
+    expect(footer).not.toBeNull();
+
+    await act(async () => tab(view.container, 'Settings')?.click());
     expect(view.container.textContent).toContain('Shared x86');
     expect(view.container.textContent).toContain('Applies to new machines');
 
-    const buttons = [...view.container.querySelectorAll<HTMLButtonElement>('button')];
+    const buttons = [...footer!.querySelectorAll<HTMLButtonElement>('button')];
     await act(async () => buttons.find((b) => b.textContent === 'New workspace from this one')?.click());
     await act(async () => buttons.find((b) => b.textContent === 'Delete workspace')?.click());
     expect(onClone).toHaveBeenCalledOnce();
@@ -316,10 +395,15 @@ describe('WorkspaceSessionRail', () => {
         workspace={workspace}
         sessions={[]}
         activeSessionId=""
+        livePorts={[]}
+        previewLinks={[]}
         onSelectSession={() => undefined}
         onSpawnSession={() => undefined}
+        onOpenPreview={() => undefined}
+        onOpenPreviewLink={() => undefined}
         onOpenMembers={onOpenMembers}
         onOpenDetails={onOpenDetails}
+        onOpenMachine={() => undefined}
       />,
     );
 
@@ -342,16 +426,55 @@ describe('WorkspaceSessionRail', () => {
         workspace={{ ...workspace, accessRole: 'editor', shared: true }}
         sessions={[]}
         activeSessionId=""
+        livePorts={[]}
+        previewLinks={[]}
         onSelectSession={() => undefined}
         onSpawnSession={() => undefined}
+        onOpenPreview={() => undefined}
+        onOpenPreviewLink={() => undefined}
         onOpenMembers={onOpenMembers}
         onOpenDetails={onOpenDetails}
+        onOpenMachine={() => undefined}
       />,
     ));
     expect(view.container.querySelector('button[aria-label="Members of Details test"]')).toBeNull();
     expect(view.container.querySelector(
       'button[aria-label="Workspace details for Details test"]',
     )).not.toBeNull();
+    await view.unmount();
+  });
+
+  it('opens the same New tab menu the tab strip serves, live ports and all', async () => {
+    const onSpawnSession = vi.fn();
+    const onOpenPreview = vi.fn();
+    const view = await render(
+      <WorkspaceSessionRail
+        workspace={workspace}
+        sessions={[]}
+        activeSessionId=""
+        livePorts={[{ port: 3000, process: 'vite', firstSeenAt: 1 }]}
+        previewLinks={[]}
+        onSelectSession={() => undefined}
+        onSpawnSession={onSpawnSession}
+        onOpenPreview={onOpenPreview}
+        onOpenPreviewLink={() => undefined}
+        onOpenMembers={() => undefined}
+        onOpenDetails={() => undefined}
+        onOpenMachine={() => undefined}
+      />,
+    );
+
+    const pinned = view.container.querySelector<HTMLButtonElement>('button[aria-label="New tab"]');
+    expect(pinned?.textContent).toContain('New tab');
+    await act(async () => pinned?.click());
+    const items = [...view.container.querySelectorAll<HTMLButtonElement>(
+      '.webapp-agent-menu.shell-newmenu [role="menuitem"]',
+    )];
+    expect(items.map((item) => item.textContent?.trim()))
+      .toEqual(['Claude', 'Codex', 'Terminal', ':3000vite']);
+    await act(async () => items[3]?.click());
+    expect(onOpenPreview).toHaveBeenCalledWith(3000);
+    expect(view.container.querySelector('.shell-newmenu')).toBeNull();
     await view.unmount();
   });
 });

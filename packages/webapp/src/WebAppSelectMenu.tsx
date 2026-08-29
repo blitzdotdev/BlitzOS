@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useRef, useState } from 'react';
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 export type CockpitSelectOption = {
   value: string;
@@ -10,6 +10,53 @@ export type CockpitSelectOption = {
    * why their type is missing. */
   disabled?: boolean;
 };
+
+/** The gap between the trigger and the popover, and the margin the popover
+ * keeps from the viewport edge. */
+const MENU_GAP = 6;
+const VIEWPORT_MARGIN = 8;
+/** `min-width` in webapp-select.css, so the clamp cannot push the popover
+ * past the right edge, and the shortest popover worth drawing. */
+const MENU_MIN_WIDTH = 220;
+const MENU_MIN_HEIGHT = 120;
+const MENU_MAX_HEIGHT = 320;
+
+/** Where the popover sits, in viewport coordinates.
+ *
+ * It is `position: fixed`, so no scroll container between it and the page can
+ * clip it and nothing between it and the page can paint over it. That is what
+ * a popover inside the workspace-details dialog needs: its body scrolls, and
+ * an absolutely positioned menu was cut off by it. */
+type MenuPlacement = {
+  left: number;
+  top?: number;
+  bottom?: number;
+  maxHeight: number;
+};
+
+function placeMenu(trigger: HTMLElement): MenuPlacement {
+  const rect = trigger.getBoundingClientRect();
+  const left = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(rect.left, window.innerWidth - MENU_MIN_WIDTH - VIEWPORT_MARGIN),
+  );
+  const above = rect.top - MENU_GAP - VIEWPORT_MARGIN;
+  const below = window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_MARGIN;
+  // Upward is the shape every caller has drawn since this control existed;
+  // it flips only where there is more room the other way.
+  if (above >= below) {
+    return {
+      left,
+      bottom: window.innerHeight - rect.top + MENU_GAP,
+      maxHeight: Math.max(MENU_MIN_HEIGHT, Math.min(MENU_MAX_HEIGHT, above)),
+    };
+  }
+  return {
+    left,
+    top: rect.bottom + MENU_GAP,
+    maxHeight: Math.max(MENU_MIN_HEIGHT, Math.min(MENU_MAX_HEIGHT, below)),
+  };
+}
 
 type WebAppSelectMenuProps = {
   ariaLabel: string;
@@ -31,10 +78,31 @@ export function WebAppSelectMenu({
   disabled = false,
 }: WebAppSelectMenuProps) {
   const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<MenuPlacement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listboxId = useId();
   const selected = options.find((option) => option.value === value);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    const place = () => {
+      const trigger = buttonRef.current;
+      if (trigger !== null) setPlacement(placeMenu(trigger));
+    };
+    place();
+    // Capture, so the popover follows a scroll in any container above it
+    // rather than staying where the trigger used to be.
+    window.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      window.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,7 +141,18 @@ export function WebAppSelectMenu({
         <span className="webapp-select-chevron" aria-hidden="true">⌃</span>
       </button>
       {open && (
-        <div className="webapp-select-menu" id={listboxId} role="listbox" aria-label={ariaLabel}>
+        <div
+          className="webapp-select-menu"
+          id={listboxId}
+          role="listbox"
+          aria-label={ariaLabel}
+          style={placement === null ? undefined : {
+            left: placement.left,
+            top: placement.top,
+            bottom: placement.bottom,
+            maxHeight: placement.maxHeight,
+          }}
+        >
           {options.map((option, index) => {
             const showGroup = option.group && option.group !== options[index - 1]?.group;
             return (

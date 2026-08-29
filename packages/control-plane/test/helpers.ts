@@ -86,6 +86,10 @@ export class FakeProviders implements VmProvider, VolumeProvider {
   detachCalls = 0;
   onCreate?: (machineId: string) => Promise<void>;
   onDestroy?: (machineId: string) => Promise<void>;
+  /** Undefined by default, so the fake places no volume of its own and a
+   * suite that never asked for one still sees `volume_id` null. A suite that
+   * exercises the auto-created volume sets it. */
+  volumeLocation?: (machineTypeId: string) => string | null;
 
   capabilities() {
     // Ticket-capable from epoch: workspaces created in tests are new.

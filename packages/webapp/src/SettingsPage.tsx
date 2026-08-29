@@ -190,6 +190,15 @@ export function SettingsPage({
         <nav className="settings-side-nav" aria-label="Settings sections" role="tablist">
           {navigation}
         </nav>
+        {/* The one place the product asks for a human. It lived in the strip's
+          * account menu until that menu went; settings is where a member looks
+          * for it next. */}
+        <a
+          className="settings-nav-link"
+          href="https://discord.gg/VsywH6GNhB"
+          target="_blank"
+          rel="noreferrer"
+        >Ask us on Discord</a>
       </aside>
       <div className="settings-content">
         {section === 'profile' && <ProfilePanel viewer={viewer} onSignOut={onSignOut} />}

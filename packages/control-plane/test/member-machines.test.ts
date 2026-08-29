@@ -430,6 +430,71 @@ describe("member machines", () => {
     expect((await machineRow(workspace.id, "personal"))?.state).toBe("destroyed");
   });
 
+  it("gives every member a volume unless their row asked for none", async () => {
+    const { app, providers } = harness();
+    // The fake places no volume unless a suite asks it to; this one is about
+    // what happens when it can.
+    providers.volumeLocation = () => "test";
+    const cookie = await operatorSession(app);
+    const keeper = await sameOrgSession("volume-keeper");
+    const throwaway = await sameOrgSession("volume-throwaway");
+    const later = await sameOrgSession("volume-later");
+
+    const created = await appRequest(app, "/workspaces", {
+      ...json({
+        machineTypeId: "small",
+        members: [
+          { membershipId: keeper.membershipId, role: "member" },
+          { membershipId: throwaway.membershipId, role: "member", persistentVolume: false },
+        ],
+      }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    const workspace = (await created.json<CreatedWorkspace>()).workspace;
+
+    // Default true: an absent field is a member who keeps their disk.
+    expect((await machineRow(workspace.id, keeper.membershipId))?.volume_id).not.toBeNull();
+    // False skips the existing helper, so there is no volume and no ownership
+    // row to reclaim later.
+    const bare = await machineRow(workspace.id, throwaway.membershipId);
+    expect(bare?.volume_id).toBeNull();
+    expect(await env.DB
+      .prepare("SELECT COUNT(*) AS count FROM volume_ownership")
+      .first<number>("count")).toBe(2);
+
+    // The manual provision carries the same field, for a workspace whose
+    // auto-provision is off or a machine that was destroyed.
+    const added = await appRequest(app, `/workspaces/${workspace.id}/members`, {
+      ...json({ membershipId: later.membershipId, role: "viewer" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(added.status).toBe(201);
+    expect((await appRequest(app, `/workspaces/${workspace.id}/members/${later.membershipId}`, {
+      ...json({ role: "member" }, "PATCH"),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(200);
+    const machineId = await machineIdFor(workspace.id, later.membershipId);
+    expect((await appRequest(app, `/machines/${machineId}`, {
+      method: "DELETE",
+      headers: { Cookie: cookie },
+    })).status).toBe(200);
+    await env.DB.prepare("UPDATE machines SET volume_id = NULL WHERE id = ?1")
+      .bind(machineId).run();
+
+    const back = await appRequest(app, `/workspaces/${workspace.id}/members/${later.membershipId}/machine`, {
+      ...json({ persistentVolume: false }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    });
+    expect(back.status).toBe(201);
+    expect((await machineRow(workspace.id, later.membershipId))?.volume_id).toBeNull();
+
+    // A field that is not a boolean is refused rather than coerced.
+    expect((await appRequest(app, `/workspaces/${workspace.id}/members`, {
+      ...json({ membershipId: later.membershipId, role: "member", persistentVolume: "no" }),
+      headers: { Cookie: cookie, "Content-Type": "application/json" },
+    })).status).toBe(400);
+  });
+
   it("counts machines against vm_limit, not workspaces", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);

@@ -1,5 +1,12 @@
 import { first, rows } from "./db.js";
-import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
+import {
+  HttpError,
+  isBoolean,
+  isRecord,
+  readJson,
+  requiredString,
+  type JsonValue,
+} from "./http.js";
 import {
   destroyMachine,
   machineFor,
@@ -38,6 +45,12 @@ export function parseAddWorkspaceMember(value: JsonValue): AddWorkspaceMemberReq
   if (value.machineTypeId !== undefined && value.machineTypeId !== null) {
     result.machineTypeId = requiredString(value.machineTypeId, "machineTypeId", 256);
   }
+  if (value.persistentVolume !== undefined && value.persistentVolume !== null) {
+    if (!isBoolean(value.persistentVolume)) {
+      throw new HttpError(400, "persistentVolume must be a boolean");
+    }
+    result.persistentVolume = value.persistentVolume;
+  }
   return result;
 }
 
@@ -46,6 +59,12 @@ function parseProvisionMemberMachine(value: JsonValue): ProvisionMemberMachineRe
   const result: ProvisionMemberMachineRequest = {};
   if (value.machineTypeId !== undefined && value.machineTypeId !== null) {
     result.machineTypeId = requiredString(value.machineTypeId, "machineTypeId", 256);
+  }
+  if (value.persistentVolume !== undefined && value.persistentVolume !== null) {
+    if (!isBoolean(value.persistentVolume)) {
+      throw new HttpError(400, "persistentVolume must be a boolean");
+    }
+    result.persistentVolume = value.persistentVolume;
   }
   return result;
 }
@@ -68,6 +87,7 @@ function memberProvisionInput(
   machineTypeId: string,
   requestOrigin: string,
   existing: MachineRow | null,
+  persistentVolume?: boolean,
 ): ProvisionMachineInput {
   const input: ProvisionMachineInput = {
     workspace,
@@ -77,6 +97,7 @@ function memberProvisionInput(
   };
   if (existing !== null) input.machineId = existing.id;
   if (existing?.volume_id != null) input.volumeId = existing.volume_id;
+  if (persistentVolume !== undefined) input.persistentVolume = persistentVolume;
   return input;
 }
 
@@ -138,6 +159,7 @@ export async function addWorkspaceMember(
         input.machineTypeId ?? workspace.default_machine_type_id,
         requestOrigin,
         existing,
+        input.persistentVolume,
       ))
     : existing;
   return {
@@ -263,6 +285,7 @@ export function addWorkspaceMemberRoutes(
       input.machineTypeId ?? existing?.machine_type_id ?? workspace.default_machine_type_id,
       new URL(context.req.url).origin,
       existing,
+      input.persistentVolume,
     ));
     return context.json<WorkspaceMemberResponse>({
       member: {

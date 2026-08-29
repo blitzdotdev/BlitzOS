@@ -1,4 +1,4 @@
-import type { ListMachineTypesResponse, Volume } from '@blitzos/schema';
+import type { ListMachineTypesResponse } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../api';
 import type { TenantMe } from '../api-adapter';
 import { ConfirmationDialog } from '../ConfirmationDialog';
@@ -11,6 +11,7 @@ import {
   WorkspaceDetailsDialog,
   type WorkspaceDetailsTab,
 } from '../WorkspaceDetailsDialog';
+import { MyMachineDialog } from '../MyMachineDialog';
 import type { CloudWorkspaceModel } from '../workspace-store';
 
 /** The workspace this dialog stack is about to delete, and the name the
@@ -31,15 +32,23 @@ export type ShellDialogsProps = {
   createWorkspaceBusy: boolean;
   createWorkspaceError: string | null;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  listVolumes: () => Promise<Volume[]>;
   /** The workspace a "new workspace from existing" copies, or null. */
   cloneFromWorkspaceId: string | null;
   onCancelCreateWorkspace: () => void;
   onCreateWorkspace: (input: CreateWorkspaceDialogInput) => void;
   /** Which workspace the details dialog is about, and which tab it opens on.
-   * The rail's people icon opens Members; the ⋯ icon opens the default. */
-  details: { workspaceId: string; tab: WorkspaceDetailsTab } | null;
+   * The rail's people icon opens Members; the ⋯ icon opens the default.
+   * `focusAddMember` is the tile menu's Invite, which lands on Members with
+   * the picker ready to type into. */
+  details: {
+    workspaceId: string;
+    tab: WorkspaceDetailsTab;
+    focusAddMember?: boolean;
+  } | null;
   onCloseDetails: () => void;
+  /** The workspace whose "My machine" panel is open, or null. */
+  machineWorkspaceId: string | null;
+  onCloseMachine: () => void;
   onCloneWorkspace: (workspaceId: string) => void;
   onRequestDeleteWorkspace: (workspaceId: string) => void;
   confirmation: WebAppConfirmation | null;
@@ -60,12 +69,13 @@ export function ShellDialogs({
   createWorkspaceBusy,
   createWorkspaceError,
   listMachineTypes,
-  listVolumes,
   cloneFromWorkspaceId,
   onCancelCreateWorkspace,
   onCreateWorkspace,
   details,
   onCloseDetails,
+  machineWorkspaceId,
+  onCloseMachine,
   onCloneWorkspace,
   onRequestDeleteWorkspace,
   confirmation,
@@ -78,6 +88,9 @@ export function ShellDialogs({
   const detailsWorkspace = details === null
     ? undefined
     : workspaces.find(({ id }) => id === details.workspaceId);
+  const machineWorkspace = machineWorkspaceId === null
+    ? undefined
+    : workspaces.find(({ id }) => id === machineWorkspaceId);
   // Workspace admin, or an org admin reaching in implicitly (§3): the wire
   // reports the second as a null stored role on a workspace they can open.
   const canManageDetails = detailsWorkspace?.myRole === 'admin'
@@ -97,7 +110,6 @@ export function ShellDialogs({
           saveComputeCredential={client.putComputeCredential}
           client={client}
           listMachineTypes={listMachineTypes}
-          listVolumes={listVolumes}
           cloneFromWorkspaceId={cloneFromWorkspaceId}
           cloneFromWorkspaceName={cloneSource?.title ?? null}
           viewerName={viewer?.identity.name || viewer?.identity.email || 'You'}
@@ -111,11 +123,21 @@ export function ShellDialogs({
           workspace={detailsWorkspace}
           listMachineTypes={listMachineTypes}
           initialTab={details.tab}
+          focusAddMember={details.focusAddMember ?? false}
           onClose={onCloseDetails}
           onClone={() => onCloneWorkspace(detailsWorkspace.id)}
           onDelete={canManageDetails
             ? () => onRequestDeleteWorkspace(detailsWorkspace.id)
             : null}
+        />
+      )}
+      {machineWorkspace !== undefined && (
+        <MyMachineDialog
+          client={client}
+          workspace={machineWorkspace}
+          membershipId={viewer?.membership.id ?? null}
+          listMachineTypes={listMachineTypes}
+          onClose={onCloseMachine}
         />
       )}
       {confirmation && (

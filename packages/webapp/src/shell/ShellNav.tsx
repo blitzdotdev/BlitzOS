@@ -1,6 +1,6 @@
 import type { TenantMe } from '../api-adapter';
-import type { SpawnSessionType } from '../WebAppHeader';
-import type { WorkspaceDrawerSegment } from '../storage';
+import type { SpawnSessionType } from '../NewTabMenu';
+import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
 import type { DriveRailSession } from './rail-sessions';
 import { WorkspaceSessionRail } from './WorkspaceSessionRail';
@@ -17,20 +17,25 @@ export type ShellNavProps = {
   showRail: boolean;
   sessions: DriveRailSession[];
   activeSessionId: string;
-  openPanels: ReadonlySet<WorkspaceDrawerSegment>;
-  pendingRequestCount: number;
+  livePorts: LivePort[];
+  previewLinks: PreviewLink[];
   drawerOpen: boolean;
   onSelectWorkspace: (workspaceId: string) => void;
+  onRenameWorkspace: (workspaceId: string, name: string) => void;
+  onOpenWorkspaceSettings: (workspaceId: string) => void;
+  onInviteToWorkspace: (workspaceId: string) => void;
   onCreateWorkspace: () => void;
-  onOpenPanel: (panel: WorkspaceDrawerSegment) => void;
   onSwitchOrg: (orgId: string) => void;
   onCreateOrg: () => void;
   onOpenDrive: () => void;
   onOpenSettings: () => void;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
+  onOpenPreview: (port: number) => void;
+  onOpenPreviewLink: (url: string, title: string) => void;
   onOpenWorkspaceMembers: (workspaceId: string) => void;
   onOpenWorkspaceDetails: (workspaceId: string) => void;
+  onOpenWorkspaceMachine: (workspaceId: string) => void;
   onCloseDrawer: () => void;
 };
 
@@ -45,20 +50,25 @@ export function ShellNav({
   showRail,
   sessions,
   activeSessionId,
-  openPanels,
-  pendingRequestCount,
+  livePorts,
+  previewLinks,
   drawerOpen,
   onSelectWorkspace,
+  onRenameWorkspace,
+  onOpenWorkspaceSettings,
+  onInviteToWorkspace,
   onCreateWorkspace,
-  onOpenPanel,
   onSwitchOrg,
   onCreateOrg,
   onOpenDrive,
   onOpenSettings,
   onSelectSession,
   onSpawnSession,
+  onOpenPreview,
+  onOpenPreviewLink,
   onOpenWorkspaceMembers,
   onOpenWorkspaceDetails,
+  onOpenWorkspaceMachine,
   onCloseDrawer,
 }: ShellNavProps) {
   return (
@@ -68,12 +78,11 @@ export function ShellNav({
           workspaces={workspaces}
           viewer={viewer}
           activeWorkspaceId={activeWorkspaceId}
-          openPanels={openPanels}
-          pendingRequestCount={pendingRequestCount}
-          surfacesEnabled={activeWorkspace !== undefined}
           onSelectWorkspace={onSelectWorkspace}
+          onRenameWorkspace={onRenameWorkspace}
+          onOpenWorkspaceSettings={onOpenWorkspaceSettings}
+          onInviteToWorkspace={onInviteToWorkspace}
           onCreateWorkspace={onCreateWorkspace}
-          onOpenPanel={onOpenPanel}
           onSwitchOrg={onSwitchOrg}
           onCreateOrg={onCreateOrg}
           onOpenDrive={onOpenDrive}
@@ -85,10 +94,15 @@ export function ShellNav({
             workspace={activeWorkspace}
             sessions={sessions}
             activeSessionId={activeSessionId}
+            livePorts={livePorts}
+            previewLinks={previewLinks}
             onSelectSession={onSelectSession}
             onSpawnSession={onSpawnSession}
+            onOpenPreview={onOpenPreview}
+            onOpenPreviewLink={onOpenPreviewLink}
             onOpenMembers={onOpenWorkspaceMembers}
             onOpenDetails={onOpenWorkspaceDetails}
+            onOpenMachine={onOpenWorkspaceMachine}
           />
         )}
       </div>
