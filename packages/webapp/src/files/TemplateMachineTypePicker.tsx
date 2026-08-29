@@ -31,9 +31,9 @@ export function TemplateMachineTypePicker({
 }) {
   return (
     <section className="blueprint-selection">
-      <div className="blueprint-selection__heading">
-        <h2>Machine type</h2>
-        <p>Workspaces created from this template run on this machine.</p>
+      <div className="cfg-section-head">
+        <h2 className="cfg-title">Machine type</h2>
+        <p className="cfg-desc">Workspaces created from this template run on this machine.</p>
       </div>
       {loading ? (
         <OutlinedLoadingRows count={4} ariaLabel="Loading machine types" />

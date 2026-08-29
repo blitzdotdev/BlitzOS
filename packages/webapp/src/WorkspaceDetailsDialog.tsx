@@ -92,40 +92,46 @@ function CredentialsTab({
       aria-label="Credentials"
       className="workspace-details-credentials"
     >
-      <h2>Credentials</h2>
-      <p className="workspace-details-note">
-        Workspace credentials reach every member machine through{' '}
-        <code>blitz-cred</code>. A value is write-only: it never comes back out
-        of the store, so a rotation replaces it rather than editing it.
-      </p>
-      <div className="workspace-credential-rows">
-        {credentials.length === 0 && (
-          <p className="workspace-members-empty">No workspace credentials yet.</p>
-        )}
-        {credentials.map((credential) => (
-          <div className="workspace-credential-row" key={credential.name}>
-            <span className="workspace-credential-name">
-              <strong>{credential.name}</strong>
-              {credential.label !== null && <small>{credential.label}</small>}
-            </span>
-            <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
-            {canManage && (
-              <button
-                className="webapp-action"
-                type="button"
-                aria-label={`Revoke ${credential.name}`}
-                onClick={() => onRevoke(credential.name)}
-              >
-                Revoke
-              </button>
-            )}
-          </div>
-        ))}
+      <div className="cfg-section">
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">Credentials</h2>
+          <p className="cfg-desc">
+            Workspace credentials reach every member machine through{' '}
+            <code>blitz-cred</code>. A value is write-only: it never comes back
+            out of the store, so a rotation replaces it rather than editing it.
+          </p>
+        </div>
+        <div className="workspace-credential-rows">
+          {credentials.length === 0 && (
+            <p className="workspace-members-empty">No workspace credentials yet.</p>
+          )}
+          {credentials.map((credential) => (
+            <div className="workspace-credential-row" key={credential.name}>
+              <span className="workspace-credential-name">
+                <strong>{credential.name}</strong>
+                {credential.label !== null && <small>{credential.label}</small>}
+              </span>
+              <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
+              {canManage && (
+                <button
+                  className="webapp-action"
+                  type="button"
+                  aria-label={`Revoke ${credential.name}`}
+                  onClick={() => onRevoke(credential.name)}
+                >
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
       {canManage && (
-        <div className="workspace-credential-add">
-          <h2>Add or rotate</h2>
-          <label className="blueprint-field">
+        <div className="cfg-section">
+          <div className="cfg-section-head">
+            <h2 className="cfg-title">Add or rotate</h2>
+          </div>
+          <label className="cfg-field">
             Name
             <input
               aria-label="Credential name"
@@ -137,7 +143,7 @@ function CredentialsTab({
               onChange={(event) => setName(event.currentTarget.value)}
             />
           </label>
-          <label className="blueprint-field">
+          <label className="cfg-field">
             Label (optional)
             <input
               aria-label="Credential label"
@@ -145,7 +151,7 @@ function CredentialsTab({
               onChange={(event) => setLabel(event.currentTarget.value)}
             />
           </label>
-          <label className="blueprint-field">
+          <label className="cfg-field">
             Value
             <input
               aria-label="Credential value"
@@ -155,14 +161,16 @@ function CredentialsTab({
               onChange={(event) => setValue(event.currentTarget.value)}
             />
           </label>
-          <button
-            className="webapp-action webapp-action--primary"
-            type="button"
-            disabled={name.trim() === '' || value === ''}
-            onClick={submit}
-          >
-            Save credential
-          </button>
+          <div className="cfg-actions">
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={name.trim() === '' || value === ''}
+              onClick={submit}
+            >
+              Save credential
+            </button>
+          </div>
         </div>
       )}
     </section>
@@ -340,8 +348,11 @@ export function WorkspaceDetailsDialog({
               aria-label="Members"
               className="workspace-details-members"
             >
-              <h2>Who has access</h2>
-              <WorkspaceMembersEditor
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Who has access</h2>
+                </div>
+                <WorkspaceMembersEditor
                 mode={{
                   kind: 'live',
                   members: workspace.members,
@@ -358,8 +369,9 @@ export function WorkspaceDetailsDialog({
                 orgMembers={orgMembers}
                 machines={machines}
                 defaultMachineTypeId={workspace.defaultMachineTypeId}
-                autoFocusAdd={focusAddMember}
-              />
+                  autoFocusAdd={focusAddMember}
+                />
+              </div>
             </section>
           )}
           {tab === 'credentials' && (
@@ -384,14 +396,14 @@ export function WorkspaceDetailsDialog({
           )}
         </div>
         {(onClone !== null || onDelete !== null) && (
-          <footer className="workspace-details-footer">
+          <footer className="workspace-details-footer cfg-footer">
             {onClone && (
               <button className="webapp-action" type="button" onClick={onClone}>
                 New workspace from this one
               </button>
             )}
             {onDelete && (
-              <button className="workspace-details-delete" type="button" onClick={onDelete}>
+              <button className="cfg-danger-action" type="button" onClick={onDelete}>
                 Delete workspace
               </button>
             )}

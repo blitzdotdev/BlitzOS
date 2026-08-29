@@ -1,0 +1,7 @@
+{
+  "request": {
+    "diskUsedPercent": 41,
+    "note": "unknown keys are tolerated for forward compatibility"
+  },
+  "accepts": true
+}

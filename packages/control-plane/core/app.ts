@@ -7,6 +7,7 @@ import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./en
 import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addMachineRoutes } from "./machines.js";
+import { addMachineStatsRoutes } from "./machine-stats.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
@@ -105,6 +106,9 @@ export function installControlPlaneRoutes(
   // same reason; its one session route (/workspaces/:id/box-update) collides
   // with nothing.
   addBoxConfigRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Box-authenticated too, and registered here for the same prefix reason: the
+  // guest's own disk report (packages/schema/fixtures/machine-stats/).
+  addMachineStatsRoutes(router, runtimeFactory);
   // Registered before addWorkspaceRoutes: /workspaces/:id/members and
   // /workspaces/:id/credentials are literal paths under the same prefix.
   addWorkspaceMemberRoutes(router, runtimeFactory, requireMembershipPrincipal);

@@ -272,7 +272,9 @@ describe('provider admin form', () => {
         onSubmit={() => undefined}
       />,
     );
-    const labels = [...view.container.querySelectorAll('.connect-field__label')]
+    // The field micro-label is `.cfg-label` since the settings-surface
+    // system landed (src/settings-surface.css).
+    const labels = [...view.container.querySelectorAll('.cfg-label')]
       .map((label) => label.textContent);
     expect(labels).toEqual(['Bot token']);
     expect(view.container.querySelector('input[name="baseUrl"]')).toBeNull();

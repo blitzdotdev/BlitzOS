@@ -74,6 +74,7 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | connection pull v1 | CP producer `core/connections/pull-wire.ts`, routes in `core/connections/pull-routes.ts` (`GET /workspaces/self/connections`, `POST /workspaces/self/connections/:name/token`) ↔ Go consumer `broker/internal/workspace/connections.go`, printed by `blitz-cred list\|get\|env`. Carries BOTH credential planes: the member's own connection grant and the workspace credential store (plans/MEMBER-MACHINES.md §4) | `fixtures/connection-pull/` | `test/connection-pull-conformance.test.ts` + `test/pull-credentials.test.ts` + `test/member-machines.test.ts` (CP), `broker/internal/workspace/connections_test.go` + `broker/cmd/blitz-cred/main_test.go` (box) |
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
 | recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ guest readers: `blitz-term` through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation`, plus the bootstrap-emitted chat sender's raw `prompt.txt` read (the sender never parses `invocation.env` — model/effort/permission are interpolated into its source at render time) | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/actor/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
+| machine-stats | guest producer `box/rootfs/usr/local/bin/blitz-machine-stats` (s6 longrun `machine-stats`, one report every 10 min) ↔ CP consumer `core/machine-stats.ts` (`POST /workspaces/self/machine-stats`), which fills `machines.disk_used_percent` and surfaces as `MachineView.volumeUsedPercent` | `fixtures/machine-stats/` | `test/machine-stats-conformance.test.ts` (CP), `box/actor/test/machine-stats-conformance.test.ts` (guest: the real script against a local origin) |
 | box config v1 | CP `core/box-config.ts` producer (`GET /workspaces/self/box-config`) and consumer (`POST /workspaces/self/box-update-result`) ↔ host updater bash/python emitted by `core/bootstrap.ts` (`blitz-box-update`; cloud-VM path only — the microVM provider has its own guest lifecycle and no update path yet) | `fixtures/box-config/` | `test/box-config-conformance.test.ts` (CP), `test/box-update-conformance.test.mjs` (runs real `python3` over the emitted parser/producer, `bash -n` over the emitted scripts), `test/box-update-host.test.mjs` (runs the emitted updater in real bash against a live CP over real curl) |
 
 Retired: the `workspace environment` contract (`GET /workspaces/self/environment`
@@ -128,6 +129,29 @@ Templates and Recipes are disabled product-wide (2026-08-29), on both sides:
 The page components (`TemplatesHome`, `RecipesHome`, `CreateTemplateScreen`,
 `CreateRecipeScreen`), the client methods and the recipe rows are untouched
 and unreachable. Restoring a surface means restoring both branches.
+
+## Settings surface style (webapp)
+
+`packages/webapp/src/settings-surface.css` is canon for every
+settings-shaped screen: the workspace-details dialog and its three tabs,
+"My machine", the account settings page and its panels, and the section
+headings of the create-workspace dialog. One class prefix, `cfg-`; the rules
+and the whole vocabulary are documented at the top of that file. Read it
+before restyling a settings surface, and extend it rather than starting a
+seventh heading treatment somewhere else.
+
+The four rules a change must not break:
+
+- The tabbed dialog has ONE fixed height. `.workspace-details-dialog` sets
+  `height`, not `max-height`; the body scrolls; switching tabs never moves
+  the frame.
+- Section titles are sentence case, never all-caps, always `--cfg-title-*`
+  (the ink white and size the "Agent rules" heading had). Descriptions are
+  `--cfg-desc-*`. Field micro-labels are sentence case too.
+- Exactly one thin divider between two adjacent sections, drawn by
+  `.cfg-section ~ .cfg-section` and by nothing else. Card outlines and
+  list-row separators are structure, not dividers.
+- No new colours: everything resolves to a token in `tokens.css`.
 
 ## VM provider architecture (do not regress)
 

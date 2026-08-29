@@ -74,12 +74,16 @@ function ProfilePanel({
           <span>{viewer.identity.email}</span>
         </div>
       </div>
-      <dl className="settings-definition-list">
-        <div><dt>Display name</dt><dd>{displayName}</dd></div>
-        <div><dt>Identity</dt><dd>{viewer.identity.email}</dd></div>
-        <div><dt>Workspace scope</dt><dd>{viewer.org.name || viewer.org.slug}</dd></div>
-        <div><dt>Role</dt><dd>{viewer.membership.role}</dd></div>
-      </dl>
+      <div className="cfg-section">
+        <dl className="cfg-meta">
+          <div><dt>Display name</dt><dd>{displayName}</dd></div>
+          <div><dt>Identity</dt><dd>{viewer.identity.email}</dd></div>
+          <div><dt>Workspace scope</dt><dd>{viewer.org.name || viewer.org.slug}</dd></div>
+          {/* `OrgRole` is a wire term shown to a person; the e-mail above is
+            * not, which is why the list itself re-cases nothing. */}
+          <div><dt>Role</dt><dd className="cfg-meta-term">{viewer.membership.role}</dd></div>
+        </dl>
+      </div>
       <AppearanceControl />
     </section>
   );
@@ -94,8 +98,10 @@ function AppearanceControl() {
     { id: 'dark', label: 'Dark' },
   ];
   return (
-    <div className="settings-appearance">
-      <span className="settings-appearance-label">Appearance</span>
+    <div className="cfg-section">
+      <div className="cfg-section-head">
+        <h2 className="cfg-title">Appearance</h2>
+      </div>
       <div className="settings-appearance-options" role="radiogroup" aria-label="Theme">
         {choices.map((choice) => (
           <button
@@ -110,7 +116,7 @@ function AppearanceControl() {
           >{choice.label}</button>
         ))}
       </div>
-      <span className="settings-appearance-note">Applies to this device only.</span>
+      <span className="cfg-help">Applies to this device only.</span>
     </div>
   );
 }

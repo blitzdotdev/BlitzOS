@@ -119,16 +119,16 @@ export function AgentRulesPicker({
   };
 
   return (
-    <div className="blueprint-agent-rules">
-      <div className="blueprint-selection__heading">
-        <h2>Agent rules</h2>
-        <p>
+    <div className="cfg-section">
+      <div className="cfg-section-head">
+        <h2 className="cfg-title">Agent rules</h2>
+        <p className="cfg-desc">
           The always-loaded instructions your agents read in this workspace.
           Leave it on the default unless your team needs its own.
         </p>
       </div>
       <div className="blueprint-agent-rules-row">
-        <label className="blueprint-field" htmlFor={selectId}>
+        <label className="cfg-label" htmlFor={selectId}>
           Rules document
         </label>
         <select
@@ -191,12 +191,12 @@ export function AgentRulesPicker({
                 <p className="webapp-form-message" role="alert">{error}</p>
               )}
               {draft.id === null && (
-                <p className="blueprint-agent-rules-note">
+                <p className="cfg-help">
                   Saving creates a rules document for your org and selects it
                   here. The built-in default is never changed in place.
                 </p>
               )}
-              <label className="blueprint-field" htmlFor={nameId}>
+              <label className="cfg-label" htmlFor={nameId}>
                 Name
               </label>
               <input
@@ -213,7 +213,7 @@ export function AgentRulesPicker({
                   setDraft((current) => current === null ? current : { ...current, name });
                 }}
               />
-              <label className="blueprint-field" htmlFor={contentId}>
+              <label className="cfg-label" htmlFor={contentId}>
                 Rules
               </label>
               <textarea

@@ -181,6 +181,7 @@ export {
   type AddWorkspaceMemberRequest,
   type MachineResponse,
   type MachineState,
+  type MachineStatsRequest,
   type MachineView,
   type ProvisionMemberMachineRequest,
   type PutWorkspaceCredentialRequest,

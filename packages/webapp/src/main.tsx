@@ -14,6 +14,7 @@ import './drive-shell.css';
 import './strip-rail.css';
 import './files.css';
 import './confirmation-dialog.css';
+import './settings-surface.css';
 import './workspace-details-dialog.css';
 import './loading-skeleton.css';
 import './create-workspace-dialog.css';

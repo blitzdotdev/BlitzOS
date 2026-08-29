@@ -141,7 +141,9 @@ function stubReload(): ReturnType<typeof vi.fn> {
 }
 
 function leaveButton(container: HTMLElement): HTMLButtonElement | null {
-  return container.querySelector<HTMLButtonElement>(".settings-danger .webapp-action");
+  // The danger zone and its verb are `.cfg-danger` / `.cfg-danger-action`
+  // since the settings-surface system landed (src/settings-surface.css).
+  return container.querySelector<HTMLButtonElement>(".cfg-danger .cfg-danger-action");
 }
 
 async function click(element: HTMLElement | null | undefined): Promise<void> {
@@ -652,7 +654,7 @@ describe("webapp shell smoke", () => {
 
     const leave = leaveButton(view.container);
     expect(leave?.disabled).toBe(true);
-    expect(view.container.querySelector(".settings-danger")?.textContent)
+    expect(view.container.querySelector(".cfg-danger")?.textContent)
       .toContain("You are the only member");
     await click(leave);
     expect(document.querySelector(".webapp-confirmation-actions")).toBeNull();
