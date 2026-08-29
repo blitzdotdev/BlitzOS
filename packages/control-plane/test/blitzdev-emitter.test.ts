@@ -47,6 +47,7 @@ const expected = [
   "core/db.ts",
   "core/blobs.ts",
   "core/wire.ts",
+  "core/wire-machines.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
@@ -56,6 +57,7 @@ const expected = [
   "core/entitlements.ts",
   "core/environment.ts",
   "core/connections/types.ts",
+  "core/connections/pull-routes.ts",
   "core/connections/pull-wire.ts",
   "core/connections/root-crypto.ts",
   "core/connections/manifest.ts",
@@ -93,12 +95,12 @@ const expected = [
   "core/files/sync.ts",
   "core/files/usage-push.ts",
   "core/identity/google.ts",
-  "core/identity/grants.ts",
   "core/identity/invites.ts",
   "core/identity/members.ts",
   "core/identity/orgs.ts",
   "core/identity/routes.ts",
   "core/janitors.ts",
+  "core/machines.ts",
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
@@ -117,9 +119,11 @@ const expected = [
   "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts",
+  "core/workspace-credentials.ts",
+  "core/workspace-members.ts",
   "core/workspace-names.ts",
+  "core/workspace-projection.ts",
   "core/workspace-records.ts",
-  "core/workspace-templates.ts",
   "core/workspace-tunnels.ts",
   "core/workspace-volumes.ts",
   "core/workspaces.ts",
@@ -150,7 +154,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(102);
+    expect(first.files).toHaveLength(106);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 
