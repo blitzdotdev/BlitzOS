@@ -114,7 +114,3 @@ export interface PutWorkspaceCredentialRequest {
   value: string;
 }
 
-export interface ListWorkspaceCredentialsResponse {
-  credentials: WorkspaceCredentialView[];
-}
-

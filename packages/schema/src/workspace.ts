@@ -111,17 +111,14 @@ export interface WorkspaceView {
   volumeId: string | null;
   error: string | null;
   role: WorkspaceRole | null;
-  orgShareRole: "editor" | "viewer" | null;
   owner: {
     name: string;
     avatarUrl: string | null;
   };
-  environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
   /** Connection names the workspace's ceiling enables — its template's
    * stipulated providers plus any named at create. The workspace connections
-   * panel draws one status row per name; gated on the viewer's role like
-   * `environment`. */
+   * panel draws one status row per name; gated on the viewer's role. */
   connections: string[];
   /** Present when a recipe launch created this workspace (provenance). */
   recipeId?: string;
@@ -202,10 +199,6 @@ export interface PutWorkspaceCredentialRequest {
   name: string;
   label?: string;
   value: string;
-}
-
-export interface ListWorkspaceCredentialsResponse {
-  credentials: WorkspaceCredentialView[];
 }
 
 export interface TemplateConnectionView {

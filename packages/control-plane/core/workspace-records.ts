@@ -185,18 +185,10 @@ export function workspaceView(projection: WorkspaceProjection): WorkspaceView {
     volumeId: mine?.volume_id ?? null,
     error: mine?.error ?? null,
     role,
-    // Retired with `workspace_grants`: sharing is a stored workspace role now.
-    // The field stays so existing clients keep parsing, and it stays null
-    // because there is no org-wide default left to report.
-    orgShareRole: null,
     owner: {
       name: row.owner_name ?? row.owner_id,
       avatarUrl: row.owner_avatar_url ?? null,
     },
-    // Retired with `workspaces.environment`. Values live in
-    // `workspace_credentials` and only `blitz-cred` reads them, so nothing is
-    // delivered ambiently and nothing is projected here.
-    environment: null,
     agentRuleId: row.agent_rule_id,
     connections: canOpen ? manifestConnectionNames(row.manifest) : [],
     orgId: row.org_id,

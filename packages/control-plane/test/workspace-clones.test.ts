@@ -389,26 +389,29 @@ describe("workspace clones and repos", () => {
     );
   });
 
-  it("adds every org member on orgShareRole and clears reach on removal", async () => {
+  it("gives a member named at create their reach, and clears it on removal", async () => {
     const { app } = harness();
     const owner = await operatorSession(app);
     const member = await sameOrgSession("neighbor");
 
     const created = await appRequest(app, "/workspaces", {
-      ...json({ machineTypeId: "small", orgShareRole: "editor" }),
+      ...json({
+        machineTypeId: "small",
+        members: [{ membershipId: member.membershipId, role: "member" }],
+      }),
       headers: { Cookie: owner, "Content-Type": "application/json" },
     });
     expect(created.status).toBe(201);
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
 
-    // `orgShareRole` is a bulk member add now, not a stored default: every
-    // active member gets a workspace_members row at the matching role.
+    // The members editor is the only membership control at create: a named
+    // member gets a workspace_members row at the role they were given.
     const detail = await appRequest(app, `/workspaces/${workspace.id}`, {
       headers: { Cookie: member.cookie },
     });
     expect(detail.status).toBe(200);
     await expect(detail.json()).resolves.toMatchObject({
-      workspace: { role: "editor", myRole: "member", orgShareRole: null },
+      workspace: { role: "editor", myRole: "member" },
     });
     expect((await appRequest(app, `/workspaces/${workspace.id}`, {
       method: "DELETE",

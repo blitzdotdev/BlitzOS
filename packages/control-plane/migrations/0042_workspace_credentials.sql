@@ -44,6 +44,10 @@ CREATE INDEX workspace_credentials_workspace
 -- `json_each` walks the stored `{"env":{...},"startupScript":...}` document.
 -- The startup script does NOT migrate: it is a boot hook, not a secret, and
 -- nothing in the new model runs one.
+--
+-- The GLOB is a filter, not a validation: a name must start with a letter to
+-- be servable, so an env var whose name starts with an underscore or a digit
+-- is DISCARDED here and does not reach the new store.
 INSERT OR IGNORE INTO workspace_credentials
   (id, workspace_id, name, label, ciphertext,
    created_by_membership_id, created_at, updated_at)
@@ -60,6 +64,4 @@ FROM workspaces w
 JOIN json_each(json_extract(w.environment, '$.env')) env
 WHERE w.environment IS NOT NULL
   AND w.owner_membership_id IS NOT NULL
-  AND json_valid(w.environment)
-  AND json_type(w.environment, '$.env') = 'object'
   AND env.key GLOB '[A-Za-z]*';

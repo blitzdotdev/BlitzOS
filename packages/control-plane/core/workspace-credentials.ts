@@ -4,14 +4,9 @@ import { first, rows } from "./db.js";
 import { HttpError, isRecord, readJson, requiredString, type JsonValue } from "./http.js";
 import type { Principal } from "./principals.js";
 import type { CoreContext, CoreRouter, CoreRuntime, RuntimeFactory } from "./runtime.js";
-import {
-  isWorkspaceMember,
-  requireWorkspaceAdmin,
-  workspaceAccess,
-} from "./workspace-access.js";
+import { requireWorkspaceAdmin } from "./workspace-access.js";
 import { workspaceById, type WorkspaceRow } from "./workspace-records.js";
 import type {
-  ListWorkspaceCredentialsResponse,
   PutWorkspaceCredentialRequest,
   WorkspaceCredentialView,
 } from "./wire.js";
@@ -47,14 +42,14 @@ export function credentialAad(workspaceId: string, name: string): string {
  * value. */
 const LEGACY_PLAINTEXT_PREFIX = "plaintext:v0:";
 
+/** What a credential looks like to everything except the one reader of a
+ * value: a name, its label, when it was added, and the workspace it belongs
+ * to. A ciphertext is never selected to answer a names-only question. */
 export interface WorkspaceCredentialRow {
-  id: string;
   workspace_id: string;
   name: string;
   label: string | null;
-  ciphertext: string;
   created_at: number;
-  updated_at: number;
 }
 
 export function workspaceCredentialView(row: WorkspaceCredentialRow): WorkspaceCredentialView {
@@ -66,7 +61,7 @@ export async function liveWorkspaceCredentials(
   workspaceId: string,
 ): Promise<WorkspaceCredentialRow[]> {
   return rows<WorkspaceCredentialRow>(db, {
-    q: `SELECT id, workspace_id, name, label, ciphertext, created_at, updated_at
+    q: `SELECT workspace_id, name, label, created_at
         FROM workspace_credentials
         WHERE workspace_id = ?1 AND revoked_at IS NULL
         ORDER BY name`,
@@ -82,8 +77,8 @@ export async function workspaceCredentialValue(
   workspaceId: string,
   name: string,
 ): Promise<string | null> {
-  const row = await first<WorkspaceCredentialRow>(db, {
-    q: `SELECT id, workspace_id, name, label, ciphertext, created_at, updated_at
+  const row = await first<{ ciphertext: string }>(db, {
+    q: `SELECT ciphertext
         FROM workspace_credentials
         WHERE workspace_id = ?1 AND name = ?2 AND revoked_at IS NULL LIMIT 1`,
     v: [workspaceId, name],
@@ -194,22 +189,6 @@ export function addWorkspaceCredentialRoutes(
   runtimeFactory: RuntimeFactory,
   requirePrincipal: (context: CoreContext) => Promise<Principal>,
 ): void {
-  /** Names only. A value never comes back out of this store; the only reader
-   * of a value is `blitz-cred` on a member's own machine. */
-  router.get("/workspaces/:id/credentials", async (context) => {
-    const principal = await requirePrincipal(context);
-    const runtime = runtimeFactory(context);
-    const workspace = await workspaceForCredentials(runtime, principal, context.req.param("id"));
-    const access = await workspaceAccess(runtime.db, principal, workspace);
-    // A viewer holds no machine and may not use a credential (§3), so they do
-    // not get to enumerate the names either.
-    if (!isWorkspaceMember(access)) throw new HttpError(403, "forbidden");
-    const live = await liveWorkspaceCredentials(runtime.db, workspace.id);
-    return context.json<ListWorkspaceCredentialsResponse>({
-      credentials: live.map(workspaceCredentialView),
-    });
-  });
-
   router.put("/workspaces/:id/credentials", async (context) => {
     const principal = await requirePrincipal(context);
     const runtime = runtimeFactory(context);

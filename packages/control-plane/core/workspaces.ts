@@ -11,7 +11,7 @@ import { revokeWorkspaceLeasesQuery } from "./connections/leases.js";
 import { matchesStoredHash } from "./crypto.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
-import { parseWorkspaceEnvironment, WORKSPACE_REQUEST_MAX_BYTES } from "./environment.js";
+import { WORKSPACE_REQUEST_MAX_BYTES } from "./environment.js";
 import {
   HttpError,
   isBoolean,
@@ -176,12 +176,6 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
   if (value.credentials !== undefined) {
     result.credentials = parseCreateCredentials(value.credentials);
   }
-  if (value.orgShareRole !== undefined && value.orgShareRole !== null) {
-    if (value.orgShareRole !== "editor" && value.orgShareRole !== "viewer") {
-      throw new HttpError(400, "orgShareRole must be editor or viewer");
-    }
-    result.orgShareRole = value.orgShareRole;
-  }
   if (value.name !== undefined) {
     const name = isString(value.name)
       ? value.name.trim()
@@ -217,9 +211,6 @@ function parseCreateWorkspace(value: unknown): CreateWorkspaceRequest {
     }
     result.connections = [...new Set(value.connections.map((entry, index) =>
       requiredString(entry, `connections[${String(index)}]`, 64)))];
-  }
-  if (value.environment !== undefined) {
-    result.environment = parseWorkspaceEnvironment(value.environment);
   }
   if (value.agentRuleId !== undefined) {
     if (!(value.agentRuleId === null || isString(value.agentRuleId))) {
@@ -601,32 +592,13 @@ export async function performWorkspaceCreate(
   for (const credential of input.credentials ?? []) {
     await putWorkspaceCredential(runtime, id, membershipId, credential, now);
   }
-  // Legacy `environment` converts to the same store. The startup script does
-  // not: nothing runs one any more (plans/MEMBER-MACHINES.md §1).
-  for (const [key, value] of Object.entries(input.environment?.env ?? {})) {
-    await putWorkspaceCredential(runtime, id, membershipId, { name: key, value }, now);
-  }
   const workspace = await workspaceById(runtime.db, id);
   if (workspace === null) throw new Error("workspace disappeared during create");
 
+  // Membership at create is exactly what the caller named — the members editor
+  // is the only control there is.
   const members: AddWorkspaceMemberRequest[] = [...(input.members ?? [])]
     .filter((member) => member.membershipId !== membershipId);
-  if (input.orgShareRole !== undefined) {
-    // The org-wide share converts to one row per active member, at the
-    // matching workspace role. It is a bulk add now, not a stored default.
-    const roster = await rows<{ id: string }>(runtime.db, {
-      q: `SELECT id FROM memberships
-          WHERE org_id = ?1 AND status = 'active' AND id != ?2
-          ORDER BY id`,
-      v: [orgId, membershipId],
-    });
-    const role = input.orgShareRole === "editor" ? "member" : "viewer";
-    for (const entry of roster) {
-      if (!members.some((member) => member.membershipId === entry.id)) {
-        members.push({ membershipId: entry.id, role });
-      }
-    }
-  }
 
   const creatorMachine: ProvisionMachineInput = {
     workspace,
@@ -653,16 +625,7 @@ export async function performWorkspaceCreate(
   for (const member of members) {
     const identity = await activeOrgMember(runtime, orgId, member.membershipId);
     if (identity === null) continue;
-    try {
-      await addWorkspaceMember(runtime, workspace, membershipId, member, requestOrigin, identity);
-    } catch (error) {
-      // A quota refusal here is about one VM, not about the workspace. The
-      // membership is the durable thing and it is already written, so the
-      // member simply has no machine yet — which `machine: null` says on the
-      // view, and which a later provision fixes. Failing the whole create
-      // instead would throw away a team roster over one slot.
-      if (!(error instanceof HttpError && error.status === 409)) throw error;
-    }
+    await addWorkspaceMember(runtime, workspace, membershipId, member, requestOrigin, identity);
   }
   const created = await workspaceById(runtime.db, id);
   if (created === null) throw new Error("workspace disappeared during create");
@@ -820,9 +783,12 @@ export function addWorkspaceRoutes(
       throw new HttpError(409, "only a deleted workspace can be recreated");
     }
     const machines = await machinesForWorkspaces(runtime.db, [row.id]);
+    // The OWNER's machine or nothing. Any other member's row holds THEIR
+    // volume, and recreating onto it would restore the workspace on somebody
+    // else's disk. Without an owner machine the 409 below is the answer.
     const owner = machines.find(
       (machine) => machine.membership_id === row.owner_membership_id,
-    ) ?? machines[0];
+    );
     if (owner?.volume_id == null) {
       throw new HttpError(409, "workspace kept no volume, so it cannot be recreated");
     }

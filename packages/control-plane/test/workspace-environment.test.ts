@@ -55,7 +55,7 @@ describe("workspace environment (legacy shim)", () => {
     })).status).toBe(403);
   });
 
-  it("still accepts a create that carries the legacy environment field", async () => {
+  it("ignores a legacy environment field on a create", async () => {
     const { app } = harness();
     const cookie = await operatorSession(app);
     const created = await appRequest(app, "/workspaces", {
@@ -66,39 +66,12 @@ describe("workspace environment (legacy shim)", () => {
         environment: { env: { API_ORIGIN: "https://api.example" }, startupScript: null },
       }),
     });
+    // The field is gone from the request, not refused: an old client that
+    // still sends one gets its workspace, and the value goes nowhere. A
+    // credential is written through `credentials` now.
     expect(created.status).toBe(201);
     const workspace = (await created.json<{ workspace: WorkspaceView }>()).workspace;
-    // Nothing is projected back: the value became a workspace credential, and
-    // a credential value never crosses the wire again.
-    expect(workspace.environment).toBeNull();
-    expect(workspace.credentials).toEqual([
-      { name: "API_ORIGIN", label: null, createdAt: expect.any(Number) },
-    ]);
-  });
-
-  it("still refuses a malformed legacy environment", async () => {
-    const { app } = harness();
-    const cookie = await operatorSession(app);
-    const invalid = [
-      { env: { "BAD-KEY": "x" }, startupScript: null },
-      { env: { PORT: 3000 }, startupScript: null },
-      {
-        env: Object.fromEntries(
-          Array.from({ length: 51 }, (_index, index) => [`KEY_${String(index)}`, "x"]),
-        ),
-        startupScript: null,
-      },
-      { env: { LARGE: "x".repeat(8 * 1024) }, startupScript: null },
-      { env: {}, startupScript: "x".repeat(64 * 1024 + 1) },
-    ];
-    for (const candidate of invalid) {
-      const response = await appRequest(app, "/workspaces", {
-        method: "POST",
-        headers: { Cookie: cookie, "Content-Type": "application/json" },
-        body: JSON.stringify({ machineTypeId: "small", environment: candidate }),
-      });
-      expect(response.status, JSON.stringify(candidate).slice(0, 100)).toBe(400);
-    }
+    expect(workspace.credentials).toEqual([]);
   });
 
   it("rejects a create body larger than the request ceiling", async () => {

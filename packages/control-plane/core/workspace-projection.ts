@@ -44,7 +44,7 @@ export async function projectWorkspaces(
     workspaceMembers(db, ids),
     machinesForWorkspaces(db, ids),
     rows<WorkspaceCredentialRow>(db, {
-      q: `SELECT id, workspace_id, name, label, ciphertext, created_at, updated_at
+      q: `SELECT workspace_id, name, label, created_at
           FROM workspace_credentials
           WHERE workspace_id IN (${placeholders}) AND revoked_at IS NULL
           ORDER BY name`,

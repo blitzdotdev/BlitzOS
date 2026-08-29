@@ -2,7 +2,6 @@ import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { first, rows, type Db } from "../db.js";
 import { HttpError, requiredString } from "../http.js";
-import { authenticateBox } from "../oauth.js";
 import { providerManifest, providerRedirectPath } from "./catalog/index.js";
 import type { ProviderManifest } from "./catalog/types.js";
 import { addConnectRoutes } from "./connect.js";
@@ -19,7 +18,6 @@ import {
 import {
   connectionDefaultScopes,
   manifestAllows,
-  manifestConnectionNames,
   manifestWithConnection,
   manifestWithoutConnection,
   usableByAllows,
@@ -42,7 +40,6 @@ import type {
   MinterResult,
   MintRequest,
   MintResult,
-  WorkspaceConnectionsResponse,
 } from "./types.js";
 import type { GrantRow } from "./user-grants.js";
 import {
@@ -56,10 +53,6 @@ import {
   isWorkspaceMember,
   workspaceAccess,
 } from "../workspace-access.js";
-import {
-  liveWorkspaceCredentials,
-  workspaceCredentialValue,
-} from "../workspace-credentials.js";
 
 /** The workspace fields a mint needs. `owner_id` is still read for the
  * connect-grid path, which acts as the person clicking; a BOX mint resolves

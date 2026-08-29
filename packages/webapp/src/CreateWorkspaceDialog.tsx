@@ -158,7 +158,6 @@ export function CreateWorkspaceDialog({
     const name = String(data.get('name') ?? '').trim();
     const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
     const volumeId = String(data.get('volumeId') ?? '');
-    const orgShareRole = String(data.get('orgShareRole') ?? '');
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
@@ -166,7 +165,6 @@ export function CreateWorkspaceDialog({
     if (name) input.name = name;
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
-    if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
     if (repos.length > 0) input.repos = repos;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
     if (cloneFromWorkspaceId !== null) input.cloneFromWorkspaceId = cloneFromWorkspaceId;
@@ -412,21 +410,6 @@ export function CreateWorkspaceDialog({
               onChange={setRepos}
             />
           </section>}
-
-          <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Sharing</h2>
-              <p>Who at {orgName} can open this workspace. You can change it later.</p>
-            </div>
-            <label className="blueprint-field">
-              Access
-              <select name="orgShareRole" defaultValue="" aria-label="Workspace sharing">
-                <option value="">Only the members above</option>
-                <option value="editor">Everyone at {orgName} can edit</option>
-                <option value="viewer">Everyone at {orgName} can view</option>
-              </select>
-            </label>
-          </section>
 
           <section className="blueprint-selection blueprint-setup-script">
             <div className="blueprint-selection__heading">

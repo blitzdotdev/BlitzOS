@@ -488,7 +488,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
-    listWorkspaceCredentials: vi.fn(async () => ({ credentials: [] })),
     putWorkspaceCredential: vi.fn(async () => undefined),
     revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),

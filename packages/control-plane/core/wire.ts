@@ -179,7 +179,6 @@ export {
   MACHINE_STATES,
   WORKSPACE_MEMBER_ROLES,
   type AddWorkspaceMemberRequest,
-  type ListWorkspaceCredentialsResponse,
   type MachineResponse,
   type MachineState,
   type MachineView,
@@ -193,8 +192,9 @@ export {
   type WorkspaceMemberRole,
   type WorkspaceMemberView,
 } from "./wire-machines.js";
+// The three names the declarations below reference by hand. A re-export does
+// not bind them locally, so they are imported as well as re-exported.
 import type {
-  MachineView,
   WorkspaceCredentialView,
   WorkspaceMemberRole,
   WorkspaceMemberView,
@@ -279,17 +279,14 @@ export interface WorkspaceView {
   volumeId: string | null;
   error: string | null;
   role: WorkspaceRole | null;
-  orgShareRole: "editor" | "viewer" | null;
   owner: {
     name: string;
     avatarUrl: string | null;
   };
-  environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
   /** Connection names the workspace's ceiling enables — its template's
    * stipulated providers plus any named at create. The workspace connections
-   * panel draws one status row per name; gated on the viewer's role like
-   * `environment`. */
+   * panel draws one status row per name; gated on the viewer's role. */
   connections: string[];
   /** Present when a recipe launch created this workspace (provenance). */
   recipeId?: string;
@@ -567,9 +564,6 @@ export interface CreateWorkspaceRequest {
   /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
    * one is refused rather than ignored. */
   templateId?: string;
-  /** Adds every active org member at the matching workspace role:
-   * editor → member, viewer → viewer. */
-  orgShareRole?: "editor" | "viewer";
   name?: string;
   sshPublicKey?: string;
   volumeId?: string;
@@ -578,9 +572,6 @@ export interface CreateWorkspaceRequest {
   /** Providers to enable in the new workspace. The manifest stays the ceiling;
    * this is the provision list, and the ceiling wins on conflict. */
   connections?: string[];
-  /** Legacy. Its `env` entries become workspace credentials; the startup
-   * script is dropped, because nothing runs one any more. */
-  environment?: WorkspaceEnvironment;
   /** Overrides the clone source's rule; null (or absent) falls back to the
    * source's rule and then the built-in doc. */
   agentRuleId?: string | null;

@@ -447,9 +447,11 @@ describe("member machines", () => {
       }),
       headers: { Cookie: cookie, "Content-Type": "application/json" },
     });
-    expect(created.status).toBe(201);
     // Two slots, three members who each want a VM: the creator and the first
-    // added member get one, and the third add finds the quota spent.
+    // added member get one, and the third add finds the quota spent. The
+    // refusal is the caller's answer — a create no longer swallows it and
+    // hands back a roster that is quietly short a machine.
+    expect(created.status).toBe(409);
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM machines")
       .first<number>("count")).toBe(2);
     expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_members")
@@ -533,13 +535,21 @@ describe("member machines", () => {
     const workspace = (await created.json<CreatedWorkspace>()).workspace;
     const path = `/workspaces/${workspace.id}/credentials`;
 
-    // Use, yes; manage, no. A viewer may not even enumerate the names: they
-    // hold no machine and may not use a credential at all (§3).
-    await expect(appRequest(app, path, { headers: { Cookie: member.cookie } })
-      .then((response) => response.json())).resolves.toEqual({
+    // Use, yes; manage, no. The names reach a member on the workspace view,
+    // and a viewer sees none: they hold no machine and may not use a
+    // credential at all (§3).
+    await expect(appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: member.cookie },
+    }).then((response) => response.json())).resolves.toMatchObject({
+      workspace: {
         credentials: [{ name: "STRIPE_API_KEY", label: null, createdAt: expect.any(Number) }],
-      });
-    expect((await appRequest(app, path, { headers: { Cookie: viewer.cookie } })).status).toBe(403);
+      },
+    });
+    await expect(appRequest(app, `/workspaces/${workspace.id}`, {
+      headers: { Cookie: viewer.cookie },
+    }).then((response) => response.json())).resolves.toMatchObject({
+      workspace: { credentials: [] },
+    });
     expect((await appRequest(app, path, {
       ...json({ name: "OTHER", value: "x" }, "PUT"),
       headers: { Cookie: member.cookie, "Content-Type": "application/json" },

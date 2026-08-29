@@ -1,6 +1,5 @@
 import type { MachineType } from "./machine.js";
 import type { CredentialManifest } from "./credential.js";
-import type { WorkspaceEnvironment } from "./environment.js";
 import type { Volume } from "./volume.js";
 import type { RetryAction, WorkspaceMemberRole, WorkspaceView } from "./workspace.js";
 
@@ -42,9 +41,6 @@ export interface CreateWorkspaceRequest {
   /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
    * one is refused rather than ignored. */
   templateId?: string;
-  /** Adds every active org member at the matching workspace role:
-   * editor → member, viewer → viewer. */
-  orgShareRole?: "editor" | "viewer";
   /** Optional display name; blank means the server picks a random one. */
   name?: string;
   sshPublicKey?: string;
@@ -55,9 +51,6 @@ export interface CreateWorkspaceRequest {
   /** Providers to enable in the new workspace. The manifest stays the ceiling;
    * this is the provision list, and the ceiling wins on conflict. */
   connections?: string[];
-  /** Legacy. Its `env` entries become workspace credentials; the startup
-   * script is dropped, because nothing runs one any more. */
-  environment?: WorkspaceEnvironment;
   /** Overrides the clone source's rule; null (or absent) falls back to the
    * source's rule and then the built-in doc. */
   agentRuleId?: string | null;

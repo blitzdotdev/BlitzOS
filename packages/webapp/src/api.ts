@@ -6,7 +6,6 @@ import type {
   ListWorkspaceReposResponse,
   UpdateWorkspaceRequest,
   ListAgentRulesResponse,
-  ListWorkspaceCredentialsResponse,
   MachineResponse,
   PutWorkspaceCredentialRequest,
   SetMachineTypeRequest,
@@ -200,8 +199,6 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
    * Another location is refused until the volume move lands (§5). */
   setMachineType(machineId: string, input: SetMachineTypeRequest): Promise<MachineResponse>;
   destroyMachine(machineId: string): Promise<MachineResponse>;
-  /** Names only; a workspace credential value never comes back out. */
-  listWorkspaceCredentials(workspaceId: string): Promise<ListWorkspaceCredentialsResponse>;
   /** Add and rotate are the same write: one live row per (workspace, name). */
   putWorkspaceCredential(
     workspaceId: string,
@@ -661,9 +658,6 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     destroyMachine: (machineId) => request<MachineResponse>(
       `/machines/${encodeURIComponent(machineId)}`,
       { method: "DELETE" },
-    ),
-    listWorkspaceCredentials: (workspaceId) => request<ListWorkspaceCredentialsResponse>(
-      `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,
     ),
     putWorkspaceCredential: (workspaceId, input) => request<void>(
       `/workspaces/${encodeURIComponent(workspaceId)}/credentials`,

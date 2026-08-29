@@ -234,11 +234,6 @@ const putWorkspaceCredentialRequest: SharedShape<
   schema.PutWorkspaceCredentialRequest
 > = { name: workspaceCredential.name, label: "live", value: "sk_test_only" };
 
-const listWorkspaceCredentialsResponse: SharedShape<
-  wire.ListWorkspaceCredentialsResponse,
-  schema.ListWorkspaceCredentialsResponse
-> = { credentials: [workspaceCredential] };
-
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -259,9 +254,7 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   volumeId: volume.id,
   error: null,
   role: "owner",
-  orgShareRole: "editor",
   owner: { name: "Owner", avatarUrl: null },
-  environment,
   agentRuleId: agentRule.id,
   connections: ["linear"],
   recipeId: recipe.id,
@@ -402,7 +395,6 @@ const createWorkspaceRequest: SharedShape<
     },
   },
   connections: ["github"],
-  environment,
   agentRuleId: agentRule.id,
   repos: [templateRepo.repo],
 };
@@ -674,7 +666,6 @@ const fullFieldValues = [
   clearAgentRuleRequest,
   workspaceMemberResponse,
   putWorkspaceCredentialRequest,
-  listWorkspaceCredentialsResponse,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -765,7 +756,6 @@ describe("local wire copies", () => {
     expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
     expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
     expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
-    expectTypeOf<wire.ListWorkspaceCredentialsResponse>().toEqualTypeOf<schema.ListWorkspaceCredentialsResponse>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();

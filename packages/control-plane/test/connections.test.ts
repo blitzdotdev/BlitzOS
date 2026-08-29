@@ -323,11 +323,8 @@ describe("connections: per-user grants", () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
     expect((await connectLinear(app, owner)).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, owner, {
-      ...LINEAR_CEILING,
-      orgShareRole: "editor",
-    });
-    // A second member with no grant of their own shares the workspace.
+    const { workspace, box } = await readyWorkspace(app, providers, owner, LINEAR_CEILING);
+    // A second org member with no grant of their own.
     const editor = await sameOrgSession("editor-one");
     expect(editor.cookie.length).toBeGreaterThan(0);
 
@@ -993,9 +990,7 @@ describe("connections: connecting from the webApp", () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
     expect((await connectLinear(app, owner)).status).toBe(204);
-    const { workspace } = await readyWorkspace(app, providers, owner, {
-      orgShareRole: "editor",
-    });
+    const { workspace } = await readyWorkspace(app, providers, owner);
     const editor = await sameOrgSession("editor-one");
 
     expect((await connectHere(app, editor.cookie, workspace.id)).status).toBe(403);
@@ -1150,9 +1145,7 @@ describe("connections: connecting from the webApp", () => {
   it("refuses to sign a workspace the caller cannot control into the state", async () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
-    const { workspace } = await readyWorkspace(app, providers, owner, {
-      orgShareRole: "editor",
-    });
+    const { workspace } = await readyWorkspace(app, providers, owner);
     const editor = await sameOrgSession("editor-one");
     testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
     testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
