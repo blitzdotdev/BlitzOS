@@ -1,8 +1,14 @@
 import { act } from 'react';
-import type { MachineType, WorkspaceMemberView } from '@blitzos/schema';
+import type {
+  MachineState,
+  MachineType,
+  MachineView,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
 import type { ControlPlaneClient } from '../src/api.js';
 import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
 import { WorkspaceSessionRail } from '../src/shell/WorkspaceSessionRail.js';
+import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
 import { describe, expect, it, vi } from 'vitest';
 import { render, settle } from './dom.js';
 import { workspaceModelFixture } from './workspace-fixtures.js';
@@ -239,5 +245,38 @@ describe('WorkspaceSessionRail', () => {
       'button[aria-label="Workspace details for Details test"]',
     )).not.toBeNull();
     await view.unmount();
+  });
+});
+
+describe('machineActionsFor', () => {
+  const machine = (state: MachineState): MachineView => ({
+    id: 'machine-one',
+    state,
+    machineTypeId: 'cx23@fsn1',
+    volumeId: 'volume-one',
+    membershipId: 'membership-1',
+    error: null,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  it('offers nothing without a machine, because there is no id to act on', () => {
+    // The wire sends null for a destroyed or absent machine, and every
+    // lifecycle route is keyed by machine id. A member gets one through the
+    // role write, not through this menu.
+    expect(machineActionsFor(null)).toEqual([]);
+  });
+
+  it('offers nothing to a machine that is going somewhere', () => {
+    expect(machineActionsFor(machine('provisioning'))).toEqual([]);
+    expect(machineActionsFor(machine('destroying'))).toEqual([]);
+  });
+
+  it('matches each settled state to what it can accept', () => {
+    expect(machineActionsFor(machine('running'))).toEqual(['stop', 'recreate', 'destroy']);
+    expect(machineActionsFor(machine('stopped'))).toEqual(['start', 'destroy']);
+    // Error is the one reachable state whose VM may be missing, so it is the
+    // only one that offers a bare provision.
+    expect(machineActionsFor(machine('error'))).toEqual(['provision', 'recreate', 'destroy']);
   });
 });

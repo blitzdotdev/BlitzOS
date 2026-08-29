@@ -40,12 +40,23 @@ const MACHINE_ACTION_LABELS = {
   destroy: 'Destroy',
 } satisfies Record<MachineAction, string>;
 
-/** Which verbs the machine's current state can accept. A destroyed machine
- * provisions again on the same row; a live one stops, recreates, or goes. */
+/**
+ * Which verbs this machine's state can accept.
+ *
+ * A member with no machine gets none: the wire sends `machine: null` for a
+ * destroyed or absent one, so there is no id to act on, and every lifecycle
+ * route is keyed by machine id. The way a member gets a machine is the role
+ * write, which provisions one where the workspace auto-provisions.
+ *
+ * `provision` appears only on an error row, which is the one reachable state
+ * whose VM may be missing. A machine that is going somewhere accepts nothing
+ * until it arrives.
+ */
 export function machineActionsFor(machine: MachineView | null): MachineAction[] {
-  if (machine === null || machine.state === 'destroyed') return ['provision'];
-  if (machine.state === 'stopped') return ['start', 'destroy'];
+  if (machine === null) return [];
   if (machine.state === 'provisioning' || machine.state === 'destroying') return [];
+  if (machine.state === 'stopped') return ['start', 'destroy'];
+  if (machine.state === 'error') return ['provision', 'recreate', 'destroy'];
   return ['stop', 'recreate', 'destroy'];
 }
 
@@ -185,7 +196,7 @@ function MemberRow({
           }}
         />
       )}
-      {showMachine && machine !== null && <MachineStateChip machine={machine} />}
+      {showMachine && <MachineStateChip machine={machine} />}
       {showMachine && (
         <MachineTypeSelect
           machines={machines}
@@ -269,9 +280,7 @@ export function WorkspaceMembersEditor({
   viewerName?: string;
   viewerAvatarUrl?: string | null;
 }) {
-  const listed = new Set(mode.kind === 'draft'
-    ? mode.members.map(({ membershipId }) => membershipId)
-    : mode.members.map(({ membershipId }) => membershipId));
+  const listed = new Set(mode.members.map(({ membershipId }) => membershipId));
   const readOnly = mode.kind === 'live' && mode.readOnly;
   const candidates = orgMembers.filter((member) =>
     member.status === 'active' && !listed.has(member.id));

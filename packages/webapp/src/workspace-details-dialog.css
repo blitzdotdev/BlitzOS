@@ -102,3 +102,6 @@
 .workspace-member-role .webapp-select-trigger { min-height: 30px; padding: 0 8px; font-size: 11px; }
 .workspace-member-actions .webapp-select-trigger { min-height: 30px; padding: 0 8px; }
 .workspace-member-actions .webapp-select-value { display: none; }
+/* No machine at all: the member is a viewer, or the workspace does not
+ * auto-provision and their role has not been written since. */
+.machine-chip--none { border-style: dashed; }

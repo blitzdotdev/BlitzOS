@@ -293,16 +293,11 @@ export function WorkspaceDetailsDialog({
   }, []);
 
   const machineAction = (member: WorkspaceMemberView, action: MachineAction) => {
+    // `machineActionsFor` offers nothing without a machine, so the menu that
+    // called this always names one.
     const machine = member.machine;
-    if (action === 'provision') {
-      if (machine === null) {
-        setError('This member has no machine row yet. Change their role to provision one.');
-        return;
-      }
-      run(client.provisionMachine(machine.id));
-      return;
-    }
     if (machine === null) return;
+    if (action === 'provision') run(client.provisionMachine(machine.id));
     if (action === 'stop') run(client.stopMachine(machine.id));
     if (action === 'start') run(client.startMachine(machine.id));
     if (action === 'recreate') run(client.recreateMachine(machine.id));
