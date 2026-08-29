@@ -71,7 +71,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed module closure [ven
     expect(closure.missing.every((miss) => miss.target === "core/webapp-tickets")).toBe(true);
     expect(report).toContain("MISSING core/webapp-tickets");
     expect(report).toContain("<- core/index.ts");
-    expect(report).toContain("<- core/identity/grants.ts");
+    expect(report).toContain("<- core/workspace-tunnels.ts");
     // Both spellings reach the same file from different depths.
     expect(report).toContain("(./webapp-tickets)");
     expect(report).toContain("(../webapp-tickets)");

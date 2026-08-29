@@ -1,4 +1,3 @@
-import type { RecipeBootstrap } from "./bootstrap.js";
 import type { Db } from "./db.js";
 import { first, rows, transaction } from "./db.js";
 import { WORKSPACE_REQUEST_MAX_BYTES } from "./environment.js";
@@ -19,22 +18,23 @@ import {
   RECIPE_HARNESSES,
   type AgentProvider,
   type CreateRecipeRequest,
-  type CreateWorkspaceResponse,
   type ListRecipesResponse,
   type OrgUsageCaptureResponse,
   type RecipeHarness,
   type RecipeResponse,
   type RecipeView,
 } from "./wire.js";
-import { workspaceView } from "./workspace-records.js";
-import { workspaceTemplateForCreate } from "./workspace-templates.js";
-import { performWorkspaceCreate } from "./workspaces.js";
+import { workspaceById } from "./workspace-records.js";
 
 export interface RecipeRow {
   id: string;
   org_id: string;
   name: string;
-  template_id: string;
+  /** The workspace a launch clones. The wire still spells it `templateId`,
+   * because the template object it used to name is gone and the field now
+   * carries a workspace id (migration 0043). NULL on every row that predates
+   * the change: there was no mapping from a template to a workspace. */
+  source_workspace_id: string | null;
   harness: RecipeHarness;
   model: string | null;
   effort: string | null;
@@ -67,6 +67,7 @@ function parseRecipe(value: JsonValue): CreateRecipeRequest {
   if (!isRecord(value)) throw new HttpError(400, "request body must be an object");
   const name = requiredString(value.name, "name", RECIPE_NAME_MAX).trim();
   if (name === "") throw new HttpError(400, "name is required");
+  // Legacy name, workspace id. See RecipeRow.source_workspace_id.
   const templateId = requiredString(value.templateId, "templateId", 256);
   if (!isRecipeHarness(value.harness)) {
     throw new HttpError(400, "harness must be claude, codex, or chat");
@@ -124,13 +125,28 @@ function recipeView(row: RecipeRow): RecipeView {
   const view: RecipeView = {
     id: row.id,
     name: row.name,
-    templateId: row.template_id,
+    // Empty where the row predates the template retirement: the recipe has no
+    // launch source until somebody edits it and picks a workspace.
+    templateId: row.source_workspace_id ?? "",
     harness: row.harness,
     prompt: row.prompt,
   };
   if (row.model !== null) view.model = row.model;
   if (row.effort !== null) view.effort = row.effort;
   return view;
+}
+
+/** The workspace a recipe launches from: it has to exist, in this org, and be
+ * live. 404s an unknown or foreign one before anything is written. */
+async function requireSourceWorkspace(
+  db: Db,
+  workspaceId: string,
+  orgId: string,
+): Promise<void> {
+  const workspace = await workspaceById(db, workspaceId);
+  if (workspace === null || workspace.org_id !== orgId || workspace.deleted_at !== null) {
+    throw new HttpError(404, "workspace not found");
+  }
 }
 
 async function recipeForOrg(db: Db, id: string, orgId: string): Promise<RecipeRow> {
@@ -152,32 +168,6 @@ function requireRecipeEditRights(principal: Principal, recipe: RecipeRow): void 
   ) {
     throw new HttpError(403, "forbidden");
   }
-}
-
-/** The launch's bootstrap additions, derived from a validated row. Only chat
- * pins the adapter provider (`BLITZ_AGENT`); TUI recipes leave the image
- * default alone. Rows are validated at write time, but a chat model can
- * leave the catalog later, so the launch re-derives the provider and refuses
- * loudly instead of booting a box whose BLITZ_AGENT nobody chose. */
-function recipeBootstrap(recipe: RecipeRow): RecipeBootstrap {
-  const bootstrap: RecipeBootstrap = recipe.harness === "chat"
-    ? {
-        harness: "chat",
-        agentProvider: chatAgentProvider(recipe),
-        prompt: recipe.prompt,
-      }
-    : { harness: recipe.harness, prompt: recipe.prompt };
-  if (recipe.model !== null) bootstrap.model = recipe.model;
-  if (recipe.effort !== null) bootstrap.effort = recipe.effort;
-  return bootstrap;
-}
-
-function chatAgentProvider(recipe: RecipeRow): AgentProvider {
-  const agentProvider = recipe.model === null ? null : agentProviderForModel(recipe.model);
-  if (agentProvider === null) {
-    throw new HttpError(409, "recipe model is no longer in the agent catalog; edit the recipe");
-  }
-  return agentProvider;
 }
 
 export function addRecipeRoutes(
@@ -212,13 +202,12 @@ export function addRecipeRoutes(
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
     const input = parseRecipe(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
-    // 404s unknown or foreign templates before anything is written.
-    await workspaceTemplateForCreate(runtime.db, input.templateId, principal.orgId);
+    await requireSourceWorkspace(runtime.db, input.templateId, principal.orgId);
     const id = crypto.randomUUID();
     const now = Date.now();
     await rows(runtime.db, {
       q: `INSERT INTO recipes
-          (id, org_id, name, template_id, harness, model, effort, prompt,
+          (id, org_id, name, source_workspace_id, harness, model, effort, prompt,
            created_by_membership_id, created_at, updated_at)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)`,
       v: [
@@ -253,10 +242,10 @@ export function addRecipeRoutes(
     requireRecipeEditRights(principal, recipe);
     // Full replacement with the create shape, like template edits.
     const input = parseRecipe(await readJson(context.req.raw, WORKSPACE_REQUEST_MAX_BYTES));
-    await workspaceTemplateForCreate(runtime.db, input.templateId, principal.orgId);
+    await requireSourceWorkspace(runtime.db, input.templateId, principal.orgId);
     await rows(runtime.db, {
       q: `UPDATE recipes
-          SET name = ?2, template_id = ?3, harness = ?4, model = ?5,
+          SET name = ?2, source_workspace_id = ?3, harness = ?4, model = ?5,
               effort = ?6, prompt = ?7, updated_at = ?8
           WHERE id = ?1`,
       v: [
@@ -290,28 +279,46 @@ export function addRecipeRoutes(
     return context.body(null, 204);
   });
 
+  /**
+   * Launch is parked.
+   *
+   * A recipe used to launch a workspace from a template. Templates are gone
+   * (migration 0043) and the replacement — clone this workspace, then deliver
+   * the invocation to the clone's machine — is a bigger change than the
+   * retirement it rides on. The route answers 400 with the reason rather than
+   * launching from a source it can no longer resolve.
+   *
+   * TODO(member-machines): launch by cloning `source_workspace_id` through
+   * `performWorkspaceCreate({ cloneFromWorkspaceId })` and pass the recipe
+   * bootstrap to the creator's machine. Recipe CRUD already stores the source.
+   */
   router.post("/workspace-recipes/:id/launch", async (context) => {
     const runtime = runtimeFactory(context);
     const principal = await memberFor(context);
-    const recipe = await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
-    const template = await workspaceTemplateForCreate(
-      runtime.db,
-      recipe.template_id,
-      principal.orgId,
+    await recipeForOrg(runtime.db, context.req.param("id"), principal.orgId);
+    throw new HttpError(
+      400,
+      "recipe launch is unavailable while recipes re-point from templates to workspace clones",
     );
-    // The existing create path does everything else: template machine-type
-    // default, environment and agent-rule inheritance, folder attach with the
-    // launcher as principal (unreadable folders are skipped, not leaked), and
-    // the vm_limit 409, which passes straight through to the caller.
-    const row = await performWorkspaceCreate(
-      runtime,
-      principal,
-      new URL(context.req.url).origin,
-      { templateId: template.id },
-      { recipeId: recipe.id, bootstrap: recipeBootstrap(recipe) },
-    );
-    return context.json<CreateWorkspaceResponse>({ workspace: workspaceView(row, "owner") }, 201);
   });
+}
+
+/** Org-wide agent-usage capture. It rides in this file because the corpus it
+ * fills is the recipe corpus, but it is not a recipe surface: it stays
+ * registered while recipes are hidden. */
+export function addOrgUsageCaptureRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+  requirePrincipal: (context: CoreContext) => Promise<Principal>,
+): void {
+  async function memberFor(context: CoreContext): Promise<Principal & { orgId: string }> {
+    const principal = await requirePrincipal(context);
+    if (principal.orgId === null || principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    // SAFETY: orgId was null-checked immediately above; the intersection only narrows that one property.
+    return principal as Principal & { orgId: string };
+  }
 
   async function requireAdmin(context: CoreContext): Promise<Principal & { orgId: string }> {
     const principal = await memberFor(context);

@@ -6,20 +6,23 @@ import { addWorkspaceEnvironmentRoutes } from "./environment.js";
 import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./entitlements.js";
 import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
+import { addMachineRoutes } from "./machines.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
 import type { Principal } from "./principals.js";
 import { addMicrovmHostRoutes } from "./compute/microvm.js";
 import { addOrgComputeCredentialRoutes } from "./compute/org-credentials.js";
-import { addRecipeRoutes } from "./recipes.js";
+import { addOrgUsageCaptureRoutes } from "./recipes.js";
 import { addRegistryRoutes } from "./registry.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "./runtime.js";
 import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
-import { addWorkspaceTemplateRoutes } from "./workspace-templates.js";
+import { addWorkspaceCredentialRoutes } from "./workspace-credentials.js";
+import { addWorkspaceMemberRoutes } from "./workspace-members.js";
+import { addWorkspaceSettingsRoutes } from "./workspace-settings.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
 
 // TODO(house-canon): Route structured core logs through the canonical logger.
@@ -81,8 +84,20 @@ export function installControlPlaneRoutes(
   addOAuthRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWebAppStateRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addAgentRuleLibraryRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
-  addRecipeRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Templates and Recipes are disabled product-wide (2026-08-29). Both
+  // registrations stay here, commented, so the decision is visible where the
+  // surface used to be mounted and turning either back on is one line.
+  //   - Templates: the object is gone. A workspace is its own template, and
+  //     "new workspace from existing" is CreateWorkspaceRequest.cloneFromWorkspaceId
+  //     (plans/MEMBER-MACHINES.md §0). Migration 0043 dropped the four tables.
+  //   - Recipes: disabled 2026-08-29, feature hidden. The code and the
+  //     `recipes` rows are untouched; only the routes are unmounted.
+  // addWorkspaceTemplateRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // addRecipeRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  //
+  // Usage capture is not a recipe surface — it is an org switch that fills a
+  // Drive folder — so it stays mounted.
+  addOrgUsageCaptureRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Box-authenticated, so it is registered ahead of the session-authenticated
   // /workspaces/:id routes it shares a prefix with.
   addWorkspaceEnvironmentRoutes(router, runtimeFactory);
@@ -90,7 +105,15 @@ export function installControlPlaneRoutes(
   // same reason; its one session route (/workspaces/:id/box-update) collides
   // with nothing.
   addBoxConfigRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Registered before addWorkspaceRoutes: /workspaces/:id/members and
+  // /workspaces/:id/credentials are literal paths under the same prefix.
+  addWorkspaceMemberRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Same reason: /workspaces/:id/repos is a literal path under the prefix
+  // addWorkspaceRoutes registers its parameterised routes on.
+  addWorkspaceSettingsRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addMachineRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addVolumeRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addFilesRoutes(router, runtimeFactory, requireMembershipPrincipal);

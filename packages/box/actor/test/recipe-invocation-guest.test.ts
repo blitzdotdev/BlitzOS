@@ -215,11 +215,11 @@ function expectPlanted(box: TermBox, planted: boolean): void {
   expect(existsSync(join(box.recipeDir, "prompt.txt.delivered"))).toBe(!planted);
 }
 
-/** The `-e` flags carry the tab's own environment into the new session,
- * because a tmux server hands later sessions its own startup snapshot rather
- * than the creating client's environment (blitz-term-credentials.test.ts pins
- * the rule). These boxes have no creds/env.d, so only the locale pair
- * appears — the recipe argv still has to be exact around it. */
+/** The `-e` flags carry the locale into the new session, because a tmux server
+ * hands later sessions its own startup snapshot rather than the creating
+ * client's environment (blitz-term-credentials.test.ts pins the rule). The
+ * locale pair is all blitz-term passes — the recipe argv still has to be exact
+ * around it. */
 function tmuxCreateArgv(session: string): string[] {
   return [
     "-u", "new-session", "-A", "-s", session, "-c", "/workspace",

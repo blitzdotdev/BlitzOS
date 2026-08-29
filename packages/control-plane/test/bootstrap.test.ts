@@ -1037,6 +1037,7 @@ write_files:
 
     await provider.createVm({
       workspaceId: "workspace-id",
+      machineId: "machine-id",
       machineTypeId: "cx23@fsn1",
       sshPublicKey: SSH_PUBLIC_KEY,
       phoneHomeUrl: PHONE_HOME_URL,

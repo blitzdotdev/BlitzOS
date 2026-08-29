@@ -34,9 +34,18 @@ it did before entitlements existed.
 | 404 | Unknown organization, or the secret is unset |
 
 `seatLimit` is stored in `org_entitlements.seat_limit`. `vmLimit` is stored in
-`orgs.vm_limit` — the existing column the workspace-create path has always
-enforced. It is deliberately not copied into the new table: two rows holding
-one limit is two answers to one question.
+`orgs.vm_limit` — the existing column the create path has always enforced. It
+is deliberately not copied into the new table: two rows holding one limit is
+two answers to one question.
+
+**`vmLimit` counts MACHINES, and so does `vmsUsed`.** A workspace is
+configuration and costs nothing; a machine is one member's VM and costs money
+(plans/MEMBER-MACHINES.md §1). An organization that ran ten one-member
+workspaces sees the same number it always did. One that adds a second member
+to a workspace now sees the second VM it is actually paying for, and the gate
+that refuses is the same predicate — evaluated inside the INSERT that creates
+the machine, so two adds racing the last slot cannot both win it. A machine in
+any state but `destroyed` holds its slot.
 
 `platformCompute` is optional and stored in
 `org_entitlements.platform_compute` as 0 or 1. It says the organization may run

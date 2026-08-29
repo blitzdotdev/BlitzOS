@@ -45,44 +45,24 @@ export function parseTemplateRepos(value: JsonValue | undefined): string[] {
   return repos;
 }
 
-export async function templateRepoRows(
-  db: Db,
-  templateIds: string[],
-): Promise<TemplateRepoRow[]> {
-  if (templateIds.length === 0) return [];
-  return rows<TemplateRepoRow>(db, {
-    q: `SELECT template_id, repo, private FROM workspace_template_repos
-        WHERE template_id IN (${templateIds.map((_id, index) => `?${String(index + 1)}`).join(",")})
-        ORDER BY template_id, repo`,
-    v: templateIds,
-  });
+export interface WorkspaceRepoRow {
+  workspace_id: string;
+  repo: string;
+  private: number;
 }
 
-export async function replaceTemplateRepos(
-  db: Db,
-  templateId: string,
-  repos: readonly TemplateRepo[],
-): Promise<void> {
-  await rows(db, {
-    q: "DELETE FROM workspace_template_repos WHERE template_id = ?1",
-    v: [templateId],
+/** The repos a workspace clones on first boot. Privacy gates create; row order
+ * keeps the emitted bootstrap script deterministic.
+ *
+ * The template tables are gone (plans/MEMBER-MACHINES.md §0), so this reads
+ * the workspace's own list — which is also what a clone copies. */
+export async function workspaceRepos(db: Db, workspaceId: string): Promise<TemplateRepo[]> {
+  const result = await rows<WorkspaceRepoRow>(db, {
+    q: `SELECT workspace_id, repo, private FROM workspace_repos
+        WHERE workspace_id = ?1 ORDER BY repo`,
+    v: [workspaceId],
   });
-  for (const repo of repos) {
-    await rows(db, {
-      q: `INSERT INTO workspace_template_repos (template_id, repo, private)
-          VALUES (?1, ?2, ?3)`,
-      v: [templateId, repo.repo, repo.private ? 1 : 0],
-    });
-  }
-}
-
-/** The repos a workspace created from this template clones. Privacy gates
- * create; row order keeps the emitted bootstrap script deterministic. */
-export async function templateRepos(db: Db, templateId: string): Promise<TemplateRepo[]> {
-  return (await templateRepoRows(db, [templateId])).map((row) => ({
-    repo: row.repo,
-    private: row.private === 1,
-  }));
+  return result.map((row) => ({ repo: row.repo, private: row.private === 1 }));
 }
 
 /** The list a workspace owns, whichever source chose it. Written once at

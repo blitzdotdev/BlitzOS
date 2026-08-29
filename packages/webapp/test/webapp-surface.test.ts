@@ -4,6 +4,7 @@ import { connectionsFocusEndpointUrl } from "../src/connections-focus.js";
 import { previewFocusEndpointUrl } from "../src/preview.js";
 import { standaloneResolver } from "../src/resolver.js";
 import { terminalWebSocketUrl } from "../src/workspace-endpoints.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 /** The control plane forwards only the paths in `isWebAppSurfacePath`, so a
  * URL this app builds that falls outside it is a feature that 403s in
@@ -11,28 +12,7 @@ import { terminalWebSocketUrl } from "../src/workspace-endpoints.js";
  * it so the two cannot drift apart silently. */
 describe("webApp box surface", () => {
   const origin = "https://cp.example";
-  const emptyConnections: string[] = [];
-  const workspace = {
-    id: "workspace-one",
-    name: "workspace-one",
-    machineTypeId: "cx23@fsn1",
-    phase: "ready",
-    retryAction: null,
-    canObserve: true,
-    launchable: true,
-    revision: 1,
-    createdAt: 1_700_000_000_000,
-    updatedAt: 1_700_000_000_000,
-    ssh: null,
-    volumeId: null,
-    error: null,
-    role: "owner",
-    orgShareRole: null,
-    owner: { name: "Owner", avatarUrl: null },
-    environment: null,
-    agentRuleId: null,
-    connections: emptyConnections,
-  } as const;
+  const workspace = workspaceViewFixture();
 
   function boxPath(url: string): { port: 7444 | 7445; path: string } {
     const parsed = new URL(url);

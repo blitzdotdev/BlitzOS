@@ -238,7 +238,7 @@ export function addAgentRuleLibraryRoutes(
     await transaction(runtime.db, [
       { q: "UPDATE workspaces SET agent_rule_id = NULL WHERE agent_rule_id = ?1", v: [id] },
       {
-        q: "UPDATE workspace_templates SET agent_rule_id = NULL WHERE agent_rule_id = ?1",
+        q: "UPDATE workspaces SET agent_rule_id = NULL WHERE agent_rule_id = ?1",
         v: [id],
       },
       { q: "DELETE FROM agent_rules WHERE id = ?1", v: [id] },

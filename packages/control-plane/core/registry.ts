@@ -21,12 +21,14 @@ import {
   type RegisterKeysResponse,
 } from "./wire.js";
 
-interface BoxRow {
+/** A machine, with the identity it acts as resolved from its membership. The
+ * `boxes` row that used to carry a stored `principal_id` is gone for workspace
+ * guests; this join is what replaced it. */
+interface MachineRegistryRow {
   id: string;
   principal_id: string;
-  workspace_id: string | null;
+  workspace_id: string;
   broker_box_id: string | null;
-  is_broker: number;
 }
 
 interface FeedRow {
@@ -115,11 +117,21 @@ async function requireOwnBox(
   return box;
 }
 
-async function boxRow(db: Db, id: string): Promise<BoxRow | null> {
-  return first<BoxRow>(db, {
-    q: "SELECT * FROM boxes WHERE id = ?1 LIMIT 1",
+async function machineRegistryRow(db: Db, id: string): Promise<MachineRegistryRow | null> {
+  return first<MachineRegistryRow>(db, {
+    q: `SELECT m.id, m.workspace_id, m.broker_box_id, ms.user_id AS principal_id
+        FROM machines m JOIN memberships ms ON ms.id = m.membership_id
+        WHERE m.id = ?1 LIMIT 1`,
     v: [id],
   });
+}
+
+async function isBrokerBox(db: Db, id: string): Promise<boolean> {
+  const row = await first<{ box_id: string }>(db, {
+    q: "SELECT box_id FROM broker_boxes WHERE box_id = ?1 LIMIT 1",
+    v: [id],
+  });
+  return row !== null;
 }
 
 /**
@@ -224,6 +236,8 @@ export function addRegistryRoutes(
     }
     await transaction(runtimeFactory(context).db, [
       {
+        // A broker is still a `boxes` row: it enrols through the device-code
+        // flow and belongs to no workspace, so it never became a machine.
         q: "UPDATE boxes SET is_broker = 1, broker_box_id = NULL WHERE id = ?1",
         v: [box.id],
       },
@@ -251,9 +265,9 @@ export function addRegistryRoutes(
   router.post("/boxes/:id/keys", async (context) => {
     const box = await requireOwnBox(context, runtimeFactory);
     const db = runtimeFactory(context).db;
-    const current = await boxRow(db, box.id);
-    if (current === null || current.workspace_id === null || current.is_broker === 1) {
-      throw new HttpError(403, "only workspace boxes may register keys");
+    const current = await machineRegistryRow(db, box.id);
+    if (current === null) {
+      throw new HttpError(403, "only workspace machines may register keys");
     }
     const keys = parseBrokerKeys(await readJson(context.req.raw));
     // Membership, then the box's own pin, then placement. The pin is a derived
@@ -294,11 +308,11 @@ export function addRegistryRoutes(
           Date.now(),
         ],
       },
-      // Follows the membership rather than only filling a NULL, so a box left
-      // pointing at a broker the member is no longer on re-wires itself on its
-      // next boot instead of talking to a box that will not mint for it.
+      // Follows the membership rather than only filling a NULL, so a machine
+      // left pointing at a broker the member is no longer on re-wires itself on
+      // its next boot instead of talking to a box that will not mint for it.
       {
-        q: `UPDATE boxes
+        q: `UPDATE machines
             SET broker_box_id = (
               SELECT broker_box_id FROM broker_members WHERE principal_id = ?1
             )
@@ -308,7 +322,7 @@ export function addRegistryRoutes(
     ];
     for (const key of keys) {
       queries.push({
-        q: `INSERT OR IGNORE INTO broker_keys (id, box_id, pubkey, operation)
+        q: `INSERT OR IGNORE INTO broker_keys (id, machine_id, pubkey, operation)
             VALUES (?1, ?2, ?3, ?4)`,
         v: [crypto.randomUUID(), box.id, key.pubkey, key.op],
       });
@@ -345,30 +359,31 @@ export function addRegistryRoutes(
   router.get("/boxes/:id/feed", async (context) => {
     const box = await requireOwnBox(context, runtimeFactory);
     const db = runtimeFactory(context).db;
-    const current = await boxRow(db, box.id);
-    if (current?.is_broker !== 1) throw new HttpError(403, "box is not a broker");
-    // Driven by MEMBERSHIPS, with the boxes LEFT-joined on. A member whose
-    // workspaces have all been destroyed still appears, with an empty key
-    // list: that is the wire's "keep this account, serve it no keys" state.
-    // Deriving this from live boxes instead — as it once did — made destroying
-    // a member's last workspace their deprovision signal, and the broker
-    // answers that signal by deleting the home holding the only copy of their
-    // vendor refresh token.
+    if (!(await isBrokerBox(db, box.id))) throw new HttpError(403, "box is not a broker");
+    // Driven by MEMBERSHIPS, with the machines LEFT-joined on. A member whose
+    // machines have all been destroyed still appears, with an empty key list:
+    // that is the wire's "keep this account, serve it no keys" state. Deriving
+    // this from live machines instead — as it once did from boxes — made
+    // destroying a member's last workspace their deprovision signal, and the
+    // broker answers that signal by deleting the home holding the only copy of
+    // their vendor refresh token.
     //
-    // The keys still come from boxes, and only from boxes, so destroy remains
-    // the revocation path: the box row goes, `broker_keys` CASCADEs with it,
-    // and the next poll removes those authorized_keys lines.
+    // The keys still come from machines, and only from machines, so destroy
+    // remains the revocation path: the machine row goes, `broker_keys`
+    // CASCADEs with it, and the next poll removes those authorized_keys lines.
     const result = await rows<FeedRow>(db, {
       q: `SELECT member.unix_name AS unix_name, p.harnesses AS harnesses,
                  keys.pubkey AS pubkey, keys.operation AS operation
           FROM broker_members member
           JOIN principals p ON p.id = member.principal_id
-          LEFT JOIN boxes box
-            ON box.principal_id = member.principal_id
-           AND box.broker_box_id = member.broker_box_id
-          LEFT JOIN broker_keys keys ON keys.box_id = box.id
+          LEFT JOIN machines machine
+            ON machine.broker_box_id = member.broker_box_id
+           AND machine.membership_id IN (
+             SELECT id FROM memberships WHERE user_id = member.principal_id
+           )
+          LEFT JOIN broker_keys keys ON keys.machine_id = machine.id
           WHERE member.broker_box_id = ?1
-          ORDER BY member.unix_name, box.id, keys.operation, keys.pubkey`,
+          ORDER BY member.unix_name, machine.id, keys.operation, keys.pubkey`,
       v: [box.id],
     });
 

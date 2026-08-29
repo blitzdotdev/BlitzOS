@@ -111,31 +111,31 @@ function statusFromWire(workspace: WorkspaceView): RestWorkspaceStatus {
   return workspace.phase;
 }
 
-export function workspaceFromWire(
-  workspace: WorkspaceView,
-  ownerMembershipId = "",
-): V2WorkspaceRecord | null {
+export function workspaceFromWire(workspace: WorkspaceView): V2WorkspaceRecord | null {
   if (workspace.phase === "destroying" || workspace.phase === "destroyed") return null;
   return {
     id: workspace.id,
-    ownerMembershipId: workspace.role === "owner" ? ownerMembershipId : "",
+    // The workspace names its creator, so this no longer has to be inferred
+    // from "the viewer is the owner" — which could only ever name the viewer.
+    ownerMembershipId: workspace.ownerMembershipId ?? "",
     canControl: workspace.role !== null,
     shared: workspace.role === "editor" || workspace.role === "viewer",
     accessRole: workspace.role,
-    orgShareRole: workspace.orgShareRole,
     owner: workspace.owner,
     machineType: workspace.machineTypeId,
     volumeId: workspace.volumeId,
-    environmentConfigured: workspace.environment !== null
-      && Object.keys(workspace.environment.env).length > 0,
-    startupConfigured: workspace.environment?.startupScript !== null
-      && workspace.environment?.startupScript !== undefined,
     name: workspace.name,
     status: statusFromWire(workspace),
     errorDetail: workspace.error,
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
     connections: workspace.connections,
+    members: workspace.members,
+    credentials: workspace.credentials,
+    defaultMachineTypeId: workspace.defaultMachineTypeId,
+    autoProvision: workspace.autoProvision,
+    agentRuleId: workspace.agentRuleId,
+    myRole: workspace.myRole,
     ingressLabel: workspace.id,
     sessionUrl: null,
     retryAction: workspace.retryAction,
@@ -144,8 +144,6 @@ export function workspaceFromWire(
 }
 
 export class ApiAdapter {
-  private ownerMembershipId = "";
-
   public constructor(
     private readonly client: WebAppWireClient,
     private readonly onUnauthorized: () => void,
@@ -157,13 +155,10 @@ export class ApiAdapter {
 
   public async logout(): Promise<void> {
     await this.call(() => this.client.logout());
-    this.ownerMembershipId = "";
   }
 
   public async getMe(): Promise<Me> {
-    const me = meFromWire(await this.call(() => this.client.me()));
-    this.ownerMembershipId = me.membership?.id ?? "";
-    return me;
+    return meFromWire(await this.call(() => this.client.me()));
   }
 
   public async createOrg(name: string): Promise<void> {
@@ -173,14 +168,14 @@ export class ApiAdapter {
   public async listWorkspaces(): Promise<V2WorkspaceRecord[]> {
     const wire = (await this.call(() => this.client.poll())).workspaces;
     return wire.flatMap((workspace) => {
-      const mapped = workspaceFromWire(workspace, this.ownerMembershipId);
+      const mapped = workspaceFromWire(workspace);
       return mapped === null ? [] : [mapped];
     });
   }
 
   public async createWorkspace(input: CreateWorkspaceRequest): Promise<V2WorkspaceRecord> {
     const response = await this.call(() => this.client.create(input));
-    const mapped = workspaceFromWire(response.workspace, this.ownerMembershipId);
+    const mapped = workspaceFromWire(response.workspace);
     if (mapped === null) throw new ApiError("The created workspace is no longer available.", 409);
     return mapped;
   }
@@ -193,7 +188,7 @@ export class ApiAdapter {
    * through the same wire adapter and rides the same navigation flow. */
   public async launchRecipe(recipeId: string): Promise<V2WorkspaceRecord> {
     const response = await this.call(() => this.client.launchRecipe(recipeId));
-    const mapped = workspaceFromWire(response.workspace, this.ownerMembershipId);
+    const mapped = workspaceFromWire(response.workspace);
     if (mapped === null) throw new ApiError("The launched workspace is no longer available.", 409);
     return mapped;
   }

@@ -1,16 +1,31 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { ListMachineTypesResponse, MachineType, Volume } from '@blitzos/schema';
-import type { ControlPlaneClient, WorkspaceGrantView } from './api';
-import { DriveAvatar } from './files/DriveAvatar';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type {
+  AddWorkspaceMemberRequest,
+  ListMachineTypesResponse,
+  MachineType,
+  PutWorkspaceCredentialRequest,
+  TemplateRepoView,
+  WorkspaceMemberRole,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
+import type { ControlPlaneClient, MemberView } from './api';
+import { ConfirmationDialog } from './ConfirmationDialog';
 import { ModalOverlay } from './ModalOverlay';
+import { WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
+import {
+  WorkspaceMembersEditor,
+  type MachineAction,
+} from './WorkspaceMembersEditor';
+import { WorkspaceSettingsTab } from './WorkspaceSettingsTab';
 import type { CloudWorkspaceModel } from './workspace-store';
 
-function providerLabel(providerId: string): string {
-  if (providerId === 'microvm') return 'Local lab';
-  if (providerId === 'hetzner') return 'Hetzner';
-  if (providerId === 'aws') return 'AWS';
-  return providerId;
-}
+export type WorkspaceDetailsTab = 'members' | 'credentials' | 'settings';
+
+const TAB_LABELS = {
+  members: 'Members',
+  credentials: 'Credentials',
+  settings: 'Settings',
+} satisfies Record<WorkspaceDetailsTab, string>;
 
 function dateLabel(timestamp: number): string {
   if (!Number.isFinite(timestamp) || timestamp <= 0) return 'Unavailable';
@@ -20,66 +35,178 @@ function dateLabel(timestamp: number): string {
   }).format(new Date(timestamp));
 }
 
-function yesNo(value: boolean): string {
-  return value ? 'Yes' : 'No';
+/** "Workspace default" travels as an absent field, not as an empty string
+ * the server would have to read as a type id. */
+function addMember(input: {
+  membershipId: string;
+  role: WorkspaceMemberRole;
+  machineTypeId: string;
+}): AddWorkspaceMemberRequest {
+  const request: AddWorkspaceMemberRequest = {
+    membershipId: input.membershipId,
+    role: input.role,
+  };
+  if (input.machineTypeId !== WORKSPACE_DEFAULT_MACHINE_TYPE) {
+    request.machineTypeId = input.machineTypeId;
+  }
+  return request;
 }
 
-function DetailList({ children }: { children: ReactNode }) {
-  return <dl className="workspace-details-list">{children}</dl>;
-}
+/** The `SetMachineType` confirmation of §6: the disk survives, the VM does
+ * not. Held as state so the confirm can run the write it describes. */
+type PendingTypeChange = {
+  member: WorkspaceMemberView;
+  machineTypeId: string;
+};
 
-function Detail({ label, value }: { label: string; value: ReactNode }) {
-  return <div><dt>{label}</dt><dd>{value}</dd></div>;
-}
-
-function ComputeDetails({ machine, fallback }: { machine: MachineType | null; fallback: string | null }) {
+function CredentialsTab({
+  credentials,
+  canManage,
+  onPut,
+  onRevoke,
+}: {
+  credentials: CloudWorkspaceModel['credentials'];
+  canManage: boolean;
+  onPut: (input: PutWorkspaceCredentialRequest) => void;
+  onRevoke: (name: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [label, setLabel] = useState('');
+  const [value, setValue] = useState('');
+  const submit = () => {
+    if (name.trim() === '' || value === '') return;
+    const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
+    if (label.trim() !== '') input.label = label.trim();
+    onPut(input);
+    setName('');
+    setLabel('');
+    setValue('');
+  };
   return (
-    <DetailList>
-      <Detail label="Machine" value={machine?.name ?? fallback ?? 'Unavailable'} />
-      <Detail label="Provider" value={machine ? providerLabel(machine.providerId) : 'Unavailable'} />
-      <Detail label="Location" value={machine?.location || 'Unavailable'} />
-      <Detail label="CPU" value={machine ? `${machine.cpuCores} vCPU` : 'Unavailable'} />
-      <Detail label="Memory" value={machine ? `${machine.memGb} GB` : 'Unavailable'} />
-      <Detail label="Disk" value={machine ? `${machine.diskGb} GB` : 'Unavailable'} />
-    </DetailList>
+    <section
+      id="workspace-details-credentials-panel"
+      role="tabpanel"
+      aria-label="Credentials"
+      className="workspace-details-credentials"
+    >
+      <p className="workspace-details-note">
+        Workspace credentials reach every member machine through{' '}
+        <code>blitz-cred</code>. A value is write-only: it never comes back out
+        of the store, so a rotation replaces it rather than editing it.
+      </p>
+      <div className="workspace-credential-rows">
+        {credentials.length === 0 && (
+          <p className="workspace-members-empty">No workspace credentials yet.</p>
+        )}
+        {credentials.map((credential) => (
+          <div className="workspace-credential-row" key={credential.name}>
+            <span className="workspace-credential-name">
+              <strong>{credential.name}</strong>
+              {credential.label !== null && <small>{credential.label}</small>}
+            </span>
+            <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
+            {canManage && (
+              <button
+                className="webapp-action"
+                type="button"
+                aria-label={`Revoke ${credential.name}`}
+                onClick={() => onRevoke(credential.name)}
+              >
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      {canManage && (
+        <div className="workspace-credential-add">
+          <h2>Add or rotate</h2>
+          <label className="blueprint-field">
+            Name
+            <input
+              aria-label="Credential name"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="STRIPE_API_KEY"
+              value={name}
+              onChange={(event) => setName(event.currentTarget.value)}
+            />
+          </label>
+          <label className="blueprint-field">
+            Label (optional)
+            <input
+              aria-label="Credential label"
+              value={label}
+              onChange={(event) => setLabel(event.currentTarget.value)}
+            />
+          </label>
+          <label className="blueprint-field">
+            Value
+            <input
+              aria-label="Credential value"
+              type="password"
+              autoComplete="off"
+              value={value}
+              onChange={(event) => setValue(event.currentTarget.value)}
+            />
+          </label>
+          <button
+            className="webapp-action webapp-action--primary"
+            type="button"
+            disabled={name.trim() === '' || value === ''}
+            onClick={submit}
+          >
+            Save credential
+          </button>
+        </div>
+      )}
+    </section>
   );
 }
 
-function StorageDetails({ attached, volume }: { attached: boolean; volume: Volume | null }) {
-  return (
-    <DetailList>
-      <Detail label="Persistent volume" value={attached ? 'Attached' : 'Not attached'} />
-      {attached && <Detail label="Volume" value={volume?.name ?? 'Attached volume'} />}
-      {attached && <Detail label="Size" value={volume ? `${volume.sizeGb} GB` : 'Unavailable'} />}
-      {attached && <Detail label="Location" value={volume?.location || 'Unavailable'} />}
-    </DetailList>
-  );
-}
-
+/**
+ * The workspace administration surface (plans/MEMBER-MACHINES.md §6).
+ *
+ * Three tabs: who is in the workspace and what machine each of them holds,
+ * the workspace credential names, and the settings. The old Compute and
+ * Storage panels are gone — a workspace has no single machine to describe,
+ * so those facts live on the member rows instead.
+ */
 export function WorkspaceDetailsDialog({
   client,
   workspace,
-  orgName,
   listMachineTypes,
-  listVolumes,
+  initialTab = 'members',
   onClose,
+  onClone,
   onDelete,
 }: {
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
-  orgName: string;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
-  listVolumes: () => Promise<Volume[]>;
+  initialTab?: WorkspaceDetailsTab;
   onClose: () => void;
+  onClone: (() => void) | null;
   onDelete: (() => void) | null;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   const [machines, setMachines] = useState<MachineType[]>([]);
-  const [volumes, setVolumes] = useState<Volume[]>([]);
-  const [grants, setGrants] = useState<WorkspaceGrantView[]>([]);
+  const [orgMembers, setOrgMembers] = useState<MemberView[]>([]);
+  // The repo list is not on `WorkspaceView`: it is settings a poll has no
+  // reason to carry, so the dialog reads it once and keeps what each write
+  // answers with.
+  const [repos, setRepos] = useState<TemplateRepoView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<'compute' | 'access'>('compute');
+  const [tab, setTab] = useState<WorkspaceDetailsTab>(initialTab);
+  const [pendingTypeChange, setPendingTypeChange] = useState<PendingTypeChange | null>(null);
+
+  // Workspace admin runs the workspace; an org admin passes every ✓ in that
+  // column through implicit reach, which the wire reports as a null role on a
+  // workspace they can still open (§3).
+  const canManage = workspace.myRole === 'admin' || workspace.myRole === null;
+  const workspaceId = workspace.id;
 
   useEffect(() => { closeButton.current?.focus(); }, []);
   useEffect(() => {
@@ -87,25 +214,72 @@ export function WorkspaceDetailsDialog({
     setLoading(true);
     void Promise.all([
       listMachineTypes(),
-      listVolumes(),
-      client.listWorkspaceGrants(workspace.id),
-    ]).then(([machineResponse, volumeResponse, grantResponse]) => {
-      if (cancelled) return;
-      setMachines(machineResponse.machineTypes);
-      setVolumes(volumeResponse);
-      setGrants(grantResponse.grants);
-      setError(null);
-    }).catch((caught: Error) => {
-      if (!cancelled) setError(caught.message || 'Could not load workspace details.');
-    }).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
+      client.listMembers(),
+      client.listWorkspaceRepos(workspaceId),
+    ])
+      .then(([machineResponse, memberResponse, repoResponse]) => {
+        if (cancelled) return;
+        setMachines(machineResponse.machineTypes);
+        setOrgMembers(memberResponse.members);
+        setRepos(repoResponse.repos);
+        setError(null);
+      })
+      .catch((caught: Error) => {
+        if (!cancelled) setError(caught.message || 'Could not load workspace details.');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [client, listMachineTypes, listVolumes, workspace.id]);
+  }, [client, listMachineTypes, workspaceId]);
 
-  const machine = machines.find(({ id }) => id === workspace.machineType) ?? null;
-  const volume = volumes.find(({ id }) => id === workspace.volumeId) ?? null;
-  const ownerName = workspace.owner?.name ?? 'Workspace owner';
+  /** Every write reports its own failure and leaves the poll to refresh the
+   * rows, so no edit invents a row the server has not agreed to. */
+  const run = useCallback((action: Promise<unknown>) => {
+    void action.then(() => setError(null)).catch((caught: Error) => setError(caught.message));
+  }, []);
+
+  const machineAction = (member: WorkspaceMemberView, action: MachineAction) => {
+    const machine = member.machine;
+    // A member with no machine has no id to act on, so their one verb goes to
+    // the route keyed by the membership instead. The row's type select shows
+    // the workspace default until a machine exists, so nothing overrides it.
+    if (machine === null) {
+      if (action === 'provision') run(client.provisionMemberMachine(workspaceId, member.membershipId, {}));
+      return;
+    }
+    if (action === 'provision') run(client.provisionMachine(machine.id));
+    if (action === 'stop') run(client.stopMachine(machine.id));
+    if (action === 'start') run(client.startMachine(machine.id));
+    if (action === 'recreate') run(client.recreateMachine(machine.id));
+    if (action === 'destroy') run(client.destroyMachine(machine.id));
+  };
+
+  /** A repo write answers with the list it produced, so the panel shows what
+   * the server holds rather than what the browser hoped for. A remove answers
+   * 204, and the row the server agreed to delete is the one dropped here. */
+  const addRepo = (repo: string) => {
+    void client.addWorkspaceRepo(workspaceId, { repo })
+      .then((response) => { setRepos(response.repos); setError(null); })
+      .catch((caught: Error) => setError(caught.message));
+  };
+
+  const removeRepo = (repo: string) => {
+    void client.removeWorkspaceRepo(workspaceId, repo)
+      .then(() => {
+        setRepos((current) => current.filter((entry) => entry.repo !== repo));
+        setError(null);
+      })
+      .catch((caught: Error) => setError(caught.message));
+  };
+
+  const changeMachineType = (member: WorkspaceMemberView, machineTypeId: string) => {
+    // A machine that does not exist has no type to change; the row's type
+    // select only writes once there is a VM behind it.
+    if (member.machine === null) {
+      setError('This member has no machine yet, so there is no type to change.');
+      return;
+    }
+    setPendingTypeChange({ member, machineTypeId });
+  };
 
   return (
     <ModalOverlay onDismiss={onClose}>
@@ -116,82 +290,93 @@ export function WorkspaceDetailsDialog({
         aria-label={`Workspace details for ${workspace.title}`}
       >
         <header className="workspace-details-header">
-          <h1>Workspace details <em>“{workspace.title}”</em></h1>
+          <h1>Workspace <em>“{workspace.title}”</em></h1>
           <button ref={closeButton} type="button" aria-label="Close workspace details" onClick={onClose}>×</button>
         </header>
         <div className="workspace-details-tabs" role="tablist" aria-label="Workspace detail views">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'compute'}
-            aria-controls="workspace-details-compute-panel"
-            onClick={() => setView('compute')}
-          >Compute</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={view === 'access'}
-            aria-controls="workspace-details-access-panel"
-            onClick={() => setView('access')}
-          >Access</button>
+          {(['members', 'credentials', 'settings'] as const).map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              role="tab"
+              aria-selected={tab === candidate}
+              aria-controls={`workspace-details-${candidate}-panel`}
+              onClick={() => setTab(candidate)}
+            >
+              {TAB_LABELS[candidate]}
+            </button>
+          ))}
         </div>
         <div className="workspace-details-body">
           {loading && <p className="workspace-details-status" role="status">Loading workspace details…</p>}
-          {error && <p className="workspace-details-error" role="alert">{error}</p>}
-          {view === 'compute' ? (
-            <div id="workspace-details-compute-panel" role="tabpanel" className="workspace-details-grid">
-              <section><h2>Compute</h2><ComputeDetails machine={machine} fallback={workspace.machineType} /></section>
-              <section><h2>Storage</h2><StorageDetails attached={workspace.volumeId !== null} volume={volume} /></section>
-              <section>
-                <h2>Workspace</h2>
-                <DetailList>
-                  <Detail label="Status" value={workspace.lifecycleStatus} />
-                  <Detail label="Owner" value={ownerName} />
-                  <Detail label="Your access" value={workspace.accessRole ?? 'None'} />
-                  <Detail label="Created" value={dateLabel(workspace.createdAt)} />
-                  <Detail label="Updated" value={dateLabel(workspace.updatedAt)} />
-                </DetailList>
-              </section>
-              <section>
-                <h2>Configuration</h2>
-                <DetailList>
-                  <Detail label="Environment variables" value={yesNo(workspace.environmentConfigured)} />
-                  <Detail label="Startup script" value={yesNo(workspace.startupConfigured)} />
-                  <Detail label="Connections" value={workspace.connections.length} />
-                </DetailList>
-              </section>
-            </div>
-          ) : (
-            <section id="workspace-details-access-panel" role="tabpanel" className="workspace-details-access">
-              <h2>Who has access</h2>
-              <div className="workspace-details-people">
-                <div className="workspace-details-person">
-                  <DriveAvatar name={ownerName} avatarUrl={workspace.owner?.avatarUrl ?? null} size="md" />
-                  <span><strong>{ownerName}</strong><small>Workspace owner</small></span>
-                  <b>Owner</b>
-                </div>
-                <div className="workspace-details-person">
-                  <span className="workspace-details-org" aria-hidden="true">{orgName.charAt(0).toUpperCase()}</span>
-                  <span><strong>Everyone at {orgName}</strong><small>General workspace access</small></span>
-                  <b>{workspace.orgShareRole ?? 'Restricted'}</b>
-                </div>
-                {grants.map((grant) => (
-                  <div className="workspace-details-person" key={grant.id}>
-                    <DriveAvatar name={grant.member.name || grant.member.email} avatarUrl={grant.member.avatarUrl} size="md" />
-                    <span><strong>{grant.member.name || grant.member.email}</strong><small>{grant.member.email}</small></span>
-                    <b>{grant.role}</b>
-                  </div>
-                ))}
-              </div>
+          {error !== null && <p className="workspace-details-error" role="alert">{error}</p>}
+          {tab === 'members' && (
+            <section
+              id="workspace-details-members-panel"
+              role="tabpanel"
+              aria-label="Members"
+              className="workspace-details-members"
+            >
+              <WorkspaceMembersEditor
+                mode={{
+                  kind: 'live',
+                  members: workspace.members,
+                  readOnly: !canManage,
+                  ownerMembershipId: workspace.ownerMembershipId,
+                  onAdd: (input) => run(client.addWorkspaceMember(workspace.id, addMember(input))),
+                  onRoleChange: (membershipId, role: WorkspaceMemberRole) =>
+                    run(client.updateWorkspaceMember(workspace.id, membershipId, { role })),
+                  onMachineTypeChange: changeMachineType,
+                  onMachineAction: machineAction,
+                  onRemove: (member) =>
+                    run(client.removeWorkspaceMember(workspace.id, member.membershipId)),
+                }}
+                orgMembers={orgMembers}
+                machines={machines}
+                defaultMachineTypeId={workspace.defaultMachineTypeId}
+              />
             </section>
           )}
+          {tab === 'credentials' && (
+            <CredentialsTab
+              credentials={workspace.credentials}
+              canManage={canManage}
+              onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input))}
+              onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name))}
+            />
+          )}
+          {tab === 'settings' && (
+            <WorkspaceSettingsTab
+              client={client}
+              workspace={workspace}
+              machines={machines}
+              repos={repos}
+              canManage={canManage}
+              onSave={(input) => run(client.updateWorkspace(workspaceId, input))}
+              onAddRepo={addRepo}
+              onRemoveRepo={removeRepo}
+              onClone={onClone}
+              onDelete={onDelete}
+            />
+          )}
         </div>
-        {onDelete && (
-          <footer className="workspace-details-footer">
-            <button className="workspace-details-delete" type="button" onClick={onDelete}>Delete workspace</button>
-          </footer>
-        )}
       </section>
+      {pendingTypeChange !== null && (
+        <ConfirmationDialog
+          title="Change machine type?"
+          description={`This replaces ${pendingTypeChange.member.name}'s VM with a ${pendingTypeChange.machineTypeId} one. It keeps the disk — the volume and everything on it survives — but running sessions restart.`}
+          confirmLabel="Yes, change the type"
+          onCancel={() => setPendingTypeChange(null)}
+          onConfirm={() => {
+            const machine = pendingTypeChange.member.machine;
+            setPendingTypeChange(null);
+            if (machine === null) return;
+            run(client.setMachineType(machine.id, {
+              machineTypeId: pendingTypeChange.machineTypeId,
+            }));
+          }}
+        />
+      )}
     </ModalOverlay>
   );
 }

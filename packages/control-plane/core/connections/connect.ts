@@ -1,6 +1,10 @@
 import { first } from "../db.js";
 import { HttpError, requiredString } from "../http.js";
-import { canControlWorkspace, type WorkspaceAccessRow } from "../workspace-access.js";
+import {
+  isWorkspaceAdmin,
+  workspaceAccess,
+  type WorkspaceAccessRow,
+} from "../workspace-access.js";
 import {
   clearConnectOAuthStateCookie,
   connectReturnTo,
@@ -112,7 +116,9 @@ async function controllableWorkspace(
   if (workspace === null || workspace.org_id !== principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
-  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  if (!isWorkspaceAdmin(await workspaceAccess(runtime.db, principal, workspace))) {
+    throw new HttpError(403, "forbidden");
+  }
   return id;
 }
 

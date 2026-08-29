@@ -23,9 +23,10 @@ function rulesClient(
   rules: AgentRuleView[] = [BUILT_IN_RULE],
 ): AgentRulesApi & Pick<
   ControlPlaneClient,
-  "connectStartUrl" | "listGithubInstallations" | "listGithubRepositories"
+  "connectStartUrl" | "listGithubInstallations" | "listGithubRepositories" | "listMembers"
 > {
   return {
+    listMembers: vi.fn(async () => ({ members: orgMembers })),
     listAgentRules: vi.fn(async () => ({ rules })),
     putAgentRule: vi.fn(async (id: string, input: { name: string; content: string }) => ({
       rule: { id, ...input, updatedAt: 5, builtIn: false },
@@ -45,6 +46,26 @@ function rulesClient(
   };
 }
 
+/** React owns the value of a controlled input, so assigning `.value` is
+ * discarded on the next render. The native setter is what a real keystroke
+ * reaches, and it is what makes React see the change. */
+async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
+  const setInputValue = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  if (setInputValue === undefined) throw new Error("input value setter is unavailable");
+  await act(async () => {
+    setInputValue.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+const orgMembers = [
+  { id: "membership-1", email: "ada@example.com", name: "Ada Park", avatarUrl: null, role: "admin" as const, status: "active" as const },
+  { id: "membership-2", email: "nia@example.com", name: "Nia Newcomer", avatarUrl: null, role: "member" as const, status: "active" as const },
+];
+
 const machines = [
   { id: "cx23@fsn1", providerId: "hetzner", supportsVolumes: true, name: "CX23", cpuCores: 2, memGb: 4, diskGb: 40, arch: "x86" as const, location: "fsn1", monthlyPrice: { amount: 6.49, currency: "USD" } },
   { id: "mv-2c2g@lab", providerId: "microvm", supportsVolumes: false, name: "Lab 2C/2G", cpuCores: 2, memGb: 2, diskGb: 20, arch: "x86" as const, location: "lab", monthlyPrice: null },
@@ -59,8 +80,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -84,12 +103,16 @@ describe("create workspace dialog", () => {
       );
     });
     expect(submit).toHaveBeenCalledOnce();
-    expect(submit).toHaveBeenCalledWith({ machineTypeId: "cx23@fsn1", orgShareRole: "editor" });
+    // Sharing defaults to the members named on the form: an org-wide share
+    // gives every active member a machine, which is not a default.
+    expect(submit).toHaveBeenCalledWith({ machineTypeId: "cx23@fsn1" });
     const keylessRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(keylessRequest).sort()).toEqual(["machineTypeId", "orgShareRole"]);
+    expect(Object.keys(keylessRequest).sort()).toEqual(["machineTypeId"]);
     expect("sshPublicKey" in keylessRequest).toBe(false);
     expect("volumeId" in keylessRequest).toBe(false);
-    expect(JSON.stringify(keylessRequest)).toBe('{"machineTypeId":"cx23@fsn1","orgShareRole":"editor"}');
+    expect("members" in keylessRequest).toBe(false);
+    expect("credentials" in keylessRequest).toBe(false);
+    expect(JSON.stringify(keylessRequest)).toBe('{"machineTypeId":"cx23@fsn1"}');
     await view.unmount();
   });
 
@@ -101,8 +124,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => [{
           id: "vol-1",
@@ -132,70 +153,16 @@ describe("create workspace dialog", () => {
 
     expect(submit).toHaveBeenCalledWith({
       machineTypeId: "cx23@fsn1",
-      orgShareRole: "editor",
       sshPublicKey: "ssh-ed25519 AAAA operator@example",
       volumeId: "vol-1",
     });
     const completeRequest = submit.mock.calls[0]?.[0];
-    expect(Object.keys(completeRequest).sort()).toEqual(["machineTypeId", "orgShareRole", "sshPublicKey", "volumeId"])
+    expect(Object.keys(completeRequest).sort()).toEqual(["machineTypeId", "sshPublicKey", "volumeId"])
     expect("sshPublicKey" in completeRequest).toBe(true);
     expect("volumeId" in completeRequest).toBe(true);
     expect(JSON.stringify(completeRequest)).toBe(
-      '{"machineTypeId":"cx23@fsn1","sshPublicKey":"ssh-ed25519 AAAA operator@example","volumeId":"vol-1","orgShareRole":"editor"}',
+      '{"machineTypeId":"cx23@fsn1","sshPublicKey":"ssh-ed25519 AAAA operator@example","volumeId":"vol-1"}',
     );
-    await view.unmount();
-  });
-
-  it("submits a populated advanced environment", async () => {
-    const submit = vi.fn();
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-    const key = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Environment variable key 1"]',
-    )!;
-    const value = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Environment variable value 1"]',
-    )!;
-    const script = view.container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Startup script"]',
-    )!;
-    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-    if (inputSetter === undefined || textareaSetter === undefined) throw new Error('input setter unavailable');
-    await act(async () => {
-      inputSetter.call(key, 'API_ORIGIN');
-      key.dispatchEvent(new Event('input', { bubbles: true }));
-      inputSetter.call(value, 'https://api.example');
-      value.dispatchEvent(new Event('input', { bubbles: true }));
-      textareaSetter.call(script, 'npm install\n');
-      script.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).toHaveBeenCalledWith({
-      machineTypeId: 'cx23@fsn1',
-      orgShareRole: 'editor',
-      environment: {
-        env: { API_ORIGIN: 'https://api.example' },
-        startupScript: 'npm install\n',
-      },
-    });
     await view.unmount();
   });
 
@@ -206,8 +173,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({
           machineTypes: [],
           failures: [
@@ -239,8 +204,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({
           machineTypes: machines,
           failures: [
@@ -272,8 +235,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: [], failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -295,8 +256,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => [{
           id: "vol-1",
@@ -328,77 +287,6 @@ describe("create workspace dialog", () => {
   });
 
 
-  it("picks repositories without a template and hides the picker under one", async () => {
-    const submit = vi.fn();
-    const client = rulesClient();
-    client.listGithubRepositories = vi.fn(async () => ({
-      repositories: [
-        { repo: "acme/app", accountLogin: "acme", private: true },
-        { repo: "acme/tools", accountLogin: "acme", private: false },
-      ],
-      truncated: false,
-    }));
-    const template = {
-      id: "template-1",
-      name: "analysis starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: null,
-      isOrgDefault: false,
-      environment: null,
-      folders: [],
-      connections: [],
-      repos: [],
-    };
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={client}
-        listTemplates={async () => [template]}
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const checkbox = (repo: string) => [...view.container
-      .querySelectorAll<HTMLLabelElement>('.tplf-repo')]
-      .find((label) => label.textContent?.startsWith(repo))
-      ?.querySelector<HTMLInputElement>('input')!;
-    await act(async () => checkbox('acme/app').click());
-    await act(async () => {
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
-      machineTypeId: "cx23@fsn1",
-      repos: ["acme/app"],
-    }));
-
-    // A template carries its own list, and the control plane refuses a body
-    // that names both, so selecting one takes the picker and the selection.
-    await act(async () => {
-      [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
-        .find((tile) => tile.textContent?.includes('analysis starter'))?.click();
-    });
-    expect(view.container.querySelector('.tplf-repos')).toBeNull();
-    await act(async () => {
-      [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
-        .find((tile) => tile.textContent?.includes('No template'))?.click();
-    });
-    await settle();
-    expect(checkbox('acme/app').checked).toBe(false);
-    await view.unmount();
-  });
-
   it("carries a repo selection with no template through the connect round trip", async () => {
     const client = rulesClient();
     client.listGithubRepositories = vi.fn(async () => {
@@ -410,8 +298,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={client}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -430,7 +316,6 @@ describe("create workspace dialog", () => {
       'blitz:github-connect-draft:workspace-new',
     ) ?? '{}')).toEqual({
       templateId: null,
-      environment: { env: {}, startupScript: null },
       agentRuleId: null,
       repos: [],
     });
@@ -441,7 +326,6 @@ describe("create workspace dialog", () => {
       'blitz:github-connect-draft:workspace-new',
       JSON.stringify({
         templateId: null,
-        environment: { env: {}, startupScript: null },
         agentRuleId: null,
         repos: ['acme/app'],
       }),
@@ -453,10 +337,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient()}
-        listTemplates={async () => []}
-        // The org default must not reclaim a member who deselected it.
-        initialTemplateId="template-default"
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -475,417 +355,6 @@ describe("create workspace dialog", () => {
     await returned.unmount();
   });
 
-  it("collapses the form when a template is selected and submits the template body", async () => {
-    const submit = vi.fn();
-    const onNewTemplate = vi.fn();
-    const template = {
-      id: "template-1",
-      name: "analysis starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: null,
-      isOrgDefault: false,
-      environment: {
-        env: { FROM_TEMPLATE: "yes" },
-        startupScript: "./setup.sh\n",
-      },
-      folders: [
-        { id: "folder-a", name: "datasets", role: "viewer" as const },
-        { id: "folder-b", name: "private", role: null },
-      ],
-      connections: [{ provider: "linear" }],
-      repos: [],
-    };
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listTemplates={async () => [template]}
-        onNewTemplate={onNewTemplate}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-
-    expect(view.container.textContent).toContain("analysis starter");
-    expect(view.container.textContent).toContain("by Ada Park");
-    expect(view.container.textContent).toContain("1 folder you cannot access yet");
-    expect(view.container.querySelector('input[name="name"]')).not.toBeNull();
-
-    const tile = [...view.container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("analysis starter"))!;
-    await act(async () => {
-      tile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(view.container.querySelector('input[name="name"]')).toBeNull();
-    expect(view.container.querySelector('select[name="orgShareRole"]')).toBeNull();
-    expect(view.container.textContent).toContain("no access yet, will not sync");
-
-    await act(async () => {
-      view.container.querySelector("form")?.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true }),
-      );
-    });
-    // The server enables the template's own connections; the dialog sends
-    // none of its own — creation never blocks on them and never names them.
-    expect(submit).toHaveBeenCalledWith({
-      templateId: "template-1",
-      orgShareRole: "editor",
-      environment: template.environment,
-    });
-
-    const newTile = [...view.container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("New template"))!;
-    await act(async () => {
-      newTile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(onNewTemplate).toHaveBeenCalledOnce();
-    await view.unmount();
-  });
-
-  it("blocks a private-repo template until the member connects GitHub", async () => {
-    const submit = vi.fn();
-    const listGithubRepositories = vi.fn(async () => {
-      throw new ApiRequestError("GitHub is not connected", 409, null);
-    });
-    const template = {
-      id: "template-private",
-      name: "private starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: null,
-      isOrgDefault: false,
-      environment: null,
-      folders: [],
-      connections: [{ provider: "github" }],
-      repos: [{ repo: "acme/private-app", private: true }],
-    };
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={{ ...rulesClient(), listGithubRepositories }}
-        listTemplates={async () => [template]}
-        initialTemplateId={template.id}
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-    await settle();
-
-    expect(listGithubRepositories).toHaveBeenCalledWith();
-    const create = view.container.querySelector<HTMLButtonElement>('.create-workspace-primary')!;
-    expect(create.disabled).toBe(true);
-    const connect = view.container.querySelector<HTMLAnchorElement>(
-      'a[href="/connect/github/start?returnTo=workspace-new"]',
-    )!;
-    expect(connect.textContent).toBe('Connect GitHub');
-    await act(async () => {
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).not.toHaveBeenCalled();
-    connect.addEventListener('click', (event) => event.preventDefault());
-    await act(async () => connect.click());
-    expect(JSON.parse(window.sessionStorage.getItem(
-      'blitz:github-connect-draft:workspace-new',
-    ) ?? '{}')).toEqual({
-      templateId: 'template-private',
-      environment: { env: {}, startupScript: null },
-      agentRuleId: null,
-      repos: [],
-    });
-    await view.unmount();
-  });
-
-  it("restores the selected template after connect instead of the org default", async () => {
-    window.history.replaceState({}, "", "/workspaces/new?connect=ok&provider=github");
-    window.sessionStorage.setItem(
-      'blitz:github-connect-draft:workspace-new',
-      JSON.stringify({
-        templateId: 'template-private',
-        environment: { env: { ROUND_TRIP: 'yes' }, startupScript: './resume.sh\n' },
-        agentRuleId: 'rule-override',
-        repos: [],
-      }),
-    );
-    const submit = vi.fn();
-    const privateTemplate = {
-      id: "template-private",
-      name: "private starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: null,
-      isOrgDefault: false,
-      environment: null,
-      folders: [],
-      connections: [{ provider: "github" }],
-      repos: [{ repo: "acme/private-app", private: true }],
-    };
-    const defaultTemplate = {
-      ...privateTemplate,
-      id: "template-default",
-      name: "org default",
-      isOrgDefault: true,
-      connections: [],
-      repos: [],
-    };
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient([BUILT_IN_RULE, {
-          id: 'rule-override',
-          name: 'Redirect rules',
-          content: '# Redirect rules\n',
-          updatedAt: 7,
-          builtIn: false,
-        }])}
-        listTemplates={async () => [defaultTemplate, privateTemplate]}
-        initialTemplateId={defaultTemplate.id}
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const privateTile = [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
-      .find((tile) => tile.textContent?.includes('private starter'))!;
-    const defaultTile = [...view.container.querySelectorAll<HTMLButtonElement>('.template-tile')]
-      .find((tile) => tile.textContent?.includes('org default'))!;
-    expect(privateTile.getAttribute('aria-pressed')).toBe('true');
-    expect(defaultTile.getAttribute('aria-pressed')).toBe('false');
-    expect(window.sessionStorage.getItem('blitz:github-connect-draft:workspace-new')).toBeNull();
-    expect(view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Environment variable key 1"]',
-    )?.value).toBe('ROUND_TRIP');
-    expect(view.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Agent rules document"]',
-    )?.value).toBe('rule-override');
-    expect(view.container.querySelector<HTMLButtonElement>('.create-workspace-primary')?.disabled)
-      .toBe(false);
-    await act(async () => {
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).toHaveBeenCalledWith({
-      templateId: 'template-private',
-      orgShareRole: 'editor',
-      environment: {
-        env: { ROUND_TRIP: 'yes' },
-        startupScript: './resume.sh\n',
-      },
-      agentRuleId: 'rule-override',
-    });
-    await view.unmount();
-  });
-
-  it("preselects the org-default template from initialTemplateId, deselectably", async () => {
-    const submit = vi.fn();
-    const template = {
-      id: "template-default",
-      name: "org starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: "rule-1",
-      isOrgDefault: true,
-      environment: {
-        env: { FROM_TEMPLATE: "yes" },
-        startupScript: "./setup.sh\n",
-      },
-      folders: [],
-      connections: [],
-      repos: [],
-    };
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient([BUILT_IN_RULE, {
-          id: "rule-1",
-          name: "House rules",
-          content: "# House rules\n",
-          updatedAt: 3,
-          builtIn: false,
-        }])}
-        listTemplates={async () => [template]}
-        initialTemplateId="template-default"
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-
-    // Seeding behaves exactly like a click on the tile: the manual form is
-    // collapsed and the template's environment and rule ride along.
-    expect(view.container.querySelector('input[name="name"]')).toBeNull();
-    const tile = [...view.container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("org starter"))!;
-    expect(tile.getAttribute("aria-pressed")).toBe("true");
-    expect(view.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Agent rules document"]',
-    )?.value).toBe("rule-1");
-
-    await act(async () => {
-      view.container.querySelector("form")?.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).toHaveBeenCalledWith({
-      templateId: "template-default",
-      orgShareRole: "editor",
-      environment: template.environment,
-    });
-    await view.unmount();
-
-    // The member can still walk away from the default to the manual form.
-    const deselected = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listTemplates={async () => [template]}
-        initialTemplateId="template-default"
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={() => undefined}
-      />,
-    );
-    await settle();
-    const pressed = [...deselected.container.querySelectorAll("button")]
-      .find((button) => button.textContent?.includes("org starter"))!;
-    await act(async () => {
-      pressed.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(deselected.container.querySelector('input[name="name"]')).not.toBeNull();
-    await deselected.unmount();
-  });
-
-  it("offers a blank tile that leaves the org default and creates with no template", async () => {
-    const submit = vi.fn();
-    const template = {
-      id: "template-default",
-      name: "org starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: "rule-1",
-      isOrgDefault: true,
-      environment: {
-        env: { FROM_TEMPLATE: "yes" },
-        startupScript: "./setup.sh\n",
-      },
-      folders: [],
-      connections: [],
-      repos: [],
-    };
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient([BUILT_IN_RULE, {
-          id: "rule-1",
-          name: "House rules",
-          content: "# House rules\n",
-          updatedAt: 3,
-          builtIn: false,
-        }])}
-        listTemplates={async () => [template]}
-        initialTemplateId="template-default"
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-
-    // The blank choice leads the grid, before any template.
-    const blank = view.container.querySelector<HTMLButtonElement>(".template-grid > button")!;
-    expect(blank.textContent).toContain("No template");
-    // The org default is seeded, so the blank tile is not the pressed one yet.
-    expect(blank.getAttribute("aria-pressed")).toBe("false");
-    expect(view.container.querySelector('input[name="name"]')).toBeNull();
-
-    await act(async () => {
-      blank.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    const tiles = [...view.container.querySelectorAll<HTMLButtonElement>(".template-grid > button")];
-    expect(tiles[0]?.getAttribute("aria-pressed")).toBe("true");
-    expect(tiles[1]?.getAttribute("aria-pressed")).toBe("false");
-    // The member now picks the machine, so the manual form is back.
-    expect(view.container.querySelector(".machine-catalog-groups")).not.toBeNull();
-    expect(view.container.querySelector('input[name="name"]')).not.toBeNull();
-    expect(view.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Agent rules document"]',
-    )?.value).toBe("");
-
-    await act(async () => {
-      view.container.querySelector("form")?.dispatchEvent(
-        new Event("submit", { bubbles: true, cancelable: true }),
-      );
-    });
-    // The template's id, environment and rule all left with it.
-    expect(submit).toHaveBeenCalledWith({
-      machineTypeId: "cx23@fsn1",
-      orgShareRole: "editor",
-    });
-    expect("templateId" in submit.mock.calls[0]![0]).toBe(false);
-    await view.unmount();
-  });
-
-  it("ignores an initialTemplateId the list no longer carries and stays manual", async () => {
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listTemplates={async () => []}
-        initialTemplateId="template-deleted"
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={() => undefined}
-      />,
-    );
-    await settle();
-    expect(view.container.querySelector('input[name="name"]')).not.toBeNull();
-    await view.unmount();
-  });
-
   it("picks an agent rule in the same Advanced section and sends it", async () => {
     const submit = vi.fn();
     const orgRule = {
@@ -901,8 +370,6 @@ describe("create workspace dialog", () => {
         error={null}
         orgName="acme"
         client={rulesClient([BUILT_IN_RULE, orgRule])}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -919,7 +386,6 @@ describe("create workspace dialog", () => {
       'select[aria-label="Agent rules document"]',
     )!;
     expect(advanced[0]?.contains(select)).toBe(true);
-    expect(advanced[0]?.querySelector('textarea[aria-label="Startup script"]')).not.toBeNull();
     expect([...select.options].map((option) => option.textContent)).toEqual([
       "Default (built-in)",
       "House rules",
@@ -941,95 +407,9 @@ describe("create workspace dialog", () => {
     // suite pins that exact shape.
     expect(submit).toHaveBeenCalledWith({
       machineTypeId: "cx23@fsn1",
-      orgShareRole: "editor",
       agentRuleId: "rule-1",
     });
     await view.unmount();
-  });
-
-  it("prefills a template's rule and sends an explicit override", async () => {
-    const submit = vi.fn();
-    const orgRule = {
-      id: "rule-1",
-      name: "House rules",
-      content: "# House rules\n",
-      updatedAt: 3,
-      builtIn: false,
-    };
-    const template = {
-      id: "template-1",
-      name: "analysis starter",
-      machineTypeId: "cx23@fsn1",
-      createdAt: 1,
-      createdBy: { name: "Ada Park", avatarUrl: null },
-      agentRuleId: "rule-1",
-      isOrgDefault: false,
-      environment: null,
-      folders: [],
-      connections: [],
-      repos: [],
-    };
-    // The dialog refuses a second submit per mount, so each expectation gets
-    // its own render.
-    const open = async () => {
-      const view = await render(
-        <CreateWorkspaceDialog
-          busy={false}
-          error={null}
-          orgName="acme"
-          client={rulesClient([BUILT_IN_RULE, orgRule])}
-          listTemplates={async () => [template]}
-          onNewTemplate={() => undefined}
-          listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-          listVolumes={async () => []}
-          onCancel={() => undefined}
-          onSubmit={submit}
-        />,
-      );
-      await settle();
-      const tile = [...view.container.querySelectorAll("button")]
-        .find((button) => button.textContent?.includes("analysis starter"))!;
-      await act(async () => {
-        tile.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      });
-      return view;
-    };
-    const submitForm = async (view: { container: HTMLElement }) => {
-      await act(async () => {
-        view.container.querySelector("form")?.dispatchEvent(
-          new Event("submit", { bubbles: true, cancelable: true }),
-        );
-      });
-    };
-
-    // The template's rule pre-fills, and matching it needs no field on the wire.
-    const untouched = await open();
-    expect(untouched.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Agent rules document"]',
-    )?.value).toBe("rule-1");
-    await submitForm(untouched);
-    expect(submit).toHaveBeenCalledWith({ templateId: "template-1", orgShareRole: "editor" });
-    await untouched.unmount();
-
-    // Going back to the default is an explicit null, not silence — otherwise
-    // the server would read it as "keep the template's rule".
-    const overridden = await open();
-    const select = overridden.container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Agent rules document"]',
-    )!;
-    const selectSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-    if (selectSetter === undefined) throw new Error("select setter unavailable");
-    await act(async () => {
-      selectSetter.call(select, "");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await submitForm(overridden);
-    expect(submit).toHaveBeenLastCalledWith({
-      templateId: "template-1",
-      orgShareRole: "editor",
-      agentRuleId: null,
-    });
-    await overridden.unmount();
   });
 
   it("validates an admin's cloud key inline and reveals machines without a reload", async () => {
@@ -1058,8 +438,6 @@ describe("create workspace dialog", () => {
         admin
         saveComputeCredential={saveComputeCredential}
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={listMachineTypes}
         listVolumes={async () => []}
         onCancel={() => undefined}
@@ -1102,8 +480,6 @@ describe("create workspace dialog", () => {
         orgName="acme"
         orgId="org-one"
         client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
         listMachineTypes={async () => ({
           machineTypes: [],
           failures: [],
@@ -1122,6 +498,209 @@ describe("create workspace dialog", () => {
     );
     expect(view.container.querySelector('input[type="password"]')).toBeNull();
     expect(view.container.querySelector('.machine-catalog-groups')).toBeNull();
+    await view.unmount();
+  });
+  it("labels the grid the default machine type and adds members with a per-row type", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        viewerName="Ada Park"
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    // The grid picks a default, never a restriction (plan §1a).
+    expect(view.container.textContent).toContain("Default machine type");
+    // The creator is pinned as the first workspace admin and has no remove.
+    expect(view.container.textContent).toContain("Ada Park (you)");
+    expect(view.container.querySelector('button[aria-label="Remove Ada Park (you)"]')).toBeNull();
+
+    const search = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]')!;
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(new Event("focus", { bubbles: true }));
+    });
+    const suggestion = [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+      .find((button) => button.textContent?.includes("Nia Newcomer"))!;
+    await act(async () => suggestion.click());
+
+    // "Workspace default" is the first option and names what it resolves to.
+    const typeSelect = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Machine type for Nia Newcomer"]',
+    )!;
+    await act(async () => typeSelect.click());
+    const options = [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    expect(options[0]?.textContent).toContain("Workspace default (CX23)");
+    await act(async () => options.find((o) => o.textContent?.includes("Lab 2C/2G"))?.click());
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      machineTypeId: "cx23@fsn1",
+      members: [{ membershipId: "membership-2", role: "member", machineTypeId: "mv-2c2g@lab" }],
+    }));
+    await view.unmount();
+  });
+
+  it("hides the machine type on a viewer row and omits an unchosen type from the body", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const search = view.container.querySelector<HTMLInputElement>('[aria-label="Add people"]')!;
+    await act(async () => {
+      search.focus();
+      search.dispatchEvent(new Event("focus", { bubbles: true }));
+    });
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>(".drive-suggestion")]
+      .find((button) => button.textContent?.includes("Nia Newcomer"))?.click());
+
+    const roleSelect = view.container.querySelector<HTMLButtonElement>(
+      '[aria-label="Role for Nia Newcomer"]',
+    )!;
+    await act(async () => roleSelect.click());
+    await act(async () => [...view.container.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+      .find((option) => option.textContent?.includes("Viewer"))?.click());
+
+    // A viewer never holds a machine (§2.2), so the row has no type to pick.
+    expect(view.container.querySelector('[aria-label="Machine type for Nia Newcomer"]')).toBeNull();
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    // No machineTypeId: "workspace default" travels as an absent field, not as
+    // an empty string the server would read as a type id.
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      members: [{ membershipId: "membership-2", role: "viewer" }],
+    }));
+    await view.unmount();
+  });
+
+  it("sends credential names and values once, and drops an incomplete row", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    const addCredential = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Add credential")!;
+    await act(async () => addCredential.click());
+    await act(async () => addCredential.click());
+
+    const field = (label: string) =>
+      view.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+    await typeInto(field("Credential 1 name"), "STRIPE_API_KEY");
+    await typeInto(field("Credential 1 label"), "billing");
+    await typeInto(field("Credential 1 value"), "sk-live-x");
+    // Row two is named but has no value, so it is not a credential yet.
+    await typeInto(field("Credential 2 name"), "UNFINISHED");
+    expect(view.container.querySelector<HTMLInputElement>(
+      '[aria-label="Credential 1 value"]',
+    )?.type).toBe("password");
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: [{ name: "STRIPE_API_KEY", label: "billing", value: "sk-live-x" }],
+    }));
+    await view.unmount();
+  });
+
+  it("tells a member that creating a workspace is an org-admin power", async () => {
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin={false}
+        client={rulesClient()}
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={() => undefined}
+      />,
+    );
+    await settle();
+
+    expect(view.container.textContent).toContain("Only an admin at acme can create a workspace.");
+    await view.unmount();
+  });
+
+  it("names the clone source and drops the repo picker under one", async () => {
+    const submit = vi.fn();
+    const view = await render(
+      <CreateWorkspaceDialog
+        busy={false}
+        error={null}
+        orgName="acme"
+        admin
+        client={rulesClient()}
+        cloneFromWorkspaceId="workspace-source"
+        cloneFromWorkspaceName="engineering"
+        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
+        listVolumes={async () => []}
+        onCancel={() => undefined}
+        onSubmit={submit}
+      />,
+    );
+    await settle();
+    await settle();
+
+    expect(view.container.textContent).toContain('New workspace from “engineering”');
+    // A clone carries its source's repo list, and a body naming both is a 400.
+    expect(view.container.querySelector(".tplf-repos")).toBeNull();
+
+    await act(async () => {
+      view.container.querySelector("form")?.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      cloneFromWorkspaceId: "workspace-source",
+    }));
     await view.unmount();
   });
 });

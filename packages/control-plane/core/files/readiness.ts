@@ -37,7 +37,8 @@ export async function convergeFilesReady(
 ): Promise<boolean> {
   if (syncedAttachments < await attachedFolderCount(runtime, workspaceId)) return false;
   await rows(runtime.db, {
-    q: "UPDATE workspaces SET files_ready = 1 WHERE id = ?1 AND phase = 'ready' AND files_ready = 0",
+    q: `UPDATE workspaces SET files_ready = 1
+        WHERE id = ?1 AND deleted_at IS NULL AND files_ready = 0`,
     v: [workspaceId],
   });
   return true;
@@ -49,7 +50,7 @@ export async function convergeFilesReady(
 async function markUnattachedWorkspacesReady(runtime: CoreRuntime): Promise<void> {
   await rows(runtime.db, {
     q: `UPDATE workspaces SET files_ready = 1
-        WHERE phase = 'ready' AND files_ready = 0
+        WHERE deleted_at IS NULL AND files_ready = 0
           AND NOT EXISTS (
             SELECT 1 FROM folder_attachments WHERE workspace_id = workspaces.id
           )`,

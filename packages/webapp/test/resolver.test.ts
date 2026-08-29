@@ -2,28 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceView } from "@blitzos/schema";
 import { endpointTarget, standaloneResolver, validPort } from "../src/resolver.js";
 import { terminalWebSocketUrl } from "../src/CloudApp.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
-const workspace: WorkspaceView = {
-  id: "one",
-  name: "brave-otter",
-  machineTypeId: "cx23@fsn1",
-  phase: "ready",
-  retryAction: null,
-  canObserve: true,
-  launchable: true,
-  revision: 1,
-  createdAt: 1_700_000_000_000,
-  updatedAt: 1_700_000_000_000,
-  ssh: null,
-  volumeId: null,
-  error: null,
-  role: "owner",
-  orgShareRole: null,
-  connections: [],
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-};
+const workspace: WorkspaceView = workspaceViewFixture({ id: "one", name: "brave-otter" });
 
 describe("standalone endpoint resolver", () => {
   it("routes all workspace surfaces through the control-plane origin", () => {

@@ -5,7 +5,6 @@ import type { Principal } from "../principals.js";
 import { cookieValue, SESSION_COOKIE } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
 import { addGoogleAuthRoutes } from "./google.js";
-import { addGrantRoutes } from "./grants.js";
 import { addInviteRoutes } from "./invites.js";
 import { addMemberRoutes } from "./members.js";
 import { availableOrgSlug, DEFAULT_ORG_VM_LIMIT, MAX_SELF_CREATED_ORGS } from "./orgs.js";
@@ -145,7 +144,6 @@ export function addIdentityRoutes(
   addGoogleAuthRoutes(router, runtimeFactory);
   addInviteRoutes(router, runtimeFactory, requirePrincipal);
   addMemberRoutes(router, runtimeFactory, requirePrincipal);
-  addGrantRoutes(router, runtimeFactory, requirePrincipal);
 
   router.get("/me", async (context) => {
     const principal = await requirePrincipal(context);

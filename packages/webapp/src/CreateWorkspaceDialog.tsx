@@ -5,11 +5,10 @@ import type {
   MachineTypeProviderFailure,
   MachineTypeProviderStatus,
   Volume,
-  WorkspaceTemplateView,
 } from '@blitzos/schema';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { AgentRulesPicker, type AgentRulesApi } from './AgentRulesPicker';
-import { ApiRequestError, type ControlPlaneClient } from './api';
+import type { ControlPlaneClient, MemberView } from './api';
 import {
   clearWorkspaceConnectDraft,
   hasConnectReturn,
@@ -20,42 +19,42 @@ import type { ComputeCredentialsClient } from './compute-credentials-api';
 import { isComputeCredentialProvider } from './ComputeCredentialFields';
 import { InlineComputeCredentialSetup } from './InlineComputeCredentialSetup';
 import { OutlinedLoadingRows } from './LoadingSkeleton';
-import { MachineCatalogGrid, machineTypeLabel } from './MachineCatalogGrid';
-import { TemplateRepoPicker } from './files/TemplateRepoPicker';
+import { MachineCatalogGrid } from './MachineCatalogGrid';
+import { WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
 import {
-  EMPTY_WORKSPACE_ENVIRONMENT,
-  EnvironmentEditor,
-  populatedEnvironment,
-} from './EnvironmentEditor';
+  WorkspaceMembersEditor,
+  type DraftWorkspaceMember,
+} from './WorkspaceMembersEditor';
+import { TemplateRepoPicker } from './files/TemplateRepoPicker';
 
 export type CreateWorkspaceDialogInput = CreateWorkspaceRequest;
 
-type GithubGrantCheck =
-  | { kind: 'idle' }
-  | { kind: 'checking' }
-  | { kind: 'live' }
-  | { kind: 'missing' }
-  | { kind: 'failed'; message: string };
+/** A credential the create request will carry. This is the only path where a
+ * value crosses the wire (plans/MEMBER-MACHINES.md §1 wire types). */
+type DraftCredential = { name: string; label: string; value: string };
 
 type CreateWorkspaceDialogProps = {
   busy: boolean;
   error: string | null;
   orgName: string;
   orgId?: string;
+  /** Org admin. Workspace creation is org-admin only for now (§3), so a
+   * member is told before they fill the form, not after the 403. */
   admin?: boolean;
   saveComputeCredential?: ComputeCredentialsClient['putComputeCredential'];
   client: AgentRulesApi & Pick<
     ControlPlaneClient,
-    'connectStartUrl' | 'listGithubInstallations' | 'listGithubRepositories'
+    'connectStartUrl' | 'listGithubInstallations' | 'listGithubRepositories' | 'listMembers'
   >;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
   listVolumes: () => Promise<Volume[]>;
-  listTemplates: () => Promise<WorkspaceTemplateView[]>;
-  /** Template to preselect — the org default. Seeded once (environment and
-   * agent rule included) when both the id and the loaded list carry it; the
-   * member can still deselect. */
-  initialTemplateId?: string | null;
-  onNewTemplate: () => void;
+  /** The workspace whose config this create copies — "new workspace from
+   * existing", which replaced templates (§0). Members and credential values
+   * are never copied. */
+  cloneFromWorkspaceId?: string | null;
+  cloneFromWorkspaceName?: string | null;
+  /** Named on the pinned first row of the members editor. */
+  viewerName?: string;
   onCancel: () => void;
   onSubmit: (input: CreateWorkspaceDialogInput) => void;
 };
@@ -70,38 +69,28 @@ export function CreateWorkspaceDialog({
   client,
   listMachineTypes,
   listVolumes,
-  listTemplates,
-  initialTemplateId,
-  onNewTemplate,
+  cloneFromWorkspaceId = null,
+  cloneFromWorkspaceName = null,
+  viewerName = 'You',
   onCancel,
   onSubmit,
 }: CreateWorkspaceDialogProps) {
   const returningFromConnect = hasConnectReturn();
   const [restoredDraft] = useState(readWorkspaceConnectDraft);
-  // A draft that chose "no template" must survive the round trip as that
-  // choice; ?? would quietly hand the org default back to a member who had
-  // just deselected it.
-  const seededTemplateId = restoredDraft === null ? initialTemplateId : restoredDraft.templateId;
   const [machines, setMachines] = useState<MachineType[]>([]);
   const [machineFailures, setMachineFailures] = useState<MachineTypeProviderFailure[]>([]);
   const [providerStatuses, setProviderStatuses] = useState<MachineTypeProviderStatus[]>([]);
   const [volumes, setVolumes] = useState<Volume[]>([]);
-  const [templates, setTemplates] = useState<WorkspaceTemplateView[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(
-    seededTemplateId ?? null,
-  );
+  const [orgMembers, setOrgMembers] = useState<MemberView[]>([]);
   const [selectedMachineType, setSelectedMachineType] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [environment, setEnvironment] = useState(
-    restoredDraft?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT,
-  );
   const [agentRuleId, setAgentRuleId] = useState<string | null>(
     restoredDraft?.agentRuleId ?? null,
   );
   const [repos, setRepos] = useState<string[]>(restoredDraft?.repos ?? []);
-  const [githubGrantCheck, setGithubGrantCheck] = useState<GithubGrantCheck>({ kind: 'idle' });
-  const [githubCheckVersion, setGithubCheckVersion] = useState(0);
+  const [members, setMembers] = useState<DraftWorkspaceMember[]>([]);
+  const [credentials, setCredentials] = useState<DraftCredential[]>([]);
   const submitted = useRef(false);
   const selectedMachine = machines.find(({ id }) => id === selectedMachineType);
   const supportsVolumes = selectedMachine?.supportsVolumes ?? false;
@@ -128,23 +117,6 @@ export function CreateWorkspaceDialog({
     if (returningFromConnect) clearWorkspaceConnectDraft();
   }, [returningFromConnect]);
 
-  // Seeding needs the template row, not just its id: selecting a template
-  // also loads its environment and agent rule, exactly like a click on the
-  // tile. Runs at most once — the prop may arrive after the list (or the
-  // list after the prop), and a member who deselected must stay deselected.
-  const seededTemplate = useRef(false);
-  useEffect(() => {
-    if (seededTemplate.current || seededTemplateId === null || seededTemplateId === undefined) {
-      return;
-    }
-    const template = templates.find(({ id }) => id === seededTemplateId);
-    if (template === undefined) return;
-    seededTemplate.current = true;
-    setSelectedTemplateId(template.id);
-    setEnvironment(restoredDraft?.environment ?? template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
-    setAgentRuleId(restoredDraft === null ? template.agentRuleId : restoredDraft.agentRuleId);
-  }, [templates, restoredDraft, seededTemplateId]);
-
   useEffect(() => {
     let mounted = true;
     setLoading(true);
@@ -153,10 +125,10 @@ export function CreateWorkspaceDialog({
     void Promise.allSettled([
       listMachineTypes(),
       listVolumes(),
-      listTemplates(),
-    ]).then(([machineResult, volumeResult, templateResult]) => {
+      client.listMembers(),
+    ]).then(([machineResult, volumeResult, memberResult]) => {
       if (!mounted) return;
-      setTemplates(templateResult.status === 'fulfilled' ? templateResult.value : []);
+      setOrgMembers(memberResult.status === 'fulfilled' ? memberResult.value.members : []);
       if (machineResult.status === 'rejected') {
         setLoadError(machineResult.reason instanceof Error
           ? machineResult.reason.message
@@ -169,90 +141,23 @@ export function CreateWorkspaceDialog({
       setLoading(false);
     });
     return () => { mounted = false; };
-  }, [installMachineTypes, listMachineTypes, listVolumes, listTemplates]);
+  }, [client, installMachineTypes, listMachineTypes, listVolumes]);
 
-  const selectedTemplate = templates.find(({ id }) => id === selectedTemplateId) ?? null;
-  const requiresGithubGrant = selectedTemplate?.repos.some((repo) => repo.private) ?? false;
-  useEffect(() => {
-    if (!requiresGithubGrant) {
-      setGithubGrantCheck({ kind: 'idle' });
-      return;
-    }
-    let mounted = true;
-    setGithubGrantCheck({ kind: 'checking' });
-    // The listing route resolves and refreshes the member credential. Its
-    // result is deliberately ignored: only the server create preflight owns
-    // the separate question of whether this grant reaches each private repo.
-    void client.listGithubRepositories()
-      .then(() => {
-        if (mounted) setGithubGrantCheck({ kind: 'live' });
-      })
-      .catch((caught: Error) => {
-        if (!mounted) return;
-        if (caught instanceof ApiRequestError && caught.status === 409) {
-          setGithubGrantCheck({ kind: 'missing' });
-          return;
-        }
-        setGithubGrantCheck({ kind: 'failed', message: caught.message });
-      });
-    return () => { mounted = false; };
-  }, [client, githubCheckVersion, requiresGithubGrant]);
-  const githubCreateBlocked = requiresGithubGrant && githubGrantCheck.kind !== 'live';
   const machineFailureItems = machineFailures.map((failure) => (
     <li key={failure.providerId}>{failure.providerId}: {failure.error}</li>
   ));
-  // The blank tile and the toggle-off share this, so the two paths cannot drift.
-  const clearTemplate = () => {
-    setSelectedTemplateId(null);
-    setEnvironment(EMPTY_WORKSPACE_ENVIRONMENT);
-    setAgentRuleId(null);
-  };
-  // The picker is hidden under a template, and the control plane refuses a
-  // body carrying both sources, so the selection is dropped rather than kept
-  // out of sight to be sent later.
-  const selectTemplate = (template: WorkspaceTemplateView) => {
-    setSelectedTemplateId(template.id);
-    setEnvironment(template.environment ?? EMPTY_WORKSPACE_ENVIRONMENT);
-    setAgentRuleId(template.agentRuleId);
-    setRepos([]);
-  };
   const storeDraft = () => {
-    storeWorkspaceConnectDraft({
-      templateId: selectedTemplateId,
-      environment,
-      agentRuleId,
-      repos,
-    });
+    storeWorkspaceConnectDraft({ templateId: null, agentRuleId, repos });
   };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy || submitted.current) return;
-    if (selectedTemplate !== null) {
-      // Ordinary stipulated providers still connect after create. A private
-      // bootstrap clone is the one exception: the server refuses it without a
-      // live GitHub grant, so this dialog waits for the cheap grant check.
-      if (githubCreateBlocked) return;
-      submitted.current = true;
-      const input: CreateWorkspaceDialogInput = {
-        templateId: selectedTemplate.id,
-        orgShareRole: 'editor',
-      };
-      const configured = populatedEnvironment(environment);
-      if (configured !== undefined) input.environment = configured;
-      else if (selectedTemplate.environment !== null) input.environment = environment;
-      // Sent whenever it differs from what the template already carries, so an
-      // explicit "back to Default" is not read as "leave the template's rule".
-      if (agentRuleId !== selectedTemplate.agentRuleId) input.agentRuleId = agentRuleId;
-      onSubmit(input);
-      return;
-    }
     if (selectedMachineType === '') return;
     const data = new FormData(event.currentTarget);
     const name = String(data.get('name') ?? '').trim();
     const sshPublicKey = String(data.get('sshPublicKey') ?? '').trim();
     const volumeId = String(data.get('volumeId') ?? '');
-    const orgShareRole = String(data.get('orgShareRole') ?? '');
     submitted.current = true;
     const input: CreateWorkspaceDialogInput = {
       machineTypeId: selectedMachineType,
@@ -260,12 +165,40 @@ export function CreateWorkspaceDialog({
     if (name) input.name = name;
     if (sshPublicKey) input.sshPublicKey = sshPublicKey;
     if (volumeId) input.volumeId = volumeId;
-    if (orgShareRole === 'editor' || orgShareRole === 'viewer') input.orgShareRole = orgShareRole;
     if (repos.length > 0) input.repos = repos;
-    const configured = populatedEnvironment(environment);
-    if (configured !== undefined) input.environment = configured;
     if (agentRuleId !== null) input.agentRuleId = agentRuleId;
+    if (cloneFromWorkspaceId !== null) input.cloneFromWorkspaceId = cloneFromWorkspaceId;
+    if (members.length > 0) {
+      input.members = members.map((member) => (
+        member.machineTypeId === WORKSPACE_DEFAULT_MACHINE_TYPE
+          ? { membershipId: member.membershipId, role: member.role }
+          : {
+            membershipId: member.membershipId,
+            role: member.role,
+            machineTypeId: member.machineTypeId,
+          }
+      ));
+    }
+    const namedCredentials = credentials.filter(
+      (credential) => credential.name.trim() !== '' && credential.value !== '',
+    );
+    if (namedCredentials.length > 0) {
+      input.credentials = namedCredentials.map((credential) => (
+        credential.label.trim() === ''
+          ? { name: credential.name.trim(), value: credential.value }
+          : {
+            name: credential.name.trim(),
+            label: credential.label.trim(),
+            value: credential.value,
+          }
+      ));
+    }
     onSubmit(input);
+  };
+
+  const updateCredential = (index: number, patch: Partial<DraftCredential>) => {
+    setCredentials((current) => current.map((credential, at) =>
+      at === index ? { ...credential, ...patch } : credential));
   };
 
   return (
@@ -276,137 +209,31 @@ export function CreateWorkspaceDialog({
         onSubmit={submit}
       >
         <header className="create-workspace-header">
-          <div className="create-workspace-header__title"><h1>Create workspace</h1></div>
+          <div className="create-workspace-header__title">
+            <h1>{cloneFromWorkspaceName === null
+              ? 'Create workspace'
+              : `New workspace from “${cloneFromWorkspaceName}”`}</h1>
+          </div>
           <button type="button" aria-label="Close" disabled={busy} onClick={onCancel}>×</button>
         </header>
 
         <div className="create-workspace-main">
-          {(error || loadError) && (
+          {(error ?? loadError) !== null && (
             <div className="create-workspace-notices">
               <p className="webapp-form-message" role="alert">{error ?? loadError}</p>
             </div>
           )}
-
-          <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Templates</h2>
-              <p>Start from a shared setup. Its machine type and Drive folders come attached.</p>
+          {!admin && (
+            // Told up front rather than after the server's 403: creating a
+            // workspace is an org-admin power for now (§3).
+            <div className="create-workspace-notices">
+              <p className="webapp-form-message" role="status">
+                Only an admin at {orgName} can create a workspace.
+              </p>
             </div>
-            <div className="template-grid">
-              {/* The dialog opens on the org default. Before this tile the only
-                * way to a blank workspace was a second click on that default.
-                * Nobody could see that, so the choice gets a tile of its own. */}
-              <button
-                className={`template-tile${selectedTemplateId === null ? ' template-tile--selected' : ''}`}
-                type="button"
-                aria-pressed={selectedTemplateId === null}
-                onClick={clearTemplate}
-              >
-                <strong>No template</strong>
-              </button>
-              {templates.map((template) => {
-                const missing = template.folders.filter(({ role }) => role === null).length;
-                const active = template.id === selectedTemplateId;
-                return (
-                  <button
-                    className={`template-tile${active ? ' template-tile--selected' : ''}`}
-                    type="button"
-                    key={template.id}
-                    aria-pressed={active}
-                    onClick={() => {
-                      if (active) {
-                        clearTemplate();
-                        return;
-                      }
-                      selectTemplate(template);
-                    }}
-                  >
-                    <strong>{template.name}</strong>
-                    <span>{machineTypeLabel(template.machineTypeId)}</span>
-                    <span>
-                      {template.folders.length === 1 ? '1 folder' : `${template.folders.length} folders`}
-                      {' · by '}{template.createdBy.name}
-                    </span>
-                    {missing > 0 && (
-                      <span className="template-tile__warn">
-                        {missing === 1 ? '1 folder' : `${missing} folders`} you cannot access yet
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-              <button className="template-tile template-tile--new" type="button" onClick={onNewTemplate}>
-                <strong>+ New template</strong>
-                <span>Name it, pick folders, share it with {orgName}</span>
-              </button>
-            </div>
-          </section>
-
-          {selectedTemplate !== null && (
-            <section className="blueprint-selection">
-              <div className="blueprint-selection__heading">
-                <h2>{selectedTemplate.name}</h2>
-                <p>
-                  {machineTypeLabel(selectedTemplate.machineTypeId)}
-                  {' · shared with everyone at '}{orgName}
-                  {' · the workspace is named after the template'}
-                </p>
-              </div>
-              {selectedTemplate.folders.length > 0 && (
-                <ul className="template-folder-list">
-                  {selectedTemplate.folders.map((folder) => (
-                    <li key={folder.id}>
-                      {folder.name}
-                      {folder.role === null ? ' — no access yet, will not sync' : ''}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {selectedTemplate.connections.length > 0 && (
-                <ul className="template-connection-list">
-                  {/* Names only: connecting happens inside the workspace,
-                    * from its connections panel, after create. */}
-                  {selectedTemplate.connections.map((connection) => (
-                    <li key={connection.provider}>
-                      {connection.provider}
-                      {' · connect from the workspace connections panel'}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {requiresGithubGrant && githubGrantCheck.kind === 'checking' && (
-                <p className="template-github-gate" role="status">Checking your GitHub connection…</p>
-              )}
-              {requiresGithubGrant && githubGrantCheck.kind === 'missing' && (
-                <div className="template-github-gate">
-                  <p>This template includes private repositories. Connect GitHub before create.</p>
-                  <a
-                    className="webapp-action webapp-action--primary"
-                    href={client.connectStartUrl('github', undefined, 'workspace-new')}
-                    onClick={storeDraft}
-                  >
-                    Connect GitHub
-                  </a>
-                </div>
-              )}
-              {requiresGithubGrant && githubGrantCheck.kind === 'failed' && (
-                <div className="template-github-gate">
-                  <p className="webapp-form-message" role="alert">
-                    {githubGrantCheck.message}
-                  </p>
-                  <button
-                    className="webapp-action"
-                    type="button"
-                    onClick={() => setGithubCheckVersion((current) => current + 1)}
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-            </section>
           )}
 
-          {selectedTemplate === null && <section className="blueprint-selection">
+          <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
               <h2>Name</h2>
               <p>Optional. Leave blank to get a random name.</p>
@@ -423,12 +250,15 @@ export function CreateWorkspaceDialog({
                 spellCheck={false}
               />
             </label>
-          </section>}
+          </section>
 
-          {selectedTemplate === null && <section className="blueprint-selection">
+          <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
-              <h2>Machine type</h2>
-              <p>Select the compute location and size for this workspace.</p>
+              <h2>Default machine type</h2>
+              <p>
+                What a member's machine is unless their row names another one.
+                A machine type is never a restriction on this workspace.
+              </p>
             </div>
             {loading ? (
               <OutlinedLoadingRows count={4} ariaLabel="Loading machine types" />
@@ -468,9 +298,83 @@ export function CreateWorkspaceDialog({
                 ) : null}
               </>
             )}
-          </section>}
+          </section>
 
-          {selectedTemplate === null && <section className="blueprint-selection">
+          <section className="blueprint-selection">
+            <div className="blueprint-selection__heading">
+              <h2>Members</h2>
+              <p>
+                Existing members of {orgName}. Each one gets their own machine
+                the moment the workspace exists; a viewer gets none.
+              </p>
+            </div>
+            <WorkspaceMembersEditor
+              mode={{ kind: 'draft', members, onChange: setMembers }}
+              orgMembers={orgMembers}
+              machines={machines}
+              defaultMachineTypeId={selectedMachineType}
+              viewerName={viewerName}
+            />
+          </section>
+
+          <section className="blueprint-selection">
+            <div className="blueprint-selection__heading">
+              <h2>Credentials</h2>
+              <p>
+                Names and values every member machine reads with{' '}
+                <code>blitz-cred</code>. This is the only time a value is sent;
+                it never comes back out.
+              </p>
+            </div>
+            {credentials.map((credential, index) => (
+              // The index is the identity here: two blank rows are two rows,
+              // and a name is editable, so neither can key the list.
+              // eslint-disable-next-line react/no-array-index-key
+              <div className="create-credential-row" key={index}>
+                <input
+                  aria-label={`Credential ${String(index + 1)} name`}
+                  placeholder="STRIPE_API_KEY"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  value={credential.name}
+                  onChange={(event) => updateCredential(index, { name: event.currentTarget.value })}
+                />
+                <input
+                  aria-label={`Credential ${String(index + 1)} label`}
+                  placeholder="Label (optional)"
+                  value={credential.label}
+                  onChange={(event) => updateCredential(index, { label: event.currentTarget.value })}
+                />
+                <input
+                  aria-label={`Credential ${String(index + 1)} value`}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Value"
+                  value={credential.value}
+                  onChange={(event) => updateCredential(index, { value: event.currentTarget.value })}
+                />
+                <button
+                  type="button"
+                  aria-label={`Remove credential ${String(index + 1)}`}
+                  onClick={() => setCredentials((current) =>
+                    current.filter((_credential, at) => at !== index))}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              className="webapp-action"
+              type="button"
+              onClick={() => setCredentials((current) =>
+                [...current, { name: '', label: '', value: '' }])}
+            >
+              Add credential
+            </button>
+          </section>
+
+          <section className="blueprint-selection">
             <div className="blueprint-selection__heading">
               <h2>Volume</h2>
               <p>Optionally attach an available volume.</p>
@@ -489,12 +393,11 @@ export function CreateWorkspaceDialog({
                 <span>Volumes are not supported by this machine provider.</span>
               )}
             </label>
-          </section>}
+          </section>
 
-          {/* Only without a template. A template already carries a repository
-            * list, and the two sources never mix — showing both would invite a
-            * body the control plane refuses with a 400. */}
-          {selectedTemplate === null && <section className="blueprint-selection tplf-repos">
+          {/* A clone already carries its source's repository list, and the two
+            * sources never mix — a body naming both is refused with a 400. */}
+          {cloneFromWorkspaceId === null && <section className="blueprint-selection tplf-repos">
             <div className="blueprint-selection__heading">
               <h2>Repositories</h2>
               <p>GitHub repositories cloned into /workspace when this workspace starts.</p>
@@ -508,22 +411,7 @@ export function CreateWorkspaceDialog({
             />
           </section>}
 
-          {selectedTemplate === null && <section className="blueprint-selection">
-            <div className="blueprint-selection__heading">
-              <h2>Sharing</h2>
-              <p>Who at {orgName} can open this workspace. You can change it later.</p>
-            </div>
-            <label className="blueprint-field">
-              Access
-              <select name="orgShareRole" defaultValue="editor" aria-label="Workspace sharing">
-                <option value="editor">Everyone at {orgName} can edit</option>
-                <option value="viewer">Everyone at {orgName} can view</option>
-                <option value="">Only me and people I invite</option>
-              </select>
-            </label>
-          </section>}
-
-          {selectedTemplate === null && <section className="blueprint-selection blueprint-setup-script">
+          <section className="blueprint-selection blueprint-setup-script">
             <div className="blueprint-selection__heading">
               <h2>SSH public key (optional)</h2>
               <p>Optional. Without a key the workspace is webapp-only. Recreate the workspace to add one later.</p>
@@ -535,16 +423,11 @@ export function CreateWorkspaceDialog({
               autoCorrect="off"
               spellCheck={false}
             />
-          </section>}
+          </section>
 
           <details className="blueprint-advanced">
             <summary>Advanced</summary>
             <div className="blueprint-advanced__content">
-              <EnvironmentEditor
-                key={selectedTemplateId ?? 'workspace'}
-                initial={environment}
-                onChange={setEnvironment}
-              />
               <AgentRulesPicker
                 client={client}
                 value={agentRuleId}
@@ -559,11 +442,9 @@ export function CreateWorkspaceDialog({
           <button
             className="create-workspace-primary"
             type="submit"
-            disabled={busy
-              || githubCreateBlocked
-              || (selectedTemplate === null && (loading || selectedMachineType === ''))}
+            disabled={busy || loading || selectedMachineType === ''}
           >
-            {busy ? 'Creating…' : selectedTemplate === null ? 'Create workspace' : `Create from ${selectedTemplate.name}`}
+            {busy ? 'Creating…' : 'Create workspace'}
           </button>
         </footer>
       </form>

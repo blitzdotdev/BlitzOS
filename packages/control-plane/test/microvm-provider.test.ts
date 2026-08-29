@@ -57,6 +57,7 @@ function provider(
 function createInput(machineTypeId: string): CreateVmInput {
   return {
     workspaceId: "workspace-id",
+    machineId: "machine-id",
     machineTypeId,
     sshPublicKey: SSH_KEY,
     phoneHomeUrl: PHONE_HOME_URL,
@@ -519,7 +520,7 @@ describe("microVM pool provider", () => {
       );
       const body = JSON.parse(String(init?.body));
       expect(body).toEqual({
-        workspace_id: "workspace-id",
+        workspace_id: "machine-id",
         cpu: 2,
         mem_mb: 2_048,
         ssh_authorized_key: SSH_KEY,
@@ -536,7 +537,7 @@ describe("microVM pool provider", () => {
       ]);
       expect("ssh_authorized_key" in body).toBe(true);
       expect(JSON.stringify(body)).toBe(
-        `{"workspace_id":"workspace-id","cpu":2,"mem_mb":2048,"ssh_authorized_key":"${SSH_KEY}","phone_home_url":"${PHONE_HOME_URL}","cp_origin":"https://cp.example"}`,
+        `{"workspace_id":"machine-id","cpu":2,"mem_mb":2048,"ssh_authorized_key":"${SSH_KEY}","phone_home_url":"${PHONE_HOME_URL}","cp_origin":"https://cp.example"}`,
       );
       return Response.json({
         vm_id: "vm-1-abcdef123456",
@@ -600,7 +601,7 @@ describe("microVM pool provider", () => {
       expect(Object.keys(body)).toEqual(["workspace_id", "cpu", "mem_mb", "phone_home_url", "cp_origin"]);
       expect("ssh_authorized_key" in body).toBe(false);
       expect(JSON.stringify(body)).toBe(
-        `{"workspace_id":"workspace-id","cpu":2,"mem_mb":2048,"phone_home_url":"${PHONE_HOME_URL}","cp_origin":"https://cp.example"}`,
+        `{"workspace_id":"machine-id","cpu":2,"mem_mb":2048,"phone_home_url":"${PHONE_HOME_URL}","cp_origin":"https://cp.example"}`,
       );
     }
   });

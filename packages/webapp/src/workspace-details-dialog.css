@@ -11,14 +11,11 @@
   font-family: var(--font-ui);
 }
 
-.workspace-details-header,
-.workspace-details-footer {
+.workspace-details-header {
   display: flex;
   flex: none;
   align-items: center;
-}
-
-.workspace-details-header { justify-content: space-between; padding: 20px 18px 6px 22px; }
+  justify-content: space-between; padding: 20px 18px 6px 22px; }
 .workspace-details-header h1 { min-width: 0; margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
 .workspace-details-header h1 em { font-style: normal; }
 .workspace-details-header button { flex: none; width: 34px; height: 34px; border: 0; border-radius: 50%; color: var(--faint); background: transparent; font-size: 20px; }
@@ -33,33 +30,71 @@
 .workspace-details-tabs button[aria-selected="true"]::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--accent); content: ''; }
 
 .workspace-details-body { min-height: 280px; overflow-y: auto; padding: 20px 22px 8px; }
-.workspace-details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 28px; }
-.workspace-details-grid section,
-.workspace-details-access { min-width: 0; }
-.workspace-details-grid h2,
-.workspace-details-access h2 { margin: 0 0 9px; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-
 .workspace-details-list { margin: 0; }
 .workspace-details-list > div { display: grid; grid-template-columns: minmax(105px, 1fr) minmax(0, 1.25fr); gap: 12px; padding: 6px 0; border-top: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
 .workspace-details-list dt { color: var(--faint); font-size: 11px; }
 .workspace-details-list dd { min-width: 0; margin: 0; overflow: hidden; font-size: 11px; text-align: right; text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
 
-.workspace-details-access { min-height: 240px; }
-.workspace-details-people { border-top: 1px solid var(--rule); }
-.workspace-details-person { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
-.workspace-details-person > span:nth-child(2) { display: grid; min-width: 0; gap: 2px; }
-.workspace-details-person strong,
-.workspace-details-person small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-details-person strong { font-size: 11px; font-weight: 550; }
-.workspace-details-person small { color: var(--faint); font-size: 10px; }
-.workspace-details-person b { color: var(--faint); font-size: 10px; font-weight: 500; text-transform: capitalize; }
-.workspace-details-org { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--rule); border-radius: 6px; color: var(--faint); font-size: 11px; }
+/* Members, credentials and settings (plans/MEMBER-MACHINES.md §6). */
+.workspace-details-members,
+.workspace-details-credentials,
+.workspace-details-settings { min-width: 0; min-height: 240px; }
+.workspace-details-credentials h2,
+.workspace-details-settings h2 { margin: 0 0 9px; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+
+.workspace-members-search { position: relative; margin-bottom: 14px; }
+.workspace-members-rows { border-top: 1px solid var(--rule); }
+.workspace-members-empty { margin: 14px 0; color: var(--faint); font-size: 11px; }
+
+.workspace-member-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto auto auto 28px; align-items: center; gap: 8px; min-height: 52px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-member-name { display: grid; min-width: 0; gap: 2px; }
+.workspace-member-name strong,
+.workspace-member-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-member-name strong { font-size: 11px; font-weight: 550; }
+.workspace-member-name small { color: var(--faint); font-size: 10px; }
+.workspace-member-role-static { color: var(--faint); font-size: 10px; text-transform: capitalize; }
+.workspace-member-remove { width: 24px; height: 24px; border: 0; border-radius: 50%; color: var(--faint); background: transparent; font-size: 15px; }
+.workspace-member-remove:hover,
+.workspace-member-remove:focus-visible { color: var(--ansi-red); background: var(--hover); }
+
+/* The machine state, in the vocabulary of MachineState. Provisioning and
+ * destroying are the two that are going somewhere, so they share a colour. */
+.machine-chip { padding: 2px 7px; border: 1px solid var(--rule); border-radius: var(--r-pill); color: var(--faint); font-size: 10px; text-transform: capitalize; white-space: nowrap; }
+.machine-chip--running { border-color: color-mix(in oklab, var(--ansi-green) 55%, var(--rule)); color: var(--ansi-green); }
+.machine-chip--error { border-color: color-mix(in oklab, var(--ansi-red) 55%, var(--rule)); color: var(--ansi-red); }
+.machine-chip--provisioning,
+.machine-chip--destroying { border-color: color-mix(in oklab, var(--accent) 55%, var(--rule)); color: var(--accent); }
+
+.workspace-credential-rows { border-top: 1px solid var(--rule); }
+.workspace-credential-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-credential-name { display: grid; min-width: 0; gap: 2px; }
+.workspace-credential-name strong { font-size: 11px; font-weight: 550; }
+.workspace-credential-name small { color: var(--faint); font-size: 10px; }
+.workspace-credential-added { color: var(--faint); font-size: 10px; white-space: nowrap; }
+.workspace-credential-add { display: grid; gap: 10px; margin-top: 18px; }
+
+/* The settings form and the clone list. Both borrow the credential-row
+ * geometry: one list of rows, an add control under it. */
+.workspace-settings-form { display: grid; gap: 14px; margin-bottom: 18px; }
+.workspace-settings-form small { color: var(--faint); font-size: 10px; }
+.workspace-settings-toggle { display: flex; align-items: center; gap: 8px; }
+.workspace-settings-toggle input { width: auto; }
+.workspace-repos { margin-top: 18px; }
+.workspace-repos h2 { margin: 0 0 6px; font-size: 12px; font-weight: 550; }
+.workspace-repo-rows { border-top: 1px solid var(--rule); }
+.workspace-repo-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 44px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.workspace-repo-name { display: grid; min-width: 0; gap: 2px; }
+.workspace-repo-name strong { font-size: 11px; font-weight: 550; }
+.workspace-repo-name small { color: var(--faint); font-size: 10px; }
+.workspace-repo-add { display: grid; gap: 10px; margin-top: 14px; }
+
+.workspace-details-note { margin: 0 0 14px; color: var(--faint); font-size: 11px; }
+.workspace-details-settings-actions { display: flex; gap: 10px; margin-top: 18px; }
 
 .workspace-details-status,
 .workspace-details-error { margin: 0 0 14px; font-size: 11px; }
 .workspace-details-status { color: var(--faint); }
 .workspace-details-error { color: var(--ansi-red); }
-.workspace-details-footer { justify-content: flex-start; padding: 14px 18px 18px; }
 .workspace-details-delete { min-height: 38px; padding: 0 18px; border-radius: var(--r-pill); font: 500 13.5px/1 var(--font-ui); }
 .workspace-details-delete { border: 1px solid color-mix(in oklab, var(--ansi-red) 55%, var(--rule)); color: var(--ansi-red); background: transparent; }
 .workspace-details-delete:hover,
@@ -67,6 +102,21 @@
 
 @media (max-width: 620px) {
   .workspace-details-dialog { max-height: calc(100dvh - 24px); }
-  .workspace-details-grid { grid-template-columns: 1fr; }
+  /* The row keeps the avatar, the name and the remove control; the selects
+   * and the chip wrap under them rather than squeeze. */
+  .workspace-member-row { grid-template-columns: 32px minmax(0, 1fr) 28px; }
+  .workspace-details-settings-actions { flex-direction: column; }
   .workspace-details-delete { width: 100%; }
 }
+
+/* The compact machine-type select sits in a member row, so it takes its
+ * width from the row rather than the widest option name. */
+.machine-type-select { min-width: 0; max-width: 190px; }
+.machine-type-select .webapp-select-trigger { min-height: 30px; padding: 0 8px; font-size: 11px; }
+.workspace-member-role { max-width: 116px; }
+.workspace-member-role .webapp-select-trigger { min-height: 30px; padding: 0 8px; font-size: 11px; }
+.workspace-member-actions .webapp-select-trigger { min-height: 30px; padding: 0 8px; }
+.workspace-member-actions .webapp-select-value { display: none; }
+/* No machine at all: the member is a viewer, or the workspace does not
+ * auto-provision and their role has not been written since. */
+.machine-chip--none { border-style: dashed; }

@@ -21,9 +21,9 @@ import {
   userSession,
 } from "./helpers.js";
 
-function json(body: object): RequestInit {
+function json(body: object, method = "POST"): RequestInit {
   return {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   };
@@ -114,18 +114,10 @@ describe("identity phase 2", () => {
     const outsiderCookie = await userSession("outsider");
     const workspace = await createWorkspace(app, ownerCookie);
 
+    // A plain org member sees the workspaces they are IN. Membership is stored
+    // now, so a workspace they were never added to is not theirs to list.
     const metadata = await appRequest(app, "/workspaces", { headers: { Cookie: member.cookie } });
-    const metadataBody = await metadata.json<{ workspaces: WorkspaceView[] }>();
-    expect(metadataBody.workspaces).toEqual([
-      expect.objectContaining({
-        id: workspace.id,
-        role: null,
-        owner: { name: "Operator", avatarUrl: null },
-        canObserve: false,
-        launchable: false,
-        ssh: null,
-      }),
-    ]);
+    await expect(metadata.json()).resolves.toEqual({ workspaces: [] });
     expect((await appRequest(app, `/workspaces/${workspace.id}`, { headers: { Cookie: member.cookie } })).status).toBe(403);
     expect((await appRequest(app, `/workspaces/${workspace.id}`, { headers: { Cookie: outsiderCookie } })).status).toBe(404);
     const refresh = await appRequest(app, `/workspaces/${workspace.id}`, {
@@ -133,12 +125,18 @@ describe("identity phase 2", () => {
     });
     expect(refresh.headers.get("content-type")).toContain("text/html");
     expect(await refresh.text()).toContain("webapp shell");
-    await appRequest(app, `/workspaces/${workspace.id}/grants`, {
-      ...json({ membershipId: member.membershipId, role: "editor" }),
+    expect((await appRequest(app, `/workspaces/${workspace.id}/members`, {
+      ...json({ membershipId: member.membershipId, role: "member" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
-    });
+    })).status).toBe(201);
     const detail = await appRequest(app, `/workspaces/${workspace.id}`, { headers: { Cookie: member.cookie } });
-    await expect(detail.json()).resolves.toMatchObject({ workspace: { role: "editor" } });
+    // `role` is the legacy four-value access role; `myRole` is the stored one.
+    await expect(detail.json()).resolves.toMatchObject({
+      workspace: { role: "editor", myRole: "member" },
+    });
+    const listed = await appRequest(app, "/workspaces", { headers: { Cookie: member.cookie } });
+    await expect(listed.json<{ workspaces: WorkspaceView[] }>()
+      .then(({ workspaces }) => workspaces.map(({ id }) => id))).resolves.toEqual([workspace.id]);
     await expect(appRequest(app, "/workspaces", { headers: { Cookie: outsiderCookie } }).then((response) => response.json())).resolves.toEqual({ workspaces: [] });
   });
 
@@ -149,17 +147,18 @@ describe("identity phase 2", () => {
     const editor = await sameOrgSession("collaborator");
     const workspace = await createWorkspace(app, ownerCookie);
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
-    const viewer = await appRequest(app, `/workspaces/${workspace.id}/grants`, {
+    const viewer = await appRequest(app, `/workspaces/${workspace.id}/members`, {
       ...json({ membershipId: editor.membershipId, role: "viewer" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
     expect(viewer.status).toBe(201);
-    expect((await appRequest(app, `/workspaces/${workspace.id}/grants`, {
-      headers: { Cookie: editor.cookie },
-    })).status).toBe(200);
+    // A viewer holds no machine, ever (§2.2), so the proxy has nothing of
+    // theirs to route to — but they still reach the owner's files surface
+    // through the workspace, which is what the ticket below proves.
+    await expect(viewer.json()).resolves.toMatchObject({ member: { machine: null } });
     // A viewer reaches the files port with a role-carrying ticket once the VM
     // boots a guest that enforces read-only; the agent port stays closed.
-    await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")
+    await env.DB.prepare("UPDATE machines SET created_at = ?1 WHERE workspace_id = ?2")
       .bind(BOX_IMAGE_VIEWER_GUARDS_SINCE_MS, workspace.id).run();
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
@@ -172,16 +171,21 @@ describe("identity phase 2", () => {
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
 
     // A VM from before the guarded image refuses viewers outright.
-    await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")
+    await env.DB.prepare("UPDATE machines SET created_at = ?1 WHERE workspace_id = ?2")
       .bind(BOX_IMAGE_VIEWER_GUARDS_SINCE_MS - 1, workspace.id).run();
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
-    await env.DB.prepare("UPDATE workspaces SET created_at = ?1 WHERE id = ?2")
+    await env.DB.prepare("UPDATE machines SET created_at = ?1 WHERE workspace_id = ?2")
       .bind(Date.now(), workspace.id).run();
-    const created = await appRequest(app, `/workspaces/${workspace.id}/grants`, {
-      ...json({ membershipId: editor.membershipId, role: "editor" }),
+    // Promoting a viewer to member provisions their own machine in the same
+    // request, so the role write and the machine cannot disagree.
+    const created = await appRequest(app, `/workspaces/${workspace.id}/members/${editor.membershipId}`, {
+      ...json({ role: "member" }, "PATCH"),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
     });
-    const grant = await created.json<{ grant: { id: string } }>();
+    expect(created.status).toBe(200);
+    await expect(created.json()).resolves.toMatchObject({
+      member: { role: "member", machine: { state: "provisioning" } },
+    });
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
     await expect(new WorkspaceWebAppAuth("test-webapp-root-secret").verify(
       providers.webAppCredentials.at(-1) ?? "",
@@ -192,21 +196,19 @@ describe("identity phase 2", () => {
     });
     expect((await appRequest(app, `/workspaces/${workspace.id}`, { method: "DELETE", headers: { Cookie: editor.cookie } })).status).toBe(403);
 
-    providers.drainStatus = 503;
-    const revoked = await appRequest(app, `/workspaces/${workspace.id}/grants/${grant.grant.id}`, {
+    // Removing a member destroys their machine and takes their reach with it.
+    // The drain that used to run on a grant revoke is the destroy now: there
+    // is no shared guest left to evict them from.
+    const revoked = await appRequest(app, `/workspaces/${workspace.id}/members/${editor.membershipId}`, {
       method: "DELETE",
       headers: { Cookie: ownerCookie },
     });
     expect(revoked.status).toBe(204);
-    await vi.waitFor(() => {
-      expect(providers.proxyCalls).toContainEqual({ port: 7445, path: "/admin/drain" });
-      expect(providers.proxyCalls).toContainEqual({ port: 7444, path: "/admin/drain" });
-      expect(providers.drainTargets).toEqual([
-        { port: 7445, membershipId: editor.membershipId, credential: expect.any(String) },
-        { port: 7444, membershipId: editor.membershipId, credential: expect.any(String) },
-      ]);
-    });
-    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_grants").first<number>("count")).toBe(0);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM workspace_members")
+      .first<number>("count")).toBe(1);
+    expect(await env.DB
+      .prepare("SELECT state FROM machines WHERE membership_id = ?1")
+      .bind(editor.membershipId).first<string>("state")).toBe("destroyed");
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
   });
 
@@ -218,7 +220,7 @@ describe("identity phase 2", () => {
     const workspace = await createWorkspace(app, ownerCookie);
     // Age the workspace to before the 20260817a pin: its VM never upgrades,
     // so its gateway only byte-compares the static token.
-    await env.DB.prepare("UPDATE workspaces SET created_at = 1786900000000 WHERE id = ?1")
+    await env.DB.prepare("UPDATE machines SET created_at = 1786900000000 WHERE workspace_id = ?1")
       .bind(workspace.id).run();
 
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: ownerCookie } })).status).toBe(200);
@@ -227,10 +229,10 @@ describe("identity phase 2", () => {
       workspace.id,
     )).resolves.toMatchObject({ kind: "static" });
 
-    await appRequest(app, `/workspaces/${workspace.id}/grants`, {
+    expect((await appRequest(app, `/workspaces/${workspace.id}/members`, {
       ...json({ membershipId: member.membershipId, role: "viewer" }),
       headers: { Cookie: ownerCookie, "Content-Type": "application/json" },
-    });
+    })).status).toBe(201);
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: member.cookie } })).status).toBe(403);
   });
 

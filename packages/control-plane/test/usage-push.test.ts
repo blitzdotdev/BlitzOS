@@ -112,7 +112,7 @@ async function capturingWorkspace(providers: UsageGuestProviders): Promise<{
   expect(enabled.status).toBe(200);
   const { folderId } = await enabled.json<{ folderId: string }>();
   const workspace = await createWorkspace(app, cookie);
-  await env.DB.prepare("UPDATE workspaces SET phase = 'ready' WHERE id = ?1")
+  await env.DB.prepare("UPDATE machines SET state = 'running' WHERE workspace_id = ?1")
     .bind(workspace.id).run();
   return { app, cookie, workspaceId: workspace.id, folderId };
 }
@@ -186,24 +186,17 @@ describe("agent-usage capture push", () => {
 
   it("stamps the launching recipe into meta.json", async () => {
     const providers = new UsageGuestProviders();
-    const { app, cookie, workspaceId, folderId } = await capturingWorkspace(providers);
-    const template = await appRequest(app, "/workspace-templates", {
-      method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "usage", machineTypeId: "small", folderIds: [] }),
-    });
-    const templateId = (await template.json<{ template: { id: string } }>()).template.id;
-    const created = await appRequest(app, "/workspace-recipes", {
-      method: "POST",
-      headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: "provenance",
-        templateId,
-        harness: "codex",
-        prompt: "Go.\n",
-      }),
-    });
-    const recipeId = (await created.json<{ recipe: { id: string } }>()).recipe.id;
+    const { workspaceId, folderId } = await capturingWorkspace(providers);
+    // The recipe routes are unmounted (disabled 2026-08-29), so the row is
+    // written directly: what this test is about is the provenance stamp the
+    // usage push reads, not the surface that would have created it.
+    const recipeId = "provenance-recipe";
+    await env.DB.prepare(
+      `INSERT INTO recipes
+       (id, org_id, name, source_workspace_id, harness, model, effort, prompt,
+        created_by_membership_id, created_at, updated_at)
+       VALUES (?1, 'personal', 'provenance', NULL, 'codex', NULL, NULL, 'Go.', 'personal', ?2, ?2)`,
+    ).bind(recipeId, Date.now()).run();
     await env.DB.prepare("UPDATE workspaces SET recipe_id = ?1 WHERE id = ?2")
       .bind(recipeId, workspaceId).run();
     providers.files.set("claude/projects/a.jsonl", { body: "blob", mtime: 5_000 });

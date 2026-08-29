@@ -8,31 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 )
-
-const (
-	credentialsDirectory = "creds"
-	environmentDirectory = "env.d"
-	syncLockFile         = ".lock"
-	// The workspace's own variables are the only thing left in creds/env.d.
-	// Connection secrets are pulled at the moment of use and never written, so
-	// nothing else joins this file. The numeric prefix is kept because
-	// /etc/profile.d/blitz-creds.sh and blitz-term both source the glob, and
-	// renaming the entry would only churn three readers.
-	workspaceEnvironmentEntry = "00-workspace.sh"
-)
-
-// EnvironmentDir is where the broker leaves the shell fragment that
-// /etc/profile.d/blitz-creds.sh sources. The layout is spelled once, next to
-// the writer.
-func EnvironmentDir(stateDir string) string {
-	return filepath.Join(stateDir, credentialsDirectory, environmentDirectory)
-}
 
 var (
 	ErrCredentialDenied = errors.New("this workspace is not connected to that provider")
@@ -58,26 +36,6 @@ func AccessRequestID(err error) string {
 		return ""
 	}
 	return requested.RequestID
-}
-
-// withCredentialsLock serializes every writer of creds/env.d. The broker's
-// environment loop is the only writer today, but it can run twice across a
-// restart, and a half-written env file is a login shell with no variables.
-func withCredentialsLock(stateDir string, run func(credsDir string) error) error {
-	credsDir := filepath.Join(stateDir, credentialsDirectory)
-	if err := os.MkdirAll(credsDir, 0o700); err != nil {
-		return err
-	}
-	lock, err := os.OpenFile(filepath.Join(credsDir, syncLockFile), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return err
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	return run(credsDir)
 }
 
 // GitHelper answers git's credential protocol. It is the pull model applied to

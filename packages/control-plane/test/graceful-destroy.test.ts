@@ -43,16 +43,29 @@ function providerWithClock(clock: TestClock): HetznerProvider {
   return new HetznerProvider("test-token", clock);
 }
 
+/** A workspace with the owner's machine already running on `SERVER_ID`. The
+ * VM columns live on the machine now, so the seed writes two rows. */
 async function seedWorkspace(volumeId: string | null): Promise<void> {
-  await env.DB
-    .prepare(
+  await env.DB.batch([
+    env.DB.prepare(
       `INSERT INTO workspaces
-       (id, owner_id, org_id, owner_membership_id, phase, revision, vm_id,
-        volume_id, created_at, updated_at)
-       VALUES ('workspace-id', 'operator', 'personal', 'personal', 'ready', 1, ?1, ?2, 1, 1)`,
-    )
-    .bind(SERVER_ID, volumeId)
-    .run();
+       (id, owner_id, org_id, owner_membership_id, default_machine_type_id,
+        auto_provision, revision, created_at, updated_at)
+       VALUES ('workspace-id', 'operator', 'personal', 'personal', 'small', 1, 1, 1, 1)`,
+    ),
+    env.DB.prepare(
+      `INSERT INTO workspace_members
+       (workspace_id, membership_id, role, added_by_membership_id, added_at)
+       VALUES ('workspace-id', 'personal', 'admin', 'personal', 1)`,
+    ),
+    env.DB.prepare(
+      `INSERT INTO machines
+       (id, workspace_id, membership_id, state, machine_type_id,
+        compute_credential_source, vm_id, volume_id, created_at, updated_at)
+       VALUES ('machine-id', 'workspace-id', 'personal', 'running', 'small',
+               'deployment', ?1, ?2, 1, 1)`,
+    ).bind(SERVER_ID, volumeId),
+  ]);
 }
 
 describe("graceful workspace destruction", () => {

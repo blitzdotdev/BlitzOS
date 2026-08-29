@@ -1,5 +1,10 @@
 import type { TenantMe } from './api-adapter';
-import type { RetryAction } from '@blitzos/schema';
+import type {
+  RetryAction,
+  WorkspaceCredentialView,
+  WorkspaceMemberRole,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
 import type {
   Agent,
   RestWorkspaceStatus,
@@ -14,13 +19,10 @@ export type CloudWorkspaceModel = {
   shared: boolean;
   owner: WorkspaceRecord['owner'] | null;
   accessRole: WorkspaceRecord['accessRole'];
-  orgShareRole: 'editor' | 'viewer' | null;
   serverName: string;
   title: string;
   machineType: string | null;
   volumeId: string | null;
-  environmentConfigured: boolean;
-  startupConfigured: boolean;
   lifecycleStatus: RestWorkspaceStatus;
   errorDetail: string | null;
   retryAction: RetryAction;
@@ -28,6 +30,13 @@ export type CloudWorkspaceModel = {
   updatedAt: number;
   /** Stipulated connection names off the workspace ceiling. */
   connections: string[];
+  /** The member-machines view the details dialog administers (§1). */
+  members: WorkspaceMemberView[];
+  credentials: WorkspaceCredentialView[];
+  defaultMachineTypeId: string;
+  autoProvision: boolean;
+  agentRuleId: string | null;
+  myRole: WorkspaceMemberRole | null;
   agentDefault: Agent;
 };
 
@@ -54,33 +63,64 @@ function isVisibleWorkspace(record: WorkspaceRecord): boolean {
   return record.status !== 'destroying' && record.status !== 'destroyed';
 }
 
-function createWorkspaceModel(
+/** The parts of a model the server does not own, and which therefore survive
+ * a refresh: the local title, the chosen agent, and the last values of the
+ * three fields a record may omit. */
+type LocalWorkspaceState = Pick<
+  CloudWorkspaceModel,
+  'title' | 'agentDefault' | 'owner' | 'connections' | 'updatedAt'
+>;
+
+/**
+ * Projects one record over the state that preceded it.
+ *
+ * Create, load and refresh all go through here, so a field added to
+ * `WorkspaceRecord` reaches every path at once. Listing the fields on only
+ * one of the three is how `agentRuleId` used to go stale after a poll.
+ */
+function applyRecord(
+  existing: LocalWorkspaceState,
   record: WorkspaceRecord,
-  preferences: UiPreferences,
 ): CloudWorkspaceModel {
-  const preference = preferences.workspaces[record.id];
   return {
     id: record.id,
     ownerMembershipId: record.ownerMembershipId,
     canControl: record.canControl,
     shared: record.shared === true,
-    owner: record.owner ?? null,
+    owner: record.owner ?? existing.owner,
     accessRole: record.accessRole ?? null,
-    orgShareRole: record.orgShareRole ?? null,
     serverName: record.name,
-    title: record.canControl ? preference?.title || record.name : record.name,
+    title: record.canControl ? existing.title || record.name : record.name,
     machineType: record.machineType ?? null,
     volumeId: record.volumeId ?? null,
-    environmentConfigured: record.environmentConfigured === true,
-    startupConfigured: record.startupConfigured === true,
     lifecycleStatus: record.status,
     errorDetail: record.errorDetail ?? null,
     retryAction: record.retryAction,
     createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    connections: record.connections ?? [],
-    agentDefault: preference?.agentDefault ?? 'claude',
+    updatedAt: Math.max(existing.updatedAt, record.updatedAt),
+    connections: record.connections ?? existing.connections,
+    members: record.members,
+    credentials: record.credentials,
+    defaultMachineTypeId: record.defaultMachineTypeId,
+    autoProvision: record.autoProvision,
+    agentRuleId: record.agentRuleId,
+    myRole: record.myRole,
+    agentDefault: existing.agentDefault,
   };
+}
+
+function createWorkspaceModel(
+  record: WorkspaceRecord,
+  preferences: UiPreferences,
+): CloudWorkspaceModel {
+  const preference = preferences.workspaces[record.id];
+  return applyRecord({
+    title: preference?.title ?? '',
+    agentDefault: preference?.agentDefault ?? 'claude',
+    owner: null,
+    connections: [],
+    updatedAt: 0,
+  }, record);
 }
 
 function mapWorkspace(
@@ -106,27 +146,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         if (!existing || existing.canControl !== record.canControl) {
           return createWorkspaceModel(record, action.preferences);
         }
-        return {
-          ...existing,
-          ownerMembershipId: record.ownerMembershipId,
-          canControl: record.canControl,
-          shared: record.shared === true,
-          owner: record.owner ?? existing.owner,
-          accessRole: record.accessRole ?? null,
-    orgShareRole: record.orgShareRole ?? null,
-          serverName: record.name,
-          title: record.canControl ? existing.title : record.name,
-          machineType: record.machineType ?? null,
-          volumeId: record.volumeId ?? null,
-          environmentConfigured: record.environmentConfigured === true,
-          startupConfigured: record.startupConfigured === true,
-          lifecycleStatus: record.status,
-          errorDetail: record.errorDetail ?? null,
-          retryAction: record.retryAction,
-          createdAt: record.createdAt,
-          updatedAt: Math.max(existing.updatedAt, record.updatedAt),
-          connections: record.connections ?? existing.connections,
-        };
+        return applyRecord(existing, record);
       });
       const order = new Map(action.preferences.order.map((id, index) => [id, index]));
       models.sort((left, right) => (
@@ -153,27 +173,7 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         workspaces: state.workspaces.flatMap((workspace) => {
           const record = recordsById.get(workspace.id);
           if (!record || !isVisibleWorkspace(record)) return [];
-          return [{
-            ...workspace,
-            ownerMembershipId: record.ownerMembershipId,
-            canControl: record.canControl,
-            shared: record.shared === true,
-            owner: record.owner ?? workspace.owner,
-            accessRole: record.accessRole ?? null,
-    orgShareRole: record.orgShareRole ?? null,
-            serverName: record.name,
-            title: record.canControl ? workspace.title : record.name,
-            machineType: record.machineType ?? null,
-            volumeId: record.volumeId ?? null,
-            environmentConfigured: record.environmentConfigured === true,
-            startupConfigured: record.startupConfigured === true,
-            lifecycleStatus: record.status,
-            errorDetail: record.errorDetail ?? null,
-            retryAction: record.retryAction,
-            createdAt: record.createdAt,
-            updatedAt: Math.max(workspace.updatedAt, record.updatedAt),
-            connections: record.connections ?? workspace.connections,
-          }];
+          return [applyRecord(workspace, record)];
         }),
       };
     }
@@ -182,12 +182,15 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         ...workspace,
         machineType: action.record.machineType ?? workspace.machineType,
         volumeId: action.record.volumeId ?? null,
-        environmentConfigured: action.record.environmentConfigured === true,
-        startupConfigured: action.record.startupConfigured === true,
         lifecycleStatus: action.record.status,
         errorDetail: action.record.errorDetail ?? null,
         retryAction: action.record.retryAction,
         updatedAt: action.record.updatedAt,
+        // A machine act shows up here: the details dialog reads the rows this
+        // poll refreshes rather than tracking lifecycle of its own.
+        members: action.record.members,
+        credentials: action.record.credentials,
+        autoProvision: action.record.autoProvision,
       }));
     case 'workspace_resume_failed':
       return mapWorkspace(state, action.workspaceId, (workspace) => ({

@@ -11,6 +11,7 @@ import {
   type WorkspaceWebAppStateV1,
 } from "../src/storage.js";
 import { render, settle } from "./dom.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 const createClientSpy = vi.hoisted(() => vi.fn());
 const webAppHarness = vi.hoisted(() => ({
@@ -96,10 +97,31 @@ vi.mock("../src/chat/ChatPanel.js", async () => {
   };
 });
 
-function selectedSessionId(container: HTMLElement): string | undefined {
-  return container.querySelector<HTMLElement>(
-    '[aria-label="Workspace sessions"] .webapp-tab-cell [role="tab"][aria-selected="true"]',
-  )?.closest<HTMLElement>(".webapp-tab-cell")?.dataset.sessionId;
+function railSessions(container: HTMLElement): HTMLButtonElement[] {
+  return [...container.querySelectorAll<HTMLButtonElement>(
+    '[aria-label^="Sessions in "] button',
+  )];
+}
+
+function railSessionLabels(container: HTMLElement): string[] {
+  return railSessions(container).map(({ textContent }) => textContent ?? "");
+}
+
+function railSession(container: HTMLElement, label: string): HTMLButtonElement | undefined {
+  return railSessions(container).find((row) => row.textContent === label);
+}
+
+function createOrgItem(container: HTMLElement): HTMLButtonElement | undefined {
+  return [...container.querySelectorAll<HTMLButtonElement>(
+    '[role="menu"][aria-label="Organizations"] [role="menuitem"]',
+  )].find((item) => item.textContent?.includes("Create organization"));
+}
+
+/** The mobile navigation toggle reports the drawer state, so no test needs to
+ * reach for the rail's open class. */
+function navigationExpanded(container: HTMLElement): string | null {
+  return container.querySelector('button[aria-label="Open workspace navigation"]')
+    ?.getAttribute("aria-expanded") ?? null;
 }
 
 const realLocation = Object.getOwnPropertyDescriptor(window, "location")!;
@@ -141,38 +163,19 @@ async function typeInto(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-const creating: WorkspaceView = {
+const creating: WorkspaceView = workspaceViewFixture({
   id: "workspace-one",
   name: "workspace-one-name",
-  machineTypeId: "cx23@fsn1",
   phase: "creating",
   retryAction: "poll",
   canObserve: false,
   launchable: false,
-  revision: 1,
-  createdAt: 1_700_000_000_000,
-  updatedAt: 1_700_000_000_000,
-  ssh: null,
-  volumeId: null,
-  error: null,
-  role: "owner",
-  orgShareRole: null,
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  connections: [],
-};
+});
 
-const running: WorkspaceView = {
+const running: WorkspaceView = workspaceViewFixture({
   id: "workspace-running",
   name: "workspace-running-name",
-  machineTypeId: "cx23@fsn1",
-  phase: "ready",
-  retryAction: null,
-  canObserve: true,
-  launchable: true,
   revision: 2,
-  createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_005_000,
   ssh: {
     host: "box.example.test",
@@ -180,19 +183,13 @@ const running: WorkspaceView = {
     user: "blitz",
     hostPublicKey: null,
   },
-  volumeId: null,
-  error: null,
-  role: "owner",
-  orgShareRole: null,
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  connections: [],
-};
+});
 
 const runningTwo: WorkspaceView = {
   ...running,
   id: "workspace-two",
+  // A distinct name so the rail entry can be found by its accessible name.
+  name: "workspace-two-name",
   ssh: {
     ...running.ssh!,
     host: "box-two.example.test",
@@ -233,9 +230,22 @@ function client(): ControlPlaneClient {
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
     createInvite: vi.fn(async () => { throw new Error("unused"); }),
     revokeInvite: vi.fn(async () => undefined),
-    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
-    createWorkspaceGrant: vi.fn(async () => { throw new Error("unused"); }),
-    revokeWorkspaceGrant: vi.fn(async () => undefined),
+    addWorkspaceMember: vi.fn(async () => { throw new Error("unused"); }),
+    provisionMemberMachine: vi.fn(async () => { throw new Error("unused"); }),
+    updateWorkspace: vi.fn(async () => { throw new Error("unused"); }),
+    listWorkspaceRepos: vi.fn(async () => ({ repos: [] })),
+    addWorkspaceRepo: vi.fn(async () => { throw new Error("unused"); }),
+    removeWorkspaceRepo: vi.fn(async () => { throw new Error("unused"); }),
+    updateWorkspaceMember: vi.fn(async () => { throw new Error("unused"); }),
+    removeWorkspaceMember: vi.fn(async () => undefined),
+    provisionMachine: vi.fn(async () => { throw new Error("unused"); }),
+    stopMachine: vi.fn(async () => { throw new Error("unused"); }),
+    startMachine: vi.fn(async () => { throw new Error("unused"); }),
+    recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
+    setMachineType: vi.fn(async () => { throw new Error("unused"); }),
+    destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
+    putWorkspaceCredential: vi.fn(async () => undefined),
+    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error("unused"); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -266,7 +276,6 @@ function client(): ControlPlaneClient {
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
   putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-  setWorkspaceOrgRole: vi.fn(async () => undefined),
     deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => { throw new ApiRequestError("unauthorized", 401, null); }),
@@ -418,12 +427,13 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
+    expect(view.container.querySelector('button[aria-label="workspace-running-name"]')).not.toBeNull();
     expect(view.container.textContent).toContain("Example");
     await view.unmount();
   });
 
   it("returns to workspace details when workspace deletion is cancelled", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
     const wire = runningClient();
     const view = await render(
       <CloudApp
@@ -439,8 +449,12 @@ describe("webapp shell smoke", () => {
     );
     await act(async () => detailsButton?.click());
     await settle();
-    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.querySelector('[role="dialog"][aria-label^="Workspace details for"]')).not.toBeNull();
 
+    // Delete lives on the Settings tab now; the dialog opens on Members.
+    const settingsTab = [...view.container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent === "Settings");
+    await act(async () => settingsTab?.click());
     const deleteButton = [...view.container.querySelectorAll<HTMLButtonElement>("button")]
       .find((button) => button.textContent === "Delete workspace");
     await act(async () => deleteButton?.click());
@@ -450,7 +464,7 @@ describe("webapp shell smoke", () => {
       .find((button) => button.textContent === "No");
     await act(async () => cancelButton?.click());
     expect(view.container.textContent).not.toContain("Delete workspace?");
-    expect(view.container.textContent).toContain("Workspace details");
+    expect(view.container.querySelector('[role="dialog"][aria-label^="Workspace details for"]')).not.toBeNull();
     expect(view.container.textContent).toContain("Delete workspace");
     expect(wire.destroy).not.toHaveBeenCalled();
 
@@ -496,39 +510,7 @@ describe("webapp shell smoke", () => {
     await settle();
 
     expect(createOrg).toHaveBeenCalledWith("Example");
-    expect(view.container.querySelector(".drive-rail")?.textContent).toContain("workspace-running");
-    await view.unmount();
-  });
-
-  it("closes the create-workspace dialog when it hands off to the template page", async () => {
-    window.history.replaceState({}, "", "/templates");
-    const view = await render(
-      <CloudApp
-        client={runningClient()}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Create workspace"]',
-    )?.click());
-    expect(view.container.querySelector('form[aria-label="Create workspace"]')).not.toBeNull();
-
-    const newTemplate = [...view.container.querySelectorAll<HTMLButtonElement>(
-      ".template-grid > button",
-    )].find((tile) => tile.textContent?.includes("New template"))!;
-    await act(async () => newTemplate.click());
-    await settle();
-
-    // Every rail branch draws this dialog since #40, the template page too. It
-    // must leave, or it covers the page it just opened.
-    expect(window.location.pathname).toBe("/templates/new");
-    expect(view.container.querySelector('form[aria-label="Create workspace"]')).toBeNull();
-    expect(view.container.querySelector('form[aria-label="Create workspace template"]'))
-      .not.toBeNull();
-
+    expect(view.container.querySelector('button[aria-label="workspace-running-name"]')).not.toBeNull();
     await view.unmount();
   });
 
@@ -567,8 +549,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
-    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create"));
+    await click(view.container.querySelector<HTMLButtonElement>('button[aria-label="Organization: Example"]'));
+    await click(createOrgItem(view.container));
     expect(document.querySelector('[aria-label="Create organization"]')).not.toBeNull();
     await view.unmount();
   });
@@ -588,8 +570,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    await click(view.container.querySelector<HTMLButtonElement>(".webapp-org-button"));
-    const create = view.container.querySelector<HTMLButtonElement>(".webapp-org-menu-create");
+    await click(view.container.querySelector<HTMLButtonElement>('button[aria-label="Organization: Example"]'));
+    const create = createOrgItem(view.container);
     expect(create?.textContent).toContain("Create organization");
     await click(create);
 
@@ -909,7 +891,7 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
-  it("keeps file tabs out of the workspace session rail and collapsed count", async () => {
+  it("keeps file tabs out of the workspace session rail", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
       { id: 1, type: "claude" },
@@ -925,15 +907,8 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(2);
-    expect(view.container.querySelector('[data-rail-session-id="3"]')).toBeNull();
+    expect(railSessionLabels(view.container)).toEqual(["Claude", "Terminal"]);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="3"]')).not.toBeNull();
-
-    await act(async () => view.container.querySelector<HTMLButtonElement>(
-      ".webapp-workspace-disclosure",
-    )?.click());
-    expect(view.container.querySelector(".webapp-workspace-session-count")?.textContent)
-      .toBe("2 sessions");
 
     await view.unmount();
   });
@@ -954,11 +929,11 @@ describe("webapp shell smoke", () => {
     await settle();
 
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-pane-strip[data-region="side"] .webapp-tab-cell[data-session-id="2"] [role="tab"]',
+      '[aria-label="Workspace side pane sessions"] [role="tab"]',
     )?.click());
-    const railAgent = view.container.querySelector<HTMLButtonElement>('[data-rail-session-id="1"]');
-    expect(railAgent?.classList.contains("webapp-session--active")).toBe(true);
-    expect(view.container.querySelector('[data-rail-session-id="2"]')).toBeNull();
+    const railAgent = railSession(view.container, "Claude");
+    expect(railAgent?.getAttribute("aria-current")).toBe("page");
+    expect(railSessionLabels(view.container)).toEqual(["Claude"]);
 
     await view.unmount();
   });
@@ -1029,7 +1004,7 @@ describe("webapp shell smoke", () => {
     expect(webAppHarness.unmounts).toHaveBeenCalledWith("terminal", firstMountId);
     expect(view.container.querySelectorAll('[data-testid="terminal-session"]')).toHaveLength(1);
     expect(view.container.querySelector('.webapp-tab-cell[data-session-id="1"]')).toBeNull();
-    expect(view.container.querySelector('[data-rail-session-id="1"]')).toBeNull();
+    expect(railSessionLabels(view.container)).toEqual(["Claude"]);
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     });
@@ -1057,7 +1032,7 @@ describe("webapp shell smoke", () => {
     expect(view.container.textContent).toContain("Empty pane");
     expect(view.container.textContent).not.toContain("Resume your session");
     expect(view.container.textContent).not.toContain("Start a session");
-    expect(view.container.querySelectorAll("[data-rail-session-id]")).toHaveLength(0);
+    expect(railSessionLabels(view.container)).toEqual([]);
     await view.unmount();
   });
 
@@ -1091,12 +1066,12 @@ describe("webapp shell smoke", () => {
 
     // No rail, no split: one strip holding only the session tabs, with the
     // panel living in the drawer the mobile layout already had.
-    expect(view.container.querySelector(".webapp-rail-strip")).toBeNull();
-    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(view.container.querySelector('[aria-label="Workspace panels"]')).toBeNull();
+    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     expect([...view.container.querySelectorAll(
       '[aria-label="Workspace sessions"] .webapp-tab-cell',
     )]).toHaveLength(1);
-    const drawer = view.container.querySelector("#webapp-workspace-drawer")!;
+    const drawer = view.container.querySelector('[aria-label="Workspace drawer"]')!;
     const segments = [...drawer.querySelectorAll('[role="tab"]')]
       .map((tab) => tab.textContent);
     expect(segments).toEqual(["Files", "teenyapps", "Connections"]);
@@ -1129,14 +1104,14 @@ describe("webapp shell smoke", () => {
       'button[aria-label="Open workspace navigation"]',
     );
     await act(async () => openNavigation?.click());
-    expect(view.container.querySelector('.drive-rail--open')).not.toBeNull();
+    expect(navigationExpanded(view.container)).toBe("true");
 
     const detailsButton = view.container.querySelector<HTMLButtonElement>(
       'button[aria-label="Workspace details for workspace-running-name"]',
     );
     await act(async () => detailsButton?.click());
-    expect(view.container.querySelector('.drive-rail--open')).toBeNull();
-    expect(view.container.textContent).toContain("Workspace details");
+    expect(navigationExpanded(view.container)).toBe("false");
+    expect(view.container.querySelector('[role="dialog"][aria-label^="Workspace details for"]')).not.toBeNull();
 
     await view.unmount();
   });
@@ -1189,21 +1164,22 @@ describe("webapp shell smoke", () => {
     await settle();
     await settle();
 
-    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     const filesIcon = view.container.querySelector<HTMLButtonElement>(
-      '.webapp-rail-strip button[aria-label="Files"]',
+      '[aria-label="Workspace panels"] button[aria-label="Files"]',
     )!;
     await act(async () => filesIcon.click());
 
-    const strips = [...view.container.querySelectorAll<HTMLElement>(".webapp-pane-strip")];
-    expect(strips.map((strip) => strip.dataset.region)).toEqual(["main", "side"]);
-    expect(strips[1]?.querySelector('[role="tab"]')?.textContent).toContain("Files");
+    const sideStrip = view.container.querySelector<HTMLElement>(
+      '[aria-label="Workspace side pane sessions"]',
+    );
+    expect(sideStrip?.querySelector('[role="tab"]')?.textContent).toContain("Files");
     expect(filesIcon.getAttribute("aria-pressed")).toBe("true");
 
     // Clicking the same icon while its tab is in front closes the panel, and
     // the side pane goes with it.
     await act(async () => filesIcon.click());
-    expect(view.container.querySelectorAll(".webapp-pane-strip")).toHaveLength(1);
+    expect(view.container.querySelector('[aria-label="Workspace side pane sessions"]')).toBeNull();
     expect(serverWorkspaceStates.get("workspace-running")?.tabs.tabs)
       .toEqual([{ id: 1, type: "terminal" }]);
   });
@@ -1236,7 +1212,7 @@ describe("webapp shell smoke", () => {
     expect(terminal.closest<HTMLElement>(".webapp-workspace-session")?.dataset.region).toBe("main");
 
     const handle = view.container.querySelector<HTMLElement>(
-      '.webapp-pane-strip[data-region="main"] .webapp-tab-cell[data-session-id="1"] [role="tab"]',
+      '[aria-label="Workspace sessions"] .webapp-tab-cell[data-session-id="1"] [role="tab"]',
     )!;
     const panes = view.container.querySelector<HTMLElement>(".webapp-panes")!;
     await act(async () => {
@@ -1290,7 +1266,7 @@ describe("webapp shell smoke", () => {
     const first = view.container.querySelector<HTMLElement>('[data-testid="terminal-session"]')!;
     const firstMountId = first.dataset.mountId;
     await act(async () => view.container.querySelector<HTMLButtonElement>(
-      '.webapp-workspace[data-workspace-id="workspace-two"] .webapp-workspace-button',
+      'button[aria-label="workspace-two-name"]',
     )?.click());
     await settle();
 

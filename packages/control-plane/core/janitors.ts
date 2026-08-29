@@ -1,10 +1,10 @@
 import { changed, rows, transaction } from "./db.js";
 import {
-  revokeWorkspaceLeasesQuery,
+  revokeMachineLeasesQuery,
   runLeaseSweep,
 } from "./connections/leases.js";
 import type { CoreRuntime } from "./runtime.js";
-import type { WorkspaceRow } from "./workspaces.js";
+import type { MachineRow } from "./workspace-records.js";
 import {
   expiredVolumes,
   markVolumeDetachedQuery,
@@ -22,6 +22,7 @@ const LAZY_SWEEP_PREFIXES = [
   "/workspaces",
   "/volumes",
   "/machine-types",
+  "/machines",
   "/oauth/",
   "/boxes/",
   "/connections",
@@ -38,11 +39,14 @@ function sweepPath(path: string): boolean {
   );
 }
 
+/** VMs whose machine has already left. It iterates `machines` now: a workspace
+ * has no VM of its own, and a workspace with five members has five of them. */
 export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
-  const result = await rows<WorkspaceRow>(runtime.db, {
-    q: `SELECT * FROM workspaces
-        WHERE vm_id IS NOT NULL AND phase IN ('destroying', 'destroyed')
-        ORDER BY updated_at, id`,
+  const result = await rows<MachineRow & { org_id: string | null }>(runtime.db, {
+    q: `SELECT m.*, w.org_id AS org_id
+        FROM machines m JOIN workspaces w ON w.id = m.workspace_id
+        WHERE m.vm_id IS NOT NULL AND m.state IN ('destroying', 'destroyed')
+        ORDER BY m.updated_at, m.id`,
     v: [],
   });
   let destroyed = 0;
@@ -53,7 +57,8 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       // TODO(house-canon): Route structured core logs through the canonical logger.
       console.error(JSON.stringify({
         message: "orphan sweep skipped VM with no owning provider",
-        workspaceId: row.id,
+        machineId: row.id,
+        workspaceId: row.workspace_id,
         vmId: row.vm_id,
       }));
       continue;
@@ -61,7 +66,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
     if (row.org_id === null) {
       runtime.reportError(
         "orphan_sweep_compute_credential_skipped",
-        new Error(`workspace ${row.id} has no organization for provider ${owner.id}`),
+        new Error(`machine ${row.id} has no organization for provider ${owner.id}`),
       );
       continue;
     }
@@ -69,7 +74,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       const resolved = await runtime.providers.vmRegistry.resolveVmId(
         row.vm_id,
         row.org_id,
-        row.compute_credential_source ?? "deployment",
+        row.compute_credential_source,
       );
       if (resolved === undefined) continue;
       const provider = resolved.provider;
@@ -77,7 +82,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
         await provider.shutdown(row.vm_id);
         const volume = await runtime.providers.volume.forOrg(
           row.org_id,
-          row.compute_credential_source ?? "deployment",
+          row.compute_credential_source,
         );
         await volume.provider.detachVolume(row.volume_id, row.vm_id);
         await rows(runtime.db, markVolumeDetachedQuery(row.volume_id, Date.now()));
@@ -89,21 +94,21 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       const detail = error instanceof Error ? error.message : "provider operation failed";
       runtime.reportError(
         "orphan_sweep_compute_credential_skipped",
-        new Error(`workspace ${row.id} provider ${owner.id}: ${detail}`),
+        new Error(`machine ${row.id} provider ${owner.id}: ${detail}`),
       );
       continue;
     }
-    if (row.phase === "destroying") {
+    if (row.state === "destroying") {
       const transition = await transaction(runtime.db, [
-        revokeWorkspaceLeasesQuery(row.id),
-        { q: "DELETE FROM boxes WHERE workspace_id = ?1", v: [row.id] },
-        { q: "DELETE FROM webapp_state WHERE workspace_id = ?1", v: [row.id] },
+        revokeMachineLeasesQuery(row.id),
+        { q: "DELETE FROM machine_token_families WHERE machine_id = ?1", v: [row.id] },
+        { q: "DELETE FROM broker_keys WHERE machine_id = ?1", v: [row.id] },
         {
-          q: `UPDATE workspaces
-              SET phase = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
+          q: `UPDATE machines
+              SET state = 'destroyed', vm_id = NULL, ssh_host = NULL, ssh_port = NULL,
                   ssh_user = NULL, ssh_host_public_key = NULL, error = NULL,
-                  revision = revision + 1, updated_at = ?1
-              WHERE id = ?2 AND phase = 'destroying'
+                  updated_at = ?1
+              WHERE id = ?2 AND state = 'destroying'
               RETURNING id`,
           v: [Date.now(), row.id],
         },
@@ -111,7 +116,7 @@ export async function runOrphanSweep(runtime: CoreRuntime): Promise<number> {
       if (transition[3]?.length !== 1) continue;
     } else {
       await rows(runtime.db, {
-        q: "UPDATE workspaces SET vm_id = NULL WHERE id = ?1",
+        q: "UPDATE machines SET vm_id = NULL WHERE id = ?1",
         v: [row.id],
       });
     }
@@ -162,7 +167,7 @@ export async function runVolumeRetentionSweep(
         v: [row.volume_id],
       },
       {
-        q: "UPDATE workspaces SET volume_id = NULL WHERE volume_id = ?1",
+        q: "UPDATE machines SET volume_id = NULL WHERE volume_id = ?1",
         v: [row.volume_id],
       },
     ]);
@@ -174,10 +179,10 @@ export async function runVolumeRetentionSweep(
 export async function runWorkspaceTunnelSweep(runtime: CoreRuntime): Promise<number> {
   const workspaceTunnels = runtime.providers.workspaceTunnels;
   if (workspaceTunnels === undefined) return 0;
-  const result = await rows<WorkspaceRow>(runtime.db, {
-    q: `SELECT * FROM workspaces
+  const result = await rows<MachineRow>(runtime.db, {
+    q: `SELECT * FROM machines
         WHERE (tunnel_id IS NOT NULL OR dns_record_id IS NOT NULL)
-          AND phase IN ('destroying', 'destroyed', 'error')
+          AND state IN ('destroying', 'destroyed', 'error')
         ORDER BY updated_at, id`,
     v: [],
   });
@@ -188,7 +193,7 @@ export async function runWorkspaceTunnelSweep(runtime: CoreRuntime): Promise<num
       // TODO(house-canon): Route structured core logs through the canonical logger.
       console.error(JSON.stringify({
         message: "workspace tunnel sweep left Cloudflare resources for retry",
-        workspaceId: row.id,
+        machineId: row.id,
         errors: cleanup.errors,
       }));
       continue;
@@ -203,10 +208,10 @@ export async function runInvariantSweep(
   now = Date.now(),
 ): Promise<number> {
   return changed(runtime.db, {
-    q: `UPDATE workspaces
-        SET phase = 'error', error = 'workspace creation timed out',
-            phone_home_hash = NULL, revision = revision + 1, updated_at = ?1
-        WHERE phase = 'creating' AND updated_at < ?2
+    q: `UPDATE machines
+        SET state = 'error', error = 'machine creation timed out',
+            phone_home_hash = NULL, updated_at = ?1
+        WHERE state = 'provisioning' AND updated_at < ?2
         RETURNING id`,
     v: [now, now - STUCK_CREATING_MS],
   });

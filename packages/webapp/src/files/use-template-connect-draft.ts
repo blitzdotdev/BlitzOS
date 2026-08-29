@@ -7,7 +7,6 @@ import {
   storeTemplateConnectDraft,
   templateConnectReturnTo,
 } from '../connect-drafts';
-import { EMPTY_WORKSPACE_ENVIRONMENT } from '../EnvironmentEditor';
 
 /** Owns the template fields that cross the GitHub full-page redirect. The
  * screen still owns rendering and save behavior; this hook only seeds, loads,
@@ -29,14 +28,6 @@ export function useTemplateConnectDraft(
   const [templateConnections, setTemplateConnections] = useState(new Map(
     restoredDraft?.connections.map((connection) => [connection.provider, connection]),
   ));
-  const [environment, setEnvironment] = useState(
-    restoredDraft?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT,
-  );
-  const [loadedEnvironment, setLoadedEnvironment] = useState(
-    editTemplateId === undefined
-      ? restoredDraft?.environment ?? EMPTY_WORKSPACE_ENVIRONMENT
-      : null,
-  );
   const [agentRuleId, setAgentRuleId] = useState<string | null>(restoredDraft?.agentRuleId ?? null);
   const [isOrgDefault, setIsOrgDefault] = useState(restoredDraft?.isOrgDefault ?? false);
   const [repos, setRepos] = useState<string[]>(restoredDraft?.repos ?? []);
@@ -69,11 +60,6 @@ export function useTemplateConnectDraft(
         (restoredDraft?.connections ?? existing.connections)
           .map((connection) => [connection.provider, connection]),
       ));
-      const stored = restoredDraft?.environment
-        ?? existing.environment
-        ?? EMPTY_WORKSPACE_ENVIRONMENT;
-      setLoadedEnvironment(stored);
-      setEnvironment(stored);
     }).catch((caught: Error) => onError(caught.message));
     return () => { mounted = false; };
   }, [client, editTemplateId, onError, restoredDraft]);
@@ -87,7 +73,6 @@ export function useTemplateConnectDraft(
       attachedIds: [...attachedIds],
       connections: [...templateConnections.values()],
       shareWithOrg,
-      environment,
       agentRuleId,
       isOrgDefault,
       repos,
@@ -106,9 +91,6 @@ export function useTemplateConnectDraft(
     setShareWithOrg,
     templateConnections,
     setTemplateConnections,
-    environment,
-    setEnvironment,
-    loadedEnvironment,
     agentRuleId,
     setAgentRuleId,
     isOrgDefault,

@@ -22,7 +22,7 @@ const CURRENCY_CODE_PATTERN = /^[A-Za-z]{3}$/u;
  * The locale stays pinned to en-US, like the chat date format, because the
  * whole dialog is English.
  */
-function monthlyPriceLabel(price: MachinePrice | null | undefined): string | null {
+export function monthlyPriceLabel(price: MachinePrice | null | undefined): string | null {
   if (price === null || price === undefined) return null;
   if (!CURRENCY_CODE_PATTERN.test(price.currency)) return null;
   const amount = new Intl.NumberFormat('en-US', {

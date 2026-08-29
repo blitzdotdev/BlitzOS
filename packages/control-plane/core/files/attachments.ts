@@ -8,7 +8,7 @@ import {
 } from "../http.js";
 import type { Principal } from "../principals.js";
 import type { CoreContext, CoreRouter, RuntimeFactory } from "../runtime.js";
-import { canControlWorkspace } from "../workspace-access.js";
+import { isWorkspaceAdmin, workspaceAccess } from "../workspace-access.js";
 import type {
   FolderAttachmentView,
   ListFolderAttachmentsResponse,
@@ -59,13 +59,13 @@ async function controlledWorkspace(
 ): Promise<AttachmentWorkspaceRow> {
   const workspace = await first<AttachmentWorkspaceRow>(runtime.db, {
     q: `SELECT id, org_id, owner_membership_id
-        FROM workspaces WHERE id = ?1 AND phase != 'destroyed' LIMIT 1`,
+        FROM workspaces WHERE id = ?1 AND deleted_at IS NULL LIMIT 1`,
     v: [id],
   });
   if (workspace === null || workspace.org_id !== actor.principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
-  if (!canControlWorkspace(actor.principal, workspace)) {
+  if (!isWorkspaceAdmin(await workspaceAccess(runtime.db, actor.principal, workspace))) {
     throw new HttpError(403, "forbidden");
   }
   return workspace;

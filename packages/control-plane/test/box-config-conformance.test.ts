@@ -81,10 +81,10 @@ async function workspaceUpdateColumns(
   workspaceId: string,
 ): Promise<{ box_update_requested: number; box_image_reported: string | null }> {
   const row = await env.DB
-    .prepare("SELECT box_update_requested, box_image_reported FROM workspaces WHERE id = ?1")
+    .prepare("SELECT box_update_requested, box_image_reported FROM machines WHERE workspace_id = ?1")
     .bind(workspaceId)
     .first<{ box_update_requested: number; box_image_reported: string | null }>();
-  if (row === null) throw new Error("workspace row missing");
+  if (row === null) throw new Error("machine row missing");
   return row;
 }
 
@@ -206,7 +206,7 @@ describe("box-config control-plane conformance", () => {
 
     for (const [name, fixture] of fixtures<ResultFixture>("result-")) {
       await env.DB
-        .prepare("UPDATE workspaces SET box_update_requested = 1, box_image_reported = NULL WHERE id = ?1")
+        .prepare("UPDATE machines SET box_update_requested = 1, box_image_reported = NULL WHERE workspace_id = ?1")
         .bind(workspaceId)
         .run();
       const response = await appRequest(h.app, "/workspaces/self/box-update-result", {

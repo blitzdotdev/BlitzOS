@@ -107,14 +107,7 @@ func Watch(ctx context.Context, stateDir, home string) error {
 	watcher := NewWatcher(home, func(callContext context.Context, harness string, blob []byte) error {
 		return Deposit(callContext, stateDir, harness, blob)
 	})
-	environmentReady := false
 	for {
-		if !environmentReady {
-			// The startup script it may launch runs detached, so this call
-			// never holds up the credential deposits below.
-			ready, _, _ := environmentTick(ctx, stateDir, "/workspace", nil)
-			environmentReady = ready
-		}
 		_ = watcher.Tick(ctx)
 		timer := time.NewTimer(time.Second)
 		select {

@@ -1,4 +1,5 @@
 import { bearerToken, safeEqualSecret } from "./crypto.js";
+import { MACHINE_SLOT_STATES } from "./workspace-records.js";
 import { first, transaction } from "./db.js";
 import {
   HttpError,
@@ -43,11 +44,16 @@ const FREE_SEAT_LIMIT = 1;
 /** How long a checkout handoff token stays valid. */
 const HANDOFF_TOKEN_TTL_SECONDS = 15 * 60;
 
-/** Workspace phases that hold a VM slot. Written once and read by both the
- * create-path predicate in core/workspaces.ts and the usage report below, so
- * the number a person is shown and the number they are stopped by are the
- * same number. */
-export const VM_SLOT_PHASES = "'creating', 'ready', 'destroying', 'error'";
+/** Machine states that hold a VM slot. It is `MACHINE_SLOT_STATES` in
+ * core/workspace-records.ts, imported rather than re-spelled, so the number a
+ * person is shown and the number they are stopped by are the same number.
+ *
+ * The unit changed with member machines: a workspace is configuration and
+ * costs nothing, a machine is a VM and costs money, so `vm_limit` counts
+ * machines. An organization that ran ten one-member workspaces sees the same
+ * number as before; one that adds a second member to a workspace now sees the
+ * second VM it is actually paying for. */
+export { MACHINE_SLOT_STATES } from "./workspace-records.js";
 
 /** The billing service's write, parsed at the boundary into the named wire
  * type. An absent `platformCompute` is `false`: the body states an
@@ -332,8 +338,10 @@ export function addEntitlementsRoutes(
       platform_compute: number;
     }>(runtime.db, {
       q: `SELECT o.vm_limit,
-                 (SELECT COUNT(*) FROM workspaces
-                  WHERE org_id = o.id AND phase IN (${VM_SLOT_PHASES})) AS vms_used,
+                 (SELECT COUNT(*) FROM machines m
+                  JOIN workspaces w ON w.id = m.workspace_id
+                  WHERE w.org_id = o.id
+                    AND m.state IN (${MACHINE_SLOT_STATES})) AS vms_used,
                  ${activeSeatsSql("o.id")} AS seats_used,
                  ${seatLimitSql("o.id")} AS seat_limit,
                  ${platformComputeSql("o.id")} AS platform_compute

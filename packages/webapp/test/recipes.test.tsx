@@ -14,6 +14,7 @@ import { TemplatesHome } from '../src/files/TemplatesHome.js';
 import { SettingsPage } from '../src/SettingsPage.js';
 import { standaloneResolver } from '../src/resolver.js';
 import { render, settle } from './dom.js';
+import { workspaceViewFixture } from './workspace-fixtures.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -448,27 +449,15 @@ const tenantMe: TenantMe = {
   }],
 };
 
-const launchedWorkspace: WorkspaceView = {
+const launchedWorkspace: WorkspaceView = workspaceViewFixture({
   id: 'workspace-new',
   name: 'weekly report',
-  machineTypeId: 'cx23@fsn1',
   phase: 'creating',
   retryAction: 'poll',
   canObserve: false,
   launchable: false,
-  revision: 1,
-  createdAt: 1_700_000_000_000,
-  updatedAt: 1_700_000_000_000,
-  ssh: null,
-  volumeId: null,
-  error: null,
-  role: 'owner',
-  orgShareRole: null,
   owner: { name: 'Ada Park', avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  connections: [],
-};
+});
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
@@ -485,9 +474,22 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
     createInvite: vi.fn(async () => { throw new Error('unused'); }),
     revokeInvite: vi.fn(async () => undefined),
-    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
-    createWorkspaceGrant: vi.fn(async () => { throw new Error('unused'); }),
-    revokeWorkspaceGrant: vi.fn(async () => undefined),
+    addWorkspaceMember: vi.fn(async () => { throw new Error('unused'); }),
+    provisionMemberMachine: vi.fn(async () => { throw new Error('unused'); }),
+    updateWorkspace: vi.fn(async () => { throw new Error('unused'); }),
+    listWorkspaceRepos: vi.fn(async () => ({ repos: [] })),
+    addWorkspaceRepo: vi.fn(async () => { throw new Error('unused'); }),
+    removeWorkspaceRepo: vi.fn(async () => { throw new Error('unused'); }),
+    updateWorkspaceMember: vi.fn(async () => { throw new Error('unused'); }),
+    removeWorkspaceMember: vi.fn(async () => undefined),
+    provisionMachine: vi.fn(async () => { throw new Error('unused'); }),
+    stopMachine: vi.fn(async () => { throw new Error('unused'); }),
+    startMachine: vi.fn(async () => { throw new Error('unused'); }),
+    recreateMachine: vi.fn(async () => { throw new Error('unused'); }),
+    setMachineType: vi.fn(async () => { throw new Error('unused'); }),
+    destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
+    putWorkspaceCredential: vi.fn(async () => undefined),
+    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error('unused'); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -519,7 +521,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     orgUsage: vi.fn(async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false })),
     billing: vi.fn(async () => { throw new Error('unused'); }),
     putUsageCapture: vi.fn(async (enabled: boolean) => ({ enabled, folderId: null })),
-    setWorkspaceOrgRole: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => ({
       user: { ...tenantMe.identity, platformOperator: false },
@@ -667,8 +668,10 @@ describe('recipe run flow', () => {
     });
   });
 
+  // Both addresses are disabled and land on Drive; what still has to work is
+  // the strip's create action, which every page carries.
   it.each(['/templates', '/recipes'])(
-    'opens the create-workspace dialog from the rail on %s',
+    'lands on Drive and still opens the create-workspace dialog from %s',
     async (path) => {
       window.history.replaceState({}, '', path);
       const view = await render(
@@ -686,58 +689,11 @@ describe('recipe run flow', () => {
       expect(createWorkspaceButton).not.toBeNull();
       await act(async () => { createWorkspaceButton?.click(); });
 
+      expect(window.location.pathname).toBe(path);
       expect(view.container.querySelector('form[aria-label="Create workspace"]'))
         .not.toBeNull();
       await view.unmount();
     },
   );
 
-  it('posts the launch and navigates to the new workspace like create does', async () => {
-    const wire = client();
-    const view = await render(
-      <CloudApp
-        client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    expect(view.container.textContent).toContain('weekly report');
-    const run = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Run'))!;
-    await act(async () => { run.click(); });
-    await settle();
-
-    expect(wire.launchRecipe).toHaveBeenCalledWith('r-1');
-    // The launch reuses the create-workspace adoption: the record lands in
-    // the store and the app navigates to the workspace page.
-    expect(window.location.pathname).toBe('/workspaces/workspace-new');
-    await view.unmount();
-  });
-
-  it('surfaces the control-plane launch failure message on the recipes page', async () => {
-    const launchRecipe = vi.fn(async () => {
-      throw new ApiRequestError('Workspace limit reached (10). Delete one first.', 409, null);
-    });
-    const wire = client({ launchRecipe });
-    const view = await render(
-      <CloudApp
-        client={wire}
-        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
-      />,
-    );
-    await settle();
-    await settle();
-
-    const run = [...view.container.querySelectorAll('button')]
-      .find((button) => button.textContent?.includes('Run'))!;
-    await act(async () => { run.click(); });
-    await settle();
-
-    expect(window.location.pathname).toBe('/recipes');
-    expect(view.container.querySelector('.webapp-notice')?.textContent)
-      .toContain('Workspace limit reached (10). Delete one first.');
-    await view.unmount();
-  });
 });

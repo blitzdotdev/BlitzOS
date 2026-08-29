@@ -220,7 +220,11 @@ export class MicrovmPoolProvider implements VmProvider {
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
     const { host, machine } = this.hostForMachineType(input.machineTypeId);
     const body: CreateAgentVmBody = {
-      workspace_id: input.workspaceId,
+      // The host keys its guest on this id and it must be unique per VM. A
+      // workspace holds one VM per member now, so the MACHINE id goes here;
+      // the field keeps its wire name because the host protocol has no
+      // fixtures yet and renaming it would be a silent break.
+      workspace_id: input.machineId,
       cpu: machine.cpu,
       mem_mb: machine.memGb * 1_024,
     };

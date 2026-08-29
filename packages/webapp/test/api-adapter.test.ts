@@ -6,9 +6,10 @@ import {
 } from "../src/api-adapter.js";
 import type { ControlPlaneClient } from "../src/api.js";
 import { defaultGlobalWebAppState, defaultWorkspaceWebAppState } from "../src/storage.js";
+import { workspaceViewFixture } from "./workspace-fixtures.js";
 
 function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["retryAction"]): WorkspaceView {
-  return {
+  return workspaceViewFixture({
     id: `workspace-${phase}`,
     name: `name-${phase}`,
     machineTypeId: "mv-2c2g@lab",
@@ -17,18 +18,9 @@ function workspace(phase: WorkspaceView["phase"], retryAction: WorkspaceView["re
     canObserve: phase === "ready",
     launchable: phase === "ready",
     revision: 7,
-    createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_005_000,
-    ssh: null,
-    volumeId: null,
     error: phase === "error" ? "provider failed" : null,
-    role: "owner",
-    orgShareRole: null,
-    connections: [],
-  owner: { name: "Owner", avatarUrl: null },
-  environment: null,
-  agentRuleId: null,
-  };
+  });
 }
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -46,9 +38,22 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     listInvites: vi.fn(async () => ({ invites: [], ttlDays: 7 })),
     createInvite: vi.fn(async () => { throw new Error("unused"); }),
     revokeInvite: vi.fn(async () => undefined),
-    listWorkspaceGrants: vi.fn(async () => ({ grants: [] })),
-    createWorkspaceGrant: vi.fn(async () => { throw new Error("unused"); }),
-    revokeWorkspaceGrant: vi.fn(async () => undefined),
+    addWorkspaceMember: vi.fn(async () => { throw new Error("unused"); }),
+    provisionMemberMachine: vi.fn(async () => { throw new Error("unused"); }),
+    updateWorkspace: vi.fn(async () => { throw new Error("unused"); }),
+    listWorkspaceRepos: vi.fn(async () => ({ repos: [] })),
+    addWorkspaceRepo: vi.fn(async () => { throw new Error("unused"); }),
+    removeWorkspaceRepo: vi.fn(async () => { throw new Error("unused"); }),
+    updateWorkspaceMember: vi.fn(async () => { throw new Error("unused"); }),
+    removeWorkspaceMember: vi.fn(async () => undefined),
+    provisionMachine: vi.fn(async () => { throw new Error("unused"); }),
+    stopMachine: vi.fn(async () => { throw new Error("unused"); }),
+    startMachine: vi.fn(async () => { throw new Error("unused"); }),
+    recreateMachine: vi.fn(async () => { throw new Error("unused"); }),
+    setMachineType: vi.fn(async () => { throw new Error("unused"); }),
+    destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
+    putWorkspaceCredential: vi.fn(async () => undefined),
+    revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error("unused"); }),
     deleteFolder: vi.fn(async () => undefined),
@@ -79,7 +84,6 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     orgUsage: async () => ({ seatsUsed: 1, seatLimit: null, vmsUsed: 0, vmLimit: 10, platformCompute: false }),
     billing: async () => { throw new Error('unused'); },
     putUsageCapture: async (enabled: boolean) => ({ enabled, folderId: null }),
-    setWorkspaceOrgRole: async () => undefined,
     deleteFolderObject: vi.fn(async () => undefined),
     logout: vi.fn(async () => undefined),
     me: vi.fn(async () => ({
@@ -140,15 +144,15 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
 
 describe("webapp API adapter", () => {
   it("maps blitz phases and filters terminal phases", () => {
-    expect(workspaceFromWire(workspace("ready", null), "membership-one")).toMatchObject({
+    expect(workspaceFromWire(workspace("ready", null))).toMatchObject({
       status: "running",
       canControl: true,
-      ownerMembershipId: "membership-one",
+      // The workspace names its own creator; the viewer's membership id is
+      // not an answer to "who owns this".
+      ownerMembershipId: "membership-1",
       machineType: "mv-2c2g@lab",
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_005_000,
-      environmentConfigured: false,
-      startupConfigured: false,
     });
     expect(workspaceFromWire(workspace("creating", "poll"))?.status).toBe("creating");
     expect(workspaceFromWire(workspace("error", "destroy"))).toMatchObject({

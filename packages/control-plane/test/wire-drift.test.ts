@@ -137,6 +137,103 @@ const orgUsageCapture: SharedShape<
   schema.OrgUsageCaptureResponse
 > = { enabled: true, folderId: "folder" };
 
+const machine: SharedShape<wire.MachineView, schema.MachineView> = {
+  id: "machine",
+  state: "running",
+  machineTypeId: "mv-2c2g@lab",
+  volumeId: volume.id,
+  membershipId: "membership",
+  error: null,
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_005_000,
+};
+
+const workspaceMember: SharedShape<
+  wire.WorkspaceMemberView,
+  schema.WorkspaceMemberView
+> = {
+  membershipId: machine.membershipId,
+  name: "Owner",
+  avatarUrl: null,
+  role: "admin",
+  machine,
+};
+
+// A viewer holds no machine, ever (plan §2.2). Null covers different ground
+// than an object, so it needs its own row.
+const viewerMember: SharedShape<
+  wire.WorkspaceMemberView,
+  schema.WorkspaceMemberView
+> = {
+  membershipId: "viewer-membership",
+  name: "Watcher",
+  avatarUrl: "https://avatars.example/watcher.png",
+  role: "viewer",
+  machine: null,
+};
+
+const workspaceCredential: SharedShape<
+  wire.WorkspaceCredentialView,
+  schema.WorkspaceCredentialView
+> = { name: "STRIPE_API_KEY", label: "live", createdAt: 6 };
+
+const machineResponse: SharedShape<
+  wire.MachineResponse,
+  schema.MachineResponse
+> = { machine };
+
+const setMachineTypeRequest: SharedShape<
+  wire.SetMachineTypeRequest,
+  schema.SetMachineTypeRequest
+> = { machineTypeId: pricedMachineType.id };
+
+const addWorkspaceMemberRequest: SharedShape<
+  wire.AddWorkspaceMemberRequest,
+  schema.AddWorkspaceMemberRequest
+> = {
+  membershipId: viewerMember.membershipId,
+  role: "member",
+  machineTypeId: pricedMachineType.id,
+};
+
+const updateWorkspaceMemberRequest: SharedShape<
+  wire.UpdateWorkspaceMemberRequest,
+  schema.UpdateWorkspaceMemberRequest
+> = { role: "viewer" };
+
+const provisionMemberMachineRequest: SharedShape<
+  wire.ProvisionMemberMachineRequest,
+  schema.ProvisionMemberMachineRequest
+> = { machineTypeId: pricedMachineType.id };
+
+// Every settings field at once. `agentRuleId` also travels as an explicit
+// null — the way back to the built-in doc — which is different ground than a
+// string, so it gets its own row below.
+const updateWorkspaceRequest: SharedShape<
+  wire.UpdateWorkspaceRequest,
+  schema.UpdateWorkspaceRequest
+> = {
+  name: "engineering",
+  defaultMachineTypeId: machineType.id,
+  autoProvision: false,
+  agentRuleId: "rule",
+};
+
+const clearAgentRuleRequest: SharedShape<
+  wire.UpdateWorkspaceRequest,
+  schema.UpdateWorkspaceRequest
+> = { agentRuleId: null };
+
+const workspaceMemberResponse: SharedShape<
+  wire.WorkspaceMemberResponse,
+  schema.WorkspaceMemberResponse
+> = { member: workspaceMember };
+
+const putWorkspaceCredentialRequest: SharedShape<
+  wire.PutWorkspaceCredentialRequest,
+  schema.PutWorkspaceCredentialRequest
+> = { name: workspaceCredential.name, label: "live", value: "sk_test_only" };
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -157,12 +254,17 @@ const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   volumeId: volume.id,
   error: null,
   role: "owner",
-  orgShareRole: "editor",
   owner: { name: "Owner", avatarUrl: null },
-  environment,
   agentRuleId: agentRule.id,
   connections: ["linear"],
   recipeId: recipe.id,
+  orgId: "org",
+  ownerMembershipId: workspaceMember.membershipId,
+  defaultMachineTypeId: machineType.id,
+  autoProvision: true,
+  myRole: "admin",
+  members: [workspaceMember, viewerMember],
+  credentials: [workspaceCredential],
 };
 
 const templateConnection: SharedShape<
@@ -174,6 +276,16 @@ const templateRepo: SharedShape<
   wire.TemplateRepoView,
   schema.TemplateRepoView
 > = { repo: "blitzdotdev/blitz-core", private: true };
+
+const addWorkspaceRepoRequest: SharedShape<
+  wire.AddWorkspaceRepoRequest,
+  schema.AddWorkspaceRepoRequest
+> = { repo: templateRepo.repo };
+
+const listWorkspaceReposResponse: SharedShape<
+  wire.ListWorkspaceReposResponse,
+  schema.ListWorkspaceReposResponse
+> = { repos: [templateRepo] };
 
 const githubInstallation: SharedShape<
   wire.GithubInstallationView,
@@ -269,6 +381,11 @@ const createWorkspaceRequest: SharedShape<
   schema.CreateWorkspaceRequest
 > = {
   machineTypeId: machineType.id,
+  defaultMachineTypeId: machineType.id,
+  autoProvision: false,
+  members: [{ membershipId: viewerMember.membershipId, role: "member", machineTypeId: machineType.id }],
+  credentials: [{ name: workspaceCredential.name, label: "live", value: "sk_test_only" }],
+  cloneFromWorkspaceId: "workspace",
   sshPublicKey: "ssh-ed25519 AAAAcaller",
   volumeId: volume.id,
   userData: "#cloud-config\n",
@@ -278,7 +395,6 @@ const createWorkspaceRequest: SharedShape<
     },
   },
   connections: ["github"],
-  environment,
   agentRuleId: agentRule.id,
   repos: [templateRepo.repo],
 };
@@ -537,6 +653,19 @@ const connectionsResponse: SharedShape<
 > = { connections: [connectionView] };
 
 const fullFieldValues = [
+  machine,
+  workspaceMember,
+  viewerMember,
+  workspaceCredential,
+  machineResponse,
+  setMachineTypeRequest,
+  addWorkspaceMemberRequest,
+  updateWorkspaceMemberRequest,
+  provisionMemberMachineRequest,
+  updateWorkspaceRequest,
+  clearAgentRuleRequest,
+  workspaceMemberResponse,
+  putWorkspaceCredentialRequest,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -553,6 +682,8 @@ const fullFieldValues = [
   workspace,
   templateConnection,
   templateRepo,
+  addWorkspaceRepoRequest,
+  listWorkspaceReposResponse,
   githubInstallation,
   listGithubInstallations,
   githubRepository,
@@ -612,6 +743,19 @@ describe("local wire copies", () => {
     expectTypeOf<wire.Phase>().toEqualTypeOf<schema.Phase>();
     expectTypeOf<wire.RetryAction>().toEqualTypeOf<schema.RetryAction>();
     expectTypeOf<wire.WorkspaceRole>().toEqualTypeOf<schema.WorkspaceRole>();
+    expectTypeOf<wire.WorkspaceMemberRole>().toEqualTypeOf<schema.WorkspaceMemberRole>();
+    expectTypeOf<wire.MachineState>().toEqualTypeOf<schema.MachineState>();
+    expectTypeOf<wire.MachineView>().toEqualTypeOf<schema.MachineView>();
+    expectTypeOf<wire.MachineResponse>().toEqualTypeOf<schema.MachineResponse>();
+    expectTypeOf<wire.SetMachineTypeRequest>().toEqualTypeOf<schema.SetMachineTypeRequest>();
+    expectTypeOf<wire.WorkspaceMemberView>().toEqualTypeOf<schema.WorkspaceMemberView>();
+    expectTypeOf<wire.WorkspaceCredentialView>().toEqualTypeOf<schema.WorkspaceCredentialView>();
+    expectTypeOf<wire.AddWorkspaceMemberRequest>().toEqualTypeOf<schema.AddWorkspaceMemberRequest>();
+    expectTypeOf<wire.UpdateWorkspaceMemberRequest>().toEqualTypeOf<schema.UpdateWorkspaceMemberRequest>();
+    expectTypeOf<wire.ProvisionMemberMachineRequest>().toEqualTypeOf<schema.ProvisionMemberMachineRequest>();
+    expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
+    expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
+    expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();
@@ -629,6 +773,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.WorkspaceView>().toEqualTypeOf<schema.WorkspaceView>();
     expectTypeOf<wire.TemplateConnectionView>().toEqualTypeOf<schema.TemplateConnectionView>();
     expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
+    expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
+    expectTypeOf<wire.ListWorkspaceReposResponse>().toEqualTypeOf<schema.ListWorkspaceReposResponse>();
     expectTypeOf<wire.GithubInstallationView>().toEqualTypeOf<schema.GithubInstallationView>();
     expectTypeOf<wire.ListGithubInstallationsResponse>().toEqualTypeOf<schema.ListGithubInstallationsResponse>();
     expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();
@@ -711,6 +857,8 @@ describe("local wire copies", () => {
     }
     expect(wire.BOX_UPDATE_OUTCOMES).toEqual(schema.BOX_UPDATE_OUTCOMES);
     expect(wire.PHASES).toEqual(schema.PHASES);
+    expect(wire.WORKSPACE_MEMBER_ROLES).toEqual(schema.WORKSPACE_MEMBER_ROLES);
+    expect(wire.MACHINE_STATES).toEqual(schema.MACHINE_STATES);
     expect(wire.RETRY_ACTIONS).toEqual(schema.RETRY_ACTIONS);
     expect(wire.PHASE_TRANSITIONS).toEqual(schema.PHASE_TRANSITIONS);
     expect(wire.INVITE_TTL_DAYS).toBe(schema.INVITE_TTL_DAYS);

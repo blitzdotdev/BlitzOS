@@ -1,0 +1,131 @@
+import type { ReactNode } from 'react';
+import type { ControlPlaneClient } from '../api';
+import type { TenantMe } from '../api-adapter';
+import { DriveHome } from '../files/DriveHome';
+import { SettingsHeader, SettingsPage } from '../SettingsPage';
+import {
+  type AppRoute,
+  type SettingsSection,
+} from '../sessions-page-state';
+
+/** Pages the shell draws beside the rail instead of a workspace. Settings is
+ * one of them even though it hides the rail: it is still not the webApp. */
+/* The template and recipe pages are gone from this switch: their routes no
+ * longer parse and their control-plane routes are unmounted. The screens
+ * themselves stay in the tree, unreachable — see `sessions-page-state.ts`. */
+export type SecondaryRoutePage = 'drive' | 'folder' | 'settings';
+
+const SECONDARY_ROUTE_PAGES = new Set<string>(['drive', 'folder', 'settings']);
+
+export function isSecondaryRoute(
+  route: AppRoute,
+): route is Extract<AppRoute, { page: SecondaryRoutePage }> {
+  return SECONDARY_ROUTE_PAGES.has(route.page);
+}
+
+export type SecondaryRoutesProps = {
+  route: Extract<AppRoute, { page: SecondaryRoutePage }>;
+  client: ControlPlaneClient;
+  viewer: TenantMe | null;
+  loaded: boolean;
+  /** The shell's own navigation columns, drawn on every page. */
+  rail: ReactNode;
+  dialogs: ReactNode;
+  updateNotice: ReactNode;
+  error: string | null;
+  onDismissError: () => void;
+  onNavigate: (path: string) => void;
+  onOpenRail: () => void;
+  onNavigateToSettings: (section: SettingsSection) => void;
+  onOpenWorkspace: (workspaceId: string) => void;
+  onLeaveSettings: () => void;
+  onSignOut: () => Promise<void>;
+  onLeftOrg: () => void;
+  activeWorkspaceTitle: string | undefined;
+};
+
+function Notice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div className="webapp-notice" role="alert">
+      <span>{message}</span>
+      <button type="button" onClick={onDismiss}>Dismiss</button>
+    </div>
+  );
+}
+
+function Loading() {
+  return (
+    <div className="drive-content">
+      <div className="drive-empty" role="status">Loading…</div>
+    </div>
+  );
+}
+
+/** The route switch for every page that is not a workspace. Each branch is the
+ * same shell: rail, content, notices, dialogs. */
+export function SecondaryRoutes({
+  route,
+  client,
+  viewer,
+  loaded,
+  rail,
+  dialogs,
+  updateNotice,
+  error,
+  onDismissError,
+  onNavigate,
+  onOpenRail,
+  onNavigateToSettings,
+  onOpenWorkspace,
+  onLeaveSettings,
+  onSignOut,
+  onLeftOrg,
+  activeWorkspaceTitle,
+}: SecondaryRoutesProps) {
+  const notice = error === null
+    ? null
+    : <Notice message={error} onDismiss={onDismissError} />;
+  if (route.page === 'settings') {
+    return (
+      <main className="settings-shell" aria-busy={!loaded}>
+        <SettingsHeader workspaceLabel={activeWorkspaceTitle} onBack={onLeaveSettings} />
+        {loaded && viewer ? (
+          <SettingsPage
+            client={client}
+            viewer={viewer}
+            section={route.settingsSection}
+            onNavigate={onNavigateToSettings}
+            onOpenWorkspace={onOpenWorkspace}
+            onSignOut={onSignOut}
+            onLeftOrg={onLeftOrg}
+          />
+        ) : (
+          <div className="settings-page-state settings-page-state--loading" role="status">
+            Loading settings…
+          </div>
+        )}
+        {notice}
+        {updateNotice}
+      </main>
+    );
+  }
+
+  // Drive and folder are all that is left, so this is the last branch.
+  return (
+    <main className="drive-shell" aria-busy={!loaded}>
+      {rail}
+      {loaded && viewer ? (
+        <DriveHome
+          client={client}
+          viewer={viewer}
+          route={route}
+          onNavigate={onNavigate}
+          onOpenRail={onOpenRail}
+        />
+      ) : <Loading />}
+      {notice}
+      {updateNotice}
+      {dialogs}
+    </main>
+  );
+}

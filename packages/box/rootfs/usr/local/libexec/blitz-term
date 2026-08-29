@@ -64,58 +64,22 @@ if [ "$mode" = ro ]; then
   exec tmux -u attach-session -r -t "=$session"
 fi
 
-# The workspace's own variables live in the credential env.d directory, which
-# a login shell sources as a whole glob through /etc/profile.d/blitz-creds.sh.
-# tmux execs the commands below without a login shell, so the same glob is
-# sourced here, in the same order. The chat actor merges the identical files
-# (box/actor/src/credentials.ts) so the two surfaces cannot disagree about what
-# a variable holds.
+# No secret passes through here. Every credential — the workspace's own
+# variables included — is pulled at the moment of use with `blitz-cred get
+# <name>`, so a tab carries nothing that outlives its grant and a Disconnect
+# takes effect without restarting anything.
 #
-# No connection secret passes through here. An agent pulls one when it needs
-# one (`blitz-cred get <provider>`), so a tab carries no credential and a
-# Disconnect takes effect without restarting anything.
-#
-# Snapshot the exported environment first, so the delta after the glob names
-# exactly what env.d contributed. Prefixed plain variables rather than an
-# associative array: this script also has to parse under the bash 3.2 that
-# macOS still installs, where `declare -A` does not exist. `compgen -e` yields
-# valid identifiers only, so the eval builds a valid name every time.
-for env_name in $(compgen -e); do
-  eval "blitz_env_was_$env_name=\${$env_name-}"
-done
-
-for credential_env_file in "$state_dir"/creds/env.d/*.sh; do
-  [ -r "$credential_env_file" ] && . "$credential_env_file" || :
-done
-unset credential_env_file
-
-# Exporting the variables above is not enough. tmux gives a NEW session the
-# environment of the client that created it only when that client also STARTS
-# the server; every later session copies the server's snapshot instead. A box
-# boots a detached `blitz-rc` session first, so the server snapshot is
-# whatever bootstrap's `docker exec` held — no LANG, no workspace variable. Tabs then
-# inherited that bare snapshot and saw none of the env.d glob. `-e NAME=VALUE`
-# writes each variable into the session environment explicitly, so delivery no
-# longer depends on who started the server.
-#
-# The locale pair goes first: ttyd hands blitz-term LANG/LC_ALL, but the delta
-# below only carries what env.d changed, and an env.d file that sets either one
-# appends a later `-e` that tmux applies last — the same "later file wins" rule
-# the sourcing loop follows.
+# tmux gives a NEW session the environment of the client that created it only
+# when that client also STARTS the server; every later session copies the
+# server's snapshot instead. A box boots a detached `blitz-rc` session first,
+# so the server snapshot is whatever bootstrap's `docker exec` held — no LANG.
+# `-e NAME=VALUE` writes the locale into the session environment explicitly, so
+# delivery does not depend on who started the server. ttyd hands blitz-term the
+# pair; the fallback covers the callers that do not.
 #
 # -e applies on CREATE only. `new-session -A` that attaches to a live session
-# leaves that session's environment untouched, which matches today's
-# semantics: an attach never re-sourced env.d either.
+# leaves that session's environment untouched.
 session_env=(-e "LANG=${LANG:-C.UTF-8}" -e "LC_ALL=${LC_ALL:-C.UTF-8}")
-for env_name in $(compgen -e); do
-  eval "env_seen=\${blitz_env_was_$env_name+set}"
-  eval "env_was=\${blitz_env_was_$env_name-}"
-  eval "env_now=\${$env_name-}"
-  if [ "$env_seen" != set ] || [ "$env_was" != "$env_now" ]; then
-    session_env+=(-e "$env_name=$env_now")
-  fi
-done
-unset env_name env_seen env_was env_now
 
 # Recipe invocation delivery (plans/RECIPES.md Phase 2): a recipe launch
 # leaves /var/lib/blitz/recipe/{invocation.env,prompt.txt} on the state
@@ -127,7 +91,7 @@ unset env_name env_seen env_was env_now
 # an existing session attaches and never re-injects (has-session decides),
 # `ro` exited above without consuming, and HARNESS=chat files belong to the
 # bootstrap chat sender, never to blitz-term.
-recipe_dir="${BLITZ_STATE_DIR:-/var/lib/blitz}/recipe"
+recipe_dir="$state_dir/recipe"
 case "$session_type" in
   claude|codex)
     if [ -f "$recipe_dir/invocation.env" ] &&

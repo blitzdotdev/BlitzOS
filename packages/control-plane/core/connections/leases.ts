@@ -5,12 +5,13 @@ import type { Principal } from "../principals.js";
 import type { CoreRuntime } from "../runtime.js";
 import { scopesFromJson } from "./manifest.js";
 import type { Lease, MintResult } from "./types.js";
-import { canControlWorkspace } from "../workspace-access.js";
+import { isWorkspaceMember, workspaceAccess } from "../workspace-access.js";
 
 interface LeaseRow {
   id: string;
   workspace_id: string;
   box_id: string | null;
+  machine_id: string | null;
   connection_id: string;
   connection_name: string;
   user_id: string | null;
@@ -27,13 +28,14 @@ interface LeaseRow {
 interface CreateLeaseInput {
   id: string;
   workspaceId: string;
-  /** Null for a lease a person minted from the connect grid: audit records
-   * which box received a credential, and no box received this one yet. */
-  boxId: string | null;
+  /** The machine that received the credential, or null for a lease a person
+   * minted from the connect grid: audit records which guest received a
+   * credential, and no guest received this one yet. */
+  machineId: string | null;
   connectionId: string;
   connectionName: string;
-  /** The workspace owner, always: a box is one disk and one env, so a lease
-   * resolves against the owner's identity even when an editor triggered it. */
+  /** The member the credential was resolved for. It is the machine's own
+   * member now, never the workspace owner: one machine, one person. */
   userId: string;
   /** The grant this lease was minted from; null for legacy org-root mints. */
   grantId: string | null;
@@ -64,7 +66,7 @@ function leaseView(row: LeaseRow): Lease {
   return {
     id: row.id,
     workspaceId: row.workspace_id,
-    boxId: row.box_id,
+    boxId: row.machine_id ?? row.box_id,
     connection: row.connection_name,
     userId: row.user_id,
     scopes: scopesFromJson(row.scopes),
@@ -86,13 +88,13 @@ export async function createLease(
   await transaction(db, [
     {
       q: `INSERT INTO credential_leases
-          (id, workspace_id, box_id, connection_id, user_id, grant_id, scopes,
+          (id, workspace_id, machine_id, connection_id, user_id, grant_id, scopes,
            mode, token_hash, issued_at, expires_at, state)
           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active')`,
       v: [
         input.id,
         input.workspaceId,
-        input.boxId,
+        input.machineId,
         input.connectionId,
         input.userId,
         input.grantId,
@@ -113,7 +115,7 @@ export async function createLease(
         JSON.stringify({
           integration: input.connectionName,
           scopes: input.scopes,
-          box_id: input.boxId,
+          box_id: input.machineId,
           workspace_id: input.workspaceId,
           acting_principal: {
             userId: input.principal.id,
@@ -127,7 +129,7 @@ export async function createLease(
   return {
     id: input.id,
     workspaceId: input.workspaceId,
-    boxId: input.boxId,
+    boxId: input.machineId,
     connection: input.connectionName,
     userId: input.userId,
     scopes: input.scopes,
@@ -155,7 +157,9 @@ export async function listLeases(
   if (workspace === null || workspace.org_id !== principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
-  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  if (!isWorkspaceMember(await workspaceAccess(db, principal, workspace))) {
+    throw new HttpError(403, "forbidden");
+  }
   const result = await rows<LeaseRow>(db, {
     q: `SELECT lease.*, connection.scoped_name AS connection_name,
                workspace.owner_id, workspace.org_id, workspace.owner_membership_id
@@ -187,7 +191,11 @@ export async function revokeLease(
   if (row === null || row.org_id !== principal.orgId) {
     throw new HttpError(404, "credential lease not found");
   }
-  if (!canControlWorkspace(principal, row)) throw new HttpError(403, "forbidden");
+  if (!isWorkspaceMember(await workspaceAccess(db, principal, {
+    id: row.workspace_id,
+    org_id: row.org_id,
+    owner_membership_id: row.owner_membership_id,
+  }))) throw new HttpError(403, "forbidden");
   if (row.state !== "active") return;
   await transaction(db, [
     {
@@ -205,7 +213,7 @@ export async function revokeLease(
         JSON.stringify({
           integration: row.connection_name,
           scopes: scopesFromJson(row.scopes),
-          box_id: row.box_id,
+          box_id: row.machine_id ?? row.box_id,
           workspace_id: row.workspace_id,
           acting_principal: {
             userId: principal.id,
@@ -254,7 +262,9 @@ export async function listCredentialEvents(
   if (workspace === null || workspace.org_id !== principal.orgId) {
     throw new HttpError(404, "workspace not found");
   }
-  if (!canControlWorkspace(principal, workspace)) throw new HttpError(403, "forbidden");
+  if (!isWorkspaceMember(await workspaceAccess(db, principal, workspace))) {
+    throw new HttpError(403, "forbidden");
+  }
   const events = await rows<CredentialEventRow>(db, {
     q: `SELECT event.id, event.lease_id, event.event, event.detail, event.created_at
         FROM credential_events event
@@ -278,6 +288,18 @@ export function revokeWorkspaceLeasesQuery(workspaceId: string): Query {
         SET state = 'revoked', token_hash = NULL
         WHERE workspace_id = ?1 AND state = 'active'`,
     v: [workspaceId],
+  };
+}
+
+/** Every live lease a machine holds. A VM destroy is a revocation event: the
+ * guest that held the credential is gone, and a proxy lease token stays usable
+ * until its row dies. */
+export function revokeMachineLeasesQuery(machineId: string): Query {
+  return {
+    q: `UPDATE credential_leases
+        SET state = 'revoked', token_hash = NULL
+        WHERE machine_id = ?1 AND state = 'active'`,
+    v: [machineId],
   };
 }
 

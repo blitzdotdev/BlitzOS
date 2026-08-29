@@ -145,7 +145,7 @@ async function attachedFolder(providers: WebDavProviders): Promise<{
   const folderId = (await folderResponse.json<{ folder: { id: string } }>()).folder.id;
   const workspace = await createWorkspace(app, cookie);
   await env.DB.prepare(
-    "UPDATE workspaces SET phase = 'ready' WHERE id = ?1",
+    "UPDATE machines SET state = 'running' WHERE workspace_id = ?1",
   ).bind(workspace.id).run();
   const attached = await appRequest(app, `/workspaces/${workspace.id}/folders`, {
     method: "POST",
@@ -289,7 +289,7 @@ describe("control-plane folder sync", () => {
     expect(providers.files.size).toBe(0);
 
     await env.DB.prepare(
-      "UPDATE workspaces SET ssh_host = '198.51.100.7', ssh_port = 22, ssh_user = 'blitz' WHERE id = ?1",
+      "UPDATE machines SET ssh_host = '198.51.100.7', ssh_port = 22, ssh_user = 'blitz' WHERE workspace_id = ?1",
     ).bind(workspace.id).run();
     const ready = await appRequest(app, new URL(phoneHomeUrl(providers, workspace.id)).pathname, {
       method: "POST",
@@ -322,7 +322,7 @@ describe("control-plane folder sync", () => {
     });
     const workspace = await createWorkspace(app, cookie);
     await env.DB.prepare(
-      "UPDATE workspaces SET phase = 'ready' WHERE id = ?1",
+      "UPDATE machines SET state = 'running' WHERE workspace_id = ?1",
     ).bind(workspace.id).run();
     expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
       method: "POST",
@@ -338,7 +338,7 @@ describe("control-plane folder sync", () => {
     const { app, cookie, folderId, workspaceId } = await attachedFolder(providers);
     const second = await createWorkspace(app, cookie);
     await env.DB.prepare(
-      "UPDATE workspaces SET phase = 'ready' WHERE id = ?1",
+      "UPDATE machines SET state = 'running' WHERE workspace_id = ?1",
     ).bind(second.id).run();
     expect((await appRequest(app, `/workspaces/${second.id}/folders`, {
       method: "POST",
@@ -470,7 +470,7 @@ describe("control-plane folder sync", () => {
       const app = appWithProviders(providers, providers);
       const cookie = await operatorSession(app);
       const workspace = await createWorkspace(app, cookie);
-      await env.DB.prepare("UPDATE workspaces SET phase = 'ready' WHERE id = ?1")
+      await env.DB.prepare("UPDATE machines SET state = 'running' WHERE workspace_id = ?1")
         .bind(workspace.id).run();
       const folderIds: string[] = [];
       for (const name of names) {
@@ -543,7 +543,7 @@ describe("control-plane folder sync", () => {
       // Rows that predate the column read as 0, and boxes created without any
       // folder never appear in a sync pass.
       await env.DB.prepare(
-        "UPDATE workspaces SET phase = 'ready', files_ready = 0 WHERE id = ?1",
+        "UPDATE machines SET state = 'running' WHERE workspace_id = ?1",
       ).bind(workspace.id).run();
 
       await runFileSyncSweep(testRuntime(providers));

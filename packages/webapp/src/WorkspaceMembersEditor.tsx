@@ -1,0 +1,377 @@
+import type {
+  MachineType,
+  MachineView,
+  WorkspaceMemberRole,
+  WorkspaceMemberView,
+} from '@blitzos/schema';
+import { useState } from 'react';
+import type { MemberView } from './api';
+import { DriveAvatar } from './files/DriveAvatar';
+import { MachineTypeSelect, WORKSPACE_DEFAULT_MACHINE_TYPE } from './MachineTypeSelect';
+import { WebAppSelectMenu } from './WebAppSelectMenu';
+
+/** A member a create request has not sent yet. `machineTypeId` empty means
+ * "take the workspace default" and travels as an absent field. */
+export type DraftWorkspaceMember = {
+  membershipId: string;
+  role: WorkspaceMemberRole;
+  machineTypeId: string;
+};
+
+/** The lifecycle verbs of plan §6, in the order the menu lists them. */
+export type MachineAction = 'provision' | 'stop' | 'start' | 'recreate' | 'destroy';
+
+const ROLE_LABELS = {
+  admin: 'Admin',
+  member: 'Member',
+  viewer: 'Viewer',
+} satisfies Record<WorkspaceMemberRole, string>;
+
+const ROLE_OPTIONS = (['admin', 'member', 'viewer'] as const).map((role) => ({
+  value: role,
+  label: ROLE_LABELS[role],
+}));
+
+const MACHINE_ACTION_LABELS = {
+  provision: 'Provision',
+  stop: 'Stop',
+  start: 'Start',
+  recreate: 'Recreate',
+  destroy: 'Destroy',
+} satisfies Record<MachineAction, string>;
+
+/**
+ * Which verbs this machine's state can accept.
+ *
+ * A member with no machine gets exactly one: `provision`. The wire sends
+ * `machine: null` where the workspace does not auto-provision, or where theirs
+ * was destroyed, and that row is keyed by the membership rather than by a
+ * machine id — which is why it took its own route.
+ *
+ * `provision` appears again on an error row, the one reachable state whose VM
+ * may be missing. A machine that is going somewhere accepts nothing until it
+ * arrives.
+ */
+export function machineActionsFor(machine: MachineView | null): MachineAction[] {
+  if (machine === null) return ['provision'];
+  if (machine.state === 'provisioning' || machine.state === 'destroying') return [];
+  if (machine.state === 'stopped') return ['start', 'destroy'];
+  if (machine.state === 'error') return ['provision', 'recreate', 'destroy'];
+  return ['stop', 'recreate', 'destroy'];
+}
+
+function MachineStateChip({ machine }: { machine: MachineView | null }) {
+  const state = machine?.state ?? 'none';
+  return (
+    <span className={`machine-chip machine-chip--${state}`}>
+      {machine === null ? 'No machine' : machine.state}
+    </span>
+  );
+}
+
+/** The people search lifted from `ShareWorkspaceDialog`: active org members
+ * who are not on the list yet, filtered by name or email. */
+function AddMemberSearch({
+  candidates,
+  onAdd,
+}: {
+  candidates: MemberView[];
+  onAdd: (member: MemberView) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const trimmed = query.trim().toLowerCase();
+  const matches = candidates
+    .filter((member) => trimmed === ''
+      || member.name.toLowerCase().includes(trimmed)
+      || member.email.toLowerCase().includes(trimmed))
+    .slice(0, 5);
+  return (
+    <div className="workspace-members-search">
+      <input
+        className="drive-field"
+        type="text"
+        autoComplete="off"
+        placeholder="Add people"
+        aria-label="Add people"
+        value={query}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => { setQuery(event.currentTarget.value); setOpen(true); }}
+      />
+      {open && (
+        <div className="drive-suggestions">
+          {matches.length === 0
+            ? <div className="drive-suggestion-empty">No one else to add</div>
+            : matches.map((member) => (
+              <button
+                className="drive-suggestion"
+                type="button"
+                key={member.id}
+                onClick={() => {
+                  setQuery('');
+                  setOpen(false);
+                  onAdd(member);
+                }}
+              >
+                <DriveAvatar name={member.name || member.email} avatarUrl={member.avatarUrl} size="md" />
+                <span className="drive-person-copy">
+                  <strong>{member.name || member.email}</strong>
+                  <span>{member.email}</span>
+                </span>
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The volume's location, so `SetMachineType` can refuse the types that
+ * cannot reach it. Derived from the machine's current type, because the
+ * volume is created in that type's location. */
+function machineLocation(
+  machine: MachineView | null,
+  machines: readonly MachineType[],
+): string | null {
+  if (machine === null || machine.volumeId === null) return null;
+  const current = machines.find(({ id }) => id === machine.machineTypeId);
+  if (current === undefined) return null;
+  return current.location || current.id.split('@').at(-1) || null;
+}
+
+/** One row, whichever mode drew it. */
+function MemberRow({
+  name,
+  avatarUrl,
+  role,
+  machineTypeId,
+  machine,
+  machines,
+  defaultMachineTypeId,
+  pinned,
+  readOnly,
+  onRoleChange,
+  onMachineTypeChange,
+  onMachineAction,
+  onRemove,
+}: {
+  name: string;
+  avatarUrl: string | null;
+  role: WorkspaceMemberRole;
+  machineTypeId: string;
+  /** Live mode only; null in draft mode, where no machine exists yet. */
+  machine: MachineView | null;
+  machines: readonly MachineType[];
+  defaultMachineTypeId: string;
+  /** The creator, who is the first workspace admin and cannot be removed. */
+  pinned: boolean;
+  readOnly: boolean;
+  onRoleChange: (role: WorkspaceMemberRole) => void;
+  onMachineTypeChange: (machineTypeId: string) => void;
+  onMachineAction: ((action: MachineAction) => void) | null;
+  onRemove: () => void;
+}) {
+  // A viewer never holds a machine (§2.2), so the type select would be a
+  // control over something that does not exist.
+  const showMachine = role !== 'viewer';
+  const actions = onMachineAction === null ? [] : machineActionsFor(machine);
+  return (
+    <div className="workspace-member-row">
+      <DriveAvatar name={name} avatarUrl={avatarUrl} size="lg" />
+      <span className="workspace-member-name">
+        <strong>{name}</strong>
+        {pinned && <small>Workspace owner</small>}
+      </span>
+      {readOnly || pinned ? (
+        <span className="workspace-member-role-static">{ROLE_LABELS[role]}</span>
+      ) : (
+        <WebAppSelectMenu
+          ariaLabel={`Role for ${name}`}
+          className="workspace-member-role"
+          value={role}
+          options={ROLE_OPTIONS}
+          onChange={(next) => {
+            // SAFETY: the options are exactly WORKSPACE_MEMBER_ROLES.
+            onRoleChange(next as WorkspaceMemberRole);
+          }}
+        />
+      )}
+      {showMachine && <MachineStateChip machine={machine} />}
+      {showMachine && (
+        <MachineTypeSelect
+          machines={machines}
+          value={machineTypeId}
+          defaultMachineTypeId={defaultMachineTypeId}
+          volumeLocation={machineLocation(machine, machines)}
+          ariaLabel={`Machine type for ${name}`}
+          disabled={readOnly}
+          onChange={onMachineTypeChange}
+        />
+      )}
+      {showMachine && actions.length > 0 && (
+        <WebAppSelectMenu
+          ariaLabel={`Machine actions for ${name}`}
+          className="workspace-member-actions"
+          value=""
+          prefix="⋯"
+          options={actions.map((action) => ({ value: action, label: MACHINE_ACTION_LABELS[action] }))}
+          onChange={(next) => {
+            // SAFETY: the options are exactly the MachineAction values above.
+            onMachineAction?.(next as MachineAction);
+          }}
+        />
+      )}
+      {!readOnly && !pinned && (
+        <button
+          className="workspace-member-remove"
+          type="button"
+          aria-label={`Remove ${name}`}
+          onClick={onRemove}
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+export type WorkspaceMembersEditorMode =
+  | {
+    kind: 'draft';
+    members: DraftWorkspaceMember[];
+    onChange: (members: DraftWorkspaceMember[]) => void;
+  }
+  | {
+    kind: 'live';
+    members: WorkspaceMemberView[];
+    readOnly: boolean;
+    ownerMembershipId: string | null;
+    onAdd: (input: { membershipId: string; role: WorkspaceMemberRole; machineTypeId: string }) => void;
+    onRoleChange: (membershipId: string, role: WorkspaceMemberRole) => void;
+    onMachineTypeChange: (member: WorkspaceMemberView, machineTypeId: string) => void;
+    onMachineAction: (member: WorkspaceMemberView, action: MachineAction) => void;
+    onRemove: (member: WorkspaceMemberView) => void;
+  };
+
+/**
+ * The member list of plan §6b, in both its modes.
+ *
+ * *Draft* edits local state and feeds `CreateWorkspaceRequest.members[]`.
+ * *Live* calls the API on every edit, and its rows carry the machine state
+ * chip and the lifecycle menu of §6.
+ *
+ * The row is the same either way, so the two modes cannot drift into showing
+ * different things about the same member.
+ */
+export function WorkspaceMembersEditor({
+  mode,
+  orgMembers,
+  machines,
+  defaultMachineTypeId,
+  viewerName = 'You',
+  viewerAvatarUrl = null,
+}: {
+  mode: WorkspaceMembersEditorMode;
+  orgMembers: MemberView[];
+  machines: readonly MachineType[];
+  defaultMachineTypeId: string;
+  /** Draft mode pins the creator as the first workspace admin. Live mode
+   * reads the owner off the member rows, so it never needs this. */
+  viewerName?: string;
+  viewerAvatarUrl?: string | null;
+}) {
+  const listed = new Set(mode.members.map(({ membershipId }) => membershipId));
+  const readOnly = mode.kind === 'live' && mode.readOnly;
+  const candidates = orgMembers.filter((member) =>
+    member.status === 'active' && !listed.has(member.id));
+  const nameFor = (membershipId: string, fallback: string) => {
+    const member = orgMembers.find(({ id }) => id === membershipId);
+    return member === undefined ? fallback : member.name || member.email;
+  };
+
+  return (
+    <div className="workspace-members-editor">
+      {!readOnly && (
+        <AddMemberSearch
+          candidates={candidates}
+          onAdd={(member) => {
+            if (mode.kind === 'draft') {
+              mode.onChange([...mode.members, {
+                membershipId: member.id,
+                role: 'member',
+                machineTypeId: WORKSPACE_DEFAULT_MACHINE_TYPE,
+              }]);
+              return;
+            }
+            mode.onAdd({
+              membershipId: member.id,
+              role: 'member',
+              machineTypeId: WORKSPACE_DEFAULT_MACHINE_TYPE,
+            });
+          }}
+        />
+      )}
+      <div className="workspace-members-rows">
+        {mode.kind === 'draft' && (
+          <MemberRow
+            name={`${viewerName} (you)`}
+            avatarUrl={viewerAvatarUrl}
+            role="admin"
+            machineTypeId={WORKSPACE_DEFAULT_MACHINE_TYPE}
+            machine={null}
+            machines={machines}
+            defaultMachineTypeId={defaultMachineTypeId}
+            pinned
+            readOnly
+            onRoleChange={() => undefined}
+            onMachineTypeChange={() => undefined}
+            onMachineAction={null}
+            onRemove={() => undefined}
+          />
+        )}
+        {mode.kind === 'draft'
+          ? mode.members.map((draft, index) => (
+            <MemberRow
+              key={draft.membershipId}
+              name={nameFor(draft.membershipId, draft.membershipId)}
+              avatarUrl={orgMembers.find(({ id }) => id === draft.membershipId)?.avatarUrl ?? null}
+              role={draft.role}
+              machineTypeId={draft.machineTypeId}
+              machine={null}
+              machines={machines}
+              defaultMachineTypeId={defaultMachineTypeId}
+              pinned={false}
+              readOnly={false}
+              onRoleChange={(role) => mode.onChange(mode.members.map((current, at) =>
+                at === index ? { ...current, role } : current))}
+              onMachineTypeChange={(machineTypeId) => mode.onChange(mode.members.map((current, at) =>
+                at === index ? { ...current, machineTypeId } : current))}
+              onMachineAction={null}
+              onRemove={() => mode.onChange(mode.members.filter((_current, at) => at !== index))}
+            />
+          ))
+          : mode.members.map((member) => (
+            <MemberRow
+              key={member.membershipId}
+              name={member.name}
+              avatarUrl={member.avatarUrl}
+              role={member.role}
+              machineTypeId={member.machine?.machineTypeId ?? WORKSPACE_DEFAULT_MACHINE_TYPE}
+              machine={member.machine}
+              machines={machines}
+              defaultMachineTypeId={defaultMachineTypeId}
+              pinned={member.membershipId === mode.ownerMembershipId}
+              readOnly={readOnly}
+              onRoleChange={(role) => mode.onRoleChange(member.membershipId, role)}
+              onMachineTypeChange={(machineTypeId) => mode.onMachineTypeChange(member, machineTypeId)}
+              onMachineAction={readOnly ? null : (action) => mode.onMachineAction(member, action)}
+              onRemove={() => mode.onRemove(member)}
+            />
+          ))}
+        {mode.members.length === 0 && mode.kind === 'live' && (
+          <p className="workspace-members-empty">No members yet.</p>
+        )}
+      </div>
+    </div>
+  );
+}

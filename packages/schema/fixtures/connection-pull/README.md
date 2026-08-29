@@ -20,3 +20,19 @@ or newline anywhere in that set ends a line early and lets the rest read as a
 statement the control plane never sent. `token-bad-env-name` would print a
 shell word that is not an identifier. `token-extra-field` is the old delivery
 key: the box refuses an unknown field rather than guessing what it meant.
+
+## The workspace plane
+
+`blitz-cred get <name>` resolves in two planes (plans/MEMBER-MACHINES.md §4):
+the member's own connection grant first, then the workspace's own credential
+store. Both answers travel this same wire, so the box needs no second code
+path — `token-workspace-credential.json` is a workspace credential served
+through it.
+
+Two things about that fixture are the contract, not decoration. `connection`
+is the ENVIRONMENT VARIABLE NAME the agent asked for, because in this plane
+the name is the variable; it therefore starts with a letter, which is what
+keeps a stored name inside the wire's alphabet. And `expiresAt` is short even
+though a stored static has nothing to expire: it says "ask again", which is
+the whole delivery model, and it is what makes a revoke take effect on the
+next call rather than at the end of a long lease.

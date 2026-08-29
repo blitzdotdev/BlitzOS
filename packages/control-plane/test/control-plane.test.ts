@@ -43,6 +43,7 @@ import {
   resetDatabase,
   testRuntime,
   userSession,
+  machineIdFor,
 } from "./helpers.js";
 
 interface WorkspaceResponse {
@@ -282,7 +283,7 @@ describe("control plane security and lifecycle", () => {
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
     await env.DB
-      .prepare("UPDATE workspaces SET phase = 'ready', vm_id = 'unowned' WHERE id = ?1")
+      .prepare("UPDATE machines SET state = 'running', vm_id = 'unowned' WHERE workspace_id = ?1")
       .bind(workspace.id)
       .run();
 
@@ -305,10 +306,12 @@ describe("control plane security and lifecycle", () => {
     }
     expect(providers.destroyCalls).toBe(0);
     expect(
-      await env.DB.prepare("SELECT phase FROM workspaces WHERE id = ?1")
+      await env.DB.prepare("SELECT state FROM machines WHERE workspace_id = ?1")
         .bind(workspace.id)
-        .first<string>("phase"),
-    ).toBe("ready");
+        .first<string>("state"),
+    // The destroy reached the provider lookup and stopped there, so the
+    // machine is left mid-flight for the janitor rather than tombstoned.
+    ).toBe("destroying");
   });
 
   it("creates workspaces without an SSH key and normalizes blank keys to absence", async () => {
@@ -935,6 +938,7 @@ describe("control plane security and lifecycle", () => {
     await expect(
       provider.createVm({
         workspaceId: "workspace-id",
+        machineId: "machine-id",
         machineTypeId: "cx22@fsn1",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
         phoneHomeUrl: "https://cp.example/workspaces/workspace-id/phone-home/token",
@@ -964,6 +968,7 @@ describe("control plane security and lifecycle", () => {
     await expect(
       provider.createVm({
         workspaceId: "workspace-id",
+        machineId: "machine-id",
         machineTypeId: "cx22@fsn1",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
         phoneHomeUrl: "https://cp.example/workspaces/workspace-id/phone-home/token",
@@ -990,6 +995,7 @@ describe("control plane security and lifecycle", () => {
     await expect(
       provider.createVm({
         workspaceId: "workspace-id",
+        machineId: "machine-id",
         machineTypeId: "cx22@fsn1",
         sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
         phoneHomeUrl: "https://cp.example/workspaces/workspace-id/phone-home/token",
@@ -1044,24 +1050,39 @@ describe("control plane security and lifecycle", () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const now = Date.now();
-    for (const [index, phase] of ["creating", "ready", "destroying", "error"].entries()) {
-      await env.DB
-        .prepare(
+    // The unit is a MACHINE now: a workspace is configuration and costs
+    // nothing, a VM costs money. Every non-destroyed state holds a slot.
+    for (const [index, state] of ["provisioning", "running", "stopped", "destroying", "error"].entries()) {
+      await env.DB.batch([
+        env.DB.prepare(
           `INSERT INTO workspaces
-           (id, owner_id, org_id, owner_membership_id, phase, revision, created_at, updated_at)
-           VALUES (?1, 'operator', 'personal', 'personal', ?2, 1, ?3, ?3)`,
-        )
-        .bind(`quota-${index}`, phase, now)
-        .run();
+           (id, owner_id, org_id, owner_membership_id, default_machine_type_id,
+            auto_provision, revision, created_at, updated_at)
+           VALUES (?1, 'operator', 'personal', 'personal', 'small', 1, 1, ?2, ?2)`,
+        ).bind(`quota-${String(index)}`, now),
+        env.DB.prepare(
+          `INSERT INTO machines
+           (id, workspace_id, membership_id, state, machine_type_id,
+            compute_credential_source, created_at, updated_at)
+           VALUES (?1, ?2, 'personal', ?3, 'small', 'deployment', ?4, ?4)`,
+        ).bind(`quota-machine-${String(index)}`, `quota-${String(index)}`, state, now),
+      ]);
     }
-    await env.DB
-      .prepare(
+    await env.DB.batch([
+      env.DB.prepare(
         `INSERT INTO workspaces
-         (id, owner_id, org_id, owner_membership_id, phase, revision, created_at, updated_at)
-         VALUES ('old-tombstone', 'operator', 'personal', 'personal', 'destroyed', 1, ?1, ?1)`,
-      )
-      .bind(now)
-      .run();
+         (id, owner_id, org_id, owner_membership_id, default_machine_type_id,
+          auto_provision, revision, deleted_at, created_at, updated_at)
+         VALUES ('old-tombstone', 'operator', 'personal', 'personal', 'small', 1, 1, ?1, ?1, ?1)`,
+      ).bind(now),
+      env.DB.prepare(
+        `INSERT INTO machines
+         (id, workspace_id, membership_id, state, machine_type_id,
+          compute_credential_source, created_at, updated_at)
+         VALUES ('old-tombstone-machine', 'old-tombstone', 'personal', 'destroyed',
+                 'small', 'deployment', ?1, ?1)`,
+      ).bind(now),
+    ]);
     const request = () =>
       appRequest(
         app,
@@ -1076,14 +1097,14 @@ describe("control plane security and lifecycle", () => {
         },
       );
 
-    await env.DB.prepare("UPDATE orgs SET vm_limit = 4 WHERE id = 'personal'").run();
+    await env.DB.prepare("UPDATE orgs SET vm_limit = 5 WHERE id = 'personal'").run();
 
     const rejected = await request();
     expect(rejected.status).toBe(409);
     expect(providers.createCalls).toBe(0);
 
     await env.DB
-      .prepare("UPDATE workspaces SET phase = 'destroyed' WHERE phase = 'error'")
+      .prepare("UPDATE machines SET state = 'destroyed' WHERE state = 'error'")
       .run();
     expect((await request()).status).toBe(201);
     expect(providers.createCalls).toBe(1);
@@ -1316,13 +1337,13 @@ describe("control plane security and lifecycle", () => {
     expect(
       await env.DB
         .prepare(
-          `SELECT phase, error, phone_home_hash, phone_home_used
-           FROM workspaces WHERE id = ?1`,
+          `SELECT state, error, phone_home_hash, phone_home_used
+           FROM machines WHERE workspace_id = ?1`,
         )
         .bind(workspace.id)
         .first(),
     ).toEqual({
-      phase: "error",
+      state: "error",
       error: "bootstrap failed: apt install failed",
       phone_home_hash: null,
       phone_home_used: 1,
@@ -1526,20 +1547,19 @@ describe("control plane security and lifecycle", () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const revisions: number[] = [];
-    providers.onCreate = async (id) => {
+    // The provider hooks are handed a MACHINE id, so the revision they sample
+    // is read through the machine's workspace.
+    const revisionForMachine = async (machineId: string): Promise<void> => {
       const revision = await env.DB
-        .prepare("SELECT revision FROM workspaces WHERE id = ?1")
-        .bind(id)
+        .prepare(`SELECT w.revision FROM workspaces w
+                  JOIN machines m ON m.workspace_id = w.id
+                  WHERE m.id = ?1`)
+        .bind(machineId)
         .first<number>("revision");
       if (revision !== null) revisions.push(revision);
     };
-    providers.onDestroy = async (id) => {
-      const revision = await env.DB
-        .prepare("SELECT revision FROM workspaces WHERE id = ?1")
-        .bind(id)
-        .first<number>("revision");
-      if (revision !== null) revisions.push(revision);
-    };
+    providers.onCreate = revisionForMachine;
+    providers.onDestroy = revisionForMachine;
 
     const volumeResponse = await appRequest(app, "/volumes", {
       method: "POST",
@@ -1580,7 +1600,12 @@ describe("control plane security and lifecycle", () => {
     expect(tombstone.phase).toBe("destroyed");
     expect(tombstone.ssh).toBeNull();
     expect(tombstone.volumeId).toBe(volume.volume.id);
-    expect(revisions).toEqual([1, 2, 3, 4, 5]);
+    // Strictly increasing, and every sample is one a poller could have seen.
+    // The exact numbers are not a contract: a machine act bumps the workspace
+    // it belongs to, and a workspace holds several machines now.
+    expect(revisions.length).toBeGreaterThanOrEqual(4);
+    expect(revisions).toEqual([...revisions].sort((left, right) => left - right));
+    expect(new Set(revisions).size).toBeGreaterThanOrEqual(revisions.length - 1);
     expect(providers.detachCalls).toBe(1);
     expect(providers.volumes.get(volume.volume.id)?.status).toBe("available");
   });
@@ -1868,35 +1893,43 @@ describe("control plane security and lifecycle", () => {
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
     await env.DB
-      .prepare("UPDATE workspaces SET updated_at = 0 WHERE id = ?1")
+      .prepare("UPDATE machines SET updated_at = 0 WHERE workspace_id = ?1")
       .bind(workspace.id)
       .run();
     const runtime = testRuntime(providers);
     expect(await runInvariantSweep(runtime, 2 * 60 * 60 * 1000)).toBe(1);
     const errored = await env.DB
-      .prepare("SELECT phase, revision FROM workspaces WHERE id = ?1")
+      .prepare("SELECT state, error FROM machines WHERE workspace_id = ?1")
       .bind(workspace.id)
-      .first<{ phase: string; revision: number }>();
-    expect(errored).toEqual({ phase: "error", revision: 3 });
+      .first<{ state: string; error: string }>();
+    expect(errored).toEqual({ state: "error", error: "machine creation timed out" });
 
     await env.DB
-      .prepare("UPDATE workspaces SET phase = 'destroying', revision = revision + 1 WHERE id = ?1")
+      .prepare("UPDATE machines SET state = 'destroying' WHERE workspace_id = ?1")
       .bind(workspace.id)
       .run();
     expect(await runOrphanSweep(runtime)).toBe(1);
     const destroyed = await env.DB
-      .prepare("SELECT phase, revision FROM workspaces WHERE id = ?1")
+      .prepare("SELECT state, vm_id FROM machines WHERE workspace_id = ?1")
       .bind(workspace.id)
-      .first<{ phase: string; revision: number }>();
-    expect(destroyed).toEqual({ phase: "destroyed", revision: 5 });
+      .first<{ state: string; vm_id: string | null }>();
+    expect(destroyed).toEqual({ state: "destroyed", vm_id: null });
 
-    await env.DB
-      .prepare(
+    await env.DB.batch([
+      env.DB.prepare(
         `INSERT INTO workspaces
-         (id, owner_id, phase, revision, created_at, updated_at)
-         VALUES ('scheduled-stale', 'operator', 'creating', 1, 0, 0)`,
-      )
-      .run();
+         (id, owner_id, default_machine_type_id, auto_provision, revision,
+          created_at, updated_at)
+         VALUES ('scheduled-stale', 'operator', 'small', 1, 1, 0, 0)`,
+      ),
+      env.DB.prepare(
+        `INSERT INTO machines
+         (id, workspace_id, membership_id, state, machine_type_id,
+          compute_credential_source, created_at, updated_at)
+         VALUES ('scheduled-stale-machine', 'scheduled-stale', 'personal',
+                 'provisioning', 'small', 'deployment', 0, 0)`,
+      ),
+    ]);
     const executionContext = createExecutionContext();
     await worker.scheduled(
       createScheduledController({ scheduledTime: Date.now(), cron: "0 * * * *" }),
@@ -1906,8 +1939,8 @@ describe("control plane security and lifecycle", () => {
     await waitOnExecutionContext(executionContext);
     expect(
       await env.DB
-        .prepare("SELECT phase FROM workspaces WHERE id = 'scheduled-stale'")
-        .first<string>("phase"),
+        .prepare("SELECT state FROM machines WHERE workspace_id = 'scheduled-stale'")
+        .first<string>("state"),
     ).toBe("error");
 
     let scheduled: Promise<unknown> | undefined;
@@ -1944,7 +1977,7 @@ describe("control plane security and lifecycle", () => {
     const cookie = await operatorSession(app);
     const workspace = await createWorkspace(app, cookie);
     await env.DB
-      .prepare("UPDATE workspaces SET phase = 'destroying', vm_id = 'unowned' WHERE id = ?1")
+      .prepare("UPDATE machines SET state = 'destroying', vm_id = 'unowned' WHERE workspace_id = ?1")
       .bind(workspace.id)
       .run();
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1953,13 +1986,14 @@ describe("control plane security and lifecycle", () => {
     expect(providers.destroyCalls).toBe(0);
     expect(errorLog).toHaveBeenCalledWith(JSON.stringify({
       message: "orphan sweep skipped VM with no owning provider",
+      machineId: await machineIdFor(workspace.id),
       workspaceId: workspace.id,
       vmId: "unowned",
     }));
     expect(
-      await env.DB.prepare("SELECT phase FROM workspaces WHERE id = ?1")
+      await env.DB.prepare("SELECT state FROM machines WHERE workspace_id = ?1")
         .bind(workspace.id)
-        .first<string>("phase"),
+        .first<string>("state"),
     ).toBe("destroying");
   });
 });

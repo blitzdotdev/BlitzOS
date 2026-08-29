@@ -218,6 +218,11 @@ class OfferedMicrovmProvider implements VmProvider {
 
 beforeEach(async () => {
   await env.DB.batch([
+    // Children first: machines and their token families reference workspaces.
+    env.DB.prepare("DELETE FROM machine_token_families"),
+    env.DB.prepare("DELETE FROM machines"),
+    env.DB.prepare("DELETE FROM workspace_members"),
+    env.DB.prepare("DELETE FROM workspace_credentials"),
     env.DB.prepare("DELETE FROM workspaces"),
     env.DB.prepare("DELETE FROM org_compute_credentials"),
     env.DB.prepare("DELETE FROM org_entitlements"),
@@ -287,7 +292,7 @@ describe("organization compute credentials", () => {
     );
     expect(createCall?.authorization).toBe("Bearer org-test-token");
     const workspaceSource = await env.DB.prepare(
-      "SELECT compute_credential_source FROM workspaces LIMIT 1",
+      "SELECT compute_credential_source FROM machines LIMIT 1",
     ).first<{ compute_credential_source: string | null }>();
     expect(workspaceSource?.compute_credential_source).toBe("org");
 
@@ -322,7 +327,7 @@ describe("organization compute credentials", () => {
     );
     expect(createCall?.authorization).toBe("Bearer deployment-test-token");
     const workspaceSource = await env.DB.prepare(
-      "SELECT compute_credential_source FROM workspaces LIMIT 1",
+      "SELECT compute_credential_source FROM machines LIMIT 1",
     ).first<{ compute_credential_source: string | null }>();
     expect(workspaceSource?.compute_credential_source).toBe("deployment");
   });
@@ -342,7 +347,9 @@ describe("organization compute credentials", () => {
     );
     expect(createCall?.authorization).toBe("Bearer deployment-test-token");
     expect(await env.DB.prepare(
-      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'self-host-fallback-org'",
+      `SELECT m.compute_credential_source FROM machines m
+       JOIN workspaces w ON w.id = m.workspace_id
+       WHERE w.org_id = 'self-host-fallback-org'`,
     ).first()).toMatchObject({ compute_credential_source: "deployment" });
   });
 
@@ -412,7 +419,9 @@ describe("organization compute credentials", () => {
     // The pinned source is what destroy and the janitors resolve by, so it has
     // to say deployment even though the policy is byok-required.
     expect(await env.DB.prepare(
-      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'subscribed-tenant-org' LIMIT 1",
+      `SELECT m.compute_credential_source FROM machines m
+       JOIN workspaces w ON w.id = m.workspace_id
+       WHERE w.org_id = 'subscribed-tenant-org' LIMIT 1`,
     ).first()).toMatchObject({ compute_credential_source: "deployment" });
   });
 
@@ -438,7 +447,9 @@ describe("organization compute credentials", () => {
     );
     expect(createCall?.authorization).toBe("Bearer org-test-token");
     expect(await env.DB.prepare(
-      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'subscribed-byok-org' LIMIT 1",
+      `SELECT m.compute_credential_source FROM machines m
+       JOIN workspaces w ON w.id = m.workspace_id
+       WHERE w.org_id = 'subscribed-byok-org' LIMIT 1`,
     ).first()).toMatchObject({ compute_credential_source: "org" });
   });
 
@@ -486,7 +497,9 @@ describe("organization compute credentials", () => {
     );
     expect(createCall?.authorization).toBe("Bearer org-test-token");
     expect(await env.DB.prepare(
-      "SELECT compute_credential_source FROM workspaces WHERE org_id = 'tenant-with-key-org' LIMIT 1",
+      `SELECT m.compute_credential_source FROM machines m
+       JOIN workspaces w ON w.id = m.workspace_id
+       WHERE w.org_id = 'tenant-with-key-org' LIMIT 1`,
     ).first()).toMatchObject({ compute_credential_source: "org" });
   });
 
@@ -603,7 +616,7 @@ describe("organization compute credentials", () => {
     const sweepId = createdIds[1];
     if (deleteId === undefined || sweepId === undefined) throw new Error("workspace ids missing");
     await env.DB.prepare(
-      "UPDATE workspaces SET compute_credential_source = NULL WHERE id IN (?1, ?2)",
+      "UPDATE machines SET compute_credential_source = 'deployment' WHERE workspace_id IN (?1, ?2)",
     ).bind(deleteId, sweepId).run();
     expect((await appRequest(
       app,
@@ -623,7 +636,7 @@ describe("organization compute credentials", () => {
       .toBe(true);
 
     await env.DB.prepare(
-      "UPDATE workspaces SET phase = 'destroying' WHERE id = ?1",
+      "UPDATE machines SET state = 'destroying' WHERE workspace_id = ?1",
     ).bind(sweepId).run();
     const fallback = new FakeProviders();
     const base = testRuntime(fallback);
@@ -758,7 +771,7 @@ describe("organization compute credentials", () => {
       body: JSON.stringify({ machineTypeId: "cpx21@hil" }),
     });
     expect(created.status).toBe(201);
-    await env.DB.prepare("UPDATE workspaces SET phase = 'destroying'").run();
+    await env.DB.prepare("UPDATE machines SET state = 'destroying'").run();
     const deleted = await appRequest(
       app,
       "/orgs/personal/compute-credentials/hetzner",
@@ -795,7 +808,7 @@ describe("organization compute credentials", () => {
     expect(reportError.mock.calls[0]?.[0]).toBe("orphan_sweep_compute_credential_skipped");
     expect(reportError.mock.calls[0]?.[1].message).toContain("org has no hetzner credential");
     expect(
-      await env.DB.prepare("SELECT vm_id FROM workspaces LIMIT 1").first<{ vm_id: string | null }>(),
+      await env.DB.prepare("SELECT vm_id FROM machines LIMIT 1").first<{ vm_id: string | null }>(),
     ).toMatchObject({ vm_id: expect.any(String) });
   });
 

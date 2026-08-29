@@ -166,7 +166,39 @@ export type Phase = (typeof PHASES)[number];
 export const RETRY_ACTIONS = ["poll", "destroy", "create", "upgrade"] as const;
 export type RetryAction = (typeof RETRY_ACTIONS)[number] | null;
 
+/** The ticket role. It is the access role a webApp ticket carries and the
+ * legacy `WorkspaceView.role`, and it is pinned by the webApp-ticket fixture
+ * corpus on three runtimes — so it keeps its four values and its name.
+ * The STORED workspace role is `WorkspaceMemberRole` below. */
 export type WorkspaceRole = "owner" | "admin" | "editor" | "viewer";
+
+// The member-machines vocabulary lives in its own module and is re-exported
+// here, so `core/wire.ts` stays under the 700-line warn while every consumer
+// keeps one import.
+export {
+  MACHINE_STATES,
+  WORKSPACE_MEMBER_ROLES,
+  type AddWorkspaceMemberRequest,
+  type MachineResponse,
+  type MachineState,
+  type MachineView,
+  type ProvisionMemberMachineRequest,
+  type PutWorkspaceCredentialRequest,
+  type SetMachineTypeRequest,
+  type UpdateWorkspaceMemberRequest,
+  type UpdateWorkspaceRequest,
+  type WorkspaceCredentialView,
+  type WorkspaceMemberResponse,
+  type WorkspaceMemberRole,
+  type WorkspaceMemberView,
+} from "./wire-machines.js";
+// The three names the declarations below reference by hand. A re-export does
+// not bind them locally, so they are imported as well as re-exported.
+import type {
+  WorkspaceCredentialView,
+  WorkspaceMemberRole,
+  WorkspaceMemberView,
+} from "./wire-machines.js";
 
 export const PHASE_TRANSITIONS = {
   creating: ["ready", "error"],
@@ -224,7 +256,13 @@ export interface Volume {
 export interface WorkspaceView {
   id: string;
   name: string;
+  /** Legacy: the REQUESTING member's machine type, falling back to the
+   * workspace default. `defaultMachineTypeId` and `members[].machine` are the
+   * fields that state the model. */
   machineTypeId: string;
+  /** Legacy: the requesting member's machine state, projected onto the old
+   * workspace phase so a poller still sees create finish. A workspace has no
+   * phase of its own — only machines have lifecycle. */
   phase: Phase;
   retryAction: RetryAction;
   canObserve: boolean;
@@ -241,20 +279,37 @@ export interface WorkspaceView {
   volumeId: string | null;
   error: string | null;
   role: WorkspaceRole | null;
-  orgShareRole: "editor" | "viewer" | null;
   owner: {
     name: string;
     avatarUrl: string | null;
   };
-  environment: WorkspaceEnvironment | null;
   agentRuleId: string | null;
   /** Connection names the workspace's ceiling enables — its template's
    * stipulated providers plus any named at create. The workspace connections
-   * panel draws one status row per name; gated on the viewer's role like
-   * `environment`. */
+   * panel draws one status row per name; gated on the viewer's role. */
   connections: string[];
   /** Present when a recipe launch created this workspace (provenance). */
   recipeId?: string;
+  /** The member-machines fields.
+   *
+   * The only client of this view is the webapp in this repository, and it is
+   * built from `packages/schema` — so these are required, and a server that
+   * drops one fails the wire-drift gate rather than the browser. */
+  orgId: string | null;
+  ownerMembershipId: string | null;
+  /** A default for new machines, never a restriction: every machine carries
+   * its own type and may be changed to another (§1a). */
+  defaultMachineTypeId: string;
+  /** Provision and start a machine the moment a member is added. */
+  autoProvision: boolean;
+  /** The caller's stored workspace role, or null when they reach this
+   * workspace only through implicit org-admin access. */
+  myRole: WorkspaceMemberRole | null;
+  /** Empty for a caller who cannot open the workspace. */
+  members: WorkspaceMemberView[];
+  /** Names only. Populated for members and admins; empty for a caller who may
+   * not use them. */
+  credentials: WorkspaceCredentialView[];
 }
 
 export interface TemplateConnectionView {
@@ -264,6 +319,20 @@ export interface TemplateConnectionView {
 export interface TemplateRepoView {
   repo: string;
   private: boolean;
+}
+
+/** One repo to add to a live workspace ("owner/name"). The server derives
+ * `private` with the caller's own GitHub credential, exactly as create does —
+ * privacy is provider truth, not a client assertion. */
+export interface AddWorkspaceRepoRequest {
+  repo: string;
+}
+
+/** The workspace's own clone list. A change lands on the machines provisioned
+ * after it: the box clones at boot, so an existing machine keeps what it
+ * already has until it is recreated. */
+export interface ListWorkspaceReposResponse {
+  repos: TemplateRepoView[];
 }
 
 export interface GithubInstallationView {
@@ -476,12 +545,25 @@ export interface ListMachineTypesResponse {
 }
 
 export interface CreateWorkspaceRequest {
-  /** Required unless templateId is set; then the template's machine type is the default. */
+  /** Legacy spelling of `defaultMachineTypeId`; either satisfies the
+   * requirement, and `defaultMachineTypeId` wins when both are sent. */
   machineTypeId?: string;
-  /** Creates from a workspace template: its folders attach automatically. */
+  /** The default a machine takes when nothing else names one. */
+  defaultMachineTypeId?: string;
+  /** Provision and start a machine on every member add. Default true. */
+  autoProvision?: boolean;
+  /** Existing org members, added immediately. The creator is the first
+   * workspace admin and never needs a row here. */
+  members?: { membershipId: string; role: WorkspaceMemberRole; machineTypeId?: string }[];
+  /** The only path where a credential value is sent. */
+  credentials?: { name: string; label?: string; value: string }[];
+  /** Copies config — default machine type, agent rule, repos, credential
+   * NAMES are not copied and neither are members. The workspace is the
+   * template now, so this is "new workspace from existing". */
+  cloneFromWorkspaceId?: string;
+  /** Retired with the template tables (plans/MEMBER-MACHINES.md §0). Sending
+   * one is refused rather than ignored. */
   templateId?: string;
-  /** Shares the new workspace with every active org member at this role. */
-  orgShareRole?: "editor" | "viewer";
   name?: string;
   sshPublicKey?: string;
   volumeId?: string;
@@ -490,9 +572,8 @@ export interface CreateWorkspaceRequest {
   /** Providers to enable in the new workspace. The manifest stays the ceiling;
    * this is the provision list, and the ceiling wins on conflict. */
   connections?: string[];
-  environment?: WorkspaceEnvironment;
-  /** Overrides the template's rule; null (or absent) falls back to the
-   * template's rule and then the built-in doc. */
+  /** Overrides the clone source's rule; null (or absent) falls back to the
+   * source's rule and then the built-in doc. */
   agentRuleId?: string | null;
   /** GitHub repositories ("owner/name") the box clones into /workspace. Only
    * for a create with no template: a template already carries its own list,

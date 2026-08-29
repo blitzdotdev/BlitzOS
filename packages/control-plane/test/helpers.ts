@@ -78,11 +78,14 @@ export class FakeProviders implements VmProvider, VolumeProvider {
   readonly sshPublicKeys = new Map<string, string | undefined>();
   readonly userData = new Map<string, string>();
   readonly volumes = new Map<string, Volume>();
+  /** Which workspace each machine belongs to, for suites that assert on the
+   * label rather than the server name. */
+  readonly workspaceForMachine = new Map<string, string>();
   createCalls = 0;
   destroyCalls = 0;
   detachCalls = 0;
-  onCreate?: (workspaceId: string) => Promise<void>;
-  onDestroy?: (workspaceId: string) => Promise<void>;
+  onCreate?: (machineId: string) => Promise<void>;
+  onDestroy?: (machineId: string) => Promise<void>;
 
   capabilities() {
     // Ticket-capable from epoch: workspaces created in tests are new.
@@ -114,10 +117,16 @@ export class FakeProviders implements VmProvider, VolumeProvider {
 
   async createVm(input: CreateVmInput): Promise<CreatedVm> {
     this.createCalls += 1;
+    this.sshPublicKeys.set(input.machineId, input.sshPublicKey);
+    this.userData.set(input.machineId, input.userData);
+    this.workspaceForMachine.set(input.machineId, input.workspaceId);
+    // Also keyed by workspace, so a single-machine suite can ask for the boot
+    // script it already has an id for. A multi-member suite asks per machine;
+    // this alias would only give it the last one written.
     this.sshPublicKeys.set(input.workspaceId, input.sshPublicKey);
     this.userData.set(input.workspaceId, input.userData);
-    await this.onCreate?.(input.workspaceId);
-    return { id: `vm-${input.workspaceId}`, host: "203.0.113.10", port: 22, user: "blitz" };
+    await this.onCreate?.(input.machineId);
+    return { id: `vm-${input.machineId}`, host: "203.0.113.10", port: 22, user: "blitz" };
   }
 
   async shutdown(_id: string): Promise<void> {}
@@ -442,21 +451,48 @@ export async function createWorkspace(
   cookie: string,
   volumeId?: string,
 ): Promise<WorkspaceView> {
+  const body: Record<string, unknown> = {
+    machineTypeId: "small",
+    sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
+  };
+  if (volumeId !== undefined) body.volumeId = volumeId;
   const response = await appRequest(app, "/workspaces", {
     method: "POST",
     headers: { Cookie: cookie, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      machineTypeId: "small",
-      sshPublicKey: "ssh-ed25519 AAAAC3Nzatest caller",
-      ...(volumeId === undefined ? {} : { volumeId }),
-    }),
+    body: JSON.stringify(body),
   });
-  const body = await response.json<CreatedWorkspace>();
-  return body.workspace;
+  const created = await response.json<CreatedWorkspace>();
+  return created.workspace;
 }
 
-export function phoneHomeUrl(providers: FakeProviders, workspaceId: string): string {
-  const data = providers.userData.get(workspaceId);
+/** The creator's machine in a workspace. Most suites hold a workspace id and
+ * want the one VM behind it; a multi-member suite asks for a membership. */
+export async function machineIdFor(
+  workspaceId: string,
+  membershipId = "personal",
+): Promise<string> {
+  const row = await env.DB.prepare(
+    "SELECT id FROM machines WHERE workspace_id = ?1 AND membership_id = ?2 LIMIT 1",
+  ).bind(workspaceId, membershipId).first<{ id: string }>();
+  if (row === null) throw new Error(`no machine for workspace ${workspaceId}`);
+  return row.id;
+}
+
+/** The machine's own phone-home URL, resolved from the workspace id most
+ * suites carry. */
+export async function workspacePhoneHomeUrl(
+  providers: FakeProviders,
+  workspaceId: string,
+  membershipId = "personal",
+): Promise<string> {
+  return phoneHomeUrl(providers, await machineIdFor(workspaceId, membershipId));
+}
+
+/** The phone-home URL baked into one boot script. The fake provider records
+ * user data under the machine id and under the workspace id, so a suite with
+ * one machine per workspace can pass either. */
+export function phoneHomeUrl(providers: FakeProviders, id: string): string {
+  const data = providers.userData.get(id);
   const match = data?.match(/readonly PHONE_HOME_URL='([^']+)'/u);
   if (match?.[1] === undefined) throw new Error("phone-home URL not found");
   return match[1];
@@ -502,37 +538,51 @@ export async function enrollBox(
   return token.json<BoxCredential>();
 }
 
+/** Boots a workspace's first machine far enough to hold a guest access token,
+ * which is the only identity the `/workspaces/self/*` routes accept. */
+export async function boxTokenFor(
+  app: TestApp,
+  providers: FakeProviders,
+  workspaceId: string,
+): Promise<string> {
+  const ready = await appRequest(app, new URL(phoneHomeUrl(providers, workspaceId)).pathname, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pub_key_ed25519: "ssh-ed25519 AAAAhost" }),
+  });
+  return (await ready.json<{ access_token: string }>()).access_token;
+}
+
 export async function resetDatabase(): Promise<void> {
-  // Ordered children-first because D1 enforces foreign keys: recipes sit
-  // between workspaces (which stamp recipe_id) and workspace_templates
-  // (which recipes reference).
+  // Ordered children-first because D1 enforces foreign keys: machines sit
+  // between workspaces and everything keyed on a guest (token families,
+  // broker keys, leases), and recipes stamp workspaces.recipe_id.
   const tables = [
     "microvm_hosts",
     "provider_health",
     "workspace_repos",
-    "workspace_template_repos",
-    "workspace_template_connections",
-    "workspace_template_folders",
     "folder_grants",
     "folder_attachments",
     "folders",
     "credential_events",
     "credential_requests",
     "credential_leases",
-    "workspace_grants",
+    "workspace_credentials",
+    "workspace_members",
     "volume_ownership",
     "user_oauth_grants",
     "connections",
     "broker_keys",
     "broker_members",
     "broker_boxes",
+    "machine_token_families",
     "box_token_families",
+    "machines",
     "boxes",
     "device_authorizations",
     "webapp_state",
     "workspaces",
     "recipes",
-    "workspace_templates",
     "agent_rules",
     "operator_tokens",
     "sessions",
@@ -543,5 +593,12 @@ export async function resetDatabase(): Promise<void> {
     "users",
     "principals",
   ];
-  await env.DB.batch(tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)));
+  // workspaces and recipes point at each other — a workspace stamps the
+  // recipe that launched it, and a recipe names the workspace it clones — so
+  // both pointers are cleared before either table is emptied.
+  await env.DB.batch([
+    env.DB.prepare("UPDATE workspaces SET recipe_id = NULL"),
+    env.DB.prepare("UPDATE recipes SET source_workspace_id = NULL"),
+    ...tables.map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
+  ]);
 }

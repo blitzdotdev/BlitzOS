@@ -6,7 +6,6 @@ import type {
   ListUserGrantsResponse,
   MintResult,
   WorkspaceConnectionsResponse,
-  WorkspaceTemplateView,
   WorkspaceView,
 } from "@blitzos/schema";
 import { env } from "cloudflare:workers";
@@ -324,11 +323,8 @@ describe("connections: per-user grants", () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
     expect((await connectLinear(app, owner)).status).toBe(204);
-    const { workspace, box } = await readyWorkspace(app, providers, owner, {
-      ...LINEAR_CEILING,
-      orgShareRole: "editor",
-    });
-    // A second member with no grant of their own shares the workspace.
+    const { workspace, box } = await readyWorkspace(app, providers, owner, LINEAR_CEILING);
+    // A second org member with no grant of their own.
     const editor = await sameOrgSession("editor-one");
     expect(editor.cookie.length).toBeGreaterThan(0);
 
@@ -347,7 +343,7 @@ describe("connections: per-user grants", () => {
     const cookie = await operatorSession(app);
     // Another member's paste declares the org connection row. The workspace
     // owner still holds no grant, which is the case this covers.
-    const holder = await sameOrgSession("linear-holder");
+    const holder = await sameOrgSession("linear-holder", "admin");
     expect((await connectLinear(app, holder.cookie)).status).toBe(204);
     const { box } = await readyWorkspace(app, providers, cookie, LINEAR_CEILING);
 
@@ -356,7 +352,7 @@ describe("connections: per-user grants", () => {
     // the only failure shape that carries a request id back.
     expect(response.status).toBe(404);
     const body = await response.json<{ error: string; request_id: string }>();
-    expect(body.error).toBe("connection linear has no grant for the workspace owner");
+    expect(body.error).toBe("connection linear has no grant for you");
     expect(body.request_id).toMatch(/^[0-9a-f-]+$/u);
 
     const inbox = await appRequest(app, "/requests?state=pending", {
@@ -489,7 +485,7 @@ describe("connections: per-user grants", () => {
     const after = await mint(app, box.access_token, "linear");
     expect(after.status).toBe(404);
     await expect(after.json()).resolves.toMatchObject({
-      error: "connection linear has no grant for the workspace owner",
+      error: "connection linear has no grant for you",
     });
   });
 
@@ -537,20 +533,19 @@ describe("connections: templates and enablement", () => {
   async function template(
     app: Harness["app"],
     cookie: string,
-  ): Promise<WorkspaceTemplateView> {
-    const created = await appRequest(app, "/workspace-templates", {
+  ): Promise<WorkspaceView> {
+    const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "frontend",
         machineTypeId: "small",
-        folderIds: [],
-        connections: [{ provider: "linear" }],
+        connections: ["linear"],
       }),
     });
     expect(created.status).toBe(201);
-    const { template: view } = await created.json<{ template: WorkspaceTemplateView }>();
-    return view;
+    const { workspace } = await created.json<{ workspace: WorkspaceView }>();
+    return workspace;
   }
 
   /** Creation never blocks on connections: a stipulated provider with no
@@ -560,12 +555,12 @@ describe("connections: templates and enablement", () => {
     const { app, providers } = harness();
     const cookie = await operatorSession(app);
     const view = await template(app, cookie);
-    expect(view.connections).toEqual([{ provider: "linear" }]);
+    expect(view.connections).toEqual(["linear"]);
 
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: view.id }),
+      body: JSON.stringify({ cloneFromWorkspaceId: view.id }),
     });
     expect(created.status).toBe(201);
     const { workspace } = await created.json<{ workspace: WorkspaceView }>();
@@ -995,9 +990,7 @@ describe("connections: connecting from the webApp", () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
     expect((await connectLinear(app, owner)).status).toBe(204);
-    const { workspace } = await readyWorkspace(app, providers, owner, {
-      orgShareRole: "editor",
-    });
+    const { workspace } = await readyWorkspace(app, providers, owner);
     const editor = await sameOrgSession("editor-one");
 
     expect((await connectHere(app, editor.cookie, workspace.id)).status).toBe(403);
@@ -1152,9 +1145,7 @@ describe("connections: connecting from the webApp", () => {
   it("refuses to sign a workspace the caller cannot control into the state", async () => {
     const { app, providers } = harness();
     const owner = await operatorSession(app);
-    const { workspace } = await readyWorkspace(app, providers, owner, {
-      orgShareRole: "editor",
-    });
+    const { workspace } = await readyWorkspace(app, providers, owner);
     const editor = await sameOrgSession("editor-one");
     testConnectSecrets.set("LINEAR_CLIENT_ID", "client-id-value");
     testConnectSecrets.set("LINEAR_CLIENT_SECRET", "client-secret-value");
@@ -2277,24 +2268,25 @@ describe("connections: admin-configured providers through templates", () => {
     expect(response.status).toBe(204);
   }
 
+  /** A workspace is its own template now, so the thing a create clones is a
+   * workspace that already stipulates these providers. */
   async function templateNaming(
     app: Harness["app"],
     cookie: string,
     connections: { provider: string }[],
-  ): Promise<WorkspaceTemplateView> {
-    const created = await appRequest(app, "/workspace-templates", {
+  ): Promise<WorkspaceView> {
+    const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: cookie, "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "ops",
         machineTypeId: "small",
-        folderIds: [],
-        connections,
+        connections: connections.map(({ provider }) => provider),
       }),
     });
     expect(created.status).toBe(201);
-    const { template } = await created.json<{ template: WorkspaceTemplateView }>();
-    return template;
+    const { workspace } = await created.json<{ workspace: WorkspaceView }>();
+    return workspace;
   }
 
   async function workspaceCeiling(workspaceId: string): Promise<unknown> {
@@ -2389,11 +2381,11 @@ describe("connections: admin-configured providers through templates", () => {
 
     // Pasting the token — with the instance URL, being the org's first — is
     // the one member step; it also declares the org connection row.
-    const member = await sameOrgSession("youtrack-pat-member");
+    const member = await sameOrgSession("youtrack-pat-member", "admin");
     expect((await pasteYoutrack(app, member.cookie, YOUTRACK_PAT, YOUTRACK_BASE)).status)
       .toBe(204);
     const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
-      templateId: template.id,
+      cloneFromWorkspaceId: template.id,
     });
     expect(await workspaceCeiling(workspace.id)).toEqual({
       integrations: { youtrack: {} },
@@ -2442,11 +2434,11 @@ describe("connections: admin-configured providers through templates", () => {
     // No admin-root fallback exists: a second member without a grant still
     // creates — creation never blocks — but nothing mints until they paste
     // their own token. The panel shows youtrack as needs-you meanwhile.
-    const stranger = await sameOrgSession("youtrack-strangers");
+    const stranger = await sameOrgSession("youtrack-strangers", "admin");
     const bare = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: stranger.cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: template.id }),
+      body: JSON.stringify({ cloneFromWorkspaceId: template.id }),
     });
     expect(bare.status).toBe(201);
     const { workspace: unbacked } = await bare.json<{ workspace: WorkspaceView }>();
@@ -2468,7 +2460,7 @@ describe("connections: admin-configured providers through templates", () => {
 
     // The second member pastes only their token: the row already knows the
     // instance, so the URL is not asked for again.
-    const second = await sameOrgSession("youtrack-second-member");
+    const second = await sameOrgSession("youtrack-second-member", "admin");
     const SECOND_PAT = "perm:second-members-token";
     expect((await pasteYoutrack(app, second.cookie, SECOND_PAT)).status).toBe(204);
 
@@ -2510,9 +2502,9 @@ describe("connections: admin-configured providers through templates", () => {
       { provider: "discord" },
     ]);
 
-    const member = await sameOrgSession("discord-template-member");
+    const member = await sameOrgSession("discord-template-member", "admin");
     const { workspace, box } = await readyWorkspace(app, providers, member.cookie, {
-      templateId: template.id,
+      cloneFromWorkspaceId: template.id,
     });
     expect(await workspaceCeiling(workspace.id)).toEqual({
       integrations: { discord: {} },
@@ -2557,11 +2549,11 @@ describe("connections: admin-configured providers through templates", () => {
     const template = await templateNaming(app, admin, [
       { provider: "youtrack" },
     ]);
-    const member = await sameOrgSession("blocked-template-member");
+    const member = await sameOrgSession("blocked-template-member", "admin");
     const created = await appRequest(app, "/workspaces", {
       method: "POST",
       headers: { Cookie: member.cookie, "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: template.id }),
+      body: JSON.stringify({ cloneFromWorkspaceId: template.id }),
     });
     // Creation never blocks on connections: no admin root and no grant means
     // the provider reads as needs-you in the panel, and the first in-box mint

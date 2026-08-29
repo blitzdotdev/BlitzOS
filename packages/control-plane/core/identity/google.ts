@@ -328,6 +328,17 @@ async function bootstrapMembership(
           WHERE owner_id = 'operator'`,
       v: [user.id, orgId, membershipId],
     },
+    // The workspace's members and machines follow its owner: before the first
+    // Google login there is one operator identity, and both rows named it.
+    {
+      q: `UPDATE workspace_members SET membership_id = ?1
+          WHERE membership_id = 'operator'`,
+      v: [membershipId],
+    },
+    {
+      q: "UPDATE machines SET membership_id = ?1 WHERE membership_id = 'operator'",
+      v: [membershipId],
+    },
     {
       q: "UPDATE boxes SET principal_id = ?1 WHERE principal_id = 'operator'",
       v: [user.id],
@@ -345,8 +356,9 @@ async function bootstrapMembership(
     {
       q: `INSERT OR IGNORE INTO volume_ownership
           (volume_id, org_id, created_by_membership_id, created_at)
-          SELECT DISTINCT volume_id, ?1, ?2, ?3 FROM workspaces
-          WHERE owner_id = ?4 AND volume_id IS NOT NULL`,
+          SELECT DISTINCT m.volume_id, ?1, ?2, ?3
+          FROM machines m JOIN workspaces w ON w.id = m.workspace_id
+          WHERE w.owner_id = ?4 AND m.volume_id IS NOT NULL`,
       v: [orgId, membershipId, now, user.id],
     },
   ]);
