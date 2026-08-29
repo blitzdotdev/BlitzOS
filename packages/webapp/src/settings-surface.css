@@ -197,6 +197,12 @@
   gap: 10px;
 }
 
+/* An actions row that follows a section belongs to the sections above it —
+ * it gets air, never a line of its own. */
+.cfg-section ~ .cfg-actions {
+  margin-top: 14px;
+}
+
 .cfg-actions button:disabled {
   cursor: not-allowed;
   opacity: .5;
