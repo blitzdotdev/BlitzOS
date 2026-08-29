@@ -82,6 +82,30 @@
 .workspace-credential-name small { color: var(--faint); font-size: 10px; }
 .workspace-credential-added { color: var(--faint); font-size: 10px; white-space: nowrap; }
 
+/* The env-file import. The preview rows are a server dry run — the same
+ * request the Import button sends, with `dryRun` set — so the chip a row
+ * wears is a promise, not a guess. */
+.credential-import { display: grid; gap: 10px; margin-top: 18px; padding: 16px; border: 1px solid var(--rule); border-radius: var(--r-card); }
+.credential-import-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.credential-import-head h2 { margin: 0; }
+.credential-import-head span { color: var(--faint); font-size: 10.5px; }
+.credential-import-source { display: flex; align-items: center; gap: 8px; }
+.credential-import textarea { width: 100%; min-height: 118px; resize: vertical; padding: 10px; border: 1px solid var(--rule); border-radius: var(--r-control); color: var(--ink); background: var(--sunken); font: 11.5px/1.7 var(--font-mono); outline: 0; }
+.credential-import textarea:focus { border-color: var(--accent); }
+.credential-import textarea::placeholder { color: var(--faint); }
+.credential-import-preview { border-top: 1px solid var(--rule); }
+.credential-import-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 38px; border-bottom: 1px solid color-mix(in oklab, var(--rule) 60%, transparent); }
+.credential-import-row strong { font-family: var(--font-mono); font-size: 11px; font-weight: 550; }
+.credential-import-row small { display: block; margin-top: 1px; color: var(--faint); font-size: 10px; }
+.import-chip { padding: 2px 8px; border: 1px solid var(--rule); border-radius: var(--r-pill); color: var(--faint); font-size: 10px; white-space: nowrap; }
+.import-chip--stored { border-color: color-mix(in oklab, var(--ansi-green) 55%, var(--rule)); color: var(--ansi-green); }
+.import-chip--rotated { border-color: color-mix(in oklab, var(--ansi-yellow) 55%, var(--rule)); color: var(--ansi-yellow); }
+.import-chip--refused { border-color: color-mix(in oklab, var(--ansi-red) 55%, var(--rule)); color: var(--ansi-red); }
+.credential-import-summary { margin: 0; color: var(--muted); font-size: 11px; }
+.credential-import-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.credential-import-actions p { margin: 0; color: var(--faint); font-size: 10.5px; }
+.credential-import-actions code, .credential-import-summary code { font-family: var(--font-mono); font-size: 10px; }
+
 /* The clone list borrows the credential-row geometry: one list of rows, an
  * add control under it. */
 .workspace-repo-rows { border-top: 1px solid var(--rule); }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const usageText = `usage: blitz-cred COMMAND [ARGUMENTS]
   list                         providers this workspace may use, one per line
   get PROVIDER                 print PROVIDER's token on stdout, nothing else
   env PROVIDER                 print eval-able NAME=VALUE lines for PROVIDER
+  import [--check] FILE|-      store each KEY=value line as a workspace credential
   enroll --origin URL          claim this box's control-plane credential
   register                     register broker keys and pin the broker config
   token claude|codex           print the harness login token
@@ -120,6 +122,28 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 		}
 		workspace.ApplyGitIdentity(context.Background(), stateDir, token.Connection, token.Token, nil)
 		return printEnv(output, token)
+	case "import":
+		flags := flag.NewFlagSet("import", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		check := flags.Bool("check", false, "parse and report, store nothing")
+		label := flags.String("label", "", "label stored on every imported key")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 1 {
+			return errors.New("usage: blitz-cred import [--check] [--label TEXT] FILE|-")
+		}
+		text, name, err := readImportSource(flags.Arg(0), input)
+		if err != nil {
+			return err
+		}
+		if *label == "" {
+			*label = name
+		}
+		result, err := workspace.ImportCredentials(
+			context.Background(), stateDir, text, *label, *check, nil,
+		)
+		if err != nil {
+			return importFailure(err)
+		}
+		return printImport(output, result, *check)
 	case "git-helper":
 		if len(args) != 2 {
 			return errors.New("usage: blitz-cred git-helper get|store|erase")
@@ -141,6 +165,61 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 	default:
 		return errors.New("unknown blitz-cred command")
 	}
+}
+
+// readImportSource reads the dotenv text and names it: the file's base name
+// becomes the default label, so an imported key remembers where it came from.
+// `-` reads stdin and labels nothing, because a pipe has no name worth keeping.
+func readImportSource(path string, input io.Reader) (text, name string, err error) {
+	if path == "-" {
+		data, err := io.ReadAll(io.LimitReader(input, 1<<20))
+		return string(data), "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	return string(data), filepath.Base(path), nil
+}
+
+// importFailure names the person who can fix the refusal, in the same voice
+// as mintFailure: an agent that reads "403" retries, an agent that reads a
+// sentence asks the right human.
+func importFailure(err error) error {
+	if errors.Is(err, workspace.ErrNotWorkspaceAdmin) {
+		return errors.New(
+			"blitz: only a workspace admin can import credentials. Ask an admin to run this, or to change your role",
+		)
+	}
+	return err
+}
+
+// printImport writes one line per key and a closing count. Outcomes only —
+// a value never appears on stdout, which is the whole point of moving it out
+// of a file.
+func printImport(output io.Writer, result workspace.CredentialImport, check bool) error {
+	counts := map[string]int{}
+	for _, entry := range result.Results {
+		counts[entry.Outcome]++
+		line := fmt.Sprintf("%-10s%s", entry.Outcome, entry.Name)
+		if entry.Reason != "" {
+			line = fmt.Sprintf("%s  (line %d: %s)", line, entry.Line, entry.Reason)
+		}
+		if _, err := fmt.Fprintln(output, line); err != nil {
+			return err
+		}
+	}
+	summary := fmt.Sprintf("%d lines read", result.LinesRead)
+	for _, outcome := range []string{"stored", "rotated", "unchanged", "refused"} {
+		if counts[outcome] > 0 {
+			summary += fmt.Sprintf(", %d %s", counts[outcome], outcome)
+		}
+	}
+	if check {
+		summary += " (check only, nothing was written)"
+	}
+	_, err := fmt.Fprintln(output, summary)
+	return err
 }
 
 // mintFailure turns a refusal into the one sentence that tells the agent what

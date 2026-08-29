@@ -247,6 +247,7 @@ function client(): ControlPlaneClient {
     setMachineType: vi.fn(async () => { throw new Error("unused"); }),
     destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
     putWorkspaceCredential: vi.fn(async () => undefined),
+    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
     revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error("unused"); }),

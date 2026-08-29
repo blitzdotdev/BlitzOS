@@ -105,6 +105,31 @@ Workspace sessions have no MCP servers and no claude.ai connectors. Ask for a
 token with `blitz-cred`, nothing else. `/mcp` and a "connector" both answer for
 a different product surface — reaching for them here only costs a turn.
 
+## Sharing secrets with the workspace
+
+A workspace credential is a named secret every member machine can pull.
+`blitz-cred list` shows workspace credentials next to providers; `get` and
+`env` serve them the same way.
+
+To move the keys in a dotenv file into the workspace store:
+
+```
+blitz-cred import .env             # store each KEY=value line
+blitz-cred import --check .env     # parse and report, store nothing
+```
+
+Each key becomes one credential, labeled with the file it came from.
+Importing an existing name rotates it: the old value is gone on the next
+pull. Only a workspace admin's machine can import. A value must be one
+line; base64-encode a PEM or JSON key first.
+
+Import exists to get secrets OUT of files. After a successful import,
+delete the file and pull keys at the moment of use:
+
+```
+( eval "$(blitz-cred env STRIPE_API_KEY)"; use it here )
+```
+
 ## Never print a credential
 
 Never echo, print, log, or paste the value of a credential — not into a

@@ -29,13 +29,13 @@ type MintOne = (
  * row was written in that person's name. The machine's member IS the identity
  * now — nothing is borrowed, and there is no disclosure to make.
  */
-interface MachineCaller {
+export interface MachineCaller {
   workspace: MintWorkspaceRow;
   machineId: string;
   principal: Principal;
 }
 
-async function boxCaller(
+export async function boxCaller(
   runtime: ReturnType<RuntimeFactory>,
   request: Request,
 ): Promise<MachineCaller> {

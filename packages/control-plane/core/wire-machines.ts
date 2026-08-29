@@ -135,3 +135,32 @@ export interface PutWorkspaceCredentialRequest {
   value: string;
 }
 
+/** A dotenv text to store key by key. `label` lands on every stored row —
+ * callers pass the file name, so a row remembers where it came from.
+ * `dryRun` parses and reports without writing; the webApp preview and
+ * `blitz-cred import --check` are both this flag. */
+export interface ImportWorkspaceCredentialsRequest {
+  text: string;
+  label?: string;
+  dryRun?: boolean;
+}
+
+/**
+ * What one KEY=value line became. Store-level facts only: `rotated` says a
+ * live row held this name and its value changed, never anything about the
+ * vendor behind the value. `unchanged` says the incoming value equals the
+ * stored one, so nothing was written. A refused line names its reason and the
+ * rest of the file still imports.
+ */
+export interface WorkspaceCredentialImportResult {
+  name: string;
+  line: number;
+  outcome: "stored" | "rotated" | "unchanged" | "refused";
+  reason?: string;
+}
+
+export interface ImportWorkspaceCredentialsResponse {
+  results: WorkspaceCredentialImportResult[];
+  linesRead: number;
+}
+

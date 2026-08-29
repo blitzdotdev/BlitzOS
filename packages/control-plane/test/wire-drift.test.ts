@@ -249,6 +249,22 @@ const putWorkspaceCredentialRequest: SharedShape<
   schema.PutWorkspaceCredentialRequest
 > = { name: workspaceCredential.name, label: "live", value: "sk_test_only" };
 
+const importWorkspaceCredentialsRequest: SharedShape<
+  wire.ImportWorkspaceCredentialsRequest,
+  schema.ImportWorkspaceCredentialsRequest
+> = { text: "STRIPE_API_KEY=sk_test_only\n", label: "blitzos.env", dryRun: true };
+
+const importWorkspaceCredentialsResponse: SharedShape<
+  wire.ImportWorkspaceCredentialsResponse,
+  schema.ImportWorkspaceCredentialsResponse
+> = {
+  results: [
+    { name: workspaceCredential.name, line: 1, outcome: "stored" },
+    { name: "GOOGLE_SA_JSON", line: 2, outcome: "refused", reason: "empty value" },
+  ],
+  linesRead: 2,
+};
+
 const workspace: SharedShape<wire.WorkspaceView, schema.WorkspaceView> = {
   id: "workspace",
   name: "brave-otter",
@@ -688,6 +704,8 @@ const fullFieldValues = [
   clearAgentRuleRequest,
   workspaceMemberResponse,
   putWorkspaceCredentialRequest,
+  importWorkspaceCredentialsRequest,
+  importWorkspaceCredentialsResponse,
   machineType,
   pricedMachineType,
   machineTypeFailure,
@@ -779,6 +797,8 @@ describe("local wire copies", () => {
     expectTypeOf<wire.UpdateWorkspaceRequest>().toEqualTypeOf<schema.UpdateWorkspaceRequest>();
     expectTypeOf<wire.WorkspaceMemberResponse>().toEqualTypeOf<schema.WorkspaceMemberResponse>();
     expectTypeOf<wire.PutWorkspaceCredentialRequest>().toEqualTypeOf<schema.PutWorkspaceCredentialRequest>();
+    expectTypeOf<wire.ImportWorkspaceCredentialsRequest>().toEqualTypeOf<schema.ImportWorkspaceCredentialsRequest>();
+    expectTypeOf<wire.ImportWorkspaceCredentialsResponse>().toEqualTypeOf<schema.ImportWorkspaceCredentialsResponse>();
     expectTypeOf<wire.MachinePrice>().toEqualTypeOf<schema.MachinePrice>();
     expectTypeOf<wire.MachineType>().toEqualTypeOf<schema.MachineType>();
     expectTypeOf<wire.MachineTypeProviderFailure>().toEqualTypeOf<schema.MachineTypeProviderFailure>();

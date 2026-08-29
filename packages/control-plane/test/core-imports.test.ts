@@ -96,6 +96,7 @@ const expected = [
   "template-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
+  "workspace-credential-import.ts",
   "workspace-credentials.ts",
   "workspace-members.ts",
   "workspace-projection.ts",

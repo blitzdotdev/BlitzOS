@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AddWorkspaceMemberRequest,
+  ImportWorkspaceCredentialsRequest,
+  ImportWorkspaceCredentialsResponse,
   ListMachineTypesResponse,
   MachineType,
   PutWorkspaceCredentialRequest,
@@ -62,20 +64,98 @@ type PendingTypeChange = {
   machineTypeId: string;
 };
 
+/** How long the paste sits still before the preview asks the server. The
+ * preview is a real dry run — same parser, same outcomes — so it must not
+ * fire per keystroke. */
+export const IMPORT_PREVIEW_DEBOUNCE_MS = 400;
+
+function importCount(preview: ImportWorkspaceCredentialsResponse): number {
+  return preview.results.filter(
+    ({ outcome }) => outcome === 'stored' || outcome === 'rotated',
+  ).length;
+}
+
+function importSummary(response: ImportWorkspaceCredentialsResponse): string {
+  const parts = [`${response.linesRead} lines read`];
+  for (const outcome of ['stored', 'rotated', 'unchanged', 'refused'] as const) {
+    const count = response.results.filter((result) => result.outcome === outcome).length;
+    if (count > 0) parts.push(`${count} ${outcome}`);
+  }
+  return parts.join(' · ');
+}
+
 function CredentialsTab({
   credentials,
   canManage,
   onPut,
   onRevoke,
+  onImport,
 }: {
   credentials: CloudWorkspaceModel['credentials'];
   canManage: boolean;
   onPut: (input: PutWorkspaceCredentialRequest) => void;
   onRevoke: (name: string) => void;
+  onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
 }) {
   const [name, setName] = useState('');
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
+  const [importText, setImportText] = useState('');
+  const [importLabel, setImportLabel] = useState('');
+  const [preview, setPreview] = useState<ImportWorkspaceCredentialsResponse | null>(null);
+  const [imported, setImported] = useState<ImportWorkspaceCredentialsResponse | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+
+  // The preview IS the import, minus the writes: the same request with
+  // `dryRun` set, so what the rows promise is what the button will do.
+  useEffect(() => {
+    setPreview(null);
+    if (importText.trim() === '') {
+      setImportError(null);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      const request: ImportWorkspaceCredentialsRequest = { text: importText, dryRun: true };
+      if (importLabel !== '') request.label = importLabel;
+      onImport(request)
+        .then((response) => {
+          if (stale) return;
+          setImportError(null);
+          setPreview(response);
+        })
+        .catch((caught: Error) => {
+          if (!stale) setImportError(caught.message);
+        });
+    }, IMPORT_PREVIEW_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [importText, importLabel, onImport]);
+
+  const runImport = () => {
+    const request: ImportWorkspaceCredentialsRequest = { text: importText };
+    if (importLabel !== '') request.label = importLabel;
+    onImport(request)
+      .then((response) => {
+        setImportError(null);
+        setImported(response);
+        setImportText('');
+        setImportLabel('');
+      })
+      .catch((caught: Error) => setImportError(caught.message));
+  };
+
+  const chooseFile = (file: File | undefined) => {
+    if (file === undefined) return;
+    void file.text().then((text) => {
+      setImported(null);
+      setImportLabel(file.name);
+      setImportText(text);
+    });
+  };
   const submit = () => {
     if (name.trim() === '' || value === '') return;
     const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
@@ -126,6 +206,92 @@ function CredentialsTab({
           ))}
         </div>
       </div>
+      {canManage && (
+        <div className="credential-import">
+          <div className="credential-import-head">
+            <h2>Import a .env file</h2>
+            <span>each KEY=value line becomes one credential</span>
+          </div>
+          <div className="credential-import-source">
+            <button
+              className="webapp-action"
+              type="button"
+              onClick={() => fileInput.current?.click()}
+            >
+              Choose file…
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              aria-label="Choose an env file"
+              onChange={(event) => chooseFile(event.currentTarget.files?.[0])}
+            />
+            <span className="credential-import-summary">
+              {importLabel === '' ? 'or paste below' : importLabel}
+            </span>
+          </div>
+          <textarea
+            aria-label="Env file text"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            placeholder="# paste .env text — values stay here until you import"
+            value={importText}
+            onChange={(event) => {
+              setImported(null);
+              setImportText(event.currentTarget.value);
+            }}
+          />
+          {importError !== null && (
+            <p className="workspace-details-error" role="alert">{importError}</p>
+          )}
+          {preview !== null && (
+            <div className="credential-import-preview" aria-live="polite">
+              {preview.results.map((result) => (
+                <div className="credential-import-row" key={`${result.line}:${result.name}`}>
+                  <span>
+                    <strong>{result.name}</strong>
+                    <small>
+                      {result.reason === undefined
+                        ? `line ${result.line}`
+                        : `line ${result.line} — ${result.reason}`}
+                    </small>
+                  </span>
+                  <span className={`import-chip import-chip--${result.outcome}`}>
+                    {result.outcome === 'rotated' ? 'rotates' : result.outcome}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {preview !== null && (
+            <p className="credential-import-summary">{importSummary(preview)}</p>
+          )}
+          {imported !== null && (
+            <p className="credential-import-summary" role="status">
+              Imported: {importSummary(imported)}. Every member machine reads the
+              new values on its next <code>blitz-cred</code> pull.
+            </p>
+          )}
+          <div className="credential-import-actions">
+            <p>
+              Agents do the same with <code>blitz-cred import .env</code>. Values
+              never appear in results.
+            </p>
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={preview === null || importCount(preview) === 0}
+              onClick={runImport}
+            >
+              {preview === null
+                ? 'Import'
+                : `Import ${importCount(preview)} key${importCount(preview) === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </div>
+      )}
       {canManage && (
         <div className="cfg-section">
           <div className="cfg-section-head">
@@ -380,6 +546,7 @@ export function WorkspaceDetailsDialog({
               canManage={canManage}
               onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input))}
               onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name))}
+              onImport={(input) => client.importWorkspaceCredentials(workspace.id, input)}
             />
           )}
           {tab === 'settings' && (
