@@ -57,7 +57,7 @@ box_cgroup_root() {
 # ---- the oracle: can a user still reach this box? -----------------------
 start_probe() {
   local log=$1
-  python3 - "$log" "$box_port" <<'PROBE' &
+  python3 - "$log" "$box_port" <<'PROBE' >/dev/null 2>&1 &
 import socket, sys, time
 log = open(sys.argv[1], "w", buffering=1)
 log.write("epoch_ms\tok\tlatency_ms\n")
@@ -81,6 +81,8 @@ PROBE
 # ---- the sampler: cgroup accounting, straight from the host -------------
 start_sampler() {
   local root=$1 log=$2
+  # Same stdout-detach as start_probe: the subshell must not hold the
+  # command-substitution pipe open, or the caller blocks forever.
   (
     printf 'epoch_ms\tcgroup\tcurrent\tswap\thigh_events\tmax_events\toom\toom_kill\n' >"$log"
     while true; do
@@ -103,7 +105,7 @@ start_sampler() {
         "$(awk '/^full/{print $2}' /proc/pressure/memory | tr -d 'avg10=')" >>"$log"
       sleep 1
     done
-  ) &
+  ) >/dev/null 2>&1 &
   printf '%s' $!
 }
 
