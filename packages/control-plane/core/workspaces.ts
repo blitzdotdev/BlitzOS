@@ -1,5 +1,9 @@
 import type { RecipeBootstrap } from "./bootstrap.js";
-import { enablementManifestJson, parseManifest } from "./connections/manifest.js";
+import {
+  enablementManifestJson,
+  manifestConnectionNames,
+  parseManifest,
+} from "./connections/manifest.js";
 import { agentRuleIdForOrg } from "./agent-rules.js";
 import { checkGithubRepositories, probedRepos } from "./connections/github-repo-check.js";
 import { githubCallerCredential } from "./connections/github-repositories.js";
@@ -73,6 +77,7 @@ import type {
   CreateWorkspaceRequest,
   CreateWorkspaceResponse,
   PollResponse,
+  WorkspaceRole,
 } from "./wire.js";
 export type { WorkspaceRow } from "./workspace-records.js";
 
@@ -548,8 +553,15 @@ export async function performWorkspaceCreate(
       }
     }
   }
+  // A clone inherits the source's stipulated providers: the ceiling is part of
+  // the config a workspace carries, exactly as a template's provider list was.
+  // Creation never mints — the names land in the allow-list and an agent pulls
+  // a credential when it needs one.
   const requested = [...new Set([
+    ...(source === null ? [] : manifestConnectionNames(source.manifest)),
     ...(input.connections ?? []),
+    // Cloning reads through the baked git credential helper, which mints from
+    // the workspace ceiling, so naming repos stipulates github.
     ...(repos.length > 0 ? ["github"] : []),
   ])];
   const id = crypto.randomUUID();
@@ -658,16 +670,34 @@ async function deleteWorkspaceRow(db: Db, id: string): Promise<void> {
   ]);
 }
 
-/** The machine the requesting member reaches through the webApp proxy.
+/**
+ * The machine the requesting member reaches through the webApp proxy.
  *
- * The ticket already carries `membershipId`, so this is a lookup and not a
- * choice. A viewer holds no machine at all, which is the refusal below. */
+ * The ticket already carries `membershipId`, so for a member this is a lookup
+ * and not a choice: they reach their OWN machine, and a workspace with five
+ * members has five of them.
+ *
+ * A viewer is the one exception, and it is not a loophole. Viewers hold no
+ * machine, ever (§2.2), and what they are entitled to — watching the
+ * workspace and reading its drive — lives on somebody's guest. They get the
+ * owner's, read-only: the ticket carries `role: "viewer"`, the agent port is
+ * closed to them here, and the guest enforces the rest.
+ *
+ * A member with no machine gets a refusal that names the fix rather than a
+ * proxy error nobody can act on.
+ */
 async function machineForRequest(
   runtime: CoreRuntime,
-  workspaceId: string,
+  workspace: WorkspaceRow,
   membershipId: string,
+  role: WorkspaceRole,
 ): Promise<MachineRow> {
-  const machine = await machineFor(runtime.db, workspaceId, membershipId);
+  const own = await machineFor(runtime.db, workspace.id, membershipId);
+  const machine = own !== null && own.state !== "destroyed"
+    ? own
+    : role === "viewer" && workspace.owner_membership_id !== null
+      ? await machineFor(runtime.db, workspace.id, workspace.owner_membership_id)
+      : null;
   if (machine === null || machine.state === "destroyed") {
     throw new HttpError(
       409,
@@ -856,15 +886,21 @@ export function addWorkspaceRoutes(
     // The proxy routes to the REQUESTING member's machine. A workspace holds
     // one VM per member now, so "the workspace's VM" is not a thing that
     // exists; the ticket already names who is asking.
-    const machine = await machineForRequest(runtime, row.id, access.membershipId);
-    const vmId = machine.vm_id;
-    if (vmId === null) throw new HttpError(409, "workspace is not ready for webapp access");
-    const provider = providerForVmId(runtime, vmId);
     const rawPort = context.req.param("port");
     if (rawPort !== "7444" && rawPort !== "7445") {
       throw new HttpError(400, "webApp port must be 7444 or 7445");
     }
     const port: WebAppPort = rawPort === "7444" ? 7444 : 7445;
+    // The agent port is closed to viewers before any machine is resolved: a
+    // viewer may not drive an agent on anybody's machine, so there is nothing
+    // to look up.
+    if (access.role === "viewer" && port === 7444) {
+      throw new HttpError(403, "viewers cannot drive the workspace agent");
+    }
+    const machine = await machineForRequest(runtime, row, access.membershipId, access.role);
+    const vmId = machine.vm_id;
+    if (vmId === null) throw new HttpError(409, "workspace is not ready for webapp access");
+    const provider = providerForVmId(runtime, vmId);
     const requestURL = new URL(context.req.url);
     const routePrefix = `/workspaces/${encodeURIComponent(id)}/webapp/${rawPort}`;
     if (!requestURL.pathname.startsWith(routePrefix)) {
@@ -888,10 +924,8 @@ export function addWorkspaceRoutes(
     const ticketCapable = ticketsSince !== undefined && machine.created_at >= ticketsSince;
     const viewerGuardsSince = capabilities.webAppViewerGuardsSinceMs;
     const viewerSafe = viewerGuardsSince !== undefined && machine.created_at >= viewerGuardsSince;
-    if (access.role === "viewer" && (port === 7444 || !viewerSafe)) {
-      throw new HttpError(403, viewerSafe
-        ? "viewers cannot drive the workspace agent"
-        : "read-only access arrives when this workspace VM is recycled");
+    if (access.role === "viewer" && !viewerSafe) {
+      throw new HttpError(403, "read-only access arrives when this workspace VM is recycled");
     }
     const webAppAuth = requireWorkspaceWebAppAuth(runtime.providers.webAppAuth);
     const credential = ticketCapable

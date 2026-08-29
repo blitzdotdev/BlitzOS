@@ -247,7 +247,16 @@ describe("organization file library", () => {
     const { app } = harness();
     const owner = await operatorSession(app);
     const collaborator = await sameOrgSession("workspace-owner");
-    const workspace = await createWorkspace(app, collaborator.cookie);
+    // Workspace creation is org-admin only (plan §3), so the org admin makes
+    // the workspace and hands the collaborator workspace-admin over it. They
+    // may control the workspace and still cannot read the org admin's folder,
+    // which is exactly what this test separates.
+    const workspace = await createWorkspace(app, owner);
+    expect((await appRequest(app, `/workspaces/${workspace.id}/members`, {
+      method: "POST",
+      headers: { Cookie: owner, "Content-Type": "application/json" },
+      body: JSON.stringify({ membershipId: collaborator.membershipId, role: "admin" }),
+    })).status).toBe(201);
     const folderId = await createFolder(app, owner, "Agent Notes");
 
     expect((await appRequest(app, `/workspaces/${workspace.id}/folders`, {
