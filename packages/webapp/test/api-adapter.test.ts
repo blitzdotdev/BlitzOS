@@ -147,8 +147,6 @@ describe("webapp API adapter", () => {
       machineType: "mv-2c2g@lab",
       createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_005_000,
-      environmentConfigured: false,
-      startupConfigured: false,
     });
     expect(workspaceFromWire(workspace("creating", "poll"))?.status).toBe("creating");
     expect(workspaceFromWire(workspace("error", "destroy"))).toMatchObject({

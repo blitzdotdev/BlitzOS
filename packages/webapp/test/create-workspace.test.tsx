@@ -146,59 +146,6 @@ describe("create workspace dialog", () => {
     await view.unmount();
   });
 
-  it("submits a populated advanced environment", async () => {
-    const submit = vi.fn();
-    const view = await render(
-      <CreateWorkspaceDialog
-        busy={false}
-        error={null}
-        orgName="acme"
-        client={rulesClient()}
-        listTemplates={async () => []}
-        onNewTemplate={() => undefined}
-        listMachineTypes={async () => ({ machineTypes: machines, failures: [] })}
-        listVolumes={async () => []}
-        onCancel={() => undefined}
-        onSubmit={submit}
-      />,
-    );
-    await settle();
-    const key = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Environment variable key 1"]',
-    )!;
-    const value = view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Environment variable value 1"]',
-    )!;
-    const script = view.container.querySelector<HTMLTextAreaElement>(
-      'textarea[aria-label="Startup script"]',
-    )!;
-    const inputSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
-    const textareaSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-    if (inputSetter === undefined || textareaSetter === undefined) throw new Error('input setter unavailable');
-    await act(async () => {
-      inputSetter.call(key, 'API_ORIGIN');
-      key.dispatchEvent(new Event('input', { bubbles: true }));
-      inputSetter.call(value, 'https://api.example');
-      value.dispatchEvent(new Event('input', { bubbles: true }));
-      textareaSetter.call(script, 'npm install\n');
-      script.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-    await act(async () => {
-      view.container.querySelector('form')?.dispatchEvent(
-        new Event('submit', { bubbles: true, cancelable: true }),
-      );
-    });
-    expect(submit).toHaveBeenCalledWith({
-      machineTypeId: 'cx23@fsn1',
-      orgShareRole: 'editor',
-      environment: {
-        env: { API_ORIGIN: 'https://api.example' },
-        startupScript: 'npm install\n',
-      },
-    });
-    await view.unmount();
-  });
-
   it("summarizes provider failures when the machine catalog is empty", async () => {
     const view = await render(
       <CreateWorkspaceDialog
@@ -430,7 +377,6 @@ describe("create workspace dialog", () => {
       'blitz:github-connect-draft:workspace-new',
     ) ?? '{}')).toEqual({
       templateId: null,
-      environment: { env: {}, startupScript: null },
       agentRuleId: null,
       repos: [],
     });
@@ -441,7 +387,6 @@ describe("create workspace dialog", () => {
       'blitz:github-connect-draft:workspace-new',
       JSON.stringify({
         templateId: null,
-        environment: { env: {}, startupScript: null },
         agentRuleId: null,
         repos: ['acme/app'],
       }),
@@ -537,7 +482,6 @@ describe("create workspace dialog", () => {
     expect(submit).toHaveBeenCalledWith({
       templateId: "template-1",
       orgShareRole: "editor",
-      environment: template.environment,
     });
 
     const newTile = [...view.container.querySelectorAll("button")]
@@ -604,7 +548,6 @@ describe("create workspace dialog", () => {
       'blitz:github-connect-draft:workspace-new',
     ) ?? '{}')).toEqual({
       templateId: 'template-private',
-      environment: { env: {}, startupScript: null },
       agentRuleId: null,
       repos: [],
     });
@@ -617,7 +560,6 @@ describe("create workspace dialog", () => {
       'blitz:github-connect-draft:workspace-new',
       JSON.stringify({
         templateId: 'template-private',
-        environment: { env: { ROUND_TRIP: 'yes' }, startupScript: './resume.sh\n' },
         agentRuleId: 'rule-override',
         repos: [],
       }),
@@ -675,9 +617,6 @@ describe("create workspace dialog", () => {
     expect(privateTile.getAttribute('aria-pressed')).toBe('true');
     expect(defaultTile.getAttribute('aria-pressed')).toBe('false');
     expect(window.sessionStorage.getItem('blitz:github-connect-draft:workspace-new')).toBeNull();
-    expect(view.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Environment variable key 1"]',
-    )?.value).toBe('ROUND_TRIP');
     expect(view.container.querySelector<HTMLSelectElement>(
       'select[aria-label="Agent rules document"]',
     )?.value).toBe('rule-override');
@@ -691,10 +630,6 @@ describe("create workspace dialog", () => {
     expect(submit).toHaveBeenCalledWith({
       templateId: 'template-private',
       orgShareRole: 'editor',
-      environment: {
-        env: { ROUND_TRIP: 'yes' },
-        startupScript: './resume.sh\n',
-      },
       agentRuleId: 'rule-override',
     });
     await view.unmount();
@@ -742,7 +677,7 @@ describe("create workspace dialog", () => {
     await settle();
 
     // Seeding behaves exactly like a click on the tile: the manual form is
-    // collapsed and the template's environment and rule ride along.
+    // collapsed and the template's rule rides along.
     expect(view.container.querySelector('input[name="name"]')).toBeNull();
     const tile = [...view.container.querySelectorAll("button")]
       .find((button) => button.textContent?.includes("org starter"))!;
@@ -759,7 +694,6 @@ describe("create workspace dialog", () => {
     expect(submit).toHaveBeenCalledWith({
       templateId: "template-default",
       orgShareRole: "editor",
-      environment: template.environment,
     });
     await view.unmount();
 
@@ -856,7 +790,7 @@ describe("create workspace dialog", () => {
         new Event("submit", { bubbles: true, cancelable: true }),
       );
     });
-    // The template's id, environment and rule all left with it.
+    // The template's id and rule both left with it.
     expect(submit).toHaveBeenCalledWith({
       machineTypeId: "cx23@fsn1",
       orgShareRole: "editor",
@@ -919,7 +853,6 @@ describe("create workspace dialog", () => {
       'select[aria-label="Agent rules document"]',
     )!;
     expect(advanced[0]?.contains(select)).toBe(true);
-    expect(advanced[0]?.querySelector('textarea[aria-label="Startup script"]')).not.toBeNull();
     expect([...select.options].map((option) => option.textContent)).toEqual([
       "Default (built-in)",
       "House rules",

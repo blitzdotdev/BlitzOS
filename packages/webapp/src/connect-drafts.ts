@@ -1,7 +1,4 @@
-import type {
-  TemplateConnectionView,
-  WorkspaceEnvironment,
-} from '@blitzos/schema';
+import type { TemplateConnectionView } from '@blitzos/schema';
 import { asJsonObject, isBoolean, isString, type JsonValue } from './type-guards';
 
 export type TemplateConnectReturnTo = 'template-new' | `template-edit:${string}`;
@@ -12,7 +9,6 @@ export interface TemplateConnectDraft {
   attachedIds: string[];
   connections: TemplateConnectionView[];
   shareWithOrg: boolean;
-  environment: WorkspaceEnvironment;
   agentRuleId: string | null;
   isOrgDefault: boolean;
   repos: string[];
@@ -23,7 +19,6 @@ export interface WorkspaceConnectDraft {
    * with no template selected, so that is the state most likely to be
    * mid-edit when the member leaves for github.com. */
   templateId: string | null;
-  environment: WorkspaceEnvironment;
   agentRuleId: string | null;
   repos: string[];
 }
@@ -47,20 +42,6 @@ function stringList(value: JsonValue | undefined): string[] | null {
   return Array.isArray(value) && value.every(isString) ? value : null;
 }
 
-function draftEnvironment(value: JsonValue | undefined): WorkspaceEnvironment | null {
-  const parsed = asJsonObject(value);
-  const parsedEnv = asJsonObject(parsed?.env);
-  const startupScript = parsed?.startupScript;
-  if (parsed === null || parsedEnv === null) return null;
-  if (startupScript !== null && !isString(startupScript)) return null;
-  const env: WorkspaceEnvironment['env'] = {};
-  for (const [name, entry] of Object.entries(parsedEnv)) {
-    if (!isString(entry)) return null;
-    env[name] = entry;
-  }
-  return { env, startupScript };
-}
-
 function templateDraft(serialized: string): TemplateConnectDraft | null {
   let value: JsonValue;
   try {
@@ -71,7 +52,6 @@ function templateDraft(serialized: string): TemplateConnectDraft | null {
   const parsed = asJsonObject(value);
   const attachedIds = stringList(parsed?.attachedIds);
   const repos = stringList(parsed?.repos);
-  const environment = draftEnvironment(parsed?.environment);
   if (
     parsed === null
     || !isString(parsed.name)
@@ -79,7 +59,6 @@ function templateDraft(serialized: string): TemplateConnectDraft | null {
     || attachedIds === null
     || !Array.isArray(parsed.connections)
     || !isBoolean(parsed.shareWithOrg)
-    || environment === null
     || !(parsed.agentRuleId === null || isString(parsed.agentRuleId))
     || !isBoolean(parsed.isOrgDefault)
     || repos === null
@@ -96,7 +75,6 @@ function templateDraft(serialized: string): TemplateConnectDraft | null {
     attachedIds,
     connections,
     shareWithOrg: parsed.shareWithOrg,
-    environment,
     agentRuleId: parsed.agentRuleId,
     isOrgDefault: parsed.isOrgDefault,
     repos,
@@ -111,18 +89,15 @@ function workspaceDraft(serialized: string): WorkspaceConnectDraft | null {
     return null;
   }
   const parsed = asJsonObject(value);
-  const environment = draftEnvironment(parsed?.environment);
   const repos = stringList(parsed?.repos);
   if (
     parsed === null
     || !(parsed.templateId === null || (isString(parsed.templateId) && parsed.templateId !== ''))
-    || environment === null
     || !(parsed.agentRuleId === null || isString(parsed.agentRuleId))
     || repos === null
   ) return null;
   return {
     templateId: parsed.templateId,
-    environment,
     agentRuleId: parsed.agentRuleId,
     repos,
   };

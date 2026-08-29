@@ -11,6 +11,7 @@ import './webapp-select.css';
 import './chat-panel.css';
 import './files-drive.css';
 import './drive-shell.css';
+import './strip-rail.css';
 import './files.css';
 import './confirmation-dialog.css';
 import './workspace-details-dialog.css';

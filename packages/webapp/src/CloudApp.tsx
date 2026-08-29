@@ -5,7 +5,6 @@ import {
   useReducer,
   useRef,
   useState,
-  type CSSProperties,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
@@ -18,23 +17,14 @@ import {
 import type { ControlPlaneClient } from './api';
 import type { CredentialRequestView, FolderAttachmentView } from '@blitzos/schema';
 import {
-  WebAppHeader,
   SPAWN_SESSION_LABELS,
   type WebAppTabModel,
   type SpawnSessionType,
 } from './WebAppHeader';
 import { FileIcon } from './WebAppIcons';
-import { DriveHome } from './files/DriveHome';
-import { CreateRecipeScreen } from './files/CreateRecipeScreen';
-import { CreateTemplateScreen } from './files/CreateTemplateScreen';
-import { DriveRail, type DriveRailNav, type DriveRailSession } from './files/DriveRail';
-import { RecipesHome } from './files/RecipesHome';
-import { TemplatesHome } from './files/TemplatesHome';
+import type { DriveRailSession } from './shell/rail-sessions';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
-import {
-  CreateWorkspaceDialog,
-  type CreateWorkspaceDialogInput,
-} from './CreateWorkspaceDialog';
+import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { caughtErrorMessage } from './error-message';
 import {
@@ -42,26 +32,23 @@ import {
   WebAppLoadingShell,
 } from './LoadingSkeleton';
 import { machineTypeLabel } from './MachineCatalogGrid';
-import { SettingsHeader, SettingsPage } from './SettingsPage';
-import { ShareWorkspaceDialog } from './ShareWorkspaceDialog';
-import { WorkspaceDetailsDialog } from './WorkspaceDetailsDialog';
 import {
   bindVisualViewportGeometry,
   useMobileWebApp,
 } from './mobile-webapp';
+import { PasteCodeModal } from './shell/PasteCodeModal';
+import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
+import { ShellNav } from './shell/ShellNav';
+import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
+import { WorkPanes } from './shell/WorkPanes';
 import {
   drivePath,
   folderPagePath,
   parseAppRoute,
-  recipeEditPath,
-  recipeNewPath,
-  recipesPath,
   settingsPath,
   workspacePath,
   type SettingsSection,
-  templateEditPath,
   templateNewPath,
-  templatesPath,
 } from './sessions-page-state';
 import {
   clampDrawerWidth,
@@ -94,10 +81,8 @@ import {
 import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
 import { WorkspaceRailStrip } from './WorkspaceRailStrip';
 import { TERMINAL_KEYBOARD_EVENT, TERMINAL_PASTE_EVENT } from './terminal-touch';
-import { terminalPastePayload } from './terminal-paste';
-import { TERMINAL_SUBMIT_EVENT, TtydTerminal } from './TtydTerminal';
+import { TERMINAL_SUBMIT_EVENT } from './TtydTerminal';
 import { WorkspaceErrorState } from './WorkspaceErrorState';
-import { FileEditor } from './FileEditor';
 import { FilesSidebar } from './FilesSidebar';
 import { fullDavPath, isPathAtOrBelow } from './files';
 import { dropPasteText, uploadDroppedFiles } from './file-drop';
@@ -106,7 +91,6 @@ import {
   selectControllableWorkspaceId,
   workspaceReducer,
 } from './workspace-store';
-import { PreviewPanel } from './PreviewPanel';
 import { NATIVE_CHAT_ENABLED } from './product-features';
 import {
   isPreviewPath,
@@ -117,12 +101,10 @@ import {
 } from './preview';
 import { decideUpdateAction, extractIndexAsset } from './update-check';
 import { LoginForm } from './components/LoginForm';
-import { CreateOrgDialog } from './components/CreateOrgDialog';
 import { CreateOrgPage } from './components/CreateOrgPage';
 import type { IdentityRecord } from './protocol';
 import { FILES_DAV_ROOT, type EndpointResolver } from './resolver';
-import {
-  type ConnectionsPanelFocus, WorkspaceDrawer, WorkspacePanelContent } from './WorkspaceDrawer';
+import { type ConnectionsPanelFocus, WorkspaceDrawer } from './WorkspaceDrawer';
 import {
   rememberWorkspaceEndpoints,
   type WorkspaceEndpoints,
@@ -171,11 +153,6 @@ function TerminalIcon() {
 
 export { terminalWebSocketUrl } from './workspace-endpoints';
 
-type WebAppConfirmation = {
-  workspaceId: string;
-  label: string;
-};
-
 type FileCloseConfirmation = {
   id: string;
   label: string;
@@ -186,64 +163,6 @@ const PANEL_LABELS = {
   previews: 'teenyapps',
   connections: 'Connections',
 } satisfies Record<WorkspaceDrawerSegment, string>;
-
-function PasteCodeModal({
-  onCancel,
-  onSend,
-}: {
-  onCancel: () => void;
-  onSend: (payload: { data: string; enters: number }) => void;
-}) {
-  const [text, setText] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const canSend = text.trim().length > 0;
-  const send = () => {
-    if (!canSend) return;
-    // Paste-code submits the raw text; the terminal layer then sends Enter
-    // twice, each gated on the pty responding (echo, then the next screen) —
-    // bundling \r with the text makes Claude's input treat it as pasted
-    // content and swallow the submit.
-    onSend({ data: terminalPastePayload(text.trim(), false), enters: 2 });
-  };
-
-  return (
-    <div className="terminal-prompt-scrim" role="presentation" onClick={onCancel}>
-      <div
-        className="terminal-prompt-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Paste code"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <p className="terminal-prompt-modal__title">Paste code</p>
-        <input
-          ref={inputRef}
-          className="terminal-prompt-modal__input"
-          type="text"
-          autoComplete="off"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          placeholder="Paste the code here"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') send();
-          }}
-        />
-        <div className="terminal-prompt-modal__actions">
-          <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="button" disabled={!canSend} onClick={send}>Send</button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export type CloudAppProps = {
   client: ControlPlaneClient;
@@ -866,6 +785,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     });
   }, [activeWorkspaceId, setWorkspaceTabs]);
 
+  /** The strip's surface icons focus a panel. They open, they never close:
+   * the right icon strip owns the toggle. */
+  const openWorkspacePanel = useCallback((panel: WorkspaceDrawerSegment) => {
+    if (!activeWorkspaceId) return;
+    updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
+    if (mobileWebApp) {
+      setDrawerOpen(false);
+      setFilesDrawerOpen(true);
+      return;
+    }
+    setFocusedRegion('side');
+  }, [activeWorkspaceId, mobileWebApp, updateWorkspaceTabs]);
+
   const toggleFiles = useCallback(() => {
     if (!activeWorkspaceId) return;
     if (mobileWebApp) {
@@ -932,8 +864,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     setDetailsWorkspaceId((current) => current === request.workspaceId ? null : current);
     deleteWorkspace(request.workspaceId);
   }, [confirmation, deleteWorkspace]);
-
-  const isSettingsRoute = route.page === 'settings';
 
   const dispatchTerminalKeyboard = () => {
     window.dispatchEvent(new CustomEvent(TERMINAL_KEYBOARD_EVENT));
@@ -1270,7 +1200,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ? `workspace ${activeWorkspace.lifecycleStatus}`
     : 'workspace pending';
   const hasControllableWorkspace = store.workspaces.some(({ canControl }) => canControl);
-  const isDriveRoute = route.page === 'drive' || route.page === 'folder';
   const webAppBooting = route.page === 'webApp' && (
     !loaded || (hasControllableWorkspace && !activeWorkspace)
   );
@@ -1447,126 +1376,76 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     </div>
   );
 
-  const railFor = (nav: DriveRailNav | null, railActiveWorkspaceId: string | null) => (
-    <DriveRail
+  const shellNav = (railActiveWorkspaceId: string | null) => (
+    <ShellNav
       workspaces={store.workspaces}
+      viewer={store.viewer}
       activeWorkspaceId={railActiveWorkspaceId}
-      nav={nav}
-      identity={store.viewer?.identity ?? null}
-      org={store.viewer?.org ?? null}
-      organizations={store.viewer?.organizations.map(({ org }) => org) ?? []}
+      activeWorkspace={activeWorkspace}
+      showRail={railActiveWorkspaceId !== null || (mobileWebApp && activeWorkspace !== undefined)}
       sessions={railActiveWorkspaceId !== null && railActiveWorkspaceId === activeWorkspaceId
         ? railSessions
         : []}
       activeSessionId={railActiveSessionId ?? ''}
-      onSelectSession={selectTtydSession}
-      onOpenDrive={() => navigateTo(drivePath())}
-      onOpenTemplates={() => navigateTo(templatesPath())}
-      onOpenRecipes={() => navigateTo(recipesPath())}
+      openPanels={openPanels}
+      pendingRequestCount={activePendingRequests.length}
+      drawerOpen={drawerOpen}
       onSelectWorkspace={selectWorkspace}
       onCreateWorkspace={() => setShowCreateWorkspace(true)}
+      onOpenPanel={openWorkspacePanel}
       onSwitchOrg={(orgId) => {
         void client.switchOrg(orgId).then(() => window.location.reload());
       }}
       onCreateOrg={() => setShowCreateOrg(true)}
+      onOpenDrive={() => navigateTo(drivePath())}
       onOpenSettings={() => navigateToSettings('profile')}
+      onSelectSession={selectTtydSession}
+      onSpawnSession={spawnTtydSession}
       onOpenWorkspaceShare={(workspaceId) => setShareWorkspaceId(workspaceId)}
       onOpenWorkspaceDetails={(workspaceId) => {
         if (mobileWebApp) setDrawerOpen(false);
         setDetailsWorkspaceId(workspaceId);
       }}
-      drawerOpen={drawerOpen}
       onCloseDrawer={() => setDrawerOpen(false)}
     />
   );
-  const createWorkspaceDialog = showCreateWorkspace && (
-    <CreateWorkspaceDialog
-      busy={createWorkspaceBusy}
-      error={createWorkspaceError}
-      orgName={store.viewer?.org.name ?? 'your org'}
-      orgId={store.viewer?.org.id ?? ''}
-      admin={store.viewer?.membership.role === 'admin'}
-      saveComputeCredential={client.putComputeCredential}
+  const railOverlays = (
+    <ShellDialogs
       client={client}
-      listMachineTypes={listMachineTypes}
-      listVolumes={listVolumes}
-      listTemplates={listTemplates}
-      initialTemplateId={orgDefaultTemplateId}
-      // The template page draws this dialog too, since #40. Close it on the
-      // way out, or it covers the page it just opened.
-      onNewTemplate={() => {
-        setShowCreateWorkspace(false);
-        navigateTo(templateNewPath());
-      }}
-      onCancel={() => {
-        if (!createWorkspaceBusy) setShowCreateWorkspace(false);
-      }}
-      onSubmit={(input) => { void createWorkspace(input); }}
-    />
-  );
-  const deleteWorkspaceDialog = confirmation && (
-    <ConfirmationDialog
-      title="Delete workspace?"
-      description={`Are you sure you want to delete “${confirmation.label}”? This destroys the workspace and cannot be undone.`}
-      confirmLabel="Yes, delete"
-      cancelLabel="No"
-      onCancel={cancelConfirmation}
-      onConfirm={confirmWebAppAction}
-    />
-  );
-  const shareWorkspaceDialog = shareWorkspaceId && (() => {
-    const workspace = store.workspaces.find(({ id }) => id === shareWorkspaceId);
-    return workspace ? (
-      <ShareWorkspaceDialog
-        client={client}
-        workspaceId={workspace.id}
-        workspaceName={workspace.title}
-        orgName={store.viewer?.org.name ?? 'your org'}
-        orgShareRole={workspace.orgShareRole}
-        owner={workspace.owner ?? (workspace.accessRole === 'owner' && store.viewer
-          ? { name: store.viewer.identity.name || store.viewer.identity.email, avatarUrl: store.viewer.identity.avatarUrl ?? null }
-          : null)}
-        viewerIsOwner={workspace.accessRole === 'owner'}
-        onClose={() => setShareWorkspaceId(null)}
-      />
-    ) : null;
-  })();
-  const createOrgDialog = showCreateOrg && (
-    <CreateOrgDialog
-      onCreate={async (name) => {
+      viewer={store.viewer}
+      workspaces={store.workspaces}
+      showCreateOrg={showCreateOrg}
+      onCreateOrg={async (name) => {
         await api.createOrg(name);
         // POST /orgs rebinds the session to the org it just made, so the
         // reload lands inside it, exactly as switching does.
         window.location.reload();
       }}
-      onCancel={() => setShowCreateOrg(false)}
+      onCloseCreateOrg={() => setShowCreateOrg(false)}
+      showCreateWorkspace={showCreateWorkspace}
+      createWorkspaceBusy={createWorkspaceBusy}
+      createWorkspaceError={createWorkspaceError}
+      orgDefaultTemplateId={orgDefaultTemplateId}
+      listMachineTypes={listMachineTypes}
+      listVolumes={listVolumes}
+      listTemplates={listTemplates}
+      onNewTemplate={() => {
+        setShowCreateWorkspace(false);
+        navigateTo(templateNewPath());
+      }}
+      onCancelCreateWorkspace={() => {
+        if (!createWorkspaceBusy) setShowCreateWorkspace(false);
+      }}
+      onCreateWorkspace={(input) => { void createWorkspace(input); }}
+      shareWorkspaceId={shareWorkspaceId}
+      onCloseShare={() => setShareWorkspaceId(null)}
+      detailsWorkspaceId={detailsWorkspaceId}
+      onCloseDetails={() => setDetailsWorkspaceId(null)}
+      onRequestDeleteWorkspace={requestDeleteWorkspace}
+      confirmation={confirmation}
+      onCancelConfirmation={cancelConfirmation}
+      onConfirmDelete={confirmWebAppAction}
     />
-  );
-  const workspaceDetailsDialog = detailsWorkspaceId && (() => {
-    const workspace = store.workspaces.find(({ id }) => id === detailsWorkspaceId);
-    const canManage = workspace?.accessRole === 'owner' || workspace?.accessRole === 'admin';
-    return workspace?.canControl ? (
-      <WorkspaceDetailsDialog
-        client={client}
-        workspace={workspace}
-        orgName={store.viewer?.org.name ?? 'your org'}
-        listMachineTypes={listMachineTypes}
-        listVolumes={listVolumes}
-        onClose={() => setDetailsWorkspaceId(null)}
-        onDelete={canManage
-          ? () => requestDeleteWorkspace(workspace.id)
-          : null}
-      />
-    ) : null;
-  })();
-  const railOverlays = (
-    <>
-      {createOrgDialog}
-      {createWorkspaceDialog}
-      {shareWorkspaceDialog}
-      {workspaceDetailsDialog}
-      {deleteWorkspaceDialog}
-    </>
   );
 
   if (signedOut) {
@@ -1586,159 +1465,32 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     );
   }
 
-  if (isDriveRoute && (route.page === 'drive' || route.page === 'folder')) {
+  if (isSecondaryRoute(route)) {
     return (
-      <main className="drive-shell" aria-busy={!loaded}>
-        {railFor('drive', null)}
-        {loaded && store.viewer ? (
-          <DriveHome
-            client={client}
-            viewer={store.viewer}
-            route={route}
-            onNavigate={navigateTo}
-            onOpenRail={() => setDrawerOpen(true)}
-          />
-        ) : (
-          <div className="drive-content">
-            <div className="drive-empty" role="status">Loading…</div>
-          </div>
-        )}
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-        {updateNotice}
-        {railOverlays}
-      </main>
-    );
-  }
-
-  if (route.page === 'templates') {
-    return (
-      <main className="drive-shell" aria-busy={!loaded}>
-        {railFor('templates', null)}
-        {loaded && store.viewer ? (
-          <TemplatesHome
-            client={client}
-            creating={createWorkspaceBusy}
-            onNewTemplate={() => navigateTo(templateNewPath())}
-            onEditTemplate={(template) => navigateTo(templateEditPath(template.id))}
-            onUseTemplate={(template) => {
-              void createWorkspace({ templateId: template.id, orgShareRole: 'editor' });
-            }}
-            onOpenRail={() => setDrawerOpen(true)}
-          />
-        ) : (
-          <div className="drive-content">
-            <div className="drive-empty" role="status">Loading…</div>
-          </div>
-        )}
-        {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-        {updateNotice}
-        {railOverlays}
-      </main>
-    );
-  }
-
-  if (route.page === 'recipes') {
-    return (
-      <main className="drive-shell" aria-busy={!loaded}>
-        {railFor('recipes', null)}
-        {loaded && store.viewer ? (
-          <RecipesHome
-            client={client}
-            launching={createWorkspaceBusy}
-            onNewRecipe={() => navigateTo(recipeNewPath())}
-            onEditRecipe={(recipe) => navigateTo(recipeEditPath(recipe.id))}
-            onRunRecipe={(recipe) => { void launchRecipe(recipe.id); }}
-            onOpenRail={() => setDrawerOpen(true)}
-          />
-        ) : (
-          <div className="drive-content">
-            <div className="drive-empty" role="status">Loading…</div>
-          </div>
-        )}
-        {createWorkspaceError && <div className="webapp-notice" role="alert"><span>{createWorkspaceError}</span><button type="button" onClick={() => setCreateWorkspaceError(null)}>Dismiss</button></div>}
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-        {updateNotice}
-        {railOverlays}
-      </main>
-    );
-  }
-
-  if (route.page === 'recipe-new' || route.page === 'recipe-edit') {
-    const leaveToRecipes = () => navigateTo(recipesPath());
-    return (
-      <main className="drive-shell" aria-busy={!loaded}>
-        {railFor('recipes', null)}
-        {loaded && store.viewer ? (
-          <CreateRecipeScreen
-            client={client}
-            editRecipeId={route.page === 'recipe-edit' ? route.recipeId : undefined}
-            onSaved={leaveToRecipes}
-            onCancel={leaveToRecipes}
-          />
-        ) : (
-          <div className="drive-content">
-            <div className="drive-empty" role="status">Loading…</div>
-          </div>
-        )}
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-        {railOverlays}
-      </main>
-    );
-  }
-
-  if (route.page === 'template-new' || route.page === 'template-edit') {
-    const leaveToTemplates = () => navigateTo(templatesPath());
-    return (
-      <main className="drive-shell" aria-busy={!loaded}>
-        {railFor('templates', null)}
-        {loaded && store.viewer ? (
-          <CreateTemplateScreen
-            client={client}
-            orgId={store.viewer.org.id}
-            orgName={store.viewer.org.name}
-            admin={store.viewer.membership.role === 'admin'}
-            editTemplateId={route.page === 'template-edit' ? route.templateId : undefined}
-            isAdmin={store.viewer.membership.role === 'admin'}
-            onCreated={leaveToTemplates}
-            onCancel={leaveToTemplates}
-          />
-        ) : (
-          <div className="drive-content">
-            <div className="drive-empty" role="status">Loading…</div>
-          </div>
-        )}
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-        {railOverlays}
-      </main>
-    );
-  }
-
-  if (isSettingsRoute) {
-    return (
-      <main className="settings-shell" aria-busy={!loaded}>
-        <SettingsHeader
-          workspaceLabel={activeWorkspace?.title}
-          onBack={returnToWebApp}
-        />
-        {loaded && store.viewer ? (
-          <SettingsPage
-            client={client}
-            viewer={store.viewer}
-            section={route.settingsSection}
-            onNavigate={navigateToSettings}
-            onOpenWorkspace={navigateToWorkspacePage}
-            onSignOut={signOut}
-            onLeftOrg={() => window.location.reload()}
-          />
-        ) : (
-          <div className="settings-page-state settings-page-state--loading" role="status">
-            Loading settings…
-          </div>
-        )}
-        {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
-        {updateNotice}
-      </main>
+      <SecondaryRoutes
+        route={route}
+        client={client}
+        viewer={store.viewer}
+        loaded={loaded}
+        rail={shellNav(null)}
+        dialogs={railOverlays}
+        updateNotice={updateNotice}
+        error={error}
+        onDismissError={() => setError(null)}
+        createWorkspaceBusy={createWorkspaceBusy}
+        createWorkspaceError={createWorkspaceError}
+        onDismissCreateWorkspaceError={() => setCreateWorkspaceError(null)}
+        onCreateWorkspace={(input) => { void createWorkspace(input); }}
+        onLaunchRecipe={(recipeId) => { void launchRecipe(recipeId); }}
+        onNavigate={navigateTo}
+        onOpenRail={() => setDrawerOpen(true)}
+        onNavigateToSettings={navigateToSettings}
+        onOpenWorkspace={navigateToWorkspacePage}
+        onLeaveSettings={returnToWebApp}
+        onSignOut={signOut}
+        onLeftOrg={() => window.location.reload()}
+        activeWorkspaceTitle={activeWorkspace?.title}
+      />
     );
   }
 
@@ -1792,7 +1544,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           {dropBusy ? 'Uploading…' : 'Drop to upload into this workspace'}
         </div>
       )}
-      {railFor(null, activeWorkspaceId)}
+      {shellNav(activeWorkspaceId)}
       {railOverlays}
 
       <div className="drive-ws-frame">
@@ -1807,213 +1559,87 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 </span>
               </div>
             )}
-            <div
-              className={`webapp-panes${visibleRegions.length > 1 ? ' webapp-panes--split' : ''}`}
-              ref={panesRef}
-              data-resizing={paneResizing || undefined}
-              style={
-                // SAFETY: React accepts CSS custom properties at runtime; CSSProperties omits arbitrary `--*` keys from its static surface.
-                { '--side-pane-width': `${activeFiles.width}px` } as CSSProperties
-              }
-              onDragOver={(event) => {
+            <WorkPanes
+              client={client}
+              panesRef={panesRef}
+              visibleRegions={visibleRegions}
+              renderedSessions={renderedSessions}
+              surfaceRegion={surfaceRegion}
+              paneActiveId={paneActiveId}
+              paneTabModels={paneTabModels}
+              paneFallback={paneFallback}
+              sidePaneWidth={activeFiles.width}
+              paneResizing={paneResizing}
+              tabDrag={tabDrag}
+              splitEnabled={splitEnabled}
+              mobile={mobileWebApp}
+              drawerOpen={drawerOpen}
+              tabsLoaded={tabsLoaded}
+              workspaceWaking={workspaceWaking}
+              canEditWorkspaceLayout={canEditWorkspaceLayout}
+              activeWorkspace={activeWorkspace}
+              activeWorkspaceId={activeWorkspaceId}
+              activeWorkspaceRunning={activeWorkspaceRunning}
+              activeSessionUrl={activeSessionUrl}
+              activeFilesBase={activeFilesBase}
+              filesClient={filesClient}
+              filesSidebar={filesSidebar}
+              orgName={store.viewer?.org.name ?? 'Organization'}
+              workspaceWakingStage={workspaceWakingStage}
+              livePorts={orderedLivePorts}
+              previewLinks={orderedPreviewLinks}
+              pendingRequests={activePendingRequests}
+              pendingRequestsError={pendingRequestsError}
+              connectionsFocus={connectionsFocus}
+              onOpenDrawer={() => {
+                setFilesDrawerOpen(false);
+                setDrawerOpen(true);
+              }}
+              onSelectSession={selectTtydSession}
+              onCloseSession={closeTtydSession}
+              onRenameSession={renameTtydSession}
+              onSpawnSession={spawnTtydSession}
+              onTabDragStart={beginTabDrag}
+              onTabDragEnd={clearTabDrag}
+              onTabDragOver={(event) => {
                 if (tabDrag === null) return;
                 event.preventDefault();
                 if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
                 trackTabDrag(event);
               }}
-              onDrop={dropTabDrag}
-            >
-              {visibleRegions.map((region) => (
-                <div className="webapp-pane-strip" data-region={region} key={`strip-${region}`}>
-                  <WebAppHeader
-                    tabs={paneTabModels(region)}
-                    activeSessionId={paneActiveId(region) ?? ''}
-                    sessionBusy={false}
-                    terminalDisabled={workspaceWaking || !tabsLoaded}
-                    mobile={mobileWebApp}
-                    paneStrips={false}
-                    drawerOpen={drawerOpen}
-                    stripLabel={region === 'main'
-                      ? 'Workspace sessions'
-                      : 'Workspace side pane sessions'}
-                    spawnable={region === 'main'}
-                    onOpenDrawer={() => {
-                      setFilesDrawerOpen(false);
-                      setDrawerOpen(true);
-                    }}
-                    onSelect={selectTtydSession}
-                    onClose={closeTtydSession}
-                    onRename={canEditWorkspaceLayout ? renameTtydSession : undefined}
-                    onSpawn={spawnTtydSession}
-                    onTabDragStart={splitEnabled ? beginTabDrag : undefined}
-                    onTabDragEnd={clearTabDrag}
-                    draggingSessionId={tabDrag?.sessionId ?? null}
-                    insertBeforeId={tabDrag !== null
-                      && tabDrag.target.kind === 'tab'
-                      && tabDrag.target.region === region
-                      ? tabDrag.target.beforeId === null
-                        ? null
-                        : String(tabDrag.target.beforeId)
-                      : undefined}
-                    livePorts={orderedLivePorts}
-                    previewLinks={orderedPreviewLinks}
-                    onOpenPreview={openPreviewPort}
-                    onOpenPreviewLink={openPreviewLink}
-                  />
-                </div>
-              ))}
-              {visibleRegions.map((region) => {
-                const fallback = paneFallback(region);
-                return fallback === null ? null : (
-                  <div
-                    className="webapp-workspace-session webapp-pane-fallback"
-                    data-region={region}
-                    key={`fallback-${region}`}
-                  >{fallback}</div>
-                );
-              })}
-              {renderedSessions.map((session) => {
-                const sessionId = String(session.id);
-                const region = surfaceRegion(session);
-                const active = paneActiveId(region) === sessionId;
-                if (session.type === 'panel') {
-                  return (
-                    <div
-                      className="webapp-workspace-session webapp-pane-panel"
-                      data-region={region}
-                      hidden={!active}
-                      key={sessionId}
-                    >
-                      <WorkspacePanelContent
-                        panel={session.panel}
-                        client={client}
-                        workspaceId={activeWorkspaceId}
-                        orgName={store.viewer?.org.name ?? 'Organization'}
-                        visible={active}
-                        files={filesSidebar}
-                        pendingRequests={activePendingRequests}
-                        pendingRequestsError={pendingRequestsError}
-                        workspaceConnections={activeWorkspace?.connections ?? []}
-                        connectionsFocus={connectionsFocus}
-                        readOnly={activeWorkspace?.accessRole === 'viewer'}
-                        onResolveRequest={resolveWorkspaceRequest}
-                        livePorts={orderedLivePorts}
-                        previewLinks={orderedPreviewLinks}
-                        filesBase={activeFilesBase}
-                        previewReady={activeWorkspaceRunning}
-                        onOpenPreview={(port) => { openPreviewPort(port); }}
-                        onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
-                      />
-                    </div>
-                  );
-                }
-                if (session.type === 'preview') {
-                  return (
-                    <div
-                      className="webapp-workspace-session webapp-pane-preview"
-                      data-region={region}
-                      hidden={!active}
-                      key={sessionId}
-                    >
-                      <PreviewPanel
-                        target={'port' in session
-                          ? session.port
-                          : { url: session.url, title: session.title }}
-                        path={'port' in session ? session.path : undefined}
-                        filesBase={activeFilesBase}
-                        running={activeWorkspaceRunning}
-                      />
-                    </div>
-                  );
-                }
-                if (session.type === 'file') {
-                  return (
-                    <div
-                      className="webapp-workspace-session"
-                      data-region={region}
-                      hidden={!active || filesClient === null}
-                      key={sessionId}
-                    >
-                      <FileEditor
-                        active={active}
-                        client={filesClient}
-                        filePath={session.filePath}
-                        unavailableStage={workspaceWakingStage}
-                        onDirtyChange={(dirty) => updateFileDirty(sessionId, dirty)}
-                        onSaved={() => setFilesRefreshVersion((version) => version + 1)}
-                        onTreeRefresh={() => setFilesRefreshVersion((version) => version + 1)}
-                        onUnauthorized={handleUnauthorized}
-                      />
-                    </div>
-                  );
-                }
-                if (session.type === 'chat') {
-                  return null;
-                }
-                return (
-                  <div
-                    className="webapp-workspace-session"
-                    data-region={region}
-                    hidden={!active}
-                    key={sessionId}
-                  >
-                    <TtydTerminal
-                      url={activeSessionUrl ?? ''}
-                      sessionType={session.type}
-                      sessionKey={sessionId}
-                      active={active}
-                      readOnly={activeWorkspace?.accessRole === 'viewer'}
-                      onSignInUrl={setTerminalSignInUrl}
-                      onOpenPreview={openPreviewPort}
-                    />
-                  </div>
-                );
-              })}
-              {visibleRegions.length > 1 && (
-                <div
-                  className="webapp-pane-resizer"
-                  role="separator"
-                  aria-label="Resize side pane"
-                  aria-orientation="vertical"
-                  onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => {
-                    if (event.button !== 0) return;
-                    event.preventDefault();
-                    endPaneResize.current?.();
-                    const origin = { x: event.clientX, width: activeFiles.width };
-                    const move = (moveEvent: MouseEvent) => {
-                      setSidePaneWidth(clampDrawerWidth(
-                        origin.width + origin.x - moveEvent.clientX,
-                        window.innerWidth,
-                      ));
-                    };
-                    const stop = () => endPaneResize.current?.();
-                    window.addEventListener('mousemove', move);
-                    window.addEventListener('mouseup', stop);
-                    window.addEventListener('blur', stop);
-                    endPaneResize.current = () => {
-                      window.removeEventListener('mousemove', move);
-                      window.removeEventListener('mouseup', stop);
-                      window.removeEventListener('blur', stop);
-                      endPaneResize.current = null;
-                      setPaneResizing(false);
-                    };
-                    setPaneResizing(true);
-                  }}
-                />
-              )}
-              {tabDrag !== null && (
-                <div
-                  className="webapp-pane-drop"
-                  aria-hidden="true"
-                  style={{
-                    left: `${tabDrag.box.left}px`,
-                    top: `${tabDrag.box.top}px`,
-                    width: `${tabDrag.box.width}px`,
-                    height: `${tabDrag.box.height}px`,
-                  }}
-                />
-              )}
-            </div>
+              onTabDrop={dropTabDrag}
+              onOpenPreview={openPreviewPort}
+              onOpenPreviewLink={openPreviewLink}
+              onResolveRequest={resolveWorkspaceRequest}
+              onFileDirtyChange={updateFileDirty}
+              onFilesRefresh={() => setFilesRefreshVersion((version) => version + 1)}
+              onUnauthorized={handleUnauthorized}
+              onSignInUrl={setTerminalSignInUrl}
+              onBeginPaneResize={(event: ReactMouseEvent<HTMLDivElement>) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                endPaneResize.current?.();
+                const origin = { x: event.clientX, width: activeFiles.width };
+                const move = (moveEvent: MouseEvent) => {
+                  setSidePaneWidth(clampDrawerWidth(
+                    origin.width + origin.x - moveEvent.clientX,
+                    window.innerWidth,
+                  ));
+                };
+                const stop = () => endPaneResize.current?.();
+                window.addEventListener('mousemove', move);
+                window.addEventListener('mouseup', stop);
+                window.addEventListener('blur', stop);
+                endPaneResize.current = () => {
+                  window.removeEventListener('mousemove', move);
+                  window.removeEventListener('mouseup', stop);
+                  window.removeEventListener('blur', stop);
+                  endPaneResize.current = null;
+                  setPaneResizing(false);
+                };
+                setPaneResizing(true);
+              }}
+            />
             {mobileWebApp && activeWorkspace && (
               <button
                 className={`files-drawer-scrim${filesDrawerOpen ? ' files-drawer-scrim--open' : ''}`}

@@ -19,8 +19,6 @@ export type CloudWorkspaceModel = {
   title: string;
   machineType: string | null;
   volumeId: string | null;
-  environmentConfigured: boolean;
-  startupConfigured: boolean;
   lifecycleStatus: RestWorkspaceStatus;
   errorDetail: string | null;
   retryAction: RetryAction;
@@ -71,8 +69,6 @@ function createWorkspaceModel(
     title: record.canControl ? preference?.title || record.name : record.name,
     machineType: record.machineType ?? null,
     volumeId: record.volumeId ?? null,
-    environmentConfigured: record.environmentConfigured === true,
-    startupConfigured: record.startupConfigured === true,
     lifecycleStatus: record.status,
     errorDetail: record.errorDetail ?? null,
     retryAction: record.retryAction,
@@ -118,8 +114,6 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
           title: record.canControl ? existing.title : record.name,
           machineType: record.machineType ?? null,
           volumeId: record.volumeId ?? null,
-          environmentConfigured: record.environmentConfigured === true,
-          startupConfigured: record.startupConfigured === true,
           lifecycleStatus: record.status,
           errorDetail: record.errorDetail ?? null,
           retryAction: record.retryAction,
@@ -165,8 +159,6 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
             title: record.canControl ? workspace.title : record.name,
             machineType: record.machineType ?? null,
             volumeId: record.volumeId ?? null,
-            environmentConfigured: record.environmentConfigured === true,
-            startupConfigured: record.startupConfigured === true,
             lifecycleStatus: record.status,
             errorDetail: record.errorDetail ?? null,
             retryAction: record.retryAction,
@@ -182,8 +174,6 @@ export function workspaceReducer(state: WorkspaceStoreState, action: WorkspaceAc
         ...workspace,
         machineType: action.record.machineType ?? workspace.machineType,
         volumeId: action.record.volumeId ?? null,
-        environmentConfigured: action.record.environmentConfigured === true,
-        startupConfigured: action.record.startupConfigured === true,
         lifecycleStatus: action.record.status,
         errorDetail: action.record.errorDetail ?? null,
         retryAction: action.record.retryAction,

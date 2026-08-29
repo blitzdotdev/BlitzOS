@@ -20,10 +20,6 @@ function dateLabel(timestamp: number): string {
   }).format(new Date(timestamp));
 }
 
-function yesNo(value: boolean): string {
-  return value ? 'Yes' : 'No';
-}
-
 function DetailList({ children }: { children: ReactNode }) {
   return <dl className="workspace-details-list">{children}</dl>;
 }
@@ -155,8 +151,6 @@ export function WorkspaceDetailsDialog({
               <section>
                 <h2>Configuration</h2>
                 <DetailList>
-                  <Detail label="Environment variables" value={yesNo(workspace.environmentConfigured)} />
-                  <Detail label="Startup script" value={yesNo(workspace.startupConfigured)} />
                   <Detail label="Connections" value={workspace.connections.length} />
                 </DetailList>
               </section>
