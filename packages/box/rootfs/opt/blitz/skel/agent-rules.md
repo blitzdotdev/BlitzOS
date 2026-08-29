@@ -130,6 +130,19 @@ delete the file and pull keys at the moment of use:
 ( eval "$(blitz-cred env STRIPE_API_KEY)"; use it here )
 ```
 
+A credential can carry a comment: one line that says what the key is for.
+`blitz-cred list` prints it after a `#` — read the comments before you
+pick a key. To store an important key WITH its comment, send the value on
+stdin:
+
+```
+printf '%s' "$VALUE" | blitz-cred put STRIPE_API_KEY --comment "test-mode key, safe for CI"
+```
+
+Import never reads or writes comments, and a rotation keeps the comment
+the name already has. When you store a key others will use, write the
+comment — it is what the next agent reads instead of asking.
+
 ## Never print a credential
 
 Never echo, print, log, or paste the value of a credential — not into a

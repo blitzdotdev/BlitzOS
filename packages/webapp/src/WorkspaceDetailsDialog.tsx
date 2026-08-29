@@ -99,6 +99,7 @@ function CredentialsTab({
 }) {
   const [name, setName] = useState('');
   const [label, setLabel] = useState('');
+  const [comment, setComment] = useState('');
   const [value, setValue] = useState('');
   const [importText, setImportText] = useState('');
   const [importLabel, setImportLabel] = useState('');
@@ -160,9 +161,13 @@ function CredentialsTab({
     if (name.trim() === '' || value === '') return;
     const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
     if (label.trim() !== '') input.label = label.trim();
+    // Absent keeps a rotated key's comment; the field left empty is absence,
+    // not a clear, so rotating through this form cannot erase one.
+    if (comment.trim() !== '') input.comment = comment.trim();
     onPut(input);
     setName('');
     setLabel('');
+    setComment('');
     setValue('');
   };
   return (
@@ -189,7 +194,9 @@ function CredentialsTab({
             <div className="workspace-credential-row" key={credential.name}>
               <span className="workspace-credential-name">
                 <strong>{credential.name}</strong>
-                {credential.label !== null && <small>{credential.label}</small>}
+                {(credential.comment ?? credential.label) !== null && (
+                  <small>{credential.comment ?? credential.label}</small>
+                )}
               </span>
               <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
               {canManage && (
@@ -315,6 +322,15 @@ function CredentialsTab({
               aria-label="Credential label"
               value={label}
               onChange={(event) => setLabel(event.currentTarget.value)}
+            />
+          </label>
+          <label className="cfg-field">
+            Comment (optional)
+            <input
+              aria-label="Credential comment"
+              placeholder="what this key is for — agents read this"
+              value={comment}
+              onChange={(event) => setComment(event.currentTarget.value)}
             />
           </label>
           <label className="cfg-field">

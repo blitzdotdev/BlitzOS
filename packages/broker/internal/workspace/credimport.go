@@ -9,10 +9,11 @@ import (
 	"strings"
 )
 
-// ErrNotWorkspaceAdmin means the control plane refused the import because
-// this machine's member does not administer the workspace. The gate is the
-// same one the credentials tab enforces, so the fix is a person, not a retry.
-var ErrNotWorkspaceAdmin = errors.New("only a workspace admin can import credentials")
+// ErrNotWorkspaceAdmin means the control plane refused a credential write
+// because this machine's member does not administer the workspace. The gate
+// is the one the credentials tab enforces, so the fix is a person, not a
+// retry.
+var ErrNotWorkspaceAdmin = errors.New("only a workspace admin can write workspace credentials")
 
 // credentialImportMaxBytes caps the dotenv text this box will upload. The
 // control plane holds the real ceiling; this one exists so a mistyped path to

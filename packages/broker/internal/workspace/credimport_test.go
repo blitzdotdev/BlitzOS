@@ -86,12 +86,12 @@ func TestImportCredentialsRefusesUnprintableResponses(t *testing.T) {
 	}
 }
 
-// credentialImportFixtures reads the corpus both sides of this wire share.
-// The control plane produces these bytes and this package prints them, and
-// the two cannot import one module, so the corpus is what keeps them equal.
-func credentialImportFixtures(t *testing.T, kind string) []string {
+// sharedFixtures reads a corpus both sides of a wire share. The control
+// plane produces these bytes and this package prints them, and the two
+// cannot import one module, so the corpus is what keeps them equal.
+func sharedFixtures(t *testing.T, contract, kind string) []string {
 	t.Helper()
-	directory := filepath.Join("..", "..", "..", "schema", "fixtures", "credential-import", kind)
+	directory := filepath.Join("..", "..", "..", "schema", "fixtures", contract, kind)
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func credentialImportFixtures(t *testing.T, kind string) []string {
 }
 
 func TestCredentialImportFixtures(t *testing.T) {
-	for _, path := range credentialImportFixtures(t, "valid") {
+	for _, path := range sharedFixtures(t, "credential-import", "valid") {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -119,7 +119,7 @@ func TestCredentialImportFixtures(t *testing.T) {
 			t.Errorf("%s: %v", path, err)
 		}
 	}
-	for _, path := range credentialImportFixtures(t, "invalid") {
+	for _, path := range sharedFixtures(t, "credential-import", "invalid") {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

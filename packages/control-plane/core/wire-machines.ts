@@ -63,10 +63,13 @@ export interface WorkspaceMemberView {
 }
 
 /** A workspace credential, names only. A value never crosses the wire after
- * the write that created it. */
+ * the write that created it. The comment says what the key is FOR — it is
+ * shown wherever the name is, so an agent or a person can pick the right
+ * key without asking. */
 export interface WorkspaceCredentialView {
   name: string;
   label: string | null;
+  comment: string | null;
   createdAt: number;
 }
 
@@ -128,10 +131,15 @@ export interface UpdateWorkspaceRequest {
 }
 
 /** Add or rotate: one live row per (workspace, name), so a second write to a
- * live name replaces its value. */
+ * live name replaces its value.
+ *
+ * `comment` is tri-state: absent keeps the live row's comment across a
+ * rotation, an explicit null clears it, a string sets it. Rotation changes
+ * the secret, not what the secret is for. */
 export interface PutWorkspaceCredentialRequest {
   name: string;
   label?: string;
+  comment?: string | null;
   value: string;
 }
 

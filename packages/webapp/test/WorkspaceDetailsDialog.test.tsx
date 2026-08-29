@@ -70,7 +70,12 @@ const workspace = workspaceModelFixture({
   serverName: 'details-test',
   title: 'Details test',
   members: [ada, grace],
-  credentials: [{ name: 'STRIPE_API_KEY', label: 'billing', createdAt: 1_700_000_000_000 }],
+  credentials: [{
+    name: 'STRIPE_API_KEY',
+    label: 'billing',
+    comment: 'test-mode key, safe for CI',
+    createdAt: 1_700_000_000_000,
+  }],
 });
 
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
@@ -253,7 +258,9 @@ describe('WorkspaceDetailsDialog', () => {
     await act(async () => tab(view.container, 'Credentials')?.click());
 
     expect(view.container.textContent).toContain('STRIPE_API_KEY');
-    expect(view.container.textContent).toContain('billing');
+    // The comment outranks the label on the row: it says what the key is
+    // FOR, which is what a person picking one needs.
+    expect(view.container.textContent).toContain('test-mode key, safe for CI');
     // Write-only: the add field exists, but nothing reads a value back.
     const valueField = view.container.querySelector<HTMLInputElement>('[aria-label="Credential value"]');
     expect(valueField?.type).toBe('password');

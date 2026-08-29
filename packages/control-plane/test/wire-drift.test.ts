@@ -189,7 +189,7 @@ const viewerMember: SharedShape<
 const workspaceCredential: SharedShape<
   wire.WorkspaceCredentialView,
   schema.WorkspaceCredentialView
-> = { name: "STRIPE_API_KEY", label: "live", createdAt: 6 };
+> = { name: "STRIPE_API_KEY", label: "live", comment: "test-mode key, safe for CI", createdAt: 6 };
 
 const machineResponse: SharedShape<
   wire.MachineResponse,
@@ -247,7 +247,12 @@ const workspaceMemberResponse: SharedShape<
 const putWorkspaceCredentialRequest: SharedShape<
   wire.PutWorkspaceCredentialRequest,
   schema.PutWorkspaceCredentialRequest
-> = { name: workspaceCredential.name, label: "live", value: "sk_test_only" };
+> = {
+  name: workspaceCredential.name,
+  label: "live",
+  comment: "test-mode key, safe for CI",
+  value: "sk_test_only",
+};
 
 const importWorkspaceCredentialsRequest: SharedShape<
   wire.ImportWorkspaceCredentialsRequest,
@@ -870,6 +875,10 @@ describe("local wire copies", () => {
     expectTypeOf<connections.MintResult>().toEqualTypeOf<schema.MintResult>();
     expectTypeOf<connections.WorkspaceConnectionsResponse>()
       .toEqualTypeOf<schema.WorkspaceConnectionsResponse>();
+    expectTypeOf<connections.WorkspaceCredentialEntry>()
+      .toEqualTypeOf<schema.WorkspaceCredentialEntry>();
+    expectTypeOf<connections.WorkspaceCredentialsResponse>()
+      .toEqualTypeOf<schema.WorkspaceCredentialsResponse>();
     expectTypeOf<connections.Lease>().toEqualTypeOf<schema.CredentialLeaseView>();
     expectTypeOf<connections.CatalogAdminPlacement>().toEqualTypeOf<schema.CatalogAdminPlacement>();
     expectTypeOf<connections.CatalogAdminFormView>().toEqualTypeOf<schema.CatalogAdminFormView>();

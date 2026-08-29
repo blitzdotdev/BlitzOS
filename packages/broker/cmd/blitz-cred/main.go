@@ -23,10 +23,11 @@ const registerTimeout = 45 * time.Second
 // wrong reads the same list whichever way it arrived.
 const usageText = `usage: blitz-cred COMMAND [ARGUMENTS]
 
-  list                         providers this workspace may use, one per line
+  list                         providers and workspace credentials, one per line
   get PROVIDER                 print PROVIDER's token on stdout, nothing else
   env PROVIDER                 print eval-able NAME=VALUE lines for PROVIDER
   import [--check] FILE|-      store each KEY=value line as a workspace credential
+  put NAME [--comment TEXT]    store one workspace credential; value on stdin
   enroll --origin URL          claim this box's control-plane credential
   register                     register broker keys and pin the broker config
   token claude|codex           print the harness login token
@@ -144,6 +145,44 @@ func runWithInput(args []string, input io.Reader, output io.Writer) error {
 			return importFailure(err)
 		}
 		return printImport(output, result, *check)
+	case "put":
+		flags := flag.NewFlagSet("put", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		label := flags.String("label", "", "provenance label")
+		comment := flags.String("comment", "", "what this key is for, shown by list")
+		// The name reads naturally before the flags (`put NAME --comment ...`),
+		// and Go's flag parser stops at the first positional — so the name is
+		// lifted out before the flags are read, and either order works.
+		rest := args[1:]
+		name := ""
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			name = rest[0]
+			rest = rest[1:]
+		}
+		usage := errors.New(`usage: printf '%s' "$VALUE" | blitz-cred put NAME [--label TEXT] [--comment TEXT]`)
+		if err := flags.Parse(rest); err != nil {
+			return usage
+		}
+		if name == "" && flags.NArg() == 1 {
+			name = flags.Arg(0)
+		} else if flags.NArg() != 0 {
+			return usage
+		}
+		if name == "" {
+			return usage
+		}
+		data, err := io.ReadAll(io.LimitReader(input, 64*1024))
+		if err != nil {
+			return err
+		}
+		value := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
+		if err := workspace.PutCredential(
+			context.Background(), stateDir, name, value, *label, *comment, nil,
+		); err != nil {
+			return importFailure(err)
+		}
+		_, err = fmt.Fprintf(output, "stored    %s\n", name)
+		return err
 	case "git-helper":
 		if len(args) != 2 {
 			return errors.New("usage: blitz-cred git-helper get|store|erase")
@@ -188,7 +227,7 @@ func readImportSource(path string, input io.Reader) (text, name string, err erro
 func importFailure(err error) error {
 	if errors.Is(err, workspace.ErrNotWorkspaceAdmin) {
 		return errors.New(
-			"blitz: only a workspace admin can import credentials. Ask an admin to run this, or to change your role",
+			"blitz: only a workspace admin can write workspace credentials. Ask an admin to run this, or to change your role",
 		)
 	}
 	return err
@@ -280,6 +319,11 @@ func shellQuote(value string) string {
 // listConnections answers "what may I use here?" with a live read, never a
 // cached file. Nothing is delivered to this box any more, so the only honest
 // source is the control plane's copy of the workspace manifest.
+//
+// A workspace credential that carries a comment prints it after a `#`, so an
+// agent picking a key reads what each one is for. The comment read is
+// best-effort: a control plane too old to serve it costs the comments, never
+// the list.
 func listConnections(stateDir string, output io.Writer) error {
 	names, err := workspace.ListConnections(context.Background(), stateDir, nil)
 	if err != nil {
@@ -289,8 +333,20 @@ func listConnections(stateDir string, output io.Writer) error {
 		_, err := fmt.Fprintln(output, "no connections; ask the user to connect one: blitz connections open <provider>")
 		return err
 	}
+	comments := map[string]string{}
+	if credentials, err := workspace.ListCredentials(context.Background(), stateDir, nil); err == nil {
+		for _, credential := range credentials {
+			if credential.Comment != "" {
+				comments[credential.Name] = credential.Comment
+			}
+		}
+	}
 	for _, name := range names {
-		if _, err := fmt.Fprintln(output, name); err != nil {
+		line := name
+		if comment := comments[name]; comment != "" {
+			line = fmt.Sprintf("%s  # %s", name, comment)
+		}
+		if _, err := fmt.Fprintln(output, line); err != nil {
 			return err
 		}
 	}
