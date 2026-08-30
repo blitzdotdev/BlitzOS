@@ -22,7 +22,15 @@ arrive: context/message-flow.md "Upstream".
   Config selected by the driving turn travels on every session establishment as
   `_meta.lody.sessionConfig`; provider-specific startup translation belongs in the
   ACP adapter. `session/set_config_option` remains the live-session switch, and a
-  successful selection becomes the startup state of a later replacement.
+  successful selection becomes the startup state of a later replacement. Session
+  setup and `session/set_config_option` responses carry the agent-confirmed config
+  state; runtime projections must consume them as well as autonomous
+  `config_option_update` notifications. Presence of `configOptions`, including an
+  empty array, is an authoritative full snapshot and replaces retained startup
+  values; only an omitted field uses the legacy request-value fallback. That
+  fallback updates both replacement-session startup state and the matching
+  advertised option's effective `currentValue`, so shared runtime projection
+  cannot publish a stale value after the agent accepts a request.
   Goal snapshots use the Core `_meta.lody.goal` contract and epoch-second field names;
   convert them to the durable millisecond fields at this boundary. Normalize `limited`
   to the legacy durable `blocked` status.
