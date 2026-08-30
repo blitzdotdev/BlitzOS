@@ -12,8 +12,16 @@ for shim in blitz claude codex; do
   sh -n "$box_dir/rootfs/usr/local/bin/$shim"
 done
 
+# libexec is no longer all bash: blitz-lody-bridge and blitz-lody-projects are
+# node. Dispatch on the shebang rather than the name, so a checker is never
+# chosen by a glob that a later script quietly stops matching. A file with
+# neither shebang is bash — blitz-recipe-invocation is sourced, not executed,
+# and opens with `# shellcheck shell=bash` instead.
 while IFS= read -r script; do
-  bash -n "$script"
+  case "$(head -1 "$script")" in
+    *node*) node --check "$script" ;;
+    *) bash -n "$script" ;;
+  esac
 done < <(
   find "$box_dir/rootfs/usr/local/libexec" "$box_dir/rootfs/etc/s6-overlay/s6-rc.d" \
     -type f \( -name 'blitz-*' -o -name run \) -print

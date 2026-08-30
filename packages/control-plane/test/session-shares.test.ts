@@ -74,8 +74,20 @@ async function shareClaim(credential: string, workspaceId: string) {
 }
 
 /** Every machine in the workspace boots an image new enough for every guard,
- * so a test that is not ABOUT the cutoffs never trips one. */
-async function ageMachines(workspaceId: string, createdAt = Date.now()): Promise<void> {
+ * so a test that is not ABOUT the cutoffs never trips one.
+ *
+ * The default is the NEWEST cutoff rather than `Date.now()`, because a cutoff
+ * is set to the moment an image becomes the pin and that moment can be in the
+ * future of the commit that writes it — as `BOX_IMAGE_SHARED_SESSIONS_SINCE_MS`
+ * is. A wall-clock default silently ages every machine to just before it and
+ * turns four tests that are not about the cutoffs into 403s. */
+const NEWEST_BOX_IMAGE_CUTOFF_MS = Math.max(
+  BOX_IMAGE_TICKETS_SINCE_MS,
+  BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
+  BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
+);
+
+async function ageMachines(workspaceId: string, createdAt = NEWEST_BOX_IMAGE_CUTOFF_MS): Promise<void> {
   await env.DB.prepare("UPDATE machines SET created_at = ?1 WHERE workspace_id = ?2")
     .bind(createdAt, workspaceId).run();
 }

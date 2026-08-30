@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
-import { WebSocketServer } from "/opt/blitz/actor/node_modules/ws/wrapper.mjs";
+// The box actor was deleted with the native-chat surface, and with it
+// /opt/blitz/actor/node_modules. `ws` is now a global install beside lody,
+// which is the copy blitz-lody-bridge uses (packages/box/Dockerfile).
+import { WebSocketServer } from "/opt/blitz/npm/lib/node_modules/ws/wrapper.mjs";
 
 const port = Number(process.env.PREVIEW_FIXTURE_PORT ?? "31234");
 const server = createServer((request, response) => {
