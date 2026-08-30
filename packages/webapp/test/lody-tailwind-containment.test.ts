@@ -168,13 +168,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const blitzCss = BLITZ_STYLESHEETS.map((file) =>
   readFileSync(join(here, "..", "src", file), "utf8"),
 ).join("\n");
+/* The compensation sheet is measured SEPARATELY from the rest of our CSS, so
+   the bleed table below keeps meaning what it meant in phase 0: "what the
+   vendored sheet reaches that our product CSS does not declare". Folding it in
+   would make the table read as zero and prove nothing. */
+const compensationCss = readFileSync(join(here, "..", "src", "lody", "lody-compensation.css"), "utf8");
 
 const lodyRules = flattenStyleRules(lodyCss);
 const blitzRules = flattenStyleRules(blitzCss);
+const compensationRules = flattenStyleRules(compensationCss);
 
 /** One element per BlitzOS surface the plan names, plus bare native elements. */
 const PROBE_MARKUP = `
-  <div id="root">
     <aside class="shell-rail"><div class="shell-list">
       <div class="shell-s"><span class="shell-s__t">tab</span></div>
     </div></aside>
@@ -185,11 +190,13 @@ const PROBE_MARKUP = `
     <h1 id="probe-h1">Heading</h1>
     <ul id="probe-ul"><li id="probe-li">one</li></ul>
     <img id="probe-img" alt="" />
-    <table id="probe-table"><tbody><tr><td>x</td></tr></tbody></table>
-  </div>`;
+    <table id="probe-table"><tbody><tr><td>x</td></tr></tbody></table>`;
 
+/** The bare probes, under `#root` and NOT under a shell root — the shape phase
+ * 0 measured. The compensation test below re-mounts the same markup inside
+ * `.drive-shell`, which is where the product really renders it. */
 function probeDocument(): Document {
-  document.body.innerHTML = PROBE_MARKUP;
+  document.body.innerHTML = `<div id="root">${PROBE_MARKUP}</div>`;
   return document;
 }
 
@@ -560,6 +567,48 @@ describe("Lody Tailwind containment", () => {
         .sort();
     }
     expect(measured).toEqual(EXPECTED_BLEED);
+  });
+
+  /**
+   * Phase 3's half of the verdict. Phase 0 measured the leak and left it; this
+   * asserts the compensation sheet declares every property in it, on the
+   * elements the product actually renders — inside `.drive-shell`, which is
+   * where every bare `button`, `h1` and `li` of ours lives.
+   *
+   * The consequence is that an upstream preflight change which widens the leak
+   * fails HERE, loudly, instead of quietly restyling the Finder.
+   */
+  it("compensates every property the vendored sheet reaches inside our shell", () => {
+    document.body.innerHTML = `<div id="root"><div class="drive-shell">${PROBE_MARKUP}</div></div>`;
+    const probes: Record<string, Element> = {
+      html: document.documentElement,
+      body: document.body,
+      "#root": document.getElementById("root") as Element,
+      ".shell-s": document.querySelector(".shell-s") as Element,
+      ".files-tree-row": document.querySelector(".files-tree-row") as Element,
+      button: document.getElementById("probe-button") as Element,
+      input: document.getElementById("probe-input") as Element,
+      a: document.getElementById("probe-link") as Element,
+      h1: document.getElementById("probe-h1") as Element,
+      ul: document.getElementById("probe-ul") as Element,
+      img: document.getElementById("probe-img") as Element,
+      table: document.getElementById("probe-table") as Element,
+    };
+
+    const uncompensated: Record<string, string[]> = {};
+    for (const [name, element] of Object.entries(probes)) {
+      const lody = propertiesMatching(lodyRules, element);
+      const ours = propertiesMatching(blitzRules, element);
+      const compensated = propertiesMatching(compensationRules, element);
+      const missing = [...lody]
+        .filter(
+          (property) =>
+            !property.startsWith("--") && !ours.has(property) && !compensated.has(property),
+        )
+        .sort();
+      if (missing.length > 0) uncompensated[name] = missing;
+    }
+    expect(uncompensated).toEqual({});
   });
 
   it("records the custom-property collisions the Blitz theme overlay must resolve", () => {

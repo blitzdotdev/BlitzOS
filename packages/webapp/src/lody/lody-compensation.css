@@ -1,0 +1,150 @@
+/*
+ * Compensation for Tailwind's preflight reaching BlitzOS surfaces
+ * (plans/LODY-SESSIONS.md §7.4, plans/LODY-RUNTIME-DESIGN.md §5.1,
+ * plans/evidence/lody-phase0.md §3).
+ *
+ * WHAT THIS FIXES. The vendored Lody stylesheet is wrapped in `@layer lody`, so
+ * on any property our CSS declares for an element, ours wins. A layer changes
+ * WHO WINS, never WHICH ELEMENTS MATCH: their preflight and `@layer base` still
+ * select `*`, `html`, `body`, `button` and `::selection` document-wide, so every
+ * property our CSS leaves undeclared on a native element is theirs. Phase 0
+ * measured that set exactly. This file re-declares it.
+ *
+ * `revert`, NOT A VALUE. Every declaration rolls the property back to the
+ * user-agent origin, which is precisely "give this element its browser default
+ * back". Naming values instead would hard-code a second copy of the UA
+ * stylesheet, and it would be wrong on the browsers that disagree.
+ *
+ * `:where()`, SO SPECIFICITY IS ZERO. Nothing of ours can lose to this file:
+ * every one of our own rules, however weak, still wins. It is a floor, not a
+ * layer.
+ *
+ * SCOPED TO OUR CONTAINERS, NEVER `#root *`. `.lody-surface` lives under
+ * `#root`, so an `#root`-DESCENDANT rule would reach into the surface and revert
+ * their buttons too. `.drive-shell` and `.webapp-shell` are the two roots our
+ * product renders under. `html`, `body` and `#root` are named as ELEMENTS —
+ * none of the properties they take is inherited, so declaring on them cannot
+ * reach the surface either.
+ *
+ * `packages/webapp/test/lody-tailwind-containment.test.ts` asserts that every
+ * property phase 0 measured as leaking is declared here, per probe. An upstream
+ * preflight change that widens the leak therefore fails a test rather than
+ * quietly restyling the Finder.
+ */
+
+/* The six that reach EVERY element, from the `*` and `*, ::before, ::after`
+   preflight rules. Named on our roots and our shells, never on `*`: the Lody
+   surface lives under `#root` too, and reverting them there would undo their
+   own animations. */
+:where(html, body, #root, .shell-s, .files-tree-row) {
+  animation-duration: revert;
+  animation-iteration-count: revert;
+  outline-color: revert;
+  scroll-behavior: revert;
+  transition-duration: revert;
+  -webkit-text-size-adjust: revert;
+}
+
+:where(html) {
+  -webkit-text-size-adjust: revert;
+  -webkit-tap-highlight-color: revert;
+  border: revert;
+  font-feature-settings: revert;
+  font-variation-settings: revert;
+  line-height: revert;
+  padding: revert;
+  tab-size: revert;
+}
+
+/*
+ * Their `body { … }` is a direct declaration inside `@layer base`, and it sets
+ * `font-family` and `font-size`, which our `:root` only ever set for INHERITANCE.
+ * An inherited value loses to any declaration on the element itself, layer or
+ * not, so this one has to name our tokens rather than `revert`.
+ */
+body {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  -webkit-tap-highlight-color: revert;
+  border: revert;
+  color-scheme: inherit;
+  counter-reset: revert;
+  font-family: var(--font-ui);
+  font-size: initial;
+  line-height: normal;
+  padding: revert;
+}
+
+/* Same six, inside our shells. */
+:where(.drive-shell, .drive-shell *, .webapp-shell, .webapp-shell *) {
+  animation-duration: revert;
+  animation-iteration-count: revert;
+  outline-color: revert;
+  scroll-behavior: revert;
+  transition-duration: revert;
+  -webkit-text-size-adjust: revert;
+}
+
+/* `#root` takes the same box resets `html` does. Declared ON `#root`, never on
+   its descendants: `.lody-surface` is one of them, and these properties do not
+   inherit, so the surface is untouched. */
+:where(#root) {
+  -webkit-tap-highlight-color: revert;
+  border: revert;
+  padding: revert;
+}
+
+/* The two rows the product renders all day (phase 0: "these two matter
+   today"). Neither is inside a shell root in every mount, so both are named. */
+:where(.shell-s, .files-tree-row) {
+  -webkit-tap-highlight-color: revert;
+  border: revert;
+  margin: revert;
+  padding: revert;
+}
+
+:where(.drive-shell, .webapp-shell)
+  :where(button, input, select, textarea, a, h1, h2, h3, h4, h5, h6, ul, ol, li, img, table) {
+  -webkit-tap-highlight-color: revert;
+  border: revert;
+  margin: revert;
+  padding: revert;
+}
+
+:where(.drive-shell, .webapp-shell) :where(button, input, select, textarea) {
+  appearance: revert;
+  background-color: revert;
+  border-radius: revert;
+  color: revert;
+  cursor: revert;
+  font-feature-settings: revert;
+  font-variation-settings: revert;
+  letter-spacing: revert;
+  opacity: revert;
+}
+
+:where(.drive-shell, .webapp-shell) :where(a) {
+  text-decoration: revert;
+  -webkit-text-decoration: revert;
+}
+
+:where(.drive-shell, .webapp-shell) :where(h1, h2, h3, h4, h5, h6) {
+  font-size: revert;
+  font-weight: revert;
+}
+
+:where(.drive-shell, .webapp-shell) :where(ul, ol) {
+  list-style: revert;
+}
+
+:where(.drive-shell, .webapp-shell) :where(img) {
+  display: revert;
+  height: revert;
+  max-width: revert;
+  vertical-align: revert;
+}
+
+:where(.drive-shell, .webapp-shell) :where(table) {
+  border-collapse: revert;
+  text-indent: revert;
+}
