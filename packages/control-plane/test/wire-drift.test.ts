@@ -613,6 +613,7 @@ const catalogEntry: SharedShape<
   oauthAvailable: true,
   oauthConfigured: false,
   personalTokenLabel: "Personal API key",
+  personalTokenFallbackOnly: false,
   personalTokenHelp: "Create it in Linear's own settings.",
   personalTokenBaseUrlLabel: null,
   adminForm: catalogAdminForm,

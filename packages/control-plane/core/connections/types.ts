@@ -162,6 +162,10 @@ export interface CatalogEntryView {
   oauthAvailable: boolean;
   oauthConfigured: boolean;
   personalTokenLabel: string | null;
+  /** True where the paste path is the fallback for an instance with no OAuth
+   * client registered. The picker hides the form while `oauthConfigured` is
+   * true, so one provider does not offer two ways in. */
+  personalTokenFallbackOnly: boolean;
   personalTokenHelp: string | null;
   /** Non-null when the paste form also collects an instance URL (YouTrack).
    * Prefilled and locked from the org connection row when one carries it. */

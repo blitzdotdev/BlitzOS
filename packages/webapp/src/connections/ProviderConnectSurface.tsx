@@ -87,6 +87,10 @@ export function ProviderConnectSurface({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
 }) {
+  // A fallback path is not a second choice: where the round trip is live, the
+  // paste form would offer a worse credential beside a better one. It comes
+  // back the moment an instance has no OAuth client registered.
+  const pasteHidden = entry.personalTokenFallbackOnly && oauthHref !== null;
   return (
     <>
       {entry.oauthAvailable && (oauthHref !== null ? (
@@ -105,7 +109,7 @@ export function ProviderConnectSurface({
         </p>
       ))}
 
-      {entry.personalTokenLabel === null ? (
+      {pasteHidden ? null : entry.personalTokenLabel === null ? (
         <p className="connect-note">
           <InfoGlyph />
           <span>

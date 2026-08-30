@@ -129,6 +129,7 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: null,
+    personalTokenFallbackOnly: false,
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
     adminForm: {
@@ -169,6 +170,7 @@ function patEntry(id: string, title: string): CatalogEntryView {
     ...adminEntry(id, title, true),
     adminForm: null,
     personalTokenLabel: 'Permanent token',
+    personalTokenFallbackOnly: false,
     personalTokenBaseUrlLabel: 'Instance URL',
   };
 }

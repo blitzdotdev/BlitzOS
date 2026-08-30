@@ -325,7 +325,8 @@ export function WorkspaceProviderRows({
           // paste, or an OAuth round trip this instance actually has a client
           // registered for.
           const memberPath = row.entry !== null
-            && (row.entry.personalTokenLabel !== null
+            && ((row.entry.personalTokenLabel !== null
+              && !(row.entry.personalTokenFallbackOnly && oauthHref !== null))
               || (row.entry.oauthAvailable && oauthHref !== null));
           const state = tileState(row, backed, memberPath);
           return (
@@ -391,7 +392,8 @@ export function WorkspaceProviderRows({
                         Disconnecting stops this workspace only. Your sign-in stays.
                       </p>
                       <div className="wsc-tile__actions">
-                        {row.entry.personalTokenLabel != null ? (
+                        {row.entry.personalTokenLabel != null
+                          && !(row.entry.personalTokenFallbackOnly && oauthHref !== null) ? (
                           <button
                             className="webapp-action"
                             type="button"
