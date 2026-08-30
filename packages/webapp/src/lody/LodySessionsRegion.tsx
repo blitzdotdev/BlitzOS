@@ -9,11 +9,19 @@
  * names it.
  *
  * With the flag off this renders `null` and imports nothing at all.
+ *
+ * PHASE 4 CHANGED WHAT MAKES IT VISIBLE. Phase 3 read the `#lody` hash, because
+ * the rail could not reach the surface yet. Now the ADDRESS does it
+ * (`sessions-page-state.ts`, `ChatAddress`): the rail navigates, `CloudApp`
+ * parses, and this component is told. The hash entry point survives only in
+ * `main.tsx`, where there is no control plane and therefore no address to
+ * parse.
  */
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState, type ReactNode } from "react";
 import type { BoxEndpoints } from "../resolver.js";
-import { LODY_SESSIONS_ENABLED, lodySessionsRequested } from "./flag.js";
-import type { LodySessionSurfaceApi } from "./SessionSurface.js";
+import type { DriveRailSession } from "../shell/rail-sessions.js";
+import { LODY_SESSIONS_ENABLED } from "./flag.js";
+import type { LodyRailBinding, LodySessionSurfaceApi } from "./SessionSurface.js";
 
 const SessionSurface = lazy(async () => await import("./SessionSurface.js"));
 
@@ -24,35 +32,39 @@ export interface LodySessionsRegionProps {
   viewerName: string;
   viewerAvatarUrl: string | null;
   workspaceTitle: string;
+  /** `true` while the chat surface should cover the panes. */
+  visible: boolean;
+  /** The rail's list region, once the rail has drawn it. */
+  railHost: HTMLElement | null;
+  /** What the rail's Terminals section lists, and what a click on one does. */
+  terminals: DriveRailSession[];
+  activeTerminalId: string;
+  onSelectTerminal: (tabId: string) => void;
+  /** The `+ New tab` control for the Terminals section header. */
+  terminalsAction?: ReactNode;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
 }
 
-/** `true` while the surface should be on screen. Phase 4 replaces the hash with
- * a rail selection; see `flag.ts`. */
-export function useLodySessionsRequested(): boolean {
-  const [requested, setRequested] = useState(() =>
-    lodySessionsRequested(globalThis.location?.hash ?? ""),
-  );
-  useEffect(() => {
-    if (!LODY_SESSIONS_ENABLED) return undefined;
-    const read = (): void => setRequested(lodySessionsRequested(window.location.hash));
-    window.addEventListener("hashchange", read);
-    return () => window.removeEventListener("hashchange", read);
-  }, []);
-  return requested;
-}
-
 export function LodySessionsRegion(props: LodySessionsRegionProps) {
-  const requested = useLodySessionsRequested();
+  const rail: LodyRailBinding = {
+    terminals: props.terminals,
+    activeTerminalId: props.activeTerminalId,
+    onSelectTerminal: props.onSelectTerminal,
+  };
+  if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
+
   // Mounted on the FIRST request and never unmounted afterwards: the runtime
   // owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide has to
   // stay a hide. Not mounted before the first request either, so a member who
-  // never opens sessions never fetches the chunk.
+  // never opens sessions never fetches the chunk. The rail's vendored zone is
+  // part of the surface, so the rail is what raises the first request in
+  // practice — see `useLodyRail`.
   const [everRequested, setEverRequested] = useState(false);
+  const wanted = props.visible || props.railHost !== null;
   useEffect(() => {
-    if (requested) setEverRequested(true);
-  }, [requested]);
+    if (wanted) setEverRequested(true);
+  }, [wanted]);
 
   const { endpoints } = props;
   if (!LODY_SESSIONS_ENABLED || endpoints === null || !everRequested) return null;
@@ -67,7 +79,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     },
     viewer: { name: props.viewerName, avatarUrl: props.viewerAvatarUrl },
     workspaceTitle: props.workspaceTitle,
-    hidden: !requested,
+    hidden: !props.visible,
+    railHost: props.railHost,
+    rail,
   };
   return (
     <Suspense fallback={null}>

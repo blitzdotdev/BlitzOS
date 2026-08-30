@@ -1,5 +1,6 @@
 import type { Agent, TerminalAgent } from './protocol';
 import { isPreviewPath, isPreviewPort } from './preview';
+import { LODY_SESSIONS_ENABLED } from './lody/flag';
 import {
   asJsonObject,
   isBoolean,
@@ -148,6 +149,18 @@ export function storedWorkspacePreference(
 }
 
 export function defaultWorkspaceTabs(): WorkspaceTabs {
+  // WITH LODY SESSIONS ON, a fresh workspace opens the CHAT LANDING and holds
+  // no tabs at all (plans/LODY-SESSIONS.md §0.4). TUI tabs become opt-in,
+  // through the `+` menu in the tab strip and in the rail's Terminals section.
+  // `useLodyRail` is the other half of the rule: no tabs is what it reads as
+  // "fresh", and it is what puts the landing on screen.
+  //
+  // Only a FRESH workspace is affected. This function answers for a workspace
+  // whose persisted document the server has never seen; a workspace that
+  // already has one keeps every tab in it, flag or no flag. Nothing migrates.
+  if (LODY_SESSIONS_ENABLED) {
+    return { version: 1, tabs: [], activeId: null, nextId: 1 };
+  }
   // A fresh workspace opens straight into Claude; Files rides along in the
   // side pane, the way the drawer used to default open.
   //

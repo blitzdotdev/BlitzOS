@@ -41,8 +41,11 @@ import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
 import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
+import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion } from './lody/LodySessionsRegion';
+import { useLodyRail } from './lody/use-lody-rail';
+import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
   drivePath,
   folderPagePath,
@@ -656,7 +659,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   const navigateToWorkspacePage = useCallback((workspaceId: string) => {
     window.history.pushState({}, '', workspacePath(workspaceId));
-    setRoute({ workspaceId, page: 'webApp' });
+    setRoute({ workspaceId, page: 'webApp', chat: null });
   }, []);
 
   const navigateTo = useCallback((path: string) => {
@@ -915,6 +918,27 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [activeWorkspaceId, mainActiveId, sideActiveId]);
   const tabsLoaded = activeWorkspaceTabs !== null;
+  // Lody sessions (plans/LODY-SESSIONS.md §8). The hook owns the rail's portal
+  // host, the chat address and the fresh-workspace default; with the flag off
+  // every field is inert and the rail keeps its native list.
+  const lodyRail = useLodyRail(
+    route,
+    setRoute,
+    activeWorkspaceId,
+    tabsLoaded,
+    activeWorkspaceTabs?.tabs.length ?? 0,
+  );
+  const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
+  // The ADDRESS drives the surface, one way: a deep link, a reload and the back
+  // button all arrive here, and the surface's own navigations come back through
+  // `onActiveSessionChange` below. Both compare before acting, so the pair
+  // converges instead of looping.
+  useEffect(() => {
+    if (lodyApi === null || !lodyRail.visible) return;
+    if (lodyRail.sessionId === lodyApi.activeSessionId()) return;
+    if (lodyRail.sessionId === null) lodyApi.openLanding();
+    else lodyApi.openSession(lodyRail.sessionId);
+  }, [lodyApi, lodyRail.sessionId, lodyRail.visible]);
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
     : session.type === 'panel'
@@ -1022,13 +1046,16 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     || ttydActiveType === 'terminal'
     ? ttydActiveType
     : null;
+  const closeChat = lodyRail.closeChat;
   const addWorkspaceTab = useCallback((
     createTab: (id: number) => WorkspaceTab,
     region: WorkspaceRegion = 'main',
   ) => {
     updateWorkspaceTabs((tabs) => appendTab(tabs, region, createTab));
     setFocusedRegion(region);
-  }, [updateWorkspaceTabs]);
+    // A new tab is a request for the panes, so the chat surface steps aside.
+    closeChat();
+  }, [closeChat, updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
     addWorkspaceTab((id) => ({ id, type }));
   };
@@ -1037,7 +1064,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (session === undefined) return;
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
-  }, [activeWorkspaceId, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+    closeChat();
+  }, [activeWorkspaceId, closeChat, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1368,6 +1396,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       livePorts={orderedLivePorts}
       previewLinks={orderedPreviewLinks}
       drawerOpen={drawerOpen}
+      {...(lodyRail.onVendorHost === undefined
+        ? {}
+        : { onVendorHost: lodyRail.onVendorHost })}
       onSelectWorkspace={selectWorkspace}
       onRenameWorkspace={renameWorkspace}
       onOpenWorkspaceSettings={(workspaceId) => {
@@ -1552,18 +1583,36 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 </span>
               </div>
             )}
-            {/* Lody sessions (plans/LODY-SESSIONS.md phase 3). Renders null
+            {/* Lody sessions (plans/LODY-SESSIONS.md phases 3-4). Renders null
                 unless VITE_BLITZ_LODY_SESSIONS is on, and imports nothing
-                until it is: the vendored renderer is a 3.5 MB lazy chunk.
-                Phase 4 drives it from the rail; phase 3 drives it from the
-                `#lody` hash and leaves the rail alone. It is positioned
-                absolutely over the panes rather than replacing them, so every
-                ttyd terminal keeps its measured geometry across a switch. */}
+                until it is: the vendored renderer is a 3.5 MB lazy chunk. It
+                owns two mounts — the surface here, and the rail's vendored zone
+                through `railHost`, portalled so both share one runtime. It is
+                positioned absolutely over the panes rather than replacing them,
+                so every ttyd terminal keeps its measured geometry across a
+                switch. */}
             <LodySessionsRegion
               endpoints={activeWorkspaceRunning ? activeIngressEntry : null}
               viewerName={store.viewer?.identity.name ?? 'You'}
               viewerAvatarUrl={store.viewer?.identity.avatarUrl ?? null}
               workspaceTitle={activeWorkspace?.title ?? 'Workspace'}
+              visible={lodyRail.visible}
+              railHost={lodyRail.railHost}
+              terminals={railSessions}
+              activeTerminalId={railActiveSessionId ?? ''}
+              onSelectTerminal={selectTtydSession}
+              terminalsAction={(
+                <NewTabControl
+                  variant="icon"
+                  livePorts={orderedLivePorts}
+                  previewLinks={orderedPreviewLinks}
+                  onSpawnSession={spawnTtydSession}
+                  onOpenPreview={(port) => { openPreviewPort(port); }}
+                  onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
+                />
+              )}
+              onApiReady={setLodyApi}
+              onActiveSessionChange={lodyRail.mirror}
             />
             <WorkPanes
               client={client}

@@ -29,17 +29,13 @@ export const LODY_SESSIONS_ENABLED: boolean =
   import.meta.env.VITE_BLITZ_LODY_SESSIONS === "true";
 
 /**
- * The session surface's address while the rail cannot reach it: `#lody` with
- * the flag on.
+ * The dev harness's address: `#lody` with the flag on.
  *
- * Phase 4 replaces this with a rail selection, and phase 3 deliberately does not
- * touch the rail. Until then the hash is the whole entry point, and it is a hash
- * rather than a route so nothing in `sessions-page-state.ts` learns about chat
- * sessions before phase 4 decides how they are addressed.
- *
- * Two surfaces read it. `CloudApp` shows the mounted surface over the panes for
- * a real workspace; `main.tsx` mounts it standalone against
- * `VITE_BLITZ_LODY_DEV_ORIGIN` when there is no control plane to log into.
+ * Phase 3 used this to reach the surface from `CloudApp` too, because the rail
+ * could not. Phase 4 gave chat sessions a real address (`ChatAddress` in
+ * `sessions-page-state.ts`), so the only reader left is `main.tsx`, which
+ * mounts the surface standalone against `VITE_BLITZ_LODY_DEV_ORIGIN` when there
+ * is no control plane to log into and therefore no route to parse.
  */
 export const LODY_SESSIONS_HASH = "#lody";
 
