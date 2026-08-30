@@ -27,8 +27,11 @@
  *   `local:<uuid>`, never a BlitzOS membership id.
  * - `localProbeResultAtom` — Electron's CLI-state bridge fills it. See
  *   `seedLocalMachineIdentity` for why a plain write loses a race.
- * - the workspace-context atoms — their `$workspaceName` route fills them; our
- *   route tree calls the same vendored hook (`router.tsx`, `WorkspaceRoute`).
+ * - the workspace-context atoms — their `$workspaceName` route fills them, and
+ *   our route tree calls the same vendored hook (`router.tsx`, `WorkspaceRoute`)
+ *   with the daemon's own workspace id. They are ALSO seeded above the router by
+ *   `seedWorkspaceContext`, because the runtime is built from them and something
+ *   above the router now waits for the runtime.
  *
  * IT STAYS MOUNTED. The runtime owns a WebSocket, an IndexedDB repo and a WASM
  * instance, so the surface is hidden with the `hidden` attribute rather than
@@ -49,15 +52,16 @@ import { RouterProvider } from "@tanstack/react-router";
 import { ThemeProvider } from "@lody/components/theme-provider";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
-import { runtimeAtom } from "@lody/components/atoms/runtime";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
-import { bootstrapLodyAgentConfigs, refreshLodyAcpCapabilities } from "./agent-configs.js";
-import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
 import {
-  mirrorLocalProjectsToMachineMeta,
-  publishBoxReposAsWorkspaceRepos,
-} from "./local-projects.js";
+  currentWorkspaceIdAtom,
+  currentWorkspaceSlugAtom,
+  setWorkspaceContextAtom,
+} from "@lody/components/atoms/workspace-context";
+import { LodyAgentAuthNotice } from "./agent-auth-notice.js";
+import { LodyAgentConfigGate } from "./agent-config-gate.js";
+import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
@@ -66,7 +70,7 @@ import {
   type LodyRouter,
   type LodySessionRouterOptions,
 } from "./router.js";
-import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
+import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
 import { initLodyI18n } from "./i18n.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
@@ -186,6 +190,10 @@ export interface LodySessionSurfaceProps {
   /** Follow the session without driving it. Suppresses the composer and the
    * permission card's answer buttons (seam patch 4). */
   readOnly?: boolean;
+  /** Opens the workspace connections panel with `provider` selected — the same
+   * action `blitz connections open <provider>` raises from inside the box. The
+   * signed-out banner is the only caller (`agent-auth-notice.tsx`). */
+  onOpenConnections?: (provider: string) => void;
 }
 
 /**
@@ -248,6 +256,41 @@ function seedLocalMachineIdentity(store: LodyAtomStore, snapshot: LodyPlatformSn
 }
 
 /**
+ * Publishes the daemon's workspace into the context atoms, ABOVE the router.
+ *
+ * WHY IT CANNOT WAIT FOR THE ROUTE. `RuntimeProvider` reads
+ * `currentWorkspaceSlugAtom` and creates NO runtime while it is null
+ * (`runtime-provider.tsx:190`). Phase 3's only writer of that atom was the
+ * vendored `$workspaceName` route, so the runtime's existence depended on a
+ * route rendering — which is fine until something upstream of the router has to
+ * wait for the runtime, and `LodyAgentConfigGate` is exactly that. Seeding here
+ * breaks the cycle and states the dependency where it belongs: the surface knows
+ * the workspace before it has an address.
+ *
+ * THE PAIR IS SET IN ONE TRANSACTION and only the ID is ever repaired.
+ * `useWorkspaceContextAtoms` writes `{ slug, workspaceId: null }` in a layout
+ * effect on every slug identity change and fills the id back in from its
+ * `access` argument in a following effect, so the id is briefly null even with
+ * §12.1's fix in place. The subscription below puts it back whenever it lands on
+ * null under OUR slug — and it writes through `currentWorkspaceIdAtom`, whose
+ * setter spreads the current context and therefore cannot clear the slug. The
+ * slug setter is never used, for the reason `mountLodyRuntimeAtoms` states.
+ *
+ * A route unmount clears BOTH, so the slug check makes the repair inert there
+ * rather than resurrecting a workspace the member has left.
+ */
+function seedWorkspaceContext(store: LodyAtomStore, snapshot: LodyPlatformSnapshot): () => void {
+  const slug = snapshot.workspace.slug ?? "local";
+  const workspaceId = snapshot.workspace.workspaceId;
+  store.set(setWorkspaceContextAtom, { slug, workspaceId });
+  const repair = (): void => {
+    if (store.get(currentWorkspaceSlugAtom) !== slug) return;
+    if (store.get(currentWorkspaceIdAtom) === null) store.set(currentWorkspaceIdAtom, workspaceId);
+  };
+  return store.sub(currentWorkspaceIdAtom, repair);
+}
+
+/**
  * Seeds `userAtom` with the daemon's own identity, decorated by our auth.
  *
  * The `id` is the daemon's and must stay so: `createLocalCloudPort`'s access
@@ -268,71 +311,6 @@ function seedCurrentUser(
     name: viewer.name,
     image: viewer.avatarUrl,
   });
-}
-
-/**
- * Runs the agent-config bootstrap once the runtime is live.
- *
- * Keyed on the runtime instance rather than run at mount: `RuntimeProvider`
- * creates the runtime asynchronously and re-creates it whenever the workspace
- * changes, and the configs live in that runtime's machine Flock room. It is
- * cheap to repeat and idempotent by construction (`agent-configs.ts`), so a
- * re-run after a reconnect is a no-op rather than a duplicate row.
- */
-function LodyAgentConfigBootstrap(props: {
-  store: LodyAtomStore;
-  machineId: string;
-  endpoints: LodyRuntimeEndpoints;
-}) {
-  const { store, machineId, endpoints } = props;
-  useEffect(() => {
-    let cancelled = false;
-    let started: LodyWorkspaceRuntime | null = null;
-    const aborter = new AbortController();
-    const run = (): void => {
-      const runtime = store.get<LodyWorkspaceRuntime | null>(runtimeAtom);
-      if (runtime === null || cancelled || runtime === started) return;
-      started = runtime;
-      void (async () => {
-        await bootstrapLodyAgentConfigs(store, runtime, machineId);
-        // Before anything can be archived: the daemon's archive path reads the
-        // legacy `machineMeta.localProjects` field and the box's registrar only
-        // ever writes the Flock row, so without this mirror a worktree session
-        // archives into nothing and leaves the member's uncommitted work on
-        // disk. See `local-projects.ts` for the upstream anchor.
-        await mirrorLocalProjectsToMachineMeta(runtime, machineId);
-        // And before a worktree session can be created at all: the landing
-        // drops `githubRepoFullName` from a session's ProjectRef unless the
-        // name is in the workspace's connected-repo list, and without that
-        // field the session is a chat to the rail and to the daemon's diff
-        // stats alike. See `local-projects.ts`.
-        await publishBoxReposAsWorkspaceRepos(store, endpoints, runtime, machineId);
-        // Second, and only after the rows exist: the capabilities pass keys off
-        // them. A config that fails to report costs the composer that agent's
-        // selectors and nothing else, so it is warned about rather than raised
-        // — the same call upstream's own pass makes (`:2477`).
-        await refreshLodyAcpCapabilities(runtime, machineId, {
-          signal: aborter.signal,
-          onError: (cause, configId) => {
-            console.warn("lody: ACP capability refresh failed", { configId, cause });
-          },
-        });
-      })().catch((cause: unknown) => {
-        // Warned, not raised. A member whose agent configs failed to seed can
-        // still open a session against a config the daemon already has; blanking
-        // the surface would take that away too.
-        if (!cancelled) console.warn("lody: agent-config bootstrap failed", cause);
-      });
-    };
-    const unsubscribe = store.sub(runtimeAtom, run);
-    run();
-    return () => {
-      cancelled = true;
-      aborter.abort();
-      unsubscribe();
-    };
-  }, [store, machineId, endpoints]);
-  return null;
 }
 
 /** The stack below the platform providers, in the order design doc §1.4 fixes. */
@@ -365,12 +343,18 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   // on every render of the host, and rebuilding the router would rebuild the
   // page under the member's cursor.
   const sharedSessionId = props.shared?.sessionId ?? null;
+  const workspaceId = snapshot?.workspace.workspaceId ?? null;
   const router = useMemo<LodyRouter | null>(() => {
     if (slug === null) return null;
     const routerOptions: LodySessionRouterOptions = { readOnly };
+    // The daemon's own id, into `currentWorkspaceIdAtom` through their
+    // `$workspaceName` route. Without it every consumer that reads the id
+    // directly — the ACP sign-in panel first among them — sees `null` and
+    // refuses with "Workspace context is missing". See `router.tsx`.
+    if (workspaceId !== null) routerOptions.workspaceId = workspaceId;
     if (sharedSessionId !== null) routerOptions.initialSessionId = sharedSessionId;
     return createLodySessionRouter(slug, routerOptions);
-  }, [slug, readOnly, sharedSessionId]);
+  }, [slug, workspaceId, readOnly, sharedSessionId]);
 
   // Both seeds are effects, so the first render below sees a null user and no
   // visible machine; both atoms are jotai state, so the surface converges on
@@ -379,7 +363,12 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   useEffect(() => {
     if (snapshot === null) return undefined;
     seedCurrentUser(store, snapshot, viewer);
-    return seedLocalMachineIdentity(store, snapshot);
+    const releaseContext = seedWorkspaceContext(store, snapshot);
+    const releaseIdentity = seedLocalMachineIdentity(store, snapshot);
+    return () => {
+      releaseContext();
+      releaseIdentity();
+    };
   }, [store, snapshot, viewer]);
 
   const onActiveSessionChangeRef = useRef(onActiveSessionChange);
@@ -484,15 +473,28 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
           >
             <LodySurfaceProviders>
               <RuntimeProvider>
-                {!isShared && (
-                  <LodyAgentConfigBootstrap
+                {railSidebar}
+                <LodyAgentAuthNotice
+                  store={store}
+                  sessionId={activeSessionId}
+                  {...(props.onOpenConnections === undefined
+                    ? {}
+                    : { onOpenConnections: props.onOpenConnections })}
+                />
+                {isShared ? (
+                  // A grantee's surface writes no agent configs at all — the
+                  // rows belong to the owner's machine Flock, which the relay
+                  // refuses — so there is nothing to gate on.
+                  <RouterProvider router={router} />
+                ) : (
+                  <LodyAgentConfigGate
                     store={store}
                     machineId={snapshot.machineId}
                     endpoints={endpoints}
-                  />
+                  >
+                    <RouterProvider router={router} />
+                  </LodyAgentConfigGate>
                 )}
-                {railSidebar}
-                <RouterProvider router={router} />
               </RuntimeProvider>
             </LodySurfaceProviders>
           </BlitzPlatformProviders>

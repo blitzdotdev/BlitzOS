@@ -21,7 +21,7 @@
  * this box is 75 bytes, and `<scratchpad>/lody-data/run/lody-oss-loro-data-plane.sock`
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -514,8 +514,24 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   };
 }
 
-/** Whether a live agent turn can be attempted on this machine. */
+/**
+ * Whether a live agent turn can be attempted on this machine, by EITHER of the
+ * two paths a Claude Code process can be signed in on.
+ *
+ * The box path is the shim: `/usr/local/bin/claude` asks `blitz-cred-claude`
+ * for a fresh OAuth token on every process start, and that token comes from the
+ * workspace's connected Claude account through the broker. A box has no
+ * `~/.claude/.credentials.json` at all, so the file check below answers `false`
+ * on exactly the machine the product runs on — which is how the phase-2 exit
+ * test came to report "the daemon accepted the dispatch" as a pass on a box
+ * that could not have run a turn.
+ *
+ * The mint is checked by EXIT STATUS, never by reading what it prints: a
+ * credential that reaches a variable in this process is a credential that can
+ * reach a log.
+ */
 export function claudeCredentialAvailable(): boolean {
+  if (claudeTokenMintable()) return true;
   const home = process.env.HOME;
   if (home === undefined) return false;
   const path = join(home, ".claude", ".credentials.json");
@@ -531,4 +547,15 @@ export function claudeCredentialAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/** The box shim's own source of truth: `blitz-cred-claude` exits non-zero and
+ * prints nothing when the workspace has no Claude connection behind it. Absent
+ * on a developer laptop, where the file path above is the answer instead. */
+export function claudeTokenMintable(): boolean {
+  const minter = "/usr/local/bin/blitz-cred-claude";
+  if (!existsSync(minter)) return false;
+  // Never `stdio: 'pipe'`: the token must not enter this process at all.
+  const probe = spawnSync(minter, [], { stdio: "ignore", timeout: 20_000 });
+  return probe.status === 0;
 }

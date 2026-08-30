@@ -428,6 +428,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeWorkspaceId,
     activeFilesBase,
     (focus) => {
+      // The marker's own `requestedAt`, not `Date.now()`: the panel re-selects
+      // on a fresh `at`, and a focus replayed from the box must carry the time
+      // the box raised it.
       setConnectionsFocus({ provider: focus.provider, at: focus.requestedAt });
       if (mobileWebApp) setFilesDrawerOpen(true);
       updateWorkspaceTabs((tabs) => showPanelTab(tabs, 'connections'));
@@ -788,6 +791,25 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       return value === current.value ? current : { ...current, value };
     });
   }, [activeWorkspaceId, setWorkspaceTabs]);
+
+  // Open the connections panel and point at one provider. Declared HERE and not
+  // beside `useWorkspaceConnectionsFocus`, which raises the same thing from the
+  // box: that hook takes a closure and may read `updateWorkspaceTabs` from
+  // further down the component, while a `useCallback` names it in a dependency
+  // array and would read it before its declaration.
+  //
+  // The second caller is the Lody surface's signed-out banner, which sends a
+  // member here when an agent turn comes back unauthenticated — the box mints
+  // its agent token from a workspace connection, and this panel is the only
+  // place to supply one. `Date.now()` is the focus time because this focus has
+  // no box marker behind it; the box's own path passes the marker's
+  // `requestedAt` instead.
+  const openConnectionsPanel = useCallback((provider: string) => {
+    setConnectionsFocus({ provider, at: Date.now() });
+    if (mobileWebApp) setFilesDrawerOpen(true);
+    updateWorkspaceTabs((tabs) => showPanelTab(tabs, 'connections'));
+    if (!mobileWebApp) setFocusedRegion('side');
+  }, [mobileWebApp, setFilesDrawerOpen, updateWorkspaceTabs, setFocusedRegion]);
 
   const toggleFiles = useCallback(() => {
     if (!activeWorkspaceId) return;
@@ -1647,6 +1669,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 />
               )}
               onApiReady={setLodyApi}
+              onOpenConnections={openConnectionsPanel}
               onActiveSessionChange={lodyRail.mirror}
               onShareSession={setSharingSessionId}
               sharedSessions={sharedSessions.rows}

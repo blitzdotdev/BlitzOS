@@ -136,6 +136,31 @@ export async function bootstrapLodyAgentConfigs(
     if (result.inserted) created.push(row.id);
   }
 
+  // AND THEN PUSHED, WHICH IS THE WHOLE OF FIX A.
+  //
+  // `WorkspaceWriter`'s accept boundary is the LOCAL CRDT write, not remote sync
+  // (`providers/workspace-writer.ts:52`). So the loop above resolves while the
+  // daemon still has no row, and the composer is already usable, because the
+  // jotai publish below feeds the same picker. A prompt sent in that window
+  // creates a session whose `agentConfigId` names a row the daemon cannot see,
+  // and `resolveSessionLaunchConfig` (`apps/cli/src/session/
+  // session-launch-config-resolver.ts:57`) FAILS OPEN: it returns
+  // `source: 'none'` with no `runtimeOverrides` rather than refusing. The
+  // adapter then launches the MANAGED claude runtime instead of the box shim,
+  // nothing carries a token, and the turn comes back `acp_auth_required` — the
+  // canary finding, reproduced from the seam.
+  //
+  // A second `syncOnce` exchanges state with the room again, this time with our
+  // ops in it, so the row is on the daemon before this resolves. Its caller then
+  // gates the surface on that (`SessionSurface.tsx`, `LodyAgentConfigGate`).
+  //
+  // Swallowed like the first one: a failed push leaves the local mirror, which
+  // is still better than no rows at all, and the gate opens either way rather
+  // than trapping the member behind a spinner.
+  await handle.syncOnce().catch(() => {
+    // See above: the local mirror is the fallback, and the gate must still open.
+  });
+
   // Publish the room's rows into the jotai cache the UI reads, exactly as
   // `writeAgentConfigToMachineFlock` (`atoms/agents.ts:42`) does after its own
   // write. Without this the composer's agent picker stays empty until the
