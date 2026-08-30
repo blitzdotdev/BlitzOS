@@ -36,6 +36,9 @@ const (
 	lodyBridgeSocketPath   = "/var/lib/blitz/lody-bridge.sock"
 	lodySyncPath           = "/lody/sync"
 	lodyRPCPath            = "/lody/rpc"
+	lodyControlPath        = "/lody/control"
+	lodyProjectPath        = "/lody/project"
+	lodyPlatformPath       = "/lody/platform"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
 	webAppTokenPath        = "/var/lib/blitz/webapp-token"
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
@@ -60,6 +63,18 @@ const (
 // path under /var/lib/blitz is budgeted against that cap
 // (see /usr/local/libexec/blitz-lody-bridge). This one spends 31.
 const lodyBridgeHost = "lody-bridge"
+
+// The exact paths blitz-lody-bridge answers, each with the `/lody` prefix this
+// gateway strips before forwarding. A prefix match would be wrong here: the
+// bridge also serves `/healthz`, which is an operator probe and not a browser
+// surface, and packages/schema/src/webapp-surface.ts lists these five exactly.
+var lodyPaths = map[string]struct{}{
+	lodySyncPath:     {},
+	lodyRPCPath:      {},
+	lodyControlPath:  {},
+	lodyProjectPath:  {},
+	lodyPlatformPath: {},
+}
 
 // Ports the box runs its own services on. A preview may never claim one, so
 // this set both hides them from the discovered-port list and rejects a focus
@@ -298,7 +313,7 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.serveTerminal(response, request)
 		return
 	}
-	if request.URL.Path == lodySyncPath || request.URL.Path == lodyRPCPath {
+	if _, isLody := lodyPaths[request.URL.Path]; isLody {
 		removeWebAppTokenHeader(request.Header)
 		g.serveLody(response, request, identity, strings.TrimPrefix(request.URL.Path, "/lody"))
 		return
@@ -407,11 +422,18 @@ func unixSocketTransport(socketPath string) http.RoundTripper {
 	}
 }
 
-// serveLody proxies the browser's two doors into the Lody session daemon:
-// `/lody/sync`, the websocket carrying its CRDT data plane, and `/lody/rpc`,
-// the machine RPC it answers over HTTP. Both land on blitz-lody-bridge, which
-// re-serves the daemon's unix sockets on one of its own; nothing here talks to
-// the daemon directly.
+// serveLody proxies the browser's five doors into the Lody session daemon:
+// `/lody/sync`, the websocket carrying its CRDT data plane; `/lody/rpc`,
+// `/lody/control` and `/lody/project`, the three HTTP request planes (machine
+// RPC, session control, local-project control); and `/lody/platform`, the
+// daemon's own local identity and implicit workspace. All five land on
+// blitz-lody-bridge, which re-serves the daemon's unix sockets on one of its
+// own; nothing here talks to the daemon directly.
+//
+// The three added in phase 2 carry the same viewer policy as the first two, for
+// the same reason: `/lody/control` posts `session/create`, which dispatches an
+// agent turn, and `/lody/project` posts `local-project/checkout-branch`, which
+// moves a git worktree. Neither is narrower than the sync socket.
 //
 // TODO(lody-phase6): a viewer is refused outright here. Sharing
 // (plans/LODY-SESSIONS.md §0.1, phase 6) is what gives a read-only participant a

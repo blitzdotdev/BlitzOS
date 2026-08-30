@@ -467,6 +467,9 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 			},
 		},
 		{name: "lody rpc", method: http.MethodPost, path: lodyRPCPath},
+		{name: "lody session control", method: http.MethodPost, path: lodyControlPath},
+		{name: "lody project control", method: http.MethodPost, path: lodyProjectPath},
+		{name: "lody platform", method: http.MethodGet, path: lodyPlatformPath},
 		{
 			name:   "CORS preflight",
 			method: http.MethodOptions,
@@ -597,6 +600,9 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		{name: "terminal websocket", path: "/terminal/ws?arg=terminal", upstreamURI: "/ws?arg=terminal", webSocket: true},
 		{name: "lody sync websocket", path: lodySyncPath, upstreamURI: "/sync", webSocket: true},
 		{name: "lody rpc", path: lodyRPCPath, upstreamURI: "/rpc"},
+		{name: "lody session control", path: lodyControlPath, upstreamURI: "/control"},
+		{name: "lody project control", path: lodyProjectPath, upstreamURI: "/project"},
+		{name: "lody platform", path: lodyPlatformPath, upstreamURI: "/platform"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1103,25 +1109,67 @@ func TestLodyProxyRoutesThroughUnixSocket(t *testing.T) {
 		}
 	})
 
-	t.Run("owner reaches machine rpc with its body", func(t *testing.T) {
-		const payload = `{"method":"session/terminate"}`
-		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader(payload))
-		request.Header.Set(webAppTokenHeader, ticketFor("owner"))
-		request.Header.Set("Content-Type", "application/json")
+	// The three POST planes are separate doors on one control socket, so the
+	// body has to survive and the upstream path has to be the one the bridge
+	// maps to that plane. A path collapsed into another is the failure this
+	// catches: the bodies are three different request unions.
+	for _, plane := range []struct {
+		name        string
+		path        string
+		upstreamURI string
+		payload     string
+	}{
+		{name: "machine rpc", path: lodyRPCPath, upstreamURI: "/rpc", payload: `{"method":"session/terminate"}`},
+		{name: "session control", path: lodyControlPath, upstreamURI: "/control", payload: `{"type":"machine/status"}`},
+		{name: "project control", path: lodyProjectPath, upstreamURI: "/project", payload: `{"type":"local-project/list"}`},
+	} {
+		t.Run("owner reaches "+plane.name+" with its body", func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "http://box"+plane.path, strings.NewReader(plane.payload))
+			request.Header.Set(webAppTokenHeader, ticketFor("owner"))
+			request.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+			}
+			got := <-observed
+			if got.requestURI != plane.upstreamURI {
+				t.Errorf("upstream request URI = %q, want %q", got.requestURI, plane.upstreamURI)
+			}
+			if got.method != http.MethodPost {
+				t.Errorf("upstream method = %q, want POST", got.method)
+			}
+			if got.body != plane.payload {
+				t.Errorf("upstream body = %q, want %q", got.body, plane.payload)
+			}
+		})
+	}
+
+	t.Run("editor reads the platform snapshot", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://box"+lodyPlatformPath, nil)
+		request.Header.Set(webAppTokenHeader, ticketFor("editor"))
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != http.StatusNoContent {
 			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
 		}
 		got := <-observed
-		if got.requestURI != "/rpc" {
-			t.Errorf("upstream request URI = %q, want %q", got.requestURI, "/rpc")
+		if got.requestURI != "/platform" {
+			t.Errorf("upstream request URI = %q, want %q", got.requestURI, "/platform")
 		}
-		if got.method != http.MethodPost {
-			t.Errorf("upstream method = %q, want POST", got.method)
-		}
-		if got.body != payload {
-			t.Errorf("upstream body = %q, want %q", got.body, payload)
+	})
+
+	// The bridge's own operator probe is not a browser surface, so the gateway
+	// must not have grown a `/lody/` prefix match on the way to five paths.
+	t.Run("healthz is not a lody door", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://box/lody/healthz", nil)
+		request.Header.Set(webAppTokenHeader, ticketFor("owner"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		select {
+		case got := <-observed:
+			t.Errorf("upstream saw %q, want nothing", got.requestURI)
+		default:
 		}
 	})
 
@@ -1136,6 +1184,9 @@ func TestLodyProxyRoutesThroughUnixSocket(t *testing.T) {
 	}{
 		{name: "viewer sync", method: http.MethodGet, path: lodySyncPath, webSocket: true},
 		{name: "viewer rpc", method: http.MethodPost, path: lodyRPCPath},
+		{name: "viewer session control", method: http.MethodPost, path: lodyControlPath},
+		{name: "viewer project control", method: http.MethodPost, path: lodyProjectPath},
+		{name: "viewer platform", method: http.MethodGet, path: lodyPlatformPath},
 	} {
 		t.Run(refused.name, func(t *testing.T) {
 			request := httptest.NewRequest(refused.method, "http://box"+refused.path, nil)

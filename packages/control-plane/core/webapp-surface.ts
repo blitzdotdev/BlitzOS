@@ -10,7 +10,7 @@
  * `test/webapp-surface-drift.test.ts`, the same way `wire.ts` mirrors the
  * schema types. */
 
-export const WEBAPP_FILES_SURFACES = ["/diag", "/ports", "/previews", "/preview-focus", "/connections-focus", "/terminal/ws", "/lody/sync", "/lody/rpc"] as const;
+export const WEBAPP_FILES_SURFACES = ["/diag", "/ports", "/previews", "/preview-focus", "/connections-focus", "/terminal/ws", "/lody/sync", "/lody/rpc", "/lody/control", "/lody/project", "/lody/platform"] as const;
 export const WEBAPP_FILES_SURFACE_PREFIXES = ["/workspace/", "/preview/"] as const;
 
 export function isWebAppSurfacePath(path: string): boolean {

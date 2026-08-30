@@ -30,6 +30,9 @@ describe("webApp box surface", () => {
       terminalWebSocketUrl(endpoints.terminalUrl),
       endpoints.lodySyncUrl,
       endpoints.lodyRpcUrl,
+      endpoints.lodyControlUrl,
+      endpoints.lodyProjectUrl,
+      endpoints.lodyPlatformUrl,
       resolver.previewUrl(workspace, 3000),
       previewFocusEndpointUrl(endpoints.filesBase),
       connectionsFocusEndpointUrl(endpoints.filesBase),
@@ -48,11 +51,14 @@ describe("webApp box surface", () => {
       "/workspace/%2e%2e/home/.claude.json",
       "/admin/drain",
       "/acp",
-      // The Lody bridge answers exactly two paths. Its /healthz probe is not
-      // one of them, and neither is the prefix on its own.
+      // The Lody bridge answers exactly five browser paths. Its /healthz probe
+      // is an operator surface and not one of them, and neither is the prefix
+      // on its own.
       "/lody",
       "/lody/",
       "/lody/healthz",
+      "/lody/control/extra",
+      "/lody/platform/",
     ]) {
       expect(isWebAppSurfacePath(path), path).toBe(false);
     }

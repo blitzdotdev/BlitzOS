@@ -33,6 +33,9 @@ const resolver = {
     filesBase: `https://box.example/${wire.id}/workspace/`,
     lodySyncUrl: `wss://box.example/${wire.id}/lody/sync`,
     lodyRpcUrl: `https://box.example/${wire.id}/lody/rpc`,
+    lodyControlUrl: `https://box.example/${wire.id}/lody/control`,
+    lodyProjectUrl: `https://box.example/${wire.id}/lody/project`,
+    lodyPlatformUrl: `https://box.example/${wire.id}/lody/platform`,
   }),
   previewUrl: () => '',
 };

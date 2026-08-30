@@ -1,13 +1,44 @@
 #!/usr/bin/env node
-// The browser's two doors into the Lody session daemon.
+// The browser's doors into the Lody session daemon.
 //
 // The daemon speaks only over unix sockets in `$LODY_DATA_DIR/run` and a
-// browser cannot open one, so this bridge re-serves exactly two of its surfaces
-// on a single unix socket that the Go gateway reverse-proxies:
+// browser cannot open one, so this bridge re-serves exactly those surfaces on a
+// single unix socket that the Go gateway reverse-proxies:
 //
-//   GET  /sync    websocket  <-> `<namespace>-loro-data-plane.sock` (CRDT sync)
-//   POST /rpc     http       <-> `<namespace>-control.sock` /machine-rpc
-//   GET  /healthz http       <-> `<namespace>-probe.sock`   /healthz
+//   GET  /sync     websocket <-> `<namespace>-loro-data-plane.sock` (CRDT sync)
+//   POST /rpc      http      <-> `<namespace>-control.sock` /machine-rpc
+//   POST /control  http      <-> `<namespace>-control.sock` /session-control
+//   POST /project  http      <-> `<namespace>-control.sock` /project-control
+//   GET  /platform http      <-  `$LODY_DATA_DIR/workspace-catalog.json`
+//                                + `run/daemon.json`
+//   GET  /healthz  http      <-> `<namespace>-probe.sock`   /healthz
+//
+// `/healthz` is an operator probe and deliberately NOT a browser surface: the
+// gateway forwards only the five paths listed in
+// packages/schema/src/webapp-surface.ts, and that list omits it.
+//
+// `/platform` is the one door with no upstream socket behind it. The daemon
+// mints its `local:<uuid>` identity, its implicit `lw_<uuid>` workspace and its
+// machineId into `workspace-catalog.json`, and the browser needs all three
+// before it may address any of the other four
+// (plans/LODY-RUNTIME-DESIGN.md §1.2, §3.4, risk 4). The design doc expected the
+// machineId in `run/daemon.json`; measured against lody@0.88.1 that file carries
+// only pid/socket paths/version, and the id lives in the catalog's `machine`
+// block, so the catalog is the whole source.
+//
+// It is served BYTE-FOR-BYTE, like every other door here. The alternative — the
+// bridge projecting the four fields the renderer wants — would make the response
+// a BlitzOS-authored payload and therefore a cross-runtime contract of ours
+// needing its own fixture corpus (CLAUDE.md). Passing the daemon's own file
+// through keeps the contract Lody's, parsed browser-side by a port of Lody's own
+// `parseLocalPlatformSnapshot`
+// (`vendor/lody/apps/electron/src/main/local-platform-snapshot.ts`), which is
+// exactly the arrangement `/sync` and `/rpc` already have.
+//
+// TODO(lody-phase6): narrow this to the identity/workspace/machine triple once
+// sharing exists. The catalog also carries a `sessions` array; it reaches only
+// the member who owns the box today because the gateway refuses viewers
+// outright, and that refusal is what phase 6 replaces with a grant lookup.
 //
 // WHY A BRIDGE AND NOT A LORO RELAY. plans/LODY-SESSIONS.md §4 offered two
 // designs. Design (a) — run `loro-websocket`'s SimpleServer beside the daemon
@@ -82,6 +113,7 @@ const dataPlaneSocket = path.join(runDir, `${namespace}-loro-data-plane.sock`);
 const controlSocket = path.join(runDir, `${namespace}-control.sock`);
 const probeSocket = path.join(runDir, `${namespace}-probe.sock`);
 const listenPath = process.env.BLITZ_LODY_BRIDGE_SOCKET || `${stateDir}/lody-bridge.sock`;
+const catalogPath = path.join(dataDir, "workspace-catalog.json");
 
 function forward(request, response, socketPath, upstreamPath, headers) {
   const upstream = http.request(
@@ -104,15 +136,44 @@ function forward(request, response, socketPath, upstreamPath, headers) {
   request.pipe(upstream);
 }
 
+// The daemon requires `x-lody-local-control` on every control-socket POST; it is
+// what separates a deliberate local-control call from a stray browser request.
+const CONTROL_HEADERS = { "content-type": "application/json", "x-lody-local-control": "1" };
+
+// Browser path -> the control socket's own path. Three doors, one socket: the
+// daemon serves /machine-rpc, /session-control and /project-control on
+// `<namespace>-control.sock`, and they are separate doors here because they take
+// three different request unions and the gateway allows paths, not bodies.
+const CONTROL_ROUTES = {
+  "/rpc": "/machine-rpc",
+  "/control": "/session-control",
+  "/project": "/project-control",
+};
+
+function servePlatform(response) {
+  let catalog;
+  try {
+    catalog = fs.readFileSync(catalogPath);
+  } catch (error) {
+    // Absent until the daemon finishes provisioning its implicit workspace, so
+    // this is a normal startup state and not a failure. The browser polls.
+    response.writeHead(503, { "content-type": "application/json", "cache-control": "no-store" });
+    response.end(`{"ok":false,"error":"lody_catalog_unavailable","detail":${JSON.stringify(String(error.code ?? error.message))}}`);
+    return;
+  }
+  response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+  response.end(catalog);
+}
+
 const server = http.createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://lody-bridge");
-  if (url.pathname === "/rpc" && request.method === "POST") {
-    // The daemon requires this header on every control-socket POST; it is what
-    // separates a deliberate local-control call from a stray browser request.
-    forward(request, response, controlSocket, "/machine-rpc", {
-      "content-type": "application/json",
-      "x-lody-local-control": "1",
-    });
+  const controlPath = CONTROL_ROUTES[url.pathname];
+  if (controlPath !== undefined && request.method === "POST") {
+    forward(request, response, controlSocket, controlPath, CONTROL_HEADERS);
+    return;
+  }
+  if (url.pathname === "/platform" && request.method === "GET") {
+    servePlatform(response);
     return;
   }
   if (url.pathname === "/healthz" && request.method === "GET") {

@@ -21,6 +21,11 @@ describe("standalone endpoint resolver", () => {
       // the scheme against `window.location`.
       lodySyncUrl: "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/sync",
       lodyRpcUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/rpc",
+      // The daemon's other three doors: session control, local-project control,
+      // and the identity the browser needs before it may address any of them.
+      lodyControlUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/control",
+      lodyProjectUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/project",
+      lodyPlatformUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/platform",
     });
     expect(resolver.previewUrl(target, 3000)).toBe(
       "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/preview/3000/",

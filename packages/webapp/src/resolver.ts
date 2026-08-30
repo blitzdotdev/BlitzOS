@@ -7,6 +7,12 @@ export interface BoxEndpoints {
   lodySyncUrl: string;
   /** HTTP endpoint for the Lody daemon's machine RPC. */
   lodyRpcUrl: string;
+  /** HTTP endpoint for the Lody daemon's session control plane. */
+  lodyControlUrl: string;
+  /** HTTP endpoint for the Lody daemon's local-project control plane. */
+  lodyProjectUrl: string;
+  /** The daemon's own local identity, implicit workspace and machineId. */
+  lodyPlatformUrl: string;
 }
 
 export interface EndpointResolver {
@@ -43,6 +49,9 @@ export function standaloneResolver(
       // used from a test or a worker has no `window` to lean on.
       lodySyncUrl: `${prefix.replace(/^http(s?):\/\//u, "ws$1://")}/7445/lody/sync`,
       lodyRpcUrl: `${prefix}/7445/lody/rpc`,
+      lodyControlUrl: `${prefix}/7445/lody/control`,
+      lodyProjectUrl: `${prefix}/7445/lody/project`,
+      lodyPlatformUrl: `${prefix}/7445/lody/platform`,
     };
   };
   return {
