@@ -1,0 +1,354 @@
+/**
+ * `SessionSurface` — the vendored Lody chat surface, mounted for real
+ * (plans/LODY-SESSIONS.md §7.1, plans/LODY-RUNTIME-DESIGN.md §4).
+ *
+ * Phase 0 rendered three leaves from fixtures. Phase 2 drove a runtime with no
+ * UI. This is both halves joined: their chat landing and their session detail,
+ * inside our shell, against the box daemon.
+ *
+ * WHAT THIS FILE OWNS: the provider stack, the memory router, and the identity
+ * seeding that stands in for the parts of their root route we do not mount. It
+ * owns no session logic at all — `ChatLanding` and `SessionDetail` are theirs,
+ * unmodified, and every send / steer / cancel / permission path inside them runs
+ * their code (§0.2's vendor-wholesale rule).
+ *
+ * WHAT WE DO NOT MOUNT, AND WHY IT IS SAFE. Their `__root.tsx` builds the Convex
+ * and better-auth stack; their `$workspaceName/_auth.tsx` runs the organization
+ * guard, `ElectronMenuHandler`, OneSignal, PostHog and the command palette. None
+ * of those has a local-platform meaning, and `_auth.tsx`'s own local branch
+ * (`isLocalAppPlatform()`) already skips the cloud half. What those routes DO
+ * contribute that the pages need is three pieces of state, and each is seeded
+ * here instead:
+ *
+ * - `userAtom` — `__root.tsx:157` fills it from the better-auth session. Every
+ *   authored write reads its `id`, and `buildVisibleMachineIndex`
+ *   (`lib/visible-machine-index.ts:47`) makes the box machine visible only when
+ *   the machine doc's `ownerUserId` matches it. It must be the DAEMON's
+ *   `local:<uuid>`, never a BlitzOS membership id.
+ * - `localProbeResultAtom` — Electron's CLI-state bridge fills it. See
+ *   `seedLocalMachineIdentity` for why a plain write loses a race.
+ * - the workspace-context atoms — their `$workspaceName` route fills them; our
+ *   route tree calls the same vendored hook (`router.tsx`, `WorkspaceRoute`).
+ *
+ * IT STAYS MOUNTED. The runtime owns a WebSocket, an IndexedDB repo and a WASM
+ * instance, so the surface is hidden with the `hidden` attribute rather than
+ * unmounted — the same rule `shell/WorkPanes.tsx` applies to ttyd sessions.
+ */
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { Provider as JotaiProvider, createStore } from "jotai";
+import { I18nextProvider } from "react-i18next";
+import { RouterProvider } from "@tanstack/react-router";
+import { ThemeProvider } from "@lody/components/theme-provider";
+import { TooltipProvider } from "@lody/components/ui/tooltip";
+import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
+import { runtimeAtom } from "@lody/components/atoms/runtime";
+import { userAtom } from "@lody/components/atoms";
+import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
+import { bootstrapLodyAgentConfigs, refreshLodyAcpCapabilities } from "./agent-configs.js";
+import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
+import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
+import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
+import {
+  activeSessionIdFromPathname,
+  createLodySessionRouter,
+  type LodyRouter,
+} from "./router.js";
+import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
+import { initLodyI18n } from "./i18n.js";
+import { LODY_SURFACE_CLASS } from "./surface-class.js";
+import { appliedTheme } from "../theme.js";
+import "./lody-surface.css";
+import "./lody-surface-shell.css";
+
+/** next-themes persists under its own key. Ours is namespaced so the surface's
+ * light/dark choice can never be confused with `blitz-theme`, which is the
+ * shell's and is stored as a `data-theme` attribute rather than a class. */
+const LODY_THEME_STORAGE_KEY = "blitz-lody-theme";
+
+/**
+ * Forces their theme engine onto the shell's current choice, and returns it.
+ *
+ * This is not cosmetic. `LodyThemeProvider` (`theme-provider.tsx:149`) writes
+ * `document.documentElement.style.colorScheme` on every resolved theme — an
+ * INLINE style on the html element, which beats our `:root { color-scheme }`
+ * from any stylesheet. So a surface that resolved `light` while the shell is
+ * dark would repaint our scrollbars and form controls, everywhere, not just
+ * inside the surface. The phase-0 containment test cannot see this: it is a
+ * runtime DOM write, not a CSS rule.
+ *
+ * `defaultTheme` alone is not enough, because next-themes prefers its stored
+ * value on every later boot. Writing the key first makes the stored value ours,
+ * every mount. `'system'` is deliberately never handed over: our own default,
+ * with no `data-theme` attribute, is DARK (`tokens.css` sets
+ * `color-scheme: dark` on `:root` unconditionally), so mapping it to `system`
+ * would let the OS disagree with the shell.
+ */
+function adoptShellTheme(): "dark" | "light" {
+  const choice = appliedTheme() === "light" ? "light" : "dark";
+  try {
+    window.localStorage.setItem(LODY_THEME_STORAGE_KEY, choice);
+  } catch {
+    // Sandboxed storage: `defaultTheme` still applies for this mount.
+  }
+  return choice;
+}
+
+/** What `CloudApp` drives the surface with. Imperative on purpose: phase 3 does
+ * not touch the rail (§4.4 is phase 4), so selection is a method call rather
+ * than a prop, and the router's address stays the surface's own state. */
+export interface LodySessionSurfaceApi {
+  /** Show the session detail page for `sessionId`. */
+  openSession: (sessionId: string) => void;
+  /** Show the chat landing — the create surface, with no session selected. */
+  openLanding: () => void;
+  /** The session the surface is currently showing, or `null` on the landing. */
+  activeSessionId: () => string | null;
+  /** Every `window.ipc` channel the vendored renderer asked for that the bridge
+   * does not serve (design-doc risk 10). Empty is the healthy answer, and the
+   * phase-3 exit test asserts it after a full round trip: an upstream call site
+   * that appears at the next merge shows up here instead of as a rejected
+   * promise nobody awaits. */
+  unsupportedIpcChannels: () => readonly string[];
+}
+
+export interface LodySessionSurfaceProps {
+  endpoints: LodyRuntimeEndpoints;
+  viewer: BlitzViewer;
+  /** The BlitzOS workspace title. Replaces the daemon's own "Lody". */
+  workspaceTitle: string;
+  /** Hidden, not unmounted: the runtime must survive a rail click. */
+  hidden?: boolean;
+  /** Handed the imperative API once the daemon's identity settles, and `null`
+   * on teardown. */
+  onApiReady?: (api: LodySessionSurfaceApi | null) => void;
+  /** Fires on every resolved navigation inside the surface. */
+  onActiveSessionChange?: (sessionId: string | null) => void;
+}
+
+/**
+ * Installs `window.ipc` for the lifetime of the surface.
+ *
+ * Installed during the FIRST RENDER, not in an effect: `useImplicitLocalWorkspace`
+ * polls `localPlatform.getSnapshot` off a module-level singleton that starts on
+ * its first read (`providers/local-platform-provider.ts:110`), and that read
+ * happens while `RuntimeProvider` renders. An effect would run after it.
+ */
+function useLodyLocalBridge(endpoints: LodyRuntimeEndpoints): LodyLocalBridge {
+  const held = useRef<LodyLocalBridge | null>(null);
+  held.current ??= createLodyLocalBridge(endpoints);
+  const bridge = held.current;
+  // Two property assignments, so repeating it per render costs nothing.
+  installLodyLocalBridge(bridge);
+  useEffect(() => {
+    // Re-asserted here because React can run the cleanup below and then mount
+    // again WITHOUT re-rendering — StrictMode's double-invoke does exactly
+    // that — which would otherwise leave `window.ipc` removed for good.
+    const uninstall = installLodyLocalBridge(bridge);
+    return uninstall;
+  }, [bridge]);
+  return bridge;
+}
+
+/**
+ * Teaches the renderer that the box IS the local machine.
+ *
+ * `localProbeEffectAtom` (`atoms/local-probe.ts:113`) is an `atomEffect` mounted
+ * by `RuntimeProvider`. Outside Electron its FIRST action is to write
+ * `localProbeResultAtom = null` and `localProbeAttemptedAtom = true`, and
+ * `RuntimeProvider` then calls `runtime.setLocalMachineId(null)` — undoing the
+ * machine id and leaving `localMachineIdAtom` empty for the eleven components
+ * that read it, `session-chat-interface` and `session-detail` among them.
+ *
+ * A plain write cannot reliably win that race: the effect mounts when
+ * `RuntimeProvider` subscribes, and React runs child effects before parent
+ * effects, so neither position is safe in both mount orders (StrictMode
+ * remounts included). So this SUBSCRIBES: whenever the atom lands on `null`, the
+ * box's identity is put back. It converges after at most one extra write and is
+ * ordering-independent, which a `useEffect` placed just so is not.
+ *
+ * Note what it does NOT touch: `localAgentEnabledAtom` stays `false`, because
+ * that is Electron's "run a local agent" SETTING and we have no such setting;
+ * nothing on the local sync mode reads it (`runtime-provider.tsx:117` gates on
+ * `syncMode === 'dual'`).
+ */
+function seedLocalMachineIdentity(store: LodyAtomStore, snapshot: LodyPlatformSnapshot): () => void {
+  const identity = {
+    ok: true,
+    machineId: snapshot.machineId,
+    workspaceId: snapshot.workspace.workspaceId,
+  };
+  const assert = (): void => {
+    if (store.get(localProbeResultAtom) === null) store.set(localProbeResultAtom, identity);
+  };
+  assert();
+  return store.sub(localProbeResultAtom, assert);
+}
+
+/**
+ * Seeds `userAtom` with the daemon's own identity, decorated by our auth.
+ *
+ * The `id` is the daemon's and must stay so: `createLocalCloudPort`'s access
+ * oracle (`vendor/lody/packages/platform/src/local.ts:103`) allows exactly that
+ * id, so a BlitzOS membership id here is refused at dispatch. `email` satisfies
+ * `CurrentUserSchema`'s `z.string().email()` and is never sent anywhere — the
+ * local composition has no mail path. The value mirrors the one their own local
+ * auth provider computes (`providers/local-platform-auth-provider.tsx:47`).
+ */
+function seedCurrentUser(
+  store: LodyAtomStore,
+  snapshot: LodyPlatformSnapshot,
+  viewer: BlitzViewer,
+): void {
+  store.set(userAtom, {
+    id: snapshot.userId,
+    email: "local@lody.local",
+    name: viewer.name,
+    image: viewer.avatarUrl,
+  });
+}
+
+/**
+ * Runs the agent-config bootstrap once the runtime is live.
+ *
+ * Keyed on the runtime instance rather than run at mount: `RuntimeProvider`
+ * creates the runtime asynchronously and re-creates it whenever the workspace
+ * changes, and the configs live in that runtime's machine Flock room. It is
+ * cheap to repeat and idempotent by construction (`agent-configs.ts`), so a
+ * re-run after a reconnect is a no-op rather than a duplicate row.
+ */
+function LodyAgentConfigBootstrap(props: { store: LodyAtomStore; machineId: string }) {
+  const { store, machineId } = props;
+  useEffect(() => {
+    let cancelled = false;
+    let started: LodyWorkspaceRuntime | null = null;
+    const aborter = new AbortController();
+    const run = (): void => {
+      const runtime = store.get<LodyWorkspaceRuntime | null>(runtimeAtom);
+      if (runtime === null || cancelled || runtime === started) return;
+      started = runtime;
+      void (async () => {
+        await bootstrapLodyAgentConfigs(store, runtime, machineId);
+        // Second, and only after the rows exist: the capabilities pass keys off
+        // them. A config that fails to report costs the composer that agent's
+        // selectors and nothing else, so it is warned about rather than raised
+        // — the same call upstream's own pass makes (`:2477`).
+        await refreshLodyAcpCapabilities(runtime, machineId, {
+          signal: aborter.signal,
+          onError: (cause, configId) => {
+            console.warn("lody: ACP capability refresh failed", { configId, cause });
+          },
+        });
+      })().catch((cause: unknown) => {
+        // Warned, not raised. A member whose agent configs failed to seed can
+        // still open a session against a config the daemon already has; blanking
+        // the surface would take that away too.
+        if (!cancelled) console.warn("lody: agent-config bootstrap failed", cause);
+      });
+    };
+    const unsubscribe = store.sub(runtimeAtom, run);
+    run();
+    return () => {
+      cancelled = true;
+      aborter.abort();
+      unsubscribe();
+    };
+  }, [store, machineId]);
+  return null;
+}
+
+/** The stack below the platform providers, in the order design doc §1.4 fixes. */
+function LodySurfaceProviders(props: { children: ReactNode }) {
+  const i18n = useMemo(() => initLodyI18n(), []);
+  const theme = useMemo(() => adoptShellTheme(), []);
+  return (
+    <I18nextProvider i18n={i18n}>
+      <ThemeProvider defaultTheme={theme} storageKey={LODY_THEME_STORAGE_KEY}>
+        <TooltipProvider>{props.children}</TooltipProvider>
+      </ThemeProvider>
+    </I18nextProvider>
+  );
+}
+
+export function SessionSurface(props: LodySessionSurfaceProps) {
+  const { endpoints, viewer, workspaceTitle, onApiReady, onActiveSessionChange } = props;
+  // Installed before anything below renders; see the hook's comment.
+  const bridge = useLodyLocalBridge(endpoints);
+  const { snapshot, error } = useLodyPlatformSnapshot(endpoints.platformUrl, endpoints.fetchImpl);
+  const store = useMemo(() => createStore(), []);
+
+  const slug = snapshot?.workspace.slug ?? null;
+  const router = useMemo<LodyRouter | null>(
+    () => (slug === null ? null : createLodySessionRouter(slug)),
+    [slug],
+  );
+
+  // Both seeds are effects, so the first render below sees a null user and no
+  // visible machine; both atoms are jotai state, so the surface converges on
+  // the next tick. Only the machine-id seed has an ordering hazard, and it is a
+  // subscription rather than a write for exactly that reason.
+  useEffect(() => {
+    if (snapshot === null) return undefined;
+    seedCurrentUser(store, snapshot, viewer);
+    return seedLocalMachineIdentity(store, snapshot);
+  }, [store, snapshot, viewer]);
+
+  const onActiveSessionChangeRef = useRef(onActiveSessionChange);
+  onActiveSessionChangeRef.current = onActiveSessionChange;
+  useEffect(() => {
+    if (router === null) return undefined;
+    return router.subscribe("onResolved", () => {
+      onActiveSessionChangeRef.current?.(
+        activeSessionIdFromPathname(router.state.location.pathname),
+      );
+    });
+  }, [router]);
+
+  const onApiReadyRef = useRef(onApiReady);
+  onApiReadyRef.current = onApiReady;
+  useEffect(() => {
+    if (router === null || slug === null) return undefined;
+    const api: LodySessionSurfaceApi = {
+      openSession: (sessionId) => {
+        void router.navigate({
+          to: "/$workspaceName/sessions/$sessionId",
+          params: { workspaceName: slug, sessionId },
+        });
+      },
+      openLanding: () => {
+        void router.navigate({ to: "/$workspaceName/chat", params: { workspaceName: slug } });
+      },
+      activeSessionId: () => activeSessionIdFromPathname(router.state.location.pathname),
+      unsupportedIpcChannels: () => bridge.unsupportedChannels(),
+    };
+    onApiReadyRef.current?.(api);
+    return () => onApiReadyRef.current?.(null);
+  }, [router, slug, bridge]);
+
+  return (
+    <div className={LODY_SURFACE_CLASS} hidden={props.hidden === true}>
+      {error !== null && (
+        <div className="lody-surface__notice" role="alert">
+          Sessions are unavailable on this workspace: {error}
+        </div>
+      )}
+      {snapshot !== null && router !== null && error === null && (
+        <JotaiProvider store={store}>
+          <BlitzPlatformProviders
+            snapshot={snapshot}
+            viewer={viewer}
+            workspaceTitle={workspaceTitle}
+          >
+            <LodySurfaceProviders>
+              <RuntimeProvider>
+                <LodyAgentConfigBootstrap store={store} machineId={snapshot.machineId} />
+                <RouterProvider router={router} />
+              </RuntimeProvider>
+            </LodySurfaceProviders>
+          </BlitzPlatformProviders>
+        </JotaiProvider>
+      )}
+    </div>
+  );
+}
+
+export default SessionSurface;

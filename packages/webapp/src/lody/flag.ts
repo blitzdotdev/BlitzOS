@@ -29,14 +29,31 @@ export const LODY_SESSIONS_ENABLED: boolean =
   import.meta.env.VITE_BLITZ_LODY_SESSIONS === "true";
 
 /**
- * The phase-0 spike surface's address: `#lody-spike` with the flag on.
+ * The session surface's address while the rail cannot reach it: `#lody` with
+ * the flag on.
  *
- * Deliberately a hash and not a route — the spike renders vendored components
- * from fixtures with no daemon and no network, so it must not be reachable
- * from the product's own navigation.
+ * Phase 4 replaces this with a rail selection, and phase 3 deliberately does not
+ * touch the rail. Until then the hash is the whole entry point, and it is a hash
+ * rather than a route so nothing in `sessions-page-state.ts` learns about chat
+ * sessions before phase 4 decides how they are addressed.
+ *
+ * Two surfaces read it. `CloudApp` shows the mounted surface over the panes for
+ * a real workspace; `main.tsx` mounts it standalone against
+ * `VITE_BLITZ_LODY_DEV_ORIGIN` when there is no control plane to log into.
  */
-export const LODY_SPIKE_HASH = "#lody-spike";
+export const LODY_SESSIONS_HASH = "#lody";
 
-export function lodySpikeRequested(hash: string): boolean {
-  return LODY_SESSIONS_ENABLED && hash === LODY_SPIKE_HASH;
+export function lodySessionsRequested(hash: string): boolean {
+  return LODY_SESSIONS_ENABLED && hash === LODY_SESSIONS_HASH;
 }
+
+/**
+ * A box origin to drive the surface against with no control plane, for local
+ * development: the daemon, `blitz-lody-bridge` and a gateway stand-in on one
+ * loopback port, exactly the three processes
+ * `packages/webapp/test/lody-daemon-harness.ts` starts.
+ *
+ * Empty in every build that does not set it, which is every build.
+ */
+export const LODY_DEV_ORIGIN: string =
+  import.meta.env.VITE_BLITZ_LODY_DEV_ORIGIN ?? "";

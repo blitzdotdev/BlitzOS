@@ -130,7 +130,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 2: a session round-trips against 
   });
 
   it("seeds the two agent configs once, with their runtime overrides", async () => {
-    const created = await bootstrapLodyAgentConfigs(store, snapshot.machineId);
+    const created = await bootstrapLodyAgentConfigs(store, handle.runtime, snapshot.machineId);
     expect(created.sort()).toEqual(["blitz-claude", "blitz-codex"]);
 
     // Every builtin config MUST carry an override, or the daemon downloads its
@@ -145,7 +145,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 2: a session round-trips against 
       "codex",
     ]);
 
-    const again = await bootstrapLodyAgentConfigs(store, snapshot.machineId);
+    const again = await bootstrapLodyAgentConfigs(store, handle.runtime, snapshot.machineId);
     expect(again).toEqual([]);
   }, 60_000);
 

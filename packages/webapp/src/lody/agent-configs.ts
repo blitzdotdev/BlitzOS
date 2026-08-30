@@ -27,8 +27,11 @@
  * there is no override to pin them with. `deepseek` is a builtin agent but not a
  * managed runtime, and §0.6 of the plan limits v1 to claude and codex anyway.
  */
-import { cmdCreateAgentConfigAtom, getAgentConfigsByMachineAtomFamily } from "@lody/components/atoms/agents";
-import type { LodyAtomStore } from "./runtime.js";
+import { getMachineFlockDocId, machineFlockKeys, readMachineFlockRowsFromFlock } from "@lody/shared";
+import { setMachineFlockRowsForMachineAtom } from "@lody/components/atoms/machine-flock";
+import { resyncMachineFlockRows } from "@lody/components/hooks/use-machine-flock-rows";
+import { runStartupAcpCapabilitiesRefresh } from "@lody/components/providers/startup-acp-capabilities-refresh";
+import type { LodyAtomStore, LodyWorkspaceRuntime } from "./runtime.js";
 
 /** The shim, not `/opt/blitz/npm/bin/claude`; see the module comment. */
 export const BLITZ_CLAUDE_EXECUTABLE = "/usr/local/bin/claude";
@@ -39,19 +42,24 @@ export const BLITZ_CODEX_PATH = "/usr/local/bin/codex";
 export const BLITZ_CLAUDE_CONFIG_ID = "blitz-claude";
 export const BLITZ_CODEX_CONFIG_ID = "blitz-codex";
 
-/** An agent-config row as `parseAgentConfigRaw` (`atoms/agents.ts:148`) accepts
- * it. `description` is a required KEY that may hold `undefined`; `env` must be
- * present and must stay empty. */
-export interface LodyAgentConfigRow {
+/**
+ * An agent-config row as `parseAgentConfigRaw` (`atoms/agents.ts:148`) accepts
+ * it. `env` must be present and must stay empty; `description` is simply absent
+ * (their parser reads a missing key and an undefined one identically).
+ *
+ * A `type` and not an `interface` on purpose: TypeScript gives a type alias an
+ * implicit index signature, so the row goes into `flockRowPutIfAbsent` as a
+ * `JsonValue` with no assertion at all.
+ */
+export type LodyAgentConfigRow = {
   id: string;
   machineId: string;
   name: string;
-  description: string | undefined;
   cliType: "builtin";
   agentType: string;
   env: Record<string, string>;
   runtimeOverrides: { claudeCodeExecutable?: string; codexPath?: string };
-}
+};
 
 /**
  * The rows this box should have.
@@ -68,7 +76,6 @@ export function blitzAgentConfigRows(machineId: string): LodyAgentConfigRow[] {
       id: BLITZ_CLAUDE_CONFIG_ID,
       machineId,
       name: "Claude Code",
-      description: undefined,
       cliType: "builtin",
       agentType: "claude",
       env: {},
@@ -78,7 +85,6 @@ export function blitzAgentConfigRows(machineId: string): LodyAgentConfigRow[] {
       id: BLITZ_CODEX_CONFIG_ID,
       machineId,
       name: "Codex",
-      description: undefined,
       cliType: "builtin",
       agentType: "codex",
       env: {},
@@ -90,31 +96,125 @@ export function blitzAgentConfigRows(machineId: string): LodyAgentConfigRow[] {
 /**
  * Writes any missing row. Returns the ids it created.
  *
- * Idempotent on config id: an id already present in the merged agent-config map
- * is left alone, so a member who renamed "Claude Code" keeps the name.
+ * TWO THINGS MAKE IT IDEMPOTENT, AND PHASE 2 HAD NEITHER (design doc §7, the
+ * `TODO(lody-phase3)` this replaces).
  *
- * The residual race is bounded and points the safe way. The map is fed by the
- * machine Flock room, so a bootstrap that runs before that room finishes its
- * first sync sees no rows and re-writes ours. That write is an LWW put of the
- * canonical row — same id, same override — so the only thing it can undo is a
- * member's edit to a row, and the thing it re-asserts is the override that keeps
- * the daemon from downloading its own agent binary. Losing a rename is
- * recoverable; losing the override is a second unpinned CLI on the box.
+ * 1. **The room is awaited.** `openFlockDoc(...).syncOnce()` resolves once the
+ *    machine Flock room has exchanged state, so what follows sees the daemon's
+ *    rows rather than an empty local mirror. Phase 2 read a jotai cache fed by
+ *    that room and, running first, always saw nothing.
+ * 2. **The write is `flockRowPutIfAbsent`.** Absence and insertion are decided
+ *    in ONE transaction, so a CLI write that lands between a check and a put
+ *    cannot be overwritten. `flockRowPut` is an LWW put: it would silently undo
+ *    a member's rename on every boot.
  *
- * TODO(lody-phase3): once the surface can await the machine Flock room's first
- * sync, gate this on that instead, and drop to `writer.flockRowPutIfAbsent`.
+ * `syncOnce` failing is not fatal and is not retried here: the fallback is the
+ * local mirror, and `flockRowPutIfAbsent` is still atomic against it. A row that
+ * exists only on the daemon and has not reached us yet converges through the
+ * CRDT, so the worst case is a duplicate insert the merge resolves — never a
+ * lost override.
  */
 export async function bootstrapLodyAgentConfigs(
   store: LodyAtomStore,
+  runtime: LodyWorkspaceRuntime,
   machineId: string,
 ): Promise<string[]> {
-  const existing = store.get<{ id: string }[]>(getAgentConfigsByMachineAtomFamily(machineId));
-  const present = new Set(existing.map((config) => config.id));
+  const flockDocId: string = getMachineFlockDocId(runtime.workspaceId, machineId);
+  const handle = await runtime.repo.openFlockDoc(flockDocId);
+  await handle.syncOnce().catch(() => {
+    // The local mirror is the fallback; see the doc comment. Swallowed rather
+    // than logged because the surface has no console chokepoint of its own and
+    // the next line's result is the observable outcome either way.
+  });
+
   const created: string[] = [];
   for (const row of blitzAgentConfigRows(machineId)) {
-    if (present.has(row.id)) continue;
-    await store.set(cmdCreateAgentConfigAtom, row);
-    created.push(row.id);
+    // SAFETY: `machineFlockKeys.agentConfig` is Lody's own key builder for this
+    // row family; the seam erases its `readonly string[]` return type.
+    const key = machineFlockKeys.agentConfig(row.id) as readonly string[];
+    const result = await runtime.writer.flockRowPutIfAbsent(flockDocId, key, row);
+    if (result.inserted) created.push(row.id);
   }
+
+  // Publish the room's rows into the jotai cache the UI reads, exactly as
+  // `writeAgentConfigToMachineFlock` (`atoms/agents.ts:42`) does after its own
+  // write. Without this the composer's agent picker stays empty until the
+  // mirror's next tick.
+  store.set(setMachineFlockRowsForMachineAtom, {
+    workspaceId: runtime.workspaceId,
+    machineId,
+    rows: readMachineFlockRowsFromFlock(handle.flock),
+    mode: "merge",
+  });
   return created;
+}
+
+/**
+ * Fills the composer's mode / model / effort selectors.
+ *
+ * WHY THIS IS OURS TO CALL. `createWorkspaceRuntime` already runs a startup
+ * capabilities refresh (`:2413`), but its `listMachineIds` port answers from
+ * `deps.getAuthorizedMachineIds()` — the CONVEX-authorized machine set. The box
+ * is visible to the renderer only through `buildVisibleMachineIndex`'s
+ * owner fallback (`lib/visible-machine-index.ts:64`), which deliberately stays
+ * out of `convexAuthorizedMachineIds`, so upstream's pass lists no machines and
+ * never runs. Without it the machine Flock has no `acpCapability` rows,
+ * `buildAcpSelectorOptions` has nothing to build from, and the composer offers
+ * NO permission mode, model or effort — which also means no way to leave the
+ * `auto` mode whose classifier answers permission prompts on the member's
+ * behalf (`BUILTIN_DEFAULT_MODE_IDS.claude`, `shared/src/ai.ts:402`).
+ *
+ * The pass itself is THEIRS, unchanged: `runStartupAcpCapabilitiesRefresh`
+ * serializes per machine, tolerates a failing config, and resyncs the Flock the
+ * way its own caller does. Only the four ports are ours.
+ *
+ * Measured cost on a cold daemon: ~2 s per builtin config, and it launches the
+ * adapter without sending a prompt, so it spends no turn.
+ */
+export async function refreshLodyAcpCapabilities(
+  runtime: LodyWorkspaceRuntime,
+  machineId: string,
+  options: {
+    /** Aborted when the surface unmounts. Without it a refresh still in flight
+     * outlives the runtime and reports a transport failure against a daemon
+     * that is already gone. */
+    signal?: AbortSignal;
+    onError?: (cause: unknown, configId: string | undefined) => void;
+  } = {},
+): Promise<void> {
+  await runStartupAcpCapabilitiesRefresh({
+    listMachineIds: async () => [machineId],
+    // The box IS the local machine and `syncMode: 'local'` routes every call to
+    // it without a presence probe, so there is nothing to be offline about.
+    // Upstream gates on presence because it can dispatch to somebody else's
+    // laptop; we cannot.
+    isMachineOnline: () => true,
+    listAgentConfigs: async () => blitzAgentConfigRows(machineId),
+    refreshAgentConfig: async (_machineId: string, config: LodyAgentConfigRow, signal?: AbortSignal) => {
+      const response = await runtime.requestMachineAcpCapabilitiesRefresh(
+        {
+          type: "machine/acp-capabilities-refresh",
+          machineId,
+          workspaceId: runtime.workspaceId,
+          configId: config.id,
+          cliType: config.cliType,
+          agentType: config.agentType,
+          runtimeOverrides: config.runtimeOverrides,
+          env: config.env,
+        },
+        signal === undefined ? {} : { signal },
+      );
+      if (response?.success !== true) {
+        throw new Error(response?.error ?? "ACP capability refresh did not return a response");
+      }
+      // NOT `requireRemoteSync: true`, which is what upstream's own pass asks
+      // for. "Remote" there means the CLOUD plane, and `syncMode: 'local'`
+      // never opens one — the daemon's rows arrive over the local data plane
+      // instead, so the flag would make every refresh throw after doing its
+      // work. Measured: it did, on the first phase-3 run.
+      await resyncMachineFlockRows(runtime, machineId, {});
+    },
+    onError: (cause: unknown, context: { configId?: string }) =>
+      options.onError?.(cause, context.configId),
+  }, options.signal === undefined ? {} : { signal: options.signal });
 }

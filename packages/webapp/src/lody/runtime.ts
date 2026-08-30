@@ -85,6 +85,40 @@ export interface LodyWorkspaceWriter {
   ): Promise<void>;
   upsertDocMeta(roomId: string, patch: JsonObject): Promise<void>;
   flockRowPut(flockDocId: string, key: readonly string[], value: JsonValue): Promise<void>;
+  /** Inserts a Flock row only when its key is absent, in ONE transaction.
+   * `workspace-writer.ts:38`. The transaction is the whole point: a check
+   * followed by a put is two operations and a concurrent CLI write lands
+   * between them. */
+  flockRowPutIfAbsent(
+    flockDocId: string,
+    key: readonly string[],
+    value: JsonValue,
+  ): Promise<{ inserted: boolean; value: JsonValue }>;
+}
+
+/**
+ * Their `Flock` document body, opaque on our side.
+ *
+ * It is never inspected here — it goes straight back to
+ * `readMachineFlockRowsFromFlock`, whose parser is theirs. A nominal type rather
+ * than `unknown` so it cannot be confused with any other value that crosses the
+ * seam, and so no exported signature in this package carries `unknown`.
+ */
+export interface LodyFlockBody {
+  readonly __lodyFlock: unique symbol;
+}
+
+/** One open Flock document. `syncOnce` resolves when the room has exchanged
+ * state with its peers once — which, on the local plane, means the daemon's
+ * rows have arrived. */
+export interface LodyFlockDocHandle {
+  readonly flock: LodyFlockBody;
+  syncOnce(): Promise<void>;
+}
+
+/** The slice of the runtime's `LoroRepo` this package calls. */
+export interface LodyLoroRepo {
+  openFlockDoc(flockDocId: string): Promise<LodyFlockDocHandle>;
 }
 
 /** The mirrored session document store `withSessionStore` hands to its callback. */
@@ -96,6 +130,7 @@ export interface LodyWorkspaceRuntime {
   readonly workspaceId: string;
   readonly workspaceSlug: string;
   readonly writer: LodyWorkspaceWriter;
+  readonly repo: LodyLoroRepo;
   setLocalMachineId(machineId: string | null): void;
   resolveMachineTargetPlane(machineId: string, options?: { timeoutMs?: number }): Promise<"local" | "cloud">;
   requestSessionDispatchTurn(
@@ -104,6 +139,14 @@ export interface LodyWorkspaceRuntime {
     options?: { timeoutMs?: number },
   ): Promise<JsonValue>;
   ensureDocStream(roomId: string): Promise<void>;
+  /** `create-workspace-runtime.ts:4565`. Asks the machine to launch an agent
+   * config's ACP adapter and report its modes, models and effort levels, which
+   * the daemon then writes into the machine Flock as `acpCapability` rows.
+   * `null` means no plane answered. */
+  requestMachineAcpCapabilitiesRefresh(
+    request: JsonObject,
+    options?: { signal?: AbortSignal },
+  ): Promise<{ success?: boolean; error?: string } | null>;
   withSessionStore<T>(sessionId: string, fn: (store: LodySessionStore) => T | Promise<T>): Promise<T>;
   dispose(): Promise<void>;
 }

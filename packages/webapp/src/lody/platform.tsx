@@ -18,7 +18,9 @@ import { ConvexProvider, type ConvexReactClient } from "convex/react";
 import { createLocalPlatformProvider, createStore } from "@lody/platform";
 import { PlatformContext } from "@lody/platform/react";
 import { AuthenticatedConvexContext } from "@lody/components/hooks/use-authenticated-convex";
+import { AuthProvider } from "@lody/components/providers/convex-provider";
 import { createInertConvexClient } from "./inert-convex.js";
+import { createInertLodyAuthClient, type LodyInertAuthClient } from "./inert-auth-client.js";
 import {
   fetchLodyPlatformSnapshot,
   type LodyPlatformFetchOptions,
@@ -160,11 +162,55 @@ export function createBlitzPlatformProvider(input: BlitzPlatformInput) {
   });
 }
 
+export interface BlitzPlatformProvidersProps extends BlitzPlatformInput {
+  children: ReactNode;
+}
+
 /**
- * The provider stack, outermost first (design doc §1.4). `I18nextProvider`,
- * `ThemeProvider`, `TooltipProvider`, the memory router and `RuntimeProvider`
- * mount INSIDE this, in `SessionSurface` — they are surface concerns and phase 3
- * owns them. What lives here is everything the runtime itself needs.
+ * The provider stack, outermost first (design doc §1.4), for a snapshot the
+ * caller already holds. `I18nextProvider`, `ThemeProvider`, `TooltipProvider`,
+ * the memory router and `RuntimeProvider` mount INSIDE this, in
+ * `SessionSurface` — they are surface concerns and phase 3 owns them. What lives
+ * here is everything the runtime itself needs.
+ *
+ * Separate from `BlitzPlatformProvider` because `SessionSurface` needs the
+ * snapshot BEFORE the stack renders — the workspace slug in it is what the
+ * memory router's initial address is built from — and polling `/lody/platform`
+ * twice for one surface would be two pollers racing to settle one identity.
+ */
+export function BlitzPlatformProviders(props: BlitzPlatformProvidersProps) {
+  const convex = useRef<ConvexReactClient | null>(null);
+  convex.current ??= createInertConvexClient();
+  // `AuthProvider` memoizes on the client's identity, so it is built once.
+  const authClient = useRef<LodyInertAuthClient | null>(null);
+  authClient.current ??= createInertLodyAuthClient();
+
+  const platform = useMemo(
+    () =>
+      createBlitzPlatformProvider({
+        snapshot: props.snapshot,
+        viewer: props.viewer,
+        workspaceTitle: props.workspaceTitle,
+      }),
+    [props.snapshot, props.viewer, props.workspaceTitle],
+  );
+
+  return (
+    <ConvexProvider client={convex.current}>
+      {/* `useAuthClient` has no local-platform branch, and `SessionDetail`
+          reaches it through `useWorkspaceMembers`. See `inert-auth-client.ts`
+          for why the client is ours rather than better-auth's. */}
+      <AuthProvider authClient={authClient.current}>
+        <AuthenticatedConvexContext.Provider value={SIGNED_OUT_CONVEX}>
+          <PlatformContext.Provider value={platform}>{props.children}</PlatformContext.Provider>
+        </AuthenticatedConvexContext.Provider>
+      </AuthProvider>
+    </ConvexProvider>
+  );
+}
+
+/**
+ * The stack plus the poll that settles the identity it needs.
  *
  * Renders nothing until the daemon's identity settles: a `PlatformContext`
  * carrying a placeholder user would let a write reach the daemon under an id its
@@ -172,8 +218,6 @@ export function createBlitzPlatformProvider(input: BlitzPlatformInput) {
  */
 export function BlitzPlatformProvider(props: BlitzPlatformProviderProps) {
   const { snapshot, error } = useLodyPlatformSnapshot(props.platformUrl, props.fetchImpl);
-  const convex = useRef<ConvexReactClient | null>(null);
-  convex.current ??= createInertConvexClient();
 
   const notified = useRef(false);
   const onSnapshot = props.onSnapshot;
@@ -183,26 +227,16 @@ export function BlitzPlatformProvider(props: BlitzPlatformProviderProps) {
     onSnapshot?.(snapshot);
   }, [snapshot, onSnapshot]);
 
-  const platform = useMemo(
-    () =>
-      snapshot === null
-        ? null
-        : createBlitzPlatformProvider({
-            snapshot,
-            viewer: props.viewer,
-            workspaceTitle: props.workspaceTitle,
-          }),
-    [snapshot, props.viewer, props.workspaceTitle],
-  );
-
   if (error !== null) throw new Error(`lody platform snapshot failed: ${error}`);
-  if (platform === null) return null;
+  if (snapshot === null) return null;
 
   return (
-    <ConvexProvider client={convex.current}>
-      <AuthenticatedConvexContext.Provider value={SIGNED_OUT_CONVEX}>
-        <PlatformContext.Provider value={platform}>{props.children}</PlatformContext.Provider>
-      </AuthenticatedConvexContext.Provider>
-    </ConvexProvider>
+    <BlitzPlatformProviders
+      snapshot={snapshot}
+      viewer={props.viewer}
+      workspaceTitle={props.workspaceTitle}
+    >
+      {props.children}
+    </BlitzPlatformProviders>
   );
 }

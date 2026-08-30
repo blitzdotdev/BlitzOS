@@ -19,7 +19,7 @@ import './create-workspace-dialog.css';
 import './settings.css';
 import './invite-redeem.css';
 import { StandaloneWebApp } from './StandaloneWebApp';
-import { lodySpikeRequested } from './lody/flag';
+import { LODY_DEV_ORIGIN, lodySessionsRequested } from './lody/flag';
 import { initTheme } from './theme';
 
 initTheme();
@@ -27,17 +27,32 @@ initTheme();
 const root = document.getElementById('root');
 if (root === null) throw new Error('Missing root element');
 
-if (lodySpikeRequested(window.location.hash)) {
-  // Phase-0 render spike (plans/LODY-SESSIONS.md §10). Behind
-  // LODY_SESSIONS_ENABLED, which is off unless a developer sets
-  // VITE_BLITZ_LODY_SESSIONS=true, and reached only at #lody-spike.
+if (lodySessionsRequested(window.location.hash) && LODY_DEV_ORIGIN !== '') {
+  // The standalone session surface, for local development against a box with
+  // no control plane in front of it (plans/LODY-SESSIONS.md phase 3):
   //
-  // The import stays dynamic so the vendored Lody renderer is a lazy chunk:
-  // no part of it may enter the entry bundle, and phase 0 measures that.
-  void import('./lody/SessionSurfaceSpike').then(({ SessionSurfaceSpike }) => {
+  //   VITE_BLITZ_LODY_SESSIONS=true VITE_BLITZ_LODY_DEV_ORIGIN=http://127.0.0.1:PORT \
+  //     npm run dev -w @blitzos/webapp        # then open /#lody
+  //
+  // Inside a real workspace the surface mounts through `CloudApp` instead, on
+  // the same hash and the same flag. Both need the dynamic import: no part of
+  // the vendored renderer may enter the entry bundle, and phase 0 measured that
+  // it does not.
+  void import('./lody/SessionSurface').then(({ SessionSurface }) => {
+    const origin = LODY_DEV_ORIGIN.replace(/\/+$/u, '');
     createRoot(root).render(
       <StrictMode>
-        <SessionSurfaceSpike />
+        <SessionSurface
+          endpoints={{
+            syncUrl: `${origin.replace(/^http(s?):\/\//u, 'ws$1://')}/lody/sync`,
+            rpcUrl: `${origin}/lody/rpc`,
+            controlUrl: `${origin}/lody/control`,
+            projectUrl: `${origin}/lody/project`,
+            platformUrl: `${origin}/lody/platform`,
+          }}
+          viewer={{ name: 'Developer', avatarUrl: null }}
+          workspaceTitle="Lody dev"
+        />
       </StrictMode>,
     );
   });

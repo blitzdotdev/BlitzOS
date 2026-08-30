@@ -165,6 +165,16 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
       case "loro.isConnected":
         return dataPlane?.connection.isConnected() ?? false;
 
+      // Accepted and ignored. `theme-provider.tsx:155` calls it on every theme
+      // change with no Electron guard at all, and it asks the MAIN PROCESS to
+      // repaint the OS window chrome — a browser has no window chrome to
+      // repaint. Rejecting it produced an unhandled rejection on every mount
+      // (design-doc risk 10, seen for real in the phase-3 exit test), and
+      // guarding the call site would be a vendor edit outside the declared
+      // seams. `null` is what `ipcMain.handle` returns for a void handler.
+      case "app.setNativeTheme":
+        return null;
+
       case "localPlatform.getSnapshot": {
         // Load-bearing beyond our own platform provider: `RuntimeProvider`
         // resolves its workspace id through `useImplicitLocalWorkspace()`
@@ -337,6 +347,15 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
         listeners.sessionControlResponse.add(listener);
         return () => listeners.sessionControlResponse.delete(listener);
       }
+
+      // Accepted and never fired, the subscribe half of `app.setNativeTheme`
+      // above. Electron's main process pushes the OS-resolved theme here
+      // (`theme-provider.tsx:139`); a browser has no such push, and their own
+      // fallback for its absence is `prefers-color-scheme`, which is the right
+      // answer. Accepting it keeps the unsupported-channel set — which the
+      // phase-3 exit test asserts is empty — meaningful.
+      case "app.nativeTheme":
+        return () => {};
       default:
         recordUnsupported(channel);
         return () => {};

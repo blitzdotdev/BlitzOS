@@ -19,8 +19,20 @@ export function initLodyI18n(): i18n {
     fallbackLng: "en",
     defaultNS: "translation",
     ns: ["translation"],
+    // LOAD-BEARING, and it is theirs (`components/src/i18n/index.tsx:121`).
+    // `locales/en.json` is a FLAT map whose keys contain dots
+    // (`"sessions.stop": "Stop"`). With i18next's default `keySeparator: '.'`
+    // every one of those lookups walks a nested object that does not exist,
+    // misses, and falls back to the inline default a call site happens to
+    // carry — or to the raw key where it carries none. The surface still
+    // renders, which is why phase 0 did not notice.
+    keySeparator: false,
     resources: { en: { translation: en } },
     interpolation: { escapeValue: false },
+    // Also theirs: no backend is registered, so nothing may suspend on a load
+    // that never happens.
+    react: { useSuspense: false },
+    initImmediate: false,
   });
   initialized = i18next;
   return i18next;

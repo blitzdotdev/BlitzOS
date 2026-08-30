@@ -42,6 +42,7 @@ import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
 import { WorkPanes } from './shell/WorkPanes';
+import { LodySessionsRegion } from './lody/LodySessionsRegion';
 import {
   drivePath,
   folderPagePath,
@@ -1551,6 +1552,19 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 </span>
               </div>
             )}
+            {/* Lody sessions (plans/LODY-SESSIONS.md phase 3). Renders null
+                unless VITE_BLITZ_LODY_SESSIONS is on, and imports nothing
+                until it is: the vendored renderer is a 3.5 MB lazy chunk.
+                Phase 4 drives it from the rail; phase 3 drives it from the
+                `#lody` hash and leaves the rail alone. It is positioned
+                absolutely over the panes rather than replacing them, so every
+                ttyd terminal keeps its measured geometry across a switch. */}
+            <LodySessionsRegion
+              endpoints={activeWorkspaceRunning ? activeIngressEntry : null}
+              viewerName={store.viewer?.identity.name ?? 'You'}
+              viewerAvatarUrl={store.viewer?.identity.avatarUrl ?? null}
+              workspaceTitle={activeWorkspace?.title ?? 'Workspace'}
+            />
             <WorkPanes
               client={client}
               panesRef={panesRef}

@@ -108,19 +108,31 @@ async function freePort(): Promise<number> {
  * WebSocket-upgrade direction. It carries NO auth: ticket verification and the
  * viewer refusal are the Go gateway's, tested in `gateway/main_test.go`.
  */
-function startGatewayShim(socketPath: string, port: number): Server {
+function startGatewayShim(socketPath: string, port: number, log: (line: string) => void): Server {
   const server = createHttpServer((incoming, response) => {
     const path = (incoming.url ?? "/").replace(/^\/lody/u, "");
     const upstream = httpRequest(
       { socketPath, path, method: incoming.method, headers: incoming.headers },
       (upstreamResponse) => {
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+        // A refusal is the interesting case and its body is the diagnosis, so
+        // it is copied into the log on the way through. 2xx bodies are session
+        // documents and are left alone.
+        const failed = (upstreamResponse.statusCode ?? 502) >= 400;
+        let body = "";
+        upstreamResponse.on("data", (chunk: Buffer) => {
+          if (failed && body.length < 400) body += String(chunk);
+        });
+        upstreamResponse.on("end", () => {
+          if (failed) log(`[shim] ${incoming.method ?? "?"} ${path} -> ${upstreamResponse.statusCode ?? 502} ${body}\n`);
+        });
         upstreamResponse.pipe(response);
       },
     );
-    upstream.on("error", () => {
-      response.writeHead(502);
-      response.end();
+    upstream.on("error", (error: Error) => {
+      log(`[shim] ${incoming.method ?? "?"} ${path} upstream failed: ${error.message}\n`);
+      response.writeHead(502, { "content-type": "application/json" });
+      response.end('{"ok":false,"error":"lody_gateway_shim_upstream_failed"}');
     });
     incoming.pipe(upstream);
   });
@@ -198,6 +210,11 @@ export async function startLodyHarness(): Promise<LodyHarness> {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // The bridge's own log is part of the daemon log: when a control call fails
+  // the useful sentence ("upstream failed: …") is written here, not by the
+  // daemon, and a test that only printed the daemon's half diagnosed nothing.
+  bridge.stdout?.on("data", (chunk) => (daemonLog += `[bridge] ${String(chunk)}`));
+  bridge.stderr?.on("data", (chunk) => (daemonLog += `[bridge] ${String(chunk)}`));
   await new Promise<void>((resolve, reject) => {
     bridge.stdout?.on("data", (chunk) => {
       if (String(chunk).includes("listening on")) resolve();
@@ -207,7 +224,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   });
 
   const port = await freePort();
-  const gateway = startGatewayShim(bridgeSocket, port);
+  const gateway = startGatewayShim(bridgeSocket, port, (line) => (daemonLog += line));
   const origin = `http://127.0.0.1:${port}`;
 
   return {
