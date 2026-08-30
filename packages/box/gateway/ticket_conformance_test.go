@@ -23,11 +23,12 @@ type ticketFixtureContext struct {
 }
 
 type ticketFixtureExpectation struct {
-	Valid        bool   `json:"valid"`
-	Kind         string `json:"kind"`
-	Role         string `json:"role"`
-	UserID       string `json:"userId"`
-	MembershipID string `json:"membershipId"`
+	Valid        bool              `json:"valid"`
+	Kind         string            `json:"kind"`
+	Role         string            `json:"role"`
+	UserID       string            `json:"userId"`
+	MembershipID string            `json:"membershipId"`
+	Share        *webAppShareClaim `json:"share"`
 }
 
 type ticketFixture struct {
@@ -52,6 +53,18 @@ func readTicketContext(t *testing.T) ticketFixtureContext {
 		t.Fatalf("parse ticket context: %v", err)
 	}
 	return context
+}
+
+func shareJSON(t *testing.T, claim *webAppShareClaim) string {
+	t.Helper()
+	if claim == nil {
+		return "absent"
+	}
+	encoded, err := json.Marshal(claim)
+	if err != nil {
+		t.Fatalf("encode share claim: %v", err)
+	}
+	return string(encoded)
 }
 
 func TestWebAppTicketFixtureConformance(t *testing.T) {
@@ -107,6 +120,13 @@ func TestWebAppTicketFixtureConformance(t *testing.T) {
 			}
 			if identity.MembershipID != fixture.Expect.MembershipID {
 				t.Fatalf("%s: membershipId = %q, want %q", name, identity.MembershipID, fixture.Expect.MembershipID)
+			}
+			// Compared whole: the claim decides who may read and who may write
+			// on somebody else's box, so a field one side drops is exactly the
+			// silent change this corpus exists to catch.
+			gotShare, wantShare := shareJSON(t, identity.Share), shareJSON(t, fixture.Expect.Share)
+			if gotShare != wantShare {
+				t.Fatalf("%s: share = %s, want %s", name, gotShare, wantShare)
 			}
 		})
 	}

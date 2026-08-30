@@ -57,7 +57,12 @@ import { putWorkspaceCredential } from "./workspace-credentials.js";
 import type { WebAppPort } from "./compute/types.js";
 import { isWebAppSurfacePath } from "./webapp-surface.js";
 import { rewriteWebDavDestination } from "./webapp-proxy.js";
-import { requireWorkspaceWebAppAuth, WEBAPP_TOKEN_HEADER } from "./webapp-tickets.js";
+import {
+  requireWorkspaceWebAppAuth,
+  WEBAPP_TOKEN_HEADER,
+  type WebAppTicketClaims,
+} from "./webapp-tickets.js";
+import { shareClaimForTarget } from "./session-shares.js";
 import {
   insertWorkspaceRepos,
   parseTemplateRepos,
@@ -682,6 +687,28 @@ async function machineForRequest(
   return machine;
 }
 
+/**
+ * The machine a SHARED request is routed to: the named member's own.
+ *
+ * No viewer fallback and no owner fallback. The address names one member, and
+ * a share is a grant against that member's box; falling back to anyone else's
+ * would silently serve a different machine than the grant covers.
+ */
+async function machineForTarget(
+  runtime: CoreRuntime,
+  workspace: WorkspaceRow,
+  targetMembershipId: string,
+): Promise<MachineRow> {
+  const machine = await machineFor(runtime.db, workspace.id, targetMembershipId);
+  if (machine === null || machine.state === "destroyed") {
+    throw new HttpError(409, "that member has no machine in this workspace");
+  }
+  if (machine.vm_id === null) {
+    throw new HttpError(409, "that member's machine in this workspace is not running");
+  }
+  return machine;
+}
+
 export function addWorkspaceRoutes(
   router: CoreRouter,
   runtimeFactory: RuntimeFactory,
@@ -853,25 +880,44 @@ export function addWorkspaceRoutes(
     return context.json<CreateWorkspaceResponse>({ workspace: view });
   });
 
+  /**
+   * The proxy, for both addresses it answers on.
+   *
+   * `/workspaces/:id/webapp/7445/...` routes to the REQUESTING member's machine
+   * — a workspace holds one VM per member, so "the workspace's VM" is not a
+   * thing that exists, and the ticket already names who is asking.
+   *
+   * `/workspaces/:id/shared/:membershipId/webapp/7445/...` routes to the named
+   * member's machine and mints a `share` claim from the caller's grants
+   * (plans/LODY-SHARING.md §2.2). It is a distinct PREFIX rather than a
+   * parameter on the first address, because a caller who forgets it then
+   * reaches their own box — the safe answer — instead of somebody else's.
+   */
   const webApp = async (context: CoreContext): Promise<Response> => {
     const id = context.req.param("id");
     const runtime = runtimeFactory(context);
     const access = await webAppWorkspaceForRequest(runtime, requirePrincipal, context, id);
     const row = access.workspace;
-    // The proxy routes to the REQUESTING member's machine. A workspace holds
-    // one VM per member now, so "the workspace's VM" is not a thing that
-    // exists; the ticket already names who is asking.
     const rawPort = context.req.param("port");
     if (rawPort !== "7445") {
       throw new HttpError(400, "webApp port must be 7445");
     }
     const port: WebAppPort = 7445;
-    const machine = await machineForRequest(runtime, row, access.membershipId, access.role);
+    const target = context.req.param("membershipId");
+    const shared = target !== undefined;
+    if (shared && target === access.membershipId) {
+      throw new HttpError(400, "reach your own machine through /workspaces/:id/webapp/7445");
+    }
+    const machine = shared
+      ? await machineForTarget(runtime, row, target)
+      : await machineForRequest(runtime, row, access.membershipId, access.role);
     const vmId = machine.vm_id;
     if (vmId === null) throw new HttpError(409, "workspace is not ready for webapp access");
     const provider = providerForVmId(runtime, vmId);
     const requestURL = new URL(context.req.url);
-    const routePrefix = `/workspaces/${encodeURIComponent(id)}/webapp/${rawPort}`;
+    const routePrefix = shared
+      ? `/workspaces/${encodeURIComponent(id)}/shared/${encodeURIComponent(target)}/webapp/${rawPort}`
+      : `/workspaces/${encodeURIComponent(id)}/webapp/${rawPort}`;
     if (!requestURL.pathname.startsWith(routePrefix)) {
       throw new HttpError(400, "invalid workspace webApp path");
     }
@@ -897,14 +943,35 @@ export function addWorkspaceRoutes(
       throw new HttpError(403, "read-only access arrives when this workspace VM is recycled");
     }
     const webAppAuth = requireWorkspaceWebAppAuth(runtime.providers.webAppAuth);
+    // A `share` claim reaches a gateway that predates it as an UNKNOWN claim,
+    // and that verifier refuses rather than ignores — which is the property
+    // `unknown-claim.json` exists to keep. So the refusal is made here, where
+    // it can name the fix (§3.1).
+    const shareSince = capabilities.webAppSharedSessionsSinceMs;
+    if (shared && (shareSince === undefined || machine.created_at < shareSince)) {
+      throw new HttpError(403, "shared sessions arrive when that member's machine is recycled");
+    }
+    const share = shared
+      ? await shareClaimForTarget(runtime.db, row.id, access, target)
+      : null;
+    if (shared && share === null) {
+      throw new HttpError(403, "no session on that member's machine is shared with you");
+    }
+    const claims: Omit<WebAppTicketClaims, "exp"> = {
+      workspaceId: row.id,
+      userId: access.userId,
+      membershipId: access.membershipId,
+      role: access.role,
+    };
+    if (share !== null) claims.share = share;
     const credential = ticketCapable
-      ? await webAppAuth.mint({
-          workspaceId: row.id,
-          userId: access.userId,
-          membershipId: access.membershipId,
-          role: access.role,
-        })
+      ? await webAppAuth.mint(claims)
       : await webAppAuth.tokenFor(row.id);
+    // A shared request has no static-token fallback: that credential presents
+    // as the OWNER on the guest, which would hand a grantee the whole box.
+    if (shared && !ticketCapable) {
+      throw new HttpError(403, "shared sessions arrive when that member's machine is recycled");
+    }
     const authenticatedRequest = requestWithWebAppCredential(
       context.req.raw,
       requestURL,
@@ -944,6 +1011,8 @@ export function addWorkspaceRoutes(
 
   router.all("/workspaces/:id/webapp/:port", webApp);
   router.all("/workspaces/:id/webapp/:port/*", webApp);
+  router.all("/workspaces/:id/shared/:membershipId/webapp/:port", webApp);
+  router.all("/workspaces/:id/shared/:membershipId/webapp/:port/*", webApp);
 
   /** Deletes the workspace: every machine destroys, then the row tombstones.
    * Workspace admins and org admins only (§3). */

@@ -75,6 +75,9 @@ const workspace = workspaceModelFixture({
 function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient {
   return {
     listWorkspaceRepos: vi.fn().mockResolvedValue({ repos: [] }),
+    listSessionShares: vi.fn().mockResolvedValue({ granted: [], received: [] }),
+    grantSessionShare: vi.fn(),
+    revokeSessionShare: vi.fn(),
     listAgentRules: vi.fn().mockResolvedValue({ rules: [] }),
     listMembers: vi.fn().mockResolvedValue({
       members: [

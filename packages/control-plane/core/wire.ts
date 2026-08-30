@@ -192,6 +192,13 @@ export {
   type WorkspaceMemberRole,
   type WorkspaceMemberView,
 } from "./wire-machines.js";
+// Session sharing lives beside them for the same reason.
+export {
+  type GrantSessionShareRequest,
+  type ListSessionSharesResponse,
+  type SessionShareLevel,
+  type SessionShareView,
+} from "./wire-sharing.js";
 // The three names the declarations below reference by hand. A re-export does
 // not bind them locally, so they are imported as well as re-exported.
 import type {

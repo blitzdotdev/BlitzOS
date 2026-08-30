@@ -288,6 +288,34 @@ const listWorkspaceReposResponse: SharedShape<
   schema.ListWorkspaceReposResponse
 > = { repos: [templateRepo] };
 
+const sessionShare: SharedShape<
+  wire.SessionShareView,
+  schema.SessionShareView
+> = {
+  id: "share-1",
+  sessionId: "sess-abc",
+  ownerMembershipId: "membership-owner",
+  granteeMembershipId: "membership-grantee",
+  level: "rw",
+  createdAt: 1_788_000_000_000,
+  createdByMembershipId: "membership-owner",
+};
+
+const listSessionSharesResponse: SharedShape<
+  wire.ListSessionSharesResponse,
+  schema.ListSessionSharesResponse
+> = { granted: [sessionShare], received: [sessionShare] };
+
+const grantSessionShareRequest: SharedShape<
+  wire.GrantSessionShareRequest,
+  schema.GrantSessionShareRequest
+> = {
+  sessionId: sessionShare.sessionId,
+  granteeMembershipId: sessionShare.granteeMembershipId,
+  level: "ro",
+  ownerMembershipId: sessionShare.ownerMembershipId,
+};
+
 const githubInstallation: SharedShape<
   wire.GithubInstallationView,
   schema.GithubInstallationView
@@ -690,6 +718,9 @@ const fullFieldValues = [
   templateRepo,
   addWorkspaceRepoRequest,
   listWorkspaceReposResponse,
+  sessionShare,
+  listSessionSharesResponse,
+  grantSessionShareRequest,
   githubInstallation,
   listGithubInstallations,
   githubRepository,
@@ -781,6 +812,10 @@ describe("local wire copies", () => {
     expectTypeOf<wire.TemplateRepoView>().toEqualTypeOf<schema.TemplateRepoView>();
     expectTypeOf<wire.AddWorkspaceRepoRequest>().toEqualTypeOf<schema.AddWorkspaceRepoRequest>();
     expectTypeOf<wire.ListWorkspaceReposResponse>().toEqualTypeOf<schema.ListWorkspaceReposResponse>();
+    expectTypeOf<wire.SessionShareLevel>().toEqualTypeOf<schema.SessionShareLevel>();
+    expectTypeOf<wire.SessionShareView>().toEqualTypeOf<schema.SessionShareView>();
+    expectTypeOf<wire.ListSessionSharesResponse>().toEqualTypeOf<schema.ListSessionSharesResponse>();
+    expectTypeOf<wire.GrantSessionShareRequest>().toEqualTypeOf<schema.GrantSessionShareRequest>();
     expectTypeOf<wire.GithubInstallationView>().toEqualTypeOf<schema.GithubInstallationView>();
     expectTypeOf<wire.ListGithubInstallationsResponse>().toEqualTypeOf<schema.ListGithubInstallationsResponse>();
     expectTypeOf<wire.GithubRepositoryView>().toEqualTypeOf<schema.GithubRepositoryView>();

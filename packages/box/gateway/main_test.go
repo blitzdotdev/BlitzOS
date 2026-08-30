@@ -1072,6 +1072,11 @@ func TestLodyProxyRoutesThroughUnixSocket(t *testing.T) {
 	const controlPlaneOrigin = "https://blitz-control-plane.example"
 	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
 	handler := &gateway{
+		// A path that is NOT a lody door falls through to dufs, and this suite
+		// has one such case on purpose ("healthz is not a lody door"). Without a
+		// proxy here that fall-through is a nil dereference, which panics the
+		// whole suite rather than failing one case.
+		dufs:                   httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "dufs.invalid"}),
 		lody:                   &url.URL{Scheme: "http", Host: lodyBridgeHost},
 		lodyTransport:          unixSocketTransport(socketPath),
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
@@ -2297,4 +2302,149 @@ func TestDiagMethods(t *testing.T) {
 	if got := postResponse.Header().Get("Allow"); got != "GET, OPTIONS" {
 		t.Errorf("Allow = %q, want %q", got, "GET, OPTIONS")
 	}
+}
+
+// PHASE 6 (plans/LODY-SHARING.md §4.1) — a ticket routed to ANOTHER member's
+// machine. The gateway decides WHERE such a request may go; the bridge decides
+// what it may say once it gets there.
+func TestSharedTicketReachesOnlyTheSessionDaemon(t *testing.T) {
+	type sharedUpstream struct {
+		requestURI string
+		body       string
+	}
+	observed := make(chan sharedUpstream, 8)
+	socketPath := filepath.Join(t.TempDir(), "b.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		observed <- sharedUpstream{
+			requestURI: request.URL.RequestURI(),
+			body:       string(body) + "|" + request.Header.Get(lodyShareHeader),
+		}
+		response.WriteHeader(http.StatusNoContent)
+	})}
+	go func() { _ = upstream.Serve(listener) }()
+	defer func() { _ = upstream.Close() }()
+
+	const secret = "shared-ticket-secret"
+	const workspaceID = "workspace-shared"
+	const controlPlaneOrigin = "https://blitz-control-plane.example"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	handler := &gateway{
+		dufs:                   httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "dufs.invalid"}),
+		lody:                   &url.URL{Scheme: "http", Host: lodyBridgeHost},
+		lodyTransport:          unixSocketTransport(socketPath),
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		webAppTokenPath:        tokenPath,
+		workspaceIDPath:        workspacePath,
+		transport:              http.DefaultTransport,
+	}
+	sharedTicket := func(role string) string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "grantee-user",
+			MembershipID: "grantee-membership",
+			Role:         role,
+			Exp:          time.Now().Add(time.Hour).Unix(),
+			Share: json.RawMessage(
+				`{"target":"owner-membership","scope":"sessions","read":["sess-alpha"],"write":["sess-beta"]}`,
+			),
+		})
+	}
+
+	// §0.1 grants "read access scoped to that session's worktree; nothing else
+	// on the owner's box". Every one of these is "nothing else".
+	for _, path := range []string{
+		"/workspace/file.txt",
+		"/preview/3000/",
+		"/terminal/ws",
+		"/ports",
+		"/previews",
+		"/diag",
+		"/admin/drain",
+	} {
+		t.Run("refuses "+path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "http://box"+path, nil)
+			request.Header.Set(webAppTokenHeader, sharedTicket("editor"))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %q", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	t.Run("forwards the verified claim to the bridge", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, sharedTicket("editor"))
+		// A forged inbound copy must never survive: the browser may not author
+		// its own authority.
+		request.Header.Set(lodyShareHeader, `{"target":"owner-membership","scope":"all","read":[],"write":[]}`)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body = %q", response.Code, response.Body.String())
+		}
+		got := <-observed
+		want := `{}|{"target":"owner-membership","scope":"sessions","read":["sess-alpha"],"write":["sess-beta"]}`
+		if got.body != want {
+			t.Errorf("bridge saw %q, want %q", got.body, want)
+		}
+	})
+
+	// A viewer holds no sessions of their own, so their own box's daemon stays
+	// closed; a viewer holding a read-only share is what §0.1 asks to allow.
+	t.Run("a viewer with a share reaches the daemon", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, sharedTicket("viewer"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body = %q", response.Code, response.Body.String())
+		}
+		<-observed
+	})
+
+	t.Run("a viewer without one does not", func(t *testing.T) {
+		plain := signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "viewer-user",
+			MembershipID: "viewer-membership",
+			Role:         "viewer",
+			Exp:          time.Now().Add(time.Hour).Unix(),
+		})
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, plain)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", response.Code)
+		}
+	})
+
+	// An ordinary ticket carries no claim, so the bridge must see no header at
+	// all — its absence is what selects the "copy bytes" path.
+	t.Run("an unshared request carries no claim header", func(t *testing.T) {
+		plain := signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "owner-user",
+			MembershipID: "owner-membership",
+			Role:         "owner",
+			Exp:          time.Now().Add(time.Hour).Unix(),
+		})
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, plain)
+		request.Header.Set(lodyShareHeader, `{"target":"x","scope":"all","read":[],"write":[]}`)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", response.Code)
+		}
+		if got := <-observed; got.body != "{}|" {
+			t.Errorf("bridge saw %q, want %q", got.body, "{}|")
+		}
+	})
 }

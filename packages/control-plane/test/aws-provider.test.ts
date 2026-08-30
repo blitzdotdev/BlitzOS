@@ -195,6 +195,7 @@ describe("AWS provider ownership", () => {
       maxUserDataBytes: 49_152,
       webAppTicketsSinceMs: 1_786_993_800_000,
       webAppViewerGuardsSinceMs: 1_787_043_600_000,
+      webAppSharedSessionsSinceMs: 1_788_048_000_000,
     });
   });
 

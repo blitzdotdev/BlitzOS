@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
+import { MAX_TICKET_SHARE_SESSIONS, WorkspaceWebAppAuth } from "../core/webapp-tickets.js";
 
 /** The control-plane half of the webApp ticket contract. The Go gateway reads
  * the same corpus, so a claim one side starts enforcing and the other still
@@ -11,6 +11,15 @@ interface TicketExpectation {
   role?: string;
   userId?: string;
   membershipId?: string;
+  /** Present only on the shared-session cases. Compared whole, because the
+   * claim decides who may read and who may write on somebody else's box
+   * (plans/LODY-SHARING.md §3.2). */
+  share?: {
+    target: string;
+    scope: "sessions" | "all";
+    read: string[];
+    write: string[];
+  };
 }
 
 interface TicketFixture {
@@ -72,6 +81,7 @@ describe("webApp ticket conformance", () => {
       expect(verified?.claims.userId).toBe(fixture.expect.userId);
       expect(verified?.claims.membershipId).toBe(fixture.expect.membershipId);
       expect(verified?.claims.workspaceId).toBe(context.workspaceId);
+      expect(verified?.claims.share).toEqual(fixture.expect.share);
     });
   }
 
@@ -84,5 +94,38 @@ describe("webApp ticket conformance", () => {
     }, context.nowSeconds);
     await expect(auth.verify(credential, context.workspaceId, context.nowSeconds))
       .resolves.toMatchObject({ kind: "ticket", claims: { role: "editor" } });
+  });
+
+  it("mints and verifies a share claim, and refuses one over the id cap", async () => {
+    const share = {
+      target: "membership-owner",
+      scope: "sessions" as const,
+      read: ["sess-alpha"],
+      write: ["sess-beta"],
+    };
+    const credential = await auth.mint({
+      workspaceId: context.workspaceId,
+      userId: "user-grantee",
+      membershipId: "membership-grantee",
+      role: "editor",
+      share,
+    }, context.nowSeconds);
+    await expect(auth.verify(credential, context.workspaceId, context.nowSeconds))
+      .resolves.toMatchObject({ claims: { share } });
+
+    // The cap is what keeps the header under every proxy default in the path.
+    // A ticket over it is refused rather than truncated at the verifier: the
+    // truncation belongs to the mint, where it can be logged.
+    const oversized = await auth.mint({
+      workspaceId: context.workspaceId,
+      userId: "user-grantee",
+      membershipId: "membership-grantee",
+      role: "editor",
+      share: {
+        ...share,
+        read: Array.from({ length: MAX_TICKET_SHARE_SESSIONS + 1 }, (_, index) => `sess-${String(index)}`),
+      },
+    }, context.nowSeconds);
+    await expect(auth.verify(oversized, context.workspaceId, context.nowSeconds)).resolves.toBeNull();
   });
 });

@@ -22,6 +22,7 @@ import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
 import { addWorkspaceCredentialRoutes } from "./workspace-credentials.js";
 import { addWorkspaceMemberRoutes } from "./workspace-members.js";
+import { addSessionShareRoutes } from "./session-shares.js";
 import { addWorkspaceSettingsRoutes } from "./workspace-settings.js";
 import { addWorkspaceRoutes } from "./workspaces.js";
 
@@ -112,6 +113,8 @@ export function installControlPlaneRoutes(
   // Same reason: /workspaces/:id/repos is a literal path under the prefix
   // addWorkspaceRoutes registers its parameterised routes on.
   addWorkspaceSettingsRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // And again: /workspaces/:id/session-shares is a literal path under it.
+  addSessionShareRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addWorkspaceRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addMachineRoutes(router, runtimeFactory, requireMembershipPrincipal);
   addCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);

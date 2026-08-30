@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZ3JhbnRlZSIsIm1lbWJlcnNoaXBJZCI6Im1lbWJlcnNoaXAtZ3JhbnRlZSIsInJvbGUiOiJlZGl0b3IiLCJleHAiOjE4MDAwMDAwNjAsInNoYXJlIjpudWxsfQ.RX6BIAeLywgMqtyP0va2v9m3L_pYpLFNe60vWaWbreA",
+  "expect": {
+    "valid": false
+  },
+  "note": "An explicit null share is refused rather than read as absent. A pointer field decodes it to nil, which would accept the ticket on one side and refuse it on the other."
+}

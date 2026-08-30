@@ -22,6 +22,7 @@ import type {
 } from "./types.js";
 import {
   BOX_IMAGE_TICKETS_SINCE_MS,
+  BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
 } from "../webapp-tickets.js";
 
@@ -248,6 +249,7 @@ export class HetznerProvider implements VmProvider, VolumeProvider {
       maxUserDataBytes: HETZNER_USER_DATA_MAX_BYTES,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
+      webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
     };
   }
 

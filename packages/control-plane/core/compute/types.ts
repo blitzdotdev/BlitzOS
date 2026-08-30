@@ -16,6 +16,12 @@ export interface ProviderCapabilities {
   /** Epoch ms from which this provider's guests enforce viewer read-only
    * correctly. Undefined is "never": viewers are refused. */
   webAppViewerGuardsSinceMs?: number;
+  /** Epoch ms from which this provider's guests understand the ticket's
+   * `share` claim. An older gateway REFUSES a ticket carrying it — its decoder
+   * disallows unknown fields, deliberately — so undefined is "never" and a
+   * shared-session request to such a VM is refused by the control plane with a
+   * message that names the fix (plans/LODY-SHARING.md §3.1). */
+  webAppSharedSessionsSinceMs?: number;
   /** True when the provider attaches volumes as part of the VM create call,
    * so the disk is present before the guest's first boot. A provider that
    * answers false (or stays silent) is attached after create, which races the

@@ -24,6 +24,29 @@ Claims are exactly these five, no more and no fewer:
 - `role` — `owner`, `admin`, `editor`, or `viewer`
 - `exp` — expiry in seconds; `exp <= now` is expired
 
+…plus ONE optional sixth, `share`, present only on a ticket routed to ANOTHER
+member's machine (`plans/LODY-SHARING.md` §3):
+
+- `target` — the membership whose machine the request is routed to
+- `scope` — `sessions` for an ordinary grantee, `all` for a workspace admin's
+  implicit read-only over every session on that machine
+- `read` — session ids this ticket may read
+- `write` — session ids this ticket may also write, disjoint from `read`
+
+All four keys are required when `share` is present, and an unrecognized key
+INSIDE it is refused exactly like an unrecognized claim outside it. Two lists
+rather than one level, because a grantee can hold read-only on one session and
+read-write on another on the same box; the write predicate then never mentions
+`scope`, which makes the admin's implicit access read-only by construction. At
+most 64 ids in total, which is what keeps the header under every proxy default
+in the path.
+
+An ordinary ticket carries no `share` key at all, which is what keeps it
+verifiable by every box image in the field. A ticket that DOES carry one is
+refused by an older gateway — its decoder disallows unknown fields, on purpose
+— so the control plane refuses the shared-session route on an older VM rather
+than letting the box answer a 403 nobody can read.
+
 A credential that does not start with `v1.` is compared against the static
 per-workspace token, which predates tickets and presents as the owner. That
 path is temporary — see `TODO(identity-phase-4)`.
