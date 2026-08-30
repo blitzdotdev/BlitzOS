@@ -1,0 +1,191 @@
+#!/usr/bin/env node
+// The browser's two doors into the Lody session daemon.
+//
+// The daemon speaks only over unix sockets in `$LODY_DATA_DIR/run` and a
+// browser cannot open one, so this bridge re-serves exactly two of its surfaces
+// on a single unix socket that the Go gateway reverse-proxies:
+//
+//   GET  /sync    websocket  <-> `<namespace>-loro-data-plane.sock` (CRDT sync)
+//   POST /rpc     http       <-> `<namespace>-control.sock` /machine-rpc
+//   GET  /healthz http       <-> `<namespace>-probe.sock`   /healthz
+//
+// WHY A BRIDGE AND NOT A LORO RELAY. plans/LODY-SESSIONS.md §4 offered two
+// designs. Design (a) — run `loro-websocket`'s SimpleServer beside the daemon
+// and have the daemon join it as a client — cannot be built from the published
+// package: its bundle contains only `StreamsTransportAdapter`, so
+// `loro-repo/transport/websocket` is not in there to construct, and in local
+// mode the daemon's repo runs with zero transports by design. Design (b) —
+// this file — reuses the data-plane socket the daemon already opens for
+// Electron, whose renderer half (`@lody/shared/local-loro-transport`,
+// `LocalLoroTransportAdapter`) is a real `loro-repo` TransportAdapter already
+// in our vendored tree. Measured end to end on 2026-08-30; see
+// plans/evidence/lody-phase1.md.
+//
+// WHY IT IS DUMB. The upstream Electron relay it replaces is "a dumb broadcast
+// pipe" — protocol v7 frames are peer-addressed and the adapters filter. This
+// bridge never parses a frame: it only translates framing, one newline-
+// delimited JSON line on the socket to one WebSocket text message and back.
+// Liveness (`ping`/`pong`) belongs to the peer at each end, so it crosses this
+// process untouched, exactly like every other frame.
+//
+// ONE SOCKET PER CONNECTION, unlike the Electron relay, which multiplexes every
+// window onto one daemon socket. A browser tab therefore gets its own peer
+// lifecycle: closing the tab closes the daemon socket, and the daemon drops
+// that peer's room subscriptions without anyone synthesizing a `detach`. It is
+// also the seam phase 6 needs, where a shared session's frames must be filtered
+// per grantee rather than fanned out.
+//
+// TODO(lody-phase6): enforce the per-room share ACL in `bridge()` below. A
+// read-only grantee's inbound frames must be dropped here — the gateway refuses
+// viewers outright today precisely because it cannot see frames, and a CRDT
+// client cannot write what the relay refuses to forward. Doing that means
+// parsing protocol v7 frames instead of copying bytes, which is also what turns
+// the framing into a BlitzOS cross-runtime contract needing a fixture corpus
+// (plans/evidence/lody-phase1.md, blocker 4).
+//
+// CommonJS, like /usr/local/bin/blitz: the file has no extension and no
+// package.json above it inside the image, so node loads it as CJS. That is also
+// what lets `ws` resolve — it lives in the image's global npm prefix, which only
+// `require` reaches, through the NODE_PATH the s6 run script sets. An ESM
+// `import` specifier ignores NODE_PATH entirely.
+"use strict";
+
+const fs = require("node:fs");
+const http = require("node:http");
+const net = require("node:net");
+const path = require("node:path");
+const { WebSocketServer } = require("ws");
+
+// Mirrors LOCAL_LORO_DATA_PLANE_MAX_FRAME_BYTES in
+// vendor/lody/packages/shared/src/local-loro-data-plane.ts. A compliant peer
+// never sends a larger frame; this only bounds what a non-compliant one can
+// make us buffer.
+const MAX_FRAME_BYTES = 32 * 1024 * 1024;
+const NEWLINE = 0x0a;
+
+// KEEP THESE PATHS SHORT. `sun_path` caps a unix socket at 103 bytes, and the
+// daemon THROWS `local_ipc_socket_path_too_long` rather than falling back
+// (vendor/lody/packages/shared/src/node/local-ipc.ts, where
+// MAX_UNIX_SOCKET_PATH_BYTES is 103). The longest name under the data dir is
+// `<dataDir>/run/lody-oss-loro-data-plane.sock`, whose tail is 34 bytes, so the
+// data dir itself has 69 to spend. The image default, /var/lib/blitz/lody,
+// spends 19. A developer pointing LODY_DATA_DIR at a deep scratch directory is
+// the way this bites, and it bites at daemon startup, not here.
+const stateDir = process.env.BLITZ_STATE_DIR || "/var/lib/blitz";
+const dataDir = process.env.LODY_DATA_DIR || `${stateDir}/lody`;
+// The namespace is the daemon's installation profile: `lody-oss` is what the
+// local (OSS) platform picks, and the box always runs local. Kept in step with
+// getInstallationProfile() in vendor/lody/packages/shared/src/node/installation-profile.ts.
+const namespace = process.env.LODY_PLATFORM === "cloud" ? "lody" : "lody-oss";
+const runDir = path.join(dataDir, "run");
+const dataPlaneSocket = path.join(runDir, `${namespace}-loro-data-plane.sock`);
+const controlSocket = path.join(runDir, `${namespace}-control.sock`);
+const probeSocket = path.join(runDir, `${namespace}-probe.sock`);
+const listenPath = process.env.BLITZ_LODY_BRIDGE_SOCKET || `${stateDir}/lody-bridge.sock`;
+
+function forward(request, response, socketPath, upstreamPath, headers) {
+  const upstream = http.request(
+    { socketPath, path: upstreamPath, method: request.method, headers },
+    (upstreamResponse) => {
+      response.writeHead(upstreamResponse.statusCode ?? 502, {
+        "content-type": upstreamResponse.headers["content-type"] ?? "application/json",
+        "cache-control": "no-store",
+      });
+      upstreamResponse.pipe(response);
+    },
+  );
+  upstream.on("error", (error) => {
+    console.error(`blitz-lody-bridge: ${upstreamPath} upstream failed: ${error.message}`);
+    if (!response.headersSent) {
+      response.writeHead(502, { "content-type": "application/json", "cache-control": "no-store" });
+    }
+    response.end('{"ok":false,"error":"lody_daemon_unavailable"}');
+  });
+  request.pipe(upstream);
+}
+
+const server = http.createServer((request, response) => {
+  const url = new URL(request.url ?? "/", "http://lody-bridge");
+  if (url.pathname === "/rpc" && request.method === "POST") {
+    // The daemon requires this header on every control-socket POST; it is what
+    // separates a deliberate local-control call from a stray browser request.
+    forward(request, response, controlSocket, "/machine-rpc", {
+      "content-type": "application/json",
+      "x-lody-local-control": "1",
+    });
+    return;
+  }
+  if (url.pathname === "/healthz" && request.method === "GET") {
+    forward(request, response, probeSocket, "/healthz", {});
+    return;
+  }
+  response.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
+  response.end('{"ok":false,"error":"not_found"}');
+});
+
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url ?? "/", "http://lody-bridge");
+  if (url.pathname !== "/sync") {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(request, socket, head, bridge);
+});
+
+function bridge(ws) {
+  const upstream = net.createConnection(dataPlaneSocket);
+  let buffered = Buffer.alloc(0);
+
+  const closeBoth = () => {
+    upstream.destroy();
+    if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close();
+  };
+
+  upstream.on("connect", () => {
+    ws.on("message", (data) => {
+      const frame = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      upstream.write(frame);
+      upstream.write("\n");
+    });
+  });
+  upstream.on("data", (chunk) => {
+    buffered = buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
+    for (;;) {
+      const newline = buffered.indexOf(NEWLINE);
+      if (newline < 0) break;
+      const line = buffered.subarray(0, newline);
+      buffered = buffered.subarray(newline + 1);
+      if (line.length > 0) ws.send(line.toString("utf8"));
+    }
+    // A frame this large is a non-compliant daemon, not backpressure: the
+    // sender-side budget is smaller than the cap. Drop the connection rather
+    // than grow without bound; the client rejoins and reconciles.
+    if (buffered.length > MAX_FRAME_BYTES) {
+      console.error("blitz-lody-bridge: oversized frame from the daemon; dropping the connection");
+      closeBoth();
+    }
+  });
+  upstream.on("error", closeBoth);
+  upstream.on("close", closeBoth);
+  ws.on("close", () => upstream.destroy());
+  ws.on("error", () => upstream.destroy());
+}
+
+fs.mkdirSync(path.dirname(listenPath), { recursive: true });
+// A stale socket file survives SIGKILL and would make listen() fail with
+// EADDRINUSE on every restart.
+fs.rmSync(listenPath, { force: true });
+server.listen(listenPath, () => {
+  fs.chmodSync(listenPath, 0o600);
+  console.log(`blitz-lody-bridge: listening on ${listenPath} (daemon run dir ${runDir})`);
+});
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    server.close();
+    fs.rmSync(listenPath, { force: true });
+    process.exit(0);
+  });
+}

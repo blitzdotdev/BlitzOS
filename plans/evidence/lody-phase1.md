@@ -112,8 +112,30 @@ Starting agent service...
 This is `DAEMON-PATCH` in the sense the phase brief reserved, but it is **not**
 the transport patch the brief feared: it flips one build constant, not the
 transport factory. It is recorded in `vendor/lody/BLITZ-PATCHES.md` and applied
-to the npm artifact at image build from `patches/npm-lody/`, never to
-`vendor/`.
+to the npm artifact at image build, never to `vendor/`.
+
+> **Correction, 2026-08-30 (what phase 1 actually shipped).** The patch is the
+> same edit at **four** call sites, not one, and it lives at
+> `packages/box/patches/lody-local-platform.mjs`. The anchor
+> `resolvePlatformKind("cloud")` occurs exactly 4× in the 0.88.1 bundle; the
+> script asserts that count and the file's sha256.
+>
+> The extra sites matter because one of them is the default argument of
+> `getInstallationProfile()`. Patching only `getCliPlatformKind` runs the local
+> composition under the CLOUD installation profile, which is what produced the
+> `17788` and `lody-*` measurements recorded in §A.a below. Patching all four
+> selects the LOCAL profile, and the box depends on that shape:
+>
+> | | 1-site patch (measured below) | 4-site patch (shipped) |
+> |---|---|---|
+> | namespace | `lody` | `lody-oss` |
+> | socket basenames | `lody-control.sock`, … | `lody-oss-control.sock`, … |
+> | CLI host lease | 127.0.0.1:**17788** | 127.0.0.1:**17789** |
+> | default data dir | `~/.lody` | `~/.lody-oss` (overridden by `LODY_DATA_DIR`) |
+>
+> **17789** is therefore the port pinned in `RESERVED_PREVIEW_PORTS`, and
+> `lody-oss-` is the namespace `blitz-lody-bridge` builds its socket paths from.
+> Where §A.a below says 17788 or `lody-*`, read the right-hand column.
 
 ### Rejected alternative
 
@@ -155,6 +177,11 @@ namespace**. Consequences, all benign once pinned: socket basenames stay
 `lody-*`, the CLI host lease binds **127.0.0.1:17788** (not 17789), and the
 default data dir would be `~/.lody`. We set `LODY_DATA_DIR` explicitly, so only
 the port matters.
+
+> **Superseded by the §0 correction.** This paragraph describes the 1-site
+> patch. Phase 1 ships the 4-site patch, which also flips
+> `getInstallationProfile()`, so the box runs the local composition under the
+> **local** namespace: `lody-oss-*` sockets and the host lease on **17789**.
 
 Both probe endpoints answer over the unix socket, with the
 `x-lody-local-control` header:

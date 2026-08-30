@@ -11,9 +11,9 @@ blocker — do not patch the vendor tree.
 
 ## Seam patches
 
-_None. As of the phase-0 spike (2026-08-29) the vendor tree is byte-identical to
-upstream `966623d0`, apart from this file and `UPSTREAM.md`, which upstream does
-not carry._
+_None. As of phase 1 (2026-08-30) the vendor tree is byte-identical to upstream
+`966623d0`, apart from this file and `UPSTREAM.md`, which upstream does not
+carry._
 
 Verify with:
 
@@ -21,6 +21,43 @@ Verify with:
 git diff --stat <subtree-import-commit> -- vendor/lody \
   ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
 ```
+
+## Patches to the published npm artifact (NOT to this tree)
+
+These are applied at box-image build to the `lody` package installed from npm.
+Nothing under `vendor/lody` changes, but they are recorded here because this
+file is the merge agent's conflict manual and **every one of them is a standing
+obligation at every version bump**.
+
+| Patch | Target | Anchor | Reason |
+|---|---|---|---|
+| `packages/box/patches/lody-local-platform.mjs` | `lody/dist/index.js` | 4× `resolvePlatformKind("cloud")` | `lody@0.88.1` on npm is the CLOUD build: its Vite config inlines the platform as a literal, so the local composition root is unreachable and the daemon blocks on a device-authorization login. The patch restores the `LODY_PLATFORM` env read. Without it a box cannot start the daemon at all. |
+
+**Per-bump obligation.** Bumping the `lody` pin in `packages/box/Dockerfile`
+requires re-auditing this patch in the same change. It is guarded twice, so
+neglect fails the image build loudly rather than shipping a broken box:
+
+1. `EXPECTED_INPUT_SHA256` pins the sha256 of the published `dist/index.js`.
+   Any new version fails here first.
+2. `EXPECTED_OCCURRENCES` pins the anchor count at 4. A refactor that moves or
+   splits the call sites fails here.
+
+Re-auditing means: confirm the anchor still selects the platform, confirm the
+count, run `LODY_PLATFORM=local lody start` and see "Starting in local platform
+mode", then update `EXPECTED_INPUT_SHA256`, `EXPECTED_VERSION` and the Dockerfile
+pin together.
+
+**Patching all four sites is deliberate**, and it is a wider patch than
+`plans/evidence/lody-phase1.md` §0 first proposed. One of the four is the
+default argument of `getInstallationProfile()`, which selects the whole
+installation profile. Patching only the `getCliPlatformKind` site leaves the
+daemon running the local composition under the CLOUD profile: socket basenames
+`lody-*`, host lease on 17788, data dir `~/.lody`. Patching all four moves it to
+the LOCAL profile: basenames `lody-oss-*`, host lease on **17789**, data dir
+`~/.lody-oss`. The box depends on the second shape — 17789 is the port pinned in
+`RESERVED_PREVIEW_PORTS`, and `lody-oss-` is the namespace
+`/usr/local/libexec/blitz-lody-bridge` derives its socket paths from. Narrowing
+this patch to one site breaks both.
 
 ## Planned seams (not yet applied)
 

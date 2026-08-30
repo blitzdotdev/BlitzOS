@@ -27,10 +27,20 @@ FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c
 # Agents install into a prefix the runtime user owns, so `claude` can
 # auto-update and users can `npm install -g` without root.
 ENV NPM_CONFIG_PREFIX=/opt/blitz/npm
+# `ws` carries no binary: it is the only dependency of
+# /usr/local/libexec/blitz-lody-bridge, which reaches it through NODE_PATH.
+# `lody` is the session daemon (plans/LODY-SESSIONS.md §6). Its published
+# bundle is the CLOUD build and refuses to start without a Lody account, so the
+# patch below re-enables the local platform; see the script's header.
 RUN npm install --global --omit=dev \
       @anthropic-ai/claude-code@2.1.228 \
       @openai/codex@0.147.0 \
+      lody@0.88.1 \
+      ws@8.21.0 \
     && npm cache clean --force
+COPY packages/box/patches/lody-local-platform.mjs /tmp/lody-local-platform.mjs
+RUN node /tmp/lody-local-platform.mjs /opt/blitz/npm/lib/node_modules/lody/dist/index.js \
+    && rm /tmp/lody-local-platform.mjs
 
 FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime-base
 
@@ -131,10 +141,25 @@ RUN set -eux; \
 # "Update available!" prompt runs `npm install -g @openai/codex` straight into
 # NPM_CONFIG_PREFIX and overwrites the pin above in place — the chown on the
 # line above hands uid 1000 the write permission that makes it possible.
+#
+# LODY_PLATFORM and LODY_DATA_DIR are image-wide, not service-local, and that is
+# deliberate. `lody` is on PATH, so a member can type it in a terminal. With the
+# defaults it would pick the CLOUD installation profile — a second data
+# directory at ~/.lody, its own host lease on 17788, its own `lody-*` socket
+# basenames — see nothing of the running daemon, and offer to log in to
+# lody.ai. Setting both here means every entry point, service or shell, lands on
+# the one local daemon under /var/lib/blitz/lody.
+#
+# The path also has to stay short: `sun_path` caps a unix socket at 103 bytes
+# and the daemon throws `local_ipc_socket_path_too_long` rather than falling
+# back. The longest socket it opens under this root,
+# /var/lib/blitz/lody/run/lody-oss-loro-data-plane.sock, is 53 bytes.
 ENV HOME=/var/lib/blitz/home \
     USER=blitz \
     NPM_CONFIG_PREFIX=/opt/blitz/npm \
     DISABLE_AUTOUPDATER=1 \
+    LODY_PLATFORM=local \
+    LODY_DATA_DIR=/var/lib/blitz/lody \
     PATH=/usr/local/bin:/opt/blitz/npm/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
 
 VOLUME ["/var/lib/blitz"]
