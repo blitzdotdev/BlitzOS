@@ -536,16 +536,40 @@ The daemon, the bridge, the `lody-projects` registrar and the gateway's share
 handling all live in the box image, and none of them is in the field. Nothing
 else on this list works until an image carrying them is the pin.
 
+**Two images, and this section used to name only the second one.** #115 landed
+after phase 7 was written and made `docs/BOX-IMAGE.md` the authority, so read
+that document rather than this paragraph where the two disagree.
+
+| # | Image | What it is | Where the pin lives |
+|---|---|---|---|
+| 1 | the **box** OCI image | the container the VM runs — this is where every Lody change is | `BLITZ_DEPLOY_VAR_BOX_IMAGE_REF` / `_TAG` / `_SHA256` in `.github/workflows/canary.yml` |
+| 2 | the **golden** Hetzner snapshot | a VM snapshot that already carries docker and a copy of image 1, so first boot skips ~94 s of work | `HETZNER_SERVER_IMAGES` in BOTH `.github/workflows/canary.yml` and `.github/workflows/release.yml` |
+
+Only image 1 is load-bearing here. Do image 2 second, or not at all.
+
+**Image 1 — canary rebakes into its own R2 bucket, not GHCR.** That is #115's
+whole point: `write:packages` lives only inside `release.yml`, and that workflow
+also deploys client prod, so **cutting a `v*` tag to refresh the canary box
+image is the wrong instrument** — it ships the platform to a paying client.
+Follow *Rebaking the canary image* in `docs/BOX-IMAGE.md` (build at the merge
+commit, canary-scoped `wrangler.toml`, `publish-box-image.mjs` with
+`CF_CLAUDE_TOKEN_STAGING`), then pin the three values it prints in
+`canary.yml`. None of the three is a secret.
+
+**Image 2 — optional, and it reads image 1's pin.**
+
 ```sh
-npm run golden:bake -- --location hel1
+npm run golden:bake -- --location hel1     # needs HETZNER_API_TOKEN and the
+                                           # three BOX_IMAGE_* values from above
 ```
 
-`docs/BOX-IMAGE.md` is the procedure; `CLAUDE.md`'s Hetzner section is the
-warning that matters — **canary and client prod share one Hetzner project**, so
-the snapshot id goes into `HETZNER_SERVER_IMAGES` in BOTH `.github/workflows/canary.yml`
-and `.github/workflows/release.yml`, and deleting the old snapshot breaks both
-deployments quietly (`HetznerProvider` warns `hetzner_server_image_rejected` and
-falls back to stock Ubuntu, so the only symptom is slow creates).
+`CLAUDE.md`'s Hetzner section is the warning that matters — **canary and client
+prod share one Hetzner project**, so a snapshot id is valid for both, the id
+goes into `HETZNER_SERVER_IMAGES` in both workflows, and deleting the old
+snapshot breaks both deployments quietly (`HetznerProvider` warns
+`hetzner_server_image_rejected` and falls back to stock Ubuntu). A snapshot
+left stale is *only* slow: the bootstrap fetches whatever `BOX_IMAGE_*` names,
+so a golden image carrying yesterday's box cannot ship yesterday's box.
 
 ### 13.2 Advertise the shared-sessions capability
 
@@ -557,10 +581,10 @@ fields, on purpose — so the control plane must know which VMs can take one.
 | Where | What to add |
 |---|---|
 | `packages/control-plane/core/webapp-tickets.ts:42` | set `BOX_IMAGE_SHARED_SESSIONS_SINCE_MS` to the moment the new image becomes the pin. It is `1_788_048_000_000` today and its comment says it is a placeholder. |
-| `packages/control-plane/core/compute/hetzner.ts:248` | add `webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,` beside `webAppViewerGuardsSinceMs` in `capabilities()` |
+| `packages/control-plane/core/compute/hetzner.ts:250` | add `webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,` beside `webAppViewerGuardsSinceMs` in `capabilities()` |
 | `packages/control-plane/core/compute/aws.ts:396` | the same line, in the same place |
 
-The refusal that reads it is `core/workspaces.ts:950`. Undefined means "never",
+The refusal that reads it is `core/workspaces.ts:953`. Undefined means "never",
 which is why sharing is refused everywhere today and why a cutoff set in the
 PAST would be worse than none: it would mark every VM created today as capable
 and hand a real member exactly the unreadable 403 the capability prevents.
@@ -574,6 +598,15 @@ flag on answers 404 on every `/lody/*` path, and the surface reports "Sessions
 are unavailable on this workspace". Acceptable while the flag is off everywhere
 and every canary box is recycled onto the new image; if the flag ever reaches a
 fleet with mixed images, that capability is the next thing to add.
+
+**#112's machine-stats needs no fourth cutoff either, and the reason is worth
+naming**, because it is the shape a guest feature should have. The guest POSTs
+to `/workspaces/self/machine-stats` every ten minutes and the control plane
+fills `machines.disk_used_percent`; a box on an older image simply never calls,
+`volumeUsedPercent` stays absent, and the meter renders nothing. Nothing is
+refused and nothing 403s. A capability cutoff is only needed where the OLD side
+rejects the NEW payload — which is exactly the `share` claim's problem above,
+and not this one. The recycle in §13.4 fills the meter as a side effect.
 
 ### 13.3 Flip the flag, box image first
 
@@ -594,6 +627,9 @@ workspace onto the new image first — the capability cutoff is `createdAt`-base
 so an existing VM stays incapable however new the code is.
 
 1. `curl -s https://<canary>/version` — confirm `boxImageRef` is the new image.
+   Since #115 that value is canary's R2 manifest URL, not a GHCR digest, so
+   check `boxImageTag` and `boxImageSha256` beside it: mode B pins with all
+   three, and the tag is what names the archive the digest is of.
 2. Open a workspace. It lands on the chat landing (§0.4), the rail shows the
    three sections, and "+ New session" opens the composer.
 3. Send one turn. Confirm the transcript streams and the machine chip names the
@@ -608,6 +644,14 @@ so an existing VM stays incapable however new the code is.
 7. Revoke. Confirm the row goes and the live connection is cut
    (`plans/LODY-SHARING.md` §5).
 8. Terminals: open a TUI tab and confirm it is unchanged.
+9. Two things this image carries that are not ours, and that the same recycle
+   is the only chance to see: "My machine" should draw a volume meter within
+   ten minutes (#112's `machine-stats` service reporting for the first time),
+   and the daemon should sit in its own memory leaf —
+   `cat /sys/fs/cgroup/blitz-user.slice/lody.scope/memory.max` from a terminal
+   tab, which is the placement the deleted actor used to hold (#113,
+   `docs/MEMORY-BOUNDARY.md`). A daemon outside that leaf is a runaway agent
+   with no ceiling.
 
 Step 6 is also the cheapest place to close the one thing the exit tests could
 not (`plans/LODY-SHARING.md` §10.5): whether the daemon acts on a permission
