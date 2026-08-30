@@ -191,7 +191,9 @@ type webAppShareClaimWire struct {
 	Write  *[]string `json:"write"`
 }
 
-// Mirrors MAX_TICKET_SHARE_SESSIONS in core/webapp-tickets.ts.
+// Mirrors MAX_TICKET_SHARE_SESSIONS in core/webapp-tickets.ts. The fixture
+// corpus does not pin it — a 65-id case would be three kilobytes of noise — so
+// these two lines are the weakest link in this contract.
 const maxTicketShareSessions = 64
 
 type webAppTicketClaims struct {

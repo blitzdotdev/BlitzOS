@@ -212,11 +212,20 @@ reaching a box image older than this change is REFUSED**, because that gateway's
 `DisallowUnknownFields` sees a claim it does not know. That is fail-closed, and it
 is confined to the sharing feature — an ordinary request mints no `share` claim
 and keeps working on every image in the field. The provider capability that gates
-this is `webAppSharedSessionsSinceMs`, set the way
-`webAppViewerGuardsSinceMs` already is, and a share request to an older VM is
+this is `webAppSharedSessionsSinceMs`, and a share request to an older VM is
 refused by the control plane with a message that names the fix ("shared sessions
-arrive when that member's VM is recycled") rather than by a gateway 403 nobody
-can read.
+arrive when that member's machine is recycled") rather than by a gateway 403
+nobody can read.
+
+**No provider advertises it yet, and that is deliberate.** The two cutoffs beside
+it were each set when a specific image became the pin; the image carrying this
+gateway has not been baked, so a cutoff in the past would mark every VM created
+today as capable and hand a real member exactly the unreadable 403 the capability
+exists to prevent. Undefined is "never", so sharing is refused everywhere until
+phase 7 bakes the image and advertises it — which is the same "ship it dark, flip
+it on canary" order `LODY-SESSIONS.md` §9 sets for the rest of this port. It is
+the one line phase 7 must not forget, and `BOX_IMAGE_SHARED_SESSIONS_SINCE_MS`
+says so where it is declared.
 
 ### 3.2 The shape
 
@@ -534,15 +543,21 @@ that verifies claims the way `main_test.go` proves the real one does.
 | 2 | an RW grantee's `update` is forwarded, and a permission request answered by the RW grantee is the one the agent receives | same file, live half behind `BLITZ_LODY_LIVE_TURN=1` |
 | 3 | revoke: the next mint refuses, and `/admin/drain` closes the live connection | `control-plane/test/session-shares.test.ts` + the relay test |
 | 4 | a workspace admin with no grant row mints `scope: "all"` and reads every room | both files |
-| 5 | the rail's Share item opens the dialog, and the dialog grants and revokes | `webapp/test/session-share-dialog.test.tsx` |
+| 5 | the rail's Share item opens the dialog, and the dialog grants and revokes | `webapp/test/lody-session-rail.test.tsx` (the item) + `webapp/test/session-share-dialog.test.tsx` (the dialog) |
 
 The live-turn budget is two, both reserved for test 2. Everything else is free:
 the relay ACL is a property of frames, and a frame costs nothing.
 
+*(§9.1 is what those tests actually measured. The live half of test 2 was NOT
+spent, and §9.1 says exactly what that leaves unproven and when it is worth
+buying.)*
+
 ## 8. Follow-up, precisely scoped
 
 **"Mount a shared session in the grantee's browser."** Everything the control
-plane, the gateway and the bridge need is done and tested. What remains:
+plane, the gateway and the bridge need is done and tested; a protocol-v7 peer
+already follows a shared session end to end (§9.1). What remains is the browser
+half:
 
 1. Decide between the one-box-at-a-time remount (§6.3) and the four upstream
    changes (§6.1). Measure the `meta`-room question first — it may decide it.
@@ -554,5 +569,67 @@ plane, the gateway and the bridge need is done and tested. What remains:
    the rows themselves need no vendor change.
 4. Opening one of those rows drives the surface at the owner's box, by whichever
    answer step 1 gives.
-5. The exit tests that need a mounted grantee: an RO grantee sees the transcript
-   render and the diff view open; an RW grantee sends from the real composer.
+5. The exit tests that need a mounted grantee, and the live turns to spend on
+   them: an RO grantee sees the transcript render and the diff view open; an RW
+   grantee sends from the real composer and answers a permission request the
+   agent then acts on. That last one is the only claim phase 6 makes on paper
+   rather than in a test, and it is one turn (§9.1).
+
+## 9. What building it measured
+
+Written after the code, in the form `LODY-RUNTIME-DESIGN.md` §7–§10 use: what
+this document said, what shipped, and why.
+
+| # | This document said | What shipped | Why |
+|---|---|---|---|
+| 1 | §8 step 3: a "Shared with you" section needs `afterSessionListContent` and rows a host builds | Not built, and the OWNER's affordance needed no new prop either | `SessionList` already draws a Share entry in its row context menu, gated on the row carrying a `sharing` state and the list carrying `onShareSessionWithTeam` (`session-list.tsx:820`, `:1134`), and the row's "⋯" opens that same menu by synthesizing a `contextmenu` event (`sidebar-row-shared.tsx:507`). So right-click Share is two props and **no vendor hunk** — the "minimal upstreamable extra-menu-items prop" the brief allowed for was not needed. |
+| 2 | §4.2: the bridge parses frames | …only for a SHARED connection | The owner of the box keeps the phase-1 dumb-pipe path byte for byte, so the parsing cost and the parsing RISK are paid by the share alone. `lody-bridge-share.test.ts` asserts it directly: every frame the corpus refuses or drops for a claim is forwarded untouched without one. |
+| 3 | §4.3: `/platform` is served narrowed | …for a shared request only | The owner's request is still `fs.readFileSync` piped out byte for byte, which is what keeps that response Lody's contract rather than ours. The narrowing is a projection BlitzOS authors, so it — and only it — has a fixture pair. |
+| 4 | — (not anticipated) | The Go struct that DECODES the ticket also ENCODES it in the gateway's own tests, so `Share json.RawMessage` needed `omitempty` | Without it a nil claim marshals as `"share": null`, every test ticket carried one, and the parser refused all of them. The failure is loud and instant, which is the good case; the interesting part is that it only exists because one struct plays both roles. |
+| 5 | — (not anticipated) | `packages/box/gateway`'s Go suite had been RED, and CI does not run it | One case there deliberately requests a path that is not a lody door, which falls through to dufs — and the test's handler had no dufs proxy, so it panicked the whole suite. CI runs `go test` for `packages/broker` only; the gateway is compiled by the box-image build, which does not run its tests. Fixed in passing (a proxy at an invalid host), because phase 6 needed the suite to mean something. |
+| 6 | §3.2: the cap is 64 session ids | Unchanged, and now stated in two places that must agree | `MAX_TICKET_SHARE_SESSIONS` in `core/webapp-tickets.ts` and `maxTicketShareSessions` in `main.go`. The corpus does not pin it — a 65-id fixture would be 3 KB of noise — so the two constants carry a comment naming each other, which is the weakest link in this contract and is recorded here as such. |
+| 7 | §3.1: `webAppSharedSessionsSinceMs` is "set the way `webAppViewerGuardsSinceMs` already is" | Declared, and advertised by NO provider | Those cutoffs are historical facts — the moment a specific image became the pin. The image carrying this gateway has not been baked, so a cutoff in the past would mark every VM created today as capable and produce exactly the unreadable 403 the capability prevents. Shipped dark instead; phase 7 advertises it with the bake. |
+| 8 | — (not anticipated) | A daemon-backed suite's `beforeAll` timeout is part of the lock's contract | The harness lock serializes those suites and now waits up to 900 s, so a 180 s boot hook fires on QUEUEING rather than on anything being wrong — which is how the relay suite first failed. `HARNESS_BOOT_TIMEOUT_MS` is the lock's wait plus a suite's own boot, and it is exported so the two numbers cannot drift apart. |
+
+### 9.1 Exit tests: what is proven, and what is not
+
+**Proven, free, gating every merge:** the grant/revoke routes and their authority
+rules, including the viewer demotion at mint time and the admin's `scope: "all"`
+with no row (`control-plane/test/session-shares.test.ts`); the ticket claim on
+both verifiers, including the two shapes the two parsers could have disagreed
+about (`fixtures/webapp-ticket/`, both conformance suites); the gateway's path
+allowlist, its header forwarding and its stripping of a forged inbound copy
+(`gateway/main_test.go`); the whole relay ACL, frame by frame and door by door,
+against the real bridge script (`box/guest-tests/test/lody-bridge-share.test.ts`);
+and the share dialog's read, grant, revoke and viewer refusal
+(`webapp/test/session-share-dialog.test.tsx`).
+
+**Proven, free, against a REAL daemon** (`webapp/test/lody-sharing-relay.test.ts`,
+daemon-gated like every other phase's): a read-only grantee joins the owner's
+session room and reads the transcript out of it; its own write does not reach the
+owner's replica while a read-write grantee's does; a workspace admin reads every
+room with no grant row and still writes none; a room the claim does not name is
+refused terminally; and a granted session's diff RPC is routed while
+`session/cancel` on the same session is refused.
+
+**Proven, free, with a daemon** (`webapp/test/lody-session-rail.test.tsx`): the
+Share entry appears on a session row's own context menu and reports the session
+id.
+
+**NOT proven, and named rather than implied:**
+
+- **A grantee's MOUNTED surface.** §6.2's decision. What a protocol peer proves
+  is the relay and the claim; what it cannot prove is a rendered transcript in
+  somebody else's browser, because that needs the runtime work §8 scopes.
+- **The permission answer, live.** The mechanism is a CRDT write into
+  `doc:session-<id>` and nothing else (§4.3), and the relay test proves that
+  exact write lands for a read-write claim and is dropped for a read-only one.
+  What a paid turn would add is that the DAEMON accepts an outcome authored by a
+  non-owner peer and that its first-response-wins guard behaves as the shipped
+  bundle reads. That is a real gap and it is worth a turn the day the grantee
+  surface mounts, when the same turn also buys the rendered card.
+- **The drain, against a real gateway.** `control-plane/test/session-shares.test.ts`
+  proves the control plane calls `/admin/drain` with the grantee's membership
+  when the last grant goes, and `gateway/main_test.go` proves the gateway closes
+  the matching connections. Nothing runs both halves together, because the Go
+  gateway has no toolchain in this tree and the harness's shim is not it.

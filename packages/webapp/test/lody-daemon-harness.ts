@@ -294,6 +294,18 @@ function harnessLockIsStale(): boolean {
  */
 const HARNESS_LOCK_WAIT_MS = 900_000;
 
+/**
+ * What a daemon-backed suite's boot hook must allow.
+ *
+ * The lock SERIALIZES those suites, so a hook that times out sooner than the
+ * lock waits fires on QUEUEING rather than on anything being wrong — which is
+ * how phase 6's relay suite first failed, with a 180 s hook and a 900 s lock.
+ * The two numbers are one number, and this is it: the wait, plus a suite's own
+ * boot (a patched bundle copy, a daemon provisioning its implicit workspace, a
+ * bridge, a runtime).
+ */
+export const HARNESS_BOOT_TIMEOUT_MS = HARNESS_LOCK_WAIT_MS + 120_000;
+
 async function acquireHarnessLock(): Promise<() => void> {
   const deadline = Date.now() + HARNESS_LOCK_WAIT_MS;
   for (;;) {

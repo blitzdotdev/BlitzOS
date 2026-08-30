@@ -18,14 +18,27 @@ export const BOX_IMAGE_TICKETS_SINCE_MS = 1_786_993_800_000;
  * session for an observer. Viewers may only reach VMs booted from it. */
 export const BOX_IMAGE_VIEWER_GUARDS_SINCE_MS = 1_787_043_600_000;
 
-/** Set when the first box image whose gateway understands the `share` claim
- * became the pin. An older gateway refuses a ticket carrying it — its decoder
- * disallows unknown fields, which is the property `unknown-claim.json` exists to
- * keep — so the control plane refuses the shared-session route on an older VM
- * with a message that names the fix, rather than letting the box answer a 403
- * nobody can read (plans/LODY-SHARING.md §3.1).
+/**
+ * The cutoff for the `share` claim, when there is an image to attach it to.
  *
- * 2026-08-30 00:00 UTC, image 20260830a. */
+ * An older gateway REFUSES a ticket carrying the claim — its decoder disallows
+ * unknown fields, which is the property `unknown-claim.json` exists to keep — so
+ * the control plane refuses the shared-session route on an older VM with a
+ * message that names the fix, rather than letting the box answer a 403 nobody
+ * can read (plans/LODY-SHARING.md §3.1).
+ *
+ * NO PROVIDER ADVERTISES IT YET, deliberately. The two cutoffs above were set
+ * when a specific image became the pin; the image carrying this gateway has not
+ * been baked, so advertising a cutoff in the past would mark every VM created
+ * today as capable and hand real members that unreadable 403. Undefined is
+ * "never", so session sharing is refused everywhere until phase 7 bakes the
+ * image and adds `webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS`
+ * to `HetznerProvider` and `AwsProvider` — which is the same "ship it dark, flip
+ * it on canary" order `plans/LODY-SESSIONS.md` §9 sets for everything else here.
+ *
+ * 2026-08-30 00:00 UTC is a placeholder: replace it with the moment the image
+ * actually becomes the pin, in the same change that advertises it.
+ */
 export const BOX_IMAGE_SHARED_SESSIONS_SINCE_MS = 1_788_048_000_000;
 
 /** The most session ids one ticket carries.
@@ -33,7 +46,11 @@ export const BOX_IMAGE_SHARED_SESSIONS_SINCE_MS = 1_788_048_000_000;
  * A ticket rides in a request header and is minted per request; 64 uuid-shaped
  * ids is about 3 KB of header, which is the last size comfortably under every
  * proxy default in the path. A grantee holding more shares on ONE member's
- * machine keeps the 64 most recent (plans/LODY-SHARING.md §3.2). */
+ * machine keeps the 64 most recent (plans/LODY-SHARING.md §3.2).
+ *
+ * Mirrored as `maxTicketShareSessions` in `box/gateway/main.go`. The corpus does
+ * not pin it — a 65-id fixture would be three kilobytes of noise — so these two
+ * lines are the weakest link in this contract, and each names the other. */
 export const MAX_TICKET_SHARE_SESSIONS = 64;
 
 /**

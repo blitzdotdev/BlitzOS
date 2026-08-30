@@ -223,6 +223,17 @@ what the relay refuses to apply). The RPC shim scopes grantees to the shared
 session's worktree RPCs only. Because CRDT replicas re-sync from their own
 state, the relay itself stays stateless.
 
+*(Phase 6, shipped — `plans/LODY-SHARING.md`. Three corrections to the sketch
+above. The claim is not a level but two disjoint id lists, because one grantee
+can hold read-only on one session and read-write on another on the same box. The
+target route is a distinct PREFIX,
+`/workspaces/:id/shared/:membershipId/webapp/7445/…`, so a caller who forgets it
+reaches their own box rather than someone else's. And "the RPC shim scopes
+grantees" is the BRIDGE, not the shim: the browser half cannot be the enforcement
+point, so the box parses the bodies. The grantee's mounted SURFACE is a scoped
+follow-up (§8 there) — the vendored renderer's local plane is a singleton on
+`window.ipc`.)*
+
 ## 5. Vendoring mechanics
 
 ### 5.1 Layout
@@ -473,7 +484,7 @@ nothing here waits on a dead surface being removed.
 | 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box | **done, with one gap** — `LODY-RUNTIME-DESIGN.md` §8.6. Send and session creation are proven live through the real composer; the permission card, the queue and Stop are written and gated but were not reached inside the two-turn budget, and reaching the card first needs the composer's permission-mode selector (§8.3). |
 | 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works | **done** — `LODY-RUNTIME-DESIGN.md` §9. All four exit tests pass. Sections and order follow upstream, not §8's sketch (§9.2). Chat sessions are addressed in the URL and nowhere else (§9.1). |
 | 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode | **done, with one blocker** — `LODY-RUNTIME-DESIGN.md` §10. Nine of the ten composer controls pass (§10.5); `+` attachments have no port to implement §0.7 behind and are a recorded blocker with an exact seam (§10.4). Registration reads `/workspace` rather than the `workspace_repos` list, for the reasons in §10.7. Two upstream defects were found and worked around without a vendor hunk (§10.1). |
-| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | — |
+| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | **done, owner-side; the grantee's mounted surface is a scoped follow-up** — `plans/LODY-SHARING.md`. The grants, the target-member route, the ticket claim, the relay ACL and the owner's share/revoke UI all ship and are proven against a real daemon by a protocol-v7 grantee. Mounting a shared session inside the grantee's own vendored surface needs four changes inside `vendor/lody` (§6.1), which is larger than the rest of the phase together, so it is scoped in §8 rather than half-shipped. |
 | 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean | — |
 
 Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.

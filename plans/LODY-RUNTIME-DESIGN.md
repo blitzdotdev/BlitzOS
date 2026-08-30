@@ -1250,3 +1250,47 @@ provisioning before it asserts anything, 300 s is the same order as the work it
 is supposed to survive. It is now 900 s, named `HARNESS_LOCK_WAIT_MS` with the
 arithmetic beside it. Staleness is still the owner PID being gone, so a crashed
 holder is still reaped on the next poll and this timer only bounds honest waiting.
+
+### 11.4 The share affordance needed no vendor hunk
+
+The phase brief allowed one: "investigate Lody's row context-menu extension
+point; if a vendor hunk is unavoidable make it a minimal upstreamable 'extra menu
+items' prop". It is avoidable, and the reason is worth recording because the
+answer was not where the brief expected it.
+
+`SessionList` has no host extension point for its row menu — the items are a
+fixed list. But one of those fixed items is already a SHARE entry
+(`components/session-list.tsx:1134`), drawn whenever the row carries a
+`sharing` state and the list carries `onShareSessionWithTeam`
+(`:820`, `:891`). Upstream fills `sharing` from a cloud visibility flip;
+`SessionListRow` is a plain data type with no provenance check and BlitzOS
+builds its own rows (`SessionRailSidebar.tsx`), so filling it from §0.1's rule —
+a session is private until granted — is a field, not a patch. The "⋯" button
+opens that same menu by synthesizing a `contextmenu` event
+(`sidebar-row-shared.tsx:507`), so both affordances arrive together.
+
+So the vendor divergence after phase 6 is what it was after phase 5 plus seam
+patch 3's single predicate, and `vendor/lody/BLITZ-PATCHES.md`'s expected file
+count moves from four to five for the attachment hunk alone.
+
+### 11.5 Exit test: what is proven, and what is not
+
+Phase 6's evidence is listed where its design lives: `plans/LODY-SHARING.md`
+§9.1. In this document's own terms, three things are worth carrying forward:
+
+- **The relay is only a relay for the member who owns the box.** A connection
+  with no share claim keeps the phase-1 dumb-pipe path, so §2's framing contract
+  is unchanged for every existing caller, and the parsing the ACL needs is paid
+  for by the share alone.
+- **A grantee's MOUNTED surface is not phase 6.** The vendored renderer's local
+  plane is a singleton on `window.ipc` with a once-only transport guard and a
+  two-valued plane enum (`LODY-SHARING.md` §6.1), so a second local machine costs
+  four changes inside `vendor/`. The relay, the claim and the routes ship and are
+  proven with a protocol-v7 peer instead; §8 of that document scopes the rest.
+- **The permission answer is a CRDT write and nothing else** — no door, no
+  method, no BlitzOS code. §8.6 recorded that the permission card is gated on
+  presence and that a second CRDT peer cannot fake it; phase 6 adds the other
+  half of that finding, which is that a second peer does not need to: answering
+  is `permissionRequest.outcome = …` on the session document
+  (`apps/cli/src/lib/message-handler.ts:8336` states the whole loop), and
+  first-response-wins is the daemon's own `resolved` guard at `:8541`.

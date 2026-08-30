@@ -1,7 +1,6 @@
 import type { CreateVolumeRequest, Volume } from "../wire.js";
 import {
   BOX_IMAGE_TICKETS_SINCE_MS,
-  BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
 } from "../webapp-tickets.js";
 import { fetchBoundedText, type Fetcher } from "./json-fetch.js";
@@ -395,7 +394,6 @@ export class AwsProvider implements VmProvider, VolumeProvider {
       maxUserDataBytes: AWS_USER_DATA_RAW_MAX_BYTES,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
-      webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
     };
   }
 

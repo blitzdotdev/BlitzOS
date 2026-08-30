@@ -23,7 +23,6 @@ import { buildUserData } from "../core/cloud-init.js";
 import { hashSecret } from "../core/crypto.js";
 import {
   BOX_IMAGE_TICKETS_SINCE_MS,
-  BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
   BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
 } from "../core/webapp-tickets.js";
 import {
@@ -1191,7 +1190,6 @@ describe("control plane security and lifecycle", () => {
       maxUserDataBytes: 32 * 1024,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
-      webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
     });
   });
 
