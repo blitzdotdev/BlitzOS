@@ -17,6 +17,21 @@ export interface BoxEndpoints {
 
 export interface EndpointResolver {
   resolve(workspace: WorkspaceView): BoxEndpoints;
+  /**
+   * The same box surfaces on ANOTHER member's machine, for a session they
+   * shared (plans/LODY-SHARING.md §2.2, §8 step 2).
+   *
+   * One prefix swap and nothing else: everything after `/webapp/` is unchanged,
+   * so `isWebAppSurfacePath` and the whole `webapp-surface` contract apply
+   * byte-for-byte. `ownerMembershipId` is the TARGET — the membership whose
+   * machine runs the session — and a caller who forgets to use this builder
+   * reaches their own box, which is the safe answer.
+   *
+   * Only the Lody doors are reachable through it. The gateway refuses a ticket
+   * carrying a `share` claim on every other path (§4.1), so `terminalUrl` and
+   * `filesBase` are built for shape and would be refused if dialled.
+   */
+  resolveShared(workspace: WorkspaceView, ownerMembershipId: string): BoxEndpoints;
   previewUrl(workspace: WorkspaceView, port: number): string;
 }
 
@@ -36,9 +51,7 @@ export function standaloneResolver(
   controlPlaneOrigin = globalThis.location?.origin ?? "",
 ): EndpointResolver {
   const cpOrigin = controlPlaneOrigin.replace(/\/+$/u, "");
-  const endpoints = (workspace: WorkspaceView): BoxEndpoints => {
-    if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
-    const prefix = `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp`;
+  const endpointsAt = (prefix: string): BoxEndpoints => {
     return {
       terminalUrl: `${prefix}/7445/terminal/`,
       filesBase: `${prefix}/7445${FILES_DAV_ROOT}/`,
@@ -54,9 +67,17 @@ export function standaloneResolver(
       lodyPlatformUrl: `${prefix}/7445/lody/platform`,
     };
   };
+  const workspacePrefix = (workspace: WorkspaceView): string => {
+    if (cpOrigin === "") throw new Error("control-plane origin is required for workspace surfaces");
+    return `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}`;
+  };
   return {
-    resolve: endpoints,
-    previewUrl: (workspace, port) => `${cpOrigin}/workspaces/${encodeURIComponent(workspace.id)}/webapp/7445/preview/${port}/`,
+    resolve: (workspace) => endpointsAt(`${workspacePrefix(workspace)}/webapp`),
+    resolveShared: (workspace, ownerMembershipId) =>
+      endpointsAt(
+        `${workspacePrefix(workspace)}/shared/${encodeURIComponent(ownerMembershipId)}/webapp`,
+      ),
+    previewUrl: (workspace, port) => `${workspacePrefix(workspace)}/webapp/7445/preview/${port}/`,
   };
 }
 

@@ -27,16 +27,22 @@ function record(id: string): V2WorkspaceRecord {
   } as V2WorkspaceRecord;
 }
 
+function endpointsAt(prefix: string) {
+  return {
+    terminalUrl: `https://box.example/${prefix}/terminal/?token=discarded#fragment`,
+    filesBase: `https://box.example/${prefix}/workspace/`,
+    lodySyncUrl: `wss://box.example/${prefix}/lody/sync`,
+    lodyRpcUrl: `https://box.example/${prefix}/lody/rpc`,
+    lodyControlUrl: `https://box.example/${prefix}/lody/control`,
+    lodyProjectUrl: `https://box.example/${prefix}/lody/project`,
+    lodyPlatformUrl: `https://box.example/${prefix}/lody/platform`,
+  };
+}
+
 const resolver = {
-  resolve: (wire: V2WorkspaceRecord['wire']) => ({
-    terminalUrl: `https://box.example/${wire.id}/terminal/?token=discarded#fragment`,
-    filesBase: `https://box.example/${wire.id}/workspace/`,
-    lodySyncUrl: `wss://box.example/${wire.id}/lody/sync`,
-    lodyRpcUrl: `https://box.example/${wire.id}/lody/rpc`,
-    lodyControlUrl: `https://box.example/${wire.id}/lody/control`,
-    lodyProjectUrl: `https://box.example/${wire.id}/lody/project`,
-    lodyPlatformUrl: `https://box.example/${wire.id}/lody/platform`,
-  }),
+  resolve: (wire: V2WorkspaceRecord['wire']) => endpointsAt(wire.id),
+  resolveShared: (wire: V2WorkspaceRecord['wire'], ownerMembershipId: string) =>
+    endpointsAt(`${wire.id}/shared/${ownerMembershipId}`),
   previewUrl: () => '',
 };
 

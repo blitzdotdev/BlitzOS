@@ -291,6 +291,79 @@ describe.skipIf(!lodyDaemonAvailable())("phase 6: a grantee on the real relay", 
     client.close();
   }, 90_000);
 
+  // PHASE 7, exit test 4 (plans/LODY-SHARING.md §10.5). The projection, against
+  // a daemon that really does hold two sessions.
+  it("gives a grantee the granted session's metadata and no other's", async () => {
+    const otherSessionId = randomUUID();
+    await startLodySession(handle.runtime, {
+      sessionId: otherSessionId,
+      machineId: snapshot.machineId,
+      userId: snapshot.userId,
+      agentConfigId: "blitz-claude",
+      agentType: "claude",
+      prompt: "a session nobody shared",
+      title: "not shared with anyone",
+    });
+
+    /** The `meta` room's bundle, as one claim receives it. */
+    const readMeta = async (claim: Claim): Promise<Record<string, unknown>> => {
+      const client = await peer(claim);
+      client.send({
+        type: "join",
+        protocolVersion: PROTOCOL_VERSION,
+        requestId: randomUUID(),
+        workspaceId: snapshot.workspace.workspaceId,
+        peerId: client.peerId,
+        room: { scope: "meta" },
+      });
+      const joined = await until("a joined frame for meta", () =>
+        client.frames.find((frame) => frame.type === "joined"),
+      );
+      client.close();
+      const payload = joined.payload as { bundle?: { entries?: Record<string, unknown> } };
+      return payload.bundle?.entries ?? {};
+    };
+
+    // The daemon writes document metadata when the session's own write reaches
+    // it, so the wait is for the title to exist at all — asking the room IS the
+    // probe, exactly as the transcript wait above is.
+    const titleKey = `["m","session-${sessionId}","title"]`;
+    let entries: Record<string, unknown> = {};
+    const deadline = Date.now() + 60_000;
+    for (;;) {
+      entries = await readMeta(ownerClaim("read"));
+      if (titleKey in entries) break;
+      if (Date.now() > deadline) {
+        throw new Error(`the granted session's title never reached the meta room; saw ${Object.keys(entries).join(", ")}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const keys = Object.keys(entries);
+    // What a grantee sees: their session, and the machine document without
+    // which the surface reports the machine removed and disables its composer.
+    expect(keys).toContain(`["m","session-${sessionId}","title"]`);
+    expect(keys.some((key) => key.startsWith('["m","machine-'))).toBe(true);
+    // What they do not: the other session, in any form at all.
+    expect(keys.filter((key) => key.includes(otherSessionId))).toEqual([]);
+    // And the machine's own session list is emptied rather than dropped, so a
+    // reader finds the key and learns nothing from it.
+    const machineSessions = keys.find((key) => key.endsWith(',"sessions"]'));
+    if (machineSessions === undefined) throw new Error("the machine document carried no sessions");
+    expect((entries[machineSessions] as { d?: unknown }).d).toEqual([]);
+
+    // An admin holds implicit read-only on every session, so their meta is the
+    // daemon's own — which is also the proof the projection is what withheld
+    // the rest above, rather than the daemon never having written it.
+    const adminEntries = await readMeta({
+      target: "membership-owner",
+      scope: "all",
+      read: [],
+      write: [],
+    });
+    expect(Object.keys(adminEntries).filter((key) => key.includes(otherSessionId)).length)
+      .toBeGreaterThan(0);
+  }, 120_000);
+
   it("refuses a room the claim does not name, on the real daemon", async () => {
     const client = await peer(ownerClaim("read"));
     client.send(joinFrame(client.peerId, `session-${randomUUID()}`));

@@ -27,14 +27,22 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppRoute, ChatAddress } from "../sessions-page-state.js";
-import { workspaceChatPath, workspacePath } from "../sessions-page-state.js";
+import {
+  workspaceChatPath,
+  workspacePath,
+  workspaceSharedChatPath,
+} from "../sessions-page-state.js";
 import { LODY_SESSIONS_ENABLED } from "./flag.js";
 
 export interface LodyRailState {
   /** `true` while the chat surface should cover the panes. */
   visible: boolean;
-  /** The session the address names, or `null` on the landing / on the panes. */
+  /** The session the address names on the grantee's OWN box, or `null` on the
+   * landing, on the panes, or while a shared session is open. */
   sessionId: string | null;
+  /** The address the whole chat surface is at, shared or not. Read by
+   * `useSharedSessions` to decide which owner's box to mount. */
+  chat: ChatAddress;
   /** Handed to `ShellNav` as `onVendorHost`, and `null` with the flag off so
    * the rail keeps its native list. */
   onVendorHost: ((node: HTMLDivElement | null) => void) | undefined;
@@ -42,6 +50,8 @@ export interface LodyRailState {
   railHost: HTMLElement | null;
   openLanding: () => void;
   openSession: (sessionId: string) => void;
+  /** One session another member shared, on that member's machine. */
+  openSharedSession: (ownerMembershipId: string, sessionId: string) => void;
   /** The other direction: the surface navigated itself — the landing's send
    * creates a session and goes to it — so the address follows. Compares before
    * it acts, which is what keeps it from looping against the effect that drives
@@ -80,11 +90,22 @@ export function useLodyRail(
     (sessionId: string) => go(workspaceChatPath(activeWorkspaceId, sessionId), { sessionId }),
     [activeWorkspaceId, go],
   );
+  const openSharedSession = useCallback(
+    (ownerMembershipId: string, sessionId: string) =>
+      go(workspaceSharedChatPath(activeWorkspaceId, ownerMembershipId, sessionId), {
+        sessionId,
+        sharedFrom: ownerMembershipId,
+      }),
+    [activeWorkspaceId, go],
+  );
   const mirror = useCallback(
     (sessionId: string | null) => {
       // `chat === null` means the panes own the view; a background navigation
-      // inside the hidden surface must not yank it back.
+      // inside the hidden surface must not yank it back. Nor may a shared
+      // session's address be overwritten by the OWN surface's router, which
+      // keeps navigating in the background while it is hidden.
       if (!LODY_SESSIONS_ENABLED || chat === null) return;
+      if (chat !== "landing" && chat.sharedFrom !== undefined) return;
       if (sessionId === null) {
         if (chat !== "landing") openLanding();
         return;
@@ -114,11 +135,18 @@ export function useLodyRail(
 
   return {
     visible: LODY_SESSIONS_ENABLED && chat !== null,
-    sessionId: chat === null || chat === "landing" ? null : chat.sessionId,
+    // A shared session is NOT this surface's address: it is mounted against
+    // another box, by a second surface, so the own surface stays where it was.
+    sessionId:
+      chat === null || chat === "landing" || chat.sharedFrom !== undefined
+        ? null
+        : chat.sessionId,
+    chat,
     onVendorHost: LODY_SESSIONS_ENABLED ? setRailHost : undefined,
     railHost,
     openLanding,
     openSession,
+    openSharedSession,
     mirror,
     closeChat,
   };

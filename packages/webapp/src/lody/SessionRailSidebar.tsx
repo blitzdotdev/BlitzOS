@@ -44,6 +44,7 @@ import { useSessionActions } from "@lody/components/hooks/use-session-actions";
 import { buildSessionListRows } from "@lody/components/components/sessions/session-list-rows";
 import { SessionTypeIcon } from "../SessionTypeIcon.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
+import type { SharedSessionRow } from "./shared-sessions.js";
 
 /**
  * The shell grid's rail column, in pixels (`drive-shell.css:119`).
@@ -115,6 +116,21 @@ export interface SessionRailSidebarProps {
    * shipped it.
    */
   onShareSession?: (sessionId: string) => void;
+  /**
+   * The sessions OTHER members shared with this one
+   * (plans/LODY-SHARING.md §8 step 3).
+   *
+   * NATIVE ROWS, like Terminals, and for the same reason: they are not in this
+   * runtime's session mirror and cannot be. They live on somebody else's
+   * daemon, and this runtime is connected to exactly one box — its own. The
+   * list is read by `CloudApp` from the control plane's `received` half and
+   * titled off the owner's box, so nothing about it belongs inside the vendored
+   * sidebar's data path.
+   */
+  sharedSessions?: SharedSessionRow[];
+  /** The shared session the surface is showing, or `null`. */
+  activeSharedSessionId?: string | null;
+  onSelectSharedSession?: (row: SharedSessionRow) => void;
 }
 
 /** Repo names in first-seen order — upstream's `getStableRepoFullNames`
@@ -163,6 +179,41 @@ function TerminalRows(props: {
             </span>
             <span className="shell-s__t">{session.label}</span>
             <span className="shell-s__a" />
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/** A shared session's own row. Ours, not `SessionList`'s, because the vendored
+ * row is built from a `SessionMeta` this runtime does not hold — and because the
+ * level is the one thing a grantee has to see before they click. */
+function SharedSessionRows(props: {
+  rows: SharedSessionRow[];
+  activeSessionId: string | null;
+  onSelect: (row: SharedSessionRow) => void;
+}) {
+  return (
+    <>
+      {props.rows.map((row) => {
+        const selected = row.sessionId === props.activeSessionId;
+        return (
+          <button
+            className={`shell-s${selected ? " shell-s--on" : ""}`}
+            type="button"
+            key={`${row.ownerMembershipId}:${row.sessionId}`}
+            aria-current={selected ? "page" : undefined}
+            title={`${row.ownerName} · ${row.level === "rw" ? "read-write" : "read-only"}`}
+            onClick={() => props.onSelect(row)}
+          >
+            <span className="shell-g">
+              <SessionTypeIcon type="terminal" className="shell-g__glyph" />
+            </span>
+            <span className="shell-s__t">{row.title ?? row.sessionId.slice(0, 8)}</span>
+            <span className="shell-s__a session-rail-shared__level">
+              {row.level === "rw" ? "RW" : "RO"}
+            </span>
           </button>
         );
       })}
@@ -225,7 +276,8 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     [allActiveSessions, onlineMachineIds, sessions, user?.id, workspaceId],
   );
 
-  const { onSelectSession, onOpenLanding, onShareSession } = props;
+  const { onSelectSession, onOpenLanding, onShareSession, onSelectSharedSession } = props;
+  const sharedSessions = props.sharedSessions ?? [];
   // Every row is private and every row is the caller's own — the rail lists the
   // sessions on the caller's box, because that is the only daemon this runtime
   // is connected to — so `canManage` is simply "is the affordance offered".
@@ -266,6 +318,7 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
   const [worktreesCollapsed, setWorktreesCollapsed] = useState(false);
   const [terminalsCollapsed, setTerminalsCollapsed] = useState(false);
+  const [sharedCollapsed, setSharedCollapsed] = useState(false);
 
   const selectedSessionId = props.surfaceVisible ? props.activeSessionId : null;
   const rowActions = useMemo(() => {
@@ -331,6 +384,28 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
           chatsCollapsed={chatsCollapsed}
           onToggleChatsCollapsed={() => setChatsCollapsed((collapsed) => !collapsed)}
         />
+      )}
+      {/* Between Chats and Terminals: a shared session IS a session, so it
+          belongs with the sessions rather than below the tabs — and it stays
+          below the grantee's own, because the rail is theirs first. An empty
+          section renders nothing at all, upstream's rule, and here it is the
+          honest one: a member with no grants has nothing to say about them. */}
+      {sharedSessions.length > 0 && (
+        <div className="session-rail-shared">
+          <SidebarSectionHeader
+            label="Shared with you"
+            collapsed={sharedCollapsed}
+            toggleLabel="Shared with you"
+            onToggleCollapsed={() => setSharedCollapsed((collapsed) => !collapsed)}
+          />
+          {!sharedCollapsed && onSelectSharedSession !== undefined && (
+            <SharedSessionRows
+              rows={sharedSessions}
+              activeSessionId={props.activeSharedSessionId ?? null}
+              onSelect={onSelectSharedSession}
+            />
+          )}
+        </div>
       )}
       <div className="session-rail-terminals">
         <SidebarSectionHeader

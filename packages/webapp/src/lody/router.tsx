@@ -151,19 +151,22 @@ function ChatRoute() {
  * session identity boundary, and deferring it lets a message typed during a
  * switch be written to the session the member just left. Their comment on that
  * route says so at length; this mount inherits the rule. */
-function SessionDetailRoute() {
-  const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
-  const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
-  return (
-    <AppThemeShell>
-      <SessionDetail
-        sessionId={sessionId}
-        urlTab={search.tab}
-        urlPrNumber={search.pr}
-        urlBrowser={search.browser}
-      />
-    </AppThemeShell>
-  );
+function sessionDetailRouteComponent(readOnly: boolean) {
+  return function SessionDetailRoute() {
+    const { sessionId } = useParams({ from: "/$workspaceName/_auth/sessions/$sessionId" });
+    const search = useSearch({ from: "/$workspaceName/_auth/sessions/$sessionId" });
+    return (
+      <AppThemeShell>
+        <SessionDetail
+          sessionId={sessionId}
+          urlTab={search.tab}
+          urlPrNumber={search.pr}
+          urlBrowser={search.browser}
+          readOnly={readOnly}
+        />
+      </AppThemeShell>
+    );
+  };
 }
 
 export interface LodySessionDetailSearch {
@@ -213,6 +216,22 @@ export const LODY_SESSION_ROUTE = "/$workspaceName/_auth/sessions/$sessionId";
  * return type is the only way to talk about it. */
 export type LodyRouter = ReturnType<typeof createLodySessionRouter>;
 
+export interface LodySessionRouterOptions {
+  /** Every session page this tree renders follows without driving (seam patch
+   * 4). Fixed per router, because it is a property of WHOSE box the surface is
+   * mounted against, and that never changes under one router. */
+  readOnly?: boolean;
+  /**
+   * Open here instead of on the chat landing.
+   *
+   * A surface mounted against another member's box has exactly one address it
+   * may show: the session that was shared. The landing is the CREATE surface,
+   * and creating a session on somebody else's box is not something a share
+   * carries (`plans/LODY-SHARING.md` §4.3 — `/control` is refused outright).
+   */
+  initialSessionId?: string;
+}
+
 /**
  * Builds the tree and the router.
  *
@@ -221,7 +240,10 @@ export type LodyRouter = ReturnType<typeof createLodySessionRouter>;
  * own selection; phase 3 keeps it because the landing IS the create surface the
  * exit test drives.
  */
-export function createLodySessionRouter(workspaceSlug: string) {
+export function createLodySessionRouter(
+  workspaceSlug: string,
+  options: LodySessionRouterOptions = {},
+) {
   const rootRoute = createRootRoute({ component: RouteOutlet });
 
   const topStubs = STUB_PATHS.map((path) =>
@@ -259,7 +281,7 @@ export function createLodySessionRouter(workspaceSlug: string) {
   const sessionDetailRoute = createRoute({
     getParentRoute: () => sessionsRoute,
     path: "$sessionId",
-    component: SessionDetailRoute,
+    component: sessionDetailRouteComponent(options.readOnly === true),
     validateSearch: parseSessionDetailSearch,
   });
 
@@ -319,9 +341,14 @@ export function createLodySessionRouter(workspaceSlug: string) {
     ]),
   ]);
 
+  const initialEntry =
+    options.initialSessionId === undefined
+      ? `/${workspaceSlug}/chat`
+      : `/${workspaceSlug}/sessions/${encodeURIComponent(options.initialSessionId)}`;
+
   return createRouter({
     routeTree,
-    history: createMemoryHistory({ initialEntries: [`/${workspaceSlug}/chat`] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
     context: {},
     // A memory router in a panel has no document to scroll and no address bar.
     scrollRestoration: false,

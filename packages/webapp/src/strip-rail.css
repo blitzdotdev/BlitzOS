@@ -329,6 +329,25 @@
   margin-bottom: 12px;
 }
 
+/* "Shared with you" (plans/LODY-SHARING.md §8): the same shape as Terminals,
+   because both are native rows under one of their section headers. */
+.session-rail-shared {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+/* The level badge sits where a session row's timestamp sits. It is the one
+   thing a grantee has to read before they click: read-only and read-write are
+   the same row until you try to type. */
+.session-rail-shared__level {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--soft-ink);
+}
+
 /* The row: gutter · title · time. Never more. */
 .shell-s {
   display: flex;

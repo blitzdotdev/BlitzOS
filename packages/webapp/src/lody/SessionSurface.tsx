@@ -68,6 +68,7 @@ import {
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 import { initLodyI18n } from "./i18n.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
+import type { SharedSessionRow } from "./shared-sessions.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
 import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
@@ -118,6 +119,10 @@ export interface LodyRailBinding {
   /** Right-click Share on a session row. Absent leaves the row's menu exactly
    * as phase 4 shipped it (plans/LODY-SHARING.md §8). */
   onShareSession?: (sessionId: string) => void;
+  /** The "Shared with you" section: sessions on other members' boxes. */
+  sharedSessions?: SharedSessionRow[];
+  activeSharedSessionId?: string | null;
+  onSelectSharedSession?: (row: SharedSessionRow) => void;
 }
 
 /** What `CloudApp` drives the surface with. Imperative on purpose: the router's
@@ -166,6 +171,20 @@ export interface LodySessionSurfaceProps {
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   /** Fires on every resolved navigation inside the surface. */
   onActiveSessionChange?: (sessionId: string | null) => void;
+  /**
+   * This surface is mounted against ANOTHER member's box, for one session they
+   * shared (plans/LODY-SHARING.md §10.2).
+   *
+   * Two things follow, and both are about writing to somebody else's machine:
+   * the agent-config bootstrap does not run — it writes to the owner's machine
+   * Flock, which the relay refuses — and the router opens on the session rather
+   * than on the chat landing, because the landing creates sessions and a
+   * grantee may not create one there.
+   */
+  shared?: { sessionId: string };
+  /** Follow the session without driving it. Suppresses the composer and the
+   * permission card's answer buttons (seam patch 4). */
+  readOnly?: boolean;
 }
 
 /**
@@ -339,9 +358,21 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   const store = useMemo(() => createStore(), []);
 
   const slug = snapshot?.workspace.slug ?? null;
+  const readOnly = props.readOnly === true;
+  const isShared = props.shared !== undefined;
+  // Keyed on the primitive and not on the object: `shared` is a fresh literal
+  // on every render of the host, and rebuilding the router would rebuild the
+  // page under the member's cursor.
+  const sharedSessionId = props.shared?.sessionId ?? null;
   const router = useMemo<LodyRouter | null>(
-    () => (slug === null ? null : createLodySessionRouter(slug)),
-    [slug],
+    () =>
+      slug === null
+        ? null
+        : createLodySessionRouter(slug, {
+            readOnly,
+            ...(sharedSessionId === null ? {} : { initialSessionId: sharedSessionId }),
+          }),
+    [slug, readOnly, sharedSessionId],
   );
 
   // Both seeds are effects, so the first render below sees a null user and no
@@ -427,6 +458,15 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             {...(rail.onShareSession === undefined
               ? {}
               : { onShareSession: rail.onShareSession })}
+            {...(rail.sharedSessions === undefined
+              ? {}
+              : { sharedSessions: rail.sharedSessions })}
+            {...(rail.activeSharedSessionId === undefined
+              ? {}
+              : { activeSharedSessionId: rail.activeSharedSessionId })}
+            {...(rail.onSelectSharedSession === undefined
+              ? {}
+              : { onSelectSharedSession: rail.onSelectSharedSession })}
           />,
           railHost,
         );
@@ -447,11 +487,13 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
           >
             <LodySurfaceProviders>
               <RuntimeProvider>
-                <LodyAgentConfigBootstrap
-                  store={store}
-                  machineId={snapshot.machineId}
-                  endpoints={endpoints}
-                />
+                {!isShared && (
+                  <LodyAgentConfigBootstrap
+                    store={store}
+                    machineId={snapshot.machineId}
+                    endpoints={endpoints}
+                  />
+                )}
                 {railSidebar}
                 <RouterProvider router={router} />
               </RuntimeProvider>

@@ -46,6 +46,7 @@ import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
 import { LodySessionsRegion } from './lody/LodySessionsRegion';
 import { useLodyRail } from './lody/use-lody-rail';
+import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
   drivePath,
@@ -933,6 +934,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // Which session the share dialog is open on. One piece of state, because the
   // dialog reads and writes its own grants (plans/LODY-SHARING.md §8).
   const [sharingSessionId, setSharingSessionId] = useState<string | null>(null);
+  // Bumped when the share dialog closes, so a grant the viewer just received
+  // from themselves — an admin granting on somebody's behalf — reaches the rail
+  // without a reload.
+  const [shareRevision, setShareRevision] = useState(0);
+  // The OTHER half of sharing: what other members shared with this one, and
+  // which of those the address has open (plans/LODY-SHARING.md §10.2).
+  const sharedSessions = useSharedSessions({
+    client,
+    // The wire record rather than the store model: the resolver builds URLs
+    // from a `WorkspaceView`, and this is the one place that view is kept.
+    workspace: activeIngressEntry?.wire ?? null,
+    resolver,
+    chat: lodyRail.chat,
+    revision: shareRevision,
+  });
   // The ADDRESS drives the surface, one way: a deep link, a reload and the back
   // button all arrive here, and the surface's own navigations come back through
   // `onActiveSessionChange` below. Both compare before acting, so the pair
@@ -1618,6 +1634,11 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               onApiReady={setLodyApi}
               onActiveSessionChange={lodyRail.mirror}
               onShareSession={setSharingSessionId}
+              sharedSessions={sharedSessions.rows}
+              sharedOpen={sharedSessions.open}
+              onSelectSharedSession={(row) => {
+                lodyRail.openSharedSession(row.ownerMembershipId, row.sessionId);
+              }}
             />
             <WorkPanes
               client={client}
@@ -1945,7 +1966,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           sessionTitle={sharingSessionId.slice(0, 8)}
           members={activeWorkspace.members}
           viewerMembershipId={store.viewer.membership.id}
-          onClose={() => setSharingSessionId(null)}
+          onClose={() => {
+            setSharingSessionId(null);
+            setShareRevision((revision) => revision + 1);
+          }}
         />
       )}
       {fileCloseConfirmation && (
