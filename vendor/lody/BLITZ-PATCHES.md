@@ -77,9 +77,11 @@ git diff --stat <subtree-import-commit> -- vendor/lody \
   ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
 ```
 
-Expected after phase 6: exactly FIVE files — the three above with six
-added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2 and
-`lib/electron-session-file-sender.ts` from seam patch 3.
+Expected after phase 7: exactly SEVEN files — the three above with six
+added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2,
+`lib/electron-session-file-sender.ts` from seam patch 3, and
+`components/sessions/session-chat-interface.tsx` +
+`components/sessions/session-detail.tsx` from seam patch 4.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -172,6 +174,50 @@ the new predicate keeps its meaning and gains the `__LODY_LOCAL_BRIDGE__` arm. I
 upstream replaces the flag with a capability probe over `window.ipc` — the
 alternative the PR sketch names and rejects — drop this hunk and let the probe
 answer, because the BlitzOS bridge does serve the channel.
+
+### 4. The read-only session surface (phase 7, 2026-08-30)
+
+**Two optional props, four hunks, two files.** BlitzOS grants a member read-only
+access to another member's session (`plans/LODY-SESSIONS.md` §0.1), and mounts
+that session in their own browser against the owner's box
+(`plans/LODY-SHARING.md` §10). Upstream has no read-only mode at all: every
+member of a Lody workspace may drive every session they can see, so
+`SessionChatInterface` has no notion of a viewer.
+
+The two suppressions it DOES have — `isArchivedSession` and `isMachineRemoved` —
+were considered and rejected. Borrowing either would put a false statement on the
+screen: the session is neither archived nor on a removed machine, and both change
+the header copy as well as the composer.
+
+| # | File | Line (at `966623d0`) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 1731 | after `hideMessageArea?: boolean;` in the props interface | declares `readOnly?: boolean` |
+| 2 | same | 1900 | after `hideMessageArea = false,` in the destructuring | defaults it to `false` |
+| 3 | same | 5785 | `{shouldReplaceComposerWithPermission ? null : (` | adds `readOnly ||`, so the composer is not rendered |
+| 4 | same | 5673 | the `<FloatingPermissionRequest …/>` element | wraps it in `{readOnly ? null : ( … )}` — its options are answers, and an answer this viewer cannot write is a button that does nothing |
+| 5 | `packages/components/src/components/sessions/session-detail.tsx` | 661 | the inline props type and destructuring of `SessionDetail` | declares and defaults `readOnly` |
+| 6 | same | 4925 | the `<SessionChatInterface>` that renders a session tab | passes `readOnly={readOnly}` |
+
+The `headerVariant="toolbar"` instance at `:5448` is deliberately NOT passed the
+prop: it carries `hideMessageArea`, so it renders no composer and no permission
+card, and passing a prop that selects nothing would suggest it did.
+
+Strictly additive: with the prop absent every call site renders byte-for-byte
+what it rendered before, and no upstream call site passes it. Upstream PR drafted
+at `plans/evidence/lody-readonly-prop-pr.md`; **drop this patch when it merges.**
+
+**What the prop does NOT do, and what that leaves.** It suppresses two controls.
+The header's "…" menu still offers archive, delete, rename and fork to a
+read-only viewer, and every one of those fails at the BlitzOS relay rather than
+in the UI. Widening the prop to the menu is a bigger diff through
+`headerVariant="toolbar"`'s own call site and is the follow-up if upstream wants
+it; the enforcement does not depend on it.
+
+**Merge conflict drill.** If the composer's render guard is restructured,
+re-apply by adding `readOnly ||` to whatever decides it renders. If upstream
+grows its own viewer concept (a role on the session, a capability), drop these
+hunks and pass that instead — the BlitzOS half is one boolean on
+`packages/webapp/src/lody/SessionSurface.tsx`.
 
 ## Patches to the published npm artifact (NOT to this tree)
 

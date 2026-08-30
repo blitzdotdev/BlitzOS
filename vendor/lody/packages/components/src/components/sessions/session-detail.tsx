@@ -664,12 +664,16 @@ const SessionDetail = ({
   urlPrNumber,
   urlBrowser,
   onMobileBack,
+  readOnly = false,
 }: {
   sessionId: SessionId;
   urlTab?: string;
   urlPrNumber?: number;
   urlBrowser?: boolean;
   onMobileBack?: () => void;
+  /** Follow the session without driving it. Passed to every chat surface this
+   * page mounts; see `SessionChatInterfaceProps.readOnly`. */
+  readOnly?: boolean;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -4923,6 +4927,7 @@ const SessionDetail = ({
                   workspaceSession={activeSession}
                   className="h-full"
                   hideHeader
+                  readOnly={readOnly}
                   syncEnabled={isActive || pendingForkSourceId !== undefined}
                   isVisible={isActive}
                   isChildTab={tabSession.id !== sessionId}

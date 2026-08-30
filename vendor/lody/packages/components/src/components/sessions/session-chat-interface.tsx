@@ -1729,6 +1729,16 @@ interface SessionChatInterfaceProps {
   subHeader?: React.ReactNode;
   /** When true, hide the message area and input but keep the header and subHeader visible */
   hideMessageArea?: boolean;
+  /**
+   * When true, this surface follows the session without driving it: the
+   * composer and the permission request's response buttons are not rendered.
+   *
+   * For a host that mounts a session the viewer may read but not write. It is
+   * presentation only — a viewer who cannot write is enforced wherever the
+   * writes are applied, not here — but a control that cannot work should not be
+   * offered.
+   */
+  readOnly?: boolean;
   /** When false, keep the local doc mounted without holding the remote room subscription. */
   syncEnabled?: boolean;
   /**
@@ -1898,6 +1908,7 @@ export const SessionChatInterface = memo(
       titleSyncing,
       subHeader,
       hideMessageArea = false,
+      readOnly = false,
       syncEnabled = !hideMessageArea,
       isVisible = true,
       isExternalHistoryRefreshing = false,
@@ -5669,12 +5680,18 @@ export const SessionChatInterface = memo(
                     </ErrorBoundary>
                   </div>
 
-                  {/* Floating permission request - shown when session is waiting for permission */}
-                  <FloatingPermissionRequest
-                    sessionId={session.id}
-                    sessionStatus={liveSessionStatus ?? undefined}
-                    sessionHistory={permissionSessionHistory}
-                  />
+                  {/* Floating permission request - shown when session is waiting for permission.
+                      A read-only surface does not render it: its options are
+                      answers, and an answer this viewer cannot write is a
+                      button that does nothing. The request still appears in the
+                      transcript. */}
+                  {readOnly ? null : (
+                    <FloatingPermissionRequest
+                      sessionId={session.id}
+                      sessionStatus={liveSessionStatus ?? undefined}
+                      sessionHistory={permissionSessionHistory}
+                    />
+                  )}
 
                   {/* Notification permission prompt - shown when session becomes idle (turn completed) */}
                   {/* TODO(analytics): session/notification_prompt_shown|_permission_granted|_permission_denied.
@@ -5782,7 +5799,7 @@ export const SessionChatInterface = memo(
                   {/* Input area - isolated component to prevent full re-renders on typing.
                       Hidden while a permission is pending so the response buttons claim
                       the bottom surface; chat queue is bypassed for the same reason. */}
-                  {shouldReplaceComposerWithPermission ? null : (
+                  {readOnly || shouldReplaceComposerWithPermission ? null : (
                     <SessionChatInputArea
                       ref={inputAreaRef}
                       session={session}
