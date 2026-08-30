@@ -47,10 +47,20 @@ selector) must fully work in GitHub Worktree mode on a box.
    the server has never stored a document for is affected — nothing migrates.)*
 5. **Worktrees v1**: create + archive-with-backup + diff stats/badges. PR
    chips, PR polling, and merge flows are deferred.
+   *(Phase 5, shipped. Two things the wording did not anticipate: the worktree
+   pill is only FORCED in their `github` context, so a `local-shared` session
+   runs in the clone itself until the member ticks it — a product decision, not a
+   bug (`LODY-RUNTIME-DESIGN.md` §10.3); and archiving a local-project worktree
+   is broken upstream, which a mirror outside `vendor/` repairs (§10.1).)*
 6. **Agents v1**: claude and codex only. English only. Recipes stay on
    `blitz-term` delivery and stay product-disabled.
 7. **Attachments**: the one adaptation — their cloud-upload fallback is
    Lody-cloud; ours routes browser→box over the existing WebDAV surface.
+   *(Phase 5: BLOCKED, and the only §0 control that is. There is no attachment
+   port to implement this behind — the local fast path is gated on
+   `window.__LODY_ELECTRON__`, which BlitzOS must never set. The exact one-line
+   seam and the WebDAV route behind it are written out in
+   `LODY-RUNTIME-DESIGN.md` §10.4; no vendor hunk is applied.)*
 
 ## 1. What Lody is, in BlitzOS terms
 
@@ -301,6 +311,14 @@ vendor/lody/BLITZ-PATCHES.md  # every deliberate divergence, file + reason
    `lody/<id12>` cut off the existing clone, placed under
    `/var/lib/blitz/lody/repos/...`. `ProjectRef.githubRepoFullName` is set so
    the sidebar groups these under GitHub Worktrees.
+   *(Phase 5, shipped: an s6 longrun `lody-projects` scans `/workspace` for git
+   repositories every 30 s and registers each over `/project-control`, rather
+   than being handed the `workspace_repos` list — the cloner is a detached retry
+   loop that runs for ten minutes after boot, so a list handed down at boot names
+   directories that do not exist yet. `local-project/add` CANNOT carry
+   `githubRepoFullName`: the daemon derives it from the clone's remote and the
+   browser copies it onto the session's `ProjectRef`. Both in
+   `LODY-RUNTIME-DESIGN.md` §10.2, §10.7.)*
 5. Port 7444 stays reserved and unused. Do not bind the daemon to it: boxes in
    the field still run the old actor there, and the reserved-port fixture pins
    the set on all three sides.
@@ -403,6 +421,18 @@ measurements in `plans/LODY-RUNTIME-DESIGN.md` §9):
   they are their dialogs and their copy. The archive-backup wording in the
   confirm dialog is theirs and was not restated on our side.
 
+**What phase 5 changed in the rail.** The filter phase 4 copied from upstream
+(`loro-app-sidebar.tsx:1565`, drop every session whose `project.kind` is
+`'local'`) is GONE. Upstream drops them because it has a Local Projects section
+to draw them in; this rail does not, and a BlitzOS worktree session is exactly
+`{ kind: 'local', useWorktree: true }` — so the filter hid every one of them.
+Nothing replaces it: `buildSessionListRows` already sets a row's `repoFullName`
+from `resolveProjectGitHubRepo`, which reads `githubRepoFullName` off a local
+`ProjectRef`, so a worktree session groups under GitHub Worktrees by repo with no
+code of ours. A local project with no GitHub remote yields no `repoFullName` and
+its sessions read as Chats — the honest degradation, against upstream's, which is
+to hide them.
+
 ## 9. Migration
 
 Retirement happened FIRST, not last. Step 0 below is done on this branch, so
@@ -434,7 +464,7 @@ nothing here waits on a dead surface being removed.
 | 2 runtime | BlitzPlatformProvider, websocket transport seam patch, RPC plane shim | create session from browser console; turn dispatched; reply streams | **done** (`plans/LODY-RUNTIME-DESIGN.md` §7) |
 | 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box | **done, with one gap** — `LODY-RUNTIME-DESIGN.md` §8.6. Send and session creation are proven live through the real composer; the permission card, the queue and Stop are written and gated but were not reached inside the two-turn budget, and reaching the card first needs the composer's permission-mode selector (§8.3). |
 | 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works | **done** — `LODY-RUNTIME-DESIGN.md` §9. All four exit tests pass. Sections and order follow upstream, not §8's sketch (§9.2). Chat sessions are addressed in the URL and nowhere else (§9.1). |
-| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode | — |
+| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode | **done, with one blocker** — `LODY-RUNTIME-DESIGN.md` §10. Nine of the ten composer controls pass (§10.5); `+` attachments have no port to implement §0.7 behind and are a recorded blocker with an exact seam (§10.4). Registration reads `/workspace` rather than the `workspace_repos` list, for the reasons in §10.7. Two upstream defects were found and worked around without a vendor hunk (§10.1). |
 | 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | — |
 | 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean | — |
 

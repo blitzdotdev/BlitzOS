@@ -217,6 +217,36 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   it (`i18n/index.tsx:121`) and `packages/webapp/src/lody/i18n.ts` now does too.
   Not a divergence, a required initialization option; recorded because getting
   it wrong is silent.
+- **The archive path cannot resolve a local project's root path** (phase 5).
+  `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4315`)
+  merges `machineMeta.localProjects` with `getMachineFlockLocalProjects(
+  options.machineFlockRows)`. The DELETE caller passes `machineFlockRows`
+  (`:4499`); the ARCHIVE caller does not (`:3971`) — and the same asymmetry is in
+  the shipped bundle (`lody/dist/index.js:169066` vs `:169476`). Since
+  `local-project/add` writes only the FLOCK row (`lody-fleet.ts:1552` →
+  `local-project-meta.ts:76`), archive resolves nothing on a box, returns `null`,
+  and leaves the worktree on disk with the member's uncommitted work in it and no
+  backup commit. `packages/webapp/src/lody/local-projects.ts` mirrors the Flock
+  rows into the legacy `machineMeta.localProjects` field, which both paths still
+  read. **Candidate upstream PR: pass `machineFlockRows` on the archive path** —
+  four lines, and then this mirror is deleted.
+- **The positional `localProjects.*` IPC helpers carry no `machineId`**, because
+  in Electron the main process IS the machine and fills its own id in.
+  `requestLocalProjectGitState` (`workspace-machine-rpc-facade.ts:1006`) calls
+  `getGitState(workspaceId, localProjectId)` with two arguments, and every
+  `local-project/*` request schema requires `machineId`. On a box the main
+  process is the box and the browser is not, so `local-bridge.ts` resolves the id
+  from `/lody/platform` and injects it. Not a divergence — an adaptation the
+  Electron seam does not need — but it is why every one of those helpers silently
+  failed the daemon's `.strict()` parse until phase 5.
+- **The local attachment fast path is gated on `__LODY_ELECTRON__`.**
+  `canUseElectronLocalFileSend` (`lib/electron-session-file-sender.ts:19`) is
+  `isElectronRenderer() && Boolean(getIpcServices())`, and the flag is the one
+  global BlitzOS must never set (44 unrelated readers). So `+` attachments fall
+  through to `uploadSessionFile` against Lody cloud, which this composition has
+  no account for. **This is the one §0 composer control BlitzOS cannot serve
+  without a vendor hunk**; the proposal is recorded in
+  `plans/LODY-RUNTIME-DESIGN.md` §10.4 and no hunk is applied.
 - **`acp-extension-dsh` is an empty submodule.** Aliased to a local stub; see
   `UPSTREAM.md`.
 - **`packages/components/vite-renderer-bundle-aliases.ts` cannot be imported.**
