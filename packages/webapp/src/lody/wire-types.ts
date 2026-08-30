@@ -128,10 +128,22 @@ export type LodyIpcPush = LodyDataPlaneFrame | boolean | LodySessionControlPush;
 /** Everything `window.ipc.send` accepts. */
 export type LodyIpcSendPayload = LodyDataPlaneFrame | null;
 
+/** `SendSessionFileLocalInput` (`@lody/shared/electron-ipc:511`).
+ *
+ * The one channel argument that is not JSON. `bytes` rides Electron's structured
+ * clone so an attachment is never base64'd through IPC; here it rides a WebDAV
+ * PUT body, which does not encode it either. */
+export interface LodySendSessionFileLocalInput {
+  workspaceId: string;
+  sessionId: string;
+  machineId: string;
+  files: { fileName: string; bytes: ArrayBuffer }[];
+}
+
 /** Every argument `window.ipc.invoke` is called with. The positional
  * `localProjects.*` helpers take loose strings and option bags, so this is the
  * union of what those call sites actually pass. */
-export type LodyIpcArgument = JsonValue | undefined;
+export type LodyIpcArgument = JsonValue | LodySendSessionFileLocalInput | undefined;
 
 /** The mirrored session document, as far as this package reads it. */
 export interface LodySessionDocState extends LodyRecord {

@@ -48,6 +48,12 @@ export interface LodyRuntimeEndpoints {
   controlUrl: string;
   projectUrl: string;
   platformUrl: string;
+  /** `BoxEndpoints.filesBase` — the dufs WebDAV base `+` attachments stage
+   * through (`session-attachments.ts`). */
+  filesBase: string;
+  /** The box path `filesBase` serves. Defaults to the resolver's `/workspace`;
+   * a test that stands dufs up elsewhere moves both together. */
+  filesRoot?: string;
   fetchImpl?: typeof fetch;
   webSocketConstructor?: typeof WebSocket;
 }
@@ -173,7 +179,9 @@ export async function createLodyRuntime(options: {
     controlUrl: endpoints.controlUrl,
     projectUrl: endpoints.projectUrl,
     platformUrl: endpoints.platformUrl,
+    filesBase: endpoints.filesBase,
   };
+  if (endpoints.filesRoot !== undefined) bridgeEndpoints.filesRoot = endpoints.filesRoot;
   if (endpoints.fetchImpl !== undefined) bridgeEndpoints.fetchImpl = endpoints.fetchImpl;
   if (endpoints.webSocketConstructor !== undefined) {
     bridgeEndpoints.webSocketConstructor = endpoints.webSocketConstructor;

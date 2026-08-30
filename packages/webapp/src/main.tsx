@@ -20,6 +20,7 @@ import './settings.css';
 import './invite-redeem.css';
 import { StandaloneWebApp } from './StandaloneWebApp';
 import { LODY_DEV_ORIGIN, lodySessionsRequested } from './lody/flag';
+import { FILES_DAV_ROOT } from './resolver';
 import { initTheme } from './theme';
 
 initTheme();
@@ -49,6 +50,7 @@ if (lodySessionsRequested(window.location.hash) && LODY_DEV_ORIGIN !== '') {
             controlUrl: `${origin}/lody/control`,
             projectUrl: `${origin}/lody/project`,
             platformUrl: `${origin}/lody/platform`,
+            filesBase: `${origin}${FILES_DAV_ROOT}/`,
           }}
           viewer={{ name: 'Developer', avatarUrl: null }}
           workspaceTitle="Lody dev"

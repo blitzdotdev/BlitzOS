@@ -69,6 +69,7 @@ import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "
 import { initLodyI18n } from "./i18n.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
+import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { appliedTheme } from "../theme.js";
 import "./lody-surface.css";
@@ -315,6 +316,9 @@ function LodyAgentConfigBootstrap(props: {
 function LodySurfaceProviders(props: { children: ReactNode }) {
   const i18n = useMemo(() => initLodyI18n(), []);
   const theme = useMemo(() => adoptShellTheme(), []);
+  // Beside the theme adoption for the same reason: both write a key their own
+  // code reads on first render, so both have to happen before that render.
+  useMemo(() => seedWorktreeWorkdirDefault(), []);
   return (
     <I18nextProvider i18n={i18n}>
       <ThemeProvider defaultTheme={theme} storageKey={LODY_THEME_STORAGE_KEY}>

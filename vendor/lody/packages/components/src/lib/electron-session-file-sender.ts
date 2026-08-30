@@ -17,7 +17,9 @@ import { getIpcServices } from './electron-ipc-client';
  */
 
 export const canUseElectronLocalFileSend = (): boolean =>
-  isElectronRenderer() && Boolean(getIpcServices());
+  (isElectronRenderer() ||
+    (typeof window !== 'undefined' && window.__LODY_LOCAL_BRIDGE__ === true)) &&
+  Boolean(getIpcServices());
 
 export type SendSessionFileLocalOutcome =
   | { ok: true; files: SessionFilePayload[]; message?: string }

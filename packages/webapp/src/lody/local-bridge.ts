@@ -25,7 +25,7 @@
  * (design doc risk 10) — and every refusal is recorded, so a phase-3 round trip
  * can assert the set is empty.
  */
-import { isJsonNumber, isJsonObject, isJsonString, type JsonValue } from "@blitzos/schema";
+import { isJsonArray, isJsonNumber, isJsonObject, isJsonString, type JsonValue } from "@blitzos/schema";
 import { LocalLoroDataPlaneClientMessageSchema } from "@lody/shared/local-loro-data-plane";
 import { LocalMachineRpcRequestSchema } from "@lody/shared/local-machine-rpc";
 import { LocalProjectControlRequestSchema, LocalSessionControlRequestSchema } from "@lody/shared/message-schemas";
@@ -41,6 +41,12 @@ import {
   sendSessionControl,
   type LodyHttpPlaneEndpoints,
 } from "./rpc-client.js";
+import {
+  isSendSessionFileLocalInput,
+  removeSessionAttachments,
+  uploadSessionAttachments,
+  type LodyAttachmentEndpoints,
+} from "./session-attachments.js";
 import type {
   LodyDataPlaneFrame,
   LodyIpcArgument,
@@ -49,6 +55,7 @@ import type {
   LodyIpcSendPayload,
   LodyMachineRpcRequest,
   LodyProjectControlRequest,
+  LodySendSessionFileLocalInput,
   LodySessionControlMessage,
   LodySessionControlPush,
 } from "./wire-types.js";
@@ -71,6 +78,11 @@ export interface LodyLocalBridge {
 
 export interface LodyLocalBridgeEndpoints extends LodyHttpPlaneEndpoints {
   syncUrl: string;
+  /** `BoxEndpoints.filesBase` — where `+` attachments are staged before the
+   * daemon copies them into its blob store. */
+  filesBase: string;
+  /** The box path `filesBase` serves; see `LodyAttachmentEndpoints`. */
+  filesRoot?: string;
   webSocketConstructor?: typeof WebSocket;
 }
 
@@ -172,12 +184,12 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
    * against the raw response union. */
   async function projectResult(
     type: string,
-    fields: Record<string, JsonValue | undefined>,
+    fields: Record<string, LodyIpcArgument>,
     onError: ProjectFailureStyle,
   ): Promise<LodyIpcReply> {
     const machine = await resolveMachineId();
     if (machine === null) return projectFailure(onError, "cli_not_running");
-    const entries: [string, JsonValue][] = [["type", type], ["machineId", machine]];
+    const entries: [string, LodyIpcArgument][] = [["type", type], ["machineId", machine]];
     for (const [key, value] of Object.entries(fields)) {
       if (value !== undefined) entries.push([key, value]);
     }
@@ -193,6 +205,52 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
     // `cli_not_running` is the exact string the vendored file tree branches on.
     const dead = !response.ok && response.error === "daemon_unavailable";
     return projectFailure(onError, dead ? "cli_not_running" : message);
+  }
+
+  const attachmentEndpoints = (): LodyAttachmentEndpoints => {
+    const attachment: LodyAttachmentEndpoints = { filesBase: endpoints.filesBase };
+    if (endpoints.filesRoot !== undefined) attachment.filesRoot = endpoints.filesRoot;
+    if (endpoints.fetchImpl !== undefined) attachment.fetchImpl = endpoints.fetchImpl;
+    return attachment;
+  };
+
+  /** The second half of the attachment handoff: the paths are on the box, so
+   * this is the same `session/file-send-local` call Electron's main process
+   * makes, and the same unwrapping (`local-projects-ipc.ts:100`). */
+  async function handoffStagedAttachments(
+    input: LodySendSessionFileLocalInput,
+    paths: readonly string[],
+  ): Promise<LodyIpcReply> {
+    const parsed = LocalSessionControlRequestSchema.safeParse({
+      type: "session/file-send-local",
+      machineId: input.machineId,
+      sessionId: input.sessionId,
+      workspaceId: input.workspaceId,
+      paths: [...paths],
+    });
+    if (!parsed.success) return { ok: false, error: "invalid_request" };
+    // SAFETY: the daemon's own request union just accepted this object, and
+    // every member of it carries the `type` discriminant our side reads.
+    const request = parsed.data as LodySessionControlMessage;
+    const result = await sendSessionControl(endpoints, request, () => {});
+    if (!result.ok) return { ok: false, error: result.error };
+    const response = result.responses.find(
+      (item) => item.type === "session/file-send-local_response",
+    );
+    if (response === undefined) return { ok: false, error: "invalid_response" };
+    if (response.success !== true) {
+      const reason = response.error;
+      const named = reason !== undefined && isJsonString(reason);
+      return { ok: false, error: named ? reason : "local_handoff_failed" };
+    }
+    const files = response.files;
+    if (files === undefined || !isJsonArray(files) || files.length === 0) {
+      return { ok: false, error: "local_handoff_empty" };
+    }
+    const note = response.message;
+    return note !== undefined && isJsonString(note)
+      ? { ok: true, files, message: note }
+      : { ok: true, files };
   }
 
   const invoke = async (channel: string, ...args: LodyIpcArgument[]): Promise<LodyIpcReply> => {
@@ -242,7 +300,7 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
       }
 
       case "sessionControl.send": {
-        const payload = args[0];
+        const payload = jsonArgument(args[0]);
         if (payload === undefined || !isJsonObject(payload)) {
           return { ok: false, error: "lody_session_control_invalid_request" };
         }
@@ -336,6 +394,30 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
           },
           "null",
         );
+      // The `+` attachment handoff (plans/LODY-RUNTIME-DESIGN.md §10.4). Where
+      // Electron writes the bytes to a temp file the daemon then reads, this
+      // stages them on the box over WebDAV and hands the daemon those paths —
+      // the daemon copies each into its blob store and answers with the
+      // `transport: 'local'` blocks the composer attaches to the message.
+      case "localProjects.sendSessionFileLocal": {
+        const input = args[0];
+        if (!isSendSessionFileLocalInput(input)) return { ok: false, error: "invalid_request" };
+        const staged = await uploadSessionAttachments(
+          attachmentEndpoints(),
+          input.sessionId,
+          input.files,
+        );
+        if (!staged.ok) return { ok: false, error: staged.error };
+        try {
+          return await handoffStagedAttachments(input, staged.paths);
+        } finally {
+          // The daemon has copied the bytes by now, so the staging directory is
+          // rubbish either way — including on the failure paths above, which is
+          // why this is a `finally` and not a success branch.
+          await removeSessionAttachments(attachmentEndpoints(), staged.staged);
+        }
+      }
+
       case "localProjects.checkoutBranch":
         return await projectResult(
           "local-project/checkout-branch",
@@ -420,10 +502,20 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
   };
 }
 
+/**
+ * Every channel but the attachment handoff takes JSON. This narrows to that by
+ * EXCLUDING the one arm that is not, so the widening `LodyIpcArgument` took for
+ * `sendSessionFileLocal` costs no assertion anywhere else.
+ */
+function jsonArgument(value: LodyIpcArgument): JsonValue | undefined {
+  return isSendSessionFileLocalInput(value) ? undefined : value;
+}
+
 /** Reads one numeric field out of a vendored options bag. */
 function optionNumber(options: LodyIpcArgument, key: string): number | undefined {
-  if (options === undefined || !isJsonObject(options)) return undefined;
-  const value = options[key];
+  const bag = jsonArgument(options);
+  if (bag === undefined || !isJsonObject(bag)) return undefined;
+  const value = bag[key];
   return value !== undefined && isJsonNumber(value) ? value : undefined;
 }
 

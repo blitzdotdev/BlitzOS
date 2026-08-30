@@ -1042,6 +1042,13 @@ It is NOT applied because the brief's rule is zero new hunks and a recorded
 blocker instead. The `+` menu, its picker and the image/file split all render and
 work; only the far end of the upload is missing.
 
+**Phase 6 applied it** (§11.1), with one correction to the sketch above: the
+daemon does not read the staged file as the agent's attachment, it COPIES it into
+its own blob store during `session/file-send-local` and answers with the
+`transport: 'local'` blocks the composer attaches to the message. So the staging
+directory is a hand-off and the files are deleted again as soon as the call
+returns — which is also what Electron does with its temp directory.
+
 ### 10.5 The composer parity table
 
 The §0 acceptance artifact. Driven by
@@ -1168,6 +1175,78 @@ the free path could not reach.
 | 2 | Ruled out the test's own stale DOM node, and left the daemon log that named the real cause: the session's `configForLog` said `githubRepo: undefined`, so `updateSessionDiffStats` was never reached. That is §10.1 defect 3, and nothing short of a live turn surfaces it — every free path writes the `ProjectRef` itself and so cannot notice that the LANDING drops the field. |
 | 3 | The fix, confirmed: `githubRepo: 'blitzdotdev/wt-composer'` at create, diff stats at finalization, badge on the row. |
 
-**NOT reached:** nothing structural in the worktree path. `+` attachments are
-the one §0 control that does not work, for the reason and with the seam in
-§10.4.
+**NOT reached:** nothing structural in the worktree path. `+` attachments were
+the one §0 control that did not work, for the reason and with the seam in §10.4;
+phase 6 slice 0 applied that seam and §11.1 records what it measured.
+
+---
+
+## 11. What phase 6 changed about this document (2026-08-30)
+
+Phase 6 is opt-in per-session sharing (`LODY-SESSIONS.md` §0.1). Its design lives
+in `plans/LODY-SHARING.md`; what belongs here is what the work measured about the
+runtime, in the form §7–§10 use.
+
+### 11.1 Attachments: §10.4's seam, applied, and one thing it had wrong
+
+Seam patch 3 (`vendor/lody/BLITZ-PATCHES.md`) is the predicate §10.4 wrote out,
+unchanged. The BlitzOS half behind it is
+`packages/webapp/src/lody/session-attachments.ts` plus one channel in
+`local-bridge.ts`, and §10.4's own sentence about where the bytes go is the part
+that needed correcting.
+
+§10.4 offered two placements — "either the attachment lands at
+`/workspace/.blitz-attachments/<sessionId>/<name>` and the agent is handed an
+absolute path, or `webapp-surface.ts` grows a second prefix" — and took the
+first. The first is right, but not for the reason given: **the agent is never
+handed a path at all.** `session/file-send-local` copies each file into the
+daemon's own blob store and answers with `transport: 'local'`
+`SessionFilePayload` blocks (`apps/cli/src/lib/message-handler.ts:7530`), which
+the composer attaches to the outgoing message exactly like a cloud upload. So the
+staging directory is a HAND-OFF, and the files are deleted as soon as the control
+call returns — the same lifecycle Electron gives its temp directory
+(`apps/electron/src/main/ipc/services/local-projects-ipc.ts:79`).
+
+That is also why no new box path was needed and why the choice between the two
+placements was never close: whatever directory the bytes pass through, they do
+not stay there.
+
+Four smaller things the channel measured:
+
+| # | What | Why it matters |
+|---|---|---|
+| 1 | **dufs does not create missing intermediates**, so the channel issues `MKCOL .blitz-attachments/`, `MKCOL .blitz-attachments/<sessionId>/`, then `PUT`. 405 is success. | `core/files/sync.ts:75` already records this for the control plane's own uploads; getting it wrong shows up as a 409 on the PUT, far from the cause. |
+| 2 | **The daemon answers `session_not_found` until the session's CRDT write reaches it.** `startLodySession` is a LOCAL durable write; the daemon reads `getDocMeta(getSessionRoomId(sessionId))` and refuses until the data plane has carried it. | The exit test polls the real call rather than sleeping: there is no cheaper probe for "the daemon has this session" than asking it. In the product the composer only offers `+` on a session it is already looking at, so the window does not exist. |
+| 3 | **`LodyIpcArgument` is no longer `JsonValue`.** The attachment payload carries an `ArrayBuffer`, which no JSON type can express. | `packages/webapp/src/lody/ipc-arguments.ts` holds the three guards that narrow an argument by CHECKING it, so the widening cost no assertion at any of the ten positional-helper call sites. |
+| 4 | **The staged name is Electron's, character for character** (`<index>-<basename>`, control characters to `_`, 255 bytes). | The daemon reports the basename back as the block's file name, so a different rule would show a different name in the transcript on a box than on the desktop. |
+
+Exit evidence: `packages/webapp/test/lody-attachments.test.ts` — six free cases
+over the WebDAV half, plus one daemon-backed case that drives the whole channel
+and asserts the `transport: 'local'` block and the emptied staging directory.
+
+### 11.2 The worktree pill's default, seeded
+
+§10.3 recorded that the pill is a real toggle in the `local` context and that
+`readWorkdirModePreference` defaults it to `'local'` — the mode that edits the
+`/workspace/<repo>` clone in place. §0.5 ruled that BlitzOS defaults it ON
+through their own preference store rather than through a vendor edit, and
+`packages/webapp/src/lody/workdir-default.ts` is that: one write of their GLOBAL
+key, only when it is absent.
+
+The choice of key is the whole design. Upstream READS
+`lody.workdirMode.global` and never writes it (`lib/workdir-mode-preferences.ts`
+writes the per-project key only), so seeding the global one changes the default
+without competing with anything: their per-project write still wins, so unticking
+the pill for a repo persists, and a member who sets the global key by hand is
+never overwritten.
+
+### 11.3 The harness lock's deadline
+
+§9.3 introduced a cross-file lock because the daemon's installation profile holds
+a host lease on 17789. Its wait bound was 300 s, chosen when there were two
+daemon-backed suites. The lock SERIALIZES them, so the bound has to outlast all
+the others put together — and at five suites, each spending most of a minute on
+provisioning before it asserts anything, 300 s is the same order as the work it
+is supposed to survive. It is now 900 s, named `HARNESS_LOCK_WAIT_MS` with the
+arithmetic beside it. Staleness is still the owner PID being gone, so a crashed
+holder is still reaped on the next poll and this timer only bounds honest waiting.

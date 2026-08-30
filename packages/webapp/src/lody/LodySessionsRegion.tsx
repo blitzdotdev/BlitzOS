@@ -76,6 +76,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
       controlUrl: endpoints.lodyControlUrl,
       projectUrl: endpoints.lodyProjectUrl,
       platformUrl: endpoints.lodyPlatformUrl,
+      filesBase: endpoints.filesBase,
     },
     viewer: { name: props.viewerName, avatarUrl: props.viewerAvatarUrl },
     workspaceTitle: props.workspaceTitle,

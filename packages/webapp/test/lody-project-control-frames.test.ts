@@ -129,7 +129,11 @@ describe("local-project control frames", () => {
 
   it("builds the git-state request from the positional helper and unwraps its result", async () => {
     const { fetchImpl, sent } = stubFetch(fixture("response/git-state-github-remote.json"));
-    const bridge = createLodyLocalBridge({ ...endpoints(fetchImpl), syncUrl: "wss://box.invalid/lody/sync" });
+    const bridge = createLodyLocalBridge({
+      ...endpoints(fetchImpl),
+      syncUrl: "wss://box.invalid/lody/sync",
+      filesBase: "https://box.invalid/workspace/",
+    });
     const result = await bridge.ipc.invoke(
       "localProjects.getGitState",
       "lw_4232972aaa2f498ba29fe7e52cb0d928",

@@ -52,6 +52,9 @@ selector) must fully work in GitHub Worktree mode on a box.
    upstream forces it only in their `github` context, ours is
    `local-shared`, and an off pill would edit the `/workspace` clone
    directly. Orchestrator ruling 2026-08-30, open to user veto.
+   *(Phase 6 slice 0 shipped the seed: `webapp/src/lody/workdir-default.ts`
+   writes their GLOBAL preference key once, when it is absent. Their per-project
+   key still wins, so unticking the pill for a repo persists.)*
    *(Phase 5, shipped. Two things the wording did not anticipate: the worktree
    pill is only FORCED in their `github` context, so a `local-shared` session
    runs in the clone itself until the member ticks it — a product decision, not a
@@ -61,11 +64,11 @@ selector) must fully work in GitHub Worktree mode on a box.
    `blitz-term` delivery and stay product-disabled.
 7. **Attachments**: the one adaptation — their cloud-upload fallback is
    Lody-cloud; ours routes browser→box over the existing WebDAV surface.
-   *(Phase 5: BLOCKED, and the only §0 control that is. There is no attachment
-   port to implement this behind — the local fast path is gated on
-   `window.__LODY_ELECTRON__`, which BlitzOS must never set. The exact one-line
-   seam and the WebDAV route behind it are written out in
-   `LODY-RUNTIME-DESIGN.md` §10.4; no vendor hunk is applied.)*
+   *(Phase 5: BLOCKED, and the only §0 control that was. Phase 6 slice 0 shipped
+   it: seam patch 3 widens the one predicate, and
+   `webapp/src/lody/session-attachments.ts` stages the bytes on the box over the
+   existing dufs surface at `/workspace/.blitz-attachments/<sessionId>/` before
+   handing the daemon those paths. `LODY-RUNTIME-DESIGN.md` §10.4, §11.1.)*
 
 ## 1. What Lody is, in BlitzOS terms
 

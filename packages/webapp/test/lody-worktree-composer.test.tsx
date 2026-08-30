@@ -246,13 +246,19 @@ describe.skipIf(!lodyDaemonAvailable())("phase 5: the composer in worktree mode"
     }).catch(() => {
       throw new Error(`worktree pill never enabled; logs: ${logs.slice(-15).join(" || ")}`);
     });
-    // NOT FORCED, and not on by default. §0's bar says "branch picker + FORCED
-    // worktree pill", and `checked disabled` is exactly what the landing renders
-    // — for the `github` context (`chat-landing.tsx:3412`), which is the
-    // bare-mirror source §0.5 does not use. In the `local` context the pill is a
-    // real toggle whose default comes from `readWorkdirModePreference`, so a
-    // BlitzOS session runs IN THE CLONE until it is ticked. Recorded in
-    // `plans/LODY-RUNTIME-DESIGN.md` §10.
+    // ON BY DEFAULT, BUT NOT FORCED — and the two halves have different causes.
+    // §0's bar says "branch picker + FORCED worktree pill", and `checked
+    // disabled` is exactly what the landing renders for the `github` context
+    // (`chat-landing.tsx:3412`), which is the bare-mirror source §0.5 does not
+    // use. In the `local` context the pill is a real toggle whose default comes
+    // from `readWorkdirModePreference` — so it reads CHECKED here because phase
+    // 6 seeds their global preference key (`workdir-default.ts`, §0.5), and it
+    // stays clickable because nothing forces it. Untick and re-tick proves both.
+    expect(pill.getAttribute("data-state")).toBe("checked");
+    await act(async () => {
+      pill.click();
+    });
+    await settle();
     expect(pill.getAttribute("data-state")).toBe("unchecked");
     await act(async () => {
       pill.click();

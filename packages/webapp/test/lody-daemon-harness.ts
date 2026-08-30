@@ -32,7 +32,13 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { createServer as createHttpServer, request as httpRequest, type Server } from "node:http";
+import {
+  createServer as createHttpServer,
+  request as httpRequest,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -78,6 +84,9 @@ export interface LodyHarness {
     controlUrl: string;
     projectUrl: string;
     platformUrl: string;
+    /** The dufs stand-in's base URL, and the box path it serves. */
+    filesBase: string;
+    filesRoot: string;
   };
   daemonLog: () => string;
   stop: () => Promise<void>;
@@ -112,14 +121,81 @@ async function freePort(): Promise<number> {
 }
 
 /**
+ * The dufs stand-in, on the same front door.
+ *
+ * A box serves `/workspace` from dufs behind the same gateway port as `/lody/*`,
+ * and the `+` attachment handoff needs both: the bytes go over WebDAV and the
+ * paths they land at go to the daemon (`webapp/src/lody/session-attachments.ts`).
+ * Three methods is the whole of what that path uses — MKCOL, PUT, DELETE — so
+ * that is the whole of what this answers, with dufs's own rule that MKCOL does
+ * NOT create missing intermediates.
+ */
+function serveWorkspaceDav(
+  filesRoot: string,
+  method: string,
+  relative: string,
+  response: ServerResponse,
+  incoming: IncomingMessage,
+): void {
+  const segments = relative.split("/").filter((segment) => segment !== "").map(decodeURIComponent);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    response.writeHead(400).end();
+    return;
+  }
+  const target = join(filesRoot, ...segments);
+  if (method === "MKCOL") {
+    if (existsSync(target)) {
+      response.writeHead(405).end();
+      return;
+    }
+    if (!existsSync(dirname(target))) {
+      response.writeHead(409).end();
+      return;
+    }
+    mkdirSync(target);
+    response.writeHead(201).end();
+    return;
+  }
+  if (method === "DELETE") {
+    rmSync(target, { force: true, recursive: true });
+    response.writeHead(204).end();
+    return;
+  }
+  if (method !== "PUT") {
+    response.writeHead(405).end();
+    return;
+  }
+  if (!existsSync(dirname(target))) {
+    response.writeHead(409).end();
+    return;
+  }
+  const chunks: Buffer[] = [];
+  incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+  incoming.on("end", () => {
+    writeFileSync(target, Buffer.concat(chunks));
+    response.writeHead(201).end();
+  });
+}
+
+/**
  * The gateway stand-in. `packages/box/gateway/main.go` strips `/lody` and
  * proxies to the bridge socket; so does this, in both the plain-HTTP and the
  * WebSocket-upgrade direction. It carries NO auth: ticket verification and the
  * viewer refusal are the Go gateway's, tested in `gateway/main_test.go`.
  */
-function startGatewayShim(socketPath: string, port: number, log: (line: string) => void): Server {
+function startGatewayShim(
+  socketPath: string,
+  port: number,
+  filesRoot: string,
+  log: (line: string) => void,
+): Server {
   const server = createHttpServer((incoming, response) => {
-    const path = (incoming.url ?? "/").replace(/^\/lody/u, "");
+    const url = incoming.url ?? "/";
+    if (url.startsWith("/workspace/")) {
+      serveWorkspaceDav(filesRoot, incoming.method ?? "GET", url.slice("/workspace/".length), response, incoming);
+      return;
+    }
+    const path = url.replace(/^\/lody/u, "");
     const upstream = httpRequest(
       { socketPath, path, method: incoming.method, headers: incoming.headers },
       (upstreamResponse) => {
@@ -202,8 +278,24 @@ function harnessLockIsStale(): boolean {
   }
 }
 
+/**
+ * How long a suite waits for its turn at the daemon.
+ *
+ * The lock SERIALIZES every daemon-backed suite in the run, so this bound has to
+ * cover all the others put together, not one of them. Phase 5 shipped four such
+ * suites at 300 s; phase 6 adds the sharing relay's, and the slowest of them
+ * spends most of a minute on provisioning alone before it asserts anything. At
+ * five suites the old bound is the same order as the work it is supposed to
+ * outlast, which turns an ordinary slow machine into "another lody harness held
+ * the lock too long" — a message that names the wrong cause.
+ *
+ * Staleness is still the owner PID being gone (below), so a crashed holder is
+ * reaped in the next poll and this timer only ever bounds honest waiting.
+ */
+const HARNESS_LOCK_WAIT_MS = 900_000;
+
 async function acquireHarnessLock(): Promise<() => void> {
-  const deadline = Date.now() + 300_000;
+  const deadline = Date.now() + HARNESS_LOCK_WAIT_MS;
   for (;;) {
     try {
       mkdirSync(HARNESS_LOCK);
@@ -300,7 +392,12 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   });
 
   const port = await freePort();
-  const gateway = startGatewayShim(bridgeSocket, port, (line) => (daemonLog += line));
+  // dufs's document root on a box is `/workspace`; here it is a directory beside
+  // the daemon's, and `filesRoot` below is what keeps the URL and the path the
+  // daemon reads naming the same place.
+  const filesRoot = join(root, "w");
+  mkdirSync(filesRoot, { recursive: true });
+  const gateway = startGatewayShim(bridgeSocket, port, filesRoot, (line) => (daemonLog += line));
   const origin = `http://127.0.0.1:${port}`;
 
   // An ordinary crash or a failed assertion must not leave a daemon holding the
@@ -321,6 +418,8 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       controlUrl: `${origin}/lody/control`,
       projectUrl: `${origin}/lody/project`,
       platformUrl: `${origin}/lody/platform`,
+      filesBase: `${origin}/workspace/`,
+      filesRoot,
     },
     daemonLog: () => daemonLog,
     stop: async () => {

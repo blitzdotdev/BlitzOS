@@ -77,8 +77,9 @@ git diff --stat <subtree-import-commit> -- vendor/lody \
   ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
 ```
 
-Expected after phase 4: exactly FOUR files — the three above with six
-added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2.
+Expected after phase 6: exactly FIVE files — the three above with six
+added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2 and
+`lib/electron-session-file-sender.ts` from seam patch 3.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -127,6 +128,50 @@ upstream, re-apply by wrapping whatever renders in its place; the guard is one
 line on each side and carries no logic. If upstream adds its own suppression
 (the PR, or anything equivalent), delete these hunks and pass the new prop from
 `packages/webapp/src/lody/SessionRailSidebar.tsx`.
+
+### 3. The attachment-sender predicate (phase 6, 2026-08-30)
+
+**One hunk, one file, and it is seam patch 1's idea in a third place.** `+`
+attachments have a local fast path — hand the bytes to the machine that runs the
+session instead of uploading them to Lody cloud — and it is gated on the one
+global BlitzOS must never set:
+
+```diff
+ export const canUseElectronLocalFileSend = (): boolean =>
+-  isElectronRenderer() && Boolean(getIpcServices());
++  (isElectronRenderer() ||
++    (typeof window !== 'undefined' && window.__LODY_LOCAL_BRIDGE__ === true)) &&
++  Boolean(getIpcServices());
+```
+
+| # | File | Line (at `966623d0`) | Upstream anchor | What it gates |
+|---|---|---|---|---|
+| 1 | `packages/components/src/lib/electron-session-file-sender.ts` | 19 | `isElectronRenderer() && Boolean(getIpcServices());` | `localProjects.sendSessionFileLocal`, read by `use-chat-landing-file-draft.ts:104` and `session-chat-input-area.tsx:524` |
+
+The `typeof window` guard is not decoration: `isElectronRenderer()` carries one
+(`lib/electron.ts:5`), and dropping it would make this module throw where it
+previously returned `false`. The declaration this hunk depends on —
+`__LODY_LOCAL_BRIDGE__?: true` in `window-globals.d.ts` — is seam patch 1's
+hunk 6 and is already applied.
+
+Phase 5 recorded this as a BLOCKER rather than applying it
+(`plans/LODY-RUNTIME-DESIGN.md` §10.4), because that phase's brief allowed no new
+hunks. Phase 6 applies it, and the BlitzOS half behind it is
+`packages/webapp/src/lody/session-attachments.ts`: the bytes are staged on the
+box over the existing dufs WebDAV surface at
+`/workspace/.blitz-attachments/<sessionId>/`, the daemon is handed those absolute
+paths, and the staging files are deleted once it has copied them into its blob
+store. No new gateway path, no `webapp-surface.ts` entry, no Go change.
+
+Strictly additive, like seam patch 1: the predicate can only become true where it
+was false, and no upstream build sets the flag. Upstream PR drafted at
+`plans/evidence/lody-attachment-seam-pr.md`; **drop this patch when it merges.**
+
+**Merge conflict drill.** Identical to seam patch 1's: if the guard is reworded,
+the new predicate keeps its meaning and gains the `__LODY_LOCAL_BRIDGE__` arm. If
+upstream replaces the flag with a capability probe over `window.ipc` — the
+alternative the PR sketch names and rejects — drop this hunk and let the probe
+answer, because the BlitzOS bridge does serve the channel.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
@@ -252,14 +297,9 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   `setWorkspaceReposCacheAtom` instead, which is the other half of
   `freshRepositories ?? cachedRepositories`. Candidate upstream PR: treat a local
   project's own remote as sufficient when the workspace has no cloud repo list.
-- **The local attachment fast path is gated on `__LODY_ELECTRON__`.**
-  `canUseElectronLocalFileSend` (`lib/electron-session-file-sender.ts:19`) is
-  `isElectronRenderer() && Boolean(getIpcServices())`, and the flag is the one
-  global BlitzOS must never set (44 unrelated readers). So `+` attachments fall
-  through to `uploadSessionFile` against Lody cloud, which this composition has
-  no account for. **This is the one §0 composer control BlitzOS cannot serve
-  without a vendor hunk**; the proposal is recorded in
-  `plans/LODY-RUNTIME-DESIGN.md` §10.4 and no hunk is applied.
+- ~~**The local attachment fast path is gated on `__LODY_ELECTRON__`.**~~ Phase 6
+  applied the hunk at seam patch 3 and drafted the upstream PR
+  (`plans/evidence/lody-attachment-seam-pr.md`).
 - **`acp-extension-dsh` is an empty submodule.** Aliased to a local stub; see
   `UPSTREAM.md`.
 - **`packages/components/vite-renderer-bundle-aliases.ts` cannot be imported.**
