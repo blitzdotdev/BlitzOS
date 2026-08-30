@@ -35,7 +35,39 @@ export interface StartLodySessionInput {
   agentType: string;
   prompt: string;
   title?: string;
+  /**
+   * The session's `ProjectRef`, for a worktree session (plan §6.4).
+   *
+   * It belongs in the ACCEPT UNIT and not in a follow-up patch, because the
+   * daemon reads it off session meta on three separate paths: the dispatch
+   * watcher decides whether to cut a worktree from it, the removal preflight
+   * filters on `project.localProjectId` (`local-project-removal.ts:23`), and
+   * turn post-processing gates diff stats on `resolveProjectGitHubRepo(project)`
+   * (`session-execution-service.ts:2351`). A session that existed for a moment
+   * without it would be a chat session to all three.
+   *
+   * Absent for a plain chat, which is what a session with no project is.
+   */
+  project?: LodyProjectRef;
 }
+
+/**
+ * `ProjectRefSchema`'s `local` member (`message-schemas.ts:510`), stated on our
+ * side of the vendor type seam. `github` is not offered: §0's worktree v1 is
+ * `local-shared` only, cut off the `/workspace/<repo>` clone the box already
+ * has, so nothing here ever asks the daemon to mirror a remote.
+ */
+export type LodyProjectRef = {
+  kind: "local";
+  localProjectId: string;
+  /** The base branch the worktree is cut from. */
+  branch?: string;
+  /** Derived by the daemon from the clone's remote and reported on
+   * `local-project/git-state`; copied here so the rail groups the session under
+   * GitHub Worktrees and so diff stats run. */
+  githubRepoFullName?: string;
+  useWorktree?: boolean;
+};
 
 export interface StartedLodySession {
   sessionId: string;
@@ -99,8 +131,9 @@ export async function startLodySession(
   // close between acceptance and the first turn must never make the session look
   // empty, because an empty session is deleted rather than archived.
   const base = { ...patch, agentConfigId: input.agentConfigId, lastMessageAt: getServerNow() };
-  const meta =
+  const titled =
     input.title === undefined ? base : { ...base, title: input.title, titleSource: "user" };
+  const meta = input.project === undefined ? titled : { ...titled, project: { ...input.project } };
 
   const roomId = getSessionRoomId(input.sessionId);
   // Pre-create the stream so the first write has somewhere to converge. Awaited
