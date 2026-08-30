@@ -59,7 +59,11 @@ interface Claim {
   write: string[];
 }
 
-async function until<T>(what: string, read: () => T | undefined, timeoutMs = 20_000): Promise<T> {
+/** The default bound is a WAIT, not an assertion. Five daemon-backed suites
+ * share one machine and one daemon lock, so a room that answers in a second
+ * alone can take twenty inside a full `npm test`. Raised from 20 s after this
+ * suite's `beforeAll` timed out there while passing on its own. */
+async function until<T>(what: string, read: () => T | undefined, timeoutMs = 60_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = read();
@@ -333,15 +337,18 @@ describe.skipIf(!lodyDaemonAvailable())("phase 6: a grantee on the real relay", 
     // it, so the wait is for the title to exist at all — asking the room IS the
     // probe, exactly as the transcript wait above is.
     const titleKey = `["m","session-${sessionId}","title"]`;
+    // Each attempt is a fresh socket, a join and a close, so the interval is
+    // half a second rather than a quarter: this suite shares a machine with four
+    // other daemon-backed files and the poll is the expensive half of the wait.
     let entries: Record<string, unknown> = {};
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 120_000;
     for (;;) {
       entries = await readMeta(ownerClaim("read"));
       if (titleKey in entries) break;
       if (Date.now() > deadline) {
         throw new Error(`the granted session's title never reached the meta room; saw ${Object.keys(entries).join(", ")}`);
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
     const keys = Object.keys(entries);
     // What a grantee sees: their session, and the machine document without
@@ -367,7 +374,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 6: a grantee on the real relay", 
     });
     expect(Object.keys(adminEntries).filter((key) => key.includes(otherSessionId)).length)
       .toBeGreaterThan(0);
-  }, 120_000);
+  }, 240_000);
 
   it("refuses a room the claim does not name, on the real daemon", async () => {
     const client = await peer(ownerClaim("read"));
