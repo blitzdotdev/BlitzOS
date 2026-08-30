@@ -36,6 +36,17 @@ export interface StartLodySessionInput {
   prompt: string;
   title?: string;
   /**
+   * The permission mode this session's first turn runs under.
+   *
+   * Absent means the agent's own default, which for claude is `auto` — a mode
+   * whose classifier answers permission prompts on the member's behalf
+   * (`shared/src/ai.ts:402`). `'default'` is the one their UI calls Manual, and
+   * it is what makes a permission request reach a human at all. In the product
+   * the composer's permission selector supplies it; a caller without a composer
+   * has to say it here or inherit `auto` silently.
+   */
+  modeId?: string;
+  /**
    * The session's `ProjectRef`, for a worktree session (plan §6.4).
    *
    * It belongs in the ACCEPT UNIT and not in a follow-up patch, because the
@@ -101,14 +112,24 @@ export async function startLodySession(
   // SAFETY: `buildInitialHistoryEntry` returns Lody's `SessionHistoryInput | null`;
   // the seam erases that to an untyped value, and `builderObject` re-checks that
   // what arrived is an object before any field is read.
-  const built = buildInitialHistoryEntry({
+  const entryArgs: {
+    userId: string;
+    timestamp: string;
+    cliType: string;
+    agentType: string;
+    prompt: string;
+    inputBlocks: undefined;
+    modeId?: string;
+  } = {
     userId: input.userId,
     timestamp,
     cliType: "builtin",
     agentType: input.agentType,
     prompt: input.prompt,
     inputBlocks: undefined,
-  }) as JsonValue;
+  };
+  if (input.modeId !== undefined) entryArgs.modeId = input.modeId;
+  const built = buildInitialHistoryEntry(entryArgs) as JsonValue;
   if (built === null) throw new LodySessionStartError("lody_session_empty_prompt");
   const entry = builderObject(built, "history entry");
   const userTurnId = builderString(entry.id, "user turn id");

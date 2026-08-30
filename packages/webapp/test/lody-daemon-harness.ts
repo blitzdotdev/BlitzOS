@@ -88,8 +88,29 @@ export interface LodyHarness {
     filesBase: string;
     filesRoot: string;
   };
+  /**
+   * The same box, addressed the way a GRANTEE addresses it
+   * (plans/LODY-SHARING.md §2.2).
+   *
+   * In production the control plane mints a ticket carrying the `share` claim
+   * and the Go gateway verifies it, strips the `/shared/:membershipId` prefix
+   * and sets `X-Blitz-Lody-Share` on the way to the bridge. A browser cannot set
+   * that header itself — a WebSocket upgrade from a page carries no custom
+   * headers at all, which is §2.2's own argument for a path prefix — so the shim
+   * does the gateway's half here, and only that half: verification is
+   * `gateway/main_test.go`'s.
+   */
+  sharedEndpoints: (claim: LodyShareClaim) => LodyHarness["endpoints"];
   daemonLog: () => string;
   stop: () => Promise<void>;
+}
+
+/** The verified claim the gateway forwards. Same four keys as the wire type. */
+export interface LodyShareClaim {
+  target: string;
+  scope: "sessions" | "all";
+  read: string[];
+  write: string[];
 }
 
 function waitFor(what: string, check: () => boolean, timeoutMs: number): Promise<void> {
@@ -183,10 +204,25 @@ function serveWorkspaceDav(
  * WebSocket-upgrade direction. It carries NO auth: ticket verification and the
  * viewer refusal are the Go gateway's, tested in `gateway/main_test.go`.
  */
+const SHARE_HEADER = "x-blitz-lody-share";
+/** `/shared/<id>/lody/...` → the claim registered under `<id>`, and the box path
+ * without the prefix. `null` for an ordinary request. */
+function sharedRequest(
+  url: string,
+  claims: Map<string, LodyShareClaim>,
+): { path: string; claim: LodyShareClaim } | null {
+  const match = /^\/shared\/([^/]+)(\/.*)$/u.exec(url);
+  if (match === null) return null;
+  const claim = claims.get(match[1] ?? "");
+  if (claim === undefined) return null;
+  return { path: (match[2] ?? "/").replace(/^\/lody/u, ""), claim };
+}
+
 function startGatewayShim(
   socketPath: string,
   port: number,
   filesRoot: string,
+  claims: Map<string, LodyShareClaim>,
   log: (line: string) => void,
 ): Server {
   const server = createHttpServer((incoming, response) => {
@@ -195,9 +231,15 @@ function startGatewayShim(
       serveWorkspaceDav(filesRoot, incoming.method ?? "GET", url.slice("/workspace/".length), response, incoming);
       return;
     }
-    const path = url.replace(/^\/lody/u, "");
+    const shared = sharedRequest(url, claims);
+    const path = shared === null ? url.replace(/^\/lody/u, "") : shared.path;
+    // Set, never merged: the real gateway strips any inbound copy first, so a
+    // browser's own header can never reach the bridge.
+    const headers = { ...incoming.headers };
+    delete headers[SHARE_HEADER];
+    if (shared !== null) headers[SHARE_HEADER] = JSON.stringify(shared.claim);
     const upstream = httpRequest(
-      { socketPath, path, method: incoming.method, headers: incoming.headers },
+      { socketPath, path, method: incoming.method, headers },
       (upstreamResponse) => {
         response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
         // A refusal is the interesting case and its body is the diagnosis, so
@@ -222,9 +264,13 @@ function startGatewayShim(
     incoming.pipe(upstream);
   });
   server.on("upgrade", (incoming, socket, head) => {
-    const path = (incoming.url ?? "/").replace(/^\/lody/u, "");
+    const shared = sharedRequest(incoming.url ?? "/", claims);
+    const path = shared === null ? (incoming.url ?? "/").replace(/^\/lody/u, "") : shared.path;
     const upstream = createConnection(socketPath, () => {
-      const headers = Object.entries(incoming.headers)
+      const inbound = { ...incoming.headers };
+      delete inbound[SHARE_HEADER];
+      if (shared !== null) inbound[SHARE_HEADER] = JSON.stringify(shared.claim);
+      const headers = Object.entries(inbound)
         .map(([name, value]) => `${name}: ${Array.isArray(value) ? value.join(", ") : String(value)}`)
         .join("\r\n");
       upstream.write(`GET ${path} HTTP/1.1\r\n${headers}\r\n\r\n`);
@@ -409,7 +455,8 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   // daemon reads naming the same place.
   const filesRoot = join(root, "w");
   mkdirSync(filesRoot, { recursive: true });
-  const gateway = startGatewayShim(bridgeSocket, port, filesRoot, (line) => (daemonLog += line));
+  const shareClaims = new Map<string, LodyShareClaim>();
+  const gateway = startGatewayShim(bridgeSocket, port, filesRoot, shareClaims, (line) => (daemonLog += line));
   const origin = `http://127.0.0.1:${port}`;
 
   // An ordinary crash or a failed assertion must not leave a daemon holding the
@@ -432,6 +479,23 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       platformUrl: `${origin}/lody/platform`,
       filesBase: `${origin}/workspace/`,
       filesRoot,
+    },
+    sharedEndpoints: (claim) => {
+      const membershipId = `mem-${shareClaims.size + 1}`;
+      shareClaims.set(membershipId, claim);
+      const prefix = `${origin}/shared/${membershipId}`;
+      return {
+        syncUrl: `ws://127.0.0.1:${port}/shared/${membershipId}/lody/sync`,
+        rpcUrl: `${prefix}/lody/rpc`,
+        controlUrl: `${prefix}/lody/control`,
+        projectUrl: `${prefix}/lody/project`,
+        platformUrl: `${prefix}/lody/platform`,
+        // dufs is not reachable with a share claim at all — the gateway's path
+        // allowlist refuses everything but `/lody/*` — so this is the shape and
+        // not a door. A shared surface never stages an attachment.
+        filesBase: `${prefix}/workspace/`,
+        filesRoot,
+      };
     },
     daemonLog: () => daemonLog,
     stop: async () => {

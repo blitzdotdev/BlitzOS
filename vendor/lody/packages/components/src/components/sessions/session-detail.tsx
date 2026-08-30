@@ -5555,6 +5555,7 @@ const SessionDetail = ({
       workspaceSession: activeSession,
       className: 'h-full',
       hideHeader: true,
+      readOnly,
       syncEnabled: isActive || pendingForkSourceId !== undefined,
       isVisible,
       onFileDiffClick: handleOpenFileDiffForChat,

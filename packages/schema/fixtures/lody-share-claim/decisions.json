@@ -250,27 +250,6 @@
       },
       "verdict": "refuse",
       "note": "Not a session document either, and `scope: \"all\"` is over SESSIONS."
-    },
-    {
-      "claim": "rw",
-      "frame": {
-        "type": "update",
-        "protocolVersion": 7,
-        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
-        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
-        "room": {
-          "scope": "meta"
-        },
-        "payload": {
-          "kind": "flock-json",
-          "bundle": {
-            "version": 1,
-            "entries": {}
-          }
-        }
-      },
-      "verdict": "drop",
-      "note": "Read on `meta`, write on none. §0.1 enumerates what a co-driver may do — prompt, steer, cancel, answer a permission — and every one of those is a session-document write or a machine RPC. Renaming, archiving and pinning are meta writes and are not on that list."
     }
   ],
   "requests": [
@@ -910,6 +889,130 @@
         }
       },
       "note": "`scope: \"all\"` is forwarded byte-for-byte. A workspace admin already holds implicit read-only on every session, so the room leaks nothing they are not entitled to — and the frame is never re-serialized, so it stays the daemon's own bytes."
+    }
+  ],
+  "metaWrites": [
+    {
+      "claim": "rw",
+      "from": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-beta\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-1"
+              },
+              "[\"m\",\"session-sess-beta\",\"lastMessageAt\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": 1788050131674
+              },
+              "[\"m\",\"session-sess-beta\",\"title\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "renamed by a co-driver"
+              },
+              "[\"m\",\"session-sess-beta\",\"isArchived\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              },
+              "[\"m\",\"session-sess-alpha\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-2"
+              },
+              "[\"e\",\"session-sess-beta\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": true
+              }
+            }
+          }
+        }
+      },
+      "to": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-beta\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-1"
+              },
+              "[\"m\",\"session-sess-beta\",\"lastMessageAt\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": 1788050131674
+              }
+            }
+          }
+        }
+      },
+      "note": "`latestUserMsgId` is the DURABLE DISPATCH POINTER — the RPC that asks a machine to run a turn is only an accelerator — so a co-driver who may prompt must be able to write it. Withheld in the same frame: a rename and an archive on the session they may drive, every field on a session they may only read, and an existence record."
+    },
+    {
+      "claim": "ro",
+      "from": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-alpha\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-3"
+              }
+            }
+          }
+        }
+      },
+      "to": null,
+      "note": "A read-only grantee writes no metadata at all, so nothing survives and the frame is dropped rather than refused — the same rule that drops their document writes."
+    },
+    {
+      "claim": "admin",
+      "from": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "meta"
+        },
+        "payload": {
+          "kind": "flock-json",
+          "bundle": {
+            "version": 1,
+            "entries": {
+              "[\"m\",\"session-sess-alpha\",\"latestUserMsgId\"]": {
+                "c": "1788050131674,0,b70fc6db",
+                "d": "turn-4"
+              }
+            }
+          }
+        }
+      },
+      "to": null,
+      "note": "`scope: \"all\"` is implicit READ-ONLY over every session and carries no write list, so the same predicate that decides a document write decides this one, and it never reads `scope`."
     }
   ]
 }

@@ -221,6 +221,26 @@ const MACHINE_META_SHARE_FIELDS = new Set([
 // and a reader that finds it empty are not the same reader.
 const MACHINE_SESSIONS_FIELD = "sessions";
 
+// The session-metadata fields a READ-WRITE grantee may write, and the only ones.
+//
+// `latestUserMsgId` is the DURABLE DISPATCH POINTER: the RPC that asks a machine
+// to run a turn is only an accelerator, and the pointer is what the daemon's
+// dispatch watcher recovers from (`use-session-actions.ts:858`). A co-driver who
+// may prompt must be able to write it, or their prompt lands in the document and
+// nothing ever runs it. `lastMissingHistoryUserMsgId` is cleared in the same
+// patch, and `lastMessageAt` is what keeps the session from reading as empty.
+//
+// Everything else is withheld, and the withheld ones are the point: `title`,
+// `isArchived`, `isPinned`, `agentConfigId`, `status` and `project` are the
+// session's own identity and lifecycle. §0.1 lets a co-driver prompt, steer,
+// cancel and answer a permission request; renaming, archiving and re-pointing
+// somebody else's session at another agent are not on that list.
+const SESSION_META_SHARE_WRITE_FIELDS = new Set([
+  "latestUserMsgId",
+  "lastMissingHistoryUserMsgId",
+  "lastMessageAt",
+]);
+
 /** The verified claim, or null for an ordinary request. */
 function parseShare(headerValue) {
   if (typeof headerValue !== "string" || headerValue === "") return null;
@@ -260,22 +280,22 @@ function sessionLevel(share, sessionId) {
 /**
  * What a claim may do in one room.
  *
- * `meta` is READ for every claim and WRITE for none. For `scope: "sessions"` it
- * is read through the projection below — the room names every document on the
- * box, and "opt-in per session" means a grantee learns about the ones they were
- * granted and no others. For `scope: "all"` it is read whole.
+ * `meta` is READ for every claim and WRITE only through the field allowlist
+ * above. For `scope: "sessions"` it is read through the projection below — the
+ * room names every document on the box, and "opt-in per session" means a grantee
+ * learns about the ones they were granted and no others. For `scope: "all"` it
+ * is read whole and still written narrowly.
  *
- * Never write, for either: §0.1 enumerates what a read-write co-driver may do —
- * prompt, steer, cancel, answer a permission request — and every one of those is
- * a write to a SESSION document or a machine RPC. Renaming, archiving and
- * pinning are meta writes and are not on that list.
+ * "write" here means "the frame may be judged entry by entry", which is what
+ * `projectMetaWrite` then does. A whole-room verdict cannot express this room:
+ * one bundle carries records for many documents and many fields.
  *
  * `flock-doc` stays admin-only. The machine Flock carries the box's registered
  * local projects, which is the owner's repository list.
  */
 function roomLevel(share, room) {
   if (room === null || typeof room !== "object" || Array.isArray(room)) return "none";
-  if (room.scope === "meta") return "read";
+  if (room.scope === "meta") return "write";
   if (room.scope === "flock-doc") return share.scope === "all" ? "read" : "none";
   if (room.scope !== "doc") return "none";
   return sessionLevel(share, sessionIdForDoc(room.docId));
@@ -328,6 +348,35 @@ function projectMetaBundle(share, bundle) {
   return { ...bundle, entries: kept };
 }
 
+/**
+ * One meta-flock bundle a CLIENT sent, narrowed to what the claim may write.
+ *
+ * Returns `null` when nothing survives, which the caller reports as a drop —
+ * silently, like every other refused write, because a CRDT peer told its write
+ * failed tears the room down.
+ */
+function projectMetaWrite(share, bundle) {
+  if (bundle === null || typeof bundle !== "object" || Array.isArray(bundle)) return null;
+  const entries = bundle.entries;
+  if (entries === null || typeof entries !== "object" || Array.isArray(entries)) return null;
+  const kept = {};
+  let keptAny = false;
+  for (const [encodedKey, record] of Object.entries(entries)) {
+    let key;
+    try {
+      key = JSON.parse(encodedKey);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(key) || key.length !== 3 || key[0] !== "m") continue;
+    if (!SESSION_META_SHARE_WRITE_FIELDS.has(key[2])) continue;
+    if (sessionLevel(share, sessionIdForDoc(key[1])) !== "write") continue;
+    kept[encodedKey] = record;
+    keptAny = true;
+  }
+  return keptAny ? { ...bundle, entries: kept } : null;
+}
+
 /** A server frame on its way to a shared connection, projected if it carries a
  * meta bundle and returned untouched otherwise.
  *
@@ -373,6 +422,11 @@ function shareVerdict(share, frame) {
     case "join":
       return roomLevel(share, frame.room) === "none" ? "refuse" : "forward";
     case "update":
+      // A meta write is judged entry by entry rather than room by room, so it
+      // is neither forwarded nor dropped whole. See `projectMetaWrite`.
+      if (frame.room !== null && typeof frame.room === "object" && frame.room.scope === "meta") {
+        return "project";
+      }
       return roomLevel(share, frame.room) === "write" ? "forward" : "drop";
     // `machine-monitor` is machine-level telemetry, not session state, and no
     // share carries it. Anything else is a frame this build does not know.
@@ -626,10 +680,14 @@ function bridge(ws, share) {
   upstream.on("connect", () => {
     ws.on("message", (data) => {
       const frame = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (share !== null && !forwardClientFrame(ws, share, frame, () => (dropped += 1), () => (refused += 1))) {
+      if (share === null) {
+        upstream.write(frame);
+        upstream.write("\n");
         return;
       }
-      upstream.write(frame);
+      const judged = judgeClientFrame(ws, share, frame, () => (dropped += 1), () => (refused += 1));
+      if (judged === null) return;
+      upstream.write(judged);
       upstream.write("\n");
     });
   });
@@ -682,9 +740,9 @@ function projectServerLine(share, text) {
   return projected === decoded ? text : JSON.stringify(projected);
 }
 
-/** True when the frame may reach the daemon. A refusal is answered here; a drop
- * is silent by design (see `shareVerdict`). */
-function forwardClientFrame(ws, share, frame, onDrop, onRefuse) {
+/** The bytes that may reach the daemon, or `null` for a frame that may not.
+ * A refusal is answered here; a drop is silent by design (see `shareVerdict`). */
+function judgeClientFrame(ws, share, frame, onDrop, onRefuse) {
   let decoded = null;
   try {
     decoded = JSON.parse(frame.toString("utf8"));
@@ -692,14 +750,30 @@ function forwardClientFrame(ws, share, frame, onDrop, onRefuse) {
     decoded = null;
   }
   const verdict = shareVerdict(share, decoded);
-  if (verdict === "forward") return true;
+  if (verdict === "forward") return frame;
+  if (verdict === "project") {
+    const payload = decoded.payload;
+    if (payload === null || typeof payload !== "object" || payload.kind !== "flock-json") {
+      onDrop();
+      return null;
+    }
+    const bundle = projectMetaWrite(share, payload.bundle);
+    if (bundle === null) {
+      onDrop();
+      return null;
+    }
+    return Buffer.from(
+      JSON.stringify({ ...decoded, payload: { ...payload, bundle } }),
+      "utf8",
+    );
+  }
   if (verdict === "refuse") {
     onRefuse();
     ws.send(JSON.stringify(roomForbiddenFrame(decoded)));
-    return false;
+    return null;
   }
   onDrop();
-  return false;
+  return null;
 }
 
 fs.mkdirSync(path.dirname(listenPath), { recursive: true });

@@ -669,17 +669,24 @@ loro build is needed on the box.**
 **One box at a time (§6.3), plus a per-document `meta` projection at the bridge.
 The four vendor changes of §6.1 are NOT taken, and stay not taken.**
 
-- The grantee's own surface keeps its runtime and keeps owning the rail; a shared
-  session mounts a SECOND `SessionSurface`, keyed by the owner's membership,
-  against the owner's box. The renderer therefore still sees exactly one local
-  machine per runtime, which is the whole reason §6.1's four changes existed.
-- Two surfaces live at once rather than one being torn down, which §6.3 did not
-  consider. It costs a second WebSocket, repo and WASM instance while a shared
-  session is open — the price §6.3 already accepted for a switch — and it buys
-  back the thing §6.3 listed as the cost of its own answer: the rail keeps
-  showing the grantee's own sessions while they read somebody else's.
-- The two repos cannot collide in IndexedDB: a repo is keyed by workspace id, and
-  the owner's daemon workspace is not the grantee's.
+- Opening a shared session tears the runtime down and rebuilds it against the
+  owner's endpoints, keyed by the owner's membership. The renderer therefore
+  still sees exactly one local machine, which is the whole reason §6.1's four
+  changes existed.
+- **EXACTLY ONE SURFACE IS MOUNTED AT A TIME, and that is not a preference.**
+  Phase 7 first built two — the grantee's own surface hidden but alive, so the
+  rail kept its session list — and it does not work, because `window.ipc` is one
+  global and `sendIpc` re-reads it on EVERY call
+  (`lib/electron-ipc-client.ts`). A second mounted surface does not get a second
+  bridge; it takes the first one's. Measured, not reasoned about: with both
+  alive, the OWNER's own `session/dispatch-turn` came back `share_forbidden`,
+  having been routed to the grantee's endpoints. §6.1 called the singleton a
+  reason not to mount two machines in one runtime; it is equally a reason not to
+  mount two runtimes in one document.
+- So §6.3's cost is paid as §6.3 wrote it: the rail's vendored zone lists
+  whichever box is mounted. What keeps that navigable is that the native
+  sections — "Shared with you" and Terminals — are PROPS, so they follow the
+  mount, and "+ New session" goes back to the grantee's own landing.
 
 What the projection keeps, and what it withholds, is a fixture table rather than
 prose: `packages/schema/fixtures/lody-share-claim/decisions.json`,
@@ -690,11 +697,17 @@ Three consequences, each recorded because each is a place the design changed:
 
 1. **§4.2's `meta` row is superseded.** The room is `read` for BOTH scopes now,
    not admin-only.
-2. **`meta` is write for NOBODY**, `rw` included. §0.1 enumerates what a
-   co-driver may do — prompt, steer, cancel, answer a permission request — and
-   every one is a session-document write or a machine RPC. Rename, archive and
-   pin are meta writes, so an RW grantee's rename converges away rather than
-   landing; the relay's ACL is what says so.
+2. **`meta` is write for a THREE-FIELD allowlist and nothing else.** The first
+   answer here was "write for nobody", on the reasoning that §0.1's verbs are all
+   session-document writes or machine RPCs. That is wrong about one of them, and
+   a live turn is what showed it: `latestUserMsgId` is the DURABLE DISPATCH
+   POINTER (`use-session-actions.ts:858`), so a co-driver who may prompt must be
+   able to write it or their prompt lands in the document and nothing runs it.
+   The allowlist is `latestUserMsgId`, `lastMissingHistoryUserMsgId` (cleared in
+   the same patch) and `lastMessageAt`. `title`, `isArchived`, `isPinned`,
+   `agentConfigId`, `status` and `project` stay withheld — renaming and archiving
+   somebody else's session are not on §0.1's list — so an RW grantee's rename
+   converges away rather than landing, and the relay's ACL is what says so.
 3. **§4.2's "server → client needs no filter" now has exactly one exception.**
    The reasoning held and still holds for every other room: the daemon addresses
    frames to the peers subscribed to a room, and a grantee never joins one the
@@ -711,6 +724,15 @@ Three consequences, each recorded because each is a place the design changed:
 | the session's title, for the rail row | one `join {scope:"meta"}` on the owner's box, read as JSON | `webapp/src/lody/shared-sessions.ts`. No `LoroRepo`, no WASM, no IndexedDB: the bundle is JSON and the titles are `["m","session-<id>","title"]`. This is also the cheapest possible proof that the projection works, and it runs on every rail render. |
 | the composer's model / mode / effort selectors | **nothing — they are absent** | Those are `acpCapability` rows in the machine FLOCK, and `flock-doc` stays admin-only because the same document carries the owner's registered local projects. An RW grantee's composer therefore sends with the session's own last configuration (`resolveSessionConversationConfig` reads the session document, not the flock) and offers no selector. Named here rather than discovered later. |
 | the agent-config bootstrap | **skipped** | It writes to the owner's machine Flock, which the ACL refuses. `SessionSurface` takes `shared` and does not mount `LodyAgentConfigBootstrap` under it. |
+| the durable dispatch pointer | the metadata write allowlist (§10.2 item 2) | Found by a live turn, not by reading. |
+
+**The one follow-up this scopes.** Letting a grantee read the machine FLOCK
+through the same kind of projection — keep `agentConfig`, `agentConfigIndex` and
+`acpCapability`, withhold `localProject` and the command families — would give an
+RW co-driver their model, effort and permission-mode selectors back. The room's
+payload is the same `flock-json` shape, so the code is the same JSON filter. It
+is not phase 7 because nothing in §0.1 needs it: a co-driver's send inherits the
+session's own last configuration, which is the owner's.
 
 ### 10.4 Read-only had to become a vendor prop
 
@@ -734,12 +756,43 @@ class is computed by `getSessionChatInputAreaShellClassName` out of tailwind
 utilities — so it would key off layout position and break silently at the next
 merge, which is the failure mode `BLITZ-PATCHES.md` exists to prevent.
 
-### 10.5 Exit tests
+### 10.5 Exit tests: what is proven, and what is not
 
 | # | What | Where |
 |---|---|---|
-| 1 | the projection: every entry kind, both scopes, and an unshared connection's bytes unchanged | `box/guest-tests/test/lody-bridge-share.test.ts` (free) |
-| 2 | the shared endpoint builder and the shared chat address round-trip | `webapp/test/lody-shared-endpoints.test.ts` (free) |
-| 3 | the rail's "Shared with you" section draws a received grant, names its level, and opens it | `webapp/test/lody-shared-rail.test.tsx` (free) |
-| 4 | a grantee reads a real session's title out of the projected meta room, and cannot read an ungranted one's | `webapp/test/lody-sharing-relay.test.ts` (daemon-gated, free) |
-| 5 | an RW grantee answers a permission request through the rendered card, and the agent acts on it | `webapp/test/lody-shared-surface.test.tsx`, behind `BLITZ_LODY_LIVE_TURN=1` |
+| 1 | the projection — every entry kind, both scopes, the metadata write allowlist, and an unshared connection's bytes unchanged | `box/guest-tests/test/lody-bridge-share.test.ts` (free) |
+| 2 | the shared endpoint builder and the shared chat address round-trip, with the rail's title reader pinned to the bridge's own corpus | `webapp/test/lody-shared-endpoints.test.ts` (free) |
+| 3 | the rail's "Shared with you" section: a row per received grant, its level, its title off the owner's box, and what a click resolves to | `webapp/test/lody-shared-rail.test.tsx` (free) |
+| 4 | a grantee reads a real session's title out of the projected meta room and cannot read an ungranted one's; an admin reads both | `webapp/test/lody-sharing-relay.test.ts` (daemon-gated, free) |
+| 5 | the grantee's MOUNTED surface: another member's session renders — title, transcript — from their box, with a composer for `rw` and none for `ro` | `webapp/test/lody-shared-surface.test.tsx` (daemon-gated, free) |
+| 6 | an RW grantee answers a permission request through the rendered card, and the agent acts on it | same file, behind `BLITZ_LODY_LIVE_TURN=1` |
+
+**Proven live (three paid turns).** Each bought a finding the free path could not
+reach, and the last one did not finish.
+
+| Turn | What it bought |
+|---|---|
+| 1 | **The daemon cancels a permission request when no peer is on the room.** With the turn dispatched before the grantee's surface mounted, the daemon held its turn history writes waiting for the user turn to sync, gave up after 20 s, and then cancelled the request itself: "could not be attached to an active assistant entry; cancelling to avoid waiting for an unobservable permission outcome". The agent asks and nobody can answer. So the order is load-bearing: **attach, then dispatch** — and the dispatch has to be plain HTTP to the owner's own `/rpc`, because the owner's runtime cannot be alive at the same time as the grantee's surface (§10.2). |
+| 2 | **The card renders on a grantee's mounted surface, for a turn another member dispatched.** Seen: `Permission Required`, `Write GRANTEE_ANSWERED.md`. This is the claim phase 6 made on paper and §9.1 named as unproven. The turn also found the `latestUserMsgId` hole in the metadata ACL (§10.2). |
+| 3 | **The card's real options, and where they live in the DOM**: `Deny`, `Allow Once`, `Always Allow`. The card's header and its body are separate children, so "the last element containing the header text" is the header, which has no buttons — which is why turn 3 clicked nothing. |
+
+**NOT proven, and named rather than implied: the answer's round trip.** That the
+daemon accepts a permission outcome authored by a non-owner peer, and that the
+agent then acts on it, is still unmeasured. Turn 2 clicked an approval and the
+daemon did not act inside five minutes; turn 3 reproduced the card but the test's
+own selector never reached a button. The two are not distinguishable from here:
+the selector is now fixed, and whether what remains is a relay problem or was
+only ever the selector is one run away.
+
+The mechanism itself is proven everywhere else it can be: the outcome is a plain
+session-document write (`workspace-writer-impl.ts:151`), `lody-sharing-relay.test.ts`
+proves that exact write lands for a read-write claim and is dropped for a
+read-only one, and `lody-bridge-share.test.ts` proves the relay forwards it. What
+a fourth turn would add is the daemon's side of it. The assertion is written and
+gated in `lody-shared-surface.test.tsx`; the phase-7 budget was two turns and
+three were spent, so it stops here.
+
+One flake worth recording for whoever spends that turn: **the card is gated on
+PRESENCE** (§8.6), and presence lapses. Between turn 2 and turn 3 the same card
+was present in one run and gone in the other at the same point. Poll for it
+rather than reading once.

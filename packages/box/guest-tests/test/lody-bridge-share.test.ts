@@ -64,11 +64,21 @@ interface MetaProjection {
   note: string;
 }
 
+/** One client frame carrying meta writes, and the frame the daemon may see of
+ * it. `to: null` means nothing survived and the frame is dropped. */
+interface MetaWrite {
+  claim: string;
+  from: Record<string, unknown>;
+  to: Record<string, unknown> | null;
+  note: string;
+}
+
 const claims = fixture<Record<string, ClaimFixture>>("claims.json");
 const decisions = fixture<{
   frames: FrameDecision[];
   requests: RequestDecision[];
   metaProjections: MetaProjection[];
+  metaWrites: MetaWrite[];
 }>("decisions.json");
 
 function headerFor(name: string): string {
@@ -250,6 +260,27 @@ describe("blitz-lody-bridge share ACL", () => {
       const label = `${projection.claim}: ${projection.note}`;
       expect(back.length, label).toBe(1);
       expect(JSON.parse(back[0] ?? "{}"), label).toEqual(projection.to);
+      socket.close();
+    }
+  }, 60_000);
+
+  it("narrows a metadata WRITE to the fields a co-driver may set", async () => {
+    expect(decisions.metaWrites.length).toBeGreaterThan(0);
+    for (const write of decisions.metaWrites) {
+      const socket = await openShared(write.claim);
+      const connection = dataPlaneConnections.at(-1);
+      if (connection === undefined) throw new Error("the bridge opened no daemon socket");
+      const back: string[] = [];
+      socket.on("message", (data) => back.push(data.toString()));
+      socket.send(JSON.stringify(write.from));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const label = `${write.claim}: ${write.note}`;
+      expect(connection.lines.map((line) => JSON.parse(line)), label).toEqual(
+        write.to === null ? [] : [write.to],
+      );
+      // Dropped, never refused: a peer told its write failed tears the room
+      // down and retries.
+      expect(back, label).toEqual([]);
       socket.close();
     }
   }, 60_000);

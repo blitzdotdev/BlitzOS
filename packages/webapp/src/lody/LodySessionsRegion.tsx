@@ -110,49 +110,53 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
   if (!LODY_SESSIONS_ENABLED || endpoints === null || !everRequested) return null;
 
   const viewer = { name: props.viewerName, avatarUrl: props.viewerAvatarUrl };
-  const surfaceProps = {
-    endpoints: lodyEndpoints(endpoints),
-    viewer,
-    workspaceTitle: props.workspaceTitle,
-    // Hidden, not unmounted, while a shared session is open: this surface owns
-    // the rail's portal host, so unmounting it would take the rail's session
-    // list away for as long as the member reads somebody else's session.
-    hidden: !props.visible || sharedOpen !== null,
-    railHost: props.railHost,
-    rail,
-  };
+  // EXACTLY ONE SURFACE IS MOUNTED, and this is the constraint that decides it:
+  // the vendored renderer's local plane is a SINGLETON on `window.ipc`
+  // (plans/LODY-SHARING.md §6.1). `sendIpc` re-reads that global on every call,
+  // so a second mounted surface does not get a second bridge — it takes the
+  // first one's. Measured, not reasoned about: with both mounted, the OWNER's
+  // own `session/dispatch-turn` came back `share_forbidden`, because it had been
+  // routed to the grantee's box.
+  //
+  // So opening a shared session tears the runtime down and rebuilds it against
+  // the owner's endpoints, which is §6.3's answer taken as written, with the
+  // cost it names: the rail's vendored zone lists whichever box is mounted. The
+  // native sections — "Shared with you" and Terminals — are props, so they
+  // follow the mount and the member always has a way back.
+  const surfaceProps =
+    sharedOpen === null
+      ? {
+          key: "own",
+          endpoints: lodyEndpoints(endpoints),
+          shared: undefined,
+          readOnly: false,
+        }
+      : {
+          // Keyed by the OWNER's membership: switching between two members'
+          // shared sessions rebuilds the runtime, and switching between two
+          // sessions on the same member's box does not.
+          key: `shared:${sharedOpen.ownerMembershipId}`,
+          endpoints: lodyEndpoints(sharedOpen.endpoints),
+          shared: { sessionId: sharedOpen.sessionId },
+          readOnly: sharedOpen.level === "ro",
+        };
   return (
     <Suspense fallback={null}>
       <SessionSurface
-        {...surfaceProps}
+        key={surfaceProps.key}
+        endpoints={surfaceProps.endpoints}
+        viewer={viewer}
+        workspaceTitle={props.workspaceTitle}
+        hidden={!props.visible}
+        railHost={props.railHost}
+        rail={rail}
+        readOnly={surfaceProps.readOnly}
+        {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
         {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
         {...(props.onActiveSessionChange === undefined
           ? {}
           : { onActiveSessionChange: props.onActiveSessionChange })}
       />
-      {/* A SECOND runtime, against the owner's box (plans/LODY-SHARING.md
-          §10.2). One box per runtime is the whole reason this is a second
-          surface rather than a second machine inside the first: the vendored
-          renderer's local plane is a singleton on `window.ipc`, so two boxes in
-          one runtime cost four changes inside `vendor/`.
-
-          Keyed by the OWNER's membership, so switching between two members'
-          shared sessions rebuilds the runtime — and switching between two
-          sessions on the SAME member's box does not. It is unmounted when the
-          address stops naming a shared session, which is what closes the
-          WebSocket and releases the repo; the grantee's own surface is the one
-          that stays. */}
-      {sharedOpen !== null && (
-        <SessionSurface
-          key={sharedOpen.ownerMembershipId}
-          endpoints={lodyEndpoints(sharedOpen.endpoints)}
-          viewer={viewer}
-          workspaceTitle={props.workspaceTitle}
-          hidden={!props.visible}
-          shared={{ sessionId: sharedOpen.sessionId }}
-          readOnly={sharedOpen.level === "ro"}
-        />
-      )}
     </Suspense>
   );
 }
