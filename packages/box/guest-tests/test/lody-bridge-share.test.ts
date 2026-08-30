@@ -54,8 +54,22 @@ interface RequestDecision {
   note: string;
 }
 
+/** One server frame the daemon pushes, and what the claim is allowed to see of
+ * it. Only `meta` is ever narrowed, so `from === to` is the honest assertion for
+ * every other room and for a workspace admin. */
+interface MetaProjection {
+  claim: string;
+  from: Record<string, unknown>;
+  to: Record<string, unknown>;
+  note: string;
+}
+
 const claims = fixture<Record<string, ClaimFixture>>("claims.json");
-const decisions = fixture<{ frames: FrameDecision[]; requests: RequestDecision[] }>("decisions.json");
+const decisions = fixture<{
+  frames: FrameDecision[];
+  requests: RequestDecision[];
+  metaProjections: MetaProjection[];
+}>("decisions.json");
 
 function headerFor(name: string): string {
   const entry = claims[name];
@@ -65,6 +79,9 @@ function headerFor(name: string): string {
 
 interface DaemonConnection {
   lines: string[];
+  /** Pushes one newline-delimited frame down the socket, the way the daemon
+   * answers a join. */
+  push: (frame: Record<string, unknown>) => void;
 }
 
 describe("blitz-lody-bridge share ACL", () => {
@@ -77,7 +94,10 @@ describe("blitz-lody-bridge share ACL", () => {
 
   function serveLines(path: string): void {
     const server = createServer((socket: Socket) => {
-      const connection: DaemonConnection = { lines: [] };
+      const connection: DaemonConnection = {
+        lines: [],
+        push: (frame) => socket.write(`${JSON.stringify(frame)}\n`),
+      };
       let buffer = "";
       socket.on("data", (chunk) => {
         buffer += chunk.toString("utf8");
@@ -216,6 +236,41 @@ describe("blitz-lody-bridge share ACL", () => {
       socket.close();
     }
   }, 60_000);
+
+  it("narrows the meta room to the documents a claim was granted", async () => {
+    expect(decisions.metaProjections.length).toBeGreaterThan(0);
+    for (const projection of decisions.metaProjections) {
+      const socket = await openShared(projection.claim);
+      const connection = dataPlaneConnections.at(-1);
+      if (connection === undefined) throw new Error("the bridge opened no daemon socket");
+      const back: string[] = [];
+      socket.on("message", (data) => back.push(data.toString()));
+      connection.push(projection.from);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const label = `${projection.claim}: ${projection.note}`;
+      expect(back.length, label).toBe(1);
+      expect(JSON.parse(back[0] ?? "{}"), label).toEqual(projection.to);
+      socket.close();
+    }
+  }, 60_000);
+
+  it("leaves a server frame alone for the member who owns the box", async () => {
+    const projection = decisions.metaProjections.find((entry) => entry.claim === "ro");
+    if (projection === undefined) throw new Error("no read-only projection fixture");
+    const socket = await openShared(null);
+    const connection = dataPlaneConnections.at(-1);
+    if (connection === undefined) throw new Error("the bridge opened no daemon socket");
+    const back: string[] = [];
+    socket.on("message", (data) => back.push(data.toString()));
+    // The same frame that gets narrowed for a claim crosses BYTE FOR BYTE
+    // without one, which is the phase-1 dumb-pipe property the projection must
+    // not have cost the owner.
+    const line = JSON.stringify(projection.from);
+    connection.push(projection.from);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(back).toEqual([line]);
+    socket.close();
+  });
 
   it("echoes what the client needs to settle its own request on a refusal", async () => {
     const socket = await openShared("ro");

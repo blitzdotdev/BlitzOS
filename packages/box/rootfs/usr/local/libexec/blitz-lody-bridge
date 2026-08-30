@@ -67,6 +67,12 @@
 // grantee is exactly "a peer whose writes the relay does not apply", so the ACL
 // can only live where the frames are. See `shareVerdict` below.
 //
+// A shared connection is also the only one whose SERVER frames are read. Every
+// other room needs no outbound filter — the daemon addresses frames to the peers
+// subscribed to a room, and a grantee never joins a room the claim does not name
+// — but `meta` is a room the grantee does join, and it carries the metadata of
+// every document on the box. See `projectMetaBundle`.
+//
 // ONE SOCKET PER CONNECTION, unlike the Electron relay, which multiplexes every
 // window onto one daemon socket. A browser tab therefore gets its own peer
 // lifecycle: closing the tab closes the daemon socket, and the daemon drops
@@ -173,6 +179,48 @@ const SHARED_RPC_WRITE_METHODS = new Set([
 // union names a project, which a share says nothing about.
 const SHARED_PROJECT_TYPES = new Set(["worktree/list-files", "worktree/read-file"]);
 
+// ── The meta projection ──────────────────────────────────────────────────────
+//
+// `meta` is loro-repo's own document registry: existence records and per-doc
+// metadata for every document on this box. Phase 6 refused it outright for
+// `scope: "sessions"`, which was right about the leak and wrong about the cost:
+// SessionMeta — title, project, machineId, status, diffStats — lives ONLY here,
+// so a grantee refused the room has no session to render. Measured in
+// plans/LODY-SHARING.md §10.1.
+//
+// It is now served PROJECTED instead. The room's payload is `flock-json`, a
+// plain `{version, entries}` object whose keys are JSON-encoded paths —
+// `["e",<docId>]` for an existence record and `["m",<docId>,<field>]` for one
+// metadata field — so keeping the granted documents and dropping the rest is
+// string work on the way past. No CRDT is parsed and no loro build is needed in
+// this process, which is why the projection is affordable at all.
+//
+// `scope: "all"` is forwarded whole: a workspace admin holds implicit read-only
+// on every session, so the room leaks nothing they are not entitled to.
+const META_ENTRY_KINDS = new Set(["e", "m"]);
+const MACHINE_DOC_PREFIX = "machine-";
+// The machine document has to survive the projection or the grantee's surface
+// reports the machine REMOVED and disables its composer
+// (`session-chat-interface.tsx:2074`). These are its fields minus the two that
+// enumerate the owner's other work. An allowlist rather than a deny list, so a
+// field upstream adds is withheld until somebody reads it.
+const MACHINE_META_SHARE_FIELDS = new Set([
+  "id",
+  "name",
+  "ownerUserId",
+  "hostType",
+  "cliVersion",
+  "os",
+  "supportRegistryAgentTypes",
+  "rpcVersion",
+  "supportsLocalProjectHistoryRpc",
+  "protocolCapabilities",
+]);
+// `MachineMeta.sessions` is a required field naming every session on the box.
+// It is EMPTIED rather than dropped, because a reader that finds the key absent
+// and a reader that finds it empty are not the same reader.
+const MACHINE_SESSIONS_FIELD = "sessions";
+
 /** The verified claim, or null for an ordinary request. */
 function parseShare(headerValue) {
   if (typeof headerValue !== "string" || headerValue === "") return null;
@@ -212,19 +260,93 @@ function sessionLevel(share, sessionId) {
 /**
  * What a claim may do in one room.
  *
- * `meta` is the workspace's document-metadata room, and joining it hands over
- * the id and title of every document on this box — the owner's whole session
- * list, which is exactly what "opt-in per session" withholds. A workspace admin
- * (`scope: "all"`) already holds implicit read-only on all of them, so for them
- * it leaks nothing they are not entitled to.
+ * `meta` is READ for every claim and WRITE for none. For `scope: "sessions"` it
+ * is read through the projection below — the room names every document on the
+ * box, and "opt-in per session" means a grantee learns about the ones they were
+ * granted and no others. For `scope: "all"` it is read whole.
+ *
+ * Never write, for either: §0.1 enumerates what a read-write co-driver may do —
+ * prompt, steer, cancel, answer a permission request — and every one of those is
+ * a write to a SESSION document or a machine RPC. Renaming, archiving and
+ * pinning are meta writes and are not on that list.
+ *
+ * `flock-doc` stays admin-only. The machine Flock carries the box's registered
+ * local projects, which is the owner's repository list.
  */
 function roomLevel(share, room) {
   if (room === null || typeof room !== "object" || Array.isArray(room)) return "none";
-  if (room.scope === "meta" || room.scope === "flock-doc") {
-    return share.scope === "all" ? "read" : "none";
-  }
+  if (room.scope === "meta") return "read";
+  if (room.scope === "flock-doc") return share.scope === "all" ? "read" : "none";
   if (room.scope !== "doc") return "none";
   return sessionLevel(share, sessionIdForDoc(room.docId));
+}
+
+/** Whether one meta-flock entry key survives the projection, and as what.
+ * Answers `null` to drop it, `"keep"` to pass it through, or `"empty-sessions"`
+ * for the one field that is emptied rather than dropped. */
+function metaEntryVerdict(share, encodedKey) {
+  let key;
+  try {
+    key = JSON.parse(encodedKey);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(key) || key.length < 2) return null;
+  const [kind, docId] = key;
+  if (!META_ENTRY_KINDS.has(kind) || typeof docId !== "string") return null;
+  if (docId.startsWith(MACHINE_DOC_PREFIX)) {
+    if (kind === "e") return "keep";
+    if (key[2] === MACHINE_SESSIONS_FIELD) return "empty-sessions";
+    return MACHINE_META_SHARE_FIELDS.has(key[2]) ? "keep" : null;
+  }
+  return sessionLevel(share, sessionIdForDoc(docId)) === "none" ? null : "keep";
+}
+
+/**
+ * One meta-flock bundle, narrowed to what the claim may see.
+ *
+ * Entries are self-contained last-write-wins records — that is the property the
+ * protocol's own comment leans on when it splits an oversized bundle into
+ * independently importable chunks — so dropping some of them leaves the rest
+ * importable exactly as they arrived. Each surviving record keeps its own clock,
+ * including the emptied one, so the receiver's version vector still advances and
+ * the daemon's next delta does not re-offer what was withheld.
+ */
+function projectMetaBundle(share, bundle) {
+  if (bundle === null || typeof bundle !== "object" || Array.isArray(bundle)) return bundle;
+  const entries = bundle.entries;
+  if (entries === null || typeof entries !== "object" || Array.isArray(entries)) return bundle;
+  const kept = {};
+  for (const [encodedKey, record] of Object.entries(entries)) {
+    const verdict = metaEntryVerdict(share, encodedKey);
+    if (verdict === null) continue;
+    kept[encodedKey] =
+      verdict === "empty-sessions" && record !== null && typeof record === "object"
+        ? { ...record, d: [] }
+        : record;
+  }
+  return { ...bundle, entries: kept };
+}
+
+/** A server frame on its way to a shared connection, projected if it carries a
+ * meta bundle and returned untouched otherwise.
+ *
+ * This is the one place phase 6's "server → client needs no filter" stops
+ * holding, and it holds for every other room for the reason it always did: the
+ * daemon addresses frames to the peers subscribed to a room, and a room the
+ * grantee never joined has no path to them. `meta` is the exception because the
+ * grantee DOES join it. */
+function projectServerFrame(share, frame) {
+  if (share.scope === "all") return frame;
+  if (frame === null || typeof frame !== "object" || Array.isArray(frame)) return frame;
+  if (frame.room === null || typeof frame.room !== "object" || frame.room.scope !== "meta") {
+    return frame;
+  }
+  const payload = frame.payload;
+  if (payload === null || typeof payload !== "object" || payload.kind !== "flock-json") {
+    return frame;
+  }
+  return { ...frame, payload: { ...payload, bundle: projectMetaBundle(share, payload.bundle) } };
 }
 
 /**
@@ -518,7 +640,11 @@ function bridge(ws, share) {
       if (newline < 0) break;
       const line = buffered.subarray(0, newline);
       buffered = buffered.subarray(newline + 1);
-      if (line.length > 0) ws.send(line.toString("utf8"));
+      if (line.length === 0) continue;
+      const text = line.toString("utf8");
+      // An unshared connection is still the phase-1 dumb pipe: the bytes are
+      // handed on without ever becoming a JSON value.
+      ws.send(share === null ? text : projectServerLine(share, text));
     }
     // A frame this large is a non-compliant daemon, not backpressure: the
     // sender-side budget is smaller than the cap. Drop the connection rather
@@ -540,6 +666,20 @@ function bridge(ws, share) {
     }
   });
   ws.on("error", () => upstream.destroy());
+}
+
+/** One server line, projected for a shared connection. A line this process
+ * cannot parse is forwarded unchanged: it is the daemon's word either way, and
+ * only a meta bundle is ever narrowed. */
+function projectServerLine(share, text) {
+  let decoded;
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  const projected = projectServerFrame(share, decoded);
+  return projected === decoded ? text : JSON.stringify(projected);
 }
 
 /** True when the frame may reach the daemon. A refusal is answered here; a drop

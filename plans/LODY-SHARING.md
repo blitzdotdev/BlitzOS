@@ -633,3 +633,113 @@ id.
   when the last grant goes, and `gateway/main_test.go` proves the gateway closes
   the matching connections. Nothing runs both halves together, because the Go
   gateway has no toolchain in this tree and the harness's shim is not it.
+
+---
+
+## 10. Phase 7: the grantee's mounted surface (2026-08-30)
+
+§8's five steps, built. What follows is what they measured, in the form §9 and
+`LODY-RUNTIME-DESIGN.md` §7–§11 use.
+
+### 10.1 The `meta` question, measured first — and it decided the approach
+
+§8 step 1 says to measure the `meta`-room question before choosing between the
+one-box-at-a-time remount (§6.3) and the four upstream changes (§6.1), because
+"it may decide it". It did, and it decided a third thing neither option named.
+
+**Measured, against a real `lody@0.88.1` daemon** (the probe stood the phase-2
+harness up, created two sessions, and joined `{scope:"meta"}` as a plain
+protocol-v7 peer):
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Can a shared surface open a document it already knows the id of, without `meta`? | **No.** `SessionMeta` — title, project, `machineId`, status, diff stats — is document METADATA, not document body. `joinDocRoom(docId)` carries the body alone; `repo.getDocMeta` reads the meta flock and nothing else, and `docMetaSubscriptionAtom` (`atoms/doc-meta.ts:508`) is the only writer of `sessionMetaCacheAtom`. A grantee refused `meta` has a transcript with no session around it, and `isMachineRemoved` (`session-chat-interface.tsx:2074`) is `true` because the machine document is metadata too — which disables the composer even for a read-write grant. |
+| 2 | Does a refused `meta` join break the runtime? | No. `ensureMetaRoomSynced` (`create-workspace-runtime.ts:2954`) catches the join failure, marks the sync failed and RETURNS. So the failure mode is silent and partial, not loud — which is worse for a reader, and is why this needed measuring rather than guessing. |
+| 3 | What does the `meta` room actually put on the wire? | **Plain JSON.** The payload kind is `flock-json`, a `{version, entries}` bundle. Keys are JSON-encoded paths: `["e",<docId>]` for an existence record, `["m",<docId>,<field>]` for one metadata field, `["ef",<flockDocId>]` for a Flock doc's. Values are `{c: <clock>, d: <value>}`. |
+| 4 | Are the entries independently importable? | Yes, and upstream already depends on it: `chunkFlockBundle` (`shared/src/local-loro-data-plane.ts:408`) splits an oversized bundle by repartitioning `entries`, and its comment says "Flock entries are self-contained LWW records, so every bundle — including one chunk of a split oversized delta — is independently importable." |
+
+Answers 3 and 4 are the finding. §6.3's note said the follow-up must "either open
+a doc it already knows the id of without meta, or grow a per-document meta
+projection", and read the second as the expensive branch. It is the cheap one:
+**the projection is a JSON filter over `entries`, so no CRDT is parsed and no
+loro build is needed on the box.**
+
+### 10.2 The decision
+
+**One box at a time (§6.3), plus a per-document `meta` projection at the bridge.
+The four vendor changes of §6.1 are NOT taken, and stay not taken.**
+
+- The grantee's own surface keeps its runtime and keeps owning the rail; a shared
+  session mounts a SECOND `SessionSurface`, keyed by the owner's membership,
+  against the owner's box. The renderer therefore still sees exactly one local
+  machine per runtime, which is the whole reason §6.1's four changes existed.
+- Two surfaces live at once rather than one being torn down, which §6.3 did not
+  consider. It costs a second WebSocket, repo and WASM instance while a shared
+  session is open — the price §6.3 already accepted for a switch — and it buys
+  back the thing §6.3 listed as the cost of its own answer: the rail keeps
+  showing the grantee's own sessions while they read somebody else's.
+- The two repos cannot collide in IndexedDB: a repo is keyed by workspace id, and
+  the owner's daemon workspace is not the grantee's.
+
+What the projection keeps, and what it withholds, is a fixture table rather than
+prose: `packages/schema/fixtures/lody-share-claim/decisions.json`,
+`metaProjections[]`. In one line: the granted sessions' records, plus the machine
+document with `sessions` emptied and `localProjects` withheld.
+
+Three consequences, each recorded because each is a place the design changed:
+
+1. **§4.2's `meta` row is superseded.** The room is `read` for BOTH scopes now,
+   not admin-only.
+2. **`meta` is write for NOBODY**, `rw` included. §0.1 enumerates what a
+   co-driver may do — prompt, steer, cancel, answer a permission request — and
+   every one is a session-document write or a machine RPC. Rename, archive and
+   pin are meta writes, so an RW grantee's rename converges away rather than
+   landing; the relay's ACL is what says so.
+3. **§4.2's "server → client needs no filter" now has exactly one exception.**
+   The reasoning held and still holds for every other room: the daemon addresses
+   frames to the peers subscribed to a room, and a grantee never joins one the
+   claim does not name. `meta` is the exception because the grantee does join it,
+   so a shared connection's server frames are parsed on the way out. An unshared
+   connection is still the phase-1 dumb pipe, byte for byte, and
+   `lody-bridge-share.test.ts` asserts that with the same frame.
+
+### 10.3 What the grantee's surface needs beyond the projection
+
+| Need | Where it comes from | Note |
+|---|---|---|
+| the daemon identity, workspace and machineId | `/lody/platform`, already narrowed for a share (phase 6) | The grantee's surface therefore authors CRDT writes as the OWNER's daemon user id. That is required, not incidental: `createLocalCloudPort`'s access oracle (`platform/src/local.ts:103`) allows exactly that id, so a BlitzOS identity here is refused at dispatch. Attribution inside the document is cosmetic; the relay is what authorizes. |
+| the session's title, for the rail row | one `join {scope:"meta"}` on the owner's box, read as JSON | `webapp/src/lody/shared-sessions.ts`. No `LoroRepo`, no WASM, no IndexedDB: the bundle is JSON and the titles are `["m","session-<id>","title"]`. This is also the cheapest possible proof that the projection works, and it runs on every rail render. |
+| the composer's model / mode / effort selectors | **nothing — they are absent** | Those are `acpCapability` rows in the machine FLOCK, and `flock-doc` stays admin-only because the same document carries the owner's registered local projects. An RW grantee's composer therefore sends with the session's own last configuration (`resolveSessionConversationConfig` reads the session document, not the flock) and offers no selector. Named here rather than discovered later. |
+| the agent-config bootstrap | **skipped** | It writes to the owner's machine Flock, which the ACL refuses. `SessionSurface` takes `shared` and does not mount `LodyAgentConfigBootstrap` under it. |
+
+### 10.4 Read-only had to become a vendor prop
+
+There is no read-only mode upstream: every member of a Lody workspace may drive
+every session they can see, so `SessionChatInterface` has no notion of a viewer.
+The composer's existing suppressions are `isArchivedSession` and
+`isMachineRemoved`, and borrowing either would put a false statement on the
+screen — the session is neither archived nor on a removed machine.
+
+So phase 7 adds **seam patch 4**: `readOnly?: boolean` on `SessionDetail` and on
+`SessionChatInterface`, in the same shape as their existing `hideHeader` /
+`hideMessageArea` props. It suppresses the composer and the permission card's
+buttons, and nothing else. Four hunks in two files, strictly additive, drafted
+upstream at `plans/evidence/lody-readonly-prop-pr.md`, recorded in
+`vendor/lody/BLITZ-PATCHES.md`. The expected vendor file count moves from five to
+seven.
+
+The alternative considered and rejected was a CSS rule of ours hiding their
+composer. It needs a selector their markup does not offer — the composer's shell
+class is computed by `getSessionChatInputAreaShellClassName` out of tailwind
+utilities — so it would key off layout position and break silently at the next
+merge, which is the failure mode `BLITZ-PATCHES.md` exists to prevent.
+
+### 10.5 Exit tests
+
+| # | What | Where |
+|---|---|---|
+| 1 | the projection: every entry kind, both scopes, and an unshared connection's bytes unchanged | `box/guest-tests/test/lody-bridge-share.test.ts` (free) |
+| 2 | the shared endpoint builder and the shared chat address round-trip | `webapp/test/lody-shared-endpoints.test.ts` (free) |
+| 3 | the rail's "Shared with you" section draws a received grant, names its level, and opens it | `webapp/test/lody-shared-rail.test.tsx` (free) |
+| 4 | a grantee reads a real session's title out of the projected meta room, and cannot read an ungranted one's | `webapp/test/lody-sharing-relay.test.ts` (daemon-gated, free) |
+| 5 | an RW grantee answers a permission request through the rendered card, and the agent acts on it | `webapp/test/lody-shared-surface.test.tsx`, behind `BLITZ_LODY_LIVE_TURN=1` |

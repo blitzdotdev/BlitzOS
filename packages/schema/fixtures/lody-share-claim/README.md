@@ -37,6 +37,38 @@ Design: `plans/LODY-SHARING.md` §3, §4.
   owner's request is still served byte-for-byte; a grantee gets the
   identity/workspace/machine triple, because the catalog also names every
   session on the box.
+- `metaProjections[]` — the `meta` room's own projection, as a pair of frames:
+  what the daemon sent, and what a claim of each kind receives. Phase 7 added
+  this; see below.
+
+## The `meta` room, and why it is projected rather than refused
+
+Phase 6 refused `meta` outright for `scope: "sessions"`. That was right about
+the leak — the room is loro-repo's document registry and names every document
+on the box — and wrong about the cost, because **SessionMeta lives only there**:
+a session's title, project, machineId, status and diff stats are metadata
+records, not document body, so a grantee refused the room has nothing to render
+(`plans/LODY-SHARING.md` §10.1 records the measurement).
+
+The room is now served through a per-document projection, and the projection is
+affordable because of what the room's payload turned out to be: `flock-json`, a
+plain `{version, entries}` object whose keys are JSON-encoded paths —
+`["e",<docId>]` for an existence record, `["m",<docId>,<field>]` for one
+metadata field. Entries are self-contained last-write-wins records, which is the
+property the protocol's own chunker already leans on, so dropping some of them
+leaves the rest importable exactly as they arrived. **No CRDT is parsed and no
+loro build is needed on the box.**
+
+Two consequences worth naming:
+
+- **This is the one place "server → client needs no filter" stops holding.** It
+  held, and still holds for every other room, because the daemon addresses
+  frames to the peers subscribed to a room and a grantee never joins the others.
+  `meta` is the exception because the grantee does join it.
+- **`meta` is read for every claim and write for none**, `rw` included. §0.1
+  enumerates what a co-driver may do — prompt, steer, cancel, answer a
+  permission request — and each of those is a session-document write or a
+  machine RPC. Rename, archive and pin are meta writes and are not on the list.
 
 ## The three verdicts, and why they are three
 
