@@ -160,14 +160,26 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
       workspaceId === null
         ? []
         : buildSessionListRows(
-            // A local project is a phase-5 concept; until then a session that
-            // claims one is not ours to draw. Upstream filters the same way
-            // (`loro-app-sidebar.tsx:1565`) and then renders those sessions in
-            // its Local Projects section, which this rail does not have.
-            sessions.filter(
-              (session: { project?: { kind?: string } | null }) =>
-                session.project?.kind !== "local",
-            ),
+            // NOT FILTERED, and that is the phase-5 change. Upstream drops
+            // `project.kind === 'local'` here (`loro-app-sidebar.tsx:1565`)
+            // because it draws those sessions in its own Local Projects
+            // section, which this rail does not have — so the same filter here
+            // hid every BlitzOS worktree session, whose `ProjectRef` is exactly
+            // `{ kind: 'local', useWorktree: true }` (plan §6.4, worktree source
+            // `local-shared`).
+            //
+            // Grouping still needs no code of ours: `buildSessionListRows` sets
+            // a row's `repoFullName` from `resolveProjectGitHubRepo`
+            // (`shared/src/project.ts:152`), which reads `githubRepoFullName`
+            // off a local `ProjectRef`, and the daemon derives that field from
+            // the clone's own remote (measured: `/workspace/BlitzOS` →
+            // `blitzdotdev/BlitzOS`). So a worktree session lands under GitHub
+            // Worktrees, grouped by repo, exactly as §6.4 says.
+            //
+            // A local project with no GitHub remote yields no `repoFullName`
+            // and its sessions read as Chats. That is the honest degradation:
+            // the alternative is upstream's, which is to hide them.
+            sessions,
             {
               scope: "my",
               currentUserId: user?.id ?? null,
