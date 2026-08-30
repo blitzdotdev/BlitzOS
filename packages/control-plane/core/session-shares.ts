@@ -307,13 +307,23 @@ export function addSessionShareRoutes(
     // Only when nothing is left: a drain closes EVERY connection the grantee
     // holds to that box, so doing it while other grants survive would cut the
     // sessions they still hold.
+    //
+    // And it cannot fail the revoke. The row is already gone, so the grantee's
+    // next connect is refused whatever happens here; answering 500 would tell
+    // the caller to retry a delete that already succeeded, and would leave the
+    // UI showing a grant that no longer exists (§5).
     if (stillShared === null) {
-      await drainWorkspaceMemberConnections(
-        runtime,
-        caller.workspace.id,
-        removed.owner_membership_id,
-        removed.grantee_membership_id,
-      );
+      try {
+        await drainWorkspaceMemberConnections(
+          runtime,
+          caller.workspace.id,
+          removed.owner_membership_id,
+          removed.grantee_membership_id,
+        );
+      } catch {
+        // See above. What is lost is the seconds between here and the ticket's
+        // own 60-second expiry, on a connection the next request cannot renew.
+      }
     }
     return context.body(null, 204);
   });

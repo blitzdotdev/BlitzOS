@@ -151,18 +151,32 @@ Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar s
 
 ### Lody session surface
 
-Two more exact paths on the same 7445 origin, added in phase 1 of
+Five exact paths on the same 7445 origin, added by phases 1 and 2 of
 `plans/LODY-SESSIONS.md`:
 
 ```text
-GET  http://127.0.0.1:7445/lody/sync   (websocket)  CRDT data plane
-POST http://127.0.0.1:7445/lody/rpc                 machine RPC
+GET  http://127.0.0.1:7445/lody/sync      (websocket)  CRDT data plane
+POST http://127.0.0.1:7445/lody/rpc                    machine RPC
+POST http://127.0.0.1:7445/lody/control                session control
+POST http://127.0.0.1:7445/lody/project                local-project control
+GET  http://127.0.0.1:7445/lody/platform               the daemon's own identity
 ```
 
-Both are ticket-authenticated like every other 7445 surface, and both are
-refused to a workspace viewer with 403 until session sharing lands (phase 6).
-They are declared in `packages/schema/src/webapp-surface.ts` and
+All five are ticket-authenticated like every other 7445 surface, and all five
+are refused to a workspace viewer with 403 — unless the ticket carries a session
+SHARE claim, which is the phase-6 exception (`plans/LODY-SHARING.md`). A shared
+ticket may reach these five paths and nothing else on the box: not dufs, not a
+preview, not the terminal. They are declared in
+`packages/schema/src/webapp-surface.ts` and
 `packages/control-plane/core/webapp-surface.ts`, and drift-tested on both sides.
+
+What a share may SAY on those paths is the bridge's decision, not the gateway's:
+the gateway forwards the verified claim on `X-Blitz-Lody-Share` (stripping any
+inbound copy) and the bridge enforces the per-room ACL, scopes machine RPC and
+worktree reads to the granted sessions, refuses `/lody/control` outright, and
+serves `/lody/platform` narrowed so a grantee never learns the box's other
+sessions. The decision table is a fixture corpus,
+`packages/schema/fixtures/lody-share-claim/`.
 
 Neither reaches the daemon directly. The gateway proxies them over a unix socket
 to `blitz-lody-bridge`, which re-serves two of the Lody daemon's own unix
