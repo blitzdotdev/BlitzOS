@@ -22,7 +22,7 @@
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { createServer as createHttpServer, request as httpRequest, type Server } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -154,8 +154,45 @@ function startGatewayShim(socketPath: string, port: number, log: (line: string) 
   return server;
 }
 
+/**
+ * ONE DAEMON PER MACHINE, enforced across test FILES.
+ *
+ * The local installation profile takes a host lease on port 17789
+ * (`vendor/lody/BLITZ-PATCHES.md`), so a second `lody start` on the same box
+ * never finishes provisioning its implicit workspace — it waits for a lease it
+ * cannot have, and the harness times out 60 s later with a log that says
+ * nothing. Vitest runs test FILES in parallel by default, and two suites both
+ * needing a daemon is exactly the shape phase 4 introduced.
+ *
+ * A directory is the lock because `mkdir` is atomic on every filesystem this
+ * runs on. The stale sweep is what keeps a killed run from wedging the next
+ * one; the window is generous because a cold daemon plus a real ACP adapter
+ * legitimately takes tens of seconds.
+ */
+const HARNESS_LOCK = join(tmpdir(), "blitz-lody-harness.lock");
+const HARNESS_LOCK_STALE_MS = 10 * 60_000;
+
+async function acquireHarnessLock(): Promise<() => void> {
+  const deadline = Date.now() + 300_000;
+  for (;;) {
+    try {
+      mkdirSync(HARNESS_LOCK);
+      return () => rmSync(HARNESS_LOCK, { recursive: true, force: true });
+    } catch {
+      const heldSince = statSync(HARNESS_LOCK, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+      if (Date.now() - heldSince > HARNESS_LOCK_STALE_MS) {
+        rmSync(HARNESS_LOCK, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error("another lody harness held the lock too long");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
 /** Boots all three, and resolves once the daemon has written its catalog. */
 export async function startLodyHarness(): Promise<LodyHarness> {
+  const releaseLock = await acquireHarnessLock();
   const root = mkdtempSync(join(tmpdir(), "lp-"));
   const dataDir = join(root, "d");
   mkdirSync(dataDir, { recursive: true });
@@ -170,6 +207,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   const patchResult = await new Promise<number>((resolve) => patch.once("exit", (code) => resolve(code ?? 1)));
   if (patchResult !== 0) {
     rmSync(root, { recursive: true, force: true });
+    releaseLock();
     throw new Error("lody-local-platform patch refused the installed bundle");
   }
 
@@ -196,6 +234,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   ).catch((cause: unknown) => {
     daemon.kill("SIGKILL");
     rmSync(root, { recursive: true, force: true });
+    releaseLock();
     throw new Error(`${String(cause)}\n--- daemon log ---\n${daemonLog}`);
   });
 
@@ -248,6 +287,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       daemon.kill("SIGKILL");
       bridge.kill("SIGKILL");
       rmSync(dirname(dataDir), { recursive: true, force: true });
+      releaseLock();
     },
   };
 }

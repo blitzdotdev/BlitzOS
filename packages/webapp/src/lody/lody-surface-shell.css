@@ -80,6 +80,7 @@
    The terminal pair is derived on their side too, so one declaration covers
    both modes. */
 .lody-surface,
+.session-list--vendor,
 body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
   --muted: 220 16% 96%;
   --hover: 220 14% 95%;
@@ -90,7 +91,14 @@ body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
 /* Their dark values (index.css:977, :981). `next-themes` writes the class on
    the html element, which is why the portal rule can key off it too. */
 :root.dark .lody-surface,
+:root.dark .session-list--vendor,
 :root.dark body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
   --muted: 220 38% 14%;
   --hover: 219 42% 18%;
 }
+
+/* `.session-list--vendor` is named above because phase 4 gives Lody a SECOND
+   mount (plans/LODY-SESSIONS.md §0.3): the rail's list region is a
+   `React.createPortal` target inside `SessionSurface`'s provider stack, so it
+   is Lody DOM living under `#root` rather than under `.lody-surface`. Its box
+   is the rail's and lives in `strip-rail.css`; only the tokens are here. */

@@ -34,7 +34,15 @@
  * instance, so the surface is hidden with the `hidden` attribute rather than
  * unmounted — the same rule `shell/WorkPanes.tsx` applies to ttyd sessions.
  */
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
@@ -55,7 +63,9 @@ import {
 } from "./router.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 import { initLodyI18n } from "./i18n.js";
+import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
+import type { DriveRailSession } from "../shell/rail-sessions.js";
 import { appliedTheme } from "../theme.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
@@ -93,9 +103,18 @@ function adoptShellTheme(): "dark" | "light" {
   return choice;
 }
 
-/** What `CloudApp` drives the surface with. Imperative on purpose: phase 3 does
- * not touch the rail (§4.4 is phase 4), so selection is a method call rather
- * than a prop, and the router's address stays the surface's own state. */
+/** Everything the rail's Terminals section needs, and nothing else. */
+export interface LodyRailBinding {
+  terminals: DriveRailSession[];
+  activeTerminalId: string;
+  onSelectTerminal: (tabId: string) => void;
+  /** The `+ New tab` control, rendered in the Terminals section header. */
+  terminalsAction?: ReactNode;
+}
+
+/** What `CloudApp` drives the surface with. Imperative on purpose: the router's
+ * address stays the surface's own state, and phase 4's rail reads it back
+ * through `onActiveSessionChange` rather than owning it. */
 export interface LodySessionSurfaceApi {
   /** Show the session detail page for `sessionId`. */
   openSession: (sessionId: string) => void;
@@ -118,6 +137,22 @@ export interface LodySessionSurfaceProps {
   workspaceTitle: string;
   /** Hidden, not unmounted: the runtime must survive a rail click. */
   hidden?: boolean;
+  /**
+   * The rail's list region (`div.session-list--vendor`), if the shell offers
+   * one. Lody's sidebar body is PORTALLED there rather than rendered by the
+   * rail, because everything it reads — the session mirror, the runtime, the
+   * jotai store, i18n — lives in the provider stack below, and a second stack
+   * around the rail would be a second runtime, a second WebSocket and a second
+   * IndexedDB repo. A portal keeps one runtime and puts the DOM where §0.3
+   * wants it. React context follows the RENDER tree, so the sidebar sits below
+   * `RuntimeProvider` and outside the memory router — which is what makes
+   * `useResolvedWorkspaceScope` take its `currentWorkspaceIdAtom` branch there.
+   */
+  railHost?: HTMLElement | null;
+  /** What the rail's Terminals section draws, and what a click on one does.
+   * Terminal tabs are `webapp_state`, never sessions — the daemon never sees
+   * them — so they arrive as props and leave through this callback. */
+  rail?: LodyRailBinding;
   /** Handed the imperative API once the daemon's identity settles, and `null`
    * on teardown. */
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
@@ -303,26 +338,68 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     });
   }, [router]);
 
+  const openSession = useCallback(
+    (sessionId: string) => {
+      if (router === null || slug === null) return;
+      void router.navigate({
+        to: "/$workspaceName/sessions/$sessionId",
+        params: { workspaceName: slug, sessionId },
+      });
+    },
+    [router, slug],
+  );
+  const openLanding = useCallback(() => {
+    if (router === null || slug === null) return;
+    void router.navigate({ to: "/$workspaceName/chat", params: { workspaceName: slug } });
+  }, [router, slug]);
+
   const onApiReadyRef = useRef(onApiReady);
   onApiReadyRef.current = onApiReady;
   useEffect(() => {
     if (router === null || slug === null) return undefined;
     const api: LodySessionSurfaceApi = {
-      openSession: (sessionId) => {
-        void router.navigate({
-          to: "/$workspaceName/sessions/$sessionId",
-          params: { workspaceName: slug, sessionId },
-        });
-      },
-      openLanding: () => {
-        void router.navigate({ to: "/$workspaceName/chat", params: { workspaceName: slug } });
-      },
+      openSession,
+      openLanding,
       activeSessionId: () => activeSessionIdFromPathname(router.state.location.pathname),
       unsupportedIpcChannels: () => bridge.unsupportedChannels(),
     };
     onApiReadyRef.current?.(api);
     return () => onApiReadyRef.current?.(null);
-  }, [router, slug, bridge]);
+  }, [router, slug, bridge, openSession, openLanding]);
+
+  // The rail's own copy of the address. `onActiveSessionChange` tells `CloudApp`
+  // (which drives routing and persistence); this drives the highlight inside the
+  // portal, where a prop round-trip through `CloudApp` would render one frame
+  // late on every click.
+  const activeSessionId = useSyncExternalStore(
+    useCallback(
+      (notify: () => void) =>
+        router === null ? () => undefined : router.subscribe("onResolved", notify),
+      [router],
+    ),
+    () => (router === null ? null : activeSessionIdFromPathname(router.state.location.pathname)),
+    () => null,
+  );
+
+  const { railHost, rail } = props;
+  const railSidebar =
+    railHost === null || railHost === undefined || rail === undefined
+      ? null
+      : createPortal(
+          <SessionRailSidebar
+            terminals={rail.terminals}
+            activeTerminalId={rail.activeTerminalId}
+            activeSessionId={activeSessionId}
+            surfaceVisible={props.hidden !== true}
+            onSelectTerminal={rail.onSelectTerminal}
+            onSelectSession={openSession}
+            onOpenLanding={openLanding}
+            {...(rail.terminalsAction === undefined
+              ? {}
+              : { terminalsAction: rail.terminalsAction })}
+          />,
+          railHost,
+        );
 
   return (
     <div className={LODY_SURFACE_CLASS} hidden={props.hidden === true}>
@@ -341,6 +418,7 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             <LodySurfaceProviders>
               <RuntimeProvider>
                 <LodyAgentConfigBootstrap store={store} machineId={snapshot.machineId} />
+                {railSidebar}
                 <RouterProvider router={router} />
               </RuntimeProvider>
             </LodySurfaceProviders>

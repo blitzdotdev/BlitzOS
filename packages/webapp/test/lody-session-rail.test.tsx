@@ -1,0 +1,295 @@
+/**
+ * PHASE 4 EXIT TEST (plans/LODY-SESSIONS.md §10).
+ *
+ * "`SessionRail` with Chats / GitHub Worktrees / Terminals; + New session. New
+ * chat from the rail; terminal tabs unchanged; mobile drawer works."
+ *
+ * The mobile drawer is `shell-mobile-drawer.test.tsx` and the rail's own two
+ * shapes are `session-rail.test.tsx`; both are free and gate every merge. THIS
+ * file is the part that needs a daemon: Lody's own sidebar body, mounted into
+ * the rail's portal host, reading the real session mirror.
+ *
+ * THE SAME TWO GATES PHASES 2 AND 3 CHOSE. The suite skips with no `lody`
+ * bundle installed, which is CI. The one case that DISPATCHES is skipped unless
+ * `BLITZ_LODY_LIVE_TURN=1`, because a dispatch spends a turn of somebody's
+ * subscription:
+ *
+ *     BLITZ_LODY_LIVE_TURN=1 npx vitest run test/lody-session-rail.test.tsx
+ *
+ * Everything else here is free, and deliberately so: the three sections, the
+ * terminal rows, the New session affordance and the suppressed header and
+ * footer are all structure, and structure is what phase 4 changed.
+ */
+import "fake-indexeddb/auto";
+import { act, type ReactNode } from "react";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { WebSocket as NodeWebSocket } from "ws";
+import type { LodySessionSurfaceApi, LodySessionSurfaceProps } from "../src/lody/SessionSurface";
+import { installLodyDomStubs } from "./lody-dom-stubs";
+import { render, settle } from "./dom";
+import {
+  claudeCredentialAvailable,
+  lodyDaemonAvailable,
+  startLodyHarness,
+  type LodyHarness,
+} from "./lody-daemon-harness";
+
+/** The cheapest prompt that still creates a session and answers once. The rail
+ * is what is under test, not the answer, so nothing here waits for content. */
+const LIVE_TURN_PROMPT = "reply with the word ok";
+
+async function until<T>(what: string, read: () => T | undefined, timeoutMs = 30_000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = read();
+    if (value !== undefined) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+  }
+}
+
+describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
+  let harness: LodyHarness;
+  let mounted: Awaited<ReturnType<typeof render>>;
+  let api: LodySessionSurfaceApi | null = null;
+  let activeSessionId: string | null = null;
+  const selectedTerminals: string[] = [];
+  const consoleErrors: string[] = [];
+  /** The rail's list region, stood up exactly as `SessionRail` renders it. */
+  const railHost = document.createElement("div");
+  railHost.className = "session-list session-list--vendor";
+
+  const railText = (): string => railHost.textContent ?? "";
+  const railButtons = (): HTMLButtonElement[] => [
+    ...railHost.querySelectorAll<HTMLButtonElement>("button"),
+  ];
+  const railButton = (match: RegExp): HTMLButtonElement | undefined =>
+    railButtons().find((button) => match.test(button.textContent ?? ""));
+
+  /** The surface, with `hidden` as the only thing a case may vary: every other
+   * prop is identical across renders so the runtime is never rebuilt. */
+  let surface: (hidden: boolean) => ReactNode = () => null;
+
+  beforeAll(async () => {
+    installLodyDomStubs();
+    document.body.append(railHost);
+    const module: { SessionSurface: (props: LodySessionSurfaceProps) => ReactNode } =
+      await import("../src/lody/SessionSurface");
+    const SessionSurface = module.SessionSurface;
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      consoleErrors.push(args.map((value) => String(value)).join(" "));
+      originalError(...args);
+    };
+    harness = await startLodyHarness();
+    surface = (hidden: boolean) => (
+      <SessionSurface
+        endpoints={{
+          ...harness.endpoints,
+          // See `lody-session-surface.test.tsx`: under jsdom the global
+          // WebSocket is undici's and never delivers an event to a listener.
+          webSocketConstructor: NodeWebSocket as unknown as typeof WebSocket,
+        }}
+        viewer={{ name: "Phase 4", avatarUrl: null }}
+        workspaceTitle="Phase 4 workspace"
+        hidden={hidden}
+        railHost={railHost}
+        rail={{
+          terminals: [
+            { id: "11", label: "claude · tab 1", agent: "claude" },
+            { id: "12", label: "bash", agent: "terminal" },
+          ],
+          activeTerminalId: "12",
+          onSelectTerminal: (tabId) => selectedTerminals.push(tabId),
+          terminalsAction: <button type="button" aria-label="New tab">+</button>,
+        }}
+        onApiReady={(next) => {
+          api = next;
+        }}
+        onActiveSessionChange={(next) => {
+          activeSessionId = next;
+        }}
+      />
+    );
+    mounted = await render(surface(false));
+    await settle();
+  }, 240_000);
+
+  afterAll(async () => {
+    await mounted?.unmount();
+    railHost.remove();
+    await harness?.stop();
+  }, 60_000);
+
+  it("mounts Lody's sidebar body into the rail's list region", async () => {
+    await until("the vendored sidebar to render", () =>
+      railHost.childElementCount > 0 ? true : undefined,
+    );
+    expect(api).not.toBeNull();
+    // No provider is missing in the SECOND mount either. The portal renders
+    // below `RuntimeProvider` and outside the memory router, which is a
+    // different context path from the pages, so it is worth its own assertion.
+    expect(
+      consoleErrors.filter((line) => /must be used within|is not available/u.test(line)),
+    ).toEqual([]);
+  }, 90_000);
+
+  it("suppresses their header and footer through the props seam #4 added", () => {
+    // §0.3: `div.shell-rhead` stays native, so their workspace switcher must
+    // not render — it is the one control that would duplicate it.
+    expect(railHost.querySelector("[data-workspace-switcher-trigger]")).toBeNull();
+    expect(railHost.querySelector("[data-workspace-identity]")).toBeNull();
+    // The footer rail is settings / help / archive, all of which BlitzOS serves
+    // from its own chrome.
+    for (const label of ["Settings", "Help", "Archive"]) {
+      expect(
+        railButtons().some((button) => button.getAttribute("aria-label") === label),
+        label,
+      ).toBe(false);
+    }
+  });
+
+  it("offers + New session, and it opens the landing", async () => {
+    const newSession = await until("the New session entry", () =>
+      railButton(/New session/u),
+    );
+    await act(async () => {
+      newSession.click();
+    });
+    await settle();
+    expect(activeSessionId).toBeNull();
+    expect(api?.activeSessionId()).toBeNull();
+    // And from a session it comes back to the landing, which is the whole of
+    // "a new chat session can be started from the rail" minus the paid turn.
+    await act(async () => {
+      api?.openSession("11111111-1111-4111-8111-111111111111");
+    });
+    await settle();
+    expect(activeSessionId).toBe("11111111-1111-4111-8111-111111111111");
+    await act(async () => {
+      railButton(/New session/u)?.click();
+    });
+    await settle();
+    expect(activeSessionId).toBeNull();
+  }, 60_000);
+
+  it("draws Terminals always, and the Lody sections only once they hold rows", () => {
+    // Terminals is ours, injected through their `afterSessionListContent` slot,
+    // and it is always there: a workspace with no terminal tab is a state the
+    // member acts on from the `+` in that header.
+    expect(railText()).toContain("Terminals");
+    // Chats and GitHub Worktrees are Lody's own section logic, fed from the
+    // runtime — and upstream's rule is that an empty section renders nothing at
+    // all, header included (`loro-app-sidebar.tsx:2095`). This daemon is fresh,
+    // so neither has a row yet. The live case below is where Chats appears.
+    expect(railText()).not.toContain("GitHub Worktrees");
+    expect(railText()).not.toContain("Chats");
+  });
+
+  it("keeps the terminal tabs exactly as the old rail drew them", async () => {
+    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    expect(rows.map((row) => row.textContent)).toEqual(["claude · tab 1", "bash"]);
+    // Same glyphs: `SessionTypeIcon` renders an svg into the same gutter span.
+    expect(rows[0]?.querySelector(".shell-g .shell-g__glyph")).not.toBeNull();
+    // The surface is showing, so no terminal row claims to be selected — the
+    // panes are not what the member is looking at.
+    expect(rows.some((row) => row.className.includes("shell-s--on"))).toBe(false);
+    await act(async () => {
+      rows[0]?.click();
+    });
+    expect(selectedTerminals).toEqual(["11"]);
+    // The `+ New tab` menu keeps a home in the rail, in the Terminals header.
+    expect(
+      railButtons().some((button) => button.getAttribute("aria-label") === "New tab"),
+    ).toBe(true);
+  });
+
+  it("marks the active terminal when the panes own the view", async () => {
+    // `hidden` is what `CloudApp` sets when a terminal row is clicked, and the
+    // rail's highlight has to follow it: the surface is still MOUNTED.
+    await act(async () => {
+      mounted.root.render(surface(true));
+    });
+    await settle();
+    const rows = [...railHost.querySelectorAll<HTMLButtonElement>(".shell-s")];
+    expect(rows[1]?.className).toContain("shell-s--on");
+    await act(async () => {
+      mounted.root.render(surface(false));
+    });
+    await settle();
+  });
+
+  // A DISPATCH IS A PAID TURN, and this is phase 4's whole budget: the rail's
+  // New session, the real composer, one send, and the session that appears in
+  // the rail's Chats section as a result.
+  it.skipIf(process.env.BLITZ_LODY_LIVE_TURN !== "1" || !claudeCredentialAvailable())(
+    "starts a chat from the rail and lists it under Chats",
+    async () => {
+      await act(async () => {
+        railButton(/New session/u)?.click();
+      });
+      await settle();
+      const composer = await until("the landing composer", () => {
+        const textarea = mounted.container.querySelector<HTMLTextAreaElement>("textarea");
+        return textarea ?? undefined;
+      }, 60_000);
+      await act(async () => {
+        typeInto(composer, LIVE_TURN_PROMPT);
+      });
+      const send = await until("the send button to arm", () => {
+        const button = mounted.container.querySelector<HTMLButtonElement>(
+          'button[aria-label="Send"]',
+        );
+        return button !== null && !button.disabled ? button : undefined;
+      }, 30_000);
+      await act(async () => {
+        send.click();
+      });
+
+      const sessionId = await until(
+        "the surface to open the new session",
+        () => activeSessionId ?? undefined,
+        60_000,
+      ).catch((cause: unknown) => {
+        throw new Error(`${String(cause)}\n--- daemon log ---\n${harness.daemonLog().slice(-4000)}`);
+      });
+      expect(sessionId).toMatch(/^[0-9a-f-]{36}$/u);
+
+      // The rail is the thing under test: the session the landing created has
+      // to arrive in Lody's own Chats section, through the session mirror, with
+      // nothing of ours in between.
+      const row = await until(
+        "the session row to reach the rail",
+        () => (railText().includes("Chats")
+          ? railHost.querySelector<HTMLElement>(`[data-session-id="${sessionId}"]`)
+            ?? railButtons().find((button) => /ok/iu.test(button.textContent ?? ""))
+          : undefined),
+        60_000,
+      );
+      expect(row).toBeDefined();
+      // And a click on it routes: the rail drives the surface, not the reverse.
+      await act(async () => {
+        api?.openLanding();
+      });
+      await settle();
+      expect(activeSessionId).toBeNull();
+      await act(async () => {
+        (row as HTMLElement).click();
+      });
+      await until("the rail click to open the session", () =>
+        activeSessionId === sessionId ? true : undefined,
+      );
+    },
+    600_000,
+  );
+
+});
+
+/** Writes into a React-controlled textarea the way a keystroke does. */
+function typeInto(element: HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+  setter?.call(element, value);
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}

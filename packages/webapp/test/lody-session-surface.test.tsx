@@ -196,13 +196,13 @@ describe.skipIf(!lodyDaemonAvailable())("phase 3: the mounted Lody session surfa
   /**
    * Design-doc risk 6: `/session-control` answers its whole batch at the end,
    * so a slow `machine/acp-capabilities-refresh` would leave the composer's
-   * model and effort selectors empty with no sign of progress. This times it
-   * against a daemon that has never launched this adapter.
+   * model and effort selectors empty with no sign of progress. This proves the
+   * refresh COMPLETES; the latency decision it fed is settled elsewhere.
    *
    * It costs nothing: the refresh starts the ACP adapter and asks it for its
    * models and modes. No prompt is sent, so no turn is spent.
    */
-  it("refreshes ACP capabilities inside the streaming-bridge budget", async () => {
+  it("refreshes ACP capabilities without hanging", async () => {
     const snapshot = await fetchLodyPlatformSnapshot(harness.endpoints.platformUrl);
     if (snapshot === null) throw new Error("the daemon served no catalog");
     const started = Date.now();
@@ -223,12 +223,20 @@ describe.skipIf(!lodyDaemonAvailable())("phase 3: the mounted Lody session surfa
     // The adapter really launched and really answered, which is also the
     // narrowest proof that `/usr/local/bin/claude` runs under the daemon.
     expect(JSON.stringify(answer)).toContain("acp-capabilities-refresh_response");
-    // Measured 2.0-3.0 s on a cold daemon and recorded in
-    // plans/LODY-RUNTIME-DESIGN.md §7. The bound is the design doc's
-    // streaming-bridge trigger, not a performance target: over it, the bridge
-    // has to answer `/session-control` as newline-delimited JSON instead of one
-    // body, or the composer's selectors look hung while it runs.
-    expect(elapsedMs).toBeLessThan(10_000);
+    // A HANG DETECTOR, not a latency budget, and phase 4 is why the difference
+    // matters. This number is wall clock on whatever box the suite runs on, and
+    // phase 4 added a SECOND daemon-backed suite: with both plus 54 jsdom files
+    // sharing four cores, the same 2 s call measured 15 s and failed a 10 s
+    // bound that had nothing wrong with the code under it.
+    //
+    // The decision that bound was serving — whether `/session-control` needs a
+    // newline-delimited streaming bridge — is settled, on measurements taken
+    // with the box to themselves and recorded in plans/LODY-RUNTIME-DESIGN.md
+    // §9: 1.9 s for claude and 0.8 s for codex cold, 2.1 s and 2.7 s under a
+    // full surface mount. All four are under the ~3 s trigger, so no streaming
+    // bridge is built. What is left for a merge to catch is a refresh that
+    // never returns, and that is what this asserts.
+    expect(elapsedMs).toBeLessThan(45_000);
   }, 60_000);
 
   /**
