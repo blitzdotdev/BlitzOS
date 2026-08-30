@@ -73,23 +73,19 @@ export function SessionShareDialog({
     closeButton.current?.focus();
   }, []);
 
+  /** The grants for this session, re-read after every write: the server is
+   * where a level actually lives, so a row states what it holds rather than
+   * what was just clicked. */
   const reload = useCallback(async () => {
     const response = await client.listSessionShares(workspaceId, sessionId);
     setShares(response.granted);
   }, [client, sessionId, workspaceId]);
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const response = await client.listSessionShares(workspaceId, sessionId);
-        if (!cancelled) setShares(response.granted);
-      } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [client, sessionId, workspaceId]);
+    void reload().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [reload]);
 
   const setLevel = useCallback(
     async (membershipId: string, level: SessionShareLevel | 'none') => {

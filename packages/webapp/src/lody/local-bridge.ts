@@ -412,8 +412,8 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
           return await handoffStagedAttachments(input, staged.paths);
         } finally {
           // The daemon has copied the bytes by now, so the staging directory is
-          // rubbish either way — including on the failure paths above, which is
-          // why this is a `finally` and not a success branch.
+          // rubbish whether the handoff succeeded or the daemon refused it —
+          // which is why this is a `finally` and not a success branch.
           await removeSessionAttachments(attachmentEndpoints(), staged.staged);
         }
       }
