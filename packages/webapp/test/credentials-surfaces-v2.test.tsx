@@ -133,6 +133,7 @@ function catalogEntry(id: string, title: string): CatalogEntryView {
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: 'API key',
+    personalTokenFallbackOnly: false,
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
     adminForm: null,
@@ -417,6 +418,7 @@ describe('workspace provider rows', () => {
     const adminOnly: CatalogEntryView = {
       ...catalogEntry('tracker', 'Acme Tracker'),
       personalTokenLabel: null,
+      personalTokenFallbackOnly: false,
     };
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion, adminOnly] })),
