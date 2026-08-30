@@ -484,8 +484,8 @@ nothing here waits on a dead surface being removed.
 | 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box | **done, with one gap** — `LODY-RUNTIME-DESIGN.md` §8.6. Send and session creation are proven live through the real composer; the permission card, the queue and Stop are written and gated but were not reached inside the two-turn budget, and reaching the card first needs the composer's permission-mode selector (§8.3). |
 | 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works | **done** — `LODY-RUNTIME-DESIGN.md` §9. All four exit tests pass. Sections and order follow upstream, not §8's sketch (§9.2). Chat sessions are addressed in the URL and nowhere else (§9.1). |
 | 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode | **done, with one blocker** — `LODY-RUNTIME-DESIGN.md` §10. Nine of the ten composer controls pass (§10.5); `+` attachments have no port to implement §0.7 behind and are a recorded blocker with an exact seam (§10.4). Registration reads `/workspace` rather than the `workspace_repos` list, for the reasons in §10.7. Two upstream defects were found and worked around without a vendor hunk (§10.1). |
-| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | **done, owner-side; the grantee's mounted surface is a scoped follow-up** — `plans/LODY-SHARING.md`. The grants, the target-member route, the ticket claim, the relay ACL and the owner's share/revoke UI all ship and are proven against a real daemon by a protocol-v7 grantee. Mounting a shared session inside the grantee's own vendored surface needs four changes inside `vendor/lody` (§6.1), which is larger than the rest of the phase together, so it is scoped in §8 rather than half-shipped. |
-| 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean | — |
+| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | **done** — `plans/LODY-SHARING.md`. The grants, the target-member route, the ticket claim, the relay ACL and the owner's share/revoke UI shipped in phase 6 and are proven against a real daemon; the grantee's MOUNTED surface was scoped in §8 and shipped in phase 7 (§10). The four `vendor/lody` changes §6.1 feared were not needed: one box per runtime, one runtime per document, and a per-document projection of the `meta` room. |
+| 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean | **done, except the flip itself** — `plans/LODY-SHARING.md` §10 (the grantee's mounted surface), `docs/LODY-MERGE.md` (the runbook and its first real merge: 11 commits, one conflict, seven divergent files, all gates green). What phase 7 cannot do is deploy: the bake, the canary dogfood and the flag flip are §13's checklist and they need a human with credentials. |
 
 Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
 
@@ -523,3 +523,99 @@ Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
    bridge exists? (v1: always `local-shared`.)
 4. Does "+ New session" default to Claude or to the workspace `agentDefault`
    from `webapp_state`? (Default until decided: `agentDefault`.)
+
+## 13. Release checklist
+
+Everything in phases 0–7 is in the tree and dark. What is left needs a human
+with credentials, and it has to happen in this order. Nothing below was done by
+phase 7 — no image was baked and nothing was deployed.
+
+### 13.1 Bake the box image
+
+The daemon, the bridge, the `lody-projects` registrar and the gateway's share
+handling all live in the box image, and none of them is in the field. Nothing
+else on this list works until an image carrying them is the pin.
+
+```sh
+npm run golden:bake -- --location hel1
+```
+
+`docs/BOX-IMAGE.md` is the procedure; `CLAUDE.md`'s Hetzner section is the
+warning that matters — **canary and client prod share one Hetzner project**, so
+the snapshot id goes into `HETZNER_SERVER_IMAGES` in BOTH `.github/workflows/canary.yml`
+and `.github/workflows/release.yml`, and deleting the old snapshot breaks both
+deployments quietly (`HetznerProvider` warns `hetzner_server_image_rejected` and
+falls back to stock Ubuntu, so the only symptom is slow creates).
+
+### 13.2 Advertise the shared-sessions capability
+
+**The one line phase 6 said phase 7 must not forget**, and phase 7 could not do
+it because it requires the bake above. A ticket carrying a `share` claim is
+REFUSED by a gateway older than this change — its decoder disallows unknown
+fields, on purpose — so the control plane must know which VMs can take one.
+
+| Where | What to add |
+|---|---|
+| `packages/control-plane/core/webapp-tickets.ts:42` | set `BOX_IMAGE_SHARED_SESSIONS_SINCE_MS` to the moment the new image becomes the pin. It is `1_788_048_000_000` today and its comment says it is a placeholder. |
+| `packages/control-plane/core/compute/hetzner.ts:248` | add `webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,` beside `webAppViewerGuardsSinceMs` in `capabilities()` |
+| `packages/control-plane/core/compute/aws.ts:396` | the same line, in the same place |
+
+The refusal that reads it is `core/workspaces.ts:950`. Undefined means "never",
+which is why sharing is refused everywhere today and why a cutoff set in the
+PAST would be worse than none: it would mark every VM created today as capable
+and hand a real member exactly the unreadable 403 the capability prevents.
+
+**Verified, and there is no fourth cutoff.** `ProviderCapabilities`
+(`core/compute/types.ts:15-24`) carries three: `webAppTicketsSinceMs`,
+`webAppViewerGuardsSinceMs`, `webAppSharedSessionsSinceMs`. There is NO
+capability for "this image runs the Lody daemon at all", and that is a real gap
+rather than an oversight to fix blind: a box on an older image with the webapp
+flag on answers 404 on every `/lody/*` path, and the surface reports "Sessions
+are unavailable on this workspace". Acceptable while the flag is off everywhere
+and every canary box is recycled onto the new image; if the flag ever reaches a
+fleet with mixed images, that capability is the next thing to add.
+
+### 13.3 Flip the flag, box image first
+
+Two names for one flag, and the ORDER between them is the whole point:
+
+| # | Flag | Where | Why first |
+|---|---|---|---|
+| 1 | `BLITZ_LODY_SESSIONS` | the box image / s6 service environment | the daemon has to be running before a browser dials it. A box with the daemon and no UI is inert; a UI with no daemon is a broken screen. |
+| 2 | `VITE_BLITZ_LODY_SESSIONS` | the webapp build (`env.defaults`, and the deployment's build env) | read at MODULE LOAD (`webapp/src/lody/flag.ts`), so it is a build-time decision and flipping it means a deploy. |
+
+Reverse the order and every member on canary sees a rail that cannot list a
+session.
+
+### 13.4 Dogfood on canary
+
+Canary deploys on every push to `main` (`docs/DEPLOY-RUNBOOK.md`). Recycle a
+workspace onto the new image first — the capability cutoff is `createdAt`-based,
+so an existing VM stays incapable however new the code is.
+
+1. `curl -s https://<canary>/version` — confirm `boxImageRef` is the new image.
+2. Open a workspace. It lands on the chat landing (§0.4), the rail shows the
+   three sections, and "+ New session" opens the composer.
+3. Send one turn. Confirm the transcript streams and the machine chip names the
+   box.
+4. Register a repo under `/workspace`, tick the worktree pill, run a turn, and
+   confirm the diff badge appears on the rail row.
+5. Share that session read-only with a second member. Confirm their rail grows
+   "Shared with you", the row opens, the transcript renders and there is no
+   composer.
+6. Re-share read-write. Confirm the composer appears and a prompt runs on the
+   owner's box.
+7. Revoke. Confirm the row goes and the live connection is cut
+   (`plans/LODY-SHARING.md` §5).
+8. Terminals: open a TUI tab and confirm it is unchanged.
+
+Step 6 is also the cheapest place to close the one thing the exit tests could
+not (`plans/LODY-SHARING.md` §10.5): whether the daemon acts on a permission
+answered by a non-owner. Answer one card from the grantee's browser and watch
+the agent continue.
+
+### 13.5 Schedule the merge agent
+
+`docs/LODY-MERGE.md` is written to be executed verbatim. §5.4 says to wire it to
+a schedule "once the first two manual merges go clean" — one has, and its
+friction is in that document's log. Wire the second by hand before scheduling.
