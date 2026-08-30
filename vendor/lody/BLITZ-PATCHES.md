@@ -239,6 +239,19 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   from `/lody/platform` and injects it. Not a divergence — an adaptation the
   Electron seam does not need — but it is why every one of those helpers silently
   failed the daemon's `.strict()` parse until phase 5.
+- **A local project's repo name is dropped unless the cloud already knows the
+  repo** (phase 5). `resolveLocalProjectGithubRepoFullName`
+  (`components/chat/chat-landing.tsx:481`) returns the name the daemon derived
+  from the clone's remote only if it also appears in `repositories`, the
+  workspace's cloud-connected GitHub repo list. With no cloud that list is empty,
+  so a worktree session's `ProjectRef` never carries `githubRepoFullName` — and
+  then the rail groups it under Chats instead of GitHub Worktrees, and turn
+  post-processing skips `updateSessionDiffStats` altogether
+  (`session-execution-service.ts:2351`). `publishBoxReposAsWorkspaceRepos`
+  (`packages/webapp/src/lody/local-projects.ts`) writes the box's own clones into
+  `setWorkspaceReposCacheAtom` instead, which is the other half of
+  `freshRepositories ?? cachedRepositories`. Candidate upstream PR: treat a local
+  project's own remote as sufficient when the workspace has no cloud repo list.
 - **The local attachment fast path is gated on `__LODY_ELECTRON__`.**
   `canUseElectronLocalFileSend` (`lib/electron-session-file-sender.ts:19`) is
   `isElectronRenderer() && Boolean(getIpcServices())`, and the flag is the one

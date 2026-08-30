@@ -929,3 +929,245 @@ selector (`SessionList` renders a row as `div[role=button]` with
 supplied, which this rail does not supply). The selector is fixed and the same
 assertion now passes for free against a seeded session, which is the same accept
 unit the landing writes minus the paid dispatch.
+
+---
+
+## 10. What phase 5 changed about this document (2026-08-30)
+
+Phase 5 made worktree sessions work: repos registered from the box, worktrees cut
+off the `/workspace/<repo>` clones, archive with a backup commit, diff badges,
+and the composer's whole control bar against a real registered clone. What
+follows is what that measured, in the form §7, §8 and §9 use.
+
+### 10.1 Three upstream couplings, all found by running the thing
+
+None is in this document because none was foreseeable from reading. All three are
+recorded in `vendor/lody/BLITZ-PATCHES.md` under "things upstream does not
+support", and **none needed a vendor hunk**.
+
+| # | What is broken | Where | What ships instead |
+|---|---|---|---|
+| 1 | **Archiving a local-project worktree resolves nothing and leaves the tree on disk.** `resolveWorktreeCleanupTarget` reads the project's `originalRootPath` out of `{...machineMeta.localProjects, ...getMachineFlockLocalProjects(machineFlockRows)}`. The DELETE caller passes `machineFlockRows`; the ARCHIVE caller does not. And `local-project/add` writes ONLY the Flock row. So on a box the archive path returns `null`, no backup commit is made, and the member's uncommitted work stays in a worktree nothing will ever clean up. | `apps/cli/src/lib/message-handler.ts:3971` vs `:4499`; shipped bundle `lody/dist/index.js:169066` vs `:169476` | `packages/webapp/src/lody/local-projects.ts` mirrors the Flock rows into the legacy `machineMeta.localProjects` field, which both paths still read. Run once per runtime beside the agent-config bootstrap. Upstream PR: pass `machineFlockRows` on the archive path; then delete the mirror. |
+| 2 | **Every positional `localProjects.*` IPC helper omits `machineId`**, which every `local-project/*` request schema requires and which is `.strict()`. Upstream is right: in Electron the MAIN process is the machine. On a box the main process is the box and the browser is not, so `getGitState(workspaceId, localProjectId)` produced a request the daemon rejected at the boundary — and the landing's branch picker sat on "Checking whether this project is a git repository" forever. | `providers/workspace-machine-rpc-facade.ts:1006`, and the six helpers in `packages/webapp/src/lody/local-bridge.ts` | `local-bridge.ts` resolves the box's machineId from `/lody/platform` — the door `localPlatform.getSnapshot` already reads — caches it, and injects it into every positional helper. A failed read is not cached, so a call made before the daemon has written its catalog retries. |
+| 3 | **A local project's repo name is dropped unless the CLOUD already knows the repo.** `resolveLocalProjectGithubRepoFullName` returns the daemon's own answer only if it also appears in `repositories`, the workspace's cloud-connected GitHub repo list. This composition has no cloud, so the list is empty, so a worktree session's `ProjectRef` never carries `githubRepoFullName` — and then the rail groups it under Chats instead of GitHub Worktrees AND turn post-processing skips `updateSessionDiffStats` entirely, because it is gated on `resolveProjectGitHubRepo(project)`. **This is what §6.4 is really asking for, and it is the one that costs a live turn to see**: the agent edits the worktree, the turn finalizes, and no diff stats are ever computed. | `components/chat/chat-landing.tsx:481`, gating `:3011`; the consequence at `session-execution-service.ts:2351` | `publishBoxReposAsWorkspaceRepos` (`packages/webapp/src/lody/local-projects.ts`) writes the box's own clones into `setWorkspaceReposCacheAtom`, which is the other half of `freshRepositories ?? cachedRepositories`. Each name is the daemon's answer to `local-project/git-state`, so nothing is invented: a clone with no GitHub remote contributes nothing and its sessions stay in Chats. |
+
+Defect 2 had been latent since phase 2: nothing before phase 5 called a
+positional helper, because `localProjects.control` carries `machineId` in the
+request body and that is the door the earlier phases used.
+
+### 10.2 §6.4 was right about the field and wrong about who sets it
+
+The plan says "`ProjectRef.githubRepoFullName` is set so the sidebar groups
+these under GitHub Worktrees", next to "registration happens daemon-side". Read
+together that suggests `local-project/add` carries the repo name. It cannot:
+`LocalProjectAddRequestSchema` is `.strict()` and has only `machineId`,
+`rootPath`, `workspace?`, `allWorkspaces?`. What actually happens is a division
+of labour, measured against a real daemon:
+
+- The DAEMON derives the repo name from the clone's own remote
+  (`probeGitHubRemoteAtRootPath`, `shared/src/node/local-project.ts:558`;
+  `origin` first, push URL before fetch URL) and reports it on
+  `local-project/git-state`. `/workspace/BlitzOS` → `blitzdotdev/BlitzOS`, for
+  both an HTTPS and an SSH remote.
+- The BROWSER copies it onto the session's `ProjectRef` when the session is
+  created. That copy is what three separate daemon paths then read: the sidebar
+  grouping (`resolveProjectGitHubRepo`, `shared/src/project.ts:152`), the
+  removal preflight, and — the one that would be missed — the per-turn diff
+  stats, which upstream gates on `resolveProjectGitHubRepo(project)` being
+  truthy (`session-execution-service.ts:2351`). A worktree session whose
+  `ProjectRef` lacks the field gets **no diff stats at all**.
+
+So `startLodySession` gained an optional `project`, written into the ACCEPT UNIT
+rather than patched in afterwards — and the browser's copy is conditional on a
+cloud repo list a box does not have, which is defect 3 above.
+
+### 10.3 The forced worktree pill is not forced here
+
+§0's reference bar says "branch picker + forced worktree pill". `checked
+disabled` is exactly what the landing renders — for the **`github`** context
+(`chat-landing.tsx:3412`), which is the bare-mirror source §0.5 does not use. In
+the **`local`** context, which is what a BlitzOS worktree session is, the pill is
+a real toggle whose default comes from `readWorkdirModePreference`, and its
+unticked state means the agent runs **in the `/workspace/<repo>` clone itself**.
+
+Phase 5 does not change that: forcing it would be a vendor edit, and §0's bias
+rule says theirs wins. It is recorded here because it is a product decision
+somebody has to take, and the safe default is not the one that ships.
+
+### 10.4 Attachments: a blocker, with the seam written out
+
+§0.7 asks for the one adaptation in the plan — their cloud-upload fallback
+replaced by a browser→box route over WebDAV. **There is no port to implement it
+behind.** Searched: `PlatformProvider`/`PlatformContext` expose `identity`,
+`workspaces`, `capabilities`, `cloudApi`, `sync` and no upload member;
+`cloud-api-operations.ts` has no upload descriptor; `CloudAttachmentUploadPort`
+(`packages/platform/src/cloud-port.ts:216`) is the CLI-side seam, carries only a
+base URL, and `local.ts:120` sets it to `null`; `GitHubTokenPort` is the one
+installable port of that style and covers tokens only.
+
+What exists is a branch, and it is gated on the one global BlitzOS must never
+set:
+
+```ts
+// lib/electron-session-file-sender.ts:19
+export const canUseElectronLocalFileSend = (): boolean =>
+  isElectronRenderer() && Boolean(getIpcServices());
+```
+
+With it false, `useChatLandingFileDraft` (`:157`) falls through to
+`uploadSessionFile`, whose every URL is built from `API_BASE_URL` — Lody cloud,
+which this composition has no account for.
+
+**The seam proposal, not applied.** One hunk, same shape and same idea as seam
+patch 1, in a third file:
+
+```diff
+ export const canUseElectronLocalFileSend = (): boolean =>
+-  isElectronRenderer() && Boolean(getIpcServices());
++  (isElectronRenderer() || window.__LODY_LOCAL_BRIDGE__ === true) && Boolean(getIpcServices());
+```
+
+Behind it, `local-bridge.ts` gains one channel,
+`localProjects.sendSessionFileLocal`, which PUTs the bytes to the box over the
+existing dufs surface (`BoxEndpoints.filesBase`, `/workspaces/:id/webapp/7445/workspace/…`,
+the same route `file-drop.ts` uses) and returns the `SessionInputBlock` array
+`session-file-upload.ts:253` parses, with `transport: 'local'`. One extra
+decision it forces: dufs serves `/workspace`, and a session's workdir is a
+worktree under `/var/lib/blitz/lody` — so either the attachment lands at
+`/workspace/.blitz-attachments/<sessionId>/<name>` and the agent is handed an
+absolute path, or `webapp-surface.ts` grows a second prefix and the gateway with
+it. The first needs no new box path and is the one to take.
+
+It is NOT applied because the brief's rule is zero new hunks and a recorded
+blocker instead. The `+` menu, its picker and the image/file split all render and
+work; only the far end of the upload is missing.
+
+### 10.5 The composer parity table
+
+The §0 acceptance artifact. Driven by
+`packages/webapp/test/lody-worktree-composer.test.tsx` against a real
+`lody@0.88.1` daemon holding a real registered clone with two branches, on the
+real landing, in `local` (worktree) context.
+
+| Control | Verdict | Evidence |
+|---|---|---|
+| machine chip | **PASS** | `DesktopMachineMenu` renders and names the box (`blitzos-dev`). Phase 3 proved it on the session page; this is the landing's own call site. |
+| repo picker | **PASS** | The registered clone appears in `UnifiedProjectSelectorView` and selecting it puts the landing in `local` context. The options come from `MachineMeta.localProjects`, which for a box arrives only through `mergeMachineFlockMachineMeta` — so this also proves the Flock overlay reaches the landing. |
+| branch picker | **PASS** | Renders on the base branch (`main`) once the worktree pill is ticked, and lists every branch the clone has (`main`, `release`). It is the whole `local-project/git-state` round trip through our bridge, and it failed until §10.1 defect 2 was fixed. |
+| worktree pill | **PASS, but not forced** | Renders, is enabled once the git state lands, and toggles. See §10.3: `checked disabled` is the `github` context only. |
+| `/` commands | **PASS** | The palette opens with the adapter's own `availableCommands` — `/usage`, `/insights`, `/recap`, `/security-review` and more, over 5 entries. Also the proof that OUR capabilities pass ran, since upstream's never does for a box (§8.3). |
+| `@` mentions | **PASS** | The category menu opens (Files / Skills / Commands) and Files lists `README.md` and `index.ts` from the registered clone, over `local-project/list-files`. |
+| `$` skills | **PASS (clean empty state)** | The palette opens against a clone with no `.claude/skills`; `local-project/list-skills` answers empty, which §0's bar accepts. No `cli_not_running`. |
+| `+` attachments | **PARTIAL** | The menu, the hidden file input and the image/file split all render and work. The upload has no route to the box — §10.4, recorded blocker. |
+| model · effort | **PASS** | The run-configuration menu renders the models and effort levels the capabilities refresh reported. |
+| permission mode | **PASS** | `DesktopPermissionModeButton` opens and Manual (`default`) is selectable — the mode the permission card needs. Phase 4 pinned the control; phase 5 drives it on the landing and then spends the turn behind it. |
+
+One jsdom-only ordering note, recorded so the next reader does not read it as a
+product fault: the three mention palettes must be exercised `@`, `$`, `/` in that
+order. With `/` first the palette stays closed for 30 s; third, the same
+assertion passes in the same mount. In a browser the layer is warmed by the
+pointer that lands in the composer, and jsdom has no such pointer.
+
+### 10.6 The free path to a worktree, and what it saved
+
+A worktree session is normally born from a dispatch, which is a paid turn. It
+need not be: the daemon cuts the worktree in `createSessionInner`
+(`session-manager.ts:1932`), which runs BEFORE `session.createAgent` (`:1404`).
+So a `session/create` whose `runtimeOverrides.claudeCodeExecutable` points at
+`/bin/false` creates the branch, the worktree and the session document, then
+fails to launch an agent — and the whole lifecycle (branch name, worktree path,
+clone untouched, dirty preflight, archive-with-backup) is assertable for nothing.
+`packages/webapp/test/lody-worktree-session.test.ts` is that test.
+
+Two things it measured that are not obvious:
+
+- **The session document has to exist first.** `session/create` passes
+  `assumeDocExisting: true`, so a control-socket create with no prior CRDT write
+  leaves a session with no `machineId` — and `local-project/removal-preflight`
+  filters on exactly that (`local-project-removal.ts:23`), so the session is
+  invisible to it. The test therefore writes the accept unit with
+  `startLodySession` first, which is also the product order.
+- **`local-project/add` is idempotent on `rootPath`** — the same path returns the
+  same `localProjectId` — which is what makes re-registration on every reboot
+  safe. That is the daemon's property, captured in
+  `fixtures/lody-project-registration/response/add-repeat.json`, and the box
+  registrar's list-and-diff pass is an optimization on top of it rather than the
+  safety.
+
+### 10.7 The box registrar, and why it reads `/workspace`
+
+`packages/box/rootfs/usr/local/libexec/blitz-lody-projects`, an s6 longrun
+following `lody-daemon`, registers every git repository directly under
+`/workspace` every 30 s.
+
+§6.4 says to "drive it from box bootstrap using the `workspace_repos` list". It
+does not, for two measured reasons. The template-repo cloner in
+`core/bootstrap.ts` is a DETACHED best-effort retry loop that runs for up to ten
+minutes after boot, so a one-shot handed the list at boot would register
+directories that do not exist yet; and that file's emitted bytes are a pinned
+contract, so growing them would cost a fixture change on every deployment path.
+Inside the box, "the directories under `/workspace` that are git repositories" IS
+that list, plus every repo the member cloned by hand — which is the same thing as
+far as worktrees are concerned, and strictly more useful.
+
+Its payloads are a cross-runtime contract with two BlitzOS producers (the
+registrar and the browser bridge), so they have a fixture corpus captured from a
+real daemon and conformance tests on both sides —
+`packages/schema/fixtures/lody-project-registration/`, the row added to
+CLAUDE.md's table.
+
+### 10.8 The harness leaks a daemon, and now the run reaps it
+
+§9.3 recorded that "a SIGKILLed worker leaks a daemon, and that daemon holds
+17789, and the next run then fails to provision with an empty log. Nothing
+in-process can prevent it." Phase 5 closes it from OUTSIDE the process:
+`packages/webapp/test/lody-daemon-reaper.ts` is a Vitest `globalSetup` that runs
+once before any worker and kills anything running
+`<tmpdir>/lp-*/lody/dist/index.js` — the one path shape the harness ever spawns.
+
+Deliberately narrow. A daemon at `/opt/blitz/npm/...` is the box's own or a
+developer's own `lody start`, and killing it would be hostile; the harness's
+existing timeout message already names that case with the command to find it.
+Measured while writing this phase: an agent's own probe daemon under `/tmp/lp7`
+wedged all four daemon-backed suites, the reaper correctly left it alone, and the
+harness's message is what identified it.
+
+### 10.9 Exit test: what is proven, and what is not
+
+`packages/webapp/test/lody-worktree-session.test.ts` (daemon-gated, six free
+cases), `packages/webapp/test/lody-worktree-composer.test.tsx` (daemon-gated, six
+free cases plus one gated live turn),
+`packages/box/guest-tests/test/lody-projects-registration.test.ts` and
+`packages/webapp/test/lody-project-control-frames.test.ts` (both free, both
+gating every merge).
+
+**Proven, free:** the registrar registers every `/workspace` clone, once, and
+skips what is not a repository; the daemon reports the clone's GitHub remote, its
+branches and its working tree; no worktree setup script is configured and its
+absence costs nothing; a worktree session runs on `lody/<id12>` under
+`<dataDir>/repos/<repoId>/worktrees/<sessionId>` with the clone's HEAD, branch
+and index untouched; a dirty worktree is reported dirty and survives a project
+removal; archive commits `chore: archive backup for session <id8>` as
+`Lody Archive <archive@lody.ai>`, keeps the branch and removes the tree; and
+every composer control in §10.5 except `+`.
+
+**Proven, live (three paid turns, and the third carried three exit tests at
+once):** with the mode set to Manual from the landing's own permission selector,
+a worktree session's agent asked for permission, the card rendered and was
+answered, the agent's file landed in the worktree under
+`<dataDir>/repos/…/worktrees/<sessionId>` while `/workspace/<repo>` stayed clean
+on `main`, and the rail row grew its line-change badge. Eleven seconds from send
+to badge.
+
+The three turns were not three attempts at the same thing; each bought a finding
+the free path could not reach.
+
+| Turn | What it bought |
+|---|---|
+| 1 | The permission card and the worktree edit, both first time. It also showed that **the agent renames the branch**: the reflog reads `Branch: renamed refs/heads/lody/bced8554-c14 to refs/heads/feat/agent-wrote-thismd`, because the box's OWN agent rules (`/opt/blitz/skel/agent-rules.md`, installed by `blitz-init-state` as `~/.claude/CLAUDE.md`) tell it to work on a new branch, so it renames the one it is standing in. Nothing downstream cares — the worktree, the diff stats and the archive all key off the session id and the path — but an assertion that pins the branch name AFTER a turn is asserting the agent's manners, so that assertion lives in the free test. No diff badge. |
+| 2 | Ruled out the test's own stale DOM node, and left the daemon log that named the real cause: the session's `configForLog` said `githubRepo: undefined`, so `updateSessionDiffStats` was never reached. That is §10.1 defect 3, and nothing short of a live turn surfaces it — every free path writes the `ProjectRef` itself and so cannot notice that the LANDING drops the field. |
+| 3 | The fix, confirmed: `githubRepo: 'blitzdotdev/wt-composer'` at create, diff stats at finalization, badge on the row. |
+
+**NOT reached:** nothing structural in the worktree path. `+` attachments are
+the one §0 control that does not work, for the reason and with the seam in
+§10.4.
