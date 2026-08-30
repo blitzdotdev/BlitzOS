@@ -132,6 +132,39 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
     return { error: message };
   }
 
+  /**
+   * The box's machineId, resolved once and remembered.
+   *
+   * EVERY positional helper below needs it and NONE of their callers pass it:
+   * `requestLocalProjectGitState` (`workspace-machine-rpc-facade.ts:1006`) calls
+   * `localProjects.getGitState(workspaceId, localProjectId)` with two arguments,
+   * because in Electron the MAIN process is the machine and fills its own id in.
+   * Here the main process is the box, and the browser learns its id from
+   * `/lody/platform` — the same door `localPlatform.getSnapshot` reads. Without
+   * this every one of those requests fails the daemon's `.strict()` schema at
+   * the boundary, and the landing's branch picker sits on "Checking whether this
+   * project is a git repository" forever.
+   *
+   * Cached rather than re-fetched: the id is minted once by the daemon and
+   * cannot change while the surface is mounted. A failed read is NOT cached, so
+   * a call made before the daemon has written its catalog retries on the next
+   * one.
+   */
+  let machineId: string | null = null;
+  async function resolveMachineId(): Promise<string | null> {
+    if (machineId !== null) return machineId;
+    const options: LodyPlatformFetchOptions = {};
+    if (endpoints.fetchImpl !== undefined) options.fetchImpl = endpoints.fetchImpl;
+    try {
+      machineId = (await fetchLodyPlatformSnapshot(endpoints.platformUrl, options))?.machineId ?? null;
+    } catch {
+      // Not cached: a transport failure before the daemon has written its
+      // catalog must not make every later call fail too.
+      return null;
+    }
+    return machineId;
+  }
+
   /** One `local-project/*` or `worktree/*` request and one unwrap, mirroring
    * `apps/electron/src/main/ipc/services/local-projects-ipc.ts` field for field.
    * The four failure styles are that file's, reproduced because the callers in
@@ -142,7 +175,9 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
     fields: Record<string, JsonValue | undefined>,
     onError: ProjectFailureStyle,
   ): Promise<LodyIpcReply> {
-    const entries: [string, JsonValue][] = [["type", type]];
+    const machine = await resolveMachineId();
+    if (machine === null) return projectFailure(onError, "cli_not_running");
+    const entries: [string, JsonValue][] = [["type", type], ["machineId", machine]];
     for (const [key, value] of Object.entries(fields)) {
       if (value !== undefined) entries.push([key, value]);
     }
