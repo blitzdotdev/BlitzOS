@@ -408,13 +408,15 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  /** The workspace allow-list is the whole answer. An agent in the box pulls a
-   * credential at the moment it asks, so a name on the list is Connected.
+  /** Connected means both halves: the workspace allow-list names it AND a
+   * credential stands behind it. The allow-list alone used to be the whole
+   * answer, which read as Connected for a provider whose grant had just been
+   * revoked, on a tile that offered to connect it in the same breath.
    *
-   * The panel cannot read a lease to decide it: `ControlPlaneClient` carries no
-   * lease reader at all. That is the guarantee, not this test — re-adding a
-   * poll means re-adding the method, which a reviewer sees. */
-  it('prints Connected for the allow-list, Connect where a member can act, and Needs a key otherwise', async () => {
+   * The panel still reads no lease to decide this: `ControlPlaneClient` carries
+   * no lease reader at all. Backing is the member's own grant or an org
+   * credential, which are the two sources the mint itself consults. */
+  it('prints Connect for an allow-listed name with nothing behind it, and Needs a key otherwise', async () => {
     const adminOnly: CatalogEntryView = {
       ...catalogEntry('tracker', 'Acme Tracker'),
       personalTokenLabel: null,
@@ -425,9 +427,22 @@ describe('workspace provider rows', () => {
     });
     const view = await render(connectionsPanel(wire, ['linear']));
     await settle();
-    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
+    // Allow-listed, but no grant and no org credential: an agent asking here
+    // would be refused, so the tile does not claim otherwise.
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
     expect(stateWord(rowFor(view.container, 'Notion'))).toBe('Connect');
     expect(stateWord(rowFor(view.container, 'Acme Tracker'))).toBe('Needs a key');
+    await view.unmount();
+  });
+
+  it('prints Connected once the allow-list and a grant agree', async () => {
+    const wire = client({
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+    });
+    const view = await render(connectionsPanel(wire, ['linear']));
+    await settle();
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
     await view.unmount();
   });
 
@@ -437,6 +452,11 @@ describe('workspace provider rows', () => {
   it('prints Connected for every name in a multi-provider allow-list', async () => {
     const wire = client({
       listConnectionCatalog: vi.fn(async () => ({ providers: [linear, notion] })),
+      // Both backed, so the assertion is about the key splitting and not
+      // about what stands behind either name.
+      listConnectionGrants: vi.fn(async () => ({
+        grants: [accountGrant('linear'), accountGrant('notion')],
+      })),
     });
     const view = await render(connectionsPanel(wire, ['linear', 'notion']));
     await settle();
@@ -549,7 +569,7 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
-  it('offers a connected row Replace key and a Disconnect that names both meanings', async () => {
+  it('offers a connected row Replace key and a Disconnect that acts at once', async () => {
     const disconnectWorkspaceConnection = vi.fn(async () => undefined);
     const deleteConnectionGrant = vi.fn(async () => undefined);
     const wire = client({
@@ -575,13 +595,10 @@ describe('workspace provider rows', () => {
     await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Cancel')));
     await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
     await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Disconnect')));
-    const dialog = document.body.querySelector('[role="dialog"]');
-    if (dialog === null) throw new Error('disconnect chooser is missing');
-    // The old panel gave one action two meanings. It reached only the narrow
-    // one. The chooser names both and reaches both.
-    expect(dialog.querySelector('a')?.getAttribute('href')).toBe('/settings/connections');
-    expect(dialog.textContent).toContain('disconnect everywhere');
-    await act(async () => click(buttonIn(dialog, 'disconnect from this workspace')));
+    // No chooser. The verb is workspace-scoped, the panel header says so, and
+    // the act is reversible in one press, so it does not stop to ask. The
+    // account-wide door stays in Settings, where its blast radius is stated.
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     await settle();
 
     // One workspace leaves the allow-list. Nothing else moves: the account
@@ -691,7 +708,9 @@ describe('workspace provider rows', () => {
       />,
     );
     await settle();
-    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connected');
+    // Allow-listed with nothing behind it reads the same for a viewer as for
+    // anyone else; what differs is that they may press nothing.
+    expect(stateWord(rowFor(view.container, 'Linear'))).toBe('Connect');
     expect(view.container.querySelector('.wsc-tile__actions')).toBeNull();
     expect(pressTile(rowFor(view.container, 'Linear')).disabled).toBe(true);
     await view.unmount();
