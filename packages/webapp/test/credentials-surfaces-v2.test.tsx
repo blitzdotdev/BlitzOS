@@ -517,6 +517,38 @@ describe('workspace provider rows', () => {
     await view.unmount();
   });
 
+  /** Reading a row and changing it are different gestures. A press used to
+   * mint on a backed row, so there was no way to look at a provider without
+   * acting on it. */
+  it('opens a row on press and changes nothing until a button is pressed', async () => {
+    const mintWorkspaceConnection = vi.fn(async () => ({ lease: mintedLease('linear') }));
+    const disconnectWorkspaceConnection = vi.fn(async () => undefined);
+    const wire = client({
+      mintWorkspaceConnection,
+      disconnectWorkspaceConnection,
+      listConnectionCatalog: vi.fn(async () => ({ providers: [linear] })),
+      listConnectionGrants: vi.fn(async () => ({ grants: [accountGrant('linear')] })),
+    });
+
+    // Backed but not on the allow-list: the press that used to mint.
+    const off = await render(connectionsPanel(wire));
+    await settle();
+    await act(async () => click(pressTile(rowFor(off.container, 'Linear'))));
+    await settle();
+    expect(mintWorkspaceConnection).not.toHaveBeenCalled();
+    expect(stateWord(rowFor(off.container, 'Linear'))).toBe('Connect');
+    await off.unmount();
+
+    // Connected: the press opens the actions and disconnects nothing.
+    const on = await render(connectionsPanel(wire, ['linear']));
+    await settle();
+    await act(async () => click(pressTile(rowFor(on.container, 'Linear'))));
+    await settle();
+    expect(disconnectWorkspaceConnection).not.toHaveBeenCalled();
+    expect(stateWord(rowFor(on.container, 'Linear'))).toBe('Connected');
+    await on.unmount();
+  });
+
   it('connects an already-authorized provider in one call and no form', async () => {
     const mintWorkspaceConnection = vi.fn(async () => ({ lease: mintedLease('linear') }));
     const wire = client({
@@ -528,7 +560,12 @@ describe('workspace provider rows', () => {
     await settle();
     const row = rowFor(view.container, 'Linear');
     expect(row.textContent).not.toContain('Connected');
+    // Opening a row reads it and changes nothing.
     await act(async () => click(pressTile(row)));
+    await settle();
+    expect(mintWorkspaceConnection).not.toHaveBeenCalled();
+    // The button is what acts, and one press is the whole act.
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(view.container.querySelector('.connect-form')).toBeNull();
@@ -562,6 +599,9 @@ describe('workspace provider rows', () => {
     const view = await render(connectionsPanel(wire));
     await settle();
     await act(async () => click(pressTile(rowFor(view.container, 'Linear'))));
+    await settle();
+    expect(mintWorkspaceConnection).not.toHaveBeenCalled();
+    await act(async () => click(buttonIn(rowFor(view.container, 'Linear'), 'Connect')));
     await settle();
     expect(mintWorkspaceConnection).toHaveBeenCalledWith('workspace-one', 'linear');
     expect(view.container.querySelector('.connect-form')).toBeNull();
