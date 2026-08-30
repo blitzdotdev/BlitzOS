@@ -134,8 +134,8 @@ GET http://127.0.0.1:7445/ports
 ```
 
 The list includes listening TCP ports and excludes SSH, ttyd, the public
-gateway, its private dufs upstream, and the reserved port 7444. Use the same
-origin for preview URLs:
+gateway, its private dufs upstream, the reserved port 7444, and 17789 (the Lody
+daemon's single-instance host lease). Use the same origin for preview URLs:
 
 ```text
 http://127.0.0.1:7445/preview/<port>/
@@ -148,6 +148,30 @@ to `localhost:<port>`. Under hosted ingress, replace
 authentication, and WebSocket handling remain those of that existing route.
 
 Limitation: dufs 0.46.0 has no stock Origin allowlist; concurrent file-sidebar saves are last-write-wins.
+
+### Lody session surface
+
+Two more exact paths on the same 7445 origin, added in phase 1 of
+`plans/LODY-SESSIONS.md`:
+
+```text
+GET  http://127.0.0.1:7445/lody/sync   (websocket)  CRDT data plane
+POST http://127.0.0.1:7445/lody/rpc                 machine RPC
+```
+
+Both are ticket-authenticated like every other 7445 surface, and both are
+refused to a workspace viewer with 403 until session sharing lands (phase 6).
+They are declared in `packages/schema/src/webapp-surface.ts` and
+`packages/control-plane/core/webapp-surface.ts`, and drift-tested on both sides.
+
+Neither reaches the daemon directly. The gateway proxies them over a unix socket
+to `blitz-lody-bridge`, which re-serves two of the Lody daemon's own unix
+sockets: `/sync` onto its Loro data plane and `/rpc` onto its control socket's
+`/machine-rpc`. The daemon binds no TCP port the browser can reach — only the
+17789 host lease, which is reserved rather than proxied.
+
+Both s6 services (`lody-daemon`, `lody-bridge`) are dark unless
+`BLITZ_LODY_SESSIONS=1`; the default in `env.defaults` is `0`.
 
 Scope fence: the box keeps deliberately NO analytics, metering, or usage store.
 Usage and eval data comes from the native harness transcripts in the agent HOME

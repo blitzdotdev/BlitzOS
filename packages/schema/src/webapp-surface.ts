@@ -9,8 +9,13 @@
  * the box), so both sides import this and both are tested against it.
  */
 
-/** Exact paths served on port 7445. */
-export const WEBAPP_FILES_SURFACES = ["/diag", "/ports", "/previews", "/preview-focus", "/connections-focus", "/terminal/ws"] as const;
+/** Exact paths served on port 7445.
+ *
+ * `/lody/sync` and `/lody/rpc` are the session daemon's two doors
+ * (plans/LODY-SESSIONS.md §4): a websocket carrying its CRDT data plane, and
+ * its machine RPC over HTTP. The gateway refuses both to a workspace viewer
+ * until sharing lands. */
+export const WEBAPP_FILES_SURFACES = ["/diag", "/ports", "/previews", "/preview-focus", "/connections-focus", "/terminal/ws", "/lody/sync", "/lody/rpc"] as const;
 
 /** Path prefixes served on port 7445. `/workspace` also matches exactly. */
 export const WEBAPP_FILES_SURFACE_PREFIXES = ["/workspace/", "/preview/"] as const;

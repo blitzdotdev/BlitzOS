@@ -33,6 +33,9 @@ const (
 	terminalAddress        = "127.0.0.1:7443"
 	terminalHost           = "localhost:7443"
 	terminalOrigin         = "http://localhost:7443"
+	lodyBridgeSocketPath   = "/var/lib/blitz/lody-bridge.sock"
+	lodySyncPath           = "/lody/sync"
+	lodyRPCPath            = "/lody/rpc"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
 	webAppTokenPath        = "/var/lib/blitz/webapp-token"
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
@@ -46,6 +49,18 @@ const (
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
 )
 
+// lodyBridgeHost is a placeholder authority, not a name anything resolves. The
+// Lody bridge listens on a unix socket, so the proxy's transport dials the path
+// and ignores the address entirely; this only fills the Host header and keeps
+// httputil.ReverseProxy's URL rewriting well-formed.
+//
+// lodyBridgeSocketPath above is that socket. Keep it short: `sun_path` caps a
+// unix socket at 103 bytes, and the Lody daemon THROWS
+// `local_ipc_socket_path_too_long` rather than falling back, so every socket
+// path under /var/lib/blitz is budgeted against that cap
+// (see /usr/local/libexec/blitz-lody-bridge). This one spends 31.
+const lodyBridgeHost = "lody-bridge"
+
 // Ports the box runs its own services on. A preview may never claim one, so
 // this set both hides them from the discovered-port list and rejects a focus
 // marker naming them. It mirrors packages/schema/src/preview.ts and the
@@ -58,6 +73,7 @@ var excludedPorts = map[int]struct{}{
 	7445:  {}, // this gateway
 	7446:  {}, // public dufs file server
 	17445: {}, // private dufs upstream
+	17789: {}, // lody daemon's single-instance host lease
 }
 
 const (
@@ -99,6 +115,8 @@ type gateway struct {
 	dufs                   *httputil.ReverseProxy
 	dufsAddress            string
 	terminal               *url.URL
+	lody                   *url.URL
+	lodyTransport          http.RoundTripper
 	controlPlaneOriginPath string
 	webAppTokenPath        string
 	workspaceIDPath        string
@@ -175,6 +193,8 @@ func main() {
 		dufs:                   dufsProxy,
 		dufsAddress:            dufsAddress,
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
+		lody:                   &url.URL{Scheme: "http", Host: lodyBridgeHost},
+		lodyTransport:          unixSocketTransport(lodyBridgeSocketPath),
 		controlPlaneOriginPath: controlPlaneOriginPath,
 		webAppTokenPath:        webAppTokenPath,
 		workspaceIDPath:        workspaceIDPath,
@@ -278,6 +298,11 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.serveTerminal(response, request)
 		return
 	}
+	if request.URL.Path == lodySyncPath || request.URL.Path == lodyRPCPath {
+		removeWebAppTokenHeader(request.Header)
+		g.serveLody(response, request, identity, strings.TrimPrefix(request.URL.Path, "/lody"))
+		return
+	}
 	removeWebAppTokenHeader(request.Header)
 	if strings.HasPrefix(request.URL.Path, "/preview/") {
 		// A preview proxies straight into whatever the workspace is running,
@@ -365,6 +390,51 @@ func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Requ
 		previousRewrite(proxyRequest)
 		proxyRequest.Out.Host = terminalHost
 		proxyRequest.Out.Header.Set("Origin", terminalOrigin)
+	}
+	proxy.ServeHTTP(response, request)
+}
+
+// unixSocketTransport dials one unix socket whatever address the proxy asks
+// for. http.Transport is what makes a websocket upgrade work over it: on a 101
+// it hands the proxy a body that is also the writer, which is the only thing
+// httputil.ReverseProxy needs to splice the two connections.
+func unixSocketTransport(socketPath string) http.RoundTripper {
+	return &http.Transport{
+		DialContext: func(ctx context.Context, _ string, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+}
+
+// serveLody proxies the browser's two doors into the Lody session daemon:
+// `/lody/sync`, the websocket carrying its CRDT data plane, and `/lody/rpc`,
+// the machine RPC it answers over HTTP. Both land on blitz-lody-bridge, which
+// re-serves the daemon's unix sockets on one of its own; nothing here talks to
+// the daemon directly.
+//
+// TODO(lody-phase6): a viewer is refused outright here. Sharing
+// (plans/LODY-SESSIONS.md §0.1, phase 6) is what gives a read-only participant a
+// scoped way in — a per-room ACL keyed to a share grant, enforced where the
+// frames are, not a read-only HTTP method filter. Until that exists, "read-only"
+// has no meaning on this surface: the sync socket is bidirectional and one
+// `update` frame writes a session, so GET-versus-POST tells nobody anything. The
+// `/preview/` and dufs branches below can narrow a viewer to reads because their
+// protocols carry that distinction in the method; this one does not. Phase 6
+// replaces this refusal with a grant lookup, and the enforcement point is the
+// bridge, not here — the gateway cannot see frames.
+func (g *gateway) serveLody(response http.ResponseWriter, request *http.Request, identity webAppIdentity, upstreamPath string) {
+	if identity.Role == "viewer" {
+		deny(response, request, http.StatusForbidden, "lody sessions are not available to viewers", roleDetail(identity))
+		return
+	}
+	target := g.lody
+	if target == nil {
+		target = &url.URL{Scheme: "http", Host: lodyBridgeHost}
+	}
+	proxy := g.reverseProxy(target, upstreamPath, "", request)
+	if g.lodyTransport != nil {
+		proxy.Transport = g.lodyTransport
 	}
 	proxy.ServeHTTP(response, request)
 }

@@ -17,8 +17,10 @@
 /** Ports the box runs its own services on. A preview may never claim one:
  * 22 sshd, 7443 ttyd, 7444 (kept for boxes in the field that still run the
  * retired ACP actor), 7445 this gateway, 7446 the public
- * dufs file server, 17445 the private dufs upstream. */
-export const RESERVED_PREVIEW_PORTS: readonly number[] = [22, 7443, 7444, 7445, 7446, 17445];
+ * dufs file server, 17445 the private dufs upstream, 17789 the Lody daemon's
+ * single-instance host lease (the one loopback port it cannot be talked out of
+ * — everything else it serves is a unix socket). */
+export const RESERVED_PREVIEW_PORTS: readonly number[] = [22, 7443, 7444, 7445, 7446, 17445, 17789];
 
 export const MIN_PREVIEW_PORT = 1_024;
 export const MAX_PREVIEW_PORT = 65_535;
