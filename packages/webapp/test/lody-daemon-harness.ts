@@ -22,7 +22,16 @@
  * is 118. So the data dir is a short `os.tmpdir()` path, not the scratchpad.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer as createHttpServer, request as httpRequest, type Server } from "node:http";
 import { createConnection, createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -165,22 +174,43 @@ function startGatewayShim(socketPath: string, port: number, log: (line: string) 
  * needing a daemon is exactly the shape phase 4 introduced.
  *
  * A directory is the lock because `mkdir` is atomic on every filesystem this
- * runs on. The stale sweep is what keeps a killed run from wedging the next
- * one; the window is generous because a cold daemon plus a real ACP adapter
- * legitimately takes tens of seconds.
+ * runs on, and it holds the OWNER'S PID. Staleness is then "that process is
+ * gone", not a timer: a vitest worker killed by the OOM reaper — which is how
+ * this was found — leaves both the lock and a daemon still holding 17789, and a
+ * ten-minute timer would wedge every later run for ten minutes. A timer is kept
+ * only as the backstop for a lock whose pid file never got written.
  */
 const HARNESS_LOCK = join(tmpdir(), "blitz-lody-harness.lock");
-const HARNESS_LOCK_STALE_MS = 10 * 60_000;
+const HARNESS_LOCK_STALE_MS = 60_000;
+
+function harnessLockIsStale(): boolean {
+  const ownerFile = join(HARNESS_LOCK, "pid");
+  let owner = 0;
+  try {
+    owner = Number.parseInt(readFileSync(ownerFile, "utf8"), 10);
+  } catch {
+    // No pid yet: fall back to the age of the directory itself.
+    const heldSince = statSync(HARNESS_LOCK, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+    return Date.now() - heldSince > HARNESS_LOCK_STALE_MS;
+  }
+  if (!Number.isInteger(owner) || owner <= 0) return true;
+  try {
+    process.kill(owner, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 async function acquireHarnessLock(): Promise<() => void> {
   const deadline = Date.now() + 300_000;
   for (;;) {
     try {
       mkdirSync(HARNESS_LOCK);
+      writeFileSync(join(HARNESS_LOCK, "pid"), String(process.pid));
       return () => rmSync(HARNESS_LOCK, { recursive: true, force: true });
     } catch {
-      const heldSince = statSync(HARNESS_LOCK, { throwIfNoEntry: false })?.mtimeMs ?? 0;
-      if (Date.now() - heldSince > HARNESS_LOCK_STALE_MS) {
+      if (harnessLockIsStale()) {
         rmSync(HARNESS_LOCK, { recursive: true, force: true });
         continue;
       }
@@ -235,7 +265,14 @@ export async function startLodyHarness(): Promise<LodyHarness> {
     daemon.kill("SIGKILL");
     rmSync(root, { recursive: true, force: true });
     releaseLock();
-    throw new Error(`${String(cause)}\n--- daemon log ---\n${daemonLog}`);
+    // The daemon log is silent in the one failure mode that actually happens
+    // here, so the hint is part of the message: something else already holds
+    // the local profile's host lease. In practice that is a daemon orphaned by
+    // a worker the OOM reaper killed, which no in-process cleanup can prevent.
+    throw new Error(
+      `${String(cause)}\nIf the log below is empty, check for an orphaned daemon: ` +
+        `ss -lntp | grep 17789\n--- daemon log ---\n${daemonLog}`,
+    );
   });
 
   const bridgeSocket = join(root, "b.sock");
@@ -266,6 +303,15 @@ export async function startLodyHarness(): Promise<LodyHarness> {
   const gateway = startGatewayShim(bridgeSocket, port, (line) => (daemonLog += line));
   const origin = `http://127.0.0.1:${port}`;
 
+  // An ordinary crash or a failed assertion must not leave a daemon holding the
+  // lease for the next run. A SIGKILLed worker still can, and nothing here can
+  // change that — see the provisioning error above.
+  const killOnExit = (): void => {
+    daemon.kill("SIGKILL");
+    bridge.kill("SIGKILL");
+  };
+  process.once("exit", killOnExit);
+
   return {
     dataDir,
     origin,
@@ -287,6 +333,7 @@ export async function startLodyHarness(): Promise<LodyHarness> {
       daemon.kill("SIGKILL");
       bridge.kill("SIGKILL");
       rmSync(dirname(dataDir), { recursive: true, force: true });
+      process.off("exit", killOnExit);
       releaseLock();
     },
   };

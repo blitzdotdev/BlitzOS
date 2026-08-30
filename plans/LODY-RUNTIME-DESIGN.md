@@ -857,6 +857,21 @@ Two consequences for the suite:
   number was wall clock on a shared machine, which is exactly what the vendored
   `AGENTS.md` says a test must not depend on. The decision it served is settled
   by the clean numbers above.
+- **The webapp suite now has a memory floor, and it is worth knowing before a
+  sweep blames a change for it.** Three suites import the vendored renderer
+  (phase 2's round trip, phase 3's surface, phase 4's rail), and a worker
+  holding that graph — Monaco, three, mermaid, shiki, loro's WASM — plus a
+  daemon runs to several hundred MB. On an 8 GiB box with ~1 GB free the OOM
+  reaper takes the whole run with SIGKILL and code 137: no failing test, no
+  stack, just `Killed`. With ~3 GB free it passes, repeatedly, at the default
+  worker count. `--maxWorkers=2` halves the peak and, measured here, is not
+  slower.
+- **A SIGKILLed worker leaks a daemon**, and that daemon holds 17789, and the
+  next run then fails to provision with an empty log. Nothing in-process can
+  prevent it, so the harness names it in the timeout message
+  (`ss -lntp | grep 17789`), registers an exit-time kill for every ordinary
+  crash, and keys its lock's staleness on the owner PID being gone rather than
+  on a timer.
 
 ### 9.4 The permission-mode selector: not a submenu
 
