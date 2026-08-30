@@ -81,6 +81,11 @@ export default defineConfig(({ command, mode }) => {
     test: {
       environment: "jsdom",
       setupFiles: ["./test/setup.ts"],
+      // Runs ONCE, before any worker. It kills a `lody` daemon orphaned by a
+      // worker the OOM reaper took, which still holds the host lease on 17789
+      // and would make every daemon-backed suite in this run time out. A
+      // SIGKILLed worker runs no exit handler, so nothing in-process can do it.
+      globalSetup: ["./test/lody-daemon-reaper.ts"],
       // Capped by MEMORY as well as by cores, because three suites import the
       // vendored Lody renderer and a worker holding that graph — Monaco, three,
       // mermaid, shiki, loro's WASM — plus a `lody` daemon runs to several
