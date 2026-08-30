@@ -3,7 +3,7 @@ import type { MachineType, WorkspaceMemberView } from '@blitzos/schema';
 import { describe, expect, it, vi } from 'vitest';
 import type { ControlPlaneClient } from '../src/api.js';
 import { MyMachineDialog } from '../src/MyMachineDialog.js';
-import { WorkspaceSessionRail } from '../src/shell/WorkspaceSessionRail.js';
+import { SessionRail } from '../src/shell/SessionRail.js';
 import { render, settle } from './dom.js';
 import { workspaceModelFixture } from './workspace-fixtures.js';
 
@@ -145,7 +145,7 @@ describe('the rail header', () => {
   it('opens my machine from its own button', async () => {
     const onOpenMachine = vi.fn();
     const view = await render(
-      <WorkspaceSessionRail
+      <SessionRail
         workspace={workspace}
         sessions={[]}
         activeSessionId=""

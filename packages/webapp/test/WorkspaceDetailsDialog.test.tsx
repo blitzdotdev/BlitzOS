@@ -7,7 +7,7 @@ import type {
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../src/api.js';
 import { WorkspaceDetailsDialog } from '../src/WorkspaceDetailsDialog.js';
-import { WorkspaceSessionRail } from '../src/shell/WorkspaceSessionRail.js';
+import { SessionRail } from '../src/shell/SessionRail.js';
 import { machineActionsFor } from '../src/WorkspaceMembersEditor.js';
 import { describe, expect, it, vi } from 'vitest';
 import { render, settle } from './dom.js';
@@ -386,12 +386,12 @@ describe('WorkspaceDetailsDialog', () => {
   });
 });
 
-describe('WorkspaceSessionRail', () => {
+describe('SessionRail', () => {
   it('opens members and details, and hides members from a non-admin', async () => {
     const onOpenMembers = vi.fn();
     const onOpenDetails = vi.fn();
     const view = await render(
-      <WorkspaceSessionRail
+      <SessionRail
         workspace={workspace}
         sessions={[]}
         activeSessionId=""
@@ -422,7 +422,7 @@ describe('WorkspaceSessionRail', () => {
     // An editor on a shared workspace still opens details; only an owner or an
     // admin administers who else is in it.
     await act(async () => view.root.render(
-      <WorkspaceSessionRail
+      <SessionRail
         workspace={{ ...workspace, accessRole: 'editor', shared: true }}
         sessions={[]}
         activeSessionId=""
@@ -448,7 +448,7 @@ describe('WorkspaceSessionRail', () => {
     const onSpawnSession = vi.fn();
     const onOpenPreview = vi.fn();
     const view = await render(
-      <WorkspaceSessionRail
+      <SessionRail
         workspace={workspace}
         sessions={[]}
         activeSessionId=""

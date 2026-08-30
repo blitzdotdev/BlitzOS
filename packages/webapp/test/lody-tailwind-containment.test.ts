@@ -180,7 +180,7 @@ const compensationRules = flattenStyleRules(compensationCss);
 
 /** One element per BlitzOS surface the plan names, plus bare native elements. */
 const PROBE_MARKUP = `
-    <aside class="shell-rail"><div class="shell-list">
+    <aside class="session-rail"><div class="session-list">
       <div class="shell-s"><span class="shell-s__t">tab</span></div>
     </div></aside>
     <div class="files-tree"><div class="files-tree-row"><span>file.ts</span></div></div>

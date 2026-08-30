@@ -47,12 +47,12 @@ const assistantTurn: SessionHistoryParsed = {
   items: [
     {
       type: "text",
-      text: "I will mount the vendored sidebar body inside `div.shell-list` and keep `div.shell-rhead` native.",
+      text: "I will mount the vendored sidebar body inside `div.session-list` and keep `div.shell-rhead` native.",
     },
     {
       type: "tool_call",
       toolCallId: "fixture-tool-1",
-      title: "rg shell-list packages/webapp/src",
+      title: "rg session-list packages/webapp/src",
       kind: "search",
       status: "completed",
     },

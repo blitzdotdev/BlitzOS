@@ -1,19 +1,38 @@
-import { useEffect, useState } from 'react';
-import { NewTabMenu, type SpawnSessionType } from '../NewTabMenu';
+import type { SpawnSessionType } from '../NewTabMenu';
 import { SessionTypeIcon } from '../SessionTypeIcon';
 import type { LivePort, PreviewLink } from '../preview';
 import type { CloudWorkspaceModel } from '../workspace-store';
 // The Drive page's own share icon, so one glyph means "share" everywhere.
 import { BoxGlyph, ShareGlyph } from '../files/DriveIcons';
+import { NewTabControl } from './NewTabControl';
 import type { DriveRailSession } from './rail-sessions';
-import { PlusGlyph } from './StripIcons';
 
-export type WorkspaceSessionRailProps = {
+export type SessionRailProps = {
   workspace: CloudWorkspaceModel | undefined;
   sessions: DriveRailSession[];
   activeSessionId: string;
   livePorts: LivePort[];
   previewLinks: PreviewLink[];
+  /**
+   * The vendored zone (plans/LODY-SESSIONS.md §0.3).
+   *
+   * When supplied, `div.session-list` becomes a PORTAL TARGET and the rail draws
+   * neither the `New tab` bar nor a single row: Lody's own `LoroSidebar` body
+   * renders there instead, mounted by `SessionSurface` so it shares the one
+   * runtime. Its header and footer are suppressed through the props phase 4
+   * added upstream, its Chats and GitHub Worktrees sections come from the
+   * daemon, and today's terminal rows go in through its
+   * `afterSessionListContent` slot. `div.shell-rhead` above it stays native and
+   * byte-for-byte unchanged either way.
+   *
+   * A ref rather than a `ReactNode`, because the mount has to be a CHILD of the
+   * surface's provider stack and this rail is not: what crosses the boundary is
+   * the host element, not an element tree.
+   *
+   * Absent — which is every build with `VITE_BLITZ_LODY_SESSIONS` off — the rail
+   * is exactly what it was: New tab, then one row per managed tab.
+   */
+  onVendorHost?: (node: HTMLDivElement | null) => void;
   onSelectSession: (sessionId: string) => void;
   onSpawnSession: (type: SpawnSessionType) => void;
   onOpenPreview: (port: number) => void;
@@ -27,15 +46,17 @@ export type WorkspaceSessionRailProps = {
 };
 
 /** Column two of the shell (plans/mockups/session-rail.html `#rail`): the
- * workspace head, the pinned New tab action, and one row per managed tab.
- * The row is gutter · title · time, and never more — the time slot stays empty
- * until Build 2 gives a session a clock. */
-export function WorkspaceSessionRail({
+ * workspace head, and below it either the vendored session sections or — with
+ * Lody sessions off — the pinned New tab action and one row per managed tab.
+ * A native row is gutter · title · time, and never more; the time slot stays
+ * empty until a tab gets a clock. */
+export function SessionRail({
   workspace,
   sessions,
   activeSessionId,
   livePorts,
   previewLinks,
+  onVendorHost,
   onSelectSession,
   onSpawnSession,
   onOpenPreview,
@@ -43,29 +64,19 @@ export function WorkspaceSessionRail({
   onOpenMembers,
   onOpenDetails,
   onOpenMachine,
-}: WorkspaceSessionRailProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenuOpen(false);
-    };
-    window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [menuOpen]);
-
+}: SessionRailProps) {
   if (workspace === undefined) {
     return (
-      <aside className="shell-rail" aria-label="Workspace sessions rail">
+      <aside className="session-rail" aria-label="Workspace sessions rail">
         <div className="shell-rhead"><b>No workspace</b></div>
       </aside>
     );
   }
 
   const canShare = workspace.accessRole === 'owner' || workspace.accessRole === 'admin';
+  const vendored = onVendorHost !== undefined;
   return (
-    <aside className="shell-rail" aria-label="Workspace sessions rail">
+    <aside className="session-rail" aria-label="Workspace sessions rail">
       <div className="shell-rhead">
         <b title={workspace.title}>{workspace.title}</b>
         {/* The mockup's RAM readout: machines are not user-facing, so the slot
@@ -100,54 +111,24 @@ export function WorkspaceSessionRail({
         )}
       </div>
 
-      <div className="shell-newbar">
-        <button
-          className="shell-new"
-          type="button"
-          aria-label="New tab"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          <span className="shell-g"><PlusGlyph className="shell-new__plus" /></span>
-          New tab
-        </button>
-        {menuOpen && (
-          <button
-            className="webapp-org-backdrop"
-            type="button"
-            aria-label="Close new tab menu"
-            tabIndex={-1}
-            onMouseDown={() => setMenuOpen(false)}
-          />
-        )}
-        {menuOpen && (
-          <NewTabMenu
-            className="shell-newmenu"
-            livePorts={livePorts}
-            previewLinks={previewLinks}
-            onSpawn={(agent) => {
-              setMenuOpen(false);
-              onSpawnSession(agent);
-            }}
-            onOpenPreview={(port) => {
-              setMenuOpen(false);
-              onOpenPreview(port);
-            }}
-            onOpenPreviewLink={(url, title) => {
-              setMenuOpen(false);
-              onOpenPreviewLink(url, title);
-            }}
-          />
-        )}
-      </div>
+      {!vendored && (
+        <NewTabControl
+          variant="bar"
+          livePorts={livePorts}
+          previewLinks={previewLinks}
+          onSpawnSession={onSpawnSession}
+          onOpenPreview={onOpenPreview}
+          onOpenPreviewLink={onOpenPreviewLink}
+        />
+      )}
 
       <div
-        className="shell-list"
+        className={`session-list${vendored ? ' session-list--vendor' : ''}`}
         role="group"
         aria-label={`Sessions in ${workspace.title}`}
+        ref={onVendorHost}
       >
-        {sessions.map((session, index) => {
+        {vendored ? null : sessions.map((session, index) => {
           const active = session.id === activeSessionId
             || (activeSessionId === '' && index === 0);
           return (
