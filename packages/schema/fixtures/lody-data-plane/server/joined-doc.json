@@ -1,0 +1,16 @@
+{
+  "type": "joined",
+  "protocolVersion": 7,
+  "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+  "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+  "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+  "room": {
+    "scope": "doc",
+    "docId": "session-cap2-3700ee1b"
+  },
+  "serverVersion": "AA==",
+  "payload": {
+    "kind": "doc-update",
+    "dataBase64": "bG9ybwAAAAAAAAAAAAAAAFh8e+IABA=="
+  }
+}

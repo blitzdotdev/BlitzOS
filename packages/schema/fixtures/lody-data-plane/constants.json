@@ -1,0 +1,40 @@
+{
+  "protocolVersion": 7,
+  "maxFrameBytes": 33554432,
+  "maxPayloadBytes": 33488896,
+  "payloadTooLargeCode": "payload_too_large",
+  "roomScopes": [
+    "meta",
+    "doc",
+    "flock-doc"
+  ],
+  "payloadKinds": [
+    "doc-update",
+    "doc-update-chunk",
+    "flock-json"
+  ],
+  "clientTypes": [
+    "join",
+    "update",
+    "leave",
+    "detach",
+    "machine-monitor",
+    "ping"
+  ],
+  "serverTypes": [
+    "joined",
+    "update",
+    "room-status",
+    "error",
+    "presence",
+    "machine-monitor",
+    "pong"
+  ],
+  "roomStatuses": [
+    "connecting",
+    "joined",
+    "reconnecting",
+    "disconnected",
+    "error"
+  ]
+}
