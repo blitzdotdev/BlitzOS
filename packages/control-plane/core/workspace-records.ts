@@ -60,6 +60,8 @@ export interface MachineRow {
   broker_box_id: string | null;
   box_update_requested: number;
   box_image_reported: string | null;
+  disk_used_percent: number | null;
+  disk_reported_at: number | null;
   error: string | null;
   created_at: number;
   updated_at: number;
@@ -111,12 +113,22 @@ function machineTypeIdForRow(row: MachineRow): string {
     : row.machine_type_id;
 }
 
+/** The guest's last disk report, but only for a machine that has a volume to
+ * report on. A machine with no volume measures its VM's root disk, which is
+ * the provider's business and not a durable thing anybody keeps files on, so
+ * the field keeps the name it is given and answers null. The 0-100 range is
+ * the column's own CHECK (migration 0045), not something to re-decide here. */
+function volumeUsedPercentForRow(row: MachineRow): number | null {
+  return row.volume_id === null ? null : row.disk_used_percent;
+}
+
 export function machineView(row: MachineRow): MachineView {
   return {
     id: row.id,
     state: row.state,
     machineTypeId: machineTypeIdForRow(row),
     volumeId: row.volume_id,
+    volumeUsedPercent: volumeUsedPercentForRow(row),
     membershipId: row.membership_id,
     error: row.error,
     createdAt: row.created_at,

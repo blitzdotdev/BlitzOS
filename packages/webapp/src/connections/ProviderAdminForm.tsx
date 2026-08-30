@@ -104,7 +104,7 @@ export function ProviderAdminForm({
   return (
     <div className="connect-form" ref={fieldsRef} onKeyDown={saveOnEnter}>
       <label className="connect-field connect-field--wide">
-        <span className="connect-field__label">{form.rootLabel}</span>
+        <span className="cfg-label">{form.rootLabel}</span>
         <input name="root" type="password" required autoComplete="new-password" />
       </label>
       <p className="connect-help connect-field--wide">{form.rootHelp}</p>

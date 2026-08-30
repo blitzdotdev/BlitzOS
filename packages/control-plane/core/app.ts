@@ -7,6 +7,7 @@ import { addEntitlementsRoutes, SeatLimitReached, seatLimitEnvelope } from "./en
 import { frameworkHttpError, HttpError } from "./http.js";
 import { addFilesRoutes } from "./files/routes.js";
 import { addMachineRoutes } from "./machines.js";
+import { addMachineStatsRoutes } from "./machine-stats.js";
 import { addIdentityRoutes } from "./identity/routes.js";
 import { addOAuthRoutes } from "./oauth.js";
 import { addOperatorTokenRoutes, findOperatorTokenPrincipal } from "./operator-tokens.js";
@@ -20,7 +21,9 @@ import { addSessionRoutes } from "./sessions.js";
 import { addVersionRoutes } from "./version.js";
 import { addVolumeRoutes } from "./volumes.js";
 import { addWebAppStateRoutes } from "./webapp-state.js";
+import { addBoxCredentialRoutes } from "./connections/pull-routes.js";
 import { addWorkspaceCredentialRoutes } from "./workspace-credentials.js";
+import { addWorkspaceCredentialImportRoutes } from "./workspace-credential-import.js";
 import { addWorkspaceMemberRoutes } from "./workspace-members.js";
 import { addSessionShareRoutes } from "./session-shares.js";
 import { addWorkspaceSettingsRoutes } from "./workspace-settings.js";
@@ -106,10 +109,17 @@ export function installControlPlaneRoutes(
   // same reason; its one session route (/workspaces/:id/box-update) collides
   // with nothing.
   addBoxConfigRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Box-authenticated too, and registered here for the same prefix reason: the
+  // guest's own disk report (packages/schema/fixtures/machine-stats/).
+  addMachineStatsRoutes(router, runtimeFactory);
   // Registered before addWorkspaceRoutes: /workspaces/:id/members and
   // /workspaces/:id/credentials are literal paths under the same prefix.
   addWorkspaceMemberRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  // Box-authenticated (/workspaces/self/credentials), registered ahead of the
+  // session credential routes so "self" never binds as their :id.
+  addBoxCredentialRoutes(router, runtimeFactory);
   addWorkspaceCredentialRoutes(router, runtimeFactory, requireMembershipPrincipal);
+  addWorkspaceCredentialImportRoutes(router, runtimeFactory, requireMembershipPrincipal);
   // Same reason: /workspaces/:id/repos is a literal path under the prefix
   // addWorkspaceRoutes registers its parameterised routes on.
   addWorkspaceSettingsRoutes(router, runtimeFactory, requireMembershipPrincipal);

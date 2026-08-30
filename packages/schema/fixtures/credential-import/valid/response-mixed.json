@@ -1,0 +1,14 @@
+{
+  "results": [
+    { "name": "CF_TOKEN", "line": 1, "outcome": "rotated" },
+    { "name": "SAME_KEY", "line": 2, "outcome": "unchanged" },
+    { "name": "STRIPE_API_KEY", "line": 3, "outcome": "stored" },
+    {
+      "name": "GOOGLE_SA_JSON",
+      "line": 4,
+      "outcome": "refused",
+      "reason": "value spans more than one line; base64-encode it first"
+    }
+  ],
+  "linesRead": 4
+}

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   AddWorkspaceMemberRequest,
+  ImportWorkspaceCredentialsRequest,
+  ImportWorkspaceCredentialsResponse,
   ListMachineTypesResponse,
   MachineType,
   PutWorkspaceCredentialRequest,
@@ -62,27 +64,110 @@ type PendingTypeChange = {
   machineTypeId: string;
 };
 
+/** How long the paste sits still before the preview asks the server. The
+ * preview is a real dry run — same parser, same outcomes — so it must not
+ * fire per keystroke. */
+export const IMPORT_PREVIEW_DEBOUNCE_MS = 400;
+
+function importCount(preview: ImportWorkspaceCredentialsResponse): number {
+  return preview.results.filter(
+    ({ outcome }) => outcome === 'stored' || outcome === 'rotated',
+  ).length;
+}
+
+function importSummary(response: ImportWorkspaceCredentialsResponse): string {
+  const parts = [`${response.linesRead} lines read`];
+  for (const outcome of ['stored', 'rotated', 'unchanged', 'refused'] as const) {
+    const count = response.results.filter((result) => result.outcome === outcome).length;
+    if (count > 0) parts.push(`${count} ${outcome}`);
+  }
+  return parts.join(' · ');
+}
+
 function CredentialsTab({
   credentials,
   canManage,
   onPut,
   onRevoke,
+  onImport,
 }: {
   credentials: CloudWorkspaceModel['credentials'];
   canManage: boolean;
   onPut: (input: PutWorkspaceCredentialRequest) => void;
   onRevoke: (name: string) => void;
+  onImport: (input: ImportWorkspaceCredentialsRequest) => Promise<ImportWorkspaceCredentialsResponse>;
 }) {
   const [name, setName] = useState('');
   const [label, setLabel] = useState('');
+  const [comment, setComment] = useState('');
   const [value, setValue] = useState('');
+  const [importText, setImportText] = useState('');
+  const [importLabel, setImportLabel] = useState('');
+  const [preview, setPreview] = useState<ImportWorkspaceCredentialsResponse | null>(null);
+  const [imported, setImported] = useState<ImportWorkspaceCredentialsResponse | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+
+  // The preview IS the import, minus the writes: the same request with
+  // `dryRun` set, so what the rows promise is what the button will do.
+  useEffect(() => {
+    setPreview(null);
+    if (importText.trim() === '') {
+      setImportError(null);
+      return;
+    }
+    let stale = false;
+    const timer = setTimeout(() => {
+      const request: ImportWorkspaceCredentialsRequest = { text: importText, dryRun: true };
+      if (importLabel !== '') request.label = importLabel;
+      onImport(request)
+        .then((response) => {
+          if (stale) return;
+          setImportError(null);
+          setPreview(response);
+        })
+        .catch((caught: Error) => {
+          if (!stale) setImportError(caught.message);
+        });
+    }, IMPORT_PREVIEW_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [importText, importLabel, onImport]);
+
+  const runImport = () => {
+    const request: ImportWorkspaceCredentialsRequest = { text: importText };
+    if (importLabel !== '') request.label = importLabel;
+    onImport(request)
+      .then((response) => {
+        setImportError(null);
+        setImported(response);
+        setImportText('');
+        setImportLabel('');
+      })
+      .catch((caught: Error) => setImportError(caught.message));
+  };
+
+  const chooseFile = (file: File | undefined) => {
+    if (file === undefined) return;
+    void file.text().then((text) => {
+      setImported(null);
+      setImportLabel(file.name);
+      setImportText(text);
+    });
+  };
   const submit = () => {
     if (name.trim() === '' || value === '') return;
     const input: PutWorkspaceCredentialRequest = { name: name.trim(), value };
     if (label.trim() !== '') input.label = label.trim();
+    // Absent keeps a rotated key's comment; the field left empty is absence,
+    // not a clear, so rotating through this form cannot erase one.
+    if (comment.trim() !== '') input.comment = comment.trim();
     onPut(input);
     setName('');
     setLabel('');
+    setComment('');
     setValue('');
   };
   return (
@@ -92,40 +177,134 @@ function CredentialsTab({
       aria-label="Credentials"
       className="workspace-details-credentials"
     >
-      <h2>Credentials</h2>
-      <p className="workspace-details-note">
-        Workspace credentials reach every member machine through{' '}
-        <code>blitz-cred</code>. A value is write-only: it never comes back out
-        of the store, so a rotation replaces it rather than editing it.
-      </p>
-      <div className="workspace-credential-rows">
-        {credentials.length === 0 && (
-          <p className="workspace-members-empty">No workspace credentials yet.</p>
-        )}
-        {credentials.map((credential) => (
-          <div className="workspace-credential-row" key={credential.name}>
-            <span className="workspace-credential-name">
-              <strong>{credential.name}</strong>
-              {credential.label !== null && <small>{credential.label}</small>}
-            </span>
-            <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
-            {canManage && (
-              <button
-                className="webapp-action"
-                type="button"
-                aria-label={`Revoke ${credential.name}`}
-                onClick={() => onRevoke(credential.name)}
-              >
-                Revoke
-              </button>
-            )}
-          </div>
-        ))}
+      <div className="cfg-section">
+        <div className="cfg-section-head">
+          <h2 className="cfg-title">Credentials</h2>
+          <p className="cfg-desc">
+            Workspace credentials reach every member machine through{' '}
+            <code>blitz-cred</code>. A value is write-only: it never comes back
+            out of the store, so a rotation replaces it rather than editing it.
+          </p>
+        </div>
+        <div className="workspace-credential-rows">
+          {credentials.length === 0 && (
+            <p className="workspace-members-empty">No workspace credentials yet.</p>
+          )}
+          {credentials.map((credential) => (
+            <div className="workspace-credential-row" key={credential.name}>
+              <span className="workspace-credential-name">
+                <strong>{credential.name}</strong>
+                {(credential.comment ?? credential.label) !== null && (
+                  <small>{credential.comment ?? credential.label}</small>
+                )}
+              </span>
+              <span className="workspace-credential-added">{dateLabel(credential.createdAt)}</span>
+              {canManage && (
+                <button
+                  className="webapp-action"
+                  type="button"
+                  aria-label={`Revoke ${credential.name}`}
+                  onClick={() => onRevoke(credential.name)}
+                >
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
       {canManage && (
-        <div className="workspace-credential-add">
-          <h2>Add or rotate</h2>
-          <label className="blueprint-field">
+        <div className="credential-import">
+          <div className="credential-import-head">
+            <h2>Import a .env file</h2>
+            <span>each KEY=value line becomes one credential</span>
+          </div>
+          <div className="credential-import-source">
+            <button
+              className="webapp-action"
+              type="button"
+              onClick={() => fileInput.current?.click()}
+            >
+              Choose file…
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              hidden
+              aria-label="Choose an env file"
+              onChange={(event) => chooseFile(event.currentTarget.files?.[0])}
+            />
+            <span className="credential-import-summary">
+              {importLabel === '' ? 'or paste below' : importLabel}
+            </span>
+          </div>
+          <textarea
+            aria-label="Env file text"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            placeholder="# paste .env text — values stay here until you import"
+            value={importText}
+            onChange={(event) => {
+              setImported(null);
+              setImportText(event.currentTarget.value);
+            }}
+          />
+          {importError !== null && (
+            <p className="workspace-details-error" role="alert">{importError}</p>
+          )}
+          {preview !== null && (
+            <div className="credential-import-preview" aria-live="polite">
+              {preview.results.map((result) => (
+                <div className="credential-import-row" key={`${result.line}:${result.name}`}>
+                  <span>
+                    <strong>{result.name}</strong>
+                    <small>
+                      {result.reason === undefined
+                        ? `line ${result.line}`
+                        : `line ${result.line} — ${result.reason}`}
+                    </small>
+                  </span>
+                  <span className={`import-chip import-chip--${result.outcome}`}>
+                    {result.outcome === 'rotated' ? 'rotates' : result.outcome}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {preview !== null && (
+            <p className="credential-import-summary">{importSummary(preview)}</p>
+          )}
+          {imported !== null && (
+            <p className="credential-import-summary" role="status">
+              Imported: {importSummary(imported)}. Every member machine reads the
+              new values on its next <code>blitz-cred</code> pull.
+            </p>
+          )}
+          <div className="credential-import-actions">
+            <p>
+              Agents do the same with <code>blitz-cred import .env</code>. Values
+              never appear in results.
+            </p>
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={preview === null || importCount(preview) === 0}
+              onClick={runImport}
+            >
+              {preview === null
+                ? 'Import'
+                : `Import ${importCount(preview)} key${importCount(preview) === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </div>
+      )}
+      {canManage && (
+        <div className="cfg-section">
+          <div className="cfg-section-head">
+            <h2 className="cfg-title">Add or rotate</h2>
+          </div>
+          <label className="cfg-field">
             Name
             <input
               aria-label="Credential name"
@@ -137,7 +316,7 @@ function CredentialsTab({
               onChange={(event) => setName(event.currentTarget.value)}
             />
           </label>
-          <label className="blueprint-field">
+          <label className="cfg-field">
             Label (optional)
             <input
               aria-label="Credential label"
@@ -145,7 +324,16 @@ function CredentialsTab({
               onChange={(event) => setLabel(event.currentTarget.value)}
             />
           </label>
-          <label className="blueprint-field">
+          <label className="cfg-field">
+            Comment (optional)
+            <input
+              aria-label="Credential comment"
+              placeholder="what this key is for — agents read this"
+              value={comment}
+              onChange={(event) => setComment(event.currentTarget.value)}
+            />
+          </label>
+          <label className="cfg-field">
             Value
             <input
               aria-label="Credential value"
@@ -155,14 +343,16 @@ function CredentialsTab({
               onChange={(event) => setValue(event.currentTarget.value)}
             />
           </label>
-          <button
-            className="webapp-action webapp-action--primary"
-            type="button"
-            disabled={name.trim() === '' || value === ''}
-            onClick={submit}
-          >
-            Save credential
-          </button>
+          <div className="cfg-actions">
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={name.trim() === '' || value === ''}
+              onClick={submit}
+            >
+              Save credential
+            </button>
+          </div>
         </div>
       )}
     </section>
@@ -340,8 +530,11 @@ export function WorkspaceDetailsDialog({
               aria-label="Members"
               className="workspace-details-members"
             >
-              <h2>Who has access</h2>
-              <WorkspaceMembersEditor
+              <div className="cfg-section">
+                <div className="cfg-section-head">
+                  <h2 className="cfg-title">Who has access</h2>
+                </div>
+                <WorkspaceMembersEditor
                 mode={{
                   kind: 'live',
                   members: workspace.members,
@@ -358,8 +551,9 @@ export function WorkspaceDetailsDialog({
                 orgMembers={orgMembers}
                 machines={machines}
                 defaultMachineTypeId={workspace.defaultMachineTypeId}
-                autoFocusAdd={focusAddMember}
-              />
+                  autoFocusAdd={focusAddMember}
+                />
+              </div>
             </section>
           )}
           {tab === 'credentials' && (
@@ -368,6 +562,7 @@ export function WorkspaceDetailsDialog({
               canManage={canManage}
               onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input))}
               onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name))}
+              onImport={(input) => client.importWorkspaceCredentials(workspace.id, input)}
             />
           )}
           {tab === 'settings' && (
@@ -384,14 +579,14 @@ export function WorkspaceDetailsDialog({
           )}
         </div>
         {(onClone !== null || onDelete !== null) && (
-          <footer className="workspace-details-footer">
+          <footer className="workspace-details-footer cfg-footer">
             {onClone && (
               <button className="webapp-action" type="button" onClick={onClone}>
                 New workspace from this one
               </button>
             )}
             {onDelete && (
-              <button className="workspace-details-delete" type="button" onClick={onDelete}>
+              <button className="cfg-danger-action" type="button" onClick={onDelete}>
                 Delete workspace
               </button>
             )}

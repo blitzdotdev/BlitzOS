@@ -47,6 +47,7 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
     setMachineType: vi.fn(async () => { throw new Error('unused'); }),
     destroyMachine: vi.fn(async () => { throw new Error('unused'); }),
     putWorkspaceCredential: vi.fn(async () => undefined),
+    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
     revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error('unused'); }),
@@ -131,6 +132,7 @@ function adminEntry(id: string, title: string, proxy: boolean): CatalogEntryView
     oauthAvailable: false,
     oauthConfigured: false,
     personalTokenLabel: null,
+    personalTokenFallbackOnly: false,
     personalTokenHelp: null,
     personalTokenBaseUrlLabel: null,
     adminForm: {
@@ -171,6 +173,7 @@ function patEntry(id: string, title: string): CatalogEntryView {
     ...adminEntry(id, title, true),
     adminForm: null,
     personalTokenLabel: 'Permanent token',
+    personalTokenFallbackOnly: false,
     personalTokenBaseUrlLabel: 'Instance URL',
   };
 }
@@ -275,7 +278,9 @@ describe('provider admin form', () => {
         onSubmit={() => undefined}
       />,
     );
-    const labels = [...view.container.querySelectorAll('.connect-field__label')]
+    // The field micro-label is `.cfg-label` since the settings-surface
+    // system landed (src/settings-surface.css).
+    const labels = [...view.container.querySelectorAll('.cfg-label')]
       .map((label) => label.textContent);
     expect(labels).toEqual(['Bot token']);
     expect(view.container.querySelector('input[name="baseUrl"]')).toBeNull();

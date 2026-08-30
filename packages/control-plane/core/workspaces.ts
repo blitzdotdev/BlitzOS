@@ -143,6 +143,9 @@ function parseCreateCredentials(value: JsonValue): CreateWorkspaceCredential[] {
     if (entry.label !== undefined && entry.label !== null) {
       result.label = requiredString(entry.label, `credentials[${String(index)}].label`, 128);
     }
+    if (entry.comment !== undefined && entry.comment !== null) {
+      result.comment = requiredString(entry.comment, `credentials[${String(index)}].comment`, 256);
+    }
     return result;
   });
 }

@@ -79,9 +79,12 @@ export function ConnectionsPanel({
       {/* Account scope: a grant authorizes, it does not connect. Connecting
         * happens inside a workspace, in its connections panel — the one place
         * a lease can be minted. This page only takes things away. */}
-      <section className="settings-credential-section" aria-label="Authorized providers">
+      <section className="cfg-section" aria-label="Authorized providers">
         <div className="settings-section-heading">
-          <div><p>Personal grants</p><h2>Authorized</h2></div>
+          <div className="cfg-section-head">
+            <h2 className="cfg-title">Authorized</h2>
+            <p className="cfg-desc">Personal grants</p>
+          </div>
           <span>{grants.length} total</span>
         </div>
         {loading ? (

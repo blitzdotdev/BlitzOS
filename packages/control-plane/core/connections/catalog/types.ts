@@ -45,6 +45,12 @@ export interface ProviderPersonalToken {
    * collects the instance URL. It rides the grant as `vendor.baseUrl`, or is
    * inherited from the org connection row when one already carries it. */
   baseUrlLabel: string | null;
+  /** True where pasting a key is the fallback for an instance that cannot run
+   * the OAuth round trip, not a second choice offered beside it. The paste
+   * form then appears only while `oauthConfigured` is false, so a deployment
+   * that has registered the app shows one way in and a self-hoster that has
+   * not still has one. */
+  fallbackOnly?: boolean;
 }
 
 export type PlacementFill = "token" | "proxy-url";

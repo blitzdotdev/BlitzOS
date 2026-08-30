@@ -101,7 +101,9 @@ function stubReload(): ReturnType<typeof vi.fn> {
 }
 
 function leaveButton(container: HTMLElement): HTMLButtonElement | null {
-  return container.querySelector<HTMLButtonElement>(".settings-danger .webapp-action");
+  // The danger zone and its verb are `.cfg-danger` / `.cfg-danger-action`
+  // since the settings-surface system landed (src/settings-surface.css).
+  return container.querySelector<HTMLButtonElement>(".cfg-danger .cfg-danger-action");
 }
 
 async function click(element: HTMLElement | null | undefined): Promise<void> {
@@ -208,6 +210,7 @@ function client(): ControlPlaneClient {
     setMachineType: vi.fn(async () => { throw new Error("unused"); }),
     destroyMachine: vi.fn(async () => { throw new Error("unused"); }),
     putWorkspaceCredential: vi.fn(async () => undefined),
+    importWorkspaceCredentials: vi.fn(async () => { throw new Error('unused'); }),
     revokeWorkspaceCredential: vi.fn(async () => undefined),
     listFolders: vi.fn(async () => ({ folders: [] })),
     createFolder: vi.fn(async () => { throw new Error("unused"); }),
@@ -615,7 +618,7 @@ describe("webapp shell smoke", () => {
 
     const leave = leaveButton(view.container);
     expect(leave?.disabled).toBe(true);
-    expect(view.container.querySelector(".settings-danger")?.textContent)
+    expect(view.container.querySelector(".cfg-danger")?.textContent)
       .toContain("You are the only member");
     await click(leave);
     expect(document.querySelector(".webapp-confirmation-actions")).toBeNull();
@@ -769,6 +772,60 @@ describe("webapp shell smoke", () => {
     const activeTab = view.container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
     expect(activeTab?.textContent).toBe(":3000");
     expect(activeTab?.closest<HTMLElement>(".webapp-tab-cell")?.dataset.sessionId).toBe("2");
+    await view.unmount();
+  });
+
+  /** The mobile sheet is the only way to reach Files, teenyapps and
+   * Connections on a phone: there is no icon rail below the breakpoint. Its
+   * segment cannot come from the tab model, because a panel tab that would be
+   * the only tab collapses out of the side region, so reading that region
+   * pinned the sheet to Files and the other two tabs did nothing. */
+  it("switches the mobile drawer between all three sections", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    // The statusline button is the way in.
+    const drawerButton = view.container.querySelector<HTMLButtonElement>(
+      ".webapp-statusline__files",
+    );
+    if (drawerButton === null) throw new Error("mobile has no drawer button");
+    await act(async () => drawerButton.click());
+
+    const drawer = view.container.querySelector<HTMLElement>("#webapp-workspace-drawer");
+    if (drawer === null) throw new Error("mobile drawer did not render");
+    const segment = (label: string) => [
+      ...drawer.querySelectorAll<HTMLButtonElement>(".workspace-drawer-segments button"),
+    ].find((button) => (button.textContent ?? "").includes(label));
+    const selected = () => drawer
+      .querySelector<HTMLElement>(".webapp-tab-cell--active")
+      ?.textContent ?? "";
+
+    expect(selected()).toContain("Files");
+
+    for (const label of ["Connections", "teenyapps", "Files"]) {
+      const tab = segment(label);
+      if (tab === undefined) throw new Error(`no ${label} segment on mobile`);
+      await act(async () => tab.click());
+      expect(selected()).toContain(label);
+    }
+
     await view.unmount();
   });
 

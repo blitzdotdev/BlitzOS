@@ -1,17 +1,26 @@
 import { first, rows } from "../db.js";
-import { HttpError, requiredString } from "../http.js";
+import { HttpError, readJson, requiredString } from "../http.js";
 import { authenticateBox } from "../oauth.js";
 import type { Principal } from "../principals.js";
 import type { CoreRouter, RuntimeFactory } from "../runtime.js";
+import { requireWorkspaceAdmin } from "../workspace-access.js";
 import {
   liveWorkspaceCredentials,
+  parseWorkspaceCredential,
+  putWorkspaceCredential,
+  WORKSPACE_CREDENTIAL_MAX_BYTES,
   workspaceCredentialValue,
 } from "../workspace-credentials.js";
 import { connectionDefaultScopes, manifestConnectionNames } from "./manifest.js";
 import { mintResultBody, parseMintResult } from "./pull-wire.js";
 import { connectionByName } from "./registry.js";
 import { fileRequest } from "./requests.js";
-import type { MintResult, WorkspaceConnectionsResponse } from "./types.js";
+import type {
+  MintResult,
+  WorkspaceConnectionsResponse,
+  WorkspaceCredentialEntry,
+  WorkspaceCredentialsResponse,
+} from "./types.js";
 import type { MintOneInput, MintOutcome, MintWorkspaceRow } from "./mint.js";
 
 type MintOne = (
@@ -29,13 +38,13 @@ type MintOne = (
  * row was written in that person's name. The machine's member IS the identity
  * now — nothing is borrowed, and there is no disclosure to make.
  */
-interface MachineCaller {
+export interface MachineCaller {
   workspace: MintWorkspaceRow;
   machineId: string;
   principal: Principal;
 }
 
-async function boxCaller(
+export async function boxCaller(
   runtime: ReturnType<RuntimeFactory>,
   request: Request,
 ): Promise<MachineCaller> {
@@ -201,6 +210,56 @@ function addBoxConnectionRoutes(
     });
     if (outcome === null) throw new Error("box credential mint was skipped");
     return context.json(parseMintResult(mintResultBody(outcome.result)));
+  });
+}
+
+/**
+ * The credential store as an agent may see and change it.
+ *
+ * GET is names and comments, never values: it is what `blitz-cred list`
+ * prints so an agent can pick the right key. Any member machine may read
+ * it — the same audience the connection allow-list already reaches.
+ *
+ * PUT is one deliberate write, the box-plane twin of the credentials tab's
+ * save: same body, same parse, same workspace-admin gate, resolved from the
+ * machine's member at call time. It exists so an agent can store an
+ * important key WITH the comment that explains it, which the bulk dotenv
+ * door deliberately cannot do.
+ */
+export function addBoxCredentialRoutes(
+  router: CoreRouter,
+  runtimeFactory: RuntimeFactory,
+): void {
+  router.get("/workspaces/self/credentials", async (context) => {
+    const runtime = runtimeFactory(context);
+    const { workspace } = await boxCaller(runtime, context.req.raw);
+    const live = await liveWorkspaceCredentials(runtime.db, workspace.id);
+    return context.json<WorkspaceCredentialsResponse>({
+      credentials: live.map((row) => {
+        const entry: WorkspaceCredentialEntry = { name: row.name };
+        if (row.comment !== null) entry.comment = row.comment;
+        return entry;
+      }),
+    });
+  });
+
+  router.put("/workspaces/self/credentials", async (context) => {
+    const runtime = runtimeFactory(context);
+    const { workspace, principal } = await boxCaller(runtime, context.req.raw);
+    await requireWorkspaceAdmin(runtime.db, principal, workspace);
+    if (principal.membershipId === null) {
+      throw new HttpError(403, "active membership required");
+    }
+    const input = parseWorkspaceCredential(
+      await readJson(context.req.raw, WORKSPACE_CREDENTIAL_MAX_BYTES * 2),
+    );
+    const credential = await putWorkspaceCredential(
+      runtime,
+      workspace.id,
+      principal.membershipId,
+      input,
+    );
+    return context.json({ credential }, 201);
   });
 }
 

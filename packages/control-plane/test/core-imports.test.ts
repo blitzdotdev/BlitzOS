@@ -64,6 +64,7 @@ const expected = [
   "identity/routes.ts",
   "index.ts",
   "janitors.ts",
+  "machine-stats.ts",
   "machines.ts",
   "oauth.ts",
   "operator-tokens.ts",
@@ -96,6 +97,7 @@ const expected = [
   "template-repos.ts",
   "workspace-names.ts",
   "workspace-access.ts",
+  "workspace-credential-import.ts",
   "workspace-credentials.ts",
   "workspace-drain.ts",
   "workspace-members.ts",
@@ -132,6 +134,6 @@ describe("portable core imports", () => {
         (values: string[]) => values.every((value) => value.startsWith("./") || value.startsWith("../")),
       );
     }
-    expect(expected).toHaveLength(107);
+    expect(expected).toHaveLength(109);
   });
 });

@@ -58,7 +58,7 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
               the folder.
             </span>
           </label>
-          <p className="settings-appearance-note" role="status">
+          <p className="cfg-help" role="status">
             {state.enabled
               ? 'Capture is on. New workspace activity syncs into the usage folder.'
               : state.folderId === null
@@ -66,7 +66,7 @@ export function UsagePanel({ client }: { client: ControlPlaneClient }) {
                 : 'Capture is off. The usage folder and everything already collected are kept.'}
           </p>
           {state.folderId !== null && (
-            <p className="settings-appearance-note">
+            <p className="cfg-help">
               <a href={folderPagePath(state.folderId)}>Open the usage folder in Drive</a>
               {' — share it explicitly to grant access; it has no org-wide role.'}
             </p>

@@ -73,8 +73,11 @@ conformance tests on BOTH sides. Never hand-edit one side of a contract.
 | webApp box surface | `core/webapp-surface.ts` ↔ `schema/src/webapp-surface.ts` (webApp resolver) | n/a | `test/webapp-surface-drift.test.ts`, `webapp/test/webapp-surface.test.ts` |
 | agent rules | CP `core/agent-rules.ts` producer (`GET /workspaces/self/agent-rules`) ↔ box `blitz-rules sync` consumer (`box/rootfs/usr/local/bin/blitz-rules`); `AGENT_RULES_DOC` mirrors the canonical `box/rootfs/opt/blitz/skel/agent-rules.md` | `fixtures/agent-rules/` | `test/agent-rules-conformance.test.ts` + `test/agent-rules-drift.test.ts` (CP), `box/guest-tests/test/agent-rules-conformance.test.ts` (box) |
 | connection pull v1 | CP producer `core/connections/pull-wire.ts`, routes in `core/connections/pull-routes.ts` (`GET /workspaces/self/connections`, `POST /workspaces/self/connections/:name/token`) ↔ Go consumer `broker/internal/workspace/connections.go`, printed by `blitz-cred list\|get\|env`. Carries BOTH credential planes: the member's own connection grant and the workspace credential store (plans/MEMBER-MACHINES.md §4) | `fixtures/connection-pull/` | `test/connection-pull-conformance.test.ts` + `test/pull-credentials.test.ts` + `test/member-machines.test.ts` (CP), `broker/internal/workspace/connections_test.go` + `broker/cmd/blitz-cred/main_test.go` (box) |
+| credential import v1 | CP `core/workspace-credential-import.ts` producer (`POST /workspaces/self/credentials/dotenv`; the session twin `/workspaces/:id/credentials/dotenv` carries the same body) ↔ Go consumer `broker/internal/workspace/credimport.go`, printed by `blitz-cred import` | `fixtures/credential-import/` | `test/credential-import.test.ts` (CP producer + routes), `broker/internal/workspace/credimport_test.go` (box consumer) |
+| credential list v1 | CP `core/connections/pull-routes.ts` producer (`GET /workspaces/self/credentials`: names and comments, never values; `PUT /workspaces/self/credentials` is the box-plane single-key write beside it) ↔ Go consumer `broker/internal/workspace/credentials.go`, printed by `blitz-cred list` (comment after a `#`) and written by `blitz-cred put` | `fixtures/credential-list/` | `test/credential-comments.test.ts` (CP producer + routes), `broker/internal/workspace/credentials_test.go` (box consumer) |
 | entitlements | CP `core/entitlements.ts` (`PUT /orgs/:id/entitlements` writer, `GET /orgs/:id/usage`, the 402 seat-limit refusal and its HS256 handoff token) ↔ the PRIVATE billing service, which owns plans, writes the integers, and verifies the token — core never learns a plan name | `fixtures/entitlements/` | `test/entitlements-fixtures.test.ts` (CP); the billing service copies the corpus and pins it on its side |
 | recipe invocation files | `core/bootstrap.ts` writer (recipe launches emit `/var/lib/blitz/recipe/prompt.txt` + `invocation.env`) ↔ the guest reader `blitz-term`, through the shared parser `box/rootfs/usr/local/libexec/blitz-recipe-invocation` | `fixtures/recipe-invocation/` | `test/recipe-invocation-fixtures.test.ts` (CP), `box/guest-tests/test/recipe-invocation-guest.test.ts` (guest: shared parser vs corpus + blitz-term delivery semantics) |
+| machine-stats | guest producer `box/rootfs/usr/local/bin/blitz-machine-stats` (s6 longrun `machine-stats`, one report every 10 min) ↔ CP consumer `core/machine-stats.ts` (`POST /workspaces/self/machine-stats`), which fills `machines.disk_used_percent` and surfaces as `MachineView.volumeUsedPercent` | `fixtures/machine-stats/` | `test/machine-stats-conformance.test.ts` (CP), `box/guest-tests/test/machine-stats-conformance.test.ts` (guest: the real script against a local origin) |
 | lody data-plane v7 | browser `webapp/src/lody/data-plane-connection.ts` ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` ↔ the `lody` daemon (not in this tree). The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/local-loro-data-plane.ts`, `protocolVersion` is a `z.literal(7)`); what became ours in phase 2 is the FRAMING — one WebSocket text message is one JSON frame, newline-delimited on the daemon's side | `fixtures/lody-data-plane/` (server frames captured from a real `lody@0.88.1`) | `webapp/test/lody-data-plane-frames.test.ts` (browser producer/parser), `box/guest-tests/test/lody-bridge-frames.test.ts` (runs the real bridge script against a stand-in daemon socket) |
 | lody local-project registration | box node `box/rootfs/usr/local/libexec/blitz-lody-projects` (registers each `/workspace/<repo>` clone) ↔ browser `webapp/src/lody/local-bridge.ts` + `rpc-client.ts` ↔ the `lody` daemon's `/project-control` (not in this tree). The SCHEMA stays Lody's (`vendor/lody/packages/shared/src/message-schemas.ts`, `LocalProjectControlRequest`/`Response`); what is ours is that two BlitzOS producers keep agreeing with it | `fixtures/lody-project-registration/` (responses captured from a real `lody@0.88.1`) | `box/guest-tests/test/lody-projects-registration.test.ts` (runs the real registrar against a stand-in daemon socket), `webapp/test/lody-project-control-frames.test.ts` (browser producer/parser) |
 | lody share claim | Go gateway `box/gateway/main.go` (verifies the webApp ticket's `share` claim and forwards it on `X-Blitz-Lody-Share`, stripping any inbound copy) ↔ node `box/rootfs/usr/local/libexec/blitz-lody-bridge` (room ACL on `/sync`, session scoping on `/rpc` and `/project`, `/control` refused, `/platform` narrowed). The claim's OWN wire format is pinned by the webApp-ticket corpus on three runtimes; what this pins is the hand-off and the decisions the bridge makes from it | `fixtures/lody-share-claim/` | `gateway/main_test.go` (producer: the header bytes + the path allowlist), `box/guest-tests/test/lody-bridge-share.test.ts` (consumer: runs the real bridge against a stand-in daemon over the whole decision table) |
@@ -141,6 +144,29 @@ The page components (`TemplatesHome`, `RecipesHome`, `CreateTemplateScreen`,
 `CreateRecipeScreen`), the client methods and the recipe rows are untouched
 and unreachable. Restoring a surface means restoring both branches.
 
+## Settings surface style (webapp)
+
+`packages/webapp/src/settings-surface.css` is canon for every
+settings-shaped screen: the workspace-details dialog and its three tabs,
+"My machine", the account settings page and its panels, and the section
+headings of the create-workspace dialog. One class prefix, `cfg-`; the rules
+and the whole vocabulary are documented at the top of that file. Read it
+before restyling a settings surface, and extend it rather than starting a
+seventh heading treatment somewhere else.
+
+The four rules a change must not break:
+
+- The tabbed dialog has ONE fixed height. `.workspace-details-dialog` sets
+  `height`, not `max-height`; the body scrolls; switching tabs never moves
+  the frame.
+- Section titles are sentence case, never all-caps, always `--cfg-title-*`
+  (the ink white and size the "Agent rules" heading had). Descriptions are
+  `--cfg-desc-*`. Field micro-labels are sentence case too.
+- Exactly one thin divider between two adjacent sections, drawn by
+  `.cfg-section ~ .cfg-section` and by nothing else. Card outlines and
+  list-row separators are structure, not dividers.
+- No new colours: everything resolves to a token in `tokens.css`.
+
 ## VM provider architecture (do not regress)
 
 - The plugin contract is `VmProvider` in `core/compute/types.ts`:
@@ -155,6 +181,17 @@ and unreachable. Restoring a surface means restoring both branches.
   read files at runtime. Its emitted bytes are a contract pinned by tests.
   Do not edit the emitted script casually. Extraction to build-time text
   imports is an approved future direction (see issue #1 discussion).
+
+## Box image: canary from R2, client prod from GHCR
+
+- Canary serves the box image as an R2 archive (mode B) from its own account.
+  Client prod serves it from GHCR (mode A), pushed by `.github/workflows/release.yml`
+  on a `v*` tag.
+- `write:packages` lives only inside that workflow, so no workspace or agent
+  credential can push to GHCR. Never cut a tag to refresh an image: the same tag
+  ships client prod.
+- Rebake canary with the procedure in `docs/BOX-IMAGE.md`. The pin lands in
+  `.github/workflows/canary.yml` as `BLITZ_DEPLOY_VAR_BOX_IMAGE_*`.
 
 ## Hetzner: one project behind both deployments
 

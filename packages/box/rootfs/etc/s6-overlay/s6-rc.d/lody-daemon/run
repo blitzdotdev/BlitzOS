@@ -35,7 +35,15 @@ if [ "${BLITZ_LODY_SESSIONS:-0}" != "1" ]; then
 	exec sleep infinity
 fi
 
-exec /command/s6-setuidgid blitz /usr/bin/env \
+# The daemon hosts the ACP agent child processes, so it is user work and it
+# inherits the placement the deleted actor had (docs/MEMORY-BOUNDARY.md). An
+# agent spawns its own CLI copy out of reach of any wrapper here, so placing
+# the daemon itself is what puts every agent it starts under the ceiling.
+#
+# The gateway, not the daemon, is what the control plane talks to. A dead
+# daemon costs the sessions surface; it does not cost the box its tunnel, its
+# terminal, or its files.
+exec /usr/local/bin/blitz-cgroup enter user/lody.scope -- /command/s6-setuidgid blitz /usr/bin/env \
 	HOME="$state_dir/home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
 	PATH=/usr/local/bin:/opt/blitz/npm/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
 	LODY_PLATFORM=local \

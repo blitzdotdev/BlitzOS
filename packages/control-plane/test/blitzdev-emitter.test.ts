@@ -48,6 +48,7 @@ const expected = [
   "core/blobs.ts",
   "core/wire.ts",
   "core/wire-machines.ts",
+  "core/wire-sharing.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
@@ -101,12 +102,14 @@ const expected = [
   "core/identity/routes.ts",
   "core/janitors.ts",
   "core/machines.ts",
+  "core/machine-stats.ts",
   "core/oauth-state.ts",
   "core/oauth.ts",
   "core/operator-tokens.ts",
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
+  "core/session-shares.ts",
   "core/sessions.ts",
   "core/version.ts",
   "core/signup-config.js",
@@ -119,7 +122,9 @@ const expected = [
   "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts",
+  "core/workspace-credential-import.ts",
   "core/workspace-credentials.ts",
+  "core/workspace-drain.ts",
   "core/workspace-members.ts",
   "core/workspace-names.ts",
   "core/workspace-projection.ts",
@@ -155,7 +160,7 @@ describe.skipIf(!managedToolchainEnabled)("blitz.dev managed emitter [vendor-onl
     expect(UPLOAD_MANIFEST).toEqual(expected);
     expect(first.files.map((file) => file.path)).toEqual(expected);
     expect(first).toEqual(second);
-    expect(first.files).toHaveLength(107);
+    expect(first.files).toHaveLength(112);
     expect(first.files.every((file) => file.bytes <= 1024 * 1024)).toBe(true);
   });
 

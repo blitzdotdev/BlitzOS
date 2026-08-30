@@ -4,8 +4,17 @@ if ! grep -Eq '^CapEff:[[:space:]]*[0-9A-Fa-f]*[2367ABEFabef][0-9A-Fa-f]{5}$' /p
   echo "dockerd: skipped (container is not privileged)"
   exec /command/s6-pause
 fi
-exec /usr/local/bin/dockerd \
+# The daemon and the containers it starts sit in DIFFERENT cgroups on purpose.
+# cgroup v2 forbids a cgroup from holding processes and controller-enabled
+# children at once, so the daemon cannot live in the same slice it parents. It
+# also means a container bomb takes docker.slice — every inner container — and
+# leaves the daemon alive to serve the next `docker run`.
+#
+# Without --cgroup-parent the daemon creates container cgroups at the root of
+# the mount, outside blitz-user.slice, and the user ceiling bounds nothing.
+exec /usr/local/bin/blitz-cgroup enter user/dockerd.scope -- /usr/local/bin/dockerd \
   --host=unix:///run/docker.sock \
   --data-root=/var/lib/blitz/docker \
   --pidfile=/run/blitz-docker/dockerd.pid \
+  --cgroup-parent=/blitz-user.slice/docker.slice \
   --group=docker

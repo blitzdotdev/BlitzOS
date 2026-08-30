@@ -82,69 +82,17 @@ function tileState(
   backed: boolean,
   memberPath: boolean,
 ): TileState {
-  if (row.connected) return { kind: 'on', word: 'Connected' };
+  // Both halves, or the word is a lie. `row.connected` is the allow-list
+  // alone, so on its own it said Connected for a provider whose credential
+  // had just been revoked — while the body of the same tile offered to
+  // connect it. Falling through to the rules below yields Connect, which was
+  // already the right word for that state.
+  if (row.connected && backed) return { kind: 'on', word: 'Connected' };
   // An agent asked for a name the catalog does not know. There is no form to
   // open and nothing to mint.
   if (row.entry === null) return { kind: 'blocked', word: 'Unknown' };
   if (!backed && !memberPath) return { kind: 'blocked', word: 'Needs a key' };
   return { kind: 'go', word: 'Connect' };
-}
-
-/** Disconnecting one workspace and revoking an account authorization are
- * different acts with different blast radii, and the old panel offered only
- * the first while describing the second. Naming both, in one place, is the
- * fix. */
-function DisconnectChooser({
-  row,
-  onWorkspace,
-  onCancel,
-}: {
-  row: ProviderRow;
-  onWorkspace: () => void;
-  onCancel: () => void;
-}) {
-  const name = row.name;
-  // `cp` custody hands the agent the vendor's own credential when it asks.
-  // Disconnecting stops this workspace asking; it cannot reach into the vendor
-  // and make a Discord bot token stop working. Saying so is the difference
-  // between a promise we keep and one the vendor would have to keep for us.
-  const vendorCredential = row.entry?.custody === 'cp';
-  return (
-    <ModalOverlay onDismiss={onCancel}>
-      <section
-        className="webapp-confirmation-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Disconnect ${name}`}
-      >
-        <header className="webapp-confirmation-header"><h1>{`disconnect ${name}`}</h1></header>
-        <div className="webapp-confirmation-body">
-          <p>
-            Disconnecting here stops this workspace asking for {row.title}, from
-            the next request onward. Your account keeps the authorization, so
-            other workspaces keep working and you can reconnect this one in a
-            click.
-          </p>
-          {vendorCredential && (
-            <p>
-              An agent that already asked holds a real {row.title} credential
-              for as long as the vendor honours it. Rotate it at {row.title} if
-              that matters.
-            </p>
-          )}
-        </div>
-        <footer className="webapp-confirmation-actions">
-          <button className="webapp-action" type="button" onClick={onCancel}>cancel</button>
-          <a className="webapp-action" href={settingsPath('connections')}>disconnect everywhere</a>
-          <button
-            className="webapp-action webapp-confirmation-confirm"
-            type="button"
-            onClick={onWorkspace}
-          >disconnect from this workspace</button>
-        </footer>
-      </section>
-    </ModalOverlay>
-  );
 }
 
 /** Every provider this workspace could hold, as one list.
@@ -187,7 +135,6 @@ export function WorkspaceProviderRows({
   const [formVersion, setFormVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [disconnecting, setDisconnecting] = useState<ProviderRow | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
   useEffect(() => {
@@ -325,7 +272,8 @@ export function WorkspaceProviderRows({
           // paste, or an OAuth round trip this instance actually has a client
           // registered for.
           const memberPath = row.entry !== null
-            && (row.entry.personalTokenLabel !== null
+            && ((row.entry.personalTokenLabel !== null
+              && !(row.entry.personalTokenFallbackOnly && oauthHref !== null))
               || (row.entry.oauthAvailable && oauthHref !== null));
           const state = tileState(row, backed, memberPath);
           return (
@@ -335,26 +283,19 @@ export function WorkspaceProviderRows({
               }`}
               key={row.name}
             >
-              {/* The whole tile is the control, the way a template tile is.
-                * That is what keeps a trailing button off every row. */}
+              {/* The tile opens and closes. It does not connect.
+                *
+                * It used to: a press on a backed row minted straight away, so
+                * reading a row and changing it were the same gesture and there
+                * was no way to look without acting. Only the buttons inside
+                * change state now, and every state is reachable by opening the
+                * row rather than by knowing what a press would do. */}
               <button
                 className="wsc-tile__main"
                 type="button"
                 aria-expanded={isOpen}
                 disabled={readOnly === true}
-                onClick={() => {
-                  if (isOpen) {
-                    close();
-                    return;
-                  }
-                  // A credential already stands behind it, so the press is the
-                  // whole act: connect, and let the tile flip.
-                  if (!row.connected && backed) {
-                    void connectNow(row);
-                    return;
-                  }
-                  open(row, 'connect');
-                }}
+                onClick={() => { if (isOpen) close(); else open(row, 'connect'); }}
               >
                 <span className="wsc-tile__head">
                   <ProviderGlyph className="wsc-tile__glyph" provider={row.name} />
@@ -387,11 +328,9 @@ export function WorkspaceProviderRows({
                     />
                   ) : row.connected ? (
                     <>
-                      <p className="connect-help">
-                        Disconnecting stops this workspace only. Your sign-in stays.
-                      </p>
                       <div className="wsc-tile__actions">
-                        {row.entry.personalTokenLabel != null ? (
+                        {row.entry.personalTokenLabel != null
+                          && !(row.entry.personalTokenFallbackOnly && oauthHref !== null) ? (
                           <button
                             className="webapp-action"
                             type="button"
@@ -404,13 +343,12 @@ export function WorkspaceProviderRows({
                           className="webapp-action"
                           type="button"
                           disabled={removing !== null}
-                          onClick={() => setDisconnecting(row)}
+                          onClick={() => { void disconnectNow(row); }}
                         >{removing === row.name ? 'Disconnecting…' : 'Disconnect'}</button>
                       </div>
                     </>
                   ) : (
-                    // Only `blitz connections open` reaches this: pressing the
-                    // tile would have minted instead of opening it.
+                    // The one way to connect a row that is not connected yet.
                     <div className="wsc-tile__actions">
                       <button
                         className="webapp-action webapp-action--primary"
@@ -426,17 +364,6 @@ export function WorkspaceProviderRows({
           );
         })}
       </div>
-      {disconnecting !== null && (
-        <DisconnectChooser
-          row={disconnecting}
-          onCancel={() => setDisconnecting(null)}
-          onWorkspace={() => {
-            const row = disconnecting;
-            setDisconnecting(null);
-            void disconnectNow(row);
-          }}
-        />
-      )}
     </section>
   );
 }

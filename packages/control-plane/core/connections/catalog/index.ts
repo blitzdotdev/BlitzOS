@@ -88,6 +88,7 @@ export function catalogView(
     oauthAvailable: auth !== null,
     oauthConfigured: configured,
     personalTokenLabel: manifest.personalToken?.label ?? null,
+    personalTokenFallbackOnly: manifest.personalToken?.fallbackOnly === true,
     personalTokenHelp: manifest.personalToken?.help ?? null,
     personalTokenBaseUrlLabel: manifest.personalToken?.baseUrlLabel ?? null,
     adminForm: adminFormView(manifest),

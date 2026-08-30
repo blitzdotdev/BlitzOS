@@ -131,6 +131,28 @@ jobs:
           # cannot cross into an org's own project. It goes live for subscribed
           # orgs under plans/SUBSCRIPTION-COMPUTE.md.
           BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=425047509'
+          # The box image canary boots, served as an R2 archive from canary's
+          # own account (mode B in docs/BOX-IMAGE.md). Client prod uses mode A,
+          # a GHCR digest pushed by release.yml on a `v*` tag.
+          #
+          # The split exists because `write:packages` lives only inside
+          # release.yml, and that workflow also deploys client prod — so a tag
+          # is the wrong instrument for refreshing a canary image. Canary
+          # rebakes into its own bucket instead and reaches nothing of the
+          # customer's.
+          #
+          # None of the three is a secret. The VM bootstrap fetches the archive
+          # with no credential, so the URL is public by design; keeping the pin
+          # in this file makes it reviewable, which a value inside
+          # CANARY_WRANGLER_TOML is not. Each becomes `wrangler deploy --var`,
+          # overriding that one key and leaving the rest of the stored config
+          # alone.
+          #
+          # Rebake with the procedure in docs/BOX-IMAGE.md and update all three
+          # together: the digest is of the archive the tag names.
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: https://blitz-control-plane.minjunesv0.workers.dev/box-image/manifest.json
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:2aa3700d
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: 7d85418ee7fe77967997c449d52a2143af0ddd9fe88cef06f8f00bcb99c7fb00
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an

@@ -77,12 +77,14 @@ function ReposEditor({
     setRepo('');
   };
   return (
-    <div className="workspace-repos">
-      <h2>Repositories</h2>
-      <p className="workspace-details-note">
-        Cloned into <code>/workspace</code> when a machine boots. A change here
-        reaches a machine the next time it is provisioned or recreated.
-      </p>
+    <div className="cfg-section">
+      <div className="cfg-section-head">
+        <h2 className="cfg-title">Repositories</h2>
+        <p className="cfg-desc">
+          Cloned into <code>/workspace</code> when a machine boots. A change
+          here reaches a machine the next time it is provisioned or recreated.
+        </p>
+      </div>
       <div className="workspace-repo-rows">
         {repos.length === 0 && (
           <p className="workspace-members-empty">No repositories yet.</p>
@@ -107,8 +109,8 @@ function ReposEditor({
         ))}
       </div>
       {canManage && (
-        <div className="workspace-repo-add">
-          <label className="blueprint-field">
+        <>
+          <label className="cfg-field">
             Add a repository
             <input
               aria-label="Repository"
@@ -120,15 +122,17 @@ function ReposEditor({
               onChange={(event) => setRepo(event.currentTarget.value)}
             />
           </label>
-          <button
-            className="webapp-action"
-            type="button"
-            disabled={repo.trim() === ''}
-            onClick={submit}
-          >
-            Add repository
-          </button>
-        </div>
+          <div className="cfg-actions">
+            <button
+              className="webapp-action"
+              type="button"
+              disabled={repo.trim() === ''}
+              onClick={submit}
+            >
+              Add repository
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -173,83 +177,105 @@ export function WorkspaceSettingsTab({
       aria-label="Settings"
       className="workspace-details-settings"
     >
-      <h2>Workspace</h2>
       {canManage ? (
-        <div className="workspace-settings-form">
-          <label className="blueprint-field">
-            Name
-            <input
-              aria-label="Workspace name"
-              autoCapitalize="off"
-              autoCorrect="off"
-              spellCheck={false}
-              value={draft.name}
-              onChange={(event) => {
-                const name = event.currentTarget.value;
-                setDraft((current) => ({ ...current, name }));
-              }}
-            />
-          </label>
-          <div className="blueprint-field">
-            Default machine type
-            <WebAppSelectMenu
-              ariaLabel="Default machine type"
-              className="machine-type-select"
-              value={draft.defaultMachineTypeId}
-              options={machineTypeOptions(machines)}
-              onChange={(defaultMachineTypeId) =>
-                setDraft((current) => ({ ...current, defaultMachineTypeId }))}
-            />
-            <small>Applies to new machines; each member's type is their own.</small>
+        <>
+          <div className="cfg-section">
+            <div className="cfg-section-head">
+              <h2 className="cfg-title">Workspace</h2>
+            </div>
+            <label className="cfg-field">
+              Name
+              <input
+                aria-label="Workspace name"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                value={draft.name}
+                onChange={(event) => {
+                  const name = event.currentTarget.value;
+                  setDraft((current) => ({ ...current, name }));
+                }}
+              />
+            </label>
+            <div className="cfg-field">
+              Default machine type
+              <WebAppSelectMenu
+                ariaLabel="Default machine type"
+                className="machine-type-select"
+                value={draft.defaultMachineTypeId}
+                options={machineTypeOptions(machines)}
+                onChange={(defaultMachineTypeId) =>
+                  setDraft((current) => ({ ...current, defaultMachineTypeId }))}
+              />
+              <small className="cfg-help">
+                Applies to new machines; each member&rsquo;s type is their own.
+              </small>
+            </div>
+            <label className="cfg-field cfg-field--inline">
+              <input
+                type="checkbox"
+                aria-label="Provision a machine when a member is added"
+                checked={draft.autoProvision}
+                onChange={(event) => {
+                  const autoProvision = event.currentTarget.checked;
+                  setDraft((current) => ({ ...current, autoProvision }));
+                }}
+              />
+              Provision a machine when a member is added
+            </label>
           </div>
-          <label className="blueprint-field workspace-settings-toggle">
-            <input
-              type="checkbox"
-              aria-label="Provision a machine when a member is added"
-              checked={draft.autoProvision}
-              onChange={(event) => {
-                const autoProvision = event.currentTarget.checked;
-                setDraft((current) => ({ ...current, autoProvision }));
-              }}
-            />
-            Provision a machine when a member is added
-          </label>
           <AgentRulesPicker
             client={client}
             value={draft.agentRuleId}
             onChange={(agentRuleId) => setDraft((current) => ({ ...current, agentRuleId }))}
           />
-          <button
-            className="webapp-action webapp-action--primary"
-            type="button"
-            disabled={changes === null}
-            onClick={() => { if (changes !== null) onSave(changes); }}
-          >
-            Save settings
-          </button>
-        </div>
+          {/* One Save for the whole form, so it belongs to neither section and
+            * draws no line of its own. */}
+          <div className="cfg-actions">
+            <button
+              className="webapp-action webapp-action--primary"
+              type="button"
+              disabled={changes === null}
+              onClick={() => { if (changes !== null) onSave(changes); }}
+            >
+              Save settings
+            </button>
+          </div>
+        </>
       ) : (
-        <dl className="workspace-details-list">
-          <div><dt>Name</dt><dd>{workspace.serverName}</dd></div>
-          <div>
-            <dt>Default machine type</dt>
-            <dd>
-              {defaultMachine?.name ?? machineTypeLabel(workspace.defaultMachineTypeId)}
-              <small> — applies to new machines; each member's type is their own.</small>
-            </dd>
+        <div className="cfg-section">
+          <div className="cfg-section-head">
+            <h2 className="cfg-title">Workspace</h2>
           </div>
-          <div>
-            <dt>Provision on add</dt>
-            <dd>{workspace.autoProvision ? 'On' : 'Off'}</dd>
-          </div>
-        </dl>
+          <dl className="cfg-meta">
+            <div><dt>Name</dt><dd>{workspace.serverName}</dd></div>
+            <div>
+              <dt>Default machine type</dt>
+              <dd>{defaultMachine?.name ?? machineTypeLabel(workspace.defaultMachineTypeId)}</dd>
+            </div>
+            <div>
+              <dt>Provision on add</dt>
+              <dd>{workspace.autoProvision ? 'On' : 'Off'}</dd>
+            </div>
+          </dl>
+          <p className="cfg-help">
+            The default applies to new machines; each member&rsquo;s type is
+            their own.
+          </p>
+        </div>
       )}
-      <dl className="workspace-details-list">
-        <div><dt>Your role</dt><dd>{workspace.myRole ?? 'Organization admin'}</dd></div>
-        <div><dt>Connections</dt><dd>{workspace.connections.length}</dd></div>
-        <div><dt>Created</dt><dd>{dateLabel(workspace.createdAt)}</dd></div>
-        <div><dt>Updated</dt><dd>{dateLabel(workspace.updatedAt)}</dd></div>
-      </dl>
+      <div className="cfg-section">
+        <dl className="cfg-meta">
+          <div>
+            <dt>Your role</dt>
+            {/* `WorkspaceMemberRole` is a wire term shown to a person. */}
+            <dd className="cfg-meta-term">{workspace.myRole ?? 'Organization admin'}</dd>
+          </div>
+          <div><dt>Connections</dt><dd>{workspace.connections.length}</dd></div>
+          <div><dt>Created</dt><dd>{dateLabel(workspace.createdAt)}</dd></div>
+          <div><dt>Updated</dt><dd>{dateLabel(workspace.updatedAt)}</dd></div>
+        </dl>
+      </div>
       <ReposEditor
         repos={repos}
         canManage={canManage}
