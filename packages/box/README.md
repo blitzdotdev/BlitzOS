@@ -170,8 +170,15 @@ sockets: `/sync` onto its Loro data plane and `/rpc` onto its control socket's
 `/machine-rpc`. The daemon binds no TCP port the browser can reach — only the
 17789 host lease, which is reserved rather than proxied.
 
-Both s6 services (`lody-daemon`, `lody-bridge`) are dark unless
-`BLITZ_LODY_SESSIONS=1`; the default in `env.defaults` is `0`.
+A third service, `lody-projects`, registers every git repository directly under
+`/workspace` with the daemon as a Lody local project, so a worktree session has
+something to cut a worktree off (`plans/LODY-SESSIONS.md` §6.4). It polls rather
+than running once, because the template-repo cloner keeps arriving for up to ten
+minutes after boot and a member may clone by hand on any day after that. It talks
+only to the daemon's own control socket and opens no port.
+
+All three s6 services (`lody-daemon`, `lody-bridge`, `lody-projects`) are dark
+unless `BLITZ_LODY_SESSIONS=1`; the default in `env.defaults` is `0`.
 
 Scope fence: the box keeps deliberately NO analytics, metering, or usage store.
 Usage and eval data comes from the native harness transcripts in the agent HOME

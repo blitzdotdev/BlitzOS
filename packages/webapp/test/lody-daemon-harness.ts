@@ -45,7 +45,7 @@ import { dirname, join } from "node:path";
  * `fileURLToPath` throws "The URL must be of scheme file". The same expression
  * works in a `node`-environment test file, which is exactly the trap.
  */
-function repoRoot(): string {
+export function repoRoot(): string {
   let directory = process.cwd();
   for (;;) {
     if (existsSync(join(directory, "lint-baseline.json"))) return directory;

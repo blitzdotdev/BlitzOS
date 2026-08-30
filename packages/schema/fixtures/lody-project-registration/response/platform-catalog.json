@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "identity": {
+    "userId": "local:fdf796295fcf4d33a5df5294bc942afe"
+  },
+  "machine": {
+    "machineId": "1e3dcfd5-2927-415c-8976-6d00322d2818",
+    "machineName": "blitzos-dev"
+  },
+  "workspaces": [
+    {
+      "workspaceId": "lw_4232972aaa2f498ba29fe7e52cb0d928",
+      "name": "Lody",
+      "slug": "local",
+      "role": "owner",
+      "state": "active",
+      "cachedAt": 1788065739918,
+      "machine": {
+        "machineId": "1e3dcfd5-2927-415c-8976-6d00322d2818",
+        "machineName": "blitzos-dev",
+        "cachedAt": 1788065739918
+      }
+    }
+  ],
+  "sessions": []
+}

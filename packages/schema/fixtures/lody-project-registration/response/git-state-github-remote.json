@@ -1,0 +1,20 @@
+{
+    "ok": true,
+    "type": "local-project/git-state",
+    "result": {
+        "git": true,
+        "branches": [
+            "main"
+        ],
+        "currentBranch": "main",
+        "defaultBranch": "main",
+        "githubRepoFullName": "blitzdotdev/wt-probe",
+        "workingTree": {
+            "clean": true,
+            "staged": false,
+            "unstaged": false,
+            "untracked": false,
+            "conflicted": false
+        }
+    }
+}
