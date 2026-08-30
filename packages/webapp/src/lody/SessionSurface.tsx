@@ -54,6 +54,7 @@ import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import { bootstrapLodyAgentConfigs, refreshLodyAcpCapabilities } from "./agent-configs.js";
 import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
+import { mirrorLocalProjectsToMachineMeta } from "./local-projects.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
@@ -263,6 +264,12 @@ function LodyAgentConfigBootstrap(props: { store: LodyAtomStore; machineId: stri
       started = runtime;
       void (async () => {
         await bootstrapLodyAgentConfigs(store, runtime, machineId);
+        // Before anything can be archived: the daemon's archive path reads the
+        // legacy `machineMeta.localProjects` field and the box's registrar only
+        // ever writes the Flock row, so without this mirror a worktree session
+        // archives into nothing and leaves the member's uncommitted work on
+        // disk. See `local-projects.ts` for the upstream anchor.
+        await mirrorLocalProjectsToMachineMeta(runtime, machineId);
         // Second, and only after the rows exist: the capabilities pass keys off
         // them. A config that fails to report costs the composer that agent's
         // selectors and nothing else, so it is warned about rather than raised
