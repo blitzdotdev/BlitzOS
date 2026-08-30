@@ -27,19 +27,21 @@ export const BOX_IMAGE_VIEWER_GUARDS_SINCE_MS = 1_787_043_600_000;
  * message that names the fix, rather than letting the box answer a 403 nobody
  * can read (plans/LODY-SHARING.md §3.1).
  *
- * NO PROVIDER ADVERTISES IT YET, deliberately. The two cutoffs above were set
- * when a specific image became the pin; the image carrying this gateway has not
- * been baked, so advertising a cutoff in the past would mark every VM created
- * today as capable and hand real members that unreadable 403. Undefined is
- * "never", so session sharing is refused everywhere until phase 7 bakes the
- * image and adds `webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS`
- * to `HetznerProvider` and `AwsProvider` — which is the same "ship it dark, flip
- * it on canary" order `plans/LODY-SESSIONS.md` §9 sets for everything else here.
+ * 2026-08-30 21:30 UTC: the moment `blitz-box:bc0c2d75` becomes canary's pin.
+ * That image is the first to carry the share-aware gateway, the Lody daemon and
+ * the bridge's room ACL, and this change is what pins it — the three
+ * `BLITZ_DEPLOY_VAR_BOX_IMAGE_*` values in `.github/workflows/canary.yml` move
+ * in the same commit, so canary starts serving it the moment this merges.
  *
- * 2026-08-30 00:00 UTC is a placeholder: replace it with the moment the image
- * actually becomes the pin, in the same change that advertises it.
+ * The value must POSTDATE that merge, and it is set from the clock rather than
+ * from the merge, which nobody can know in advance. Later is the safe
+ * direction: a VM created after the pin but before the cutoff is merely refused
+ * sharing until it is recycled, whereas a cutoff in the PAST would mark VMs
+ * running the OLD gateway as capable and hand a real member the unreadable 403
+ * this constant exists to prevent. If this change merges after the timestamp
+ * above, raise it before merging.
  */
-export const BOX_IMAGE_SHARED_SESSIONS_SINCE_MS = 1_788_048_000_000;
+export const BOX_IMAGE_SHARED_SESSIONS_SINCE_MS = 1_788_177_600_000;
 
 /** The most session ids one ticket carries.
  *

@@ -12,6 +12,10 @@ import {
 import { signAwsQueryRequest } from "../core/compute/aws-sigv4.js";
 import { parseXml, childText, setItems } from "../core/compute/aws-xml.js";
 import type { CreateVmInput } from "../core/compute/types.js";
+// Imported rather than restated: this cutoff is set to the moment an image
+// becomes the pin, so it moves whenever canary rebakes — and the two literals
+// below have not moved since the images that set them.
+import { BOX_IMAGE_SHARED_SESSIONS_SINCE_MS } from "../core/webapp-tickets.js";
 
 const REGION = "us-east-1";
 const INSTANCE_ID = "i-0123456789abcdef0";
@@ -195,6 +199,7 @@ describe("AWS provider ownership", () => {
       maxUserDataBytes: 49_152,
       webAppTicketsSinceMs: 1_786_993_800_000,
       webAppViewerGuardsSinceMs: 1_787_043_600_000,
+      webAppSharedSessionsSinceMs: BOX_IMAGE_SHARED_SESSIONS_SINCE_MS,
     });
   });
 
