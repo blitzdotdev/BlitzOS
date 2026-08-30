@@ -42,6 +42,8 @@ export interface LodySessionsRegionProps {
   onSelectTerminal: (tabId: string) => void;
   /** The `+ New tab` control for the Terminals section header. */
   terminalsAction?: ReactNode;
+  /** Right-click Share on a session row (plans/LODY-SHARING.md §8). */
+  onShareSession?: (sessionId: string) => void;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
 }
@@ -53,6 +55,7 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
     onSelectTerminal: props.onSelectTerminal,
   };
   if (props.terminalsAction !== undefined) rail.terminalsAction = props.terminalsAction;
+  if (props.onShareSession !== undefined) rail.onShareSession = props.onShareSession;
 
   // Mounted on the FIRST request and never unmounted afterwards: the runtime
   // owns a WebSocket, an IndexedDB repo and a WASM instance, so a hide has to

@@ -63,6 +63,26 @@ interface LodySessionRow {
   sessionId: string;
   repoFullName: string | null;
   isPinned?: boolean;
+  /** What their row's context menu draws for the Share entry
+   * (`session-list.tsx:820`). Upstream fills it from a cloud visibility flip;
+   * BlitzOS fills it from §0.1's rule that a session is private until granted,
+   * so `visibility` is always `'private'` — the entry is how you MANAGE the
+   * grants, and a session with grants must still offer it. */
+  sharing?: { visibility: "private"; canManage: boolean };
+}
+
+/** The row callbacks this rail hands `SessionList`. Stated on our side because
+ * every `@lody/*` name is a namespace across the vendor type seam
+ * (`wire-types.ts`). */
+interface LodySessionRowActions {
+  selectedSessionId: string | null;
+  onSelectSession: (sessionId: string) => void;
+  onNavigateSessionTab: (sessionId: string) => void;
+  onArchiveSession: (sessionId: string) => void;
+  onRenameSession: (sessionId: string, nextTitle: string) => Promise<void> | void;
+  onTogglePinSession: (sessionId: string, nextPinned: boolean) => void;
+  onNavigateToNewSession: () => void;
+  onShareSessionWithTeam?: (sessionId: string) => void;
 }
 
 export interface SessionRailSidebarProps {
@@ -82,6 +102,19 @@ export interface SessionRailSidebarProps {
   /** The `+ New tab` control, rendered in the Terminals section header so the
    * Claude / Codex / terminal entries keep a home in the rail. */
   terminalsAction?: ReactNode;
+  /**
+   * Right-click Share (plans/LODY-SESSIONS.md §0.1, LODY-SHARING.md §8).
+   *
+   * NO VENDOR HUNK. `SessionList` already draws a Share entry in its row
+   * context menu, gated on the row carrying a `sharing` state and the list
+   * carrying `onShareSessionWithTeam` (`session-list.tsx:1134`), and the "⋯"
+   * button opens that same menu by synthesizing a `contextmenu` event
+   * (`sidebar-row-shared.tsx:507`). So the whole affordance is two props.
+   *
+   * Absent with sharing off, which leaves the row's menu exactly as phase 4
+   * shipped it.
+   */
+  onShareSession?: (sessionId: string) => void;
 }
 
 /** Repo names in first-seen order — upstream's `getStableRepoFullNames`
@@ -192,13 +225,27 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
     [allActiveSessions, onlineMachineIds, sessions, user?.id, workspaceId],
   );
 
+  const { onSelectSession, onOpenLanding, onShareSession } = props;
+  // Every row is private and every row is the caller's own — the rail lists the
+  // sessions on the caller's box, because that is the only daemon this runtime
+  // is connected to — so `canManage` is simply "is the affordance offered".
+  const shareableRows = useMemo(
+    () =>
+      onShareSession === undefined
+        ? rows
+        : rows.map((row: LodySessionRow) => ({
+            ...row,
+            sharing: { visibility: "private" as const, canManage: true },
+          })),
+    [onShareSession, rows],
+  );
   const chats = useMemo(
-    () => rows.filter((row) => row.repoFullName === null || row.repoFullName === ""),
-    [rows],
+    () => shareableRows.filter((row) => row.repoFullName === null || row.repoFullName === ""),
+    [shareableRows],
   );
   const worktrees = useMemo(
-    () => rows.filter((row) => row.repoFullName !== null && row.repoFullName !== ""),
-    [rows],
+    () => shareableRows.filter((row) => row.repoFullName !== null && row.repoFullName !== ""),
+    [shareableRows],
   );
   const [collapsedRepos, setCollapsedRepos] = useState<Record<string, boolean>>({});
   const repos = useMemo(
@@ -220,10 +267,9 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
   const [worktreesCollapsed, setWorktreesCollapsed] = useState(false);
   const [terminalsCollapsed, setTerminalsCollapsed] = useState(false);
 
-  const { onSelectSession, onOpenLanding } = props;
   const selectedSessionId = props.surfaceVisible ? props.activeSessionId : null;
-  const rowActions = useMemo(
-    () => ({
+  const rowActions = useMemo(() => {
+    const actions: LodySessionRowActions = {
       selectedSessionId,
       onSelectSession,
       onNavigateSessionTab: onSelectSession,
@@ -236,9 +282,12 @@ export function SessionRailSidebar(props: SessionRailSidebarProps) {
         void setSessionPinned(sessionId, nextPinned);
       },
       onNavigateToNewSession: () => onOpenLanding(),
-    }),
-    [archiveSession, onOpenLanding, onSelectSession, selectedSessionId, setSessionPinned, updateSessionTitle],
-  );
+    };
+    // Absent, not undefined: their row draws the Share entry only when the
+    // callback is present (`session-list.tsx:891`).
+    if (onShareSession !== undefined) actions.onShareSessionWithTeam = onShareSession;
+    return actions;
+  }, [archiveSession, onOpenLanding, onSelectSession, onShareSession, selectedSessionId, setSessionPinned, updateSessionTitle]);
 
   const sessionListProps = useMemo(
     () => ({

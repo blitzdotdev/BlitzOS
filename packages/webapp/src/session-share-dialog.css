@@ -1,0 +1,140 @@
+/* The session-share dialog (SessionShareDialog.tsx). Shares `.webapp-modal-screen`
+   with every other modal; everything below is this dialog's own. */
+
+.webapp-share-dialog {
+  display: flex;
+  width: min(520px, 100%);
+  max-height: min(560px, 100%);
+  flex-direction: column;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: var(--lift);
+  font-family: var(--font-ui);
+}
+
+.webapp-share-header {
+  padding: 20px 22px 8px;
+}
+
+.webapp-share-header h1 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.webapp-share-header p {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.webapp-share-body {
+  overflow-y: auto;
+  flex: 1;
+  padding: 6px 22px;
+}
+
+.webapp-share-empty,
+.webapp-share-error {
+  margin: 10px 0;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.webapp-share-error {
+  color: var(--ansi-red);
+}
+
+.webapp-share-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+  gap: 12px;
+}
+
+.webapp-share-row:last-child {
+  border-bottom: none;
+}
+
+.webapp-share-who {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.webapp-share-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.webapp-share-role {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.webapp-share-levels {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.webapp-share-levels .webapp-share-level {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  font: 500 12px/1 var(--font-ui);
+}
+
+.webapp-share-levels .webapp-share-level:hover:not(:disabled),
+.webapp-share-levels .webapp-share-level:focus-visible {
+  background: var(--hover);
+}
+
+/* The current grant, stated on the control rather than beside it: one row, one
+   place to look. */
+.webapp-share-levels .webapp-share-level[aria-pressed='true'] {
+  border-color: transparent;
+  color: var(--paper);
+  background: var(--ink);
+}
+
+.webapp-share-levels .webapp-share-level:disabled {
+  opacity: .45;
+}
+
+.webapp-share-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px 18px;
+}
+
+.webapp-share-actions .webapp-action {
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  font: 500 13.5px/1 var(--font-ui);
+}
+
+@media (max-width: 520px) {
+  .webapp-share-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .webapp-share-levels .webapp-share-level {
+    min-height: var(--touchTarget);
+  }
+}

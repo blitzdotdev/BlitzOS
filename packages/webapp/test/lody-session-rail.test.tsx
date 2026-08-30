@@ -105,6 +105,8 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   /** The surface, with `hidden` as the only thing a case may vary: every other
    * prop is identical across renders so the runtime is never rebuilt. */
   let surface: (hidden: boolean) => ReactNode = () => null;
+  /** Every session id the row's Share entry reported (phase 6). */
+  const sharedSessions: string[] = [];
 
   beforeAll(async () => {
     installLodyDomStubs();
@@ -139,6 +141,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
           activeTerminalId: "12",
           onSelectTerminal: (tabId) => selectedTerminals.push(tabId),
           terminalsAction: <button type="button" aria-label="New tab">+</button>,
+          onShareSession: (sessionId) => sharedSessions.push(sessionId),
         }}
         onApiReady={(next) => {
           api = next;
@@ -240,6 +243,43 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       activeSessionId === null ? undefined : true,
     );
     expect(activeSessionId).toMatch(/^[0-9a-f-]{36}$/u);
+  }, 90_000);
+
+  /**
+   * PHASE 6 EXIT TEST 5, first half (plans/LODY-SHARING.md §7).
+   *
+   * The way in is THEIR row context menu, with no vendor hunk: `SessionList`
+   * already draws a Share entry gated on the row carrying a `sharing` state and
+   * the list carrying `onShareSessionWithTeam` (`session-list.tsx:1134`), and
+   * the row's "⋯" opens that same menu by synthesizing a `contextmenu` event
+   * (`sidebar-row-shared.tsx:507`). So this drives the real menu rather than a
+   * button of ours, and what it proves is that the two props are enough.
+   */
+  it("offers Share on a session row's own context menu", async () => {
+    const row = railSessionRow(new RegExp(SEEDED_TITLE, "u"));
+    expect(row, `rail: ${railText()}`).toBeDefined();
+    await act(async () => {
+      (row as HTMLElement).dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }),
+      );
+    });
+    await settle();
+    const item = await until("the Share entry to appear in the row menu", () =>
+      [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].find((node) =>
+        /share/iu.test(node.textContent ?? ""),
+      ),
+    ).catch((cause: unknown) => {
+      const items = [...document.querySelectorAll("[role='menuitem']")]
+        .map((node) => node.textContent).join(" | ");
+      throw new Error(`${String(cause)}\n--- menu ---\n${items}`);
+    });
+    expect(item.getAttribute("aria-disabled")).not.toBe("true");
+    await act(async () => {
+      item.click();
+    });
+    await settle();
+    expect(sharedSessions).toHaveLength(1);
+    expect(sharedSessions[0]).toMatch(/^[0-9a-f-]{36}$/u);
   }, 90_000);
 
   it("draws Terminals always, and the Lody sections only once they hold rows", () => {

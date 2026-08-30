@@ -26,6 +26,7 @@ import type { DriveRailSession } from './shell/rail-sessions';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
+import { SessionShareDialog } from './SessionShareDialog';
 import { caughtErrorMessage } from './error-message';
 import {
   WebAppLoadingPane,
@@ -929,6 +930,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     activeWorkspaceTabs?.tabs.length ?? 0,
   );
   const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
+  // Which session the share dialog is open on. One piece of state, because the
+  // dialog reads and writes its own grants (plans/LODY-SHARING.md §8).
+  const [sharingSessionId, setSharingSessionId] = useState<string | null>(null);
   // The ADDRESS drives the surface, one way: a deep link, a reload and the back
   // button all arrive here, and the surface's own navigations come back through
   // `onActiveSessionChange` below. Both compare before acting, so the pair
@@ -1613,6 +1617,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               )}
               onApiReady={setLodyApi}
               onActiveSessionChange={lodyRail.mirror}
+              onShareSession={setSharingSessionId}
             />
             <WorkPanes
               client={client}
@@ -1928,6 +1933,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}
+      {sharingSessionId !== null && activeWorkspace !== undefined && activeWorkspace !== null && store.viewer !== null && (
+        <SessionShareDialog
+          client={client}
+          workspaceId={activeWorkspace.id}
+          sessionId={sharingSessionId}
+          // The daemon owns session titles and the rail draws them; the dialog
+          // is opened from a row whose id is all that crosses, so the heading
+          // names the session by id rather than inventing a second title
+          // source that could disagree with the row above it.
+          sessionTitle={sharingSessionId.slice(0, 8)}
+          members={activeWorkspace.members}
+          viewerMembershipId={store.viewer.membership.id}
+          onClose={() => setSharingSessionId(null)}
+        />
+      )}
       {fileCloseConfirmation && (
         <ConfirmationDialog
           title="Discard changes?"

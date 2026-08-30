@@ -115,6 +115,9 @@ export interface LodyRailBinding {
   onSelectTerminal: (tabId: string) => void;
   /** The `+ New tab` control, rendered in the Terminals section header. */
   terminalsAction?: ReactNode;
+  /** Right-click Share on a session row. Absent leaves the row's menu exactly
+   * as phase 4 shipped it (plans/LODY-SHARING.md §8). */
+  onShareSession?: (sessionId: string) => void;
 }
 
 /** What `CloudApp` drives the surface with. Imperative on purpose: the router's
@@ -421,6 +424,9 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
             {...(rail.terminalsAction === undefined
               ? {}
               : { terminalsAction: rail.terminalsAction })}
+            {...(rail.onShareSession === undefined
+              ? {}
+              : { onShareSession: rail.onShareSession })}
           />,
           railHost,
         );
