@@ -22,6 +22,20 @@ import { getServerNow, getSessionRoomId } from "@lody/shared";
 import { buildInitialHistoryEntry, buildInitialSessionMetaPatch } from "@lody/shared/session-bootstrap";
 import type { LodyWorkspaceRuntime } from "./runtime.js";
 
+/** The arguments `buildInitialHistoryEntry` takes, narrowed to the ones this
+ * package supplies (`vendor/lody/packages/shared/src/session-bootstrap.ts:16`).
+ * Named on our side because every `@lody/*` export is a namespace across the
+ * vendor type seam (`wire-types.ts`). */
+interface LodyInitialHistoryEntryArgs {
+  userId: string;
+  timestamp: string;
+  cliType: string;
+  agentType: string;
+  prompt: string;
+  inputBlocks: undefined;
+  modeId?: string;
+}
+
 export interface StartLodySessionInput {
   /** Caller-chosen so the room id is known before the write lands. */
   sessionId: string;
@@ -109,18 +123,7 @@ export async function startLodySession(
   input: StartLodySessionInput,
 ): Promise<StartedLodySession> {
   const timestamp = new Date().toISOString();
-  // SAFETY: `buildInitialHistoryEntry` returns Lody's `SessionHistoryInput | null`;
-  // the seam erases that to an untyped value, and `builderObject` re-checks that
-  // what arrived is an object before any field is read.
-  const entryArgs: {
-    userId: string;
-    timestamp: string;
-    cliType: string;
-    agentType: string;
-    prompt: string;
-    inputBlocks: undefined;
-    modeId?: string;
-  } = {
+  const entryArgs: LodyInitialHistoryEntryArgs = {
     userId: input.userId,
     timestamp,
     cliType: "builtin",
@@ -129,6 +132,9 @@ export async function startLodySession(
     inputBlocks: undefined,
   };
   if (input.modeId !== undefined) entryArgs.modeId = input.modeId;
+  // SAFETY: `buildInitialHistoryEntry` returns Lody's `SessionHistoryInput | null`;
+  // the seam erases that to an untyped value, and `builderObject` re-checks that
+  // what arrived is an object before any field is read.
   const built = buildInitialHistoryEntry(entryArgs) as JsonValue;
   if (built === null) throw new LodySessionStartError("lody_session_empty_prompt");
   const entry = builderObject(built, "history entry");
