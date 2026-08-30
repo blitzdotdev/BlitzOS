@@ -54,7 +54,10 @@ import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
 import { bootstrapLodyAgentConfigs, refreshLodyAcpCapabilities } from "./agent-configs.js";
 import { createLodyLocalBridge, installLodyLocalBridge, type LodyLocalBridge } from "./local-bridge.js";
-import { mirrorLocalProjectsToMachineMeta } from "./local-projects.js";
+import {
+  mirrorLocalProjectsToMachineMeta,
+  publishBoxReposAsWorkspaceRepos,
+} from "./local-projects.js";
 import { BlitzPlatformProviders, useLodyPlatformSnapshot, type BlitzViewer } from "./platform.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
 import {
@@ -252,8 +255,12 @@ function seedCurrentUser(
  * cheap to repeat and idempotent by construction (`agent-configs.ts`), so a
  * re-run after a reconnect is a no-op rather than a duplicate row.
  */
-function LodyAgentConfigBootstrap(props: { store: LodyAtomStore; machineId: string }) {
-  const { store, machineId } = props;
+function LodyAgentConfigBootstrap(props: {
+  store: LodyAtomStore;
+  machineId: string;
+  endpoints: LodyRuntimeEndpoints;
+}) {
+  const { store, machineId, endpoints } = props;
   useEffect(() => {
     let cancelled = false;
     let started: LodyWorkspaceRuntime | null = null;
@@ -270,6 +277,12 @@ function LodyAgentConfigBootstrap(props: { store: LodyAtomStore; machineId: stri
         // archives into nothing and leaves the member's uncommitted work on
         // disk. See `local-projects.ts` for the upstream anchor.
         await mirrorLocalProjectsToMachineMeta(runtime, machineId);
+        // And before a worktree session can be created at all: the landing
+        // drops `githubRepoFullName` from a session's ProjectRef unless the
+        // name is in the workspace's connected-repo list, and without that
+        // field the session is a chat to the rail and to the daemon's diff
+        // stats alike. See `local-projects.ts`.
+        await publishBoxReposAsWorkspaceRepos(store, endpoints, runtime, machineId);
         // Second, and only after the rows exist: the capabilities pass keys off
         // them. A config that fails to report costs the composer that agent's
         // selectors and nothing else, so it is warned about rather than raised
@@ -294,7 +307,7 @@ function LodyAgentConfigBootstrap(props: { store: LodyAtomStore; machineId: stri
       aborter.abort();
       unsubscribe();
     };
-  }, [store, machineId]);
+  }, [store, machineId, endpoints]);
   return null;
 }
 
@@ -424,7 +437,11 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
           >
             <LodySurfaceProviders>
               <RuntimeProvider>
-                <LodyAgentConfigBootstrap store={store} machineId={snapshot.machineId} />
+                <LodyAgentConfigBootstrap
+                  store={store}
+                  machineId={snapshot.machineId}
+                  endpoints={endpoints}
+                />
                 {railSidebar}
                 <RouterProvider router={router} />
               </RuntimeProvider>
