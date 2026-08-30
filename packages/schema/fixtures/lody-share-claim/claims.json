@@ -1,0 +1,35 @@
+{
+  "ro": {
+    "claim": {
+      "target": "membership-owner",
+      "scope": "sessions",
+      "read": [
+        "sess-alpha"
+      ],
+      "write": []
+    },
+    "header": "{\"target\":\"membership-owner\",\"scope\":\"sessions\",\"read\":[\"sess-alpha\"],\"write\":[]}"
+  },
+  "rw": {
+    "claim": {
+      "target": "membership-owner",
+      "scope": "sessions",
+      "read": [
+        "sess-alpha"
+      ],
+      "write": [
+        "sess-beta"
+      ]
+    },
+    "header": "{\"target\":\"membership-owner\",\"scope\":\"sessions\",\"read\":[\"sess-alpha\"],\"write\":[\"sess-beta\"]}"
+  },
+  "admin": {
+    "claim": {
+      "target": "membership-owner",
+      "scope": "all",
+      "read": [],
+      "write": []
+    },
+    "header": "{\"target\":\"membership-owner\",\"scope\":\"all\",\"read\":[],\"write\":[]}"
+  }
+}

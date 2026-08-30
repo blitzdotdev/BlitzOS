@@ -1,0 +1,466 @@
+{
+  "frames": [
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        }
+      },
+      "verdict": "forward",
+      "note": "The granted session's own room. This is the whole of what a read-only share buys on the data plane."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-zulu"
+        }
+      },
+      "verdict": "refuse",
+      "note": "A session on the same box that was never granted. Refused rather than dropped: the client is waiting on a `joined` that will never come."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "drop",
+      "note": "Read-only IS this line. A peer told its write failed tears the room down and retries; a peer whose write never lands re-converges from the owner's state."
+    },
+    {
+      "claim": "rw",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-beta"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "forward",
+      "note": "A read-write co-driver's write, including the one that answers a permission request \u2014 upstream brokers permissions through this document and no other door."
+    },
+    {
+      "claim": "rw",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "drop",
+      "note": "One connection, two levels: the same grantee holds read-only on this session and read-write on another."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        }
+      },
+      "verdict": "refuse",
+      "note": "`meta` names every document on the box, which is the owner's whole session list \u2014 exactly what \"opt-in per session\" withholds."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "meta"
+        }
+      },
+      "verdict": "forward",
+      "note": "A workspace admin already holds implicit read-only on every session, so the room leaks nothing they are not entitled to."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "update",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        },
+        "payload": {
+          "kind": "doc-update",
+          "dataBase64": "AA=="
+        }
+      },
+      "verdict": "drop",
+      "note": "The admin's implicit access is read-only BY CONSTRUCTION: the write predicate never reads `scope`."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "ping",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd"
+      },
+      "verdict": "forward",
+      "note": "Liveness belongs to the peers at each end and crosses untouched."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "leave",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "room": {
+          "scope": "doc",
+          "docId": "session-sess-alpha"
+        }
+      },
+      "verdict": "forward",
+      "note": "`leave` only unsubscribes the sender."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "detach",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd"
+      },
+      "verdict": "forward",
+      "note": "`detach` only unsubscribes the sender."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "machine-monitor",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "dataBase64": "AA=="
+      },
+      "verdict": "drop",
+      "note": "Machine-level telemetry, not session state. No share carries it."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "flock-doc",
+          "flockDocId": "machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+        }
+      },
+      "verdict": "refuse",
+      "note": "The machine flock carries local projects and agent configs for the whole box."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "flock-doc",
+          "flockDocId": "machine-c15a67ef-0ff9-4e2e-87d8-e12479ddf8e2"
+        }
+      },
+      "verdict": "forward",
+      "note": "Same reason as `meta`."
+    },
+    {
+      "claim": "ro",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "session-comment-sess-alpha"
+        }
+      },
+      "verdict": "refuse",
+      "note": "THE PREFIX TRAP. `session-comment-` starts with `session-` and is a different document family; a reader that strips the shorter prefix first would grant a room it was never asked to."
+    },
+    {
+      "claim": "admin",
+      "frame": {
+        "type": "join",
+        "protocolVersion": 7,
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+        "requestId": "0b173952-acba-4b00-bee8-7c505a1abc9e",
+        "room": {
+          "scope": "doc",
+          "docId": "preview-comment-sess-alpha"
+        }
+      },
+      "verdict": "refuse",
+      "note": "Not a session document either, and `scope: \"all\"` is over SESSIONS."
+    }
+  ],
+  "requests": [
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/open-turn-diff",
+        "params": {
+          "sessionId": "sess-alpha",
+          "turnId": "t"
+        }
+      },
+      "allowed": true,
+      "note": "A granted session's diff. This is the \"read access scoped to that session's worktree\" \u00a70.1 grants."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/open-turn-diff",
+        "params": {
+          "sessionId": "sess-zulu",
+          "turnId": "t"
+        }
+      },
+      "allowed": false,
+      "note": "The same method against a session nobody granted."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "sess-alpha",
+          "turnId": "t"
+        }
+      },
+      "allowed": false,
+      "note": "Cancelling a turn is a co-driver's act, not an observer's."
+    },
+    {
+      "claim": "rw",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "sess-beta",
+          "turnId": "t"
+        }
+      },
+      "allowed": true,
+      "note": "\u00a70.1's read-write co-driver: prompt, steer, cancel."
+    },
+    {
+      "claim": "rw",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/cancel",
+        "params": {
+          "sessionId": "sess-alpha",
+          "turnId": "t"
+        }
+      },
+      "allowed": false,
+      "note": "Read-write on one session is not read-write on the other."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "file/preview",
+        "params": {
+          "path": "/etc/passwd"
+        }
+      },
+      "allowed": false,
+      "note": "The two `file/preview*` methods name an arbitrary path and no session, which is why they are excluded rather than scoped."
+    },
+    {
+      "claim": "ro",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/save-text",
+        "params": {
+          "sessionId": "sess-alpha",
+          "path": "a.ts",
+          "text": "x"
+        }
+      },
+      "allowed": false,
+      "note": "A share grants READ access to the worktree; saving a file is not a read."
+    },
+    {
+      "claim": "rw",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/terminate",
+        "params": {
+          "sessionId": "sess-beta"
+        }
+      },
+      "allowed": false,
+      "note": "Killing the agent process is not the same act as cancelling a turn."
+    },
+    {
+      "claim": "ro",
+      "door": "/control",
+      "body": {
+        "type": "session/create",
+        "sessionId": "s",
+        "machineId": "m"
+      },
+      "allowed": false,
+      "note": "`/session-control` is refused outright: `session/create` would create a session on somebody else's box."
+    },
+    {
+      "claim": "rw",
+      "door": "/control",
+      "body": {
+        "type": "session/chat",
+        "sessionId": "sess-beta",
+        "machineId": "m"
+      },
+      "allowed": false,
+      "note": "Everything a read-write grantee needs is a machine RPC, so this door stays shut for both levels."
+    },
+    {
+      "claim": "ro",
+      "door": "/project",
+      "body": {
+        "type": "worktree/read-file",
+        "machineId": "m",
+        "repoFullName": "o/r",
+        "sessionId": "sess-alpha",
+        "relativePath": "a.ts"
+      },
+      "allowed": true,
+      "note": "The worktree read pair IS the session-scoped file access \u00a70.1 grants."
+    },
+    {
+      "claim": "ro",
+      "door": "/project",
+      "body": {
+        "type": "worktree/read-file",
+        "machineId": "m",
+        "repoFullName": "o/r",
+        "sessionId": "sess-zulu",
+        "relativePath": "a.ts"
+      },
+      "allowed": false,
+      "note": "Same door, ungranted session."
+    },
+    {
+      "claim": "ro",
+      "door": "/project",
+      "body": {
+        "type": "local-project/list",
+        "machineId": "m"
+      },
+      "allowed": false,
+      "note": "Every `local-project/*` request names a PROJECT, not a session, so none can be scoped by a share."
+    },
+    {
+      "claim": "admin",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "code-collab/get-file-index",
+        "params": {
+          "sessionId": "sess-anything"
+        }
+      },
+      "allowed": true,
+      "note": "A workspace admin reads any session on the machine, with no grant row."
+    },
+    {
+      "claim": "admin",
+      "door": "/rpc",
+      "body": {
+        "machineId": "m",
+        "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+        "method": "session/dispatch-turn",
+        "params": {
+          "sessionId": "sess-anything",
+          "userTurnId": "u",
+          "userId": "x",
+          "timestamp": "t",
+          "inputConfig": {}
+        }
+      },
+      "allowed": false,
+      "note": "\u2026and writes none of them."
+    }
+  ]
+}

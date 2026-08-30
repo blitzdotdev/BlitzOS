@@ -312,8 +312,11 @@ dependency and the box does not run it.
 One consequence for phase 6: the relay is a broadcast pipe, so per-room ACL
 cannot be a pass-through. Enforcing read-only means parsing frames and dropping
 inbound `sync` payloads for rooms the ticket does not grant write on. Frames
-are peer- and room-addressed by design, so the hook is well placed; it is
-`TODO(lody-phase6)` in the relay.
+are peer- and room-addressed by design, so the hook is well placed.
+*(Phase 6 built it there: `shareVerdict` in the bridge, with the decision table
+as a fixture corpus — `packages/schema/fixtures/lody-share-claim/`. The one
+correction to the sentence above is that a refused JOIN and a dropped UPDATE are
+different acts, for the reason `plans/LODY-SHARING.md` §4.2 gives.)*
 
 ---
 

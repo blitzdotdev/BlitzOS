@@ -1,0 +1,18 @@
+{
+  "identity": {
+    "userId": "local:0123456789abcdef0123456789abcdef"
+  },
+  "workspaces": [
+    {
+      "workspaceId": "lw_287726ab08f7490493e262c0062bf8b3",
+      "name": "Lody",
+      "slug": "local",
+      "role": "owner",
+      "state": "active"
+    }
+  ],
+  "machine": {
+    "machineId": "11111111-2222-3333-4444-555555555555",
+    "machineName": "blitzos-dev"
+  }
+}

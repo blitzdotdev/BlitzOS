@@ -322,9 +322,8 @@ the bridge holds the claim for the life of that connection.
 ### 4.2 Bridge: the room ACL
 
 The bridge stops copying bytes on `/sync` and starts parsing frames. That is the
-change `plans/evidence/lody-phase1.md` blocker 4 and the two `TODO(lody-phase6)`
-markers anticipated, and it is why
-`packages/schema/fixtures/lody-data-plane/` exists.
+change `plans/evidence/lody-phase1.md` and the two `TODO(lody-phase6)` markers
+anticipated, and it is why `packages/schema/fixtures/lody-data-plane/` exists.
 
 A connection with NO share header behaves exactly as today: every frame crosses
 untouched, in both directions. The parsing cost is paid only by a shared
@@ -361,9 +360,9 @@ them, so for `scope: "all"` the room leaks nothing they are not entitled to.
 retries and then tears the room down; a peer whose write simply never lands keeps
 a divergent local replica and re-converges from the owner's state on the next
 sync. Read-only in a CRDT world is exactly "the relay does not apply what you
-send", and the design in `LODY-SESSIONS.md` §4 says so. The count is exposed the
-same way the browser's frame counters are, so a test can prove the drop happened
-rather than infer it from an absence.
+send", and the design in `LODY-SESSIONS.md` §4 says so. The counts are logged once per shared
+connection when it closes, because silence would make "the grantee says nothing
+lands" and "the grantee is not connected" the same log line.
 
 **Server → client needs no filter.** The daemon addresses frames to the peers
 subscribed to a room, and this bridge is one socket per browser connection, so a
@@ -397,7 +396,7 @@ The other three doors:
 |---|---|
 | `/control` (session control) | refused entirely. Everything read-write needs is on `/rpc`; `session/create` would create a session on someone else's box, and `session/file-send-local` would write bytes into the owner's `/workspace`. |
 | `/project` (local-project control) | `worktree/list-files` and `worktree/read-file` only, and only for a permitted session id. That pair IS the "read access scoped to that session's worktree" §0.1 grants. Every `local-project/*` request names a PROJECT, not a session, so none can be scoped and all are refused. |
-| `/platform` | served NARROWED: `identity`, `workspaces` and `machine`, and nothing else. This is the `TODO(lody-phase6)` at the top of the bridge — the daemon's catalog also carries the owner's session list. |
+| `/platform` | served NARROWED: `identity`, `workspaces` and `machine`, and nothing else. This is the `TODO(lody-phase6)` at the top of the bridge — the daemon's catalog also names every session on the box. The OWNER's request is still served byte-for-byte, so the projection is a share-only act and its fixture pair lives with the claim's. |
 
 **Answering a permission request is not on any of these lists, and that is
 correct.** Upstream brokers permissions entirely through the session document:

@@ -2304,6 +2304,36 @@ func TestDiagMethods(t *testing.T) {
 	}
 }
 
+// The gateway's half of the share-claim contract
+// (packages/schema/fixtures/lody-share-claim/): the bytes it puts on the header
+// are what the bridge's ACL reads, and the bridge's own conformance suite drives
+// those same bytes. A field one side renames is a grant the other stops seeing.
+func TestShareClaimHeaderMatchesTheCorpus(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "fixtures", "lody-share-claim", "claims.json"))
+	if err != nil {
+		t.Fatalf("read share claim corpus: %v", err)
+	}
+	var corpus map[string]struct {
+		Claim  webAppShareClaim `json:"claim"`
+		Header string           `json:"header"`
+	}
+	if err := json.Unmarshal(raw, &corpus); err != nil {
+		t.Fatalf("parse share claim corpus: %v", err)
+	}
+	if len(corpus) == 0 {
+		t.Fatal("no share claims in the corpus")
+	}
+	for name, entry := range corpus {
+		encoded, err := json.Marshal(entry.Claim)
+		if err != nil {
+			t.Fatalf("%s: encode: %v", name, err)
+		}
+		if string(encoded) != entry.Header {
+			t.Errorf("%s: header = %s, want %s", name, encoded, entry.Header)
+		}
+	}
+}
+
 // PHASE 6 (plans/LODY-SHARING.md §4.1) — a ticket routed to ANOTHER member's
 // machine. The gateway decides WHERE such a request may go; the bridge decides
 // what it may say once it gets there.

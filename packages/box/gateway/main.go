@@ -527,16 +527,14 @@ func unixSocketTransport(socketPath string) http.RoundTripper {
 // agent turn, and `/lody/project` posts `local-project/checkout-branch`, which
 // moves a git worktree. Neither is narrower than the sync socket.
 //
-// TODO(lody-phase6): a viewer is refused outright here. Sharing
-// (plans/LODY-SESSIONS.md §0.1, phase 6) is what gives a read-only participant a
-// scoped way in — a per-room ACL keyed to a share grant, enforced where the
-// frames are, not a read-only HTTP method filter. Until that exists, "read-only"
-// has no meaning on this surface: the sync socket is bidirectional and one
-// `update` frame writes a session, so GET-versus-POST tells nobody anything. The
-// `/preview/` and dufs branches below can narrow a viewer to reads because their
-// protocols carry that distinction in the method; this one does not. Phase 6
-// replaces this refusal with a grant lookup, and the enforcement point is the
-// bridge, not here — the gateway cannot see frames.
+// "READ-ONLY" HAS NO MEANING AT THIS LAYER, and phase 6 did not change that.
+// The sync socket is bidirectional and one `update` frame writes a session, so
+// GET-versus-POST tells nobody anything here; the `/preview/` and dufs branches
+// below can narrow a viewer to reads only because their protocols carry that
+// distinction in the method. So what phase 6 added is a per-room ACL keyed to a
+// share grant, enforced by the BRIDGE, where the frames are. This function's
+// share-related job is exactly two lines: let a viewer through when they hold a
+// grant, and hand the verified claim on (plans/LODY-SHARING.md §4.1).
 func (g *gateway) serveLody(response http.ResponseWriter, request *http.Request, identity webAppIdentity, upstreamPath string) {
 	// A viewer holds no sessions of their own, so their own box's daemon is
 	// closed to them. A viewer holding a read-only SHARE is the case §0.1 asks
