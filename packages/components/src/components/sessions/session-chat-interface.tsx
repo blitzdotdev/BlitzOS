@@ -100,6 +100,7 @@ import {
   isSessionGoalActive,
   normalizeSessionInputBlocks,
   normalizeSessionTurnInputConfig,
+  resolveSessionAcpRuntimeConfig,
   resolveSessionConversationConfig,
   resolveVisibleSessionGoal,
   resolveActiveAssistantTurnId,
@@ -153,6 +154,7 @@ import { getAppShareUrl } from '@/lib/app-location';
 import { resolveSessionOpenInIdePathTarget } from '@/lib/session-open-in-ide-path';
 import {
   buildPathLauncherLaunchInput,
+  buildPathLauncherProbes,
   getAvailablePathLauncherOptions,
   getPathLauncherId,
   PATH_LAUNCHER_PREFERENCE_CHANGED_EVENT,
@@ -376,7 +378,6 @@ import {
 import { isAskUserQuestionPermissionMeta, type AnalyticsOutcome } from '@lody/shared';
 import { collectPendingScheduledTasksFromHistory, type PendingScheduledTask } from '@lody/shared';
 import { buildAuthorFixPrompt } from '@lody/shared';
-import { ACP_PLAN_PERMISSION_MODE_ID } from '@lody/shared';
 import {
   getPullRequestNumber,
   getPullRequestRepoFullName,
@@ -388,12 +389,10 @@ import {
 } from '@/lib/session-workspace-path';
 import { isNativeAppShell } from '@/lib/native-platform';
 import {
-  disableCodexPlanMode,
   findLatestCompletedCodexProposedPlan,
   shouldShowCodexProposedPlanDecision,
 } from '@/lib/codex-plan-decision';
-import { resolveModeIdAfterPlanExit } from '@/lib/plan-mode-exit';
-import { planModeExitApprovalCountAtomFamily } from '@/atoms/plan-mode-exit';
+import { buildExecutionTurnConfigOverrides } from '@/lib/execution-turn-config';
 import { canShowSubscriptionRateLimits } from '@/lib/session-usage';
 import { canShowCodexResetForecast } from '@/lib/codex-reset-forecast';
 
@@ -2030,7 +2029,6 @@ export const SessionChatInterface = memo(
       selectMode: handleModeChange,
       selectModel: handleModelChange,
       selectConfigOption: handleConfigOptionChange,
-      replaceConfigOptions: setConfigOptionValues,
       dispatch: dispatchSessionConfigSelection,
     } = useAcpSessionConfigSelectionState();
     const {
@@ -2374,6 +2372,15 @@ export const SessionChatInterface = memo(
       () => resolveSessionConversationConfig(sessionDoc?.history ?? [], sessionDoc?.mq ?? []),
       [sessionDoc?.history, sessionDoc?.mq]
     );
+    const sessionRuntimeConfig = useMemo(
+      () =>
+        resolveSessionAcpRuntimeConfig(
+          sessionDoc?.history ?? [],
+          sessionDoc?.mq ?? [],
+          sessionDoc?.acpRuntimeConfig
+        ),
+      [sessionDoc?.acpRuntimeConfig, sessionDoc?.history, sessionDoc?.mq]
+    );
     const mcpSelection = useSessionMcpSelection(sessionConversationConfig.mcpServerIds, {
       existingSession: true,
       disabled: isArchivedSession,
@@ -2418,9 +2425,22 @@ export const SessionChatInterface = memo(
       targetKey: `${session.id}:${session.cliType}:${session.agentType}`,
       preferenceRevision: sessionConversationConfigRevision,
       preferences: sessionConfigPreferences,
+      runtimePreferences: sessionRuntimeConfig,
+      preserveUnsentUserEdits: true,
       selectorOptions: sessionSelectorOptions,
       dispatch: dispatchSessionConfigSelection,
     });
+    const executionTurnConfigOverrides = useMemo(
+      () =>
+        buildExecutionTurnConfigOverrides({
+          selectedModeId,
+          defaultModeId,
+          modeOptions,
+          configOptionSelectors,
+          configOptionValues,
+        }),
+      [configOptionSelectors, configOptionValues, defaultModeId, modeOptions, selectedModeId]
+    );
 
     // Session status strip above the composer: one priority-ordered slot for
     // "will my message run?" (self offline > machine removed > machine offline).
@@ -3328,20 +3348,6 @@ export const SessionChatInterface = memo(
     const isProposedPlanDecisionReady =
       !isMachineRemoved && !isArchivedSession && !isExternalHistoryRefreshing;
 
-    // Approving "Yes, implement this plan" switches the mode of the RUNNING
-    // turn only — the composer would still say Plan and quietly plan again on
-    // the next send. The permission cards bump this counter when THIS user
-    // approves, so the selector follows.
-    const planModeExitApprovalCount = useAtomValue(planModeExitApprovalCountAtomFamily(session.id));
-    useEffect(() => {
-      if (planModeExitApprovalCount === 0 || selectedModeId !== ACP_PLAN_PERMISSION_MODE_ID) {
-        return;
-      }
-      const nextModeId = resolveModeIdAfterPlanExit(modeOptions, defaultModeId);
-      if (nextModeId) {
-        handleModeChange(nextModeId);
-      }
-    }, [defaultModeId, handleModeChange, modeOptions, planModeExitApprovalCount, selectedModeId]);
     const sessionBranch = useMemo(
       () =>
         resolveBaseBranchPreference({
@@ -3932,16 +3938,14 @@ export const SessionChatInterface = memo(
       }
 
       const decisionKey = latestCompletedProposedPlan.key;
-      const nextConfigOptionValues = disableCodexPlanMode(configOptionValues);
       pendingProposedPlanDecisionKeyRef.current = decisionKey;
       setPendingProposedPlanDecisionKey(decisionKey);
-      setConfigOptionValues(nextConfigOptionValues);
 
       const accepted = await dispatchPrompt(
         t('sessions.proposedPlanDecision.executePrompt', 'Implement the plan'),
         {
+          ...executionTurnConfigOverrides,
           forceDirect: true,
-          configOptionValuesOverride: nextConfigOptionValues,
         }
       );
 
@@ -3952,13 +3956,12 @@ export const SessionChatInterface = memo(
           return next;
         });
       } else {
-        setConfigOptionValues(configOptionValues);
         toast.error(t('sessions.proposedPlanDecision.executeError', 'Failed to execute plan'));
       }
 
       pendingProposedPlanDecisionKeyRef.current = null;
       setPendingProposedPlanDecisionKey(null);
-    }, [configOptionValues, dispatchPrompt, latestCompletedProposedPlan, setConfigOptionValues, t]);
+    }, [dispatchPrompt, executionTurnConfigOverrides, latestCompletedProposedPlan, t]);
 
     const handleGoalCommand = useCallback(
       async (
@@ -4154,8 +4157,15 @@ export const SessionChatInterface = memo(
         has_existing_pr: hasExistingPr,
         workspace_dirty: workspaceDirty,
       });
-      void dispatchPrompt(createPrPrompt);
-    }, [captureSessionEvent, createPrPrompt, dispatchPrompt, hasExistingPr, workspaceDirty]);
+      void dispatchPrompt(createPrPrompt, executionTurnConfigOverrides);
+    }, [
+      captureSessionEvent,
+      createPrPrompt,
+      dispatchPrompt,
+      executionTurnConfigOverrides,
+      hasExistingPr,
+      workspaceDirty,
+    ]);
 
     const handleCreateDraftPr = useCallback(() => {
       captureSessionEvent('session/quick_action_selected', {
@@ -4163,8 +4173,15 @@ export const SessionChatInterface = memo(
         has_existing_pr: hasExistingPr,
         workspace_dirty: workspaceDirty,
       });
-      void dispatchPrompt(createDraftPrPrompt);
-    }, [captureSessionEvent, createDraftPrPrompt, dispatchPrompt, hasExistingPr, workspaceDirty]);
+      void dispatchPrompt(createDraftPrPrompt, executionTurnConfigOverrides);
+    }, [
+      captureSessionEvent,
+      createDraftPrPrompt,
+      dispatchPrompt,
+      executionTurnConfigOverrides,
+      hasExistingPr,
+      workspaceDirty,
+    ]);
 
     const handleCommitAndPush = useCallback(() => {
       captureSessionEvent('session/quick_action_selected', {
@@ -4172,8 +4189,15 @@ export const SessionChatInterface = memo(
         has_existing_pr: hasExistingPr,
         workspace_dirty: workspaceDirty,
       });
-      void dispatchPrompt(commitAndPushPrompt);
-    }, [captureSessionEvent, commitAndPushPrompt, dispatchPrompt, hasExistingPr, workspaceDirty]);
+      void dispatchPrompt(commitAndPushPrompt, executionTurnConfigOverrides);
+    }, [
+      captureSessionEvent,
+      commitAndPushPrompt,
+      dispatchPrompt,
+      executionTurnConfigOverrides,
+      hasExistingPr,
+      workspaceDirty,
+    ]);
 
     const handleResolveConflicts = useCallback(async () => {
       if (isResolvingConflicts || !latestPr?.url) return;
@@ -4189,7 +4213,8 @@ export const SessionChatInterface = memo(
             repoFullName: latestPrRepoFullName,
             prNumber: latestPrNumber,
             prUrl: latestPr.url,
-          })
+          }),
+          executionTurnConfigOverrides
         );
       } finally {
         setIsResolvingConflicts(false);
@@ -4197,6 +4222,7 @@ export const SessionChatInterface = memo(
     }, [
       captureSessionEvent,
       dispatchPrompt,
+      executionTurnConfigOverrides,
       isResolvingConflicts,
       latestPr,
       latestPrNumber,
@@ -4227,7 +4253,7 @@ export const SessionChatInterface = memo(
           toast.info(t('sessions.fixCiErrors.noFailures', 'No failing CI checks were found'));
           return;
         }
-        const accepted = await dispatchPrompt(prompt);
+        const accepted = await dispatchPrompt(prompt, executionTurnConfigOverrides);
         if (!accepted) {
           toast.error(t('sessions.fixCiErrors.sendError', 'Failed to send the CI fix request'));
         }
@@ -4241,6 +4267,7 @@ export const SessionChatInterface = memo(
     }, [
       captureSessionEvent,
       dispatchPrompt,
+      executionTurnConfigOverrides,
       isPrActionPending,
       latestPrRepoFullName,
       refreshActivePrCheckRuns,
@@ -5192,8 +5219,6 @@ export const SessionChatInterface = memo(
     );
     const openInIdePath = openInIdeTarget?.path ?? null;
     const openInIdePathSource = openInIdeTarget?.source ?? null;
-    const shouldShowOpenInIdeButton = Boolean(openInIdePath);
-
     const resolveOpenInIdePath = useCallback(async (): Promise<string | null> => {
       return openInIdePath;
     }, [openInIdePath]);
@@ -5225,7 +5250,7 @@ export const SessionChatInterface = memo(
       typeof window !== 'undefined' && window.__LODY_ELECTRON__ === true;
     const electronPathLauncherPlatform =
       typeof window !== 'undefined' ? window.__LODY_PLATFORM__?.os : undefined;
-    const pathLauncherOptions = useMemo(
+    const launcherCandidates = useMemo(
       () =>
         getAvailablePathLauncherOptions({
           customLaunchers: pathLauncherPreference.customLaunchers,
@@ -5238,6 +5263,54 @@ export const SessionChatInterface = memo(
         pathLauncherPreference.customLaunchers,
       ]
     );
+    const [availableLauncherIds, setAvailableLauncherIds] = useState(new Set<string>());
+    useEffect(() => {
+      if (!isElectronRendererForPathLaunch || !openInIdePath) {
+        setAvailableLauncherIds(new Set());
+        return undefined;
+      }
+      const services = getIpcServices();
+      if (!services) return undefined;
+
+      let cancelled = false;
+      const launchers = buildPathLauncherProbes(
+        launcherCandidates,
+        openInIdePath,
+        electronPathLauncherPlatform
+      );
+      void services.app
+        .probePathLaunchers({
+          launchers,
+        })
+        .then(
+          (result) => {
+            if (!cancelled) {
+              setAvailableLauncherIds(new Set(result.availableIds));
+            }
+          },
+          () => {
+            // A failed probe must not advertise launchers whose presence could
+            // not be established.
+            if (!cancelled) setAvailableLauncherIds(new Set());
+          }
+        );
+      return () => {
+        cancelled = true;
+      };
+    }, [
+      launcherCandidates,
+      electronPathLauncherPlatform,
+      isElectronRendererForPathLaunch,
+      openInIdePath,
+    ]);
+    const pathLauncherOptions = useMemo(
+      () =>
+        launcherCandidates.filter((launcher) =>
+          availableLauncherIds.has(getPathLauncherId(launcher))
+        ),
+      [availableLauncherIds, launcherCandidates]
+    );
+    const shouldShowOpenInIdeButton = Boolean(openInIdePath) && pathLauncherOptions.length > 0;
     const selectedPathLauncher = useMemo(
       () =>
         resolveSelectedPathLauncher(pathLauncherPreference.selectedLauncherId, pathLauncherOptions),
@@ -5710,7 +5783,8 @@ export const SessionChatInterface = memo(
                               // PR open, a committed-but-unpushed fix is invisible
                               // to everything that reads the PR head.
                               hasPullRequest: hasExistingPr,
-                            })
+                            }),
+                            executionTurnConfigOverrides
                           );
                         }}
                       />

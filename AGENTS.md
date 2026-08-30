@@ -5,8 +5,8 @@
 ## Context maintenance
 
 Read every `AGENTS.md` from the repository root to the file being changed.
-This covers artifacts that are not source files: read `.github/AGENTS.md`
-before creating or editing a pull request or an issue.
+Before starting work intended for a pull request, or creating or editing a
+pull request or issue, read `.github/AGENTS.md`.
 Record public contributor invariants in the narrowest relevant `AGENTS.md`.
 Internal context, plans, specifications, and task records stay in the private
 repository. Keep each `AGENTS.md` under 8 KiB and add a matching `CLAUDE.md`
@@ -121,14 +121,6 @@ Use Node.js 22+ and the pnpm version pinned in `package.json`.
 - AI commits end with `Model: <runtime-model-id>`.
 - CI installs with `pnpm install --frozen-lockfile`, so a manifest change must
   land with its `pnpm-lock.yaml` update.
-- Before opening a pull request, read `.github/AGENTS.md` and
-  `.github/PULL_REQUEST_TEMPLATE.md`; `gh pr create --body` silently skips the
-  template. Draft the body from it and validate with
-  `node .github/scripts/check-pr-body.mjs --body-file <file>`.
-- Tell the user what that policy costs before opening the pull request, not
-  after CI rejects it: the Context handoff is public, and an invalid body or an
-  oversized PR with no issue URL is closed after seven days. Never claim notice
-  or maintainer agreement that did not happen.
 
 ## Test quality
 

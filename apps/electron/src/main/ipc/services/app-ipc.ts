@@ -4,6 +4,7 @@ import {
   GLOBAL_SHORTCUT_DEFAULTS,
   IPC_PUSH_CHANNELS,
   LaunchLocalPathInputSchema,
+  PathLauncherProbeSchema,
   type NativeThemeSource,
   type RendererFatalErrorReport,
   type SetGlobalShortcutInput,
@@ -11,7 +12,7 @@ import {
 } from '@lody/shared/electron-ipc'
 import { getIpcServiceDeps } from '../ipc-service-deps'
 import { setMenuLanguage } from '../../menu'
-import { launchLocalPath } from '../../services/local-path-launcher-service'
+import { hasPathLauncher, launchLocalPath } from '../../services/local-path-launcher-service'
 import { parseWindowBadge } from '../../services/window-badge-service'
 import {
   findWindow,
@@ -212,6 +213,25 @@ export class AppIpc extends IpcService {
       return { launched: false as const, error: 'invalid_payload' }
     }
     return await launchLocalPath(parsed.data)
+  }
+
+  @IpcMethod()
+  async probePathLaunchers(payload: unknown) {
+    const parsed = PathLauncherProbeSchema.safeParse(payload)
+    if (!parsed.success) {
+      return { availableIds: [] }
+    }
+    const availability = await Promise.all(
+      parsed.data.launchers.map(async ({ launcherId, input }) => ({
+        launcherId,
+        available: await hasPathLauncher(input)
+      }))
+    )
+    return {
+      availableIds: availability
+        .filter(({ available }) => available)
+        .map(({ launcherId }) => launcherId)
+    }
   }
 
   @IpcMethod()
