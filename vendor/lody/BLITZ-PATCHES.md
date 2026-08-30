@@ -70,14 +70,63 @@ mechanical: the new predicate keeps its meaning and gains
 `|| window.__LODY_LOCAL_BRIDGE__`. If the flag itself is replaced by a
 capability check, drop these hunks and satisfy the new check instead.
 
-Verify the whole divergence with:
+Verify this divergence with:
 
 ```sh
 git diff --stat <subtree-import-commit> -- vendor/lody \
   ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
 ```
 
-Expected: exactly the three files above, six added/changed lines.
+Expected after phase 4: exactly FOUR files — the three above with six
+added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2.
+
+### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
+
+**Two optional props, four hunks, one file.** §0.3 of `plans/LODY-SESSIONS.md`
+puts Lody's sidebar BODY inside the BlitzOS rail while `div.shell-rhead` — the
+workspace title, Members, My machine, Details — stays native above it. Their
+sidebar draws its own workspace-identity header and its own settings / help /
+archive footer, and BlitzOS serves both from its own chrome, so mounted as-is
+the rail carries two workspace headers and two settings entries.
+
+The plan says "suppressed via props, not source edits". Upstream at `966623d0`
+has no such prop — `afterSessionListContent` is the only slot — so phase 4 added
+them, as the smallest additive change that could be upstreamed unchanged. The
+upstream PR is drafted in `plans/evidence/lody-sidebar-props-pr.md`; **drop this
+patch when it merges.**
+
+| # | File | Line (at `966623d0`) | Upstream anchor | What it does |
+|---|---|---|---|---|
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 168 | after `bottomFloatingContent?: ReactNode;` in `LoroSidebarProps` | declares `hideHeader?: boolean` and `hideFooter?: boolean` |
+| 2 | same | 646 | after `bottomFloatingContent,` in the destructuring | defaults both to `false` |
+| 3 | same | 876 | the `group/sidebar-header` `<div>` | wraps it in `{hideHeader ? null : ( … )}` |
+| 4 | same | 1212 | the `getLoroSidebarFooterClassName(isMobile)` `<div>` | wraps it in `{hideFooter ? null : ( … )}` |
+
+Hunks 3 and 4 are a guard plus a re-indent of the block they wrap, which is why
+the raw diff is ~170 lines and the meaningful one is four:
+
+```sh
+git diff -w <subtree-import-commit> -- \
+  vendor/lody/packages/components/src/components/loro-sidebar.tsx
+```
+
+Expected: 23 changed lines, of which 15 are the two doc comments.
+
+Every hunk is strictly additive: with both props absent the component renders
+byte-for-byte what it rendered before, and no upstream call site passes either.
+
+**What a host that hides the footer takes on.** The footer is the only place the
+filter popover renders on MOBILE (`:1265`); the desktop trigger lives in the
+first section header instead. So a mobile host that hides the footer owns the
+organize/scope control. BlitzOS does not offer one in phase 4 — the rail has
+exactly three sections and no organize modes — and the prop's doc comment says
+so.
+
+**Merge conflict drill.** If the header or the footer block is restructured
+upstream, re-apply by wrapping whatever renders in its place; the guard is one
+line on each side and carries no logic. If upstream adds its own suppression
+(the PR, or anything equivalent), delete these hunks and pass the new prop from
+`packages/webapp/src/lody/SessionRailSidebar.tsx`.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
@@ -125,17 +174,15 @@ Declared ahead of time so a merge agent recognises them when they appear.
 | ~~`create-workspace-runtime.ts` — websocket transport~~ | — | **Not needed, and the plan's §5.3 item 1 is withdrawn.** Phase 1 measured that the daemon already SERVES its `LoroRepo` on a unix socket for the Electron renderer, so the browser speaks Lody's own protocol v7 through `blitz-lody-bridge` rather than a `loro-repo` `transport/websocket`. The local branch in this file was already the one we want. See `plans/evidence/lody-phase1.md` §A.b. | — |
 | ~~`workspace-machine-rpc-facade.ts` — box websocket RPC plane~~ | — | **Not needed.** The facade's existing LOCAL plane is the one we want; it reaches `window.ipc`, which we install. What it needed instead was the predicate widening above, which is a far smaller patch than a new plane. | — |
 | `packages/components/src/lib/electron-ipc-client.ts` | `getIpcServices()` | No change expected — it is a generic proxy over `window.ipc`, and installing that global is exactly how BlitzOS uses it. Listed so nobody "fixes" it. | — |
-| `packages/components/src/components/loro-sidebar.tsx` | header/footer rendering | Suppression props for §0.3's rail boundary. Upstream has none at `966623d0`. | 4 |
+| ~~`loro-sidebar.tsx` — suppression props~~ | — | **Applied**; see seam patch 2 above. | 4 |
 
 ## Things upstream does not support that we work around OUTSIDE the vendor tree
 
 Recorded here because each is a candidate seam if the workaround stops holding.
 
-- **`LoroSidebar` has no header/footer suppression props.** §0.3 wants its body
-  mounted in `div.shell-newbar` + `div.shell-list` with its own header and
-  footer suppressed "via props, not source edits", and no such prop exists at
-  `966623d0` (`afterSessionListContent` is the only slot). Phase 4 has to add
-  the props upstream, contribute them, or accept a seam patch.
+- ~~**`LoroSidebar` has no header/footer suppression props.**~~ Phase 4 added
+  them at seam patch 2 and drafted the upstream PR
+  (`plans/evidence/lody-sidebar-props-pr.md`).
 - **`useAuthenticatedConvex` throws without a provider**, and the composer's
   mention sources call it even with `cloudApi: null`. Supplied from
   `packages/webapp/src/lody/platform.tsx` with the settled signed-out value
