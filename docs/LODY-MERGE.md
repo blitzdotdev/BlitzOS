@@ -130,9 +130,16 @@ divergence with its upstream anchor. After the pull, confirm the divergence is
 still exactly what that file says:
 
 ```sh
-git diff --stat <subtree-import-commit> -- vendor/lody \
-  ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
+git diff --stat <new-upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
+  ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
+
+**Diff against the upstream COMMIT, never against the squash commit.** The
+squash commit holds the upstream tree at its own root, with no `vendor/lody/`
+prefix, so diffing a merged branch against it reports the whole vendored tree as
+added — thousands of files, and no way to see the seven that matter. Comparing
+the upstream commit to `HEAD:vendor/lody` (a tree, which `git diff` accepts) is
+the comparison that answers the question.
 
 **Expect exactly SEVEN files.** They are:
 
@@ -160,6 +167,12 @@ grep -n 'readOnly' vendor/lody/packages/components/src/components/sessions/sessi
 `BLITZ-PATCHES.md` carries a **merge conflict drill** for each patch, saying
 what to do when the anchor is reworded and what to do when upstream replaces the
 mechanism. Follow the drill; do not re-derive it.
+
+**Then re-anchor its line numbers, in the same change.** Every number in that
+file, and every line reference in §7's mirror table, is stated "at `<sha>`". A
+merge moves most of them. A stale anchor is worse than no anchor: §7's whole
+question is whether upstream fixed a defect, and an anchor pointing at the wrong
+line reads as "yes".
 
 **Three of these patches DELETE when their upstream pull request lands.** Check
 before re-applying — re-applying a patch upstream has already accepted is how a
@@ -324,4 +337,28 @@ a person's.
 Appended by each merge, newest first. A runbook that does not record what went
 wrong is a runbook that will go wrong the same way again.
 
-*(No entries yet beyond the rehearsal below.)*
+### 2026-08-30 — `966623d0` → `f3474894`, 11 commits (the first merge)
+
+The rehearsal that validated this document. Outcome: **the seam architecture
+held.** One conflict, mechanical; the divergence came out at exactly seven files;
+every gate green.
+
+| # | Friction | Fixed by |
+|---|---|---|
+| 1 | §4's verification command diffed against the SQUASH commit and reported the entire vendored tree as added. A squash commit holds the upstream tree at its own root, with no prefix. | The command above, and the same correction in `vendor/lody/BLITZ-PATCHES.md`. |
+| 2 | The one conflict was `window-globals.d.ts`: upstream widened `__LODY_PLATFORM__` with `preferredSystemLanguages` on the line above our `__LODY_LOCAL_BRIDGE__` declaration. Textually adjacent, semantically unrelated. | Keep both. This is what seam patch 1's drill describes, and it took one edit. |
+| 3 | `session-chat-interface.tsx` — seam patch 4, added in the same phase — auto-merged with no conflict, upstream having touched it in the same file 4,000 lines away. | Nothing. Recorded because it is the good case and it is worth knowing the seams are not all equally fragile. |
+| 4 | **Every line number in `BLITZ-PATCHES.md` had moved**, including the three workaround anchors in §7 whose whole purpose is to say whether upstream fixed the defect. A stale anchor reads as "fixed". | Re-anchored in the same commit. Make this step explicit at every merge: the anchors are load-bearing, not decoration. |
+| 5 | `npm test` failed FIVE cases in `lody-sharing-relay.test.ts` — and it was not the merge. Phase 7 had taught the harness's shim to strip an inbound `X-Blitz-Lody-Share`, as the real gateway does, which closed a shortcut that test had been taking: it set the header itself on the un-prefixed path. | The test now dials `harness.sharedEndpoints(claim)`, which is how a grantee reaches a box in production. Better test, found by the gate. |
+| 6 | `lody-worktree-session.test.ts` failed once inside a full `npm test` and passed alone, twice. The daemon-backed suites serialize on a cross-file lock and a full run spends ~11 minutes of test time. | Re-run before believing it. Not a merge signal. |
+
+**What did NOT move:** the npm `lody` pin. npm's latest is still `0.88.1`, so
+§3's rule applies — the daemon stays where it is, and the platform patch needed
+no re-audit because the artifact it patches did not change.
+
+**All three workaround mirrors are still needed.** Checked against the new tree:
+the archive path still does not pass `machineFlockRows`
+(`message-handler.ts:3989` vs `:4518`), `resolveLocalProjectGithubRepoFullName`
+still gates on the cloud repo list (`chat-landing.tsx:481`), and the startup
+capabilities pass still lists machines from the Convex-authorized set
+(`create-workspace-runtime.ts:2416`).

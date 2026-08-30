@@ -1,17 +1,24 @@
 # Lody upstream pin
 
 This directory is a squashed `git subtree` of the public Lody tree. Nothing in
-it is edited by hand: see `BLITZ-PATCHES.md` for the (currently empty) list of
-declared seam patches, and `plans/LODY-SESSIONS.md` §5 for the rules.
+it is edited by hand except at a declared seam: see `BLITZ-PATCHES.md` for the
+list, and `plans/LODY-SESSIONS.md` §5 for the rules. The merge procedure is
+`docs/LODY-MERGE.md`.
 
 | Field | Value |
 |---|---|
 | Upstream | https://github.com/LodyAI/Lody (Apache-2.0) |
-| Pinned commit | `966623d0fac19d3b9f53dad4dfaa7085c097f1b5` |
-| Commit date | 2026-08-30 (`fix(components): stop dropping agent file links that match edited files (#167)`) |
-| Vendored on | 2026-08-29 |
+| Pinned commit | `f34748945028ffc04316861ad25edc24535c0235` |
+| Commit date | 2026-08-30 (`fix(electron): detect system language before onboarding (#175)`) |
+| Vendored on | 2026-08-30 (first merge; initial import 2026-08-29 at `966623d0`) |
 | npm `lody` (daemon) | 0.88.1 |
-| Subtree commit here | `Squashed 'vendor/lody/' content from commit 966623d0` |
+| Subtree commit here | `Squashed 'vendor/lody/' changes from 966623d0..f3474894` |
+
+The npm pin did NOT move with this merge, and that is the documented answer
+rather than an omission: npm's latest is still `0.88.1`, so there is no release
+that corresponds to the newer subtree. `docs/LODY-MERGE.md` §3 states the rule —
+a renderer merge with an unchanged daemon is a supported state; a guessed daemon
+version is not.
 
 The renderer and the daemon must move together. `apps/cli/package.json` in this
 subtree says 0.76.0 while npm publishes 0.88.1 — the public tree lags releases,

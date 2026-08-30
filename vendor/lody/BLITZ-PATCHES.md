@@ -34,14 +34,14 @@ Every hunk is strictly additive — the predicate can only become true where it
 was false — so upstream Electron behaviour is unchanged. Open upstream as
 "allow a non-Electron local bridge".
 
-| # | File | Line (at `966623d0`) | Upstream anchor | What it gates |
+| # | File | Line (at `f3474894`) | Upstream anchor | What it gates |
 |---|---|---|---|---|
 | 1 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 120 | `window.__LODY_ELECTRON__ &&` inside `canUseLocalMachineRpc`'s `Boolean(...)` | every local Machine RPC, including `session/dispatch-turn` |
 | 2 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 182 | `const isElectron = typeof window !== 'undefined' && window.__LODY_ELECTRON__;` | `file/preview-local`; without it a local path is sent to Streams |
-| 3 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 999 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectGitState` | the sidebar's branch/worktree state |
-| 4 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1055 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectControl` | every `local-project/*` and `worktree/*` call |
+| 3 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1001 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectGitState` | the sidebar's branch/worktree state |
+| 4 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1057 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectControl` | every `local-project/*` and `worktree/*` call |
 | 5 | `packages/components/src/providers/create-workspace-runtime.ts` | 2058 | `if (!window.__LODY_ELECTRON__) {` in `canUseLocalSessionControl` | `session/create`, `session/chat`, `machine/*` |
-| 6 | `packages/components/src/window-globals.d.ts` | 30 | `__LODY_ELECTRON__?: true;` | declares `__LODY_LOCAL_BRIDGE__?: true;` so the five above typecheck |
+| 6 | `packages/components/src/window-globals.d.ts` | 31 | `__LODY_ELECTRON__?: true;` | declares `__LODY_LOCAL_BRIDGE__?: true;` so the five above typecheck |
 
 Hunks 1, 3 and 4 read:
 
@@ -70,11 +70,14 @@ mechanical: the new predicate keeps its meaning and gains
 `|| window.__LODY_LOCAL_BRIDGE__`. If the flag itself is replaced by a
 capability check, drop these hunks and satisfy the new check instead.
 
-Verify this divergence with:
+Verify this divergence by diffing OUR subtree against the upstream commit it was
+imported from. Not against the squash commit — that commit holds the upstream
+tree at its own root, so diffing a merged branch against it reports the entire
+vendored tree as added (measured, and it is the first thing that goes wrong):
 
 ```sh
-git diff --stat <subtree-import-commit> -- vendor/lody \
-  ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
+git diff --stat <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
+  ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
 
 Expected after phase 7: exactly SEVEN files — the three above with six
@@ -98,19 +101,19 @@ them, as the smallest additive change that could be upstreamed unchanged. The
 upstream PR is drafted in `plans/evidence/lody-sidebar-props-pr.md`; **drop this
 patch when it merges.**
 
-| # | File | Line (at `966623d0`) | Upstream anchor | What it does |
+| # | File | Line (at `f3474894`) | Upstream anchor | What it does |
 |---|---|---|---|---|
-| 1 | `packages/components/src/components/loro-sidebar.tsx` | 168 | after `bottomFloatingContent?: ReactNode;` in `LoroSidebarProps` | declares `hideHeader?: boolean` and `hideFooter?: boolean` |
-| 2 | same | 646 | after `bottomFloatingContent,` in the destructuring | defaults both to `false` |
-| 3 | same | 876 | the `group/sidebar-header` `<div>` | wraps it in `{hideHeader ? null : ( … )}` |
-| 4 | same | 1212 | the `getLoroSidebarFooterClassName(isMobile)` `<div>` | wraps it in `{hideFooter ? null : ( … )}` |
+| 1 | `packages/components/src/components/loro-sidebar.tsx` | 175 | after `bottomFloatingContent?: ReactNode;` in `LoroSidebarProps` | declares `hideHeader?: boolean` and `hideFooter?: boolean` |
+| 2 | same | 649 | after `bottomFloatingContent,` in the destructuring | defaults both to `false` |
+| 3 | same | 893 | the `group/sidebar-header` `<div>` | wraps it in `{hideHeader ? null : ( … )}` |
+| 4 | same | 1234 | the `getLoroSidebarFooterClassName(isMobile)` `<div>` | wraps it in `{hideFooter ? null : ( … )}` |
 
 Hunks 3 and 4 are a guard plus a re-indent of the block they wrap, which is why
 the raw diff is ~170 lines and the meaningful one is four:
 
 ```sh
-git diff -w <subtree-import-commit> -- \
-  vendor/lody/packages/components/src/components/loro-sidebar.tsx
+git diff -w <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- \
+  packages/components/src/components/loro-sidebar.tsx
 ```
 
 Expected: 23 changed lines, of which 15 are the two doc comments.
@@ -146,7 +149,7 @@ global BlitzOS must never set:
 +  Boolean(getIpcServices());
 ```
 
-| # | File | Line (at `966623d0`) | Upstream anchor | What it gates |
+| # | File | Line (at `f3474894`) | Upstream anchor | What it gates |
 |---|---|---|---|---|
 | 1 | `packages/components/src/lib/electron-session-file-sender.ts` | 19 | `isElectronRenderer() && Boolean(getIpcServices());` | `localProjects.sendSessionFileLocal`, read by `use-chat-landing-file-draft.ts:104` and `session-chat-input-area.tsx:524` |
 
@@ -189,14 +192,14 @@ were considered and rejected. Borrowing either would put a false statement on th
 screen: the session is neither archived nor on a removed machine, and both change
 the header copy as well as the composer.
 
-| # | File | Line (at `966623d0`) | Upstream anchor | What it does |
+| # | File | Line (at `f3474894`) | Upstream anchor | What it does |
 |---|---|---|---|---|
-| 1 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 1731 | after `hideMessageArea?: boolean;` in the props interface | declares `readOnly?: boolean` |
-| 2 | same | 1900 | after `hideMessageArea = false,` in the destructuring | defaults it to `false` |
-| 3 | same | 5785 | `{shouldReplaceComposerWithPermission ? null : (` | adds `readOnly ||`, so the composer is not rendered |
-| 4 | same | 5673 | the `<FloatingPermissionRequest …/>` element | wraps it in `{readOnly ? null : ( … )}` — its options are answers, and an answer this viewer cannot write is a button that does nothing |
-| 5 | `packages/components/src/components/sessions/session-detail.tsx` | 661 | the inline props type and destructuring of `SessionDetail` | declares and defaults `readOnly` |
-| 6 | same | 4925 | the `<SessionChatInterface>` that renders a session tab | passes `readOnly={readOnly}` |
+| 1 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 1740 | after `hideMessageArea?: boolean;` in the props interface | declares `readOnly?: boolean` |
+| 2 | same | 1910 | after `hideMessageArea = false,` in the destructuring | defaults it to `false` |
+| 3 | same | 5876 | `{shouldReplaceComposerWithPermission ? null : (` | adds `readOnly ||`, so the composer is not rendered |
+| 4 | same | 5761 | the `<FloatingPermissionRequest …/>` element | wraps it in `{readOnly ? null : ( … )}` — its options are answers, and an answer this viewer cannot write is a button that does nothing |
+| 5 | `packages/components/src/components/sessions/session-detail.tsx` | 667 | the inline props type and destructuring of `SessionDetail` | declares and defaults `readOnly` |
+| 6 | same | 4930, 5558 | the `<SessionChatInterface>` that renders a session tab | passes `readOnly={readOnly}` |
 
 The `headerVariant="toolbar"` instance at `:5448` is deliberately NOT passed the
 prop: it carries `hideMessageArea`, so it renders no composer and no permission
@@ -298,7 +301,7 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   their stored theme to the shell's on every mount so the two never disagree.
 - **`createWorkspaceRuntime`'s startup ACP capabilities pass never runs for a
   BlitzOS box**: its `listMachineIds` port reads the Convex-authorized machine
-  set (`:2415`), and the box is visible only through
+  set (`:2416`), and the box is visible only through
   `buildVisibleMachineIndex`'s owner fallback, which is excluded from it.
   `packages/webapp/src/lody/agent-configs.ts` runs their own
   `runStartupAcpCapabilitiesRefresh` over BlitzOS ports instead. Candidate
@@ -309,11 +312,11 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   Not a divergence, a required initialization option; recorded because getting
   it wrong is silent.
 - **The archive path cannot resolve a local project's root path** (phase 5).
-  `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4315`)
+  `resolveWorktreeCleanupTarget` (`apps/cli/src/lib/message-handler.ts:4334`)
   merges `machineMeta.localProjects` with `getMachineFlockLocalProjects(
   options.machineFlockRows)`. The DELETE caller passes `machineFlockRows`
-  (`:4499`); the ARCHIVE caller does not (`:3971`) — and the same asymmetry is in
-  the shipped bundle (`lody/dist/index.js:169066` vs `:169476`). Since
+  (`:4518`); the ARCHIVE caller does not (`:3989`) — and the same asymmetry is in
+  the shipped bundle (`lody/dist/index.js:169066` vs `:169476` at 0.88.1). Since
   `local-project/add` writes only the FLOCK row (`lody-fleet.ts:1552` →
   `local-project-meta.ts:76`), archive resolves nothing on a box, returns `null`,
   and leaves the worktree on disk with the member's uncommitted work in it and no

@@ -16,10 +16,11 @@
  * first-class participant on this wire and is exactly what the relay's ACL
  * decides about.
  *
- * The claim arrives on the header the gateway sets. The gateway's own half —
- * verifying the ticket the claim came in, and refusing every path but `/lody/*`
- * — is `packages/box/gateway/main_test.go`; the harness's shim forwards headers
- * the way the real gateway does after it has verified one.
+ * The claim arrives the way it arrives in production: a peer dials the SHARED
+ * prefix, and the gateway sets `X-Blitz-Lody-Share` from the ticket it verified,
+ * stripping any inbound copy first. The harness's shim does that half; the
+ * gateway's own — verifying the ticket, and refusing every path but `/lody/*` —
+ * is `packages/box/gateway/main_test.go`.
  */
 import "fake-indexeddb/auto";
 import { randomUUID } from "node:crypto";
@@ -43,7 +44,6 @@ import {
   type LodyHarness,
 } from "./lody-daemon-harness.js";
 
-const SHARE_HEADER = "X-Blitz-Lody-Share";
 const PROTOCOL_VERSION = 7;
 /** The prompt is the transcript, as far as this test is concerned: it is the one
  * string a grantee must be able to read out of the owner's session document. */
@@ -77,17 +77,22 @@ describe.skipIf(!lodyDaemonAvailable())("phase 6: a grantee on the real relay", 
   const store = createStore();
   const sockets: NodeWebSocket[] = [];
 
-  /** One protocol-v7 peer holding a claim, with the frames it received. */
+  /** One protocol-v7 peer holding a claim, with the frames it received.
+   *
+   * The claim arrives the way it arrives in production: the peer dials the
+   * SHARED prefix and the gateway sets `X-Blitz-Lody-Share` from the ticket it
+   * verified. The harness's shim strips any inbound copy first, exactly as
+   * `packages/box/gateway/main.go` does, so a peer cannot set its own — which is
+   * the whole point of the header. */
   async function peer(claim: Claim | null): Promise<{
     frames: Record<string, unknown>[];
     send: (frame: Record<string, unknown>) => void;
     peerId: string;
     close: () => void;
   }> {
-    const options = claim === null
-      ? {}
-      : { headers: { [SHARE_HEADER]: JSON.stringify(claim) } };
-    const socket = new NodeWebSocket(harness.endpoints.syncUrl, options);
+    const syncUrl =
+      claim === null ? harness.endpoints.syncUrl : harness.sharedEndpoints(claim).syncUrl;
+    const socket = new NodeWebSocket(syncUrl);
     sockets.push(socket);
     const frames: Record<string, unknown>[] = [];
     socket.on("message", (data: Buffer | string) => {
@@ -377,17 +382,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 6: a grantee on the real relay", 
 
   // The "and its diffs" half of exit test 1, and the RPC scope end to end.
   it("answers a granted session's diff RPC and refuses an ungranted act", async () => {
-    const endpoints = {
-      rpcUrl: harness.endpoints.rpcUrl,
-      controlUrl: harness.endpoints.controlUrl,
-      projectUrl: harness.endpoints.projectUrl,
-      platformUrl: harness.endpoints.platformUrl,
-      fetchImpl: ((input: string | URL | Request, init?: RequestInit) => {
-        const headers = new Headers(init?.headers);
-        headers.set(SHARE_HEADER, JSON.stringify(ownerClaim("read")));
-        return fetch(input, { ...init, headers });
-      }) as typeof fetch,
-    };
+    const endpoints = harness.sharedEndpoints(ownerClaim("read"));
     // A STRUCTURED answer is the proof the plane routed the method: the session
     // has no turn to diff, so the daemon's own refusal is the success here.
     const diff = await sendMachineRpc(endpoints, {
