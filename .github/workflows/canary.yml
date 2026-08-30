@@ -151,8 +151,24 @@ jobs:
           # Rebake with the procedure in docs/BOX-IMAGE.md and update all three
           # together: the digest is of the archive the tag names.
           BLITZ_DEPLOY_VAR_BOX_IMAGE_REF: https://blitz-control-plane.minjunesv0.workers.dev/box-image/manifest.json
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:2aa3700d
-          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: 7d85418ee7fe77967997c449d52a2143af0ddd9fe88cef06f8f00bcb99c7fb00
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG: blitz-box:bc0c2d75
+          BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256: 28003b08ee6ccdb43bd1c41476c34dadb3a4bc268c1eb64d607013a952d372d4
+          # The Lody session surface, half two (plans/LODY-SESSIONS.md §13.3).
+          # Half one is BLITZ_LODY_SESSIONS inside the image above, which is
+          # already baked on: the daemon has to be listening before a browser
+          # dials it, and the reverse order gives every member on canary a rail
+          # that cannot list a session.
+          #
+          # It is set HERE and not in env.defaults because env.defaults is the
+          # tracked default for every deployment, including a self-hosted fork
+          # that should stay dark. `npm run build -w @blitzos/webapp` runs
+          # `node --env-file=env.defaults vite build`, and node's --env-file
+          # does NOT overwrite a variable already in the environment — so this
+          # line wins over the `false` in that file, for this deploy only.
+          #
+          # The flag is read at MODULE LOAD (webapp/src/lody/flag.ts), so it is
+          # a build-time decision: changing it means a deploy, not a restart.
+          VITE_BLITZ_LODY_SESSIONS: "true"
           # The billing service's origin, once it has one. Empty is skipped, so
           # this line changes nothing until the value is set, and setting it
           # then needs no commit. It is an environment secret rather than an

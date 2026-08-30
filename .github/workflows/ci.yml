@@ -61,6 +61,27 @@ jobs:
       - run: go test ./...
         working-directory: packages/broker
 
+  # The gateway's Go suite had been RED and nobody saw it: this job runs
+  # `go test` for `packages/broker` only, and the gateway is compiled by the
+  # box-image build, which does not run its tests. Phase 6 fixed the suite in
+  # passing; this job is what stops it happening again. It also holds one half
+  # of two cross-runtime contracts — the webApp ticket and the lody share claim
+  # — so a fixture added on the TS side and missed here fails in CI rather than
+  # on a box.
+  gateway:
+    name: Go box gateway
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: packages/box/gateway/go.mod
+          cache-dependency-path: packages/box/gateway/go.mod
+      - run: test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }
+        working-directory: packages/box/gateway
+      - run: go test ./...
+        working-directory: packages/box/gateway
+
   box-image:
     name: Box image build check (amd64)
     runs-on: ubuntu-latest
