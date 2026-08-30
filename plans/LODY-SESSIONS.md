@@ -46,7 +46,12 @@ selector) must fully work in GitHub Worktree mode on a box.
    tabs, and no tabs is what `useLodyRail` reads as "fresh". Only a workspace
    the server has never stored a document for is affected — nothing migrates.)*
 5. **Worktrees v1**: create + archive-with-backup + diff stats/badges. PR
-   chips, PR polling, and merge flows are deferred.
+   chips, PR polling, and merge flows are deferred. The worktree pill
+   DEFAULTS ON for repo-backed sessions (seeded through Lody's own
+   workdir-mode preference store, no vendor edit) and stays toggleable —
+   upstream forces it only in their `github` context, ours is
+   `local-shared`, and an off pill would edit the `/workspace` clone
+   directly. Orchestrator ruling 2026-08-30, open to user veto.
    *(Phase 5, shipped. Two things the wording did not anticipate: the worktree
    pill is only FORCED in their `github` context, so a `local-shared` session
    runs in the clone itself until the member ticks it — a product decision, not a
