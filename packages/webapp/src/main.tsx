@@ -30,7 +30,7 @@ if (root === null) throw new Error('Missing root element');
 if (lodySpikeRequested(window.location.hash)) {
   // Phase-0 render spike (plans/LODY-SESSIONS.md §10). Behind
   // LODY_SESSIONS_ENABLED, which is off unless a developer sets
-  // VITE_LODY_SESSIONS_ENABLED=true, and reached only at #lody-spike.
+  // VITE_BLITZ_LODY_SESSIONS=true, and reached only at #lody-spike.
   //
   // The import stays dynamic so the vendored Lody renderer is a lazy chunk:
   // no part of it may enter the entry bundle, and phase 0 measures that.

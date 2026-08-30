@@ -25,7 +25,7 @@ import type {
   OptionSelectorOption,
   SessionListRepoState,
 } from "./spike-types";
-import { LodySpikePlatformProvider } from "./platform";
+import { LodySpikePlatformProvider } from "./spike-platform";
 import {
   SPIKE_LAST_ASSISTANT_MESSAGE_ID,
   SPIKE_SESSION_ID,

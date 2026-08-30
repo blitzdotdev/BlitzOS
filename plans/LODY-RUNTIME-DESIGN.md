@@ -565,3 +565,35 @@ ship a "Blitz" theme through it and leave their component classes alone.
 | 8 | Shiki's language set is emitted twice (~13 MB of 27 MB of JS): the worker build is a separate Rollup pass. | Measure again with `SessionSurface` in place; if it persists, share the worker graph through `worker.rollupOptions` before phase 7. |
 | 9 | `@scope (.lody-surface)` would delete most of §5.1 but may break Radix body portals. | Wrap the compiled sheet one at-rule deeper, then run the containment test plus a portal render (dialog + select). |
 | 10 | The `window.ipc` allowlist rejects a channel a future upstream calls unconditionally, and the failure is a rejected promise nobody awaits. | Log every `lody_ipc_channel_unsupported` through the runtime's analytics chokepoint; assert the set is empty across a full phase-3 round trip. |
+
+---
+
+## 7. What phase 2 changed about this document (2026-08-30)
+
+Phase 2 built §1, §2, §3 and §6 against a real `lody@0.88.1` daemon. Nine things
+in the plan above were measured to be wrong or incomplete. Each is listed with
+what the code actually does, because this document is the brief phase 3 reads.
+
+| # | This document says | What shipped | Why |
+|---|---|---|---|
+| 1 | §3.4: `/lody/platform` serves the catalog **plus the machineId from `run/daemon.json`** | The machineId comes from the catalog's own `machine` block | `run/daemon.json` on 0.88.1 carries only `{pid, socketPath, controlSocketPath, version, startedAt}`. There is no machineId in it. `workspace-catalog.json` has `machine.machineId`, so the catalog is the whole source and the bridge serves it byte-for-byte. |
+| 2 | §3.5: agent config `agentType: 'claude-code'` | `agentType: 'claude'` | `'claude-code'` is the RUNTIME NAME in `MANAGED_BUILTIN_RUNTIMES` (`shared/src/ai.ts:21`); the agent type beside it is `'claude'`, and `usesAcpProvidedSessionTitle` (`:47`) branches on that exact string. |
+| 3 | §2.1 table lists `localPlatform.getSnapshot` among the channels | It is LOAD-BEARING, not optional | `RuntimeProvider` resolves its workspace id through `useImplicitLocalWorkspace()` (`providers/local-platform-provider.ts:143`), which polls that channel on a MODULE-LEVEL singleton store — not through the `PlatformContext` we supply. Without the channel the runtime never gets a workspace id and never mounts, whatever `BlitzPlatformProvider` says. |
+| 4 | §3.1: the seam patch is "five tokens in two files" plus a `window-globals.d.ts` line | Six hunks in three files | Same five predicates, but the file-preview guard (`:182`) needed re-wrapping across three lines to stay in the line budget. All six are recorded in `vendor/lody/BLITZ-PATCHES.md` with their upstream anchors. |
+| 5 | §5.3 of `LODY-SESSIONS.md` still lists two "planned seams" for a websocket transport and a box RPC plane | Both are WITHDRAWN | The daemon's own data-plane socket is the sync surface (phase 1, §A.b) and the facade's existing local plane is the RPC surface. Neither needed a new plane; both needed the predicate above. |
+| 6 | §1.1: build the provider with `createLocalPlatformProvider` | Done, and it is also the source of the empty capability set | `LOCAL_PLATFORM_CAPABILITIES` is what that helper installs, so §1.1's "do not add `remoteMachines`" is enforced by construction rather than by discipline. |
+| 7 | — (not anticipated) | `@lody/*` types cannot be IMPORTED at all | `vendor-modules.d.ts` declares them as shorthand ambient modules, so TypeScript reads every imported name as a NAMESPACE and rejects it in a type position. `packages/webapp/src/lody/wire-types.ts` states the contracts on our side instead; the real shapes are enforced at runtime by Lody's own zod schemas at every boundary. |
+| 8 | — (not anticipated) | `effect@3.18.4` is a runtime dependency of the renderer | `providers/local-reconnect-loop.ts` imports it. Phase 0's dependency sweep missed it because nothing in the spike's import graph reached the runtime. |
+| 9 | §4.5: the flag is `LODY_SESSIONS_ENABLED` | The env var is `VITE_BLITZ_LODY_SESSIONS`; the exported symbol keeps its name | The box reads `BLITZ_LODY_SESSIONS`; one name across both halves beats two. See `packages/webapp/src/lody/flag.ts`. |
+
+Two more things the plan did not cover, both measured:
+
+- **A dispatch is a paid turn.** `session/dispatch-turn` launches the ACP adapter,
+  so the phase-2 exit test splits: everything up to and including the CRDT write
+  runs whenever a daemon is installed, and the dispatch runs only under
+  `BLITZ_LODY_LIVE_TURN=1`. `npm test` therefore never spends a turn.
+- **The assistant row appears before its content.** The daemon writes the
+  assistant history entry with `items: []` and only `modelInfo` filled as soon as
+  the adapter accepts the turn, then streams blocks into it. A test that waits
+  for the ROW passes on an agent that connected and then said nothing; the exit
+  test waits for non-empty `items`.

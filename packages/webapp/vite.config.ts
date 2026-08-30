@@ -75,6 +75,13 @@ export default defineConfig(({ command, mode }) => {
       // test reads the compiled sheet through the same plugin pipeline the
       // app builds with, and every other CSS import stays a cheap no-op.
       css: { include: [/lody-surface\.css/] },
+      // The app's `loro-crdt -> loro-crdt/bundler` alias exists so Vite emits
+      // and fingerprints the `.wasm` asset (`loroWasmUrlWorkaround`). Under
+      // Vitest that rewrite yields a `/@fs/...` specifier, which `fetch` cannot
+      // parse, so any test that instantiates a real `LoroRepo` dies at import.
+      // The node entry loads the same WASM off disk. Overrides the app alias
+      // for tests only; the browser build keeps the bundler entry.
+      alias: [{ find: /^loro-crdt$/u, replacement: "loro-crdt/nodejs" }],
     },
   };
 });

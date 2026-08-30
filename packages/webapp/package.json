@@ -78,6 +78,7 @@
     "convex": "^1.33.1",
     "date-fns": "^4.1.0",
     "debug": "^4.4.3",
+    "effect": "3.18.4",
     "fuse.js": "^7.1.0",
     "i18next": "^25.3.1",
     "jotai": "^2.16.0",
@@ -124,13 +125,16 @@
     "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "@types/ws": "8.18.1",
     "@vitejs/plugin-react": "6.0.5",
+    "fake-indexeddb": "^6.2.5",
     "jsdom": "29.0.0",
     "postcss": "^8.5.4",
     "tailwindcss": "^4.3.0",
     "typescript": "7.0.2",
     "vite": "8.2.1",
     "vite-plugin-wasm": "^3.5.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.10",
+    "ws": "8.21.0"
   }
 }
