@@ -1294,3 +1294,167 @@ Phase 6's evidence is listed where its design lives: `plans/LODY-SHARING.md`
   is `permissionRequest.outcome = …` on the session document
   (`apps/cli/src/lib/message-handler.ts:8336` states the whole loop), and
   first-response-wins is the daemon's own `resolved` guard at `:8541`.
+
+---
+
+## 12. What the first canary dogfood found (2026-08-30)
+
+One screenshot, on a brand-new box from the new image: the whole Lody surface
+renders, the member's first prompt dispatches, the reply is **"Authentication
+required"**, and the Retry button under it answers **"Workspace context is
+missing, please retry."**
+
+Three independent defects sat behind it. Each is written out below with what
+this document said, what the code actually did, and what shipped. Two of them
+were invisible to every existing test, and §12.4 says why.
+
+### 12.1 The Retry error: `currentWorkspaceIdAtom` was never seeded
+
+`packages/webapp/src/lody/router.tsx` called the vendored
+`useWorkspaceContextAtoms(slug, undefined)`. That hook publishes
+`{ slug, workspaceId: null }` in a layout effect and fills the id in from its
+SECOND argument alone (`hooks/use-workspace-context-atoms.ts:34`, gated on
+`access?.status === 'member' && access.organizationId`). With `undefined` there,
+`currentWorkspaceIdAtom` stayed `null` for the entire life of the surface.
+
+Nothing announced it, because the id is not what the surface is keyed on:
+
+- `activeWorkspaceRuntimeAtom` resolves from the SLUG when a slug is present
+  (`atoms/runtime.ts:485`), so the runtime still answered `ready`.
+- `RuntimeProvider` on the local platform takes `effectiveWorkspaceId` from
+  `useImplicitLocalWorkspace()`, not from the atom (`runtime-provider.tsx:129`),
+  so the runtime was built with the right id anyway.
+- `resolveWorkspaceDataScope` skips its id check entirely when
+  `organizationsReady` is false (`lib/workspace-data-scope.ts:32`), and
+  `organizationsReady` IS `currentWorkspaceId !== null` — so a null id disabled
+  the very check that would have caught it.
+
+What broke were the consumers that read the id directly. Twelve of them exist;
+`useMachineAcpAuthentication` is the one a member met, and both of its entry
+points refuse with `chat.validation.missingContext` — "Missing workspace
+context" — when `workspaceId == null` (`:82`, `:160`).
+
+**Shipped:** `createLodySessionRouter` takes a `workspaceId`, and the
+`$workspaceName` route passes `{ status: 'member', organizationId: workspaceId }`
+as the hook's own `access` argument. Zero vendor edits: this is the input the
+hook is written to take, and it is the daemon's own `lw_<uuid>` out of the same
+`/lody/platform` catalog `RuntimeProvider` reads, so the scope check now agrees
+rather than flipping every scoped consumer to `switching`.
+
+### 12.2 The `auth_required` itself: the row was local, not on the daemon
+
+§3.5 was right that `runtimeOverrides` rides an agent-config row and that the
+row is what points the adapter at `/usr/local/bin/claude`. What it did not say
+is when the daemon can SEE that row.
+
+`WorkspaceWriter`'s accept boundary is the local CRDT write, not remote sync
+(`providers/workspace-writer.ts:52`). Phase 3's bootstrap awaited
+`syncOnce()` BEFORE its writes and nothing after them, then published the rows
+into the jotai cache — so the composer's picker was populated while the daemon
+still had nothing. A prompt sent in that window creates a session whose
+`agentConfigId` names a row the daemon cannot resolve, and the daemon's launch
+resolver FAILS OPEN rather than refusing:
+`session-launch-config-resolver.ts:57` returns `source: 'none'` with no
+`runtimeOverrides`, `env` or `customAcp`. `resolveBuiltinACPProcessLaunch`
+(`apps/cli/src/agent/setting.ts:442`) then takes its managed-runtime branch,
+launches a claude binary nothing in the daemon's environment carries a token
+for, and the adapter answers ACP `-32000` → `acp_auth_required`.
+
+Two things the phase-2/3 record had wrong, both measured against a real
+`lody@0.88.1` on 2026-08-30:
+
+| Recorded | Measured |
+|---|---|
+| §3.5: "the s6 service environment carries `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CONFIG_DIR`, so the adapter sees what the TUI sees" | It carries NEITHER. `packages/box/rootfs/etc/s6-overlay/s6-rc.d/lody-daemon/run` sets `HOME`, `USER`, `LANG`, `LC_ALL`, `PATH`, `LODY_PLATFORM`, `LODY_DATA_DIR`, `LODY_MCP_HTTP_DISABLED` and nothing else. The override row is the ONLY thing that puts a credential on the agent's path, which is what makes this race fatal rather than cosmetic. |
+| (not anticipated) The daemon might register competing override-less builtin configs of its own | It does not, on the local platform. `ensureBuiltinAgentConfigs` (`apps/cli/src/lib/lody.ts:210`) exists and would write rows with no `runtimeOverrides`, but a fresh daemon left the machine Flock with only `dotlodyPath` after 20 s. Ours are the only agent-config rows on a box. |
+
+**Shipped, and why it is not the box-side seeding the brief asked for first.**
+A box-side seeder was rejected on evidence, not preference: the row lives in the
+machine Flock CRDT, so a box script would need a Loro client and Lody's Flock
+encoding; and the vendor CLI cannot write the row we need — `lody agent-config
+create` has no `--runtime-override` and no `--id`
+(`apps/cli/src/commands/agent-config.ts:623`), so it can only create a config
+that is missing the one field the whole mechanism turns on. That is the "not
+feasible without vendor/npm patching" branch, so the documented fallback ships:
+
+- `bootstrapLodyAgentConfigs` now calls `syncOnce()` a SECOND time, after the
+  writes, so it resolves with the rows on the daemon.
+- `LodyAgentConfigGate` (`packages/webapp/src/lody/agent-config-gate.tsx`, moved
+  out of `SessionSurface.tsx` so a race can be tested without Monaco) renders the
+  chat surface only once that resolves. The rail is NOT gated, so the surface is
+  never blank, and the gate opens on failure too — trapping a member behind a
+  spinner would be a worse failure than the one being prevented.
+
+**The gate needed a third change, and it is the interesting one.** Holding the
+router back deadlocked the whole surface on the first attempt, and the cycle is
+worth stating because nothing in this document made it visible: the gate waits
+for the runtime; `RuntimeProvider` creates no runtime while
+`currentWorkspaceSlugAtom` is null (`runtime-provider.tsx:190`); and phase 3's
+ONLY writer of that atom was the vendored `$workspaceName` route — which is
+behind the gate. Measured as a 60 s timeout on "the data plane to report
+connected" in the phase-3 exit test, with the gate's own log showing the runtime
+subscription firing exactly once, with `null`.
+
+So `seedWorkspaceContext` in `SessionSurface.tsx` now publishes the slug and id
+ABOVE the router, which is what `mountLodyRuntimeAtoms` has always done for the
+headless path. It states the dependency where it belongs — the surface knows its
+workspace before it has an address — and the route's own write stays, agreeing
+rather than competing. The id is repaired through `currentWorkspaceIdAtom` alone
+(whose setter spreads the current context and cannot clear the slug) whenever the
+hook's layout effect blanks it, and the repair is inert once the slug is not
+ours, so a route unmount still clears.
+
+The composer's own behaviour in the same window is worth recording, because it
+is what a reader would otherwise assume: with NO rows at all a send does not
+dispatch unconfigured, it refuses with "Choose an agent before starting"
+(`chat-landing.tsx:2922`) — the send button carries no agent-config term
+(`getChatLandingSubmitDisabled`) and the Enter path does not consult it at all.
+So the *absent-row* half of the race is a confusing error, and the
+*written-but-unsynced* half is the `auth_required` the screenshot shows.
+
+### 12.3 The product path: a box with no Claude connection
+
+Even with §12.1 and §12.2 fixed, a box whose workspace has no Claude connection
+has nothing to sign in with. `/usr/local/bin/claude` mints per process start
+through `blitz-cred-claude`, that minter exits non-zero and prints nothing when
+the workspace is not connected, and the shim is silent by design — so the agent
+simply runs signed out.
+
+Lody's own Retry is the wrong answer here and cannot be made right: it asks the
+daemon to run `claude auth login --claudeai`
+(`apps/cli/src/agent/setting.ts:505`), an interactive CLI login on a machine
+nobody is sitting at. §12.1 stops it lying about the reason; it does not make it
+the product path.
+
+**Shipped:** `packages/webapp/src/lody/agent-auth-notice.tsx`, a NATIVE banner
+layered above the vendor notice with zero vendor edits. It watches the open
+session document for the last `chat_failed` notice — the signal is a durable
+history item (`apps/cli/src/lib/message-handler.ts:1687`), not an atom, so there
+is nothing to subscribe to and it is polled every 2 s — and when the reason is
+`acp_auth_required` it names the credential the box actually uses and offers
+`onOpenConnections('claude')`, wired in `CloudApp` to the same panel-focus
+`blitz connections open <provider>` raises from inside the box.
+
+**No restart is needed after connecting.** The shim mints on every process
+start, and every turn starts a new adapter process, so the next prompt picks the
+token up. That is a property of the shim, not of the banner.
+
+### 12.4 Why no test caught any of this
+
+Both daemon-backed exit suites skip without a 21 MB `lody` bundle, which is CI,
+and the paid-turn assertions skip again without `BLITZ_LODY_LIVE_TURN=1`. So the
+merge gate never ran a single line of the surface's runtime behaviour.
+
+`packages/webapp/test/lody-agent-signin.test.tsx` is the answer, and it is
+deliberately daemon-free: a stub runtime over our own seam, so all eighteen
+assertions gate a merge. It pins the workspace-id seeding AND its absence, the
+sync-after-write ordering AND that a failed push still resolves, the gate's
+closed and open states, and the banner's truth table.
+
+One more measurement it forced, in `lody-daemon-harness.ts`:
+`claudeCredentialAvailable()` read `~/.claude/.credentials.json` only. A box has
+no such file — its credential is minted — so the helper answered `false` on
+exactly the machine the product runs on, and the phase-2 exit test's
+"the daemon accepted the dispatch" early return was being taken for the wrong
+reason. It now also asks `blitz-cred-claude` by EXIT STATUS, with
+`stdio: 'ignore'`, so the token never enters the test process.

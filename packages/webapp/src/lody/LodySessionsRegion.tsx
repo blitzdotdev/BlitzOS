@@ -56,6 +56,11 @@ export interface LodySessionsRegionProps {
   sharedOpen?: SharedSurfaceTarget | null;
   onApiReady?: (api: LodySessionSurfaceApi | null) => void;
   onActiveSessionChange?: (sessionId: string | null) => void;
+  /** Opens the workspace connections panel with `provider` selected. The
+   * signed-out banner offers it when an agent turn returns `acp_auth_required`,
+   * because the box's agent credential is minted from a workspace connection
+   * and that panel is the only place to supply one. */
+  onOpenConnections?: (provider: string) => void;
 }
 
 /** One open shared session: whose box, which session, at what level. */
@@ -152,6 +157,9 @@ export function LodySessionsRegion(props: LodySessionsRegionProps) {
         rail={rail}
         readOnly={surfaceProps.readOnly}
         {...(surfaceProps.shared === undefined ? {} : { shared: surfaceProps.shared })}
+        {...(props.onOpenConnections === undefined
+          ? {}
+          : { onOpenConnections: props.onOpenConnections })}
         {...(props.onApiReady === undefined ? {} : { onApiReady: props.onApiReady })}
         {...(props.onActiveSessionChange === undefined
           ? {}

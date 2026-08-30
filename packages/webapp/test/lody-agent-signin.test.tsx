@@ -1,0 +1,583 @@
+/**
+ * The first canary dogfood finding of the Lody port, pinned in three parts
+ * (plans/LODY-RUNTIME-DESIGN.md §12).
+ *
+ * The report: a fresh workspace shows the whole Lody surface, the member's
+ * first prompt dispatches, the reply is "Authentication required", and pressing
+ * Retry answers "Workspace context is missing, please retry."
+ *
+ * Three separate defects sat behind that one screenshot, and each gets its own
+ * group below:
+ *
+ * 1. `currentWorkspaceIdAtom` was never seeded, so every consumer that reads the
+ *    workspace id directly saw `null` — the ACP sign-in panel among them, which
+ *    is the Retry error verbatim.
+ * 2. The agent-config bootstrap resolved on the LOCAL CRDT write, so a prompt
+ *    sent before the row reached the daemon launched the managed claude runtime
+ *    with no `runtimeOverrides` — no box shim, no minted token, `auth_required`.
+ * 3. A box with no Claude connection has nothing to mint, and the surface said
+ *    nothing a member could act on.
+ *
+ * NONE OF THIS NEEDS A DAEMON. Every group drives our own seam with a stub
+ * runtime, so all of it gates a merge — which is the point: the phase-2 and
+ * phase-3 exit tests skip in CI, and that is how these three reached canary.
+ */
+import { act, useEffect } from "react";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import { Provider as JotaiProvider, createStore } from "jotai";
+import { I18nextProvider } from "react-i18next";
+import { RouterProvider } from "@tanstack/react-router";
+import { runtimeAtom } from "@lody/components/atoms/runtime";
+import { currentWorkspaceIdAtom, currentWorkspaceSlugAtom } from "@lody/components/atoms/workspace-context";
+import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-acp-authentication";
+import type { JsonValue } from "@blitzos/schema";
+import {
+  AUTH_NOTICE_POLL_MS,
+  CLAUDE_CONNECTION_NAME,
+  LodyAgentAuthNotice,
+  sessionNeedsAgentSignIn,
+} from "../src/lody/agent-auth-notice";
+import { LodyAgentConfigGate } from "../src/lody/agent-config-gate";
+import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
+import { initLodyI18n } from "../src/lody/i18n";
+import type { LodyAtomStore, LodyWorkspaceRuntime } from "../src/lody/runtime";
+import { installLodyDomStubs } from "./lody-dom-stubs";
+import { render, settle } from "./dom";
+
+/**
+ * `createLodySessionRouter` is loaded LATE, on purpose.
+ *
+ * The route tree names `ChatLanding` and `SessionDetail`, and `SessionDetail`
+ * pulls Monaco, which decides at MODULE LOAD whether it can register its
+ * clipboard commands and throws under jsdom without
+ * `document.queryCommandSupported`. A static import here would be hoisted above
+ * `installLodyDomStubs()` and take the whole file down — the same trap
+ * `lody-session-surface.test.tsx` documents.
+ */
+let createLodySessionRouter: typeof import("../src/lody/router")["createLodySessionRouter"];
+beforeAll(async () => {
+  installLodyDomStubs();
+  ({ createLodySessionRouter } = await import("../src/lody/router"));
+}, 120_000);
+
+const WORKSPACE_ID = "lw_11111111111111111111111111111111";
+const WORKSPACE_SLUG = "local";
+const MACHINE_ID = "5d1f8f2e-0000-4000-8000-000000000001";
+
+/** Every member of the seam a group here touches, and nothing else. The real
+ * shapes are Lody's and are checked by the daemon-backed suites; what these
+ * tests pin is OUR behaviour around them. */
+function stubRuntime(overrides: Partial<LodyWorkspaceRuntime> = {}): LodyWorkspaceRuntime {
+  const unimplemented = (name: string) => () => {
+    throw new Error(`stub runtime: ${name} is not part of this test`);
+  };
+  return {
+    workspaceId: WORKSPACE_ID,
+    workspaceSlug: WORKSPACE_SLUG,
+    writer: {
+      startSession: unimplemented("startSession"),
+      upsertDocMeta: unimplemented("upsertDocMeta"),
+      flockRowPut: unimplemented("flockRowPut"),
+      flockRowPutIfAbsent: unimplemented("flockRowPutIfAbsent"),
+    },
+    repo: { openFlockDoc: unimplemented("openFlockDoc") },
+    setLocalMachineId: () => undefined,
+    resolveMachineTargetPlane: unimplemented("resolveMachineTargetPlane"),
+    requestSessionDispatchTurn: unimplemented("requestSessionDispatchTurn"),
+    ensureDocStream: unimplemented("ensureDocStream"),
+    requestMachineAcpCapabilitiesRefresh: unimplemented("requestMachineAcpCapabilitiesRefresh"),
+    withSessionStore: unimplemented("withSessionStore"),
+    dispose: async () => undefined,
+    ...overrides,
+  } as LodyWorkspaceRuntime;
+}
+
+// ── 1. The Retry error: workspace context ────────────────────────────────────
+
+/**
+ * What `AcpAuthenticationPanel` does, reduced to the two atoms it reads
+ * (`components/settings/acp-authentication-panel.tsx:56`) and the one call the
+ * member's click makes. The panel itself cannot be mounted here — it lives
+ * inside `SessionDetail`, behind Monaco — so the hook is driven directly, with
+ * the atoms filled by the same route the surface mounts.
+ */
+function AuthenticationProbe(props: {
+  runtime: LodyWorkspaceRuntime | null;
+  workspaceId: string | null;
+  onResult: (result: { error: string | null }) => void;
+}) {
+  // SAFETY: the vendor seam erases `@lody/*` types (`vendor-modules.d.ts`), so
+  // the hook's two parameters cross it untyped. Both are checked by the atoms
+  // this test reads back on the other side.
+  const auth = useMachineAcpAuthentication(props.runtime, props.workspaceId) as {
+    startAuthentication: (args: Record<string, unknown>) => { promise: Promise<unknown> };
+  };
+  const { onResult } = props;
+  useEffect(() => {
+    const started = auth.startAuthentication({
+      machineId: MACHINE_ID,
+      configId: BLITZ_CLAUDE_CONFIG_ID,
+      cliType: "builtin",
+      agentType: "claude",
+      runtimeOverrides: { claudeCodeExecutable: "/usr/local/bin/claude" },
+      env: {},
+    });
+    started.promise.then(
+      () => onResult({ error: null }),
+      (cause: unknown) => onResult({ error: cause instanceof Error ? cause.message : String(cause) }),
+    );
+    // Once. A second start would take a second per-agent login slot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
+describe("the Lody surface seeds the workspace context its sign-in panel reads", () => {
+  /** Mounts the route tree at an address whose leaf renders nothing, so the
+   * `$workspaceName` route runs — and with it `useWorkspaceContextAtoms` — with
+   * none of the vendored chat pages loaded. */
+  async function mountRoute(
+    store: LodyAtomStore,
+    options: { workspaceId?: string },
+  ): Promise<{ unmount: () => Promise<void> }> {
+    const router = createLodySessionRouter(WORKSPACE_SLUG, options);
+    await act(async () => {
+      await router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: WORKSPACE_SLUG } });
+    });
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <RouterProvider router={router} />
+      </JotaiProvider>,
+    );
+    await settle();
+    return mounted;
+  }
+
+  it("publishes the daemon's workspace id, not just its slug", async () => {
+    const store = createStore();
+    const mounted = await mountRoute(store, { workspaceId: WORKSPACE_ID });
+    try {
+      expect(store.get(currentWorkspaceSlugAtom)).toBe(WORKSPACE_SLUG);
+      // The regression: phase 3 passed `undefined` for the hook's `access`
+      // argument, and this stayed `null` for the whole life of the surface.
+      expect(store.get(currentWorkspaceIdAtom)).toBe(WORKSPACE_ID);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("leaves the id null when no workspace id is supplied, which is what broke", async () => {
+    const store = createStore();
+    const mounted = await mountRoute(store, {});
+    try {
+      expect(store.get(currentWorkspaceSlugAtom)).toBe(WORKSPACE_SLUG);
+      expect(store.get(currentWorkspaceIdAtom)).toBeNull();
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("lets the ACP sign-in start instead of refusing on a missing context", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const runtime = stubRuntime({
+      sendControl: (message: Record<string, unknown>) => {
+        sent.push(message);
+      },
+      subscribeMachineAcpAuthenticationProgress: () => () => undefined,
+      // The daemon's answer, stubbed: what is under test is whether the request
+      // is ATTEMPTED, not what the CLI does with it.
+      waitForMachineAcpAuthenticateResponse: async () => ({
+        type: "machine/acp-authenticate_response",
+        machineId: MACHINE_ID,
+        requestId: "r",
+        agentType: "claude",
+        success: true,
+        disposition: "authenticated",
+      }),
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+
+    const store = createStore();
+    store.set(runtimeAtom, runtime);
+    const router = createLodySessionRouter(WORKSPACE_SLUG, { workspaceId: WORKSPACE_ID });
+    await act(async () => {
+      await router.navigate({ to: "/$workspaceName/archive", params: { workspaceName: WORKSPACE_SLUG } });
+    });
+    const results: { error: string | null }[] = [];
+    const i18n = initLodyI18n();
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={i18n}>
+          <RouterProvider router={router} />
+        </I18nextProvider>
+      </JotaiProvider>,
+    );
+    await settle();
+    // The route has run; now drive the panel's hook with exactly what the panel
+    // reads out of the atoms it just filled.
+    const probe = await render(
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={i18n}>
+          <AuthenticationProbe
+            runtime={runtime}
+            workspaceId={store.get(currentWorkspaceIdAtom)}
+            onResult={(next) => {
+              results.push(next);
+            }}
+          />
+        </I18nextProvider>
+      </JotaiProvider>,
+    );
+    await settle();
+    try {
+      expect(sent.map((message) => message.type)).toContain("machine/acp-authenticate");
+      expect(sent[0]?.workspaceId).toBe(WORKSPACE_ID);
+      expect(results).toEqual([{ error: null }]);
+    } finally {
+      await probe.unmount();
+      await mounted.unmount();
+    }
+  });
+
+  it("still refuses with the reported message when the id is absent", async () => {
+    // The other half of the pin: the message a member saw on canary, so a
+    // regression is recognised rather than merely detected.
+    const results: { error: string | null }[] = [];
+    const i18n = initLodyI18n();
+    const store = createStore();
+    const probe = await render(
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={i18n}>
+          <AuthenticationProbe
+            runtime={stubRuntime()}
+            workspaceId={null}
+            onResult={(next) => {
+              results.push(next);
+            }}
+          />
+        </I18nextProvider>
+      </JotaiProvider>,
+    );
+    await settle();
+    try {
+      expect(results[0]?.error ?? "").toMatch(/workspace context/iu);
+    } finally {
+      await probe.unmount();
+    }
+  });
+});
+
+// ── 2. The race: a prompt sent before the daemon has the config row ──────────
+
+describe("the agent-config bootstrap pushes before it resolves", () => {
+  /** A Flock handle that records the order of everything done to it. */
+  function recordingRuntime(): { runtime: LodyWorkspaceRuntime; calls: string[] } {
+    const calls: string[] = [];
+    // `readMachineFlockRowsFromFlock` scans the body at the end of the
+    // bootstrap to publish the rows into the jotai cache; an empty scan is
+    // enough, because what this test reads is the CALL ORDER above it.
+    const handle = {
+      flock: { scan: () => [] } as never,
+      syncOnce: async () => {
+        calls.push("syncOnce");
+      },
+    };
+    const runtime = stubRuntime({
+      repo: {
+        openFlockDoc: async () => {
+          calls.push("openFlockDoc");
+          return handle;
+        },
+      },
+      writer: {
+        startSession: async () => undefined,
+        upsertDocMeta: async () => undefined,
+        flockRowPut: async () => undefined,
+        flockRowPutIfAbsent: async (_docId: string, key: readonly string[], value: JsonValue) => {
+          calls.push(`put:${key.join("/")}`);
+          return { inserted: true, value };
+        },
+      },
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+    return { runtime, calls };
+  }
+
+  it("syncs the room again AFTER the rows are written", async () => {
+    const { runtime, calls } = recordingRuntime();
+    const store = createStore();
+    const created = await bootstrapLodyAgentConfigs(store, runtime, MACHINE_ID);
+    expect(created).toEqual(["blitz-claude", "blitz-codex"]);
+    // The regression: phase 3 synced ONCE, before the writes, so the rows were
+    // only ever local when this resolved and the caller had nothing to gate on.
+    // `WorkspaceWriter`'s accept boundary is the local CRDT write
+    // (`providers/workspace-writer.ts:52`), so the second sync is the only
+    // thing that puts the row on the daemon before a dispatch can name it.
+    const lastPut = calls.lastIndexOf("put:agentConfig/blitz-codex");
+    const lastSync = calls.lastIndexOf("syncOnce");
+    expect(lastPut).toBeGreaterThan(-1);
+    expect(lastSync).toBeGreaterThan(lastPut);
+  });
+
+  it("still resolves when the push fails, so the gate cannot trap a member", async () => {
+    const store = createStore();
+    const runtime = stubRuntime({
+      repo: {
+        openFlockDoc: async () => ({
+          flock: { scan: () => [] } as never,
+          syncOnce: async () => {
+            throw new Error("room unreachable");
+          },
+        }),
+      },
+      writer: {
+        startSession: async () => undefined,
+        upsertDocMeta: async () => undefined,
+        flockRowPut: async () => undefined,
+        flockRowPutIfAbsent: async (_docId: string, _key: readonly string[], value: JsonValue) => ({
+          inserted: true,
+          value,
+        }),
+      },
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+    await expect(bootstrapLodyAgentConfigs(store, runtime, MACHINE_ID)).resolves.toEqual([
+      "blitz-claude",
+      "blitz-codex",
+    ]);
+  });
+});
+
+describe("the gate holds the chat surface until the bootstrap settles", () => {
+  const endpoints = {
+    syncUrl: "ws://127.0.0.1:1/sync",
+    rpcUrl: "http://127.0.0.1:1/rpc",
+    controlUrl: "http://127.0.0.1:1/control",
+    projectUrl: "http://127.0.0.1:1/project",
+    platformUrl: "http://127.0.0.1:1/platform",
+    filesBase: "http://127.0.0.1:1/workspace",
+  };
+
+  /** The gate calls four things in order; only the first decides when it opens,
+   * so the rest are satisfied and ignored. */
+  function gateRuntime(release: Promise<void>): LodyWorkspaceRuntime {
+    return stubRuntime({
+      repo: {
+        openFlockDoc: async () => {
+          await release;
+          return { flock: { scan: () => [] } as never, syncOnce: async () => undefined };
+        },
+      },
+      writer: {
+        startSession: async () => undefined,
+        upsertDocMeta: async () => undefined,
+        flockRowPut: async () => undefined,
+        flockRowPutIfAbsent: async (_docId: string, _key: readonly string[], value: JsonValue) => ({
+          inserted: true,
+          value,
+        }),
+      },
+      requestMachineAcpCapabilitiesRefresh: async () => ({ success: true }),
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+  }
+
+  it("renders nothing until the rows are on the daemon, then renders the surface", async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = () => resolve();
+    });
+    const store = createStore();
+    store.set(runtimeAtom, gateRuntime(gate));
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <LodyAgentConfigGate store={store} machineId={MACHINE_ID} endpoints={endpoints}>
+          <div data-testid="chat">chat surface</div>
+        </LodyAgentConfigGate>
+      </JotaiProvider>,
+    );
+    try {
+      // The window the canary finding lived in: phase 3 rendered the composer
+      // here, and a prompt sent now dispatched against a config the daemon
+      // could not resolve.
+      expect(mounted.container.textContent).toBe("");
+      await act(async () => {
+        release();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await settle();
+      expect(mounted.container.textContent).toContain("chat surface");
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("opens anyway when the bootstrap throws", async () => {
+    const store = createStore();
+    store.set(
+      runtimeAtom,
+      stubRuntime({
+        repo: {
+          openFlockDoc: async () => {
+            throw new Error("no room");
+          },
+        },
+      } as unknown as Partial<LodyWorkspaceRuntime>),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <LodyAgentConfigGate store={store} machineId={MACHINE_ID} endpoints={endpoints}>
+          <div>chat surface</div>
+        </LodyAgentConfigGate>
+      </JotaiProvider>,
+    );
+    try {
+      await settle();
+      expect(mounted.container.textContent).toContain("chat surface");
+    } finally {
+      warn.mockRestore();
+      await mounted.unmount();
+    }
+  });
+});
+
+// ── 3. The banner: what a credential-less box tells the member ───────────────
+
+/** One history entry, in the shape `recordChatFailure` writes
+ * (`apps/cli/src/lib/message-handler.ts:1687`). */
+function noticeEntry(reason: string): JsonValue {
+  return {
+    id: `system-notice-${reason}`,
+    role: "system",
+    items: [{ type: "system_notice", name: "chat_failed", meta: { reason } }],
+  };
+}
+
+describe("sessionNeedsAgentSignIn", () => {
+  it("is false for an empty or absent history", () => {
+    expect(sessionNeedsAgentSignIn({})).toBe(false);
+    expect(sessionNeedsAgentSignIn({ history: [] })).toBe(false);
+  });
+
+  it("is true when the last notice is the ACP auth failure", () => {
+    expect(
+      sessionNeedsAgentSignIn({
+        history: [{ id: "u1", role: "user", items: [] }, noticeEntry("acp_auth_required")],
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for a different chat failure", () => {
+    expect(sessionNeedsAgentSignIn({ history: [noticeEntry("session_restore_failed")] })).toBe(false);
+  });
+
+  it("clears once a later assistant turn arrives", () => {
+    // A signed-in re-send leaves the old notice in the transcript forever. A
+    // banner keyed on "has ever failed" would never go away.
+    expect(
+      sessionNeedsAgentSignIn({
+        history: [
+          noticeEntry("acp_auth_required"),
+          { id: "a1", role: "assistant", items: [{ type: "text", text: "ok" }] },
+        ],
+      }),
+    ).toBe(false);
+  });
+
+  it("clears once a later notice reports a different reason", () => {
+    expect(
+      sessionNeedsAgentSignIn({
+        history: [noticeEntry("acp_auth_required"), noticeEntry("session_restore_failed")],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("the signed-out banner", () => {
+  function noticeRuntime(history: JsonValue[]): LodyWorkspaceRuntime {
+    return stubRuntime({
+      withSessionStore: async <T,>(_sessionId: string, fn: (store: { getState: () => unknown }) => T) =>
+        fn({ getState: () => ({ history }) }),
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+  }
+
+  async function mountNotice(
+    history: JsonValue[],
+    onOpenConnections?: (provider: string) => void,
+  ): Promise<{ container: HTMLElement; unmount: () => Promise<void> }> {
+    const store = createStore();
+    store.set(runtimeAtom, noticeRuntime(history));
+    const mounted = await render(
+      <LodyAgentAuthNotice
+        store={store}
+        sessionId="session-1"
+        {...(onOpenConnections === undefined ? {} : { onOpenConnections })}
+      />,
+    );
+    await settle();
+    return mounted;
+  }
+
+  it("stays out of the way while the agent is signed in", async () => {
+    const mounted = await mountNotice([{ id: "a1", role: "assistant", items: [] }]);
+    try {
+      expect(mounted.container.textContent).toBe("");
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("names the workspace connection and offers to open the panel", async () => {
+    const opened: string[] = [];
+    const mounted = await mountNotice([noticeEntry("acp_auth_required")], (provider) => {
+      opened.push(provider);
+    });
+    try {
+      const text = mounted.container.textContent ?? "";
+      expect(text).toContain("not signed in");
+      expect(text).toContain("Claude connection");
+      const button = [...mounted.container.querySelectorAll("button")].find(
+        (candidate) => candidate.textContent === "Open connections",
+      );
+      expect(button).toBeDefined();
+      await act(async () => {
+        button?.click();
+      });
+      // The provider name `blitz connections open` uses, so the panel
+      // highlights the same row either route raised it from.
+      expect(opened).toEqual([CLAUDE_CONNECTION_NAME]);
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("can be dismissed", async () => {
+    const mounted = await mountNotice([noticeEntry("acp_auth_required")]);
+    try {
+      const dismiss = [...mounted.container.querySelectorAll("button")].find(
+        (candidate) => candidate.textContent === "Dismiss",
+      );
+      await act(async () => {
+        dismiss?.click();
+      });
+      expect(mounted.container.textContent).toBe("");
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("draws nothing on the chat landing, where there is no session to read", async () => {
+    const store = createStore();
+    store.set(runtimeAtom, noticeRuntime([noticeEntry("acp_auth_required")]));
+    const mounted = await render(<LodyAgentAuthNotice store={store} sessionId={null} />);
+    await settle();
+    try {
+      expect(mounted.container.textContent).toBe("");
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("polls slowly enough to cost nothing", () => {
+    // Guards against a future edit turning a per-turn banner into a hot loop
+    // over the whole session document.
+    expect(AUTH_NOTICE_POLL_MS).toBeGreaterThanOrEqual(1_000);
+  });
+});
