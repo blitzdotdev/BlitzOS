@@ -71,6 +71,11 @@ export default defineConfig(({ command, mode }) => {
     test: {
       environment: "jsdom",
       setupFiles: ["./test/setup.ts"],
+      // `npm run dev` and `npm run build` read `env.defaults` through
+      // `node --env-file`; `vitest run` does not, so the one variable the
+      // vendored renderer THROWS without is repeated here. Keep it equal to
+      // the `env.defaults` entry — see the comment beside it there.
+      env: { VITE_PREVIEW_PUBLIC_BASE_DOMAIN: "local.invalid" },
       // Only the Lody surface entry is processed: the Tailwind containment
       // test reads the compiled sheet through the same plugin pipeline the
       // app builds with, and every other CSS import stays a cheap no-op.
@@ -81,7 +86,28 @@ export default defineConfig(({ command, mode }) => {
       // parse, so any test that instantiates a real `LoroRepo` dies at import.
       // The node entry loads the same WASM off disk. Overrides the app alias
       // for tests only; the browser build keeps the bundler entry.
-      alias: [{ find: /^loro-crdt$/u, replacement: "loro-crdt/nodejs" }],
+      alias: [
+        { find: /^loro-crdt$/u, replacement: "loro-crdt/nodejs" },
+        // Vitest resolves packages through the SSR conditions, and
+        // `react-resizable-panels` ships a DIFFERENT implementation there: its
+        // `edge-light` build has no `useLayoutEffect` at all, so a consumer's
+        // layout effect runs before the group has computed a layout and
+        // `panel.collapse()` throws "Panel size not found". Their session
+        // detail layout collapses its sidebar exactly that way
+        // (`desktop-session-detail-layout.tsx:107`), so under jsdom the whole
+        // session page would fail to mount for a reason that does not exist in
+        // a browser. Same shape as the `loro-crdt` entry above: a build the
+        // test environment can run, never the one the app ships.
+        {
+          find: /^react-resizable-panels$/u,
+          replacement: fileURLToPath(
+            new URL(
+              "../../node_modules/react-resizable-panels/dist/react-resizable-panels.browser.development.js",
+              import.meta.url,
+            ),
+          ),
+        },
+      ],
     },
   };
 });
