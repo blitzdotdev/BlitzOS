@@ -597,3 +597,166 @@ Two more things the plan did not cover, both measured:
   the adapter accepts the turn, then streams blocks into it. A test that waits
   for the ROW passes on an agent that connected and then said nothing; the exit
   test waits for non-empty `items`.
+
+---
+
+## 8. What phase 3 changed about this document (2026-08-30)
+
+Phase 3 mounted `SessionSurface` for real against a `lody@0.88.1` daemon. What
+follows is what the mount measured, in the same form §7 uses: what this document
+said, what shipped, and why.
+
+### 8.1 Risk 2, answered
+
+The probe §6 asked for — "mount `SessionDetail` behind the §1.4 stack and
+collect every 'must be used within' in one pass" — is
+`packages/webapp/test/lody-session-surface.test.tsx`. It runs against the real
+daemon rather than a fixture, because the page renders nothing without a
+runtime.
+
+**The session page demands exactly ONE provider beyond what phase 2 supplied.**
+
+| Demand | Where | Resolution |
+|---|---|---|
+| `useAuthClient()` | `hooks/use-workspace-members.ts:26`, reached from `session-detail.tsx:1674`. No local-platform branch — the chat landing never calls it, the session page always does. | `packages/webapp/src/lody/inert-auth-client.ts` + their own `AuthProvider`, mounted in `BlitzPlatformProviders`. Four settled signed-out reads, nothing else; every other member is absent, so an upstream call site that appears at the next merge throws a TypeError naming it. |
+
+Everything else §6 feared is NOT demanded by this mount:
+`RecoverableConvexBetterAuthProvider`, `StableSessionProvider`, PostHog and
+OneSignal are reached only from `__root.tsx` and `_auth.tsx`, and mounting the
+two leaves directly skips all four. `usePostHog()` inside `RuntimeProvider`
+(§1.4's open question) tolerates an absent `PostHogProvider`: the surface mounts
+with no provider and logs nothing.
+
+Three pieces of state those unmounted routes DO contribute, seeded in
+`SessionSurface` instead:
+
+- **`userAtom`** — `__root.tsx:157` fills it from the better-auth session. It
+  must carry the DAEMON's `local:<uuid>`, because `buildVisibleMachineIndex`'s
+  owner fallback (`lib/visible-machine-index.ts:64`) is the only thing that
+  makes the box machine visible with no Convex row. With it, the composer's
+  machine chip shows the box by name — which is **design-doc risk 3 answered
+  from the UI end**, not just from the target router.
+- **`localProbeResultAtom`** — Electron's CLI-state bridge fills it, and
+  `localProbeEffectAtom` NULLS it outside Electron, after which
+  `RuntimeProvider` calls `setLocalMachineId(null)` and the eleven components
+  that read `localMachineIdAtom` (`session-chat-interface`, `session-detail`,
+  `file-tree-view`, …) see no local machine. Seeded through a subscription
+  rather than a write, because the ordering between their `atomEffect` and any
+  `useEffect` of ours is not decidable in both mount orders.
+- **the workspace-context atoms** — our `$workspaceName` route calls their own
+  `useWorkspaceContextAtoms`, so the one-transaction rule §4.2 states is theirs
+  to keep.
+
+### 8.2 Nine more things the mount measured
+
+| # | This document says | What shipped | Why |
+|---|---|---|---|
+| 1 | §1.4: `RuntimeProvider` sits in the stack, and §2/§3 build the runtime with `createLodyRuntime` | `RuntimeProvider` BUILDS the runtime; `createLodyRuntime` is now the headless equivalent the phase-2 test drives | `runtime-provider.tsx:255` calls `createWorkspaceRuntime` itself and owns the doc-meta subscription, the presence wiring and `runtimeInitializingAtom`. Setting `runtimeAtom` by hand would leave all three at their defaults and fork a coupled system. |
+| 2 | — (not anticipated) | `VITE_PREVIEW_PUBLIC_BASE_DOMAIN` is REQUIRED | `lib/preview-public-config.ts:6` throws at MODULE LOAD without it, and `session-browser-panel.tsx` imports it. Set to `local.invalid` in `env.defaults`, which is their own Electron build's value (`electron.vite.config.ts:44`). |
+| 3 | §2.1: every channel outside the allowlist rejects | Two channels are now accepted as NO-OPS: `app.setNativeTheme` (invoke) and `app.nativeTheme` (subscribe) | `theme-provider.tsx:155` calls the first on every theme change with no Electron guard at all, and the rejected promise is `void`-ed — design-doc risk 10, seen for real. Both ask the Electron MAIN process to repaint OS window chrome, which a browser does not have. With them accepted the unsupported-channel set is empty across a full mount, which is what makes asserting it meaningful. |
+| 4 | §7.5 of the plan: "initialize their i18next with `en` only" | …and with `keySeparator: false` | `locales/en.json` is a FLAT map whose keys contain dots. Phase 0's init used i18next's default `keySeparator: '.'`, so every `t('sessions.stop')` missed and fell back to whatever inline default a call site carried — or to the raw key. The surface still rendered, which is why phase 0 did not notice. Their own init sets it (`i18n/index.tsx:121`). |
+| 5 | §5.2: redeclare `--muted`/`--hover` "as a triplet from our palette" | Their own values are restored on the surface instead | Deriving `H S% L%` literals from our `color-mix(in oklab, …)` tokens forks the palette into a second, silently drifting copy, and §0's bias rule puts reskins in the theme layer — their VS Code theme engine, which compiles a theme to `--vscode-*` at runtime. A "Blitz" theme through that engine is phase 4+. |
+| 6 | §5.2: "ours are unlayered, so ours win everywhere, inside the surface included" | True, and that is also the bug — including OUTSIDE the surface | Radix mounts dropdowns, selects, popovers, tooltips and dialogs as direct children of `document.body`, where a `.lody-surface`-scoped redeclaration cannot reach them and `bg-muted`/`bg-hover` lose their backgrounds. `lody-surface-shell.css` therefore carries a second selector, `body > :where(:not(#root, .files-context-backdrop, .files-context-menu))` — "a body child that is not ours". `lody-token-collisions.test.ts` pins the exclusion list against the classes our own portals render. |
+| 7 | §5.1: the compensation sheet is "measured first, shipped if `@scope` does not hold" | Shipped, and pinned | `@scope` was not attempted: the portal problem above defeats it for the same reason it defeats the token scoping. `lody-tailwind-containment.test.ts` now asserts that every property phase 0 measured as leaking is declared in `lody-compensation.css`, per probe, with the probes re-mounted inside `.drive-shell` — where the product actually renders them. |
+| 8 | — (not anticipated) | `ThemeProvider` writes `document.documentElement.style.colorScheme` | `theme-provider.tsx:149` sets it INLINE on the html element, which beats our `:root { color-scheme: dark }` from any stylesheet, so a surface that resolved `light` would repaint the whole shell's scrollbars and form controls. The phase-0 containment test cannot see this: it is a runtime DOM write, not a CSS rule. `adoptShellTheme()` writes their `next-themes` storage key from `appliedTheme()` on every mount, so their resolved theme is always ours. |
+| 9 | — (not anticipated) | `react-resizable-panels` ships a DIFFERENT implementation to the SSR conditions | Its `edge-light`/`node` build contains no `useLayoutEffect` at all, so a consumer's layout effect runs before the group has a layout and `panel.collapse()` throws `Panel size not found`. `desktop-session-detail-layout.tsx:107` collapses its sidebar exactly that way, so under jsdom the entire session page failed to mount — for a reason that does not exist in a browser, and it cost a live turn to find. `vite.config.ts` aliases the package to its browser build for tests; `lody-resizable-panels.test.ts` guards the alias. |
+
+### 8.3 The capabilities refresh: upstream's pass never runs for the box
+
+§6 risk 6 asked "time `machine/acp-capabilities-refresh` against a cold daemon;
+over ~3 s, make the bridge stream". **Measured: 2.0–3.0 s** across runs
+(`lody-session-surface.test.tsx`). Under the trigger, so **the bridge keeps
+answering `/session-control` as one body and no streaming bridge is built.**
+
+But the timing was the smaller half of the risk. `createWorkspaceRuntime`'s own
+startup pass (`:2413`) lists machines from `deps.getAuthorizedMachineIds()` —
+the CONVEX-authorized set — and the box reaches the renderer through the owner
+FALLBACK, which is deliberately excluded from that set. So upstream's pass lists
+nothing and never runs, the machine Flock gets no `acpCapability` rows,
+`buildAcpSelectorOptions` has nothing to build from, and the composer offers no
+mode, model or effort at all. `refreshLodyAcpCapabilities`
+(`packages/webapp/src/lody/agent-configs.ts`) runs THEIR
+`runStartupAcpCapabilitiesRefresh` over our own four ports instead.
+
+Two consequences recorded for later phases:
+
+- `resyncMachineFlockRows(..., { requireRemoteSync: true })` — what their caller
+  passes — always throws in `syncMode: 'local'`: "remote" there means the cloud
+  plane, which this composition never opens. Ours passes `{}`.
+- The **codex** config's refresh did not complete inside the test window
+  (~25 s), while claude's took 2–3 s. Not diagnosed; it is a phase-5 item, and
+  it costs the codex agent its selectors, nothing else.
+
+### 8.4 Diff evidence needs no new door
+
+`code-collab/*` is a machine-RPC method family
+(`shared/src/local-machine-rpc.ts:54`), so `/lody/rpc` already carries all of
+it — `open-turn-diff`, `open-current-diff`, `open-all-changes-diff`,
+`get-file-index`. `session/cancel` rides the same door. Both are asserted to
+round-trip in `lody-session-surface.test.tsx`, for free: a refusal that comes
+back as a STRUCTURED response is the proof the plane routes the method.
+**No fifth bridge door.**
+
+`session/steer` is on the same union and needs no wiring either, but it is NOT
+exercised: it takes an `expectedTurnId` and only means anything against a turn
+that is already running, so it costs the same live turn the permission card
+does. Whether the bundled claude adapter honours the `_meta.lody` steering
+extension at all is therefore still unmeasured — the plan's §1 says the harness
+contract carries it, and nothing here contradicts that or confirms it.
+
+### 8.5 Twelve new npm dependencies
+
+Mounting `SessionDetail` and `ChatLanding` for real pulls in what phase 0's
+three leaves did not. Each arrives through a barrel or a lazy boundary inside
+`@lody/components`, so none is a BlitzOS choice; all land in the lazy chunk.
+
+`vaul` (their drawer), `framer-motion` (the desktop session layout),
+`react-resizable-panels` (the same layout), `monaco-editor` (the session text
+viewer), `frimousse` (the emoji picker), `@use-gesture/react` (mobile edge
+swipe), `@meowdown/react` + `@prosekit/react` (the task body editor),
+`three` + `@react-three/fiber` + `recharts` + `@number-flow/react` +
+`@fontsource/bitcount-grid-double` (the settings usage screens, reached through
+`components/settings/stats-setting`).
+
+The last five are the clearest case of §5.1's barrel problem: nothing in the
+chat loop wants a 3D usage calendar. Removing them needs a vendor edit, so they
+stay, and phase 7's bundle sweep is where they get measured.
+
+### 8.6 Exit test: what is proven, and what is not
+
+Phase 3's exit test is `packages/webapp/test/lody-session-surface.test.tsx`. Six
+assertions run free whenever a `lody` bundle is installed; one is gated behind
+`BLITZ_LODY_LIVE_TURN=1` because it spends a turn.
+
+**Proven, free:** the surface mounts against the real daemon; the data plane
+connects; the box machine is offered by name; the composer arms on a keystroke;
+the two agent configs reach the machine Flock and come back through the
+run-configuration menu; the ACP adapter launches through `/usr/local/bin/claude`
+and reports real models and modes; `session/cancel` and `code-collab/open-turn-diff`
+round-trip; `SessionDetail` mounts with no provider missing; no `window.ipc`
+channel is refused.
+
+**Proven, live (two paid turns, the whole budget):** a prompt typed into the
+real landing composer creates a session, dispatches it, and navigates the
+surface to the session detail.
+
+**NOT reached:** the permission-request card, the message queue and the Stop
+button. Both live runs failed before them — the first on a stale assertion in
+the test, the second on §8.2's `react-resizable-panels` trap, which stopped the
+session page rendering at all. Both causes are fixed; the assertions are
+written and stay in the file, gated, for the next run that has a turn to spend.
+
+One finding stands in the way of the permission card even so, and phase 4 or 5
+must deal with it: **`BUILTIN_DEFAULT_MODE_IDS.claude` is `'auto'`**
+(`shared/src/ai.ts:402`), a mode whose classifier answers permission prompts on
+the member's behalf. The card only appears when the classifier escalates, so the
+exit test's prompt has to earn one. Selecting `default` ("Manual") from the
+composer is the product answer, and the mode selector is exactly what §8.3's
+capabilities pass makes possible — but driving that selector through a Radix
+submenu in jsdom was not solved here.
+
+A simulation was considered and rejected: the card is gated on
+`liveSessionStatus`, which comes from PRESENCE
+(`sessionLivePresenceAtomFamily`), and the daemon emits presence only for its
+own origin. A second CRDT peer cannot fake it, so there is no free path to the
+card.

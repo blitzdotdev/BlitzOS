@@ -394,16 +394,16 @@ nothing here waits on a dead surface being removed.
 
 ## 10. Phases
 
-| Phase | Deliverable | Exit test |
-|---|---|---|
-| 0 spike | Subtree added; Lody `SessionChatStream` + composer render inside our shell from fixture data; Tailwind containment verdict; loro-websocket ⇄ loro-repo round trip in a test | story-grade render, no style bleed into Finder/terminals; CRDT echo test green |
-| 1 box | `lody` pinned in image, s6 service, sync+rpc gateway routes, surface contract updated | `wscat` through gateway with ticket reaches daemon; drift tests green |
-| 2 runtime | BlitzPlatformProvider, websocket transport seam patch, RPC plane shim | create session from browser console; turn dispatched; reply streams |
-| 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box |
-| 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works |
-| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode |
-| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access |
-| 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean |
+| Phase | Deliverable | Exit test | Status |
+|---|---|---|---|
+| 0 spike | Subtree added; Lody `SessionChatStream` + composer render inside our shell from fixture data; Tailwind containment verdict; loro-websocket ⇄ loro-repo round trip in a test | story-grade render, no style bleed into Finder/terminals; CRDT echo test green | **done** (`plans/evidence/lody-phase0.md`) |
+| 1 box | `lody` pinned in image, s6 service, sync+rpc gateway routes, surface contract updated | `wscat` through gateway with ticket reaches daemon; drift tests green | **done** (`plans/evidence/lody-phase1.md`) |
+| 2 runtime | BlitzPlatformProvider, websocket transport seam patch, RPC plane shim | create session from browser console; turn dispatched; reply streams | **done** (`plans/LODY-RUNTIME-DESIGN.md` §7) |
+| 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box | **done, with one gap** — `LODY-RUNTIME-DESIGN.md` §8.6. Send and session creation are proven live through the real composer; the permission card, the queue and Stop are written and gated but were not reached inside the two-turn budget, and reaching the card first needs the composer's permission-mode selector (§8.3). |
+| 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works | — |
+| 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode | — |
+| 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | — |
+| 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean | — |
 
 Phases 1–2 and the Phase 0 UI spike can run in parallel worktrees.
 

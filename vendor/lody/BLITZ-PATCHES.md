@@ -140,6 +140,36 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   mention sources call it even with `cloudApi: null`. Supplied from
   `packages/webapp/src/lody/platform.tsx` with the settled signed-out value
   their own Storybook preview uses.
+- **`useAuthClient()` has no local-platform branch**, and `SessionDetail`
+  reaches it through `useWorkspaceMembers` (`hooks/use-workspace-members.ts:26`),
+  which calls `authClient.useActiveOrganization()`. A real better-auth client
+  fetches on subscribe, which this composition promises never to do, so
+  `packages/webapp/src/lody/inert-auth-client.ts` supplies four settled
+  signed-out reads and nothing else — any other member is absent, so a new
+  upstream call site throws a TypeError naming it. Their own `AuthProvider`
+  carries it. Candidate seam if the client's surface grows.
+- **`theme-provider.tsx` calls two Electron IPC channels unconditionally**:
+  `app.setNativeTheme` (`:155`) and `app.nativeTheme` (`:139`). Both ask the
+  main process to repaint OS window chrome. `local-bridge.ts` accepts them as
+  no-ops rather than refusing, because a refusal is an unhandled rejection on
+  every mount. Candidate upstream PR: guard both on `getIpcServices()` being an
+  Electron bridge.
+- **`theme-provider.tsx` writes `document.documentElement.style.colorScheme`**
+  (`:149`) — an inline style on the html element, outside the Lody surface,
+  which beats any stylesheet of ours. `SessionSurface.adoptShellTheme()` forces
+  their stored theme to the shell's on every mount so the two never disagree.
+- **`createWorkspaceRuntime`'s startup ACP capabilities pass never runs for a
+  BlitzOS box**: its `listMachineIds` port reads the Convex-authorized machine
+  set (`:2415`), and the box is visible only through
+  `buildVisibleMachineIndex`'s owner fallback, which is excluded from it.
+  `packages/webapp/src/lody/agent-configs.ts` runs their own
+  `runStartupAcpCapabilitiesRefresh` over BlitzOS ports instead. Candidate
+  upstream PR: let the caller supply the machine list.
+- **`locales/en.json` is a FLAT map with dotted keys**, so any i18next instance
+  built for their components needs `keySeparator: false` — their own init sets
+  it (`i18n/index.tsx:121`) and `packages/webapp/src/lody/i18n.ts` now does too.
+  Not a divergence, a required initialization option; recorded because getting
+  it wrong is silent.
 - **`acp-extension-dsh` is an empty submodule.** Aliased to a local stub; see
   `UPSTREAM.md`.
 - **`packages/components/vite-renderer-bundle-aliases.ts` cannot be imported.**
