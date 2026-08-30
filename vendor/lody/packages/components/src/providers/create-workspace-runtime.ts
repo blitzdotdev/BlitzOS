@@ -2055,7 +2055,7 @@ export async function createWorkspaceRuntime(deps: RuntimeDeps): Promise<Workspa
     if (typeof window === 'undefined') {
       return false;
     }
-    if (!window.__LODY_ELECTRON__) {
+    if (!window.__LODY_ELECTRON__ && !window.__LODY_LOCAL_BRIDGE__) {
       return false;
     }
     if (!getIpcServices()) {

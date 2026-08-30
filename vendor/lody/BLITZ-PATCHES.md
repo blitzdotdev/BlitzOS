@@ -11,16 +11,73 @@ blocker — do not patch the vendor tree.
 
 ## Seam patches
 
-_None. As of phase 1 (2026-08-30) the vendor tree is byte-identical to upstream
-`966623d0`, apart from this file and `UPSTREAM.md`, which upstream does not
-carry._
+### 1. The local-bridge predicate (phase 2, 2026-08-30)
 
-Verify with:
+**One idea, six hunks in three files, all the same shape.** BlitzOS reaches the
+Lody daemon from a browser, not from Electron, so it installs `window.ipc`
+(`packages/webapp/src/lody/local-bridge.ts`) and sets
+`window.__LODY_LOCAL_BRIDGE__` instead of `window.__LODY_ELECTRON__`. Setting the
+Electron flag is not an option: 44 sites read it — window controls in
+`routes/__root.tsx`, `electron-menu-handler`, `use-electron-updater-state`, the
+native theme bridge (`theme-provider.tsx:87`), OneSignal,
+`loro-app-sidebar.tsx:510` — and a browser satisfies none of them.
+
+The DATA plane needs no patch at all: `createLocalLoroDataPlaneConnection`
+(`providers/local-loro-data-plane-connection.ts:8`) gates only on
+`getIpcServices()`, which is a generic proxy over `window.ipc`. Five guards on
+the LOCAL RPC and session-control planes additionally require the Electron flag,
+and in `syncMode: 'local'` the cloud fallback behind each of them throws by
+design (`create-workspace-runtime.ts:1943`, `:2342`), so each is a hard failure
+rather than a degraded path.
+
+Every hunk is strictly additive — the predicate can only become true where it
+was false — so upstream Electron behaviour is unchanged. Open upstream as
+"allow a non-Electron local bridge".
+
+| # | File | Line (at `966623d0`) | Upstream anchor | What it gates |
+|---|---|---|---|---|
+| 1 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 120 | `window.__LODY_ELECTRON__ &&` inside `canUseLocalMachineRpc`'s `Boolean(...)` | every local Machine RPC, including `session/dispatch-turn` |
+| 2 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 182 | `const isElectron = typeof window !== 'undefined' && window.__LODY_ELECTRON__;` | `file/preview-local`; without it a local path is sent to Streams |
+| 3 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 999 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectGitState` | the sidebar's branch/worktree state |
+| 4 | `packages/components/src/providers/workspace-machine-rpc-facade.ts` | 1055 | `window.__LODY_ELECTRON__ &&` in `requestLocalProjectControl` | every `local-project/*` and `worktree/*` call |
+| 5 | `packages/components/src/providers/create-workspace-runtime.ts` | 2058 | `if (!window.__LODY_ELECTRON__) {` in `canUseLocalSessionControl` | `session/create`, `session/chat`, `machine/*` |
+| 6 | `packages/components/src/window-globals.d.ts` | 30 | `__LODY_ELECTRON__?: true;` | declares `__LODY_LOCAL_BRIDGE__?: true;` so the five above typecheck |
+
+Hunks 1, 3 and 4 read:
+
+```diff
+-  window.__LODY_ELECTRON__ &&
++  (window.__LODY_ELECTRON__ || window.__LODY_LOCAL_BRIDGE__) &&
+```
+
+Hunk 2 is the same predicate re-wrapped across three lines to stay inside the
+line budget; the variable keeps the name `isElectron` deliberately, because
+renaming it would grow the diff past the one idea being carried. Hunk 5 reads
+`if (!window.__LODY_ELECTRON__ && !window.__LODY_LOCAL_BRIDGE__) {`. Hunk 6 adds
+one declaration line.
+
+`create-workspace-runtime.ts:299` (`isElectronLocalDataPlaneEnabled`) is
+deliberately NOT patched. It only picks a default `syncMode` when the caller
+supplies none, and `packages/webapp/src/lody/runtime.ts` always passes
+`syncMode: 'local'` explicitly.
+
+**Rejected alternative:** a Vite `resolveId` hook redirecting
+`./local-loro-data-plane-connection` to ours. It hides the swap from every
+reader, and it still cannot reach the four facade guards.
+
+**Merge conflict drill.** If a guard is reworded upstream, the conflict is
+mechanical: the new predicate keeps its meaning and gains
+`|| window.__LODY_LOCAL_BRIDGE__`. If the flag itself is replaced by a
+capability check, drop these hunks and satisfy the new check instead.
+
+Verify the whole divergence with:
 
 ```sh
 git diff --stat <subtree-import-commit> -- vendor/lody \
   ':!vendor/lody/UPSTREAM.md' ':!vendor/lody/BLITZ-PATCHES.md'
 ```
+
+Expected: exactly the three files above, six added/changed lines.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
@@ -65,9 +122,10 @@ Declared ahead of time so a merge agent recognises them when they appear.
 
 | File | Upstream anchor | Reason | Phase |
 |---|---|---|---|
-| `packages/components/src/providers/create-workspace-runtime.ts` | `syncMode: 'cloud'` construction | Build the runtime with `loro-repo`'s `transport/websocket` against our box gateway instead of the hosted Loro Streams service, which is not in the public tree (§4). | 2 |
-| `packages/components/src/providers/workspace-machine-rpc-facade.ts` | the transport-selection switch | Add a "box websocket" RPC plane beside the existing ones (§4). | 2 |
-| `packages/components/src/lib/electron-ipc-client.ts` | `getIpcServices()` | No change expected — it already returns `null` in a browser. Listed so nobody "fixes" it. | — |
+| ~~`create-workspace-runtime.ts` — websocket transport~~ | — | **Not needed, and the plan's §5.3 item 1 is withdrawn.** Phase 1 measured that the daemon already SERVES its `LoroRepo` on a unix socket for the Electron renderer, so the browser speaks Lody's own protocol v7 through `blitz-lody-bridge` rather than a `loro-repo` `transport/websocket`. The local branch in this file was already the one we want. See `plans/evidence/lody-phase1.md` §A.b. | — |
+| ~~`workspace-machine-rpc-facade.ts` — box websocket RPC plane~~ | — | **Not needed.** The facade's existing LOCAL plane is the one we want; it reaches `window.ipc`, which we install. What it needed instead was the predicate widening above, which is a far smaller patch than a new plane. | — |
+| `packages/components/src/lib/electron-ipc-client.ts` | `getIpcServices()` | No change expected — it is a generic proxy over `window.ipc`, and installing that global is exactly how BlitzOS uses it. Listed so nobody "fixes" it. | — |
+| `packages/components/src/components/loro-sidebar.tsx` | header/footer rendering | Suppression props for §0.3's rail boundary. Upstream has none at `966623d0`. | 4 |
 
 ## Things upstream does not support that we work around OUTSIDE the vendor tree
 
