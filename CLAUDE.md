@@ -170,6 +170,17 @@ The four rules a change must not break:
   Do not edit the emitted script casually. Extraction to build-time text
   imports is an approved future direction (see issue #1 discussion).
 
+## Box image: canary from R2, client prod from GHCR
+
+- Canary serves the box image as an R2 archive (mode B) from its own account.
+  Client prod serves it from GHCR (mode A), pushed by `.github/workflows/release.yml`
+  on a `v*` tag.
+- `write:packages` lives only inside that workflow, so no workspace or agent
+  credential can push to GHCR. Never cut a tag to refresh an image: the same tag
+  ships client prod.
+- Rebake canary with the procedure in `docs/BOX-IMAGE.md`. The pin lands in
+  `.github/workflows/canary.yml` as `BLITZ_DEPLOY_VAR_BOX_IMAGE_*`.
+
 ## Hetzner: one project behind both deployments
 
 Canary and client prod share ONE Hetzner project. Verified 2026-08-28: of the

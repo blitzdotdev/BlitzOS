@@ -27,6 +27,77 @@ can download the archive. The same is true of mode A: the bootstrap runs
 `docker pull` with no registry login, so **the registry image must be publicly
 pullable**. Treat the box image as public in every mode.
 
+## Which mode each hosted deployment uses
+
+| Deployment | Mode | Why |
+|---|---|---|
+| **client prod** | A — GHCR | `release.yml` builds and pushes the image on a `v*` tag, then pins the digest it just built. |
+| **canary** | B — R2 archive | Nothing but `release.yml` may push to GHCR, and that workflow also deploys client prod. Canary needs to rebake without touching a paying client. |
+
+This split is deliberate, and it is the answer to "the canary box image is
+stale, rebuild it". **Pushing to `ghcr.io/blitzdotdev/blitz-box` requires
+`write:packages`, and the only credential that holds it is the
+`GITHUB_TOKEN` inside `release.yml`, which runs only on a `v*` tag push.**
+A workspace credential cannot push: measured 2026-08-30, `GH_PAT` reads the
+repository (HTTP 200) and pulls the image manifest (HTTP 200) but is refused
+at `POST /v2/blitzdotdev/blitz-box/blobs/uploads/` (HTTP 403), and the Blitz
+GitHub App token has no package access at all. That is the boundary working,
+not a fault to route around.
+
+Cutting a `v*` tag to refresh the canary image is the wrong instrument: it
+ships the platform to client prod, and that decision belongs to a human. So
+canary carries its own image in its own account's R2 bucket, and rebaking it
+touches nothing outside `minjunesv0`.
+
+### Rebaking the canary image
+
+Run this whenever `git diff --stat <deployed-sha>..HEAD -- packages/box
+packages/broker` is non-empty — box and broker changes reach new workspaces
+only through the image.
+
+1. Build from a clean worktree at `origin/main` (the build context is the
+   repository root):
+
+   ```sh
+   git -C /workspace/BlitzOS worktree add -b box-image /workspace/BlitzOS-box-image origin/main
+   cd /workspace/BlitzOS-box-image
+   docker build --platform linux/amd64 -f packages/box/Dockerfile -t blitz-box:<sha> .
+   ```
+
+2. Give the worktree a **canary-scoped** `packages/control-plane/wrangler.toml`.
+   The publish script always passes `--config` to wrangler, and the copy in the
+   main checkout is **client prod's** (`account_id = "d25a778b…"`,
+   `APP_URL = "https://blitzos.com"`). Publishing with that config uploads the
+   canary image into the client's bucket. Start from `wrangler.toml.example`
+   and set `account_id` to the canary account and `APP_URL` to the canary
+   origin. The file is gitignored, so it never lands in a commit.
+
+3. Publish to R2 with the canary token (`CF_CLAUDE_TOKEN_STAGING`; never print
+   it). Add `--dry-run` first to see the values without uploading:
+
+   ```sh
+   CLOUDFLARE_API_TOKEN="$CF_CLAUDE_TOKEN_STAGING" \
+   CLOUDFLARE_ACCOUNT_ID=53a144fad4e15ca51c32da9b9fe25d4a \
+     node packages/control-plane/scripts/publish-box-image.mjs --image blitz-box:<sha>
+   ```
+
+4. Pin the three values it prints in `.github/workflows/canary.yml` as
+   `BLITZ_DEPLOY_VAR_BOX_IMAGE_REF`, `BLITZ_DEPLOY_VAR_BOX_IMAGE_TAG` and
+   `BLITZ_DEPLOY_VAR_BOX_IMAGE_SHA256`, beside the `HETZNER_SERVER_IMAGES`
+   line that already works this way. A deploy var becomes `wrangler deploy
+   --var NAME:VALUE`, which overrides that one key and leaves every other var
+   from `CANARY_WRANGLER_TOML` in place — so the pin lives in a reviewable
+   commit rather than inside a secret nobody can read back. None of the three
+   is a secret: the archive is public by design, because the VM bootstrap
+   fetches it with no credential.
+
+5. Merge to `main`. Canary redeploys and **new** boxes boot the new image.
+   Existing boxes never upgrade in place.
+
+**Single-arch.** A `docker save` archive carries one architecture, so the
+canary archive is amd64. That matches the canary catalog, which offers x86
+Hetzner types only. Adding an arm type means revisiting this.
+
 ## Mode A: publish to a registry
 
 Pushing a git tag `v*` runs `.github/workflows/release.yml`, which builds
