@@ -21,10 +21,20 @@
  * footer are all structure, and structure is what phase 4 changed.
  */
 import "fake-indexeddb/auto";
+import { randomUUID } from "node:crypto";
+import { createStore } from "jotai";
 import { act, type ReactNode } from "react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket as NodeWebSocket } from "ws";
 import type { LodySessionSurfaceApi, LodySessionSurfaceProps } from "../src/lody/SessionSurface";
+import { bootstrapLodyAgentConfigs, BLITZ_CLAUDE_CONFIG_ID } from "../src/lody/agent-configs";
+import { fetchLodyPlatformSnapshot } from "../src/lody/platform-snapshot";
+import {
+  createLodyRuntime,
+  mountLodyRuntimeAtoms,
+  unmountLodyRuntimeAtoms,
+} from "../src/lody/runtime";
+import { startLodySession } from "../src/lody/session";
 import { installLodyDomStubs } from "./lody-dom-stubs";
 import { render, settle } from "./dom";
 import {
@@ -37,6 +47,22 @@ import {
 /** The cheapest prompt that still creates a session and answers once. The rail
  * is what is under test, not the answer, so nothing here waits for content. */
 const LIVE_TURN_PROMPT = "reply with the word ok";
+
+/**
+ * A session written the way the landing writes one, MINUS the dispatch.
+ *
+ * `startLodySession` is the accept unit — session meta plus the first user turn
+ * in one write — and `dispatchLodyTurn` is the separate, PAID half. So a
+ * session can be made to exist for free, and the rail listing it is then an
+ * ordinary free assertion instead of a hostage to a live turn.
+ *
+ * It runs on its own headless runtime, BEFORE the surface mounts and disposed
+ * before it does, so there is never a second `window.ipc` or a second data
+ * plane in flight. The daemon keeps the session in its own store, which is what
+ * makes it visible to the surface's mirror afterwards — the same path a session
+ * created on another device takes.
+ */
+const SEEDED_TITLE = "seeded from the rail test";
 
 async function until<T>(what: string, read: () => T | undefined, timeoutMs = 30_000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
@@ -67,6 +93,14 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   ];
   const railButton = (match: RegExp): HTMLButtonElement | undefined =>
     railButtons().find((button) => match.test(button.textContent ?? ""));
+  /** A session row. `SessionList` renders it as a `div[role=button]` carrying
+   * `data-sidebar-session-id` — an anchor only when a `getSessionHref` is
+   * supplied, and this rail supplies none because there is no browser address
+   * for a session inside the surface's memory router. */
+  const railSessionRow = (match: RegExp): HTMLElement | undefined =>
+    [...railHost.querySelectorAll<HTMLElement>("[data-sidebar-session-id]")].find((row) =>
+      match.test(row.textContent ?? ""),
+    );
 
   /** The surface, with `hidden` as the only thing a case may vary: every other
    * prop is identical across renders so the runtime is never rebuilt. */
@@ -84,6 +118,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       originalError(...args);
     };
     harness = await startLodyHarness();
+    await seedSession(harness);
     surface = (hidden: boolean) => (
       <SessionSurface
         endpoints={{
@@ -175,6 +210,38 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     expect(activeSessionId).toBeNull();
   }, 60_000);
 
+  it("lists a session the daemon already had, under Chats", async () => {
+    await until(
+      "the seeded session to reach the rail",
+      () => (railText().includes(SEEDED_TITLE) ? true : undefined),
+      60_000,
+    ).catch((cause: unknown) => {
+      throw new Error(`${String(cause)}\n--- rail ---\n${railText()}`);
+    });
+    // It is a CHAT: no project, so Lody's own split puts it there and not under
+    // GitHub Worktrees.
+    expect(railText()).toContain("Chats");
+    expect(railText()).not.toContain("GitHub Worktrees");
+  }, 90_000);
+
+  it("opens a chat session when its rail row is clicked", async () => {
+    await act(async () => {
+      api?.openLanding();
+    });
+    await settle();
+    expect(activeSessionId).toBeNull();
+    const row = railSessionRow(new RegExp(SEEDED_TITLE, "u"));
+    expect(row, `rail: ${railText()}`).toBeDefined();
+    expect(row?.getAttribute("role")).toBe("button");
+    await act(async () => {
+      (row as HTMLElement).click();
+    });
+    await until("the rail click to open the session", () =>
+      activeSessionId === null ? undefined : true,
+    );
+    expect(activeSessionId).toMatch(/^[0-9a-f-]{36}$/u);
+  }, 90_000);
+
   it("draws Terminals always, and the Lody sections only once they hold rows", () => {
     // Terminals is ours, injected through their `afterSessionListContent` slot,
     // and it is always there: a workspace with no terminal tab is a state the
@@ -182,10 +249,10 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
     expect(railText()).toContain("Terminals");
     // Chats and GitHub Worktrees are Lody's own section logic, fed from the
     // runtime — and upstream's rule is that an empty section renders nothing at
-    // all, header included (`loro-app-sidebar.tsx:2095`). This daemon is fresh,
-    // so neither has a row yet. The live case below is where Chats appears.
+    // all, header included (`loro-app-sidebar.tsx:2095`). One chat was seeded
+    // and no worktree session exists, so exactly one of the two is drawn.
+    expect(railText()).toContain("Chats");
     expect(railText()).not.toContain("GitHub Worktrees");
-    expect(railText()).not.toContain("Chats");
   });
 
   it("keeps the terminal tabs exactly as the old rail drew them", async () => {
@@ -262,12 +329,13 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       // nothing of ours in between.
       const row = await until(
         "the session row to reach the rail",
-        () => (railText().includes("Chats")
-          ? railHost.querySelector<HTMLElement>(`[data-session-id="${sessionId}"]`)
-            ?? railButtons().find((button) => /ok/iu.test(button.textContent ?? ""))
-          : undefined),
+        () =>
+          railHost.querySelector<HTMLElement>(`[data-sidebar-session-id="${sessionId}"]`)
+          ?? undefined,
         60_000,
-      );
+      ).catch((cause: unknown) => {
+        throw new Error(`${String(cause)}\n--- rail ---\n${railText()}`);
+      });
       expect(row).toBeDefined();
       // And a click on it routes: the rail drives the surface, not the reverse.
       await act(async () => {
@@ -276,7 +344,7 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
       await settle();
       expect(activeSessionId).toBeNull();
       await act(async () => {
-        (row as HTMLElement).click();
+        row.click();
       });
       await until("the rail click to open the session", () =>
         activeSessionId === sessionId ? true : undefined,
@@ -286,6 +354,36 @@ describe.skipIf(!lodyDaemonAvailable())("phase 4: the vendored rail", () => {
   );
 
 });
+
+/** See `SEEDED_TITLE`. Free: it writes, it does not dispatch. */
+async function seedSession(harness: LodyHarness): Promise<void> {
+  const snapshot = await fetchLodyPlatformSnapshot(harness.endpoints.platformUrl);
+  if (snapshot === null) throw new Error("the daemon served no catalog");
+  const store = createStore();
+  const handle = await createLodyRuntime({
+    endpoints: {
+      ...harness.endpoints,
+      webSocketConstructor: NodeWebSocket as unknown as typeof WebSocket,
+    },
+    snapshot,
+  });
+  try {
+    mountLodyRuntimeAtoms(store, handle.runtime);
+    await bootstrapLodyAgentConfigs(store, handle.runtime, snapshot.machineId);
+    await startLodySession(handle.runtime, {
+      sessionId: randomUUID(),
+      machineId: snapshot.machineId,
+      userId: snapshot.userId,
+      agentConfigId: BLITZ_CLAUDE_CONFIG_ID,
+      agentType: "claude",
+      prompt: "seed",
+      title: SEEDED_TITLE,
+    });
+  } finally {
+    unmountLodyRuntimeAtoms(store);
+    await handle.dispose();
+  }
+}
 
 /** Writes into a React-controlled textarea the way a keystroke does. */
 function typeInto(element: HTMLTextAreaElement, value: string): void {
