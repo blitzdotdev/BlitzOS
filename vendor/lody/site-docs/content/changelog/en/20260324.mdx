@@ -1,0 +1,27 @@
+---
+title: '20260324'
+version: 0.41.0
+date: 2026-03-24
+description: Added session export, custom title-generation models, permission banners, machine picker changes, mobile fixes, and stability improvements.
+---
+### New Features and Capabilities
+
+- Added a new `lody export` CLI command to export session data, including JSON, Markdown, attachments, and usage stats. **We're switching to a new sync backend next week, and older historical data will not be compatible, so export anything you want to keep in advance**
+- Added support for custom title-generation models for all ACP Agents
+- Permission request banners now stay pinned above the input box while a session is waiting for approval, so they do not get lost when you scroll
+- The machine picker is now separate from the Agent Config dropdown, making it easier to choose a machine on its own
+- Clicking a file path in chat now correctly opens the full file
+
+### Platform and UI Experience
+
+- Session configuration buttons no longer get squeezed or clipped on narrow screens
+- On mobile, the bottom area of the chat input now wraps properly instead of crushing the buttons together
+- Usage charts and stat cards on mobile now fit small screens without horizontal overflow
+
+### Fixes and Stability
+
+- ACP errors now show the specific underlying reason
+- Fixed desktop authentication failures on Linux environments outside GNOME, including Sway, Hyprland, and Niri, by automatically detecting the available keyring backend
+- Fixed worktree creation failures for empty remote repositories
+- Fixed CPU stalls caused by too many concurrent `git show` operations when large numbers of files changed
+- Fixed stale Issue and PR metadata being reused when `#` mentions failed to refresh the cache

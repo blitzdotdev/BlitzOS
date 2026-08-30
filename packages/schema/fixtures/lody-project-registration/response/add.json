@@ -1,0 +1,12 @@
+{
+    "ok": true,
+    "type": "local-project/add",
+    "result": {
+        "localProjectId": "local-project-5c929c9ed93542aaa69bc27e",
+        "name": "wt-probe",
+        "rootPath": "/tmp/lp7/ws/wt-probe",
+        "workspaceIds": [
+            "lw_4232972aaa2f498ba29fe7e52cb0d928"
+        ]
+    }
+}

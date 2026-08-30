@@ -1,3 +1,7 @@
+> Historical audit. The box actor, its ACP sessions and its SQLite journal
+> described below were deleted on 2026-08-29 (branch `lody-sessions`), and the
+> webApp proxy now accepts port 7445 alone. See `plans/LODY-SESSIONS.md`.
+
 The change is feasible, but it is not a grant-table-only change. Human identity currently terminates at the control-plane surface proxy; inside a workspace, terminal, files, agent sessions, and credentials all collapse to one `blitz` Unix user and one workspace-owner box identity. I made no repository changes.
 
 ## 1. Authentication today

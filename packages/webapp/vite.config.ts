@@ -1,11 +1,28 @@
+import { availableParallelism, freemem } from "node:os";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { loadEnv, type ServerOptions } from "vite";
+import wasm from "vite-plugin-wasm";
 import { defineConfig } from "vitest/config";
 import {
   deriveCoreRoutePaths,
   devProxyPatterns,
 } from "../control-plane/scripts/lib/worker-first-routes.mjs";
+import {
+  lodyCascadeLayerPlugin,
+  lodyVendorAliases,
+  loroWasmUrlWorkaround,
+} from "./src/lody/vendor-bridge.js";
+
+/** Measured footprint of one worker that has imported the vendored renderer,
+ * rounded up to a round number. See `test.maxWorkers` below. */
+const LODY_WORKER_BYTES = 1_073_741_824;
+
+function lodyAwareWorkerCount(): number {
+  const budget = Math.floor(freemem() / LODY_WORKER_BYTES);
+  return Math.max(1, Math.min(availableParallelism(), budget));
+}
 
 // Every first-party control-plane route the dev server must forward to the
 // control plane instead of serving the SPA shell.
@@ -43,11 +60,79 @@ export default defineConfig(({ command, mode }) => {
   }
   return {
     envDir: "../..",
-    plugins: [react()],
+    // The vendored Lody renderer (plans/LODY-SESSIONS.md §5.2) needs four
+    // things our own surface never did: its pnpm workspace links resolved as
+    // aliases, Tailwind v4, WASM (loro/flock), and top-level await in the
+    // modules that load it. React is deduped so the vendored components share
+    // our 19.2.x instance instead of getting a second copy through the alias.
+    resolve: {
+      alias: lodyVendorAliases(),
+      dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    },
+    plugins: [tailwindcss(), lodyCascadeLayerPlugin(), loroWasmUrlWorkaround(), react(), wasm()],
+    // Ported from their renderer config: the vendored workers reach WASM
+    // through top-level await, which Vite's default `iife` worker format
+    // cannot express.
+    worker: {
+      format: "es",
+      plugins: () => [loroWasmUrlWorkaround(), wasm()],
+    },
     server: target === "" ? {} : { proxy: controlPlaneProxy(target) },
     test: {
       environment: "jsdom",
       setupFiles: ["./test/setup.ts"],
+      // Runs ONCE, before any worker. It kills a `lody` daemon orphaned by a
+      // worker the OOM reaper took, which still holds the host lease on 17789
+      // and would make every daemon-backed suite in this run time out. A
+      // SIGKILLed worker runs no exit handler, so nothing in-process can do it.
+      globalSetup: ["./test/lody-daemon-reaper.ts"],
+      // Capped by MEMORY as well as by cores, because three suites import the
+      // vendored Lody renderer and a worker holding that graph — Monaco, three,
+      // mermaid, shiki, loro's WASM — plus a `lody` daemon runs to several
+      // hundred MB. Four of those on a box with a gigabyte free gets the whole
+      // run SIGKILLed by the OOM reaper: exit code 137, no failing test, no
+      // stack, just `Killed`. `freemem` and not `totalmem` because a dev box is
+      // shared, and the failure is about what is free right now. Measured here:
+      // two workers are not slower than four, so the cap costs nothing on the
+      // machine that needs it.
+      maxWorkers: lodyAwareWorkerCount(),
+      // `npm run dev` and `npm run build` read `env.defaults` through
+      // `node --env-file`; `vitest run` does not, so the one variable the
+      // vendored renderer THROWS without is repeated here. Keep it equal to
+      // the `env.defaults` entry — see the comment beside it there.
+      env: { VITE_PREVIEW_PUBLIC_BASE_DOMAIN: "local.invalid" },
+      // Only the Lody surface entry is processed: the Tailwind containment
+      // test reads the compiled sheet through the same plugin pipeline the
+      // app builds with, and every other CSS import stays a cheap no-op.
+      css: { include: [/lody-surface\.css/] },
+      // The app's `loro-crdt -> loro-crdt/bundler` alias exists so Vite emits
+      // and fingerprints the `.wasm` asset (`loroWasmUrlWorkaround`). Under
+      // Vitest that rewrite yields a `/@fs/...` specifier, which `fetch` cannot
+      // parse, so any test that instantiates a real `LoroRepo` dies at import.
+      // The node entry loads the same WASM off disk. Overrides the app alias
+      // for tests only; the browser build keeps the bundler entry.
+      alias: [
+        { find: /^loro-crdt$/u, replacement: "loro-crdt/nodejs" },
+        // Vitest resolves packages through the SSR conditions, and
+        // `react-resizable-panels` ships a DIFFERENT implementation there: its
+        // `edge-light` build has no `useLayoutEffect` at all, so a consumer's
+        // layout effect runs before the group has computed a layout and
+        // `panel.collapse()` throws "Panel size not found". Their session
+        // detail layout collapses its sidebar exactly that way
+        // (`desktop-session-detail-layout.tsx:107`), so under jsdom the whole
+        // session page would fail to mount for a reason that does not exist in
+        // a browser. Same shape as the `loro-crdt` entry above: a build the
+        // test environment can run, never the one the app ships.
+        {
+          find: /^react-resizable-panels$/u,
+          replacement: fileURLToPath(
+            new URL(
+              "../../node_modules/react-resizable-panels/dist/react-resizable-panels.browser.development.js",
+              import.meta.url,
+            ),
+          ),
+        },
+      ],
     },
   };
 });

@@ -1,0 +1,24 @@
+{
+  "name": "lody-code-review-viewer",
+  "version": "0.76.0",
+  "description": "Self-contained single-file HTML viewer for Lody code reviews, fetched on demand by `lody review`.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "files": [
+    "standalone.html"
+  ],
+  "exports": {
+    "./manifest": {
+      "types": "./src/manifest.d.ts",
+      "import": "./dist/manifest.generated.ts"
+    },
+    "./standalone.html": "./standalone.html"
+  },
+  "scripts": {
+    "build": "pnpm --filter @lody/code-review-helper build:standalone && node scripts/build-viewer.mjs",
+    "typecheck": "tsgo --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

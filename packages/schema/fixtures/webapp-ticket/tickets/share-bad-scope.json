@@ -1,0 +1,7 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItZ3JhbnRlZSIsIm1lbWJlcnNoaXBJZCI6Im1lbWJlcnNoaXAtZ3JhbnRlZSIsInJvbGUiOiJlZGl0b3IiLCJleHAiOjE4MDAwMDAwNjAsInNoYXJlIjp7InRhcmdldCI6Im1lbWJlcnNoaXAtb3duZXIiLCJzY29wZSI6ImV2ZXJ5dGhpbmciLCJyZWFkIjpbInNlc3MtYWxwaGEiXSwid3JpdGUiOltdfX0.YOzh4Gpvs1urhUxT8GawLY2Z2yRjqyXGFNr2GRYpUtY",
+  "expect": {
+    "valid": false
+  },
+  "note": "`scope` is a closed set of two."
+}

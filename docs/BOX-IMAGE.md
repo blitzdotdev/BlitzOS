@@ -1,15 +1,11 @@
 # The box image: build, publish, and ship it to workspaces
 
 Every workspace VM runs one OCI image — the box — containing SSH, the
-terminal, the ACP session actor, the files/preview gateway, and Docker-in-Docker
+terminal, the files/preview gateway, and Docker-in-Docker
 ([packages/box](../packages/box/README.md)). At boot, the VM's bootstrap
 fetches the image named by the three `BOX_IMAGE_*` vars in
 `packages/control-plane/wrangler.toml`. This page covers building the image,
 the two ways to serve it, and how upgrades behave.
-
-The ACP session actor remains available for headless recipe execution and
-protocol compatibility. It is not currently exposed as a native cockpit Chat
-surface.
 
 Part of the [self-host guide](SELF-HOST.md) (step 9).
 
@@ -215,7 +211,7 @@ copy; it carries the `--privileged` and long-`--mount` reasoning with it.
 ## Smoke test
 
 `packages/box/test/smoke.sh` exercises the whole surface: s6 service graph,
-key-only SSH, ttyd/tmux, ACP, files, ports, previews, DinD, and the
+key-only SSH, ttyd/tmux, files, ports, previews, DinD, and the
 unprivileged degradation path.
 
 ```sh

@@ -6,15 +6,15 @@ import {
   type RecipeBootstrap,
 } from "../core/bootstrap.js";
 import { isRecord, isString, type JsonValue } from "../core/http.js";
-import { AGENT_PROVIDERS, RECIPE_HARNESSES } from "../core/wire.js";
+import { RECIPE_HARNESSES } from "../core/wire.js";
 
 /**
  * Cross-runtime conformance for the recipe invocation files
  * (`fixtures/recipe-invocation/`): the control-plane writer must produce
  * exactly the corpus bytes, and the bootstrap must embed exactly those bytes
- * behind `printf '%s' '<quoted>'`. The guest-side readers (the chat sender
- * today, `blitz-term` in Phase 2) revalidate against the same corpus when
- * that image generation lands.
+ * behind `printf '%s' '<quoted>'`. The guest-side reader `blitz-term`
+ * revalidates against the same corpus in
+ * `packages/box/guest-tests/test/recipe-invocation-guest.test.ts`.
  */
 const fixtureSources = import.meta.glob<string>(
   "../../schema/fixtures/recipe-invocation/cases/**",
@@ -44,17 +44,10 @@ function parseInvocationDescriptor(name: string, source: string): RecipeBootstra
     if (!isString(value.effort)) throw new Error(`${name}: effort must be a string`);
     common.effort = value.effort;
   }
-  // Only chat carries an agentProvider (it drives BLITZ_AGENT and the
-  // sender's permission value); TUI invocations must not name one.
-  if (harness === "chat") {
-    const agentProvider = AGENT_PROVIDERS.find((candidate) => candidate === value.agentProvider);
-    if (agentProvider === undefined) {
-      throw new Error(`${name}: a chat invocation.json must name a valid agentProvider`);
-    }
-    return { harness, agentProvider, prompt: "", ...common };
-  }
+  // agentProvider belonged to the retired chat harness. No invocation carries
+  // one now, so any surviving key is a fixture that was never updated.
   if (value.agentProvider !== undefined) {
-    throw new Error(`${name}: only chat invocations carry an agentProvider`);
+    throw new Error(`${name}: agentProvider is retired; no invocation.json may carry one`);
   }
   return { harness, prompt: "", ...common };
 }
@@ -129,7 +122,7 @@ describe("recipe invocation fixture conformance", () => {
     }
   });
 
-  it("embeds the exact fixture bytes, and BLITZ_AGENT only for chat", () => {
+  it("embeds the exact fixture bytes and never names an agent backend", () => {
     for (const { name, bootstrap, promptBytes, envBytes } of cases) {
       const script = scriptFor(bootstrap);
       expect(script, name).toContain(
@@ -142,59 +135,12 @@ describe("recipe invocation fixture conformance", () => {
       expect(script, name).toContain(
         "chmod 0600 /var/lib/blitz/recipe/prompt.txt /var/lib/blitz/recipe/invocation.env",
       );
-      // Only chat pins the actor's adapter; a TUI recipe leaves the image
-      // default alone so the workspace chat tab keeps it.
-      if (bootstrap.harness === "chat") {
-        expect(script, name).toContain(`-e BLITZ_AGENT=${shellQuote(bootstrap.agentProvider)} \\`);
-      } else {
-        expect(script, name).not.toContain("BLITZ_AGENT");
-      }
+      // BLITZ_AGENT chose the retired actor's adapter. Nothing reads it, so a
+      // recipe launch must never set it again.
+      expect(script, name).not.toContain("BLITZ_AGENT");
       // The files land before the container starts; the flag rides docker run.
       expect(script.indexOf("/var/lib/blitz/recipe/prompt.txt"), name)
         .toBeLessThan(script.indexOf("docker run --detach"));
-    }
-  });
-
-  it("emits the prompt sender only for the chat harness", () => {
-    for (const { name, bootstrap } of cases) {
-      const script = scriptFor(bootstrap);
-      const senderPresent = script.includes("<<'RECIPE_SENDER'");
-      expect(senderPresent, name).toBe(bootstrap.harness === "chat");
-      if (bootstrap.harness !== "chat") continue;
-      // Best-effort background delivery, after the health wait, never on the
-      // boot's critical path.
-      expect(script, name).toContain("nohup docker exec");
-      expect(script, name).toContain("node /var/lib/blitz/recipe/sender.cjs");
-      expect(script.indexOf("<<'RECIPE_SENDER'"), name)
-        .toBeGreaterThan(script.indexOf('[ "$box_healthy" = true ]'));
-      expect(script.indexOf("nohup docker exec"), name)
-        .toBeLessThan(script.indexOf("read_host_key()"));
-      // Model, effort, and the provider's bypass permission are interpolated
-      // at render time — the sender reads only prompt.txt from disk.
-      expect(script, name).toContain(
-        `const MODEL = ${bootstrap.model === undefined ? "null" : JSON.stringify(bootstrap.model)};`,
-      );
-      expect(script, name).toContain(
-        `const EFFORT = ${bootstrap.effort === undefined ? "null" : JSON.stringify(bootstrap.effort)};`,
-      );
-      expect(script, name).toContain(
-        `const PERMISSION = ${JSON.stringify(
-          bootstrap.agentProvider === "claude" ? "bypassPermissions" : "never",
-        )};`,
-      );
-      expect(script, name).toContain("prompt.txt");
-      // The minimal ACP sequence, one pass, fail-loudly.
-      expect(script, name).toContain("'initialize'");
-      expect(script, name).toContain("'session/new'");
-      expect(script, name).toContain("'session/set_config_option'");
-      expect(script, name).toContain("'session/prompt'");
-      expect(script, name).toContain("ws://127.0.0.1:7444");
-      expect(script, name).toContain("x-blitz-webapp-token");
-      // Deleted machinery must stay deleted: no invocation.env re-parse, no
-      // permission-prompt auto-allow, no method-not-found responder.
-      expect(script, name).not.toContain("parseInvocation");
-      expect(script, name).not.toContain("session/request_permission");
-      expect(script, name).not.toContain("-32601");
     }
   });
 
@@ -233,7 +179,6 @@ describe("recipe invocation fixture conformance", () => {
     });
     expect(script).not.toContain("/var/lib/blitz/recipe");
     expect(script).not.toContain("BLITZ_AGENT");
-    expect(script).not.toContain("RECIPE_SENDER");
     expect(script).not.toContain("agent-usage");
   });
 

@@ -19,8 +19,6 @@ export function useStandalonePorts(): [StandalonePorts, (ports: StandalonePorts)
     const stored = readJson<Partial<StandalonePorts>>(PORTS_KEY, {});
     return {
       // SAFETY: validPort establishes a finite integer in the supported TCP port range.
-      acp: validPort(stored.acp ?? 0) ? (stored.acp as number) : DEFAULT_PORTS.acp,
-      // SAFETY: validPort establishes a finite integer in the supported TCP port range.
       files: validPort(stored.files ?? 0) ? (stored.files as number) : DEFAULT_PORTS.files,
     };
   });

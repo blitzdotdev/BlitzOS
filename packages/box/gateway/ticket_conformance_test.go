@@ -11,23 +11,52 @@ import (
 )
 
 // The gateway's half of the webApp ticket contract. The control plane mints
-// against this same corpus and the actor verifies it too, so a claim one side
-// starts enforcing and another still ignores fails here rather than quietly
-// changing who may do what on a box.
+// against this same corpus, so a claim one side starts enforcing and the other
+// still ignores fails here rather than quietly changing who may do what on a
+// box.
 
 type ticketFixtureContext struct {
-	RootSecret     string `json:"rootSecret"`
-	WorkspaceID    string `json:"workspaceId"`
-	WorkspaceToken string `json:"workspaceToken"`
-	NowSeconds     int64  `json:"nowSeconds"`
+	RootSecret     string              `json:"rootSecret"`
+	WorkspaceID    string              `json:"workspaceId"`
+	WorkspaceToken string              `json:"workspaceToken"`
+	NowSeconds     int64               `json:"nowSeconds"`
+	Limits         ticketFixtureLimits `json:"limits"`
+}
+
+// Numbers both verifiers must agree on but that no single ticket can pin.
+type ticketFixtureLimits struct {
+	MaxShareSessions int `json:"maxShareSessions"`
+}
+
+// THE CAP, on both sides of the contract.
+//
+// maxTicketShareSessions here and MAX_TICKET_SHARE_SESSIONS in
+// control-plane/core/webapp-tickets.ts decide the same thing — how many session
+// ids one ticket may carry — and until phase 7 they agreed only by a comment
+// naming each other (plans/LODY-SHARING.md §9, item 6, which called it the
+// weakest link in this contract).
+//
+// A number in the corpus rather than a pair of ticket fixtures: a 64-id and a
+// 65-id credential are about 3 KB of base64 each, say nothing a reader can check
+// by eye, and would have to be regenerated whenever the cap moved.
+func TestTicketShareSessionCapMatchesCorpus(t *testing.T) {
+	context := readTicketContext(t)
+	if context.Limits.MaxShareSessions != maxTicketShareSessions {
+		t.Fatalf(
+			"share session cap disagrees with the corpus: gateway %d, fixtures %d",
+			maxTicketShareSessions,
+			context.Limits.MaxShareSessions,
+		)
+	}
 }
 
 type ticketFixtureExpectation struct {
-	Valid        bool   `json:"valid"`
-	Kind         string `json:"kind"`
-	Role         string `json:"role"`
-	UserID       string `json:"userId"`
-	MembershipID string `json:"membershipId"`
+	Valid        bool              `json:"valid"`
+	Kind         string            `json:"kind"`
+	Role         string            `json:"role"`
+	UserID       string            `json:"userId"`
+	MembershipID string            `json:"membershipId"`
+	Share        *webAppShareClaim `json:"share"`
 }
 
 type ticketFixture struct {
@@ -52,6 +81,18 @@ func readTicketContext(t *testing.T) ticketFixtureContext {
 		t.Fatalf("parse ticket context: %v", err)
 	}
 	return context
+}
+
+func shareJSON(t *testing.T, claim *webAppShareClaim) string {
+	t.Helper()
+	if claim == nil {
+		return "absent"
+	}
+	encoded, err := json.Marshal(claim)
+	if err != nil {
+		t.Fatalf("encode share claim: %v", err)
+	}
+	return string(encoded)
 }
 
 func TestWebAppTicketFixtureConformance(t *testing.T) {
@@ -107,6 +148,13 @@ func TestWebAppTicketFixtureConformance(t *testing.T) {
 			}
 			if identity.MembershipID != fixture.Expect.MembershipID {
 				t.Fatalf("%s: membershipId = %q, want %q", name, identity.MembershipID, fixture.Expect.MembershipID)
+			}
+			// Compared whole: the claim decides who may read and who may write
+			// on somebody else's box, so a field one side drops is exactly the
+			// silent change this corpus exists to catch.
+			gotShare, wantShare := shareJSON(t, identity.Share), shareJSON(t, fixture.Expect.Share)
+			if gotShare != wantShare {
+				t.Fatalf("%s: share = %s, want %s", name, gotShare, wantShare)
 			}
 		})
 	}

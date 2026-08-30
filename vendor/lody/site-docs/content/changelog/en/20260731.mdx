@@ -1,0 +1,24 @@
+---
+title: '20260731'
+version: 0.74.0
+date: 2026-07-31
+description: Added session forking, a redesigned right sidebar with Browser and Side Chat, configurable dynamic sessions, and archive search and sorting.
+---
+### ✨ New
+
+- Added session forking. Use the Fork button below an Agent reply to branch a session from that reply; Codex and Claude Code also support forking from any point in the session.
+- Redesigned the right sidebar and added Browser and Side Chat.
+- Browser can open any URL for local sessions. For remote sessions, it can access ports on the machine running the session. Agent control of Browser is not supported yet.
+- Dynamically created Lody sessions can now be configured during the chat, including model and reasoning effort.
+- Added search and sorting to archived sessions.
+
+### 🐛 Fixes and Improvements
+
+- Updated light mode to use a true white background.
+- Refined parts of the mobile UI.
+- Fixed the mobile keyboard occasionally remaining open after sending a message.
+- Fixed sessions that could fail to sync in local-first mode.
+- Fixed the project list in the new-session flow not scrolling far enough to show all projects.
+- Reduced CLI CPU and memory usage.
+- Improved machine online-status stability.
+- Refined session search to search only message content, excluding tool calls and their results.

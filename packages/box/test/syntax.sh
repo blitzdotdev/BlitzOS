@@ -7,7 +7,7 @@ box_dir=$(realpath "$script_dir/..")
 # Every /usr/local/bin entry is POSIX sh. `claude` and `codex` are PATH shims:
 # a syntax error in one does not degrade a tab, it removes the version pin the
 # shim exists to hold. What each shim must CONTAIN is pinned in
-# box/actor/test/agent-shims.test.ts, which runs without docker.
+# box/guest-tests/test/agent-shims.test.ts, which runs without docker.
 for shim in blitz claude codex; do
   sh -n "$box_dir/rootfs/usr/local/bin/$shim"
 done

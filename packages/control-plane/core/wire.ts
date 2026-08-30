@@ -196,6 +196,13 @@ export {
   type WorkspaceMemberRole,
   type WorkspaceMemberView,
 } from "./wire-machines.js";
+// Session sharing lives beside them for the same reason.
+export {
+  type GrantSessionShareRequest,
+  type ListSessionSharesResponse,
+  type SessionShareLevel,
+  type SessionShareView,
+} from "./wire-sharing.js";
 // The three names the declarations below reference by hand. A re-export does
 // not bind them locally, so they are imported as well as re-exported.
 import type {
@@ -413,14 +420,13 @@ export interface ListWorkspaceTemplatesResponse {
 
 /** The shared model → provider catalog.
  *
- * It mirrors the per-provider model and effort lists the box actor accepts
- * (`packages/box/actor/src/agent-config.ts`); "default" is expressed by
- * omitting the model or effort, so it is not listed. The providers are the
- * TUI harness list (`HARNESSES` above) — one constant, derived, never
- * re-spelled. The canonical copy lives in
+ * It mirrors the per-provider model and effort lists the pinned harness CLIs
+ * accept; "default" is expressed by omitting the model or effort, so it is not
+ * listed. The providers are the TUI harness list (`HARNESSES` above) — one
+ * constant, derived, never re-spelled. The canonical copy lives in
  * `packages/schema/src/agent-catalog.ts` (core code may not import packages);
- * `test/wire-drift.test.ts` holds the two together. Extend both copies and
- * the actor catalog in the same change. */
+ * `test/wire-drift.test.ts` holds the two together. Extend both copies in the
+ * same change. */
 export const AGENT_PROVIDERS = HARNESSES;
 
 export type AgentProvider = (typeof AGENT_PROVIDERS)[number];
@@ -471,8 +477,8 @@ export function agentEffortsForModel(provider: AgentProvider, model?: string): r
 /** A recipe is one row: a template reference plus an invocation — harness,
  * model, effort, prompt. Launching one creates a normal workspace from the
  * template and delivers the invocation to the box (plans/RECIPES.md).
- * The harness choices are the TUI harnesses plus the headless chat run. */
-export const RECIPE_HARNESSES = [...HARNESSES, "chat"] as const;
+ * The harness choices are the TUI harnesses. */
+export const RECIPE_HARNESSES = [...HARNESSES] as const;
 
 export type RecipeHarness = (typeof RECIPE_HARNESSES)[number];
 
@@ -481,8 +487,8 @@ export interface RecipeView {
   name: string;
   templateId: string;
   harness: RecipeHarness;
-  /** A catalog model (see AGENT_MODELS); absent means the harness default.
-   * Required for `chat`, whose model also selects the adapter provider. */
+  /** A catalog model (see AGENT_MODELS); absent means the harness
+   * default. */
   model?: string;
   effort?: string;
   prompt: string;

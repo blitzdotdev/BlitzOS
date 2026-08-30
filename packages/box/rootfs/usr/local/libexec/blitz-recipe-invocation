@@ -4,7 +4,7 @@
 # files` contract row in CLAUDE.md; writer: control-plane core/bootstrap.ts).
 #
 # Sourced, never executed: blitz-term sources it when a TUI session is
-# created, and packages/box/actor/test/recipe-invocation-guest.test.ts drives
+# created, and packages/box/guest-tests/test/recipe-invocation-guest.test.ts drives
 # the same function against packages/schema/fixtures/recipe-invocation/. One
 # implementation on purpose — do not fork this parsing anywhere else.
 #

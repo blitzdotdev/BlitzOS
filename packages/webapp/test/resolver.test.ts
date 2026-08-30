@@ -9,14 +9,23 @@ const workspace: WorkspaceView = workspaceViewFixture({ id: "one", name: "brave-
 describe("standalone endpoint resolver", () => {
   it("routes all workspace surfaces through the control-plane origin", () => {
     const resolver = standaloneResolver(
-      { acp: 8444, files: 8445 },
+      { files: 8445 },
       "https://cp.example.test/",
     );
     const target = { ...workspace, id: "workspace one/two" };
     expect(resolver.resolve(target)).toEqual({
       terminalUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/terminal/",
-      acpUrl: "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7444",
       filesBase: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/workspace/",
+      // The sync URL leaves the resolver already on wss: unlike the terminal it
+      // is the exact path the gateway routes, so nothing downstream has to flip
+      // the scheme against `window.location`.
+      lodySyncUrl: "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/sync",
+      lodyRpcUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/rpc",
+      // The daemon's other three doors: session control, local-project control,
+      // and the identity the browser needs before it may address any of them.
+      lodyControlUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/control",
+      lodyProjectUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/project",
+      lodyPlatformUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/platform",
     });
     expect(resolver.previewUrl(target, 3000)).toBe(
       "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/preview/3000/",

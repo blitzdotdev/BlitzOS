@@ -1,0 +1,116 @@
+---
+title: GitHub Integration
+description: Connect GitHub repositories to Lody for cloned projects, issue and PR context, worktree sessions, CI status, and review-comment sync.
+---
+
+# GitHub Integration
+
+To keep workflows smooth across desktop and mobile, Lody treats GitHub integration as a core part
+of the product. After installing the Lody GitHub App for your repositories, Lody can clone your
+projects from any device, fetch Issue and PR context, and provide a more streamlined workflow.
+
+## Setup
+
+Open **Settings** -> **GitHub** -> **Manage** to jump to the GitHub App installation page.
+Select the repositories you want Lody to access, then return to Lody. The selected repositories
+appear under **Repositories available to add to workspace**. Add the ones you need to the current
+workspace.
+
+Lody supports sharing one repository across multiple workspaces. In other workspaces, repositories
+with an existing GitHub App installation can be selected and added directly.
+
+### Can't find a repository in the authorized list?
+
+If a repository you authorized does not appear under **Authorized Repositories**, the GitHub App
+installation likely missed it (for example you clicked **Install** before selecting that repo, or
+the repo lives in an organization that requires admin approval).
+
+The simplest fix is to start the authorization over:
+
+1. Open [github.com/settings/installations](https://github.com/settings/installations) (for personal
+   repos) or your organization's **Settings → GitHub Apps → Lody → Configure** page.
+2. Uninstall the **Lody** GitHub App.
+3. Back in Lody, open **Settings → GitHub → Manage** and reinstall the app, this time selecting
+   every repository you want Lody to access.
+
+After the reinstall completes, return to the Settings page — the repositories appear in the list
+and can be added to the workspace.
+
+## Personal GitHub Identity
+
+The GitHub App installation gives Lody repository access. Personal identity is separate and
+optional: enable it only if you want PR comments, review actions, and merges to be performed as
+your own GitHub user. To use it, turn on **Act as you for PRs, comments, and merges** in
+**Settings** -> **GitHub**, then authorize your GitHub account.
+
+After authorization, the Settings page shows the connected GitHub account. This does not change
+which repositories Lody can access; repository access still comes from the GitHub App installation.
+You can turn the option off later if you want Lody to use only the workspace GitHub App identity
+again.
+
+## Select a Repository for a Conversation
+
+On the home page, use the repository selector at the top-left of the composer to choose a
+repository that was added to the workspace. Lody then lists branches in that repository so you can
+choose where to start.
+
+<img src="/_docs-assets/lody-main-github-select.png" alt="" />
+
+After you create a conversation, Lody clones and initializes the repository on the CLI machine,
+then creates a new [Worktree](/docs/worktrees) from the branch you selected. Each conversation runs
+on its own branch and does not affect other conversations.
+
+## Start from an Issue or Pull Request
+
+After selecting a repository on the home page, type `#` to mention Issues and Pull Requests in the
+current repository.
+
+<img src="/_docs-assets/mention-issue.png" alt="" />
+
+Use the up and down arrow keys to select an item, then press Enter to confirm. The selected Issue
+or PR context is injected into the prompt, so the agent can handle tasks like `Fix #12` or
+`Review the implementation in #56`.
+
+## PR Status and CI Sync
+
+When a session is linked to a GitHub PR, Lody shows the PR number, open/closed/merged state, and CI
+status in the session UI. Running, passing, and failing checks update in Lody, so you do not need
+to keep switching back to GitHub just to see whether the branch is ready.
+
+If you keep working on a branch that already has a PR, Lody also tries to detect that PR and attach
+it to the session automatically.
+
+## PR Actions in Lody
+
+Click the PR badge at the top of a linked session to open the PR panel. From there you can review
+the PR title, description, branch, CI, comments, and reviews without leaving Lody.
+
+Draft PRs show a **Ready for review** action in the PR panel. After the PR is ready and mergeable,
+you can also merge it from Lody and delete the branch after merge when GitHub still has the branch.
+
+## Auto-Archive Finished PR Sessions
+
+In **Settings** -> **General**, enable auto-archive rules for PR-linked sessions:
+
+- archive when the PR is merged
+- archive when the PR is closed
+
+Auto-archive keeps completed PR work out of the active sidebar while preserving the conversation
+and worktree until you permanently delete the archived session.
+
+## Commit and Push for PR Sessions
+
+For GitHub-backed sessions that are linked to a PR, Lody checks the workspace after each agent turn.
+If there are uncommitted changes or local commits that have not been pushed yet, Lody can ask the
+agent to commit and push them to the PR branch.
+
+You can still trigger **Commit & Push** manually from the session UI, or use **Fix PR Comments**
+when review comments need another pass.
+
+## Review Comment Sync
+
+In [Diff Comments](/docs/diff-comments), PR-linked sessions can publish new line comments back to
+GitHub by enabling **Sync to GitHub**.
+
+Existing GitHub PR Review line comments are also shown in Lody diffs, and replies from Lody are
+posted back to GitHub. This keeps review, code inspection, and follow-up agent work in one place.

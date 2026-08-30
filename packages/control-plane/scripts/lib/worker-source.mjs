@@ -27,7 +27,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/runtime.ts",
   "core/db.ts",
   "core/blobs.ts",
-  "core/wire.ts", "core/wire-machines.ts",
+  "core/wire.ts", "core/wire-machines.ts", "core/wire-sharing.ts",
   "core/agent-rules.ts",
   "core/bootstrap.ts",
   "core/box-config.ts",
@@ -52,6 +52,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/principals.ts",
   "core/recipes.ts",
   "core/registry.ts",
+  "core/session-shares.ts",
   "core/sessions.ts",
   "core/version.ts",
   "core/signup-config.js",
@@ -61,7 +62,7 @@ export const CORE_MANIFEST = Object.freeze([
   "core/webapp-state.ts", "core/webapp-proxy.ts", "core/webapp-surface.ts", "core/webapp-tickets.ts",
   "core/template-repos.ts",
   "core/workspace-access.ts", "core/workspace-credential-import.ts",
-  "core/workspace-credentials.ts", "core/workspace-members.ts",
+  "core/workspace-credentials.ts", "core/workspace-drain.ts", "core/workspace-members.ts",
   "core/workspace-names.ts", "core/workspace-projection.ts", "core/workspace-records.ts",
   "core/workspace-settings.ts",
   "core/workspace-tunnels.ts",
@@ -255,6 +256,8 @@ export const BLITZDEV_CONFIG = Object.freeze({
     { name: "folder_attachments", fields: [{ name: "workspace_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "workspaces", column: "id" } }, { name: "folder_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "folders", column: "id" } }, { name: "attached_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "guest_path", type: "text", sqlType: "text" }], indexes: [{ name: "identity", unique: true, fields: ["workspace_id", "folder_id"] }, { name: "folder", fields: ["folder_id", "workspace_id"] }], extensions: [DENY_ALL_RULES] },
     // Flat like agent_rules/broker_members: this file already sits on the
     // max-lines warn list, so a new table stays terse instead of growing it.
+    // The harness CHECK still admits the retired 'chat' value: narrowing a D1
+    // CHECK needs a table-rebuild migration, and nothing writes it any more.
     { name: "recipes", fields: [{ name: "id", type: "text", sqlType: "text", primary: true, noUpdate: true, usage: "record_uid" }, { name: "org_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "orgs", column: "id" } }, { name: "name", type: "text", sqlType: "text", notNull: true }, { name: "source_workspace_id", type: "text", sqlType: "text", foreignKey: { table: "workspaces", column: "id" } }, { name: "harness", type: "text", sqlType: "text", notNull: true, check: "harness IN ('claude', 'codex', 'chat')" }, { name: "model", type: "text", sqlType: "text" }, { name: "effort", type: "text", sqlType: "text" }, { name: "prompt", type: "text", sqlType: "text", notNull: true }, { name: "created_by_membership_id", type: "text", sqlType: "text", notNull: true, foreignKey: { table: "memberships", column: "id" } }, { name: "created_at", type: "integer", sqlType: "integer", notNull: true }, { name: "updated_at", type: "integer", sqlType: "integer", notNull: true }], indexes: [{ name: "org", fields: ["org_id", "created_at"] }, { name: "source_workspace", fields: "source_workspace_id" }], extensions: [DENY_ALL_RULES] },
     {
       name: "webapp_state",

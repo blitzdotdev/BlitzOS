@@ -22,6 +22,7 @@
     "**/integration/results/**",
     "packages/box/test/.smoke-tmp/**",
     "packages/broker/internal/vendor/**",
+    "vendor/lody/**",
     "tools/oxlint/anti-slop/**",
     "tools/oxlint/blitz-house/**"
   ],

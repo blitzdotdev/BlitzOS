@@ -38,9 +38,6 @@ npm ci
 
 Notes:
 
-- `npm ci` compiles or downloads `better-sqlite3`, a native module used by the
-  box actor's tests. Prebuilt binaries cover common platforms; otherwise you
-  need a C/C++ toolchain.
 - You do not need to build anything yet. The deploy command in step 4 builds
   the webapp itself (the root `npm run build` exists for CI-style checks).
 

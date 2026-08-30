@@ -115,8 +115,8 @@ export class WorkspaceTunnels {
     return result;
   }
 
-  /** Proxies one webapp request through the workspace tunnel. Port 7444
-   * maps to the gateway's /acp prefix; 7445 passes through unchanged. */
+  /** Proxies one webapp request through the workspace tunnel. The path
+   * passes through unchanged. */
   async proxy(
     hostname: string,
     workspaceId: string,
@@ -125,7 +125,6 @@ export class WorkspaceTunnels {
     request: Request,
     credential?: string,
   ): Promise<Response> {
-    const upstreamPath = port === 7444 ? `/acp${pathAndQuery}` : pathAndQuery;
     const headers = new Headers(request.headers);
     headers.delete("Cookie");
     headers.delete("Host");
@@ -133,7 +132,7 @@ export class WorkspaceTunnels {
     headers.set(WEBAPP_TOKEN_HEADER, credential ?? await this.webAppTokenFor(workspaceId));
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
     const fetcher = this.fetcher;
-    return fetcher(`https://${hostname}${upstreamPath}`, {
+    return fetcher(`https://${hostname}${pathAndQuery}`, {
       method: request.method,
       headers,
       body: hasBody ? request.body : undefined,

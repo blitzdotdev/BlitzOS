@@ -1,0 +1,215 @@
+[
+  {
+    "id": "0d825a98-bc3f-4b3e-ad80-d3fc63eb6ee5",
+    "role": "assistant",
+    "timestamp": "2025-12-13T05:41:52.674Z",
+    "items": [
+      {
+        "type": "available_commands",
+        "commands": [
+          {
+            "description": "Review my current changes and find issues",
+            "input": {
+              "hint": "optional custom review instructions"
+            },
+            "name": "review"
+          },
+          {
+            "description": "Review the code changes against a specific branch",
+            "input": {
+              "hint": "branch name"
+            },
+            "name": "review-branch"
+          },
+          {
+            "description": "Review the code changes introduced by a commit",
+            "input": {
+              "hint": "commit sha"
+            },
+            "name": "review-commit"
+          },
+          {
+            "description": "create an AGENTS.md file with instructions for Codex",
+            "input": null,
+            "name": "init"
+          },
+          {
+            "description": "summarize conversation to prevent hitting the context limit",
+            "input": null,
+            "name": "compact"
+          },
+          {
+            "description": "logout of Codex",
+            "input": null,
+            "name": "logout"
+          }
+        ]
+      },
+      {
+        "type": "thought",
+        "text": "\n\n**Preparing to run a colored print command**"
+      }
+    ]
+  },
+  {
+    "id": "a771a34e-3803-4d9d-a4c0-2739f92d1bd4",
+    "role": "assistant",
+    "timestamp": "2025-12-13T05:41:52.674Z",
+    "items": [
+      {
+        "type": "tool_call",
+        "toolCallId": "call_gTjxR5Nqx37tYiIJUA1XZ1TM",
+        "title": "Run printf \"\\033[31mred\\033[0m\\n\"",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "/bin/zsh",
+            "args": ["-lc", "printf \"\\033[31mred\\033[0m\\n\""],
+            "cwd": "/var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-tools"
+          },
+          {
+            "type": "terminal_output",
+            "output": "\u001b[31mred\u001b[0m\n",
+            "stream": "combined",
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "thought",
+        "text": "\n\n**Executing directory listing command**"
+      }
+    ]
+  },
+  {
+    "id": "55bfe6b0-2cb8-449f-8c91-b6a067422c78",
+    "role": "assistant",
+    "timestamp": "2025-12-13T05:41:52.675Z",
+    "items": [
+      {
+        "type": "tool_call",
+        "toolCallId": "call_QSmtUXeQWJPUK0vhdXwnbR4V",
+        "title": "List /var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-tools",
+        "kind": "search",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "/bin/zsh",
+            "args": ["-lc", "ls -1"],
+            "cwd": "/var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-tools"
+          },
+          {
+            "type": "terminal_output",
+            "output": "acp-history-listing.txt\nacp-history-target.txt\n",
+            "stream": "combined",
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "thought",
+        "text": "\n\n**Saving exact command output**"
+      }
+    ]
+  },
+  {
+    "id": "98b700b1-103e-4e3e-97cb-c4df4903a5aa",
+    "role": "assistant",
+    "timestamp": "2025-12-13T05:41:52.675Z",
+    "items": [
+      {
+        "type": "tool_call",
+        "toolCallId": "call_7Aqh4kGv8CicGUi7OiHMjdHP",
+        "title": "Run ls -1 > acp-history-listing.txt",
+        "kind": "execute",
+        "status": "failed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "/bin/zsh",
+            "args": ["-lc", "ls -1 > acp-history-listing.txt"],
+            "cwd": "/var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-tools"
+          },
+          {
+            "type": "terminal_output",
+            "output": "zsh:1: operation not permitted: acp-history-listing.txt\n",
+            "stream": "combined",
+            "exitStatus": {
+              "exitCode": 1,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "thought",
+        "text": "\n\n**Requesting write permission**"
+      }
+    ]
+  },
+  {
+    "id": "13f0df77-c4fc-4490-b8df-004a4876383f",
+    "role": "assistant",
+    "timestamp": "2025-12-13T05:41:52.675Z",
+    "items": [
+      {
+        "type": "tool_call",
+        "toolCallId": "call_Pj1RcFaDcPjXum8hV2DydW0d",
+        "title": "Run ls -1 > acp-history-listing.txt",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "/bin/zsh",
+            "args": ["-lc", "ls -1 > acp-history-listing.txt"],
+            "cwd": "/var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-tools"
+          }
+        ]
+      },
+      {
+        "type": "thought",
+        "text": "\n\n**Preparing to overwrite file with escalation**"
+      }
+    ]
+  },
+  {
+    "id": "9509c25f-396a-4bd5-a061-c8927a565557",
+    "role": "assistant",
+    "timestamp": "2025-12-13T05:41:52.675Z",
+    "items": [
+      {
+        "type": "tool_call",
+        "toolCallId": "call_VX1uX0Rr5Ik6w0qWge22kgwx",
+        "title": "Run printf \"done\\n\" > acp-history-target.txt",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "/bin/zsh",
+            "args": ["-lc", "printf \"done\\n\" > acp-history-target.txt"],
+            "cwd": "/var/folders/x9/v95xfgsd7q77l65gphtc4vdw0000gn/T/lody-acp-history-e2e-tools"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "completed"
+      },
+      {
+        "type": "thought",
+        "text": "\n\n**Finalizing completion**"
+      }
+    ]
+  }
+]

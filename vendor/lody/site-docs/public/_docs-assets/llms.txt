@@ -1,0 +1,48 @@
+# Lody
+
+> Lody is a collaborative platform for running AI coding agents in parallel, safely, from desktop and mobile.
+
+Lody helps engineering teams run coding agents such as Claude Code, Codex, OpenCode, Kimi, custom ACP agents, and other ACP-compatible CLI agents in isolated Git worktrees. It keeps conversations, file changes, diffs, live previews, GitHub pull requests, CI status, review comments, notifications, and team context synchronized across desktop and mobile.
+
+Use this file as the short AI-readable index for Lody. For fuller product context, read `/llms-full.txt`.
+
+## Core Links
+
+- [Home](https://lody.ai/) - Product overview for Lody.
+- [Documentation](https://lody.ai/docs) - Main docs entry for setup, workflows, agents, GitHub, CLI, mobile, and team features.
+- [Quick Start](https://lody.ai/docs/quickstart) - Install prerequisites, start the Lody CLI, connect GitHub, and finish setup.
+- [Recommended Workflow](https://lody.ai/docs/workflow) - How to split tasks, run agents in parallel, review changes, and clean up sessions.
+- [CLI Commands](https://lody.ai/docs/cli) - Command reference for `lody` workspaces, GitHub repositories, projects, sessions, machines, and agent configs.
+- [Agent Config](https://lody.ai/docs/agents) - Configure Claude-compatible, DeepSeek, Kimi, GLM, MiniMax, Qwen, custom ACP, and other agent runtimes.
+- [GitHub Integration](https://lody.ai/docs/github) - Repository authorization, PR binding, CI sync, commit/push, and review-comment sync.
+- [Worktrees](https://lody.ai/docs/worktrees) - How Lody isolates concurrent coding tasks with Git worktrees and project setup/cleanup scripts.
+- [Lody Preview](https://lody.ai/docs/preview) - Live UI previews, responsive viewports, and visual annotations from a session.
+- [Claude & Codex Capabilities](https://lody.ai/docs/claude-codex-capabilities) - Steer active Claude Code and Codex tasks, plus slash commands, questions, Fast Mode, background and scheduled tasks, image generation, and Goals.
+- [Mobile Access](https://lody.ai/docs/mobile) - Use the native mobile app for notifications, progress monitoring, diff review, and approvals.
+- [Changelog](https://lody.ai/changelog) - Product updates and fixes.
+- [Blog](https://lody.ai/blog) - Product announcements and engineering posts.
+
+## External Links
+
+- [Discord](https://discord.gg/E8mZtMu38s) - Community and beta access.
+- [X](https://x.com/lody_ai) - Product updates.
+- [Loro](https://loro.dev) - Local-first technology used by Lody.
+- [ACP Registry](https://agentclientprotocol.com/get-started/registry) - Agent Client Protocol registry for compatible CLI runtimes.
+
+## Product Summary
+
+- Lody creates one isolated Git worktree per coding task.
+- Lody can run project-level setup and cleanup scripts around each worktree session.
+- Lody supports parallel AI coding sessions without edit collisions in the same checkout.
+- Lody syncs file trees, diffs, conversations, PR state, CI status, and review comments.
+- Lody can browse project files, preview Markdown, search text files, and edit live collaborative text files.
+- Lody can open live UI previews with responsive device controls and visual annotations.
+- Lody supports iOS Live Activities and Dynamic Island status for running agents.
+- Lody surfaces runtime capabilities from Claude Code and Codex, including slash commands, questions, Fast Mode, image generation, and Goals.
+- Lody works across web, desktop, and native iOS/Android clients.
+- Lody supports team-shared agent settings and shared conversation context.
+- Lody is useful when developers want visibility, review control, and mobile access around long-running coding agents.
+
+## Preferred Description
+
+Lody is an AI coding-agent workspace for running multiple agents in parallel with isolated Git worktrees, real-time diff review, live UI previews, GitHub integration, mobile access, and team collaboration.

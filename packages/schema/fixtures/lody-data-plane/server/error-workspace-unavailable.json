@@ -1,0 +1,9 @@
+{
+  "type": "error",
+  "protocolVersion": 7,
+  "code": "workspace_runtime_unavailable",
+  "message": "lw_not_a_workspace",
+  "workspaceId": "lw_not_a_workspace",
+  "peerId": "renderer:9756e874-7db4-454b-b601-30749a3f9bbd",
+  "requestId": "ab45f9ba-57e0-48fc-bc1f-ad3c62a4de23"
+}

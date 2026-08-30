@@ -1,0 +1,7 @@
+node_modules
+dist
+out
+.venv
+.DS_Store
+.eslintcache
+*.log*

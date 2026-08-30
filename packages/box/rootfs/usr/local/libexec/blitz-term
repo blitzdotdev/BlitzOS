@@ -91,9 +91,8 @@ session_env=(-e "LANG=${LANG:-C.UTF-8}" -e "LC_ALL=${LC_ALL:-C.UTF-8}")
 # positional argument (tmux execs a multi-argument command directly, so the
 # prompt bytes never pass through a shell). Renaming invocation.env is the
 # atomic once-only claim and happens before tmux starts. `new-session -A` on
-# an existing session attaches and never re-injects (has-session decides),
-# `ro` exited above without consuming, and HARNESS=chat files belong to the
-# bootstrap chat sender, never to blitz-term.
+# an existing session attaches and never re-injects (has-session decides), and
+# `ro` exited above without consuming. blitz-term is the only consumer.
 recipe_dir="$state_dir/recipe"
 case "$session_type" in
   claude|codex)

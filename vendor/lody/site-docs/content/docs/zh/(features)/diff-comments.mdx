@@ -1,0 +1,37 @@
+---
+title: Diff 行评论
+description: 在 Lody diff 中添加行级评论、回复线程，并同步到 GitHub PR Review。
+---
+
+# Diff 行评论
+
+Diff 行评论让你可以直接在 Lody 的代码差异里留下 review 意见。它适合团队协作，也适合把某一行问题发送回对话，让 Agent 根据评论继续修复。
+
+## 添加评论
+
+1. 打开某个 session 的 diff。可以从对话下方的当轮改动进入，也可以从右侧 `Changes` 面板进入。
+2. 鼠标悬停到可评论的 diff 行，点击行号旁的 `+`。
+3. 输入评论内容。评论支持 Markdown。
+4. 点击 **Comment**，或按 `Ctrl+Enter` / `Cmd+Enter` 提交。
+
+在移动端，可以直接点击可评论的 diff 行来打开评论输入框。
+
+## 回复和解决线程
+
+评论会以线程形式显示在对应行下方。你可以：
+
+- 在同一线程下继续回复。
+- 编辑或删除自己发布的评论。
+- 点击 **Resolve** 标记已解决。
+- 点击 **Unresolve** 重新打开已解决线程。
+- 折叠线程，只保留摘要。
+
+## 发给 Agent 处理
+
+评论线程左侧的发送按钮可以把评论引用加入当前对话。之后你可以直接让 Agent 根据这条评论解释、修复或反驳。
+
+## 同步到 GitHub
+
+如果当前 session 已关联 GitHub PR，新增评论时会出现 **Sync to GitHub** 选项。勾选后，Lody 会把评论发布为 GitHub PR Review 的行评论。
+
+Lody 也会读取 GitHub 上已有的 PR Review 行评论，并显示在对应 diff 行下。你可以在 Lody 中回复这些 GitHub 线程，回复会发布回 GitHub。

@@ -92,7 +92,6 @@ for _attempt in $(seq 1 100); do
   listeners=$(docker exec "$container" ss -ltnH 2>/dev/null || true)
   if grep -q '0.0.0.0:22' <<<"$listeners" \
     && grep -q '127.0.0.1:7443' <<<"$listeners" \
-    && grep -q '127.0.0.1:7444' <<<"$listeners" \
     && grep -q '127.0.0.1:7445' <<<"$listeners" \
     && grep -q '127.0.0.1:17445' <<<"$listeners"; then
     ready=true
@@ -103,10 +102,10 @@ done
 [ "$ready" = true ] || fail "loopback services did not become ready"
 
 services=$(docker exec "$container" /command/s6-rc -a list)
-for service in init-state enroll register sshd ttyd actor dufs gateway watch dockerd; do
+for service in init-state enroll register sshd ttyd dufs gateway watch dockerd; do
   grep -qx "$service" <<<"$services" || fail "s6 graph is missing $service"
 done
-for service in sshd ttyd actor dufs gateway watch dockerd; do
+for service in sshd ttyd dufs gateway watch dockerd; do
   docker exec "$container" /command/s6-svstat "/run/service/$service" | grep -q '^up' || fail "$service is not up"
 done
 dufs_version=$(docker exec "$container" /usr/local/bin/dufs --version)
@@ -166,9 +165,14 @@ for service in sshd ttyd dufs blitz-box-gatew; do
   [ "$where" = /blitz-system.slice ] \
     || fail "$service must sit in the reservation, but it is in [$where]"
 done
-where=$(cgroup_of node) || fail "the actor is not running"
-[ "$where" = /blitz-user.slice/actor.scope ] \
-  || fail "the actor must sit under the user ceiling, but it is in [$where]"
+# The actor that used to hold user/actor.scope is gone; the Lody daemon
+# inherited the placement. It is dark by default, so a smoke box idles it in
+# `sleep infinity` and there is no node to look at here. The placement is
+# asserted by reading its run script instead — see the boundary lab
+# (packages/box/test/memory-load.sh) for the live check on an enabled box.
+docker exec "$container" grep -q 'blitz-cgroup enter user/lody.scope' \
+  /etc/s6-overlay/s6-rc.d/lody-daemon/run \
+  || fail "the lody daemon does not enter the user ceiling"
 where=$(cgroup_of dockerd) || fail "dockerd is not running"
 [ "$where" = /blitz-user.slice/dockerd.scope ] \
   || fail "dockerd must sit beside its containers, not in them: [$where]"
@@ -208,7 +212,7 @@ echo "PASS no-CP skips"
 # Terminal delivery: the shim must WIN the PATH over the pinned binary it execs,
 # in a plain login shell as well as in the image environment. A member-installed
 # copy landing in the writable npm prefix and shadowing it is the single most
-# common way a terminal ends up signed out while chat is authenticated.
+# common way a terminal ends up signed out while the box holds a credential.
 resolved=$(docker exec "$container" /bin/sh -lc 'command -v claude')
 [ "$resolved" = '/usr/local/bin/claude' ] || fail "login-shell claude resolves to $resolved, not the shim"
 resolved=$(docker exec "$container" /bin/sh -c 'command -v claude')
@@ -225,7 +229,7 @@ echo "PASS terminal delivery shim"
 
 listeners=$(docker exec "$container" ss -ltnH)
 grep -Eq '[[:space:]]0\.0\.0\.0:22[[:space:]]' <<<"$listeners" || fail "sshd is not listening on port 22"
-for port in 7443 7444 7445; do
+for port in 7443 7445; do
   grep -Eq "[[:space:]]127\\.0\\.0\\.1:$port[[:space:]]" <<<"$listeners" || fail "$port is not on loopback"
   if grep -Eq "[[:space:]](0\\.0\\.0\\.0|\[::\]):$port[[:space:]]" <<<"$listeners"; then
     fail "$port has a non-loopback listener"
@@ -279,7 +283,7 @@ docker exec "$container" grep -q sftp-payload /workspace/sftp-dst \
   || fail "sftp uploaded nothing"
 echo "PASS ssh sessions carry the user ceiling"
 
-
+docker cp "$script_dir/ws-client.mjs" "$container:/tmp/ws-client.mjs" >/dev/null
 docker cp "$script_dir/ttyd-client.mjs" "$container:/tmp/ttyd-client.mjs" >/dev/null
 ttyd_url='ws://127.0.0.1:7443/ws?arg=terminal&arg=smoke-contract'
 docker exec --user blitz \
@@ -332,51 +336,6 @@ if [ "$boundary_expected" = yes ]; then
   echo "PASS per-tab memory leaves"
 fi
 
-
-# The actor always authenticates WebSocket upgrades, including in standalone
-# mode. Install the per-run sentinel as its temporary static compatibility
-# token, then remove it before the unauthenticated files smoke below.
-#
-# ORDERING CONSTRAINT: do not touch the gateway (7445) between the install and
-# the rm below. currentWebAppAuth latches: the first non-empty token it reads
-# sets authRequired for the life of the process and it keeps serving from
-# lastWebAppToken after the file is gone, so every later unauthenticated
-# gateway assertion in this script would fail with 403. The block below talks
-# to the actor on 7444 directly, which is why this is safe today.
-docker exec "$container" install -o blitz -g blitz -m 0600 \
-  /run/blitz/smoke-secret /var/lib/blitz/webapp-token
-docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
-import { readFileSync } from "node:fs";
-import { WebSocket } from "ws";
-
-const token = readFileSync("/run/blitz/smoke-secret", "utf8").trim();
-const socket = new WebSocket("ws://127.0.0.1:7444", {
-  origin: "http://127.0.0.1",
-  headers: { "x-blitz-webapp-token": token },
-});
-const result = await new Promise((resolve, reject) => {
-  const timer = setTimeout(() => reject(new Error("ACP smoke timeout")), 5000);
-  socket.on("open", () => {
-    socket.send(JSON.stringify({ jsonrpc: "2.0", id: "initialize", method: "initialize", params: { protocolVersion: 1, clientCapabilities: {} } }));
-  });
-  socket.on("message", (data) => {
-    const frame = JSON.parse(data.toString());
-    if (frame.id === "initialize") {
-      if (frame.result?.agentInfo?.name !== "BlitzOS box") reject(new Error("bad initialize response"));
-      socket.send(JSON.stringify({ jsonrpc: "2.0", id: "new", method: "session/new", params: { cwd: "/workspace", mcpServers: [] } }));
-    } else if (frame.id === "new") {
-      if (typeof frame.result?.sessionId !== "string") reject(new Error("bad session/new response"));
-      resolve(frame.result.sessionId);
-    }
-  });
-  socket.on("error", reject);
-  socket.on("close", () => clearTimeout(timer));
-});
-console.log(`PASS ACP initialize + session/new (${result})`);
-socket.close();
-NODE
-docker exec "$container" rm -f /var/lib/blitz/webapp-token
-
 docker run --rm \
   --network "container:$container" \
   --env FILES_BASE=http://127.0.0.1:7445 \
@@ -421,21 +380,18 @@ preview_http=$(docker run --rm --network "container:$container" "$curl_image" \
   -fsS 'http://127.0.0.1:7445/preview/31234/deep/path?probe=1')
 [ "$preview_http" = 'preview-http:GET:/deep/path?probe=1' ] \
   || fail "preview HTTP proxy returned: $preview_http"
-docker exec -i --workdir /opt/blitz/actor "$container" node --input-type=module <<'NODE'
-import { WebSocket } from "ws";
+docker exec -i "$container" node --input-type=module <<'NODE'
+import { openWebSocket } from "/tmp/ws-client.mjs";
 
 const result = await new Promise((resolve, reject) => {
-  const socket = new WebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
-    origin: "http://127.0.0.1",
-  });
   const timer = setTimeout(() => reject(new Error("preview WebSocket timeout")), 5000);
-  socket.on("open", () => socket.send("hello"));
-  socket.on("message", (message) => {
-    clearTimeout(timer);
-    socket.close();
-    resolve(message.toString());
-  });
-  socket.on("error", reject);
+  openWebSocket("ws://127.0.0.1:7445/preview/31234/socket?probe=1", {
+    origin: "http://127.0.0.1",
+    onMessage: (message) => {
+      clearTimeout(timer);
+      resolve(message.toString());
+    },
+  }).then((socket) => socket.send("hello"), reject);
 });
 if (result !== "preview-ws:/socket?probe=1:hello") throw new Error(`bad preview WebSocket response: ${result}`);
 NODE

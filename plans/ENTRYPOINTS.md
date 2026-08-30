@@ -1,6 +1,12 @@
 # ENTRYPOINTS — Slack/Discord as invocation surfaces: gap + e2e target
 
 2026-08-12. Status: known gap, not scheduled. Nothing in this repo implements any of it yet.
+
+> **Stale since 2026-08-29 (branch `lody-sessions`).** Every "the actor" and
+> "ACP session" reference below names a box service that is now DELETED, along
+> with its journal and its 7444 listener. The gaps this page states are still
+> real, but the building blocks it counts on are gone. Read
+> `plans/LODY-SESSIONS.md` for what replaces the session plane.
 Principle: one runner, N thin connectors — an agent run is one session with many subscribers,
 and every surface (Slack thread, webApp UI, future CLI/cron) is just another subscriber.
 

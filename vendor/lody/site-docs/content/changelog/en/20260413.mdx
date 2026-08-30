@@ -1,0 +1,66 @@
+---
+title: '20260413'
+version: 0.42.0
+date: 2026-04-13
+description: Introduced the new sync engine, multi-tab sessions, diff comments, VS Code themes, conversation search, and migration notes.
+---
+### Breaking Changes and Migration
+
+- After updating, you may need to sign in again.
+- If you are using GitHub Worktree, the machine running the Agent must be configured with your GitHub identity (via `gh auth`); otherwise, we will default to using the `lody` identity to create the Pull Request.
+- Lody has switched to a new sync engine and data structure. Old workspaces will no longer be available, so you need to create a new workspace to use Lody.
+- Lody no longer requests users' GitHub personal identity permissions. As a result, we no longer provide the ability for the same GitHub repository to be authorized once and shared across multiple workspaces. A repository is now associated with only one workspace.
+
+### ✨ Multi-Tab Sessions
+
+You can now open multiple conversation tabs and file viewers within a single session. Like VSCode's tab bar, you can chat with the Agent on the left while viewing files and diffs on the right without interrupting either side. Child tabs inherit the parent's working directory, with drag-to-reorder and rename support.
+
+<img src="/_docs-assets/20260413-multi-tab.png" alt="" />
+
+### 💬 Line-Level Diff Comments
+
+You can now add comments directly in the diff viewer. Supports Markdown, threaded replies, marking threads as resolved, sync to GitHub, and one-click send to the conversation window.
+
+<img src="/_docs-assets/20260413-diff-comment.png" alt="" />
+
+### 🎨 UI Improvements & VSCode Theme Support
+
+- Added VSCode Theme compatibility, with several excellent open-source themes integrated out of the box (Vitesse, Gruvbox Material, Tokyo Night, One Dark Pro, and more). Huge thanks to the open-source authors for their amazing work!
+  <img src="/_docs-assets/20260413-theme.png" alt="" />
+
+- Improved Markdown rendering and diff loading experience
+- Search within the conversation
+  <img src="/_docs-assets/20260413-session-find.png" alt="" />
+
+### 🖥️ Daemon Mode
+
+The CLI now supports Daemon mode, keeping Lody running in the background with automatic restart:
+
+```bash
+lody daemon start     # Start the background daemon
+lody daemon status    # Check status
+lody daemon logs      # View logs
+lody daemon stop      # Stop the daemon
+```
+
+### 🔗 GitHub Integration Improvements
+
+- PR CI check status syncs in real time to the session UI, so you do not need to switch to GitHub to see build results
+- PR-linked sessions support automatic commit and push
+
+### 🌐 Sync & Stability
+
+- Replaced the sync engine for improved reliability
+- cgroup-aware CLI resource limits to prevent lockups in Linux container environments
+- ACP idle timeout reduced to 30 minutes to save resources
+- Automatic session memory pressure eviction
+
+### 🛠️ Fixes and Improvements
+
+- Added Google, Apple, and Discord third-party login.
+- Fixed diff loading and sync issues
+- Fixed GitHub auth token refresh timing
+- Fixed Safari < 16.4 boot crash
+- Fixed various mobile UI layout issues
+- Reduced CLI log noise and disk usage
+- Sessions use prompt prefix as initial title instead of "Untitled"

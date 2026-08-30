@@ -33,9 +33,12 @@ const (
 	terminalAddress        = "127.0.0.1:7443"
 	terminalHost           = "localhost:7443"
 	terminalOrigin         = "http://localhost:7443"
-	actorAddress           = "127.0.0.1:7444"
-	actorHost              = "localhost:7444"
-	actorOrigin            = "http://localhost:7444"
+	lodyBridgeSocketPath   = "/var/lib/blitz/lody-bridge.sock"
+	lodySyncPath           = "/lody/sync"
+	lodyRPCPath            = "/lody/rpc"
+	lodyControlPath        = "/lody/control"
+	lodyProjectPath        = "/lody/project"
+	lodyPlatformPath       = "/lody/platform"
 	controlPlaneOriginPath = "/var/lib/blitz/origin"
 	webAppTokenPath        = "/var/lib/blitz/webapp-token"
 	workspaceIDPath        = "/var/lib/blitz/workspace-id"
@@ -47,7 +50,37 @@ const (
 	webAppTokenHeader      = "X-Blitz-WebApp-Token"
 	corsAllowMethods       = "GET, HEAD, POST, PUT, DELETE, OPTIONS, PROPFIND, MKCOL, MOVE, COPY"
 	corsExposeHeaders      = "ETag, DAV, Content-Type, Content-Length, Last-Modified, Location"
+
+	// The gateway → bridge half of the share contract
+	// (packages/schema/fixtures/lody-share-claim/). The verified claim travels
+	// to blitz-lody-bridge on this header, and any inbound copy is stripped
+	// first — the browser must never be able to author one.
+	lodyShareHeader = "X-Blitz-Lody-Share"
 )
+
+// lodyBridgeHost is a placeholder authority, not a name anything resolves. The
+// Lody bridge listens on a unix socket, so the proxy's transport dials the path
+// and ignores the address entirely; this only fills the Host header and keeps
+// httputil.ReverseProxy's URL rewriting well-formed.
+//
+// lodyBridgeSocketPath above is that socket. Keep it short: `sun_path` caps a
+// unix socket at 103 bytes, and the Lody daemon THROWS
+// `local_ipc_socket_path_too_long` rather than falling back, so every socket
+// path under /var/lib/blitz is budgeted against that cap
+// (see /usr/local/libexec/blitz-lody-bridge). This one spends 31.
+const lodyBridgeHost = "lody-bridge"
+
+// The exact paths blitz-lody-bridge answers, each with the `/lody` prefix this
+// gateway strips before forwarding. A prefix match would be wrong here: the
+// bridge also serves `/healthz`, which is an operator probe and not a browser
+// surface, and packages/schema/src/webapp-surface.ts lists these five exactly.
+var lodyPaths = map[string]struct{}{
+	lodySyncPath:     {},
+	lodyRPCPath:      {},
+	lodyControlPath:  {},
+	lodyProjectPath:  {},
+	lodyPlatformPath: {},
+}
 
 // Ports the box runs its own services on. A preview may never claim one, so
 // this set both hides them from the discovered-port list and rejects a focus
@@ -57,10 +90,11 @@ const (
 var excludedPorts = map[int]struct{}{
 	22:    {}, // sshd
 	7443:  {}, // ttyd
-	7444:  {}, // ACP actor
+	7444:  {}, // retired ACP actor; stays reserved for boxes in the field
 	7445:  {}, // this gateway
 	7446:  {}, // public dufs file server
 	17445: {}, // private dufs upstream
+	17789: {}, // lody daemon's single-instance host lease
 }
 
 const (
@@ -102,7 +136,8 @@ type gateway struct {
 	dufs                   *httputil.ReverseProxy
 	dufsAddress            string
 	terminal               *url.URL
-	actor                  *url.URL
+	lody                   *url.URL
+	lodyTransport          http.RoundTripper
 	controlPlaneOriginPath string
 	webAppTokenPath        string
 	workspaceIDPath        string
@@ -125,7 +160,41 @@ type webAppIdentity struct {
 	UserID       string `json:"userId"`
 	MembershipID string `json:"membershipId"`
 	Role         string `json:"role"`
+	// Set only on a ticket routed to ANOTHER member's machine. Its presence is
+	// what turns this box into a shared surface for the request: the caller may
+	// reach /lody/* and nothing else, and the bridge scopes what they may say
+	// there (plans/LODY-SHARING.md §4).
+	Share *webAppShareClaim `json:"share,omitempty"`
 }
+
+// What a ticket routed to another member's machine may do here. Two disjoint
+// id lists rather than one level, because a grantee can hold read-only on one
+// session and read-write on another on the same box; the write predicate then
+// never mentions Scope, which makes a workspace admin's implicit access
+// read-only by construction (plans/LODY-SHARING.md §3.2).
+type webAppShareClaim struct {
+	Target string   `json:"target"`
+	Scope  string   `json:"scope"`
+	Read   []string `json:"read"`
+	Write  []string `json:"write"`
+}
+
+// Decoded first as pointers so a MISSING key is distinguishable from an empty
+// one. All four are required: a claim with no `write` key would otherwise read
+// as "writes nothing" here and be refused outright by the control plane's own
+// parser, and two verifiers that disagree about a malformed claim is exactly
+// what this contract's fixtures exist to prevent.
+type webAppShareClaimWire struct {
+	Target *string   `json:"target"`
+	Scope  *string   `json:"scope"`
+	Read   *[]string `json:"read"`
+	Write  *[]string `json:"write"`
+}
+
+// Mirrors MAX_TICKET_SHARE_SESSIONS in core/webapp-tickets.ts. The fixture
+// corpus does not pin it — a 65-id case would be three kilobytes of noise — so
+// these two lines are the weakest link in this contract.
+const maxTicketShareSessions = 64
 
 type webAppTicketClaims struct {
 	WorkspaceID  string `json:"workspaceId"`
@@ -133,6 +202,48 @@ type webAppTicketClaims struct {
 	MembershipID string `json:"membershipId"`
 	Role         string `json:"role"`
 	Exp          int64  `json:"exp"`
+	// Raw so that `"share": null` is refused rather than read as absent: a
+	// pointer field would decode it to nil and accept the ticket, while the
+	// control plane's parser refuses it. `omitempty` matters on the way OUT —
+	// the tests mint through this same struct, and a nil RawMessage without it
+	// encodes as `null`, which every one of those tickets would then be refused
+	// for.
+	Share json.RawMessage `json:"share,omitempty"`
+}
+
+func parseShareClaim(raw json.RawMessage) (*webAppShareClaim, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var wire webAppShareClaimWire
+	if err := decoder.Decode(&wire); err != nil || requireJSONEOF(decoder) != nil {
+		return nil, false
+	}
+	if wire.Target == nil || wire.Scope == nil || wire.Read == nil || wire.Write == nil {
+		return nil, false
+	}
+	claim := webAppShareClaim{Target: *wire.Target, Scope: *wire.Scope, Read: *wire.Read, Write: *wire.Write}
+	if claim.Target == "" || (claim.Scope != "sessions" && claim.Scope != "all") {
+		return nil, false
+	}
+	if len(claim.Read)+len(claim.Write) > maxTicketShareSessions {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(claim.Read)+len(claim.Write))
+	for _, id := range append(append([]string{}, claim.Read...), claim.Write...) {
+		if id == "" {
+			return nil, false
+		}
+		// Disjoint, so the join and update predicates cannot disagree about one
+		// session.
+		if _, duplicate := seen[id]; duplicate {
+			return nil, false
+		}
+		seen[id] = struct{}{}
+	}
+	return &claim, true
 }
 
 type drainTarget struct {
@@ -179,7 +290,8 @@ func main() {
 		dufs:                   dufsProxy,
 		dufsAddress:            dufsAddress,
 		terminal:               &url.URL{Scheme: "http", Host: terminalAddress},
-		actor:                  &url.URL{Scheme: "http", Host: actorAddress},
+		lody:                   &url.URL{Scheme: "http", Host: lodyBridgeHost},
+		lodyTransport:          unixSocketTransport(lodyBridgeSocketPath),
 		controlPlaneOriginPath: controlPlaneOriginPath,
 		webAppTokenPath:        webAppTokenPath,
 		workspaceIDPath:        workspaceIDPath,
@@ -214,6 +326,18 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		identity, allowed = webAppCredential(request, webAppToken, workspaceID, time.Now().Unix())
 		if !allowed {
 			deny(response, request, http.StatusForbidden, "webApp token forbidden", webAppCredentialDetail(request, workspaceID))
+			return
+		}
+	}
+	// A SHARED ticket may reach the session daemon's doors and nothing else.
+	// §0.1 of plans/LODY-SESSIONS.md grants "read access scoped to that
+	// session's worktree; nothing else on the owner's box", and this is that
+	// sentence: an allowlist, so a surface added later is refused until somebody
+	// decides it belongs. The worktree reads themselves ride /lody/project,
+	// which the bridge scopes per session.
+	if identity.Share != nil {
+		if _, isLody := lodyPaths[request.URL.Path]; !isLody {
+			deny(response, request, http.StatusForbidden, "a shared session reaches the session daemon only", roleDetail(identity)+" path "+request.URL.Path)
 			return
 		}
 	}
@@ -283,14 +407,9 @@ func (g *gateway) ServeHTTP(response http.ResponseWriter, request *http.Request)
 		g.serveTerminal(response, request)
 		return
 	}
-	if request.URL.Path == "/acp" || strings.HasPrefix(request.URL.Path, "/acp/") {
-		// The actor has no role guard of its own, so an observer reaching it
-		// here would drive the agent.
-		if identity.Role == "viewer" {
-			deny(response, request, http.StatusForbidden, "viewers cannot drive the workspace agent", roleDetail(identity))
-			return
-		}
-		g.serveACP(response, request)
+	if _, isLody := lodyPaths[request.URL.Path]; isLody {
+		removeWebAppTokenHeader(request.Header)
+		g.serveLody(response, request, identity, strings.TrimPrefix(request.URL.Path, "/lody"))
 		return
 	}
 	removeWebAppTokenHeader(request.Header)
@@ -384,21 +503,64 @@ func (g *gateway) serveTerminal(response http.ResponseWriter, request *http.Requ
 	proxy.ServeHTTP(response, request)
 }
 
-func (g *gateway) serveACP(response http.ResponseWriter, request *http.Request) {
-	target := g.actor
+// unixSocketTransport dials one unix socket whatever address the proxy asks
+// for. http.Transport is what makes a websocket upgrade work over it: on a 101
+// it hands the proxy a body that is also the writer, which is the only thing
+// httputil.ReverseProxy needs to splice the two connections.
+func unixSocketTransport(socketPath string) http.RoundTripper {
+	return &http.Transport{
+		DialContext: func(ctx context.Context, _ string, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+}
+
+// serveLody proxies the browser's five doors into the Lody session daemon:
+// `/lody/sync`, the websocket carrying its CRDT data plane; `/lody/rpc`,
+// `/lody/control` and `/lody/project`, the three HTTP request planes (machine
+// RPC, session control, local-project control); and `/lody/platform`, the
+// daemon's own local identity and implicit workspace. All five land on
+// blitz-lody-bridge, which re-serves the daemon's unix sockets on one of its
+// own; nothing here talks to the daemon directly.
+//
+// The three added in phase 2 carry the same viewer policy as the first two, for
+// the same reason: `/lody/control` posts `session/create`, which dispatches an
+// agent turn, and `/lody/project` posts `local-project/checkout-branch`, which
+// moves a git worktree. Neither is narrower than the sync socket.
+//
+// "READ-ONLY" HAS NO MEANING AT THIS LAYER, and phase 6 did not change that.
+// The sync socket is bidirectional and one `update` frame writes a session, so
+// GET-versus-POST tells nobody anything here; the `/preview/` and dufs branches
+// below can narrow a viewer to reads only because their protocols carry that
+// distinction in the method. So what phase 6 added is a per-room ACL keyed to a
+// share grant, enforced by the BRIDGE, where the frames are. This function's
+// share-related job is exactly two lines: let a viewer through when they hold a
+// grant, and hand the verified claim on (plans/LODY-SHARING.md §4.1).
+func (g *gateway) serveLody(response http.ResponseWriter, request *http.Request, identity webAppIdentity, upstreamPath string) {
+	// A viewer holds no sessions of their own, so their own box's daemon is
+	// closed to them. A viewer holding a read-only SHARE is the case §0.1 asks
+	// to allow, and the bridge is what keeps it read-only.
+	if identity.Role == "viewer" && identity.Share == nil {
+		deny(response, request, http.StatusForbidden, "lody sessions are not available to viewers", roleDetail(identity))
+		return
+	}
+	removeLodyShareHeader(request.Header)
+	if identity.Share != nil {
+		encoded, err := json.Marshal(identity.Share)
+		if err != nil {
+			deny(response, request, http.StatusInternalServerError, "share claim could not be forwarded", roleDetail(identity))
+			return
+		}
+		request.Header.Set(lodyShareHeader, string(encoded))
+	}
+	target := g.lody
 	if target == nil {
-		target = &url.URL{Scheme: "http", Host: actorAddress}
+		target = &url.URL{Scheme: "http", Host: lodyBridgeHost}
 	}
-	upstreamPath := strings.TrimPrefix(request.URL.Path, "/acp")
-	if upstreamPath == "" {
-		upstreamPath = "/"
-	}
-	proxy := g.reverseProxy(target, upstreamPath, "/acp", request)
-	previousRewrite := proxy.Rewrite
-	proxy.Rewrite = func(proxyRequest *httputil.ProxyRequest) {
-		previousRewrite(proxyRequest)
-		proxyRequest.Out.Host = actorHost
-		proxyRequest.Out.Header.Set("Origin", actorOrigin)
+	proxy := g.reverseProxy(target, upstreamPath, "", request)
+	if g.lodyTransport != nil {
+		proxy.Transport = g.lodyTransport
 	}
 	proxy.ServeHTTP(response, request)
 }
@@ -503,14 +665,13 @@ func (g *gateway) serveDiag(response http.ResponseWriter, request *http.Request,
 	}
 }
 
-// diagServices probes the three addresses this gateway proxies to, and always
-// all three: a box that reports two services is not a diagnosis anyone can act
-// on. main is the only place a gateway is built and it sets all three, so the
+// diagServices probes the two addresses this gateway proxies to, and always
+// both: a box that reports one service is not a diagnosis anyone can act on.
+// main is the only place a gateway is built and it sets both, so the
 // addresses are read straight off the struct.
 func (g *gateway) diagServices() []diagService {
-	services := make([]diagService, 0, 3)
+	services := make([]diagService, 0, 2)
 	for _, service := range []diagService{
-		{Name: "actor", Address: g.actor.Host},
 		{Name: "terminal", Address: g.terminal.Host},
 		{Name: "dufs", Address: g.dufsAddress},
 	} {
@@ -976,7 +1137,11 @@ func webAppCredential(request *http.Request, secret, workspaceID string, now int
 	if claims.UserID == "" || claims.MembershipID == "" || !validWebAppRole(claims.Role) {
 		return webAppIdentity{}, false
 	}
-	identity := webAppIdentity{UserID: claims.UserID, MembershipID: claims.MembershipID, Role: claims.Role}
+	share, shareOK := parseShareClaim(claims.Share)
+	if !shareOK {
+		return webAppIdentity{}, false
+	}
+	identity := webAppIdentity{UserID: claims.UserID, MembershipID: claims.MembershipID, Role: claims.Role, Share: share}
 	*request = *request.WithContext(context.WithValue(request.Context(), webAppIdentityContextKey{}, identity))
 	return identity, true
 }
@@ -1024,6 +1189,17 @@ func forceReadOnlyTerminalArgs(target *url.URL) bool {
 	query.Add("arg", "ro")
 	target.RawQuery = query.Encode()
 	return true
+}
+
+// The verified share claim, handed to the bridge. Any inbound copy is stripped
+// first, exactly like the webApp token: the browser must never be able to
+// author one.
+func removeLodyShareHeader(header http.Header) {
+	for name := range header {
+		if strings.EqualFold(name, lodyShareHeader) {
+			delete(header, name)
+		}
+	}
 }
 
 func removeWebAppTokenHeader(header http.Header) {

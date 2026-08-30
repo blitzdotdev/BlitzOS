@@ -1,0 +1,794 @@
+#!/usr/bin/env node
+// The browser's doors into the Lody session daemon.
+//
+// The daemon speaks only over unix sockets in `$LODY_DATA_DIR/run` and a
+// browser cannot open one, so this bridge re-serves exactly those surfaces on a
+// single unix socket that the Go gateway reverse-proxies:
+//
+//   GET  /sync     websocket <-> `<namespace>-loro-data-plane.sock` (CRDT sync)
+//   POST /rpc      http      <-> `<namespace>-control.sock` /machine-rpc
+//   POST /control  http      <-> `<namespace>-control.sock` /session-control
+//   POST /project  http      <-> `<namespace>-control.sock` /project-control
+//   GET  /platform http      <-  `$LODY_DATA_DIR/workspace-catalog.json`
+//                                + `run/daemon.json`
+//   GET  /healthz  http      <-> `<namespace>-probe.sock`   /healthz
+//
+// `/healthz` is an operator probe and deliberately NOT a browser surface: the
+// gateway forwards only the five paths listed in
+// packages/schema/src/webapp-surface.ts, and that list omits it.
+//
+// `/platform` is the one door with no upstream socket behind it. The daemon
+// mints its `local:<uuid>` identity, its implicit `lw_<uuid>` workspace and its
+// machineId into `workspace-catalog.json`, and the browser needs all three
+// before it may address any of the other four
+// (plans/LODY-RUNTIME-DESIGN.md §1.2, §3.4, risk 4). The design doc expected the
+// machineId in `run/daemon.json`; measured against lody@0.88.1 that file carries
+// only pid/socket paths/version, and the id lives in the catalog's `machine`
+// block, so the catalog is the whole source.
+//
+// It is served BYTE-FOR-BYTE, like every other door here. The alternative — the
+// bridge projecting the four fields the renderer wants — would make the response
+// a BlitzOS-authored payload and therefore a cross-runtime contract of ours
+// needing its own fixture corpus (CLAUDE.md). Passing the daemon's own file
+// through keeps the contract Lody's, parsed browser-side by a port of Lody's own
+// `parseLocalPlatformSnapshot`
+// (`vendor/lody/apps/electron/src/main/local-platform-snapshot.ts`), which is
+// exactly the arrangement `/sync` and `/rpc` already have.
+//
+// A SHARED request gets a NARROWED catalog instead — `identity`, `workspaces`
+// and `machine`, and nothing else. The catalog also names the box's own
+// sessions, and "opt-in per session" means a grantee learns about the one they
+// were granted and no others. That projection is BlitzOS-authored and therefore
+// a contract of ours, so it has a fixture pair in
+// `packages/schema/fixtures/lody-share-claim/` and conformance on both sides.
+// The owner's own request is still served byte-for-byte.
+//
+// WHY A BRIDGE AND NOT A LORO RELAY. plans/LODY-SESSIONS.md §4 offered two
+// designs. Design (a) — run `loro-websocket`'s SimpleServer beside the daemon
+// and have the daemon join it as a client — cannot be built from the published
+// package: its bundle contains only `StreamsTransportAdapter`, so
+// `loro-repo/transport/websocket` is not in there to construct, and in local
+// mode the daemon's repo runs with zero transports by design. Design (b) —
+// this file — reuses the data-plane socket the daemon already opens for
+// Electron, whose renderer half (`@lody/shared/local-loro-transport`,
+// `LocalLoroTransportAdapter`) is a real `loro-repo` TransportAdapter already
+// in our vendored tree. Measured end to end on 2026-08-30; see
+// plans/evidence/lody-phase1.md.
+//
+// WHY IT IS DUMB, FOR THE MEMBER WHO OWNS THE BOX. The upstream Electron relay
+// it replaces is "a dumb broadcast pipe" — protocol v7 frames are peer-addressed
+// and the adapters filter. For a connection with no share claim this bridge is
+// the same thing: it never parses a frame, it only translates framing, one
+// newline-delimited JSON line on the socket to one WebSocket text message and
+// back. Liveness (`ping`/`pong`) belongs to the peer at each end, so it crosses
+// this process untouched, exactly like every other frame.
+//
+// A SHARED connection is where it stops being dumb, and it has to: a read-only
+// grantee is exactly "a peer whose writes the relay does not apply", so the ACL
+// can only live where the frames are. See `shareVerdict` below.
+//
+// A shared connection is also the only one whose SERVER frames are read. Every
+// other room needs no outbound filter — the daemon addresses frames to the peers
+// subscribed to a room, and a grantee never joins a room the claim does not name
+// — but `meta` is a room the grantee does join, and it carries the metadata of
+// every document on the box. See `projectMetaBundle`.
+//
+// ONE SOCKET PER CONNECTION, unlike the Electron relay, which multiplexes every
+// window onto one daemon socket. A browser tab therefore gets its own peer
+// lifecycle: closing the tab closes the daemon socket, and the daemon drops
+// that peer's room subscriptions without anyone synthesizing a `detach`. It is
+// also the seam phase 6 needs, where a shared session's frames must be filtered
+// per grantee rather than fanned out.
+//
+// THE SHARE CLAIM ARRIVES ON A HEADER. The Go gateway verifies the webApp
+// ticket and forwards the claim it found as `X-Blitz-Lody-Share`, stripping any
+// inbound copy first — so by the time a claim reaches this process it is the
+// control plane's word, not the browser's. This file never decides WHO someone
+// is; it decides what an already-authenticated claim may say
+// (plans/LODY-SHARING.md §4).
+//
+// CommonJS, like /usr/local/bin/blitz: the file has no extension and no
+// package.json above it inside the image, so node loads it as CJS. That is also
+// what lets `ws` resolve — it lives in the image's global npm prefix, which only
+// `require` reaches, through the NODE_PATH the s6 run script sets. An ESM
+// `import` specifier ignores NODE_PATH entirely.
+"use strict";
+
+const fs = require("node:fs");
+const http = require("node:http");
+const net = require("node:net");
+const path = require("node:path");
+const { WebSocketServer } = require("ws");
+
+// Mirrors LOCAL_LORO_DATA_PLANE_MAX_FRAME_BYTES in
+// vendor/lody/packages/shared/src/local-loro-data-plane.ts. A compliant peer
+// never sends a larger frame; this only bounds what a non-compliant one can
+// make us buffer.
+const MAX_FRAME_BYTES = 32 * 1024 * 1024;
+const NEWLINE = 0x0a;
+
+// A shared POST is buffered so its body can be judged (`forwardShared`), so it
+// needs a bound the piped path does not. Every request a share may make is a
+// method name, a session id and a path: kilobytes. One mebibyte is generous and
+// still small enough that a hostile grantee cannot make this process grow.
+const MAX_SHARED_BODY_BYTES = 1024 * 1024;
+
+// KEEP THESE PATHS SHORT. `sun_path` caps a unix socket at 103 bytes, and the
+// daemon THROWS `local_ipc_socket_path_too_long` rather than falling back
+// (vendor/lody/packages/shared/src/node/local-ipc.ts, where
+// MAX_UNIX_SOCKET_PATH_BYTES is 103). The longest name under the data dir is
+// `<dataDir>/run/lody-oss-loro-data-plane.sock`, whose tail is 34 bytes, so the
+// data dir itself has 69 to spend. The image default, /var/lib/blitz/lody,
+// spends 19. A developer pointing LODY_DATA_DIR at a deep scratch directory is
+// the way this bites, and it bites at daemon startup, not here.
+const stateDir = process.env.BLITZ_STATE_DIR || "/var/lib/blitz";
+const dataDir = process.env.LODY_DATA_DIR || `${stateDir}/lody`;
+// The namespace is the daemon's installation profile: `lody-oss` is what the
+// local (OSS) platform picks, and the box always runs local. Kept in step with
+// getInstallationProfile() in vendor/lody/packages/shared/src/node/installation-profile.ts.
+const namespace = process.env.LODY_PLATFORM === "cloud" ? "lody" : "lody-oss";
+const runDir = path.join(dataDir, "run");
+const dataPlaneSocket = path.join(runDir, `${namespace}-loro-data-plane.sock`);
+const controlSocket = path.join(runDir, `${namespace}-control.sock`);
+const probeSocket = path.join(runDir, `${namespace}-probe.sock`);
+const listenPath = process.env.BLITZ_LODY_BRIDGE_SOCKET || `${stateDir}/lody-bridge.sock`;
+const catalogPath = path.join(dataDir, "workspace-catalog.json");
+
+// ── The share ACL ────────────────────────────────────────────────────────────
+//
+// Everything below runs ONLY for a connection or request that carries a
+// verified share claim. With no claim every path here is skipped and the bridge
+// behaves exactly as it did in phase 2.
+
+const SHARE_HEADER = "x-blitz-lody-share";
+const PROTOCOL_VERSION = 7;
+
+// `session-<id>` is the session document's room id
+// (vendor/lody/packages/shared/src/index.ts:370). Two OTHER prefixes start with
+// the same six characters and are NOT session documents, so they are stripped
+// first — upstream's own `docId` router checks them in this order (`:401`).
+const SESSION_DOC_PREFIX = "session-";
+const NON_SESSION_DOC_PREFIXES = ["preview-comment-", "session-comment-"];
+
+// Machine-RPC methods a share may call. Every method on the union except the
+// two `file/preview*` ones carries `params.sessionId`, so the ACL is "is the
+// method allowed" AND "is that session granted" rather than a table of cases.
+// The excluded ones name arbitrary paths and no session, which is why they are
+// excluded rather than scoped.
+const SHARED_RPC_READ_METHODS = new Set([
+  "code-collab/get-file-index",
+  "code-collab/open-text",
+  "code-collab/refresh-text",
+  "code-collab/open-current-diff",
+  "code-collab/open-all-changes-diff",
+  "code-collab/open-turn-diff",
+  "code-collab/lsp-definition",
+  "code-collab/lsp-references",
+]);
+// A read-write grantee is a co-driver: prompt, steer, cancel
+// (plans/LODY-SESSIONS.md §0.1). Not `session/terminate` — killing the agent
+// process is not the same act as cancelling a turn — and not
+// `code-collab/save-text`, because a share grants READ access to the worktree.
+const SHARED_RPC_WRITE_METHODS = new Set([
+  "session/cancel",
+  "session/steer",
+  "session/dispatch-turn",
+]);
+
+// The two `local-project/*` doors that name a SESSION. Everything else on that
+// union names a project, which a share says nothing about.
+const SHARED_PROJECT_TYPES = new Set(["worktree/list-files", "worktree/read-file"]);
+
+// ── The meta projection ──────────────────────────────────────────────────────
+//
+// `meta` is loro-repo's own document registry: existence records and per-doc
+// metadata for every document on this box. Phase 6 refused it outright for
+// `scope: "sessions"`, which was right about the leak and wrong about the cost:
+// SessionMeta — title, project, machineId, status, diffStats — lives ONLY here,
+// so a grantee refused the room has no session to render. Measured in
+// plans/LODY-SHARING.md §10.1.
+//
+// It is now served PROJECTED instead. The room's payload is `flock-json`, a
+// plain `{version, entries}` object whose keys are JSON-encoded paths —
+// `["e",<docId>]` for an existence record and `["m",<docId>,<field>]` for one
+// metadata field — so keeping the granted documents and dropping the rest is
+// string work on the way past. No CRDT is parsed and no loro build is needed in
+// this process, which is why the projection is affordable at all.
+//
+// `scope: "all"` is forwarded whole: a workspace admin holds implicit read-only
+// on every session, so the room leaks nothing they are not entitled to.
+const META_ENTRY_KINDS = new Set(["e", "m"]);
+const MACHINE_DOC_PREFIX = "machine-";
+// The machine document has to survive the projection or the grantee's surface
+// reports the machine REMOVED and disables its composer
+// (`session-chat-interface.tsx:2074`). These are its fields minus the two that
+// enumerate the owner's other work. An allowlist rather than a deny list, so a
+// field upstream adds is withheld until somebody reads it.
+const MACHINE_META_SHARE_FIELDS = new Set([
+  "id",
+  "name",
+  "ownerUserId",
+  "hostType",
+  "cliVersion",
+  "os",
+  "supportRegistryAgentTypes",
+  "rpcVersion",
+  "supportsLocalProjectHistoryRpc",
+  "protocolCapabilities",
+]);
+// `MachineMeta.sessions` is a required field naming every session on the box.
+// It is EMPTIED rather than dropped, because a reader that finds the key absent
+// and a reader that finds it empty are not the same reader.
+const MACHINE_SESSIONS_FIELD = "sessions";
+
+// The session-metadata fields a READ-WRITE grantee may write, and the only ones.
+//
+// `latestUserMsgId` is the DURABLE DISPATCH POINTER: the RPC that asks a machine
+// to run a turn is only an accelerator, and the pointer is what the daemon's
+// dispatch watcher recovers from (`use-session-actions.ts:858`). A co-driver who
+// may prompt must be able to write it, or their prompt lands in the document and
+// nothing ever runs it. `lastMissingHistoryUserMsgId` is cleared in the same
+// patch, and `lastMessageAt` is what keeps the session from reading as empty.
+//
+// Everything else is withheld, and the withheld ones are the point: `title`,
+// `isArchived`, `isPinned`, `agentConfigId`, `status` and `project` are the
+// session's own identity and lifecycle. §0.1 lets a co-driver prompt, steer,
+// cancel and answer a permission request; renaming, archiving and re-pointing
+// somebody else's session at another agent are not on that list.
+const SESSION_META_SHARE_WRITE_FIELDS = new Set([
+  "latestUserMsgId",
+  "lastMissingHistoryUserMsgId",
+  "lastMessageAt",
+]);
+
+/** The verified claim, or null for an ordinary request. */
+function parseShare(headerValue) {
+  if (typeof headerValue !== "string" || headerValue === "") return null;
+  let decoded;
+  try {
+    decoded = JSON.parse(headerValue);
+  } catch {
+    return null;
+  }
+  if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) return null;
+  if (decoded.scope !== "sessions" && decoded.scope !== "all") return null;
+  if (!Array.isArray(decoded.read) || !Array.isArray(decoded.write)) return null;
+  return {
+    scope: decoded.scope,
+    read: new Set(decoded.read.filter((id) => typeof id === "string")),
+    write: new Set(decoded.write.filter((id) => typeof id === "string")),
+  };
+}
+
+/** The session a `doc` room belongs to, or null when it is not a session doc. */
+function sessionIdForDoc(docId) {
+  if (typeof docId !== "string") return null;
+  for (const prefix of NON_SESSION_DOC_PREFIXES) {
+    if (docId.startsWith(prefix)) return null;
+  }
+  return docId.startsWith(SESSION_DOC_PREFIX) ? docId.slice(SESSION_DOC_PREFIX.length) : null;
+}
+
+/** `"write"`, `"read"` or `"none"` for one session id. */
+function sessionLevel(share, sessionId) {
+  if (typeof sessionId !== "string" || sessionId === "") return "none";
+  if (share.write.has(sessionId)) return "write";
+  if (share.read.has(sessionId) || share.scope === "all") return "read";
+  return "none";
+}
+
+/**
+ * What a claim may do in one room.
+ *
+ * `meta` is READ for every claim and WRITE only through the field allowlist
+ * above. For `scope: "sessions"` it is read through the projection below — the
+ * room names every document on the box, and "opt-in per session" means a grantee
+ * learns about the ones they were granted and no others. For `scope: "all"` it
+ * is read whole and still written narrowly.
+ *
+ * "write" here means "the frame may be judged entry by entry", which is what
+ * `projectMetaWrite` then does. A whole-room verdict cannot express this room:
+ * one bundle carries records for many documents and many fields.
+ *
+ * `flock-doc` stays admin-only. The machine Flock carries the box's registered
+ * local projects, which is the owner's repository list.
+ */
+function roomLevel(share, room) {
+  if (room === null || typeof room !== "object" || Array.isArray(room)) return "none";
+  if (room.scope === "meta") return "write";
+  if (room.scope === "flock-doc") return share.scope === "all" ? "read" : "none";
+  if (room.scope !== "doc") return "none";
+  return sessionLevel(share, sessionIdForDoc(room.docId));
+}
+
+/** Whether one meta-flock entry key survives the projection, and as what.
+ * Answers `null` to drop it, `"keep"` to pass it through, or `"empty-sessions"`
+ * for the one field that is emptied rather than dropped. */
+function metaEntryVerdict(share, encodedKey) {
+  let key;
+  try {
+    key = JSON.parse(encodedKey);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(key) || key.length < 2) return null;
+  const [kind, docId] = key;
+  if (!META_ENTRY_KINDS.has(kind) || typeof docId !== "string") return null;
+  if (docId.startsWith(MACHINE_DOC_PREFIX)) {
+    if (kind === "e") return "keep";
+    if (key[2] === MACHINE_SESSIONS_FIELD) return "empty-sessions";
+    return MACHINE_META_SHARE_FIELDS.has(key[2]) ? "keep" : null;
+  }
+  return sessionLevel(share, sessionIdForDoc(docId)) === "none" ? null : "keep";
+}
+
+/**
+ * One meta-flock bundle, narrowed to what the claim may see.
+ *
+ * Entries are self-contained last-write-wins records — that is the property the
+ * protocol's own comment leans on when it splits an oversized bundle into
+ * independently importable chunks — so dropping some of them leaves the rest
+ * importable exactly as they arrived. Each surviving record keeps its own clock,
+ * including the emptied one, so the receiver's version vector still advances and
+ * the daemon's next delta does not re-offer what was withheld.
+ */
+function projectMetaBundle(share, bundle) {
+  if (bundle === null || typeof bundle !== "object" || Array.isArray(bundle)) return bundle;
+  const entries = bundle.entries;
+  if (entries === null || typeof entries !== "object" || Array.isArray(entries)) return bundle;
+  const kept = {};
+  for (const [encodedKey, record] of Object.entries(entries)) {
+    const verdict = metaEntryVerdict(share, encodedKey);
+    if (verdict === null) continue;
+    kept[encodedKey] =
+      verdict === "empty-sessions" && record !== null && typeof record === "object"
+        ? { ...record, d: [] }
+        : record;
+  }
+  return { ...bundle, entries: kept };
+}
+
+/**
+ * One meta-flock bundle a CLIENT sent, narrowed to what the claim may write.
+ *
+ * Returns `null` when nothing survives, which the caller reports as a drop —
+ * silently, like every other refused write, because a CRDT peer told its write
+ * failed tears the room down.
+ */
+function projectMetaWrite(share, bundle) {
+  if (bundle === null || typeof bundle !== "object" || Array.isArray(bundle)) return null;
+  const entries = bundle.entries;
+  if (entries === null || typeof entries !== "object" || Array.isArray(entries)) return null;
+  const kept = {};
+  let keptAny = false;
+  for (const [encodedKey, record] of Object.entries(entries)) {
+    let key;
+    try {
+      key = JSON.parse(encodedKey);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(key) || key.length !== 3 || key[0] !== "m") continue;
+    if (!SESSION_META_SHARE_WRITE_FIELDS.has(key[2])) continue;
+    if (sessionLevel(share, sessionIdForDoc(key[1])) !== "write") continue;
+    kept[encodedKey] = record;
+    keptAny = true;
+  }
+  return keptAny ? { ...bundle, entries: kept } : null;
+}
+
+/** A server frame on its way to a shared connection, projected if it carries a
+ * meta bundle and returned untouched otherwise.
+ *
+ * This is the one place phase 6's "server → client needs no filter" stops
+ * holding, and it holds for every other room for the reason it always did: the
+ * daemon addresses frames to the peers subscribed to a room, and a room the
+ * grantee never joined has no path to them. `meta` is the exception because the
+ * grantee DOES join it. */
+function projectServerFrame(share, frame) {
+  if (share.scope === "all") return frame;
+  if (frame === null || typeof frame !== "object" || Array.isArray(frame)) return frame;
+  if (frame.room === null || typeof frame.room !== "object" || frame.room.scope !== "meta") {
+    return frame;
+  }
+  const payload = frame.payload;
+  if (payload === null || typeof payload !== "object" || payload.kind !== "flock-json") {
+    return frame;
+  }
+  return { ...frame, payload: { ...payload, bundle: projectMetaBundle(share, payload.bundle) } };
+}
+
+/**
+ * `"forward"`, `"drop"` or `"refuse"` for one client frame.
+ *
+ * An `update` the claim may not write is DROPPED, not refused. A CRDT peer told
+ * its write failed tears the room down and retries; a peer whose write simply
+ * never lands keeps a divergent local replica and re-converges from the owner's
+ * state on the next sync. Read-only in a CRDT world IS "the relay does not apply
+ * what you send".
+ *
+ * A `join` it may not make is REFUSED, because the client is waiting on a
+ * `joined` that will never come, and a terminal error is the only thing that
+ * stops a reconnect loop retrying a grant it does not have.
+ */
+function shareVerdict(share, frame) {
+  if (frame === null || typeof frame !== "object" || Array.isArray(frame)) return "drop";
+  switch (frame.type) {
+    case "ping":
+    // `leave` and `detach` only unsubscribe the sender.
+    case "leave":
+    case "detach":
+      return "forward";
+    case "join":
+      return roomLevel(share, frame.room) === "none" ? "refuse" : "forward";
+    case "update":
+      // A meta write is judged entry by entry rather than room by room, so it
+      // is neither forwarded nor dropped whole. See `projectMetaWrite`.
+      if (frame.room !== null && typeof frame.room === "object" && frame.room.scope === "meta") {
+        return "project";
+      }
+      return roomLevel(share, frame.room) === "write" ? "forward" : "drop";
+    // `machine-monitor` is machine-level telemetry, not session state, and no
+    // share carries it. Anything else is a frame this build does not know.
+    default:
+      return "drop";
+  }
+}
+
+/** The refusal a rejected `join` gets back, echoing what the client needs to
+ * settle its own request. `terminal` because a rejoin cannot become allowed. */
+function roomForbiddenFrame(frame) {
+  const refusal = {
+    type: "error",
+    protocolVersion: PROTOCOL_VERSION,
+    code: "room_forbidden",
+    message: "this room is not shared with you",
+    terminal: true,
+  };
+  for (const field of ["workspaceId", "peerId", "requestId"]) {
+    if (typeof frame[field] === "string") refusal[field] = frame[field];
+  }
+  if (frame.room !== null && typeof frame.room === "object") refusal.room = frame.room;
+  return refusal;
+}
+
+/** The catalog a shared request sees: the identity/workspace/machine triple and
+ * nothing else. Absent keys stay absent rather than becoming null, so the
+ * browser's parser sees the same shapes it sees on an owner's request. */
+function narrowCatalog(catalog) {
+  const narrowed = {};
+  for (const field of ["identity", "workspaces", "machine"]) {
+    if (catalog[field] !== undefined) narrowed[field] = catalog[field];
+  }
+  return narrowed;
+}
+
+/** Whether a `/rpc` body is inside the claim. */
+function rpcAllowed(share, body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return false;
+  const params = body.params;
+  const sessionId = params !== null && typeof params === "object" ? params.sessionId : undefined;
+  if (SHARED_RPC_READ_METHODS.has(body.method)) return sessionLevel(share, sessionId) !== "none";
+  if (SHARED_RPC_WRITE_METHODS.has(body.method)) return sessionLevel(share, sessionId) === "write";
+  return false;
+}
+
+/** Whether a `/project` body is inside the claim. */
+function projectAllowed(share, body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return false;
+  if (!SHARED_PROJECT_TYPES.has(body.type)) return false;
+  return sessionLevel(share, body.sessionId) !== "none";
+}
+
+function forward(request, response, socketPath, upstreamPath, headers) {
+  const upstream = http.request(
+    { socketPath, path: upstreamPath, method: request.method, headers },
+    (upstreamResponse) => {
+      response.writeHead(upstreamResponse.statusCode ?? 502, {
+        "content-type": upstreamResponse.headers["content-type"] ?? "application/json",
+        "cache-control": "no-store",
+      });
+      upstreamResponse.pipe(response);
+    },
+  );
+  upstream.on("error", (error) => {
+    console.error(`blitz-lody-bridge: ${upstreamPath} upstream failed: ${error.message}`);
+    if (!response.headersSent) {
+      response.writeHead(502, { "content-type": "application/json", "cache-control": "no-store" });
+    }
+    response.end('{"ok":false,"error":"lody_daemon_unavailable"}');
+  });
+  request.pipe(upstream);
+}
+
+// The daemon requires `x-lody-local-control` on every control-socket POST; it is
+// what separates a deliberate local-control call from a stray browser request.
+const CONTROL_HEADERS = { "content-type": "application/json", "x-lody-local-control": "1" };
+
+// Browser path -> the control socket's own path. Three doors, one socket: the
+// daemon serves /machine-rpc, /session-control and /project-control on
+// `<namespace>-control.sock`, and they are separate doors here because they take
+// three different request unions and the gateway allows paths, not bodies.
+const CONTROL_ROUTES = {
+  "/rpc": "/machine-rpc",
+  "/control": "/session-control",
+  "/project": "/project-control",
+};
+
+function servePlatform(response, share) {
+  let catalog;
+  try {
+    catalog = fs.readFileSync(catalogPath);
+  } catch (error) {
+    // Absent until the daemon finishes provisioning its implicit workspace, so
+    // this is a normal startup state and not a failure. The browser polls.
+    response.writeHead(503, { "content-type": "application/json", "cache-control": "no-store" });
+    response.end(`{"ok":false,"error":"lody_catalog_unavailable","detail":${JSON.stringify(String(error.code ?? error.message))}}`);
+    return;
+  }
+  let body = catalog;
+  if (share !== null) {
+    let decoded;
+    try {
+      decoded = JSON.parse(catalog.toString("utf8"));
+    } catch {
+      // A catalog this process cannot read is a catalog it cannot narrow, and
+      // serving it whole to a grantee is the one thing that must not happen.
+      response.writeHead(503, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end('{"ok":false,"error":"lody_catalog_unreadable"}');
+      return;
+    }
+    body = Buffer.from(JSON.stringify(narrowCatalog(decoded)), "utf8");
+  }
+  response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+  response.end(body);
+}
+
+/** The refusal each door answers with, in the shape its own caller parses. A
+ * status nobody can read is no use to an operator, and a body the vendored
+ * client cannot parse turns a refusal into a transport error far from here. */
+function refuseShared(response, upstreamPath, requestedType) {
+  const body = upstreamPath === "/machine-rpc"
+    ? { ok: false, error: "share_forbidden" }
+    : upstreamPath === "/project-control"
+      ? { ok: false, type: requestedType, error: "execution_failed", message: "share_forbidden" }
+      : { ok: false, error: "share_forbidden" };
+  response.writeHead(403, { "content-type": "application/json", "cache-control": "no-store" });
+  response.end(JSON.stringify(body));
+}
+
+/**
+ * A shared POST, judged before it reaches the daemon.
+ *
+ * The body has to be BUFFERED rather than piped, because the ACL is a property
+ * of the body: which method, and which session. An unshared request keeps the
+ * pipe and pays nothing.
+ */
+function forwardShared(request, response, upstreamPath, share) {
+  // `/session-control` is refused outright: everything a read-write grantee
+  // needs is a machine RPC, `session/create` would create a session on somebody
+  // else's box, and `session/file-send-local` would write bytes into their
+  // /workspace.
+  if (upstreamPath === "/session-control") {
+    refuseShared(response, upstreamPath, undefined);
+    return;
+  }
+  const chunks = [];
+  let size = 0;
+  let refused = false;
+  request.on("data", (chunk) => {
+    if (refused) return;
+    size += chunk.length;
+    if (size > MAX_SHARED_BODY_BYTES) {
+      refused = true;
+      response.writeHead(413, { "content-type": "application/json", "cache-control": "no-store" });
+      response.end('{"ok":false,"error":"share_request_too_large"}');
+      return;
+    }
+    chunks.push(chunk);
+  });
+  request.on("end", () => {
+    if (refused) return;
+    const raw = Buffer.concat(chunks);
+    let body = null;
+    try {
+      body = JSON.parse(raw.toString("utf8"));
+    } catch {
+      body = null;
+    }
+    const allowed = upstreamPath === "/machine-rpc"
+      ? rpcAllowed(share, body)
+      : projectAllowed(share, body);
+    if (!allowed) {
+      refuseShared(response, upstreamPath, body === null ? undefined : body.type);
+      return;
+    }
+    const upstream = http.request(
+      {
+        socketPath: controlSocket,
+        path: upstreamPath,
+        method: "POST",
+        headers: { ...CONTROL_HEADERS, "content-length": String(raw.length) },
+      },
+      (upstreamResponse) => {
+        response.writeHead(upstreamResponse.statusCode ?? 502, {
+          "content-type": upstreamResponse.headers["content-type"] ?? "application/json",
+          "cache-control": "no-store",
+        });
+        upstreamResponse.pipe(response);
+      },
+    );
+    upstream.on("error", (error) => {
+      console.error(`blitz-lody-bridge: ${upstreamPath} upstream failed: ${error.message}`);
+      if (!response.headersSent) {
+        response.writeHead(502, { "content-type": "application/json", "cache-control": "no-store" });
+      }
+      response.end('{"ok":false,"error":"lody_daemon_unavailable"}');
+    });
+    upstream.end(raw);
+  });
+}
+
+const server = http.createServer((request, response) => {
+  const url = new URL(request.url ?? "/", "http://lody-bridge");
+  const share = parseShare(request.headers[SHARE_HEADER]);
+  const controlPath = CONTROL_ROUTES[url.pathname];
+  if (controlPath !== undefined && request.method === "POST") {
+    if (share === null) forward(request, response, controlSocket, controlPath, CONTROL_HEADERS);
+    else forwardShared(request, response, controlPath, share);
+    return;
+  }
+  if (url.pathname === "/platform" && request.method === "GET") {
+    servePlatform(response, share);
+    return;
+  }
+  if (url.pathname === "/healthz" && request.method === "GET") {
+    forward(request, response, probeSocket, "/healthz", {});
+    return;
+  }
+  response.writeHead(404, { "content-type": "application/json", "cache-control": "no-store" });
+  response.end('{"ok":false,"error":"not_found"}');
+});
+
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES });
+
+server.on("upgrade", (request, socket, head) => {
+  const url = new URL(request.url ?? "/", "http://lody-bridge");
+  if (url.pathname !== "/sync") {
+    socket.destroy();
+    return;
+  }
+  // Read ONCE, at the upgrade: the claim is the ticket the gateway verified for
+  // this connection, and the connection outlives the ticket's own 60-second
+  // life. Revocation therefore cuts a live connection through `/admin/drain`
+  // rather than through expiry (plans/LODY-SHARING.md §5).
+  const share = parseShare(request.headers[SHARE_HEADER]);
+  wss.handleUpgrade(request, socket, head, (ws) => bridge(ws, share));
+});
+
+function bridge(ws, share) {
+  const upstream = net.createConnection(dataPlaneSocket);
+  let buffered = Buffer.alloc(0);
+  let dropped = 0;
+  let refused = 0;
+
+  const closeBoth = () => {
+    upstream.destroy();
+    if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close();
+  };
+
+  upstream.on("connect", () => {
+    ws.on("message", (data) => {
+      const frame = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      if (share === null) {
+        upstream.write(frame);
+        upstream.write("\n");
+        return;
+      }
+      const judged = judgeClientFrame(ws, share, frame, () => (dropped += 1), () => (refused += 1));
+      if (judged === null) return;
+      upstream.write(judged);
+      upstream.write("\n");
+    });
+  });
+  upstream.on("data", (chunk) => {
+    buffered = buffered.length === 0 ? chunk : Buffer.concat([buffered, chunk]);
+    for (;;) {
+      const newline = buffered.indexOf(NEWLINE);
+      if (newline < 0) break;
+      const line = buffered.subarray(0, newline);
+      buffered = buffered.subarray(newline + 1);
+      if (line.length === 0) continue;
+      const text = line.toString("utf8");
+      // An unshared connection is still the phase-1 dumb pipe: the bytes are
+      // handed on without ever becoming a JSON value.
+      ws.send(share === null ? text : projectServerLine(share, text));
+    }
+    // A frame this large is a non-compliant daemon, not backpressure: the
+    // sender-side budget is smaller than the cap. Drop the connection rather
+    // than grow without bound; the client rejoins and reconciles.
+    if (buffered.length > MAX_FRAME_BYTES) {
+      console.error("blitz-lody-bridge: oversized frame from the daemon; dropping the connection");
+      closeBoth();
+    }
+  });
+  upstream.on("error", closeBoth);
+  upstream.on("close", closeBoth);
+  ws.on("close", () => {
+    upstream.destroy();
+    // The one place a share connection's enforcement is visible to an operator.
+    // Silence would make "the grantee says nothing lands" and "the grantee is
+    // not connected" the same log.
+    if (share !== null) {
+      console.log(`blitz-lody-bridge: shared connection closed (dropped ${dropped}, refused ${refused})`);
+    }
+  });
+  ws.on("error", () => upstream.destroy());
+}
+
+/** One server line, projected for a shared connection. A line this process
+ * cannot parse is forwarded unchanged: it is the daemon's word either way, and
+ * only a meta bundle is ever narrowed. */
+function projectServerLine(share, text) {
+  let decoded;
+  try {
+    decoded = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  const projected = projectServerFrame(share, decoded);
+  return projected === decoded ? text : JSON.stringify(projected);
+}
+
+/** The bytes that may reach the daemon, or `null` for a frame that may not.
+ * A refusal is answered here; a drop is silent by design (see `shareVerdict`). */
+function judgeClientFrame(ws, share, frame, onDrop, onRefuse) {
+  let decoded = null;
+  try {
+    decoded = JSON.parse(frame.toString("utf8"));
+  } catch {
+    decoded = null;
+  }
+  const verdict = shareVerdict(share, decoded);
+  if (verdict === "forward") return frame;
+  if (verdict === "project") {
+    const payload = decoded.payload;
+    if (payload === null || typeof payload !== "object" || payload.kind !== "flock-json") {
+      onDrop();
+      return null;
+    }
+    const bundle = projectMetaWrite(share, payload.bundle);
+    if (bundle === null) {
+      onDrop();
+      return null;
+    }
+    return Buffer.from(
+      JSON.stringify({ ...decoded, payload: { ...payload, bundle } }),
+      "utf8",
+    );
+  }
+  if (verdict === "refuse") {
+    onRefuse();
+    ws.send(JSON.stringify(roomForbiddenFrame(decoded)));
+    return null;
+  }
+  onDrop();
+  return null;
+}
+
+fs.mkdirSync(path.dirname(listenPath), { recursive: true });
+// A stale socket file survives SIGKILL and would make listen() fail with
+// EADDRINUSE on every restart.
+fs.rmSync(listenPath, { force: true });
+server.listen(listenPath, () => {
+  fs.chmodSync(listenPath, 0o600);
+  console.log(`blitz-lody-bridge: listening on ${listenPath} (daemon run dir ${runDir})`);
+});
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => {
+    server.close();
+    fs.rmSync(listenPath, { force: true });
+    process.exit(0);
+  });
+}

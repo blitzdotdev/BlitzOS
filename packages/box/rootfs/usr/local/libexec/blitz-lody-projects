@@ -1,0 +1,207 @@
+#!/usr/bin/env node
+// Registers every git clone under /workspace as a Lody local project
+// (plans/LODY-SESSIONS.md §6.4).
+//
+// WHY THIS EXISTS. A worktree session is cut off a LOCAL PROJECT the daemon
+// already knows: `ProjectRef` kind `local`, `useWorktree: true`. The daemon
+// learns about a project exactly one way — `local-project/add` on its
+// `/project-control` socket — and the desktop app drives that from a directory
+// picker nobody is sitting at on a box. So the box drives it itself.
+//
+// WHY /workspace AND NOT THE CONTROL PLANE'S REPO LIST. Bootstrap knows the
+// template repos it asked for (`core/bootstrap.ts`, TEMPLATES-V2 cloner) and
+// clones each to `/workspace/<dir>`. Inside the box, "the directories under
+// /workspace that are git repositories" IS that list, plus every repo the
+// member cloned by hand — which is the same thing as far as worktrees are
+// concerned. Reading it here rather than passing it down also avoids the two
+// real problems with the host-side list: the cloner is a DETACHED best-effort
+// retry loop that runs for up to ten minutes after boot, so a one-shot fed the
+// list at boot would register directories that do not exist yet; and
+// `core/bootstrap.ts`'s emitted bytes are a pinned contract, so growing them
+// for this would cost a fixture change on every deployment path.
+//
+// WHY A LOOP AND NOT A ONESHOT. Same reason: clones land late. One pass every
+// POLL_INTERVAL_MS costs one `local-project/list` plus one `local-project/add`
+// per newly seen repo, forever, which also picks up a repo the member clones
+// on day three and re-registers everything if the daemon's store is ever reset.
+//
+// IDEMPOTENCY IS THE DAEMON'S, AND IT IS MEASURED. `local-project/add` keyed on
+// the same `rootPath` returns the SAME `localProjectId` (verified against
+// lody@0.88.1 on 2026-08-30), so a reboot cannot duplicate a project even if
+// the list read below fails. The list is a courtesy that keeps the steady state
+// quiet, not the safety.
+//
+// `githubRepoFullName` IS NOT SENT, and must not be: `local-project/add` has no
+// such field (`LocalProjectAddRequestSchema` is `.strict()`). The daemon derives
+// it from the clone's own remote and reports it on `local-project/git-state` —
+// measured as `blitzdotdev/BlitzOS` for `/workspace/BlitzOS`. That is the field
+// §6.4 needs for the sidebar to group these under GitHub Worktrees, and it
+// arrives for free.
+//
+// CommonJS with no dependencies, like `blitz-recipe-invocation`: the file has no
+// extension and no package.json above it inside the image, and it talks to a
+// unix socket, which `node:http` does without `ws`.
+"use strict";
+
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+
+const stateDir = process.env.BLITZ_STATE_DIR || "/var/lib/blitz";
+const dataDir = process.env.LODY_DATA_DIR || `${stateDir}/lody`;
+// Kept in step with `blitz-lody-bridge`, and with getInstallationProfile() in
+// vendor/lody/packages/shared/src/node/installation-profile.ts.
+const namespace = process.env.LODY_PLATFORM === "cloud" ? "lody" : "lody-oss";
+const controlSocket = path.join(dataDir, "run", `${namespace}-control.sock`);
+const catalogPath = path.join(dataDir, "workspace-catalog.json");
+const workspaceRoot = process.env.BLITZ_WORKSPACE_ROOT || "/workspace";
+const POLL_INTERVAL_MS = 30_000;
+/** One pass and exit, for the conformance test and for a manual re-run. */
+const ONCE = process.env.BLITZ_LODY_PROJECTS_ONCE === "1";
+
+/** The daemon requires this on every control-socket POST. */
+const CONTROL_HEADERS = { "content-type": "application/json", "x-lody-local-control": "1" };
+const REQUEST_TIMEOUT_MS = 30_000;
+
+function postProjectControl(request) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify(request);
+    const call = http.request(
+      {
+        socketPath: controlSocket,
+        path: "/project-control",
+        method: "POST",
+        headers: { ...CONTROL_HEADERS, "content-length": Buffer.byteLength(body) },
+        timeout: REQUEST_TIMEOUT_MS,
+      },
+      (response) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => (text += chunk));
+        response.on("end", () => {
+          try {
+            resolve(JSON.parse(text));
+          } catch {
+            resolve({ ok: false, error: "unparseable_response", status: response.statusCode });
+          }
+        });
+      },
+    );
+    call.on("timeout", () => call.destroy(new Error("project-control timed out")));
+    call.on("error", (error) => resolve({ ok: false, error: "unreachable", message: error.message }));
+    call.end(body);
+  });
+}
+
+/** The daemon's own machineId, out of the catalog it writes when it provisions
+ * its implicit workspace. Absent until then, which is a normal startup state. */
+function readMachineId() {
+  let catalog;
+  try {
+    catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+  } catch {
+    return null;
+  }
+  const machineId = catalog && catalog.machine && catalog.machine.machineId;
+  return typeof machineId === "string" && machineId.length > 0 ? machineId : null;
+}
+
+/**
+ * Every immediate child of `/workspace` that is a git repository.
+ *
+ * A `.git` ENTRY, not a directory: a repo checked out as a worktree carries a
+ * `.git` file instead. Only one level deep, because that is where the cloner
+ * puts a repo and because walking a workspace tree of arbitrary depth on a
+ * 30-second timer is not free. Sorted so the registration order is stable,
+ * which is what makes the corpus in
+ * `packages/schema/fixtures/lody-project-registration/` a fixture rather than a
+ * snapshot of one boot.
+ */
+function discoverRepositories(root) {
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const rootPath = path.join(root, entry.name);
+    if (fs.existsSync(path.join(rootPath, ".git"))) found.push(rootPath);
+  }
+  return found.sort();
+}
+
+/** Every `rootPath` the daemon already holds, across every workspace. */
+function registeredRootPaths(listResult) {
+  const roots = new Set();
+  const workspaces = listResult && listResult.workspaces;
+  if (!Array.isArray(workspaces)) return roots;
+  for (const workspace of workspaces) {
+    const projects = workspace && workspace.projects;
+    if (!Array.isArray(projects)) continue;
+    for (const project of projects) {
+      if (project && typeof project.rootPath === "string") roots.add(project.rootPath);
+    }
+  }
+  return roots;
+}
+
+async function registerOnce() {
+  const machineId = readMachineId();
+  if (machineId === null) return { skipped: "catalog_unavailable" };
+  const repositories = discoverRepositories(workspaceRoot);
+  if (repositories.length === 0) return { added: [], known: 0 };
+
+  const listed = await postProjectControl({ type: "local-project/list", machineId });
+  // A failed list is not fatal: `local-project/add` is idempotent on rootPath,
+  // so the pass still converges, it just re-adds what is already there.
+  const known = listed && listed.ok === true ? registeredRootPaths(listed.result) : new Set();
+
+  const added = [];
+  for (const rootPath of repositories) {
+    if (known.has(rootPath)) continue;
+    const response = await postProjectControl({ type: "local-project/add", machineId, rootPath });
+    if (response && response.ok === true) {
+      added.push(rootPath);
+      console.log(`blitz-lody-projects: registered ${rootPath}`);
+    } else {
+      // Both halves: the CODE is what an operator greps for and what the
+      // response schema pins, the message is what tells them which directory
+      // was wrong.
+      const code = (response && response.error) || "unknown";
+      const detail = (response && response.message) || "";
+      console.error(`blitz-lody-projects: ${rootPath} refused: ${code}: ${detail}`);
+    }
+  }
+  return { added, known: known.size };
+}
+
+async function main() {
+  if (ONCE) {
+    const result = await registerOnce();
+    console.log(`blitz-lody-projects: ${JSON.stringify(result)}`);
+    return;
+  }
+  console.log(
+    `blitz-lody-projects: watching ${workspaceRoot} every ${POLL_INTERVAL_MS}ms (daemon socket ${controlSocket})`,
+  );
+  for (;;) {
+    try {
+      await registerOnce();
+    } catch (error) {
+      console.error(`blitz-lody-projects: pass failed: ${error.message}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+}
+
+for (const signal of ["SIGTERM", "SIGINT"]) {
+  process.on(signal, () => process.exit(0));
+}
+
+main().catch((error) => {
+  console.error(`blitz-lody-projects: ${error.message}`);
+  process.exit(1);
+});

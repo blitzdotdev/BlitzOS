@@ -26,6 +26,7 @@ import type { DriveRailSession } from './shell/rail-sessions';
 import { ShareToDriveDialog } from './files/ShareToDriveDialog';
 import type { CreateWorkspaceDialogInput } from './CreateWorkspaceDialog';
 import { ConfirmationDialog } from './ConfirmationDialog';
+import { SessionShareDialog } from './SessionShareDialog';
 import { caughtErrorMessage } from './error-message';
 import {
   WebAppLoadingPane,
@@ -41,7 +42,12 @@ import { ShellDialogs, type WebAppConfirmation } from './shell/ShellDialogs';
 import type { WorkspaceDetailsTab } from './WorkspaceDetailsDialog';
 import { ShellNav } from './shell/ShellNav';
 import { isSecondaryRoute, SecondaryRoutes } from './shell/SecondaryRoutes';
+import { NewTabControl } from './shell/NewTabControl';
 import { WorkPanes } from './shell/WorkPanes';
+import { LodySessionsRegion } from './lody/LodySessionsRegion';
+import { useLodyRail } from './lody/use-lody-rail';
+import { useSharedSessions } from './lody/use-shared-sessions';
+import type { LodySessionSurfaceApi } from './lody/SessionSurface';
 import {
   drivePath,
   folderPagePath,
@@ -54,7 +60,6 @@ import {
   clampDrawerWidth,
   defaultWorkspaceFiles,
   isManagedWorkspaceTab,
-  removeDismissedChatAuthProviders,
   tabRegion,
   withPreviewTabPath,
   type StorageNamespace,
@@ -91,7 +96,6 @@ import {
   selectControllableWorkspaceId,
   workspaceReducer,
 } from './workspace-store';
-import { NATIVE_CHAT_ENABLED } from './product-features';
 import {
   isPreviewPath,
   isPreviewPort,
@@ -229,7 +233,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const workspaceEndpoints = useRef(new Map<string, WorkspaceEndpoints>());
   const firstWorkspacePrompted = useRef(false);
   // Visit once, then retain: tab switches preserve live state without eagerly
-  // opening every saved terminal, WebGL surface, and chat SDK connection.
+  // opening every saved terminal and WebGL surface.
   const retainedSessionIdsRef = useRef<{ workspaceId: string; ids: Set<string> }>({
     workspaceId: '',
     ids: new Set(),
@@ -672,7 +676,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
   const navigateToWorkspacePage = useCallback((workspaceId: string) => {
     window.history.pushState({}, '', workspacePath(workspaceId));
-    setRoute({ workspaceId, page: 'webApp' });
+    setRoute({ workspaceId, page: 'webApp', chat: null });
   }, []);
 
   const navigateTo = useCallback((path: string) => {
@@ -718,9 +722,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
     void api.deleteWorkspace(workspaceId)
       .then(() => {
-        if (storageNamespace) {
-          removeDismissedChatAuthProviders(storageNamespace, workspaceId);
-        }
         workspaceEndpoints.current.delete(workspaceId);
       })
       .catch((cause: unknown) => {
@@ -731,7 +732,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         });
         setError(`Could not delete “${workspace.title}”: ${caughtErrorMessage(cause, 'The control plane request failed.')}`);
       });
-  }, [api, navigateToWorkspacePage, storageNamespace]);
+  }, [api, navigateToWorkspacePage]);
 
   const selectWorkspace = useCallback((workspaceId: string) => {
     if (!store.workspaces.some(({ id, canControl }) => id === workspaceId && canControl)) return;
@@ -934,6 +935,45 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     }
   }, [activeWorkspaceId, mainActiveId, sideActiveId]);
   const tabsLoaded = activeWorkspaceTabs !== null;
+  // Lody sessions (plans/LODY-SESSIONS.md §8). The hook owns the rail's portal
+  // host, the chat address and the fresh-workspace default; with the flag off
+  // every field is inert and the rail keeps its native list.
+  const lodyRail = useLodyRail(
+    route,
+    setRoute,
+    activeWorkspaceId,
+    tabsLoaded,
+    activeWorkspaceTabs?.tabs.length ?? 0,
+  );
+  const [lodyApi, setLodyApi] = useState<LodySessionSurfaceApi | null>(null);
+  // Which session the share dialog is open on. One piece of state, because the
+  // dialog reads and writes its own grants (plans/LODY-SHARING.md §8).
+  const [sharingSessionId, setSharingSessionId] = useState<string | null>(null);
+  // Bumped when the share dialog closes, so a grant the viewer just received
+  // from themselves — an admin granting on somebody's behalf — reaches the rail
+  // without a reload.
+  const [shareRevision, setShareRevision] = useState(0);
+  // The OTHER half of sharing: what other members shared with this one, and
+  // which of those the address has open (plans/LODY-SHARING.md §10.2).
+  const sharedSessions = useSharedSessions({
+    client,
+    // The wire record rather than the store model: the resolver builds URLs
+    // from a `WorkspaceView`, and this is the one place that view is kept.
+    workspace: activeIngressEntry?.wire ?? null,
+    resolver,
+    chat: lodyRail.chat,
+    revision: shareRevision,
+  });
+  // The ADDRESS drives the surface, one way: a deep link, a reload and the back
+  // button all arrive here, and the surface's own navigations come back through
+  // `onActiveSessionChange` below. Both compare before acting, so the pair
+  // converges instead of looping.
+  useEffect(() => {
+    if (lodyApi === null || !lodyRail.visible) return;
+    if (lodyRail.sessionId === lodyApi.activeSessionId()) return;
+    if (lodyRail.sessionId === null) lodyApi.openLanding();
+    else lodyApi.openSession(lodyRail.sessionId);
+  }, [lodyApi, lodyRail.sessionId, lodyRail.visible]);
   const ttydLabel = (session: WorkspaceTab) => session.type === 'file'
     ? session.filePath
     : session.type === 'panel'
@@ -943,8 +983,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           ? `:${session.port}`
           : previewLinkLabel(session.url, session.title)
         : (
-          session.type === 'chat'
-          || session.type === 'claude'
+          session.type === 'claude'
           || session.type === 'codex'
           || session.type === 'terminal'
             ? session.title ?? SPAWN_SESSION_LABELS[session.type]
@@ -1042,15 +1081,17 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     || ttydActiveType === 'terminal'
     ? ttydActiveType
     : null;
+  const closeChat = lodyRail.closeChat;
   const addWorkspaceTab = useCallback((
     createTab: (id: number) => WorkspaceTab,
     region: WorkspaceRegion = 'main',
   ) => {
     updateWorkspaceTabs((tabs) => appendTab(tabs, region, createTab));
     setFocusedRegion(region);
-  }, [updateWorkspaceTabs]);
+    // A new tab is a request for the panes, so the chat surface steps aside.
+    closeChat();
+  }, [closeChat, updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
-    if (type === 'chat' && !NATIVE_CHAT_ENABLED) return;
     addWorkspaceTab((id) => ({ id, type }));
   };
   const selectTtydSession = useCallback((id: string) => {
@@ -1058,7 +1099,8 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (session === undefined) return;
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
-  }, [activeWorkspaceId, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+    closeChat();
+  }, [activeWorkspaceId, closeChat, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1389,6 +1431,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       livePorts={orderedLivePorts}
       previewLinks={orderedPreviewLinks}
       drawerOpen={drawerOpen}
+      {...(lodyRail.onVendorHost === undefined
+        ? {}
+        : { onVendorHost: lodyRail.onVendorHost })}
       onSelectWorkspace={selectWorkspace}
       onRenameWorkspace={renameWorkspace}
       onOpenWorkspaceSettings={(workspaceId) => {
@@ -1573,6 +1618,43 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
                 </span>
               </div>
             )}
+            {/* Lody sessions (plans/LODY-SESSIONS.md phases 3-4). Renders null
+                unless VITE_BLITZ_LODY_SESSIONS is on, and imports nothing
+                until it is: the vendored renderer is a 3.5 MB lazy chunk. It
+                owns two mounts — the surface here, and the rail's vendored zone
+                through `railHost`, portalled so both share one runtime. It is
+                positioned absolutely over the panes rather than replacing them,
+                so every ttyd terminal keeps its measured geometry across a
+                switch. */}
+            <LodySessionsRegion
+              endpoints={activeWorkspaceRunning ? activeIngressEntry : null}
+              viewerName={store.viewer?.identity.name ?? 'You'}
+              viewerAvatarUrl={store.viewer?.identity.avatarUrl ?? null}
+              workspaceTitle={activeWorkspace?.title ?? 'Workspace'}
+              visible={lodyRail.visible}
+              railHost={lodyRail.railHost}
+              terminals={railSessions}
+              activeTerminalId={railActiveSessionId ?? ''}
+              onSelectTerminal={selectTtydSession}
+              terminalsAction={(
+                <NewTabControl
+                  variant="icon"
+                  livePorts={orderedLivePorts}
+                  previewLinks={orderedPreviewLinks}
+                  onSpawnSession={spawnTtydSession}
+                  onOpenPreview={(port) => { openPreviewPort(port); }}
+                  onOpenPreviewLink={(url, title) => { openPreviewLink(url, title); }}
+                />
+              )}
+              onApiReady={setLodyApi}
+              onActiveSessionChange={lodyRail.mirror}
+              onShareSession={setSharingSessionId}
+              sharedSessions={sharedSessions.rows}
+              sharedOpen={sharedSessions.open}
+              onSelectSharedSession={(row) => {
+                lodyRail.openSharedSession(row.ownerMembershipId, row.sessionId);
+              }}
+            />
             <WorkPanes
               client={client}
               panesRef={panesRef}
@@ -1885,6 +1967,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
 
       {error && <div className="webapp-notice" role="alert"><span>{error}</span><button type="button" onClick={() => setError(null)}>Dismiss</button></div>}
       {updateNotice}
+      {sharingSessionId !== null && activeWorkspace !== undefined && activeWorkspace !== null && store.viewer !== null && (
+        <SessionShareDialog
+          client={client}
+          workspaceId={activeWorkspace.id}
+          sessionId={sharingSessionId}
+          // The daemon owns session titles and the rail draws them; the dialog
+          // is opened from a row whose id is all that crosses, so the heading
+          // names the session by id rather than inventing a second title
+          // source that could disagree with the row above it.
+          sessionTitle={sharingSessionId.slice(0, 8)}
+          members={activeWorkspace.members}
+          viewerMembershipId={store.viewer.membership.id}
+          onClose={() => {
+            setSharingSessionId(null);
+            setShareRevision((revision) => revision + 1);
+          }}
+        />
+      )}
       {fileCloseConfirmation && (
         <ConfirmationDialog
           title="Discard changes?"

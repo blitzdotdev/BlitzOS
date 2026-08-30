@@ -1,0 +1,30 @@
+---
+title: '20260427'
+version: 0.47.1
+date: 2026-04-27
+description: Added GPT-5.5 support, redesigned Agent settings, introduced a DeepSeek preset, and improved the sidebar, automatic file refresh, and overall stability.
+---
+### Agent Experience
+
+- Added support for GPT-5.5
+- Redesigned the Agent settings page with a new category sidebar and capability refresh flow
+- Added a DeepSeek preset so you can paste a token and finish setup quickly
+- Improved connection stability and capability detection for Agents such as Claude Code and Codex
+- Fixed a macOS issue where using Codex could trigger a `ComputerUse` error popup
+
+### Desktop Experience
+
+- The left sidebar can now be collapsed, resized by dragging, and toggled with keyboard shortcuts
+- Local projects, GitHub Worktrees, and Chat sections are clearer, with more consistent sidebar interactions
+- Local file lists in sessions now refresh automatically, making changes easier to review as they happen
+
+### Conversation Experience
+
+- Streaming code blocks no longer flicker between highlighted and plain-text rendering
+- Session initialization and switching are more stable, reducing occasional loading mix-ups
+
+### Other Fixes
+
+- Remote projects no longer incorrectly trigger local detection
+- Machine online status and realtime sync are now more accurate
+- Fixed bottom spacing in the CLI output area inside Electron

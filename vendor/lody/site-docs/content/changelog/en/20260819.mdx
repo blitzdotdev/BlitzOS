@@ -1,0 +1,21 @@
+---
+title: '20260819'
+version: 0.83.0
+date: 2026-08-19
+description: Improved the Kimi Code agent, added a brand new desktop onboarding flow and agent-driven MCP configuration, and fixed offline session restore, version reporting, and dsh compatibility.
+---
+
+Version 0.83.0
+
+### ✨ New
+
+- Improved Kimi Code, with support for background tasks, sub agents, and token usage tracking.
+- A brand new desktop onboarding flow: first launch now includes an intro sequence and product tour, lets you pick a theme and language, detects the agents already installed on your machine, and walks you through your first session.
+- Agents can now configure the workspace's MCP servers for you.
+
+### 🐛 Fixes and Improvements
+
+- Fixed session worktree restore failing when offline or when the remote repository was unreachable.
+- Fixed the CLI reporting a version that did not match the released one.
+- Fixed dsh compatibility issues.
+- Improved how the dsh agent presents its thinking.

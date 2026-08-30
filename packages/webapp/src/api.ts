@@ -3,6 +3,8 @@ import type {
   AddWorkspaceRepoRequest,
   ApiError,
   ProvisionMemberMachineRequest,
+  GrantSessionShareRequest,
+  ListSessionSharesResponse,
   ListWorkspaceReposResponse,
   UpdateWorkspaceRequest,
   ListAgentRulesResponse,
@@ -10,6 +12,7 @@ import type {
   PutWorkspaceCredentialRequest,
   SetMachineTypeRequest,
   UpdateWorkspaceMemberRequest,
+  SessionShareView,
   WorkspaceMemberResponse,
   PutAgentRuleRequest,
   PutAgentRuleResponse,
@@ -193,6 +196,21 @@ export interface ControlPlaneClient extends FileLibraryClient, ComputeCredential
     input: AddWorkspaceRepoRequest,
   ): Promise<ListWorkspaceReposResponse>;
   removeWorkspaceRepo(workspaceId: string, repo: string): Promise<void>;
+  /** Both halves of session sharing on one screen: `granted` is what the
+   * caller may manage, `received` is what other members shared with them
+   * (plans/LODY-SHARING.md §1.3). `sessionId` narrows `granted` to the session
+   * the share dialog is open on. */
+  listSessionShares(
+    workspaceId: string,
+    sessionId?: string,
+  ): Promise<ListSessionSharesResponse>;
+  /** Grant, or change an existing grant's level — the write upserts on
+   * (workspace, session, grantee), so both are this one call. */
+  grantSessionShare(
+    workspaceId: string,
+    input: GrantSessionShareRequest,
+  ): Promise<SessionShareView>;
+  revokeSessionShare(workspaceId: string, shareId: string): Promise<void>;
   provisionMachine(machineId: string): Promise<MachineResponse>;
   stopMachine(machineId: string): Promise<MachineResponse>;
   startMachine(machineId: string): Promise<MachineResponse>;
@@ -647,6 +665,18 @@ export function createControlPlaneClient(baseUrl = ""): ControlPlaneClient {
     // is not something the router hands back intact.
     removeWorkspaceRepo: (workspaceId, repo) => request<void>(
       `/workspaces/${encodeURIComponent(workspaceId)}/repos/${repo.split("/").map(encodeURIComponent).join("/")}`,
+      { method: "DELETE" },
+    ),
+    listSessionShares: (workspaceId, sessionId) => request<ListSessionSharesResponse>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/session-shares`
+        + (sessionId === undefined ? "" : `?sessionId=${encodeURIComponent(sessionId)}`),
+    ),
+    grantSessionShare: (workspaceId, input) => request<SessionShareView>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/session-shares`,
+      { method: "PUT", headers: jsonHeaders, body: JSON.stringify(input) },
+    ),
+    revokeSessionShare: (workspaceId, shareId) => request<void>(
+      `/workspaces/${encodeURIComponent(workspaceId)}/session-shares/${encodeURIComponent(shareId)}`,
       { method: "DELETE" },
     ),
     provisionMemberMachine: (workspaceId, membershipId, input) => request<WorkspaceMemberResponse>(

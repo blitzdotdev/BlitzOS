@@ -1,0 +1,50 @@
+import type { Meta, StoryObj } from '@storybook/react';
+
+import { AcpAuthenticationAuthorizationView } from '@/components/settings/acp-authentication-panel';
+
+const meta = {
+  title: 'Settings/AcpAuthenticationAuthorizationView',
+  component: AcpAuthenticationAuthorizationView,
+  decorators: [
+    (Story) => (
+      <div className="w-[520px] max-w-[calc(100vw-2rem)]">
+        <Story />
+      </div>
+    ),
+  ],
+  parameters: { layout: 'centered' },
+  args: {
+    authorizationCode: '',
+    authorizationCodeSubmitted: false,
+    submittingAuthorizationCode: false,
+    userCodeCopied: false,
+    onOpenAuthorization: () => {},
+    onCopyUserCode: () => {},
+    onAuthorizationCodeChange: () => {},
+    onSubmitAuthorizationCode: () => {},
+  },
+} satisfies Meta<typeof AcpAuthenticationAuthorizationView>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const ChatGPTDeviceCode: Story = {
+  args: {
+    provider: 'ChatGPT',
+    authorization: {
+      authorizationUrl: 'https://auth.openai.com/codex/device',
+      userCode: 'DQGR-SB46E',
+      expiresInSeconds: 900,
+    },
+  },
+};
+
+export const ClaudeBrowserFallback: Story = {
+  args: {
+    provider: 'Claude',
+    authorization: {
+      authorizationUrl: 'https://claude.com/cai/oauth/authorize?code=true',
+      acceptsAuthorizationCode: true,
+    },
+  },
+};

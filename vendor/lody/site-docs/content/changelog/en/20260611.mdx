@@ -1,0 +1,33 @@
+---
+title: '20260611'
+version: 0.58.0
+date: 2026-06-11
+description: iOS Live Activities and Dynamic Island support, worktree setup and cleanup scripts, mobile project file browsing, realtime file editing, Markdown preview and search, more reliable remote diffs, custom ACP agents, and PWA removal.
+---
+### New
+
+- **iOS Live Activities and Dynamic Island**: Track agent progress from the iPhone Lock Screen and Dynamic Island without opening Lody. When an agent needs approval, Lody can also send an actionable Live Activity alert.
+
+  <img src="/_docs-assets/20260611-island.png" alt="Lody Live Activity on Dynamic Island" />
+
+- **Worktree setup and cleanup scripts**: Configure project-level scripts that run after a worktree is created and before the agent starts, plus cleanup scripts that run when the session is archived and the worktree is removed.
+- **Project file browsing on mobile**: Browse local and GitHub project directories, then open files directly from the mobile project view without starting a session first.
+- **Realtime project file editing**: Edit text files in the current working directory collaboratively with your team on local or remote sessions. Mobile editing is coming soon.
+- **Markdown preview and search in the file viewer**: Markdown files now have a one-click toggle between source and rendered preview, and text files can open the in-view search control.
+- **More reliable Turn Diff and All Changes**: Diff loading is more stable, and remote devices can now inspect files and diffs more consistently.
+- **Custom ACP agents**: Add any ACP-compatible agent by entering its launch command and arguments.
+
+### Improvements
+
+- Added a copy button to Proposed Plan cards, including plan-only responses at the bottom of the message.
+- The local project picker is now machine-first and more stable.
+- Project lists in new conversations are sorted by recent activity.
+- Preview now includes a copy button for the share link.
+- Very long user messages no longer overflow or get clipped by the chat bubble.
+- The right sidebar collapse button no longer jumps sideways while toggling.
+- Shared machines and projects are preserved more reliably during connection jitter.
+- Fixed repeated page movement on the create-conversation screen while a machine is offline.
+
+### Removed
+
+- Lody no longer ships PWA support.

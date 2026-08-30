@@ -1,0 +1,19 @@
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
+/>
+<style>
+  /*
+   * Match production html/body/root overflow constraints.
+   * Prevents iOS Safari from scrolling the window when the virtual keyboard
+   * opens, which would push the top of the page out of view.
+   */
+  html,
+  body,
+  #storybook-root {
+    height: 100%;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+  }
+</style>

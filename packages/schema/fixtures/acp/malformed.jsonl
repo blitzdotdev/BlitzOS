@@ -1,1 +1,0 @@
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-malformed","update":{"sessionUpdate":"agent_message_chunk","messageId":"message-malformed-1","content":{"type":"text"}}}}

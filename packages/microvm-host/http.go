@@ -16,6 +16,9 @@ import (
 	"time"
 )
 
+// 7445 is the gateway every current guest serves. 7444 belonged to the retired
+// ACP actor and stays accepted so guests already in the field keep answering an
+// older control plane; nothing in this tree asks for it.
 var allowedWebAppPorts = map[int]struct{}{
 	7444: {},
 	7445: {},
@@ -155,8 +158,9 @@ func (a *API) webApp(w http.ResponseWriter, r *http.Request) {
 				proxyRequest.Out.Header.Set("X-Blitz-WebApp-Token", webAppCredential[0])
 			}
 			if target.port == 7444 {
-				// The authenticated webApp proxy is the ACP security boundary. The
-				// loopback-only actor intentionally accepts only loopback origins.
+				// 7444 served the retired ACP actor. The route stays for guests
+				// already in the field: their loopback-only listener accepts only
+				// loopback origins, and the authenticated proxy is the boundary.
 				proxyRequest.Out.Header.Set("Origin", "http://127.0.0.1")
 			}
 			proxyRequest.SetXForwarded()

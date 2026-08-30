@@ -4,7 +4,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
     "noEmit": true,
-    "types": ["node", "vite/client", "vitest/globals"]
+    "types": ["node", "vite/client", "vitest/globals"],
+    "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts"]
 }

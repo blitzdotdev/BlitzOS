@@ -1,0 +1,43 @@
+import type { Meta, StoryObj } from '@storybook/react';
+import { fn } from 'storybook/test';
+import { ResetPasswordPage } from '@/components/pages/reset-password-page';
+
+const meta = {
+  title: 'Components/ResetPasswordPage',
+  component: ResetPasswordPage,
+  parameters: {
+    layout: 'fullscreen',
+  },
+  tags: ['autodocs'],
+  args: {
+    password: '',
+    confirmPassword: '',
+    onPasswordChange: fn(),
+    onConfirmPasswordChange: fn(),
+    onSubmit: fn(),
+    onBackToLogin: fn(),
+  },
+} satisfies Meta<typeof ResetPasswordPage>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {};
+
+export const Success: Story = {
+  args: {
+    success: true,
+  },
+};
+
+export const MissingToken: Story = {
+  args: {
+    tokenAvailable: false,
+  },
+};
+
+export const Error: Story = {
+  args: {
+    submitError: 'Unable to reset password. Please try again.',
+  },
+};

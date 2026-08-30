@@ -118,7 +118,7 @@ func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 		}
 	})
 
-	t.Run("rewrites ACP origin after the authenticated boundary", func(t *testing.T) {
+	t.Run("rewrites the origin on the reserved 7444 route after the authenticated boundary", func(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/vms/vm-1-webApp/webapp/7444", nil)
 		request.Header.Set("Authorization", "Bearer "+webAppTestToken)
 		request.Header.Set("Origin", "https://cp.example.test")
@@ -129,7 +129,7 @@ func TestWebAppRoutingRestrictionAuthAndUnknownVM(t *testing.T) {
 		}
 		got := <-observed
 		if got.uri != "/" || got.origin != "http://127.0.0.1" {
-			t.Fatalf("ACP upstream request = %#v", got)
+			t.Fatalf("reserved-port upstream request = %#v", got)
 		}
 	})
 }
@@ -153,7 +153,7 @@ func TestWebAppWebSocketBidirectionalPipe(t *testing.T) {
 		}
 		defer connection.Close()
 		accept := websocketAccept(request.Header.Get("Sec-WebSocket-Key"))
-		_, _ = fmt.Fprintf(buffered, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: acp\r\n\r\n", accept)
+		_, _ = fmt.Fprintf(buffered, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: tty\r\n\r\n", accept)
 		if err := buffered.Flush(); err != nil {
 			backendResult <- err.Error()
 			return
@@ -183,13 +183,13 @@ func TestWebAppWebSocketBidirectionalPipe(t *testing.T) {
 	}
 	defer connection.Close()
 	key := base64.StdEncoding.EncodeToString([]byte("webApp-test-key"))
-	_, _ = fmt.Fprintf(connection, "GET /vms/vm-1-webApp/webapp/7444?arg=kept HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nX-Blitz-WebApp-Token: guest-ticket\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Protocol: acp\r\nOrigin: https://cp.example.test\r\n\r\n", agentURL.Host, webAppTestToken, key)
+	_, _ = fmt.Fprintf(connection, "GET /vms/vm-1-webApp/webapp/7444?arg=kept HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nX-Blitz-WebApp-Token: guest-ticket\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Protocol: tty\r\nOrigin: https://cp.example.test\r\n\r\n", agentURL.Host, webAppTestToken, key)
 	reader := bufio.NewReader(connection)
 	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusSwitchingProtocols || response.Header.Get("Sec-WebSocket-Protocol") != "acp" {
+	if response.StatusCode != http.StatusSwitchingProtocols || response.Header.Get("Sec-WebSocket-Protocol") != "tty" {
 		t.Fatalf("upgrade response = %s headers=%v", response.Status, response.Header)
 	}
 	if err := writeWebSocketText(connection, "hello", true); err != nil {

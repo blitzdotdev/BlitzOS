@@ -1,5 +1,0 @@
-{"jsonrpc":"2.0","id":"turn-text-1","method":"session/prompt","params":{"sessionId":"session-text","prompt":[{"type":"text","text":"Say hello."}]}}
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-text","update":{"sessionUpdate":"user_message_chunk","messageId":"message-user-1","content":{"type":"text","text":"Say hello."}}}}
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-text","update":{"sessionUpdate":"agent_message_chunk","messageId":"message-agent-1","content":{"type":"text","text":"Hello"}}}}
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-text","update":{"sessionUpdate":"agent_message_chunk","messageId":"message-agent-1","content":{"type":"text","text":" from Blitz."}}}}
-{"jsonrpc":"2.0","id":"turn-text-1","result":{"stopReason":"end_turn"}}

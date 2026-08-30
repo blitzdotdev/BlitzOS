@@ -265,9 +265,6 @@ export function WorkPanes({
             </div>
           );
         }
-        if (session.type === 'chat') {
-          return null;
-        }
         return (
           <div
             className="webapp-workspace-session"

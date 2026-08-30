@@ -14,46 +14,53 @@ describe("webApp box surface", () => {
   const origin = "https://cp.example";
   const workspace = workspaceViewFixture();
 
-  function boxPath(url: string): { port: 7444 | 7445; path: string } {
+  function boxPath(url: string): string {
     const parsed = new URL(url);
-    const match = parsed.pathname.match(/^\/workspaces\/[^/]+\/webapp\/(7444|7445)(.*)$/u);
+    const match = parsed.pathname.match(/^\/workspaces\/[^/]+\/webapp\/7445(.*)$/u);
     if (match === null) throw new Error(`not a webApp URL: ${url}`);
-    return {
-      port: match[1] === "7444" ? 7444 : 7445,
-      path: match[2] === "" ? "/" : match[2]!,
-    };
+    return match[1] === "" ? "/" : match[1]!;
   }
 
   it("only builds URLs the control plane will forward", () => {
-    const resolver = standaloneResolver({ acp: 7444, files: 7445 }, origin);
+    const resolver = standaloneResolver({ files: 7445 }, origin);
     const endpoints = resolver.resolve(workspace);
     const urls = [
-      endpoints.acpUrl,
       endpoints.filesBase,
       `${endpoints.filesBase}notes/report.md`,
       terminalWebSocketUrl(endpoints.terminalUrl),
+      endpoints.lodySyncUrl,
+      endpoints.lodyRpcUrl,
+      endpoints.lodyControlUrl,
+      endpoints.lodyProjectUrl,
+      endpoints.lodyPlatformUrl,
       resolver.previewUrl(workspace, 3000),
       previewFocusEndpointUrl(endpoints.filesBase),
       connectionsFocusEndpointUrl(endpoints.filesBase),
     ];
     for (const url of urls) {
-      const { port, path } = boxPath(url);
-      expect(isWebAppSurfacePath(port, path), url).toBe(true);
+      expect(isWebAppSurfacePath(boxPath(url)), url).toBe(true);
     }
   });
 
   it("keeps the box's other doors shut", () => {
     // The agent's home directory sits beside /workspace on the file server,
-    // and both the gateway and the actor answer an administrative drain.
+    // and the gateway answers an administrative drain the browser never may.
     for (const path of [
       "/home/",
       "/home/.claude/.credentials.json",
       "/workspace/%2e%2e/home/.claude.json",
       "/admin/drain",
       "/acp",
+      // The Lody bridge answers exactly five browser paths. Its /healthz probe
+      // is an operator surface and not one of them, and neither is the prefix
+      // on its own.
+      "/lody",
+      "/lody/",
+      "/lody/healthz",
+      "/lody/control/extra",
+      "/lody/platform/",
     ]) {
-      expect(isWebAppSurfacePath(7445, path), path).toBe(false);
+      expect(isWebAppSurfacePath(path), path).toBe(false);
     }
-    expect(isWebAppSurfacePath(7444, "/admin/drain")).toBe(false);
   });
 });

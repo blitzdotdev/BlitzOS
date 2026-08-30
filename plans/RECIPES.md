@@ -3,6 +3,15 @@
 Status: plan (2026-08-21, rev 3 — thin cut). Supersedes rev 1 (template
 extension) and rev 2 (recipe-owned folders). Decision history at the bottom.
 
+> **Half retired 2026-08-29 (branch `lody-sessions`).** The `chat` harness, the
+> box actor it spoke ACP to, the bootstrap prompt sender, the `BLITZ_AGENT`
+> flag and the ACP fixture corpus are DELETED. A recipe harness is `claude` or
+> `codex`, and the ONLY delivery path is the one Phase 2 describes: the launch
+> writes `/var/lib/blitz/recipe/{invocation.env,prompt.txt}` and `blitz-term`
+> consumes them when it creates the TUI session. Recipes are also disabled
+> product-wide (see the root CLAUDE.md). Read every `chat`, sender, ACP and
+> 7444 statement below as history. Successor plan: `plans/LODY-SESSIONS.md`.
+
 A recipe is one row: a template reference plus an invocation — harness, model,
 effort, prompt. Nothing else. It is the "routine"/"automation" concept from
 cloud-agent products, with one difference that is our differentiation: a recipe
@@ -20,10 +29,10 @@ evals from it.
 | Templates: machine + ≤16 folders + environment + agent rule | Shipped | `core/workspace-templates.ts` |
 | Template env + startup script → workspace at create | Shipped (PR #5), three-runtime fixtures | `core/environment.ts`, `schema/fixtures/workspace-environment/` |
 | Agent rules → `~/.claude/CLAUDE.md` + `~/.codex/AGENTS.md` at boot | Shipped (PR #3) | `core/agent-rules.ts` |
-| Chat prompt path (ACP frames, ticket/token auth, not browser-bound) | Shipped | `box/actor/src/server.ts` |
-| Model + effort per ACP session | Shipped | `box/actor/src/agent-config.ts` |
-| Harness selection | Image env `BLITZ_AGENT`, read by the actor at start | `box/actor/src/main.ts` |
-| Terminal launch | Closed 2–3 arg contract, no prompt channel | `box/rootfs/usr/local/libexec/blitz-term` |
+| Chat prompt path (ACP frames, ticket/token auth, not browser-bound) | ~~Shipped~~ deleted 2026-08-29 | — |
+| Model + effort per ACP session | ~~Shipped~~ deleted 2026-08-29 | — |
+| Harness selection | ~~Image env `BLITZ_AGENT`~~ deleted 2026-08-29; `HARNESS` in `invocation.env` decides | `box/rootfs/usr/local/libexec/blitz-recipe-invocation` |
+| Terminal launch | Closed 2–3 arg contract, plus the recipe invocation files | `box/rootfs/usr/local/libexec/blitz-term` |
 | Native transcripts (tokens, model, full history; chat AND TUI) | Written by the harnesses into agent HOME on the state volume | `/var/lib/blitz/home/.claude/projects/…`, `…/.codex/sessions/…` |
 | Transcript export | **None** — HOME sits outside `/workspace`, unreachable by Drive sync | `core/files/sync.ts` |
 

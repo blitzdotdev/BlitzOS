@@ -35,7 +35,7 @@ These mechanisms carry into the rewrite:
   copy, so they must be open to audit.
 - Workspace-side client, moved out of the golden image into this module. The box
   OCI image consumes it. The watcher reads refresh-token files, so the trust
-  rule keeps it open. The chat bridge is already open (2026-07-28 split).
+  rule keeps it open.
 - Wire contract: opaque `version`, strict decode, 1 MiB cap, member-absent =
   deprovision. All carry. No ceiling: `expires_at` leaves the schema, the wire,
   and the authorized_keys render.
@@ -119,7 +119,7 @@ and the systemd wiring.
 |---|---|---|
 | `enroll` | box first start, one-shot | device flow → box credential, 0600 on the state volume. Skipped: no CP config, or hosted already delivered it via phone_home |
 | `register` | box boot, idempotent | generate mint/deposit keypairs, register pubkeys (auth = the box OAuth token), write pinned broker config + harness hooks |
-| `token <harness>` | harness hooks (codex `auth command`, session-actor turn refresh) | ssh mint over the pinned host, print token |
+| `token <harness>` | harness hooks (codex `auth command`) | ssh mint over the pinned host, print token |
 | `watch` | box service, interactive workspaces | detect a fresh vendor login, deposit it |
 
 `mint` and `deposit` are never typed by a human. They exist only as `command=`
@@ -187,6 +187,6 @@ Before adding a broker status command:
   `SSH_ORIGINAL_COMMAND`, allowlist enforcement, malformed commands, and both
   supported providers.
 - Document the compatibility window and deployment order across broker,
-  `blitz-cred`, box image, actor, and WebApp versions.
+  `blitz-cred`, box image, and WebApp versions.
 - Prove the final protocol against a real broker container and a newly built
   box image before enabling it in the UI.

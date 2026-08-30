@@ -6,7 +6,7 @@
 # and the kernel picked a victim by resident size alone. Two failures followed.
 # Under a slow squeeze the whole VM entered direct reclaim and cloudflared
 # stalled while still alive — the box went quiet with no OOM line anywhere.
-# Under a fast squeeze the OOM killer could take dockerd, the actor, or PID 1,
+# Under a fast squeeze the OOM killer could take dockerd, the Lody daemon, or PID 1,
 # and a PID 1 kill restarted the whole container and lost every session.
 #
 # The fix is two cgroups. The services that carry the box to its user get a

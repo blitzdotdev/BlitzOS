@@ -1,0 +1,10 @@
+{
+    "cSpell.words": [
+        "demux",
+        "LODY",
+        "worktree"
+    ],
+    // UI Setting:
+    // TypeScript (Native Preview) > Use Tsgo
+    "typescript.experimental.useTsgo": true
+}

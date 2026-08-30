@@ -3,7 +3,7 @@
 #
 # NOTHING HERE IS FATAL, and that is the whole point. Every long-run service on
 # this box is ordered behind this oneshot, so an s6 failure here would leave a
-# workspace with no terminal, no chat and no SSH because a credential broker was
+# workspace with no terminal and no SSH because a credential broker was
 # unreachable. The broker is OPTIONAL — zero enrolled brokers is how the feature
 # is turned off — and the correct outcome of every failure is a workspace that
 # boots and says it is signed out. That is something a member can fix from

@@ -183,7 +183,7 @@
 }
 
 /* --------------------------------------------------------------- column 2 */
-.shell-rail {
+.session-rail {
   display: flex;
   grid-column: 2;
   grid-row: 1 / 3;
@@ -272,13 +272,80 @@
   left: 8px;
 }
 
-.shell-list {
+/* The same control as a `+` glyph, in the Terminals section header the
+   vendored rail draws. The bar's border and gutters are the rail's, not the
+   control's, so both come off; the menu keeps its width and hangs from the
+   trigger's right edge, where the header has no room to the left. */
+.shell-newbar--icon {
+  margin-bottom: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.shell-newbar--icon .shell-newmenu {
+  top: 26px;
+  right: 0;
+  left: auto;
+  width: 220px;
+}
+
+.session-list {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
   padding: 0 8px 8px;
   scrollbar-color: var(--rule) transparent;
   scrollbar-width: thin;
+}
+
+/* The vendored zone (plans/LODY-SESSIONS.md §0.3): Lody's own sidebar body,
+   which brings its own scroll viewport, its own gutters and its own new-chat
+   affordance. So this drops all three of ours and only gives the mount a box
+   to fill. `overflow: hidden` and not `auto`: two nested scrollers would put a
+   second scrollbar beside theirs. */
+.session-list--vendor {
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}
+
+/* `LoroSidebar` sizes its root with an INLINE width, because upstream it IS the
+   window's resizable sidebar and it carries a drag sash. Here the shell grid
+   owns the column, so the inline value has to lose — and an inline style cannot
+   be outranked any other way. `SessionRailSidebar.RAIL_WIDTH` pins the same
+   number on the other side so the first paint is already right. */
+.session-list--vendor > * {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  flex: 1 1 auto;
+}
+
+/* The Terminals section: their section header, our rows. The rows are the
+   rail's own `.shell-s`, so only the block around them needs a box. */
+.session-rail-terminals {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+/* "Shared with you" (plans/LODY-SHARING.md §8): the same shape as Terminals,
+   because both are native rows under one of their section headers. */
+.session-rail-shared {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 12px;
+}
+
+/* The level badge sits where a session row's timestamp sits. It is the one
+   thing a grantee has to read before they click: read-only and read-write are
+   the same row until you try to type. */
+.session-rail-shared__level {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--soft-ink);
 }
 
 /* The row: gutter · title · time. Never more. */
@@ -353,13 +420,13 @@
   .shell-nav--open { transform: translateX(0); }
 
   .shell-strip,
-  .shell-rail {
+  .session-rail {
     height: 100%;
     grid-column: auto;
     grid-row: auto;
   }
 
-  .shell-rail { flex: 1 1 auto; }
+  .session-rail { flex: 1 1 auto; }
 
   .shell-strip__close {
     display: grid;

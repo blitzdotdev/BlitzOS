@@ -4,6 +4,8 @@ import {
   folderPagePath,
   parseAppRoute,
   settingsPath,
+  workspaceChatPath,
+  workspacePath,
 } from '../src/sessions-page-state.js';
 
 describe('settings routes', () => {
@@ -85,5 +87,45 @@ describe('settings routes', () => {
     expect(drivePath()).toBe('/');
     expect(folderPagePath('f-1', ['a b', 'c'])).toBe('/folder/f-1/a%20b/c');
     expect(parseAppRoute('/nonsense')).toEqual({ workspaceId: null, page: 'drive' });
+  });
+
+  // plans/LODY-SESSIONS.md §8: a chat session is an ADDRESS, and the address
+  // bar is the only place the active selection persists. `webapp_state` never
+  // learns about chat sessions — the daemon's list is what exists.
+  it('routes the three chat states, and leaves the bare workspace address alone', () => {
+    expect(parseAppRoute('/workspaces/ws-1')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: null,
+    });
+    expect(parseAppRoute('/workspaces/ws-1/')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: null,
+    });
+    expect(parseAppRoute('/workspaces/ws-1/chat')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: 'landing',
+    });
+    expect(parseAppRoute('/workspaces/ws-1/chat/')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: 'landing',
+    });
+    expect(parseAppRoute('/workspaces/ws-1/chat/s%201')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: { sessionId: 's 1' },
+    });
+    expect(workspacePath('ws-1')).toBe('/workspaces/ws-1');
+    expect(workspaceChatPath('ws-1')).toBe('/workspaces/ws-1/chat');
+    expect(workspaceChatPath('ws-1', 's 1')).toBe('/workspaces/ws-1/chat/s%201');
+    // A deeper address is not a workspace address at all, so it falls to Drive
+    // the way every unknown path does.
+    expect(parseAppRoute('/workspaces/ws-1/chat/s-1/extra')).toEqual({
+      workspaceId: null,
+      page: 'drive',
+    });
   });
 });

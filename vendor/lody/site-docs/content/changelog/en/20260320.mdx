@@ -1,0 +1,16 @@
+---
+title: '20260320'
+version: 0.39.0
+date: 2026-03-20
+description: Added slash commands in chat, dynamic agent configuration options, and fixes for Windows login and stale local CLI connections.
+---
+### New Features and Capabilities
+
+- Added slash command support in the chat input. Type `/` to browse and insert commands exposed by the Agent, such as `review`, `compact`, and `undo`
+<img src="/_docs-assets/slash.png" alt="" />
+- Agent configuration options are now loaded dynamically, with support for displaying all available modes and model options. After upgrading, refresh the options on the Agent Config page
+
+### Fixes and Stability
+
+- Fixed a blank-screen issue when entering an email address in the Windows desktop app
+- Fixed an issue where expired local CLI server connections could not recover

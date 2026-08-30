@@ -1,0 +1,21 @@
+---
+title: '20260520'
+version: 0.53.0
+date: 2026-05-20
+description: Added Codex Plan Mode support, improved streaming Markdown performance, and fixed mobile sign-in, onboarding, GitHub identity, PR refresh, and local-project branch loading issues.
+---
+### New
+
+- Added support for the Codex Plan Mode flow.
+
+### Fixes and Improvements
+
+- Improved streaming Markdown rendering performance in conversations.
+- Fixed a blank screen after the first successful sign-in in the native mobile app.
+- The onboarding flow can now skip Agent connection and let you configure it later from Settings.
+- Fixed failures when refreshing Claude configuration.
+- Fixed abnormal font rendering on Android.
+- Fixed cases where actions still used the wrong identity after personal GitHub permissions had been granted.
+- Fixed stale PR pages not refreshing automatically.
+- Raised the threshold before long pasted text is collapsed into a compact preview.
+- Fixed timeouts while loading branch information for local projects, and added a manual refresh entry.

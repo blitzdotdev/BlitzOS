@@ -30,4 +30,4 @@ non-empty strings.
 Conformance: the control-plane producer is tested in
 `packages/control-plane/test/agent-rules-conformance.test.ts`; the box consumer
 (`blitz-rules sync`, `packages/box/rootfs/usr/local/bin/blitz-rules`) is tested
-in `packages/box/actor/test/agent-rules-conformance.test.ts`.
+in `packages/box/guest-tests/test/agent-rules-conformance.test.ts`.

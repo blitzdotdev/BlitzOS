@@ -116,22 +116,13 @@ func TestTicketVerificationAndViewerEnforcement(t *testing.T) {
 		t.Fatalf("viewer read-only terminal URI = %q", got)
 	}
 
-	// Viewers may look at a preview but not send to it, and the agent port
-	// is closed to them entirely.
+	// Viewers may look at a preview but not send to it.
 	previewWrite := httptest.NewRequest(http.MethodPost, "http://box/preview/3000/api", strings.NewReader("x"))
 	previewWrite.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
 	previewResponse := httptest.NewRecorder()
 	handler.ServeHTTP(previewResponse, previewWrite)
 	if previewResponse.Code != http.StatusForbidden {
 		t.Fatalf("viewer preview write status = %d, want %d", previewResponse.Code, http.StatusForbidden)
-	}
-
-	acpRequest := httptest.NewRequest(http.MethodGet, "http://box/acp", nil)
-	acpRequest.Header.Set(webAppTokenHeader, signedTicket(t, secret, viewer))
-	acpResponse := httptest.NewRecorder()
-	handler.ServeHTTP(acpResponse, acpRequest)
-	if acpResponse.Code != http.StatusForbidden {
-		t.Fatalf("viewer acp status = %d, want %d", acpResponse.Code, http.StatusForbidden)
 	}
 
 	// Drain is the control plane's switch, not a user surface.
@@ -438,7 +429,6 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 	handler := &gateway{
 		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
 		terminal:               upstreamURL,
-		actor:                  upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, "https://blitz-control-plane.example"),
 		webAppTokenPath:        webAppPath,
 		tunnelTokenPath:        filepath.Join(authDir, "tunnel-token"),
@@ -458,7 +448,6 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 		{name: "ports", method: http.MethodGet, path: "/ports"},
 		{name: "dufs", method: http.MethodGet, path: "/workspace/file.txt"},
 		{name: "preview", method: http.MethodGet, path: "/preview/" + strconv.Itoa(upstreamPort) + "/"},
-		{name: "acp", method: http.MethodGet, path: "/acp"},
 		{
 			name:   "terminal websocket",
 			method: http.MethodGet,
@@ -468,6 +457,19 @@ func TestGatewayEmptyWebAppTokenFailsClosedEveryRoute(t *testing.T) {
 				request.Header.Set("Upgrade", "websocket")
 			},
 		},
+		{
+			name:   "lody sync websocket",
+			method: http.MethodGet,
+			path:   lodySyncPath,
+			configure: func(request *http.Request) {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			},
+		},
+		{name: "lody rpc", method: http.MethodPost, path: lodyRPCPath},
+		{name: "lody session control", method: http.MethodPost, path: lodyControlPath},
+		{name: "lody project control", method: http.MethodPost, path: lodyProjectPath},
+		{name: "lody platform", method: http.MethodGet, path: lodyPlatformPath},
 		{
 			name:   "CORS preflight",
 			method: http.MethodOptions,
@@ -554,7 +556,7 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		requestURI     string
 		hasWebAppToken bool
 	}
-	observed := make(chan observation, 4)
+	observed := make(chan observation, 8)
 	upstream := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		hasWebAppToken := false
 		for name := range request.Header {
@@ -581,7 +583,7 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 	handler := &gateway{
 		dufs:            httputil.NewSingleHostReverseProxy(upstreamURL),
 		terminal:        upstreamURL,
-		actor:           upstreamURL,
+		lody:            upstreamURL,
 		webAppTokenPath: webAppPath,
 		tunnelTokenPath: filepath.Join(authDir, "tunnel-token"),
 		transport:       http.DefaultTransport,
@@ -592,12 +594,15 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 		path        string
 		upstreamURI string
 		webSocket   bool
-		keepsToken  bool
 	}{
 		{name: "dufs", path: "/workspace/file.txt", upstreamURI: "/workspace/file.txt"},
 		{name: "preview", path: "/preview/" + strconv.Itoa(upstreamPort) + "/asset.js?x=1", upstreamURI: "/asset.js?x=1"},
-		{name: "acp", path: "/acp/v1/sessions?resume=true", upstreamURI: "/v1/sessions?resume=true", keepsToken: true},
 		{name: "terminal websocket", path: "/terminal/ws?arg=terminal", upstreamURI: "/ws?arg=terminal", webSocket: true},
+		{name: "lody sync websocket", path: lodySyncPath, upstreamURI: "/sync", webSocket: true},
+		{name: "lody rpc", path: lodyRPCPath, upstreamURI: "/rpc"},
+		{name: "lody session control", path: lodyControlPath, upstreamURI: "/control"},
+		{name: "lody project control", path: lodyProjectPath, upstreamURI: "/project"},
+		{name: "lody platform", path: lodyPlatformPath, upstreamURI: "/platform"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -617,8 +622,8 @@ func TestGatewayStripsWebAppTokenFromAllUpstreams(t *testing.T) {
 			if got.requestURI != test.upstreamURI {
 				t.Errorf("upstream request URI = %q, want %q", got.requestURI, test.upstreamURI)
 			}
-			if got.hasWebAppToken != test.keepsToken {
-				t.Errorf("upstream token presence = %v, want %v", got.hasWebAppToken, test.keepsToken)
+			if got.hasWebAppToken {
+				t.Errorf("upstream token presence = %v, want false", got.hasWebAppToken)
 			}
 		})
 	}
@@ -1029,141 +1034,187 @@ func TestTerminalProxyHandshakeContract(t *testing.T) {
 	}
 }
 
-func TestACPProxyHTTPAndWebSocketContract(t *testing.T) {
+// The Lody bridge listens on a unix socket, not a port, so this drives the real
+// transport main() installs rather than a TCP stand-in: a wrong dial network or
+// a dropped socket path would 502 here and nowhere else. It also pins the two
+// upstream paths, because the gateway is what turns /lody/sync into /sync.
+func TestLodyProxyRoutesThroughUnixSocket(t *testing.T) {
 	type observedRequest struct {
-		method      string
-		requestURI  string
-		host        string
-		origin      string
-		prefix      string
-		webSocket   bool
-		subprotocol string
+		requestURI string
+		host       string
+		method     string
+		body       string
 	}
-	observed := make(chan observedRequest, 2)
-	actor := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	observed := make(chan observedRequest, 4)
+	socketPath := filepath.Join(t.TempDir(), "lody-bridge.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, readErr := io.ReadAll(request.Body)
+		if readErr != nil {
+			t.Errorf("reading upstream body: %v", readErr)
+		}
 		observed <- observedRequest{
-			method:      request.Method,
-			requestURI:  request.URL.RequestURI(),
-			host:        request.Host,
-			origin:      request.Header.Get("Origin"),
-			prefix:      request.Header.Get("X-Forwarded-Prefix"),
-			webSocket:   isWebSocketUpgrade(request),
-			subprotocol: request.Header.Get("Sec-WebSocket-Protocol"),
+			requestURI: request.URL.RequestURI(),
+			host:       request.Host,
+			method:     request.Method,
+			body:       string(body),
 		}
 		response.WriteHeader(http.StatusNoContent)
-	}))
-	defer actor.Close()
-	actorURL, err := url.Parse(actor.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	})}
+	go func() { _ = upstream.Serve(listener) }()
+	defer func() { _ = upstream.Close() }()
 
+	const secret = "lody-ticket-secret"
+	const workspaceID = "workspace-lody"
 	const controlPlaneOrigin = "https://blitz-control-plane.example"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
 	handler := &gateway{
-		actor:                  actorURL,
+		// A path that is NOT a lody door falls through to dufs, and this suite
+		// has one such case on purpose ("healthz is not a lody door"). Without a
+		// proxy here that fall-through is a nil dereference, which panics the
+		// whole suite rather than failing one case.
+		dufs:                   httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "dufs.invalid"}),
+		lody:                   &url.URL{Scheme: "http", Host: lodyBridgeHost},
+		lodyTransport:          unixSocketTransport(socketPath),
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		webAppTokenPath:        tokenPath,
+		workspaceIDPath:        workspacePath,
 		transport:              http.DefaultTransport,
 	}
-
-	httpRequest := httptest.NewRequest(http.MethodPost, "http://box/acp/v1/sessions?resume=true", strings.NewReader("prompt"))
-	httpRequest.Header.Set("Origin", controlPlaneOrigin)
-	httpResponse := httptest.NewRecorder()
-	handler.ServeHTTP(httpResponse, httpRequest)
-	if httpResponse.Code != http.StatusNoContent {
-		t.Fatalf("HTTP status = %d, want %d; body = %q", httpResponse.Code, http.StatusNoContent, httpResponse.Body.String())
+	ticketFor := func(role string) string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "member-user",
+			MembershipID: "member-membership",
+			Role:         role,
+			Exp:          time.Now().Add(time.Hour).Unix(),
+		})
 	}
 
-	webSocketRequest := httptest.NewRequest(http.MethodGet, "http://box/acp/socket?session=go-test", nil)
-	webSocketRequest.Header.Set("Connection", "Upgrade")
-	webSocketRequest.Header.Set("Upgrade", "websocket")
-	webSocketRequest.Header.Set("Origin", controlPlaneOrigin)
-	webSocketRequest.Header.Set("Sec-WebSocket-Protocol", "acp")
-	webSocketResponse := httptest.NewRecorder()
-	handler.ServeHTTP(webSocketResponse, webSocketRequest)
-	if webSocketResponse.Code != http.StatusNoContent {
-		t.Fatalf("WebSocket status = %d, want %d; body = %q", webSocketResponse.Code, http.StatusNoContent, webSocketResponse.Body.String())
-	}
+	t.Run("editor reaches the sync websocket", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://box"+lodySyncPath, nil)
+		request.Header.Set(webAppTokenHeader, ticketFor("editor"))
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", "websocket")
+		request.Header.Set("Origin", controlPlaneOrigin)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+		}
+		got := <-observed
+		if got.requestURI != "/sync" {
+			t.Errorf("upstream request URI = %q, want %q", got.requestURI, "/sync")
+		}
+		if got.host != lodyBridgeHost {
+			t.Errorf("upstream Host = %q, want %q", got.host, lodyBridgeHost)
+		}
+	})
 
-	httpObserved := <-observed
-	if httpObserved.method != http.MethodPost {
-		t.Errorf("HTTP upstream method = %q, want %q", httpObserved.method, http.MethodPost)
-	}
-	if httpObserved.requestURI != "/v1/sessions?resume=true" {
-		t.Errorf("HTTP upstream request URI = %q", httpObserved.requestURI)
-	}
-	if httpObserved.webSocket {
-		t.Error("HTTP upstream request unexpectedly upgraded")
-	}
-	assertACPUpstreamHeaders(t, httpObserved.host, httpObserved.origin, httpObserved.prefix)
-
-	webSocketObserved := <-observed
-	if webSocketObserved.requestURI != "/socket?session=go-test" {
-		t.Errorf("WebSocket upstream request URI = %q", webSocketObserved.requestURI)
-	}
-	if !webSocketObserved.webSocket {
-		t.Error("WebSocket upstream request lost upgrade headers")
-	}
-	if webSocketObserved.subprotocol != "acp" {
-		t.Errorf("WebSocket upstream subprotocol = %q, want acp", webSocketObserved.subprotocol)
-	}
-	assertACPUpstreamHeaders(t, webSocketObserved.host, webSocketObserved.origin, webSocketObserved.prefix)
-}
-
-func TestACPExactPathAndQueryRouteToActor(t *testing.T) {
-	actorRequests := make(chan string, 2)
-	actor := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		actorRequests <- request.URL.RequestURI()
-		response.WriteHeader(http.StatusNoContent)
-	}))
-	defer actor.Close()
-	actorURL, err := url.Parse(actor.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dufsRequests := make(chan string, 1)
-	dufs := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		dufsRequests <- request.URL.RequestURI()
-		response.WriteHeader(http.StatusAccepted)
-	}))
-	defer dufs.Close()
-	dufsURL, err := url.Parse(dufs.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	handler := &gateway{
-		dufs:      httputil.NewSingleHostReverseProxy(dufsURL),
-		actor:     actorURL,
-		transport: http.DefaultTransport,
-	}
-	for _, test := range []struct {
+	// The three POST planes are separate doors on one control socket, so the
+	// body has to survive and the upstream path has to be the one the bridge
+	// maps to that plane. A path collapsed into another is the failure this
+	// catches: the bodies are three different request unions.
+	for _, plane := range []struct {
+		name        string
 		path        string
 		upstreamURI string
+		payload     string
 	}{
-		{path: "/acp", upstreamURI: "/"},
-		{path: "/acp?x=1", upstreamURI: "/?x=1"},
+		{name: "machine rpc", path: lodyRPCPath, upstreamURI: "/rpc", payload: `{"method":"session/terminate"}`},
+		{name: "session control", path: lodyControlPath, upstreamURI: "/control", payload: `{"type":"machine/status"}`},
+		{name: "project control", path: lodyProjectPath, upstreamURI: "/project", payload: `{"type":"local-project/list"}`},
 	} {
-		t.Run(test.path, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "http://box"+test.path, nil)
+		t.Run("owner reaches "+plane.name+" with its body", func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "http://box"+plane.path, strings.NewReader(plane.payload))
+			request.Header.Set(webAppTokenHeader, ticketFor("owner"))
+			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			handler.ServeHTTP(response, request)
 			if response.Code != http.StatusNoContent {
 				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
 			}
-			if got := <-actorRequests; got != test.upstreamURI {
-				t.Errorf("actor request URI = %q, want %q", got, test.upstreamURI)
+			got := <-observed
+			if got.requestURI != plane.upstreamURI {
+				t.Errorf("upstream request URI = %q, want %q", got.requestURI, plane.upstreamURI)
+			}
+			if got.method != http.MethodPost {
+				t.Errorf("upstream method = %q, want POST", got.method)
+			}
+			if got.body != plane.payload {
+				t.Errorf("upstream body = %q, want %q", got.body, plane.payload)
 			}
 		})
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "http://box/acpx?x=1", nil)
-	response := httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusAccepted {
-		t.Fatalf("/acpx status = %d, want %d; body = %q", response.Code, http.StatusAccepted, response.Body.String())
-	}
-	if got := <-dufsRequests; got != "/acpx?x=1" {
-		t.Errorf("dufs request URI = %q, want %q", got, "/acpx?x=1")
+	t.Run("editor reads the platform snapshot", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://box"+lodyPlatformPath, nil)
+		request.Header.Set(webAppTokenHeader, ticketFor("editor"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusNoContent, response.Body.String())
+		}
+		got := <-observed
+		if got.requestURI != "/platform" {
+			t.Errorf("upstream request URI = %q, want %q", got.requestURI, "/platform")
+		}
+	})
+
+	// The bridge's own operator probe is not a browser surface, so the gateway
+	// must not have grown a `/lody/` prefix match on the way to five paths.
+	t.Run("healthz is not a lody door", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodGet, "http://box/lody/healthz", nil)
+		request.Header.Set(webAppTokenHeader, ticketFor("owner"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		select {
+		case got := <-observed:
+			t.Errorf("upstream saw %q, want nothing", got.requestURI)
+		default:
+		}
+	})
+
+	// A viewer is refused on both paths, and refused before anything is
+	// forwarded: the sync socket is bidirectional, so a read-only participant
+	// has no meaning here until sharing (phase 6) can filter frames per grant.
+	for _, refused := range []struct {
+		name      string
+		method    string
+		path      string
+		webSocket bool
+	}{
+		{name: "viewer sync", method: http.MethodGet, path: lodySyncPath, webSocket: true},
+		{name: "viewer rpc", method: http.MethodPost, path: lodyRPCPath},
+		{name: "viewer session control", method: http.MethodPost, path: lodyControlPath},
+		{name: "viewer project control", method: http.MethodPost, path: lodyProjectPath},
+		{name: "viewer platform", method: http.MethodGet, path: lodyPlatformPath},
+	} {
+		t.Run(refused.name, func(t *testing.T) {
+			request := httptest.NewRequest(refused.method, "http://box"+refused.path, nil)
+			request.Header.Set(webAppTokenHeader, ticketFor("viewer"))
+			request.Header.Set("Origin", controlPlaneOrigin)
+			if refused.webSocket {
+				request.Header.Set("Connection", "Upgrade")
+				request.Header.Set("Upgrade", "websocket")
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d; body = %q", response.Code, http.StatusForbidden, response.Body.String())
+			}
+			if !strings.Contains(response.Body.String(), "not available to viewers") {
+				t.Errorf("body = %q, want the viewer refusal reason", response.Body.String())
+			}
+			select {
+			case got := <-observed:
+				t.Errorf("upstream saw %q, want nothing", got.requestURI)
+			default:
+			}
+		})
 	}
 }
 
@@ -1504,7 +1555,7 @@ func TestServePreviewFocusEmptyAbsentAndMethod(t *testing.T) {
 
 // Reader side of the connections-focus cross-runtime contract. The CLI
 // producer is pinned against the same fixtures in
-// packages/box/actor/test/connections-focus-conformance.test.ts, the browser
+// packages/box/guest-tests/test/connections-focus-conformance.test.ts, the browser
 // consumer in packages/webapp/test/connections-focus.test.ts.
 func TestServeConnectionsFocusFixtures(t *testing.T) {
 	fixturesDirectory := filepath.Join("..", "..", "schema", "fixtures", "connections-focus")
@@ -1732,19 +1783,6 @@ func stringPointer(value string) *string {
 	return &value
 }
 
-func assertACPUpstreamHeaders(t *testing.T, host, origin, prefix string) {
-	t.Helper()
-	if host != actorHost {
-		t.Errorf("upstream Host = %q, want %q", host, actorHost)
-	}
-	if origin != actorOrigin {
-		t.Errorf("upstream Origin = %q, want %q", origin, actorOrigin)
-	}
-	if prefix != "/acp" {
-		t.Errorf("upstream X-Forwarded-Prefix = %q, want /acp", prefix)
-	}
-}
-
 func assertActualCORS(t *testing.T, header http.Header, origin string) {
 	t.Helper()
 	if got := header.Get("Access-Control-Allow-Origin"); got != origin {
@@ -1809,7 +1847,6 @@ func TestPolicyRefusalsExplainThemselves(t *testing.T) {
 	handler := &gateway{
 		dufs:                   httputil.NewSingleHostReverseProxy(upstreamURL),
 		terminal:               upstreamURL,
-		actor:                  upstreamURL,
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
 		webAppTokenPath:        tokenPath,
 		workspaceIDPath:        workspacePath,
@@ -1873,12 +1910,6 @@ func TestPolicyRefusalsExplainThemselves(t *testing.T) {
 			credential: viewer(),
 			status:     http.StatusBadRequest, reason: "terminal requires a session type and key",
 			details: []string{`role "viewer"`, "got 1 positional arg values, want 2"},
-		},
-		{
-			name: "agent port for a viewer", method: http.MethodGet, target: "/acp",
-			credential: viewer(),
-			status:     http.StatusForbidden, reason: "viewers cannot drive the workspace agent",
-			details: []string{`role "viewer"`},
 		},
 		{
 			name: "preview write by a viewer", method: http.MethodPost, target: "/preview/3000/api",
@@ -2018,10 +2049,10 @@ func TestWebSocketOriginRefusalNamesBothOrigins(t *testing.T) {
 	})
 }
 
-// diagGateway builds a box whose every diagnosable fact is a fixture: a live
-// actor, a dufs that answers, a terminal address nothing listens on, a real
-// origin, a real workspace id, and an agent credential file holding a value
-// that must never leave the box.
+// diagGateway builds a box whose every diagnosable fact is a fixture: a dufs
+// that answers, a terminal address nothing listens on, a real origin, a real
+// workspace id, and an agent credential file holding a value that must never
+// leave the box.
 func diagGateway(t *testing.T, secret, workspaceID, controlPlaneOrigin, credentialContents string) (*gateway, string) {
 	t.Helper()
 	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
@@ -2042,7 +2073,6 @@ func diagGateway(t *testing.T, secret, workspaceID, controlPlaneOrigin, credenti
 	return &gateway{
 		dufsAddress:            liveURL.Host,
 		terminal:               &url.URL{Scheme: "http", Host: closedLoopbackAddress(t)},
-		actor:                  liveURL,
 		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
 		webAppTokenPath:        tokenPath,
 		workspaceIDPath:        workspacePath,
@@ -2156,10 +2186,10 @@ func TestDiagReportsTheStateThatDecidesRefusals(t *testing.T) {
 		t.Error("agentCredentialPresent = false while the credential file exists")
 	}
 
-	// A box always answers for all three services, in a fixed order, whether
+	// A box always answers for both services, in a fixed order, whether
 	// or not they answer: "the terminal is missing from the list" is not a
 	// diagnosis anyone can act on.
-	wantNames := []string{"actor", "terminal", "dufs"}
+	wantNames := []string{"terminal", "dufs"}
 	gotNames := make([]string, 0, len(report.Services))
 	for _, service := range report.Services {
 		gotNames = append(gotNames, service.Name)
@@ -2167,7 +2197,7 @@ func TestDiagReportsTheStateThatDecidesRefusals(t *testing.T) {
 	if !reflect.DeepEqual(gotNames, wantNames) {
 		t.Fatalf("services = %v, want %v", gotNames, wantNames)
 	}
-	reachable := map[string]bool{"actor": true, "terminal": false, "dufs": true}
+	reachable := map[string]bool{"terminal": false, "dufs": true}
 	for _, service := range report.Services {
 		if service.Reachable != reachable[service.Name] {
 			t.Errorf("%s reachable = %v, want %v (address %s, error %q)",
@@ -2272,4 +2302,179 @@ func TestDiagMethods(t *testing.T) {
 	if got := postResponse.Header().Get("Allow"); got != "GET, OPTIONS" {
 		t.Errorf("Allow = %q, want %q", got, "GET, OPTIONS")
 	}
+}
+
+// The gateway's half of the share-claim contract
+// (packages/schema/fixtures/lody-share-claim/): the bytes it puts on the header
+// are what the bridge's ACL reads, and the bridge's own conformance suite drives
+// those same bytes. A field one side renames is a grant the other stops seeing.
+func TestShareClaimHeaderMatchesTheCorpus(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "schema", "fixtures", "lody-share-claim", "claims.json"))
+	if err != nil {
+		t.Fatalf("read share claim corpus: %v", err)
+	}
+	var corpus map[string]struct {
+		Claim  webAppShareClaim `json:"claim"`
+		Header string           `json:"header"`
+	}
+	if err := json.Unmarshal(raw, &corpus); err != nil {
+		t.Fatalf("parse share claim corpus: %v", err)
+	}
+	if len(corpus) == 0 {
+		t.Fatal("no share claims in the corpus")
+	}
+	for name, entry := range corpus {
+		encoded, err := json.Marshal(entry.Claim)
+		if err != nil {
+			t.Fatalf("%s: encode: %v", name, err)
+		}
+		if string(encoded) != entry.Header {
+			t.Errorf("%s: header = %s, want %s", name, encoded, entry.Header)
+		}
+	}
+}
+
+// PHASE 6 (plans/LODY-SHARING.md §4.1) — a ticket routed to ANOTHER member's
+// machine. The gateway decides WHERE such a request may go; the bridge decides
+// what it may say once it gets there.
+func TestSharedTicketReachesOnlyTheSessionDaemon(t *testing.T) {
+	type sharedUpstream struct {
+		requestURI string
+		body       string
+	}
+	observed := make(chan sharedUpstream, 8)
+	socketPath := filepath.Join(t.TempDir(), "b.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		observed <- sharedUpstream{
+			requestURI: request.URL.RequestURI(),
+			body:       string(body) + "|" + request.Header.Get(lodyShareHeader),
+		}
+		response.WriteHeader(http.StatusNoContent)
+	})}
+	go func() { _ = upstream.Serve(listener) }()
+	defer func() { _ = upstream.Close() }()
+
+	const secret = "shared-ticket-secret"
+	const workspaceID = "workspace-shared"
+	const controlPlaneOrigin = "https://blitz-control-plane.example"
+	tokenPath, workspacePath := writeGatewayIdentity(t, secret, workspaceID)
+	handler := &gateway{
+		dufs:                   httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "dufs.invalid"}),
+		lody:                   &url.URL{Scheme: "http", Host: lodyBridgeHost},
+		lodyTransport:          unixSocketTransport(socketPath),
+		controlPlaneOriginPath: writeOriginFile(t, controlPlaneOrigin),
+		webAppTokenPath:        tokenPath,
+		workspaceIDPath:        workspacePath,
+		transport:              http.DefaultTransport,
+	}
+	sharedTicket := func(role string) string {
+		return signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "grantee-user",
+			MembershipID: "grantee-membership",
+			Role:         role,
+			Exp:          time.Now().Add(time.Hour).Unix(),
+			Share: json.RawMessage(
+				`{"target":"owner-membership","scope":"sessions","read":["sess-alpha"],"write":["sess-beta"]}`,
+			),
+		})
+	}
+
+	// §0.1 grants "read access scoped to that session's worktree; nothing else
+	// on the owner's box". Every one of these is "nothing else".
+	for _, path := range []string{
+		"/workspace/file.txt",
+		"/preview/3000/",
+		"/terminal/ws",
+		"/ports",
+		"/previews",
+		"/diag",
+		"/admin/drain",
+	} {
+		t.Run("refuses "+path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "http://box"+path, nil)
+			request.Header.Set(webAppTokenHeader, sharedTicket("editor"))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403; body = %q", response.Code, response.Body.String())
+			}
+		})
+	}
+
+	t.Run("forwards the verified claim to the bridge", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, sharedTicket("editor"))
+		// A forged inbound copy must never survive: the browser may not author
+		// its own authority.
+		request.Header.Set(lodyShareHeader, `{"target":"owner-membership","scope":"all","read":[],"write":[]}`)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body = %q", response.Code, response.Body.String())
+		}
+		got := <-observed
+		want := `{}|{"target":"owner-membership","scope":"sessions","read":["sess-alpha"],"write":["sess-beta"]}`
+		if got.body != want {
+			t.Errorf("bridge saw %q, want %q", got.body, want)
+		}
+	})
+
+	// A viewer holds no sessions of their own, so their own box's daemon stays
+	// closed; a viewer holding a read-only share is what §0.1 asks to allow.
+	t.Run("a viewer with a share reaches the daemon", func(t *testing.T) {
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, sharedTicket("viewer"))
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204; body = %q", response.Code, response.Body.String())
+		}
+		<-observed
+	})
+
+	t.Run("a viewer without one does not", func(t *testing.T) {
+		plain := signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "viewer-user",
+			MembershipID: "viewer-membership",
+			Role:         "viewer",
+			Exp:          time.Now().Add(time.Hour).Unix(),
+		})
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, plain)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403", response.Code)
+		}
+	})
+
+	// An ordinary ticket carries no claim, so the bridge must see no header at
+	// all — its absence is what selects the "copy bytes" path.
+	t.Run("an unshared request carries no claim header", func(t *testing.T) {
+		plain := signedTicket(t, secret, webAppTicketClaims{
+			WorkspaceID:  workspaceID,
+			UserID:       "owner-user",
+			MembershipID: "owner-membership",
+			Role:         "owner",
+			Exp:          time.Now().Add(time.Hour).Unix(),
+		})
+		request := httptest.NewRequest(http.MethodPost, "http://box"+lodyRPCPath, strings.NewReader("{}"))
+		request.Header.Set(webAppTokenHeader, plain)
+		request.Header.Set(lodyShareHeader, `{"target":"x","scope":"all","read":[],"write":[]}`)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", response.Code)
+		}
+		if got := <-observed; got.body != "{}|" {
+			t.Errorf("bridge saw %q, want %q", got.body, "{}|")
+		}
+	})
 }

@@ -1,0 +1,17 @@
+{
+  "credential": "v1.eyJ3b3Jrc3BhY2VJZCI6IjExMTExMTExLTIyMjItNDMzMy04NDQ0LTU1NTU1NTU1NTU1NSIsInVzZXJJZCI6InVzZXItYWRtaW4iLCJtZW1iZXJzaGlwSWQiOiJtZW1iZXJzaGlwLWFkbWluIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxODAwMDAwMDYwLCJzaGFyZSI6eyJ0YXJnZXQiOiJtZW1iZXJzaGlwLW93bmVyIiwic2NvcGUiOiJhbGwiLCJyZWFkIjpbXSwid3JpdGUiOltdfX0.hguvdBDVnqXeSd9YoFu1z-7cFtv_fKP7cyBqfnpORyk",
+  "expect": {
+    "valid": true,
+    "kind": "ticket",
+    "role": "admin",
+    "userId": "user-admin",
+    "membershipId": "membership-admin",
+    "share": {
+      "target": "membership-owner",
+      "scope": "all",
+      "read": [],
+      "write": []
+    }
+  },
+  "note": "A workspace admin's implicit read-only over every session on that machine. Both lists empty and the write predicate never reads `scope`, so this ticket can write nothing."
+}

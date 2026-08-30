@@ -17,7 +17,7 @@ the rare one:
   `docker ps` shows a healthy container. Nothing restarts anything, because
   nothing died.
 - **OOM kill** (the loud one). The kernel picks the biggest RSS. That is
-  usually the offending build or agent, but dockerd, the session actor, and
+  usually the offending build or agent, but dockerd, the Lody daemon, and
   container PID 1 are all legal victims. A PID 1 kill restarts the whole box
   and loses every tmux session in it.
 
@@ -41,7 +41,7 @@ VM (Hetzner cloud server, Ubuntu 24.04)
           pids 4096 · swap 2G      — everything a member's work can grow
           ├── tab-<session>        one per terminal tab      oom.group=1
           ├── ssh-<pid>            one per ssh session       oom.group=1
-          ├── actor.scope          chat agents (SDK spawns)  oom.group=1
+          ├── lody.scope           session agents (ACP children) oom.group=1
           ├── rc.scope             claude.ai Remote Control  oom.group=1
           ├── dockerd.scope        the DinD daemon itself
           └── docker.slice         every inner container     max = user/2, oom.group=1
@@ -59,7 +59,7 @@ band below the ceiling so a runaway throttles visibly before it dies.
 |---|---|---|
 | Terminal tab | the tmux **pane command** in `blitz-term` | tmux forks panes from its server, not from the launcher |
 | SSH / sftp | `ForceCommand /usr/local/libexec/blitz-ssh-session` | sessions fork from sshd, which lives in the protected slice |
-| Chat agents | the actor's own s6 `run` | the SDK spawns its own CLI copy beyond any wrapper |
+| Session agents | the `lody-daemon` s6 `run` | the daemon spawns each ACP agent beyond any wrapper |
 | Remote Control | its s6 `run` | it drives a full agent |
 | Inner containers | `dockerd --cgroup-parent` | dockerd otherwise creates cgroups outside every limit |
 

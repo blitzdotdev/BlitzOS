@@ -1,0 +1,172 @@
+[
+  {
+    "id": "321107ca-919d-4ff3-852e-ba6b4612ef1d",
+    "role": "assistant",
+    "timestamp": "2026-01-07T14:08:39.564Z",
+    "contents": [
+      {
+        "type": "text",
+        "text": "I'll run all five commands for you and show you the output of each."
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "toolu_017uvV7gVWuvYFq77EYRjdAv",
+        "title": "`echo \"Hello World\"`",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "echo \"Hello World\"",
+            "args": []
+          },
+          {
+            "content": {
+              "text": "Print Hello World",
+              "type": "text"
+            },
+            "type": "content"
+          },
+          {
+            "type": "terminal_output",
+            "output": "Hello World\n",
+            "stream": "combined",
+            "truncated": false,
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "toolu_01Sks3GF5pB5viEcUTAZeWB3",
+        "title": "`echo -e \"Line1\\nLine2\\nLine3\"`",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "echo -e \"Line1\\nLine2\\nLine3\"",
+            "args": []
+          },
+          {
+            "content": {
+              "text": "Print multiple lines",
+              "type": "text"
+            },
+            "type": "content"
+          },
+          {
+            "type": "terminal_output",
+            "output": "Line1\nLine2\nLine3\n",
+            "stream": "combined",
+            "truncated": false,
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "toolu_01Vit12eFtW7UXzZzTpS3wcp",
+        "title": "`printf \"\\033[31mRed Text\\033[0m\\n\"`",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "printf \"\\033[31mRed Text\\033[0m\\n\"",
+            "args": []
+          },
+          {
+            "content": {
+              "text": "Print ANSI colored text",
+              "type": "text"
+            },
+            "type": "content"
+          },
+          {
+            "type": "terminal_output",
+            "output": "\u001b[31mRed Text\u001b[0m\n",
+            "stream": "combined",
+            "truncated": false,
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "toolu_01FEWfA5PwM9a2kgNBsgs56Y",
+        "title": "`seq 1 5`",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "seq 1 5",
+            "args": []
+          },
+          {
+            "content": {
+              "text": "Print numbers 1 to 5",
+              "type": "text"
+            },
+            "type": "content"
+          },
+          {
+            "type": "terminal_output",
+            "output": "1\n2\n3\n4\n5\n",
+            "stream": "combined",
+            "truncated": false,
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "tool_call",
+        "toolCallId": "toolu_01RuvAwrkLkbAY6KnzqngpbE",
+        "title": "`ls -la`",
+        "kind": "execute",
+        "status": "completed",
+        "content": [
+          {
+            "type": "terminal_command",
+            "command": "ls -la",
+            "args": []
+          },
+          {
+            "content": {
+              "text": "List directory contents",
+              "type": "text"
+            },
+            "type": "content"
+          },
+          {
+            "type": "terminal_output",
+            "output": "total 24\ndrwxr-xr-x   2 zx   zx    4096 Jan  7 14:08 .\ndrwxrwxrwt 261 root root 20480 Jan  7 14:08 ..\n",
+            "stream": "combined",
+            "truncated": false,
+            "exitStatus": {
+              "exitCode": 0,
+              "signal": null
+            }
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "text": "Here are the results of all five commands:\n\n**1. `echo \"Hello World\"`**\n```\nHello World\n```\n\n**2. `echo -e \"Line1\\nLine2\\nLine3\"`**\n```\nLine1\nLine2\nLine3\n```\n\n**3. `printf \"\\033[31mRed Text\\033[0m\\n\"`**\n```\nRed Text\n```\n(This would appear in red in a terminal that supports ANSI colors)\n\n**4. `seq 1 5`**\n```\n1\n2\n3\n4\n5\n```\n\n**5. `ls -la`**\n```\ntotal 24\ndrwxr-xr-x   2 zx   zx    4096 Jan  7 14:08 .\ndrwxrwxrwt 261 root root 20480 Jan  7 14:08 ..\n```\n\n**Most interesting output:** The `ls -la` command had the most interesting output because it reveals actual system information - showing this is an empty directory owned by user \"zx\", with the parent being a world-writable temp directory (indicated by the sticky bit 't' in the permissions). It also shows timestamps and the directory structure context.\n\nTERMINAL_TEST_DONE"
+      }
+    ]
+  }
+]

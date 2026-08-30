@@ -70,7 +70,6 @@ class ProxyProviders extends FakeProviders {
     // static-token path while fresh ones get tickets.
     return {
       ...super.capabilities(),
-      webAppActorBypassesGateway: true,
       webAppTicketsSinceMs: BOX_IMAGE_TICKETS_SINCE_MS,
       webAppViewerGuardsSinceMs: BOX_IMAGE_VIEWER_GUARDS_SINCE_MS,
     };
@@ -157,7 +156,7 @@ describe("identity phase 2", () => {
     // through the workspace, which is what the ticket below proves.
     await expect(viewer.json()).resolves.toMatchObject({ member: { machine: null } });
     // A viewer reaches the files port with a role-carrying ticket once the VM
-    // boots a guest that enforces read-only; the agent port stays closed.
+    // boots a guest that enforces read-only.
     await env.DB.prepare("UPDATE machines SET created_at = ?1 WHERE workspace_id = ?2")
       .bind(BOX_IMAGE_VIEWER_GUARDS_SINCE_MS, workspace.id).run();
     expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7445/ports`, { headers: { Cookie: editor.cookie } })).status).toBe(200);
@@ -168,7 +167,6 @@ describe("identity phase 2", () => {
       kind: "ticket",
       claims: { role: "viewer", userId: "collaborator", membershipId: editor.membershipId },
     });
-    expect((await appRequest(app, `/workspaces/${workspace.id}/webapp/7444`, { headers: { Cookie: editor.cookie } })).status).toBe(403);
 
     // A VM from before the guarded image refuses viewers outright.
     await env.DB.prepare("UPDATE machines SET created_at = ?1 WHERE workspace_id = ?2")
@@ -253,11 +251,12 @@ describe("identity phase 2", () => {
     expect((await proxy("7445/home/")).status).toBe(403);
     // Traversal, raw and percent-encoded, must not climb out of /workspace.
     expect((await proxy("7445/workspace/%2e%2e/home/.claude.json")).status).toBe(403);
-    // Both the gateway and the actor answer /admin/drain for any ticket.
+    // The gateway answers /admin/drain for any ticket; the browser never may.
     expect((await proxy("7445/admin/drain", "POST")).status).toBe(403);
-    expect((await proxy("7444/admin/drain", "POST")).status).toBe(403);
-    // The gateway's /acp is a second door to the agent on the files port.
+    // /acp was the retired actor's door on the files port.
     expect((await proxy("7445/acp")).status).toBe(403);
+    // 7444 is reserved, never proxied: the port itself is refused.
+    expect((await proxy("7444")).status).toBe(400);
 
     for (const allowed of [
       "7445/workspace/",
@@ -266,7 +265,6 @@ describe("identity phase 2", () => {
       "7445/previews",
       "7445/preview/3000/",
       "7445/terminal/ws",
-      "7444",
     ]) {
       expect((await proxy(allowed)).status, allowed).toBe(200);
     }

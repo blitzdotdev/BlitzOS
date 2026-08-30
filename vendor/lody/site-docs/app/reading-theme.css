@@ -1,0 +1,50 @@
+/* Shared dark reading palette for the long-form surfaces (blog + docs).
+ *
+ * The stock grounds are heavily saturated blue — the marketing tokens sit at
+ * hsl(222 55% 9.6%) and the Fumadocs ocean preset at hsl(220 60% 8%). At that
+ * saturation the page competes with cover art and code, so reading surfaces
+ * drop to a calmer ink-blue. This is the single source of truth: `blog.css`
+ * maps the `--landing-*` tokens onto it and the block below maps Fumadocs'
+ * `--color-fd-*` onto it. Light mode deliberately keeps its stock values.
+ *
+ * Marketing (landing / pricing / changelog / download) is untouched: those
+ * pages use `--landing-*` and `--mkt-*` and reference no `fd-` token.
+ */
+
+html.dark {
+  --ink-bg: 220 24% 10%;
+  --ink-surface-1: 220 16% 15.5%;
+  --ink-surface-2: 220 15% 19%;
+  --ink-border: 220 14% 21%;
+  --ink-fg: 210 14% 94%;
+  --ink-fg-muted: 214 11% 65%;
+  --ink-accent: 202 74% 63%;
+}
+
+/* Overrides the `.dark` block in fumadocs-ui/css/ocean.css. Imported after it,
+ * and `html.dark` outranks `.dark`, so these win. */
+html.dark {
+  --color-fd-background: hsl(var(--ink-bg));
+  --color-fd-foreground: hsl(var(--ink-fg));
+  --color-fd-muted: hsl(var(--ink-surface-1));
+  --color-fd-muted-foreground: hsl(var(--ink-fg-muted));
+  --color-fd-popover: hsl(var(--ink-surface-1));
+  --color-fd-popover-foreground: hsl(var(--ink-fg));
+  --color-fd-card: hsl(var(--ink-surface-1) / 0.5);
+  --color-fd-card-foreground: hsl(var(--ink-fg));
+  --color-fd-border: hsl(var(--ink-border));
+  --color-fd-primary: hsl(var(--ink-accent));
+  --color-fd-secondary: hsl(var(--ink-surface-2));
+  --color-fd-secondary-foreground: hsl(var(--ink-fg));
+  --color-fd-accent: hsl(var(--ink-surface-2));
+  --color-fd-accent-foreground: hsl(var(--ink-fg));
+  --color-fd-ring: hsl(var(--ink-accent));
+}
+
+/* The ocean preset washes a blue glow across the top of every dark page
+ * (`linear-gradient(rgba(5, 105, 255, 0.15), transparent 20rem)`). The blog
+ * hides it behind its own opaque ground; on docs it is the loudest blue on the
+ * page, so the reading surfaces drop it. */
+html.dark body {
+  background-image: none;
+}

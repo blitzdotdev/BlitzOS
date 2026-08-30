@@ -1,0 +1,26 @@
+#!/command/with-contenv bash
+# Registers every git clone under /workspace as a Lody local project, so a
+# worktree session has something to cut a worktree off (plans/LODY-SESSIONS.md
+# §6.4). See /usr/local/libexec/blitz-lody-projects for why it reads /workspace
+# rather than the control plane's repo list, and why it is a loop.
+#
+# It runs as the same uid as the daemon: the control socket is 0600 and the
+# daemon refuses a peer it does not own.
+set -euo pipefail
+
+state_dir=${BLITZ_STATE_DIR:-/var/lib/blitz}
+
+# Follows lody-daemon. With no daemon there is no socket to register against,
+# and a registrar that logs a connection refusal every 30 seconds is worse than
+# one that idles.
+if [ "${BLITZ_LODY_SESSIONS:-0}" != "1" ]; then
+	echo "lody-projects: disabled (set BLITZ_LODY_SESSIONS=1 to enable)"
+	exec sleep infinity
+fi
+
+exec /command/s6-setuidgid blitz /usr/bin/env \
+	HOME="$state_dir/home" USER=blitz LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+	BLITZ_STATE_DIR="$state_dir" \
+	LODY_PLATFORM=local \
+	LODY_DATA_DIR="$state_dir/lody" \
+	/usr/local/libexec/blitz-lody-projects

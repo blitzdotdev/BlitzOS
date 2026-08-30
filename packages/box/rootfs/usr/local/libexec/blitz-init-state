@@ -40,6 +40,12 @@ fi
 
 install -d -m 0700 -o "$uid" -g "$gid" "$state_dir"
 install -d -m 0700 -o "$uid" -g "$gid" "$state_dir/home"
+# The Lody daemon's data root: session CRDT documents, its sqlite stores, the
+# worktrees it cuts, and the 0700 run dir holding its unix sockets. It lives on
+# the state volume so sessions survive VM replacement like every other
+# /var/lib/blitz path. The daemon REFUSES to use a run dir it does not own, so
+# creating it with the wrong uid is a startup failure, not a warning.
+install -d -m 0700 -o "$uid" -g "$gid" "$state_dir/lody"
 install -d -m 0700 -o root -g root "$state_dir/ssh" "$state_dir/docker"
 install -d -m 0755 -o "$uid" -g "$gid" /workspace
 install -d -m 0755 -o root -g root /run/sshd /run/blitz-sshd /run/blitz-docker
