@@ -35,8 +35,16 @@ selector) must fully work in GitHub Worktree mode on a box.
    stays native. Lody's own sidebar header/footer are suppressed via props,
    not source edits. The Terminals section is native rows injected through
    their `afterSessionListContent` slot.
+   *(Phase 4, shipped: `div.shell-newbar` is GONE in the vendored shape rather
+   than filled — their `home` nav entry, relabelled "New session", is the
+   new-chat affordance, and the `+ New tab` menu moves into the Terminals
+   section header. The suppression props did not exist upstream; phase 4 wrote
+   them as seam patch 2 and drafted the PR that removes it.)*
 4. **Default UX**: a fresh workspace opens the chat landing. TUI tabs are
    opt-in via the `+` menu and the Terminals section.
+   *(Phase 4, shipped: with the flag on, `defaultWorkspaceTabs()` returns NO
+   tabs, and no tabs is what `useLodyRail` reads as "fresh". Only a workspace
+   the server has never stored a document for is affected — nothing migrates.)*
 5. **Worktrees v1**: create + archive-with-backup + diff stats/badges. PR
    chips, PR polling, and merge flows are deferred.
 6. **Agents v1**: claude and codex only. English only. Recipes stay on
@@ -370,6 +378,31 @@ NOT tabs and never enter `WorkspaceTabs`. The old `type:'chat'` tab is already
 deleted from both parsers; a stored one is DROPPED on read, on both sides, so
 an old shared document still parses.
 
+**What phase 4 shipped that differs from the sketch above** (details and
+measurements in `plans/LODY-RUNTIME-DESIGN.md` §9):
+
+- **The sketch's order is not the shipped order.** `LoroSidebar` renders
+  `sessionListProps` before `afterSessionListContent`, and their own comment
+  says why ("so Chats reads as the last section"), so the rail reads GitHub
+  Worktrees, then Chats, then Terminals. §0's bias rule settles it.
+- **An empty Lody section renders nothing, header included** — upstream's rule
+  (`loro-app-sidebar.tsx:2095`). Terminals is the exception, because it is ours
+  and its header carries the `+`.
+- **"+ New session" is their `home` nav entry, relabelled.** It is the same
+  action — go to the chat landing, which is the create surface — so there is no
+  native button and no `div.shell-newbar` in the vendored shape.
+- **The selection is an ADDRESS.** `AppRoute`'s webApp variant carries
+  `chat: null | 'landing' | { sessionId }`, served by `/workspaces/:id`,
+  `/workspaces/:id/chat` and `/workspaces/:id/chat/:id`. That is the whole
+  answer to "where does the active chat selection persist": in the URL, and
+  nowhere else. `webapp_state` learns nothing about chat sessions, because the
+  daemon's list is what exists and a stale id in a document shared across a
+  workspace would point other members at a session archived on somebody else's
+  box.
+- **Archive / rename / pin are wired to Lody's own `useSessionActions`**, so
+  they are their dialogs and their copy. The archive-backup wording in the
+  confirm dialog is theirs and was not restated on our side.
+
 ## 9. Migration
 
 Retirement happened FIRST, not last. Step 0 below is done on this branch, so
@@ -400,7 +433,7 @@ nothing here waits on a dead surface being removed.
 | 1 box | `lody` pinned in image, s6 service, sync+rpc gateway routes, surface contract updated | `wscat` through gateway with ticket reaches daemon; drift tests green | **done** (`plans/evidence/lody-phase1.md`) |
 | 2 runtime | BlitzPlatformProvider, websocket transport seam patch, RPC plane shim | create session from browser console; turn dispatched; reply streams | **done** (`plans/LODY-RUNTIME-DESIGN.md` §7) |
 | 3 surface | `SessionSurface` mounted; full chat loop (permissions, diffs, queue) | send/steer/cancel/permission round trip on canary box | **done, with one gap** — `LODY-RUNTIME-DESIGN.md` §8.6. Send and session creation are proven live through the real composer; the permission card, the queue and Stop are written and gated but were not reached inside the two-turn budget, and reaching the card first needs the composer's permission-mode selector (§8.3). |
-| 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works | — |
+| 4 rail | `SessionRail` with Chats / GitHub Worktrees / Terminals; + New session | new chat from rail; terminal tabs unchanged; mobile drawer works | **done** — `LODY-RUNTIME-DESIGN.md` §9. All four exit tests pass. Sections and order follow upstream, not §8's sketch (§9.2). Chat sessions are addressed in the URL and nowhere else (§9.1). |
 | 5 worktrees | local projects registered from `workspace_repos`; worktree sessions; diff stats/badges; full composer parity (repo/branch pickers, `/` `@` `$` `+`, model/effort, permission mode) | worktree session edits code on a branch; archive backs up dirty state; every screenshot control works in worktree mode | — |
 | 6 sharing | `session_shares` D1 + CP routes; target-member proxy routing; sync-server ACL (ro drops inbound updates); worktree-scoped RPC for grantees; right-click share UI; admin implicit RO | RO grantee follows a live session + diffs, cannot write; RW grantee prompts and answers a permission; revoke cuts access | — |
 | 7 flag + automate | flag flip on canary, `docs/LODY-MERGE.md`, first two upstream merges by hand, then scheduled | one scheduled merge PR lands clean | — |

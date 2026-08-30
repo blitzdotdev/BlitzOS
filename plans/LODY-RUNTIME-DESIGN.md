@@ -760,3 +760,157 @@ A simulation was considered and rejected: the card is gated on
 (`sessionLivePresenceAtomFamily`), and the daemon emits presence only for its
 own origin. A second CRDT peer cannot fake it, so there is no free path to the
 card.
+
+---
+
+## 9. What phase 4 changed about this document (2026-08-30)
+
+Phase 4 made sessions first-class in the shell: `SessionRail`, Lody's own
+sidebar body inside it, an address for a chat session, and the chat landing as
+a fresh workspace's default. What follows is what that measured, in the form §7
+and §8 use.
+
+### 9.1 §4.3 and §4.4, answered
+
+§4.3 said "deep links are a phase-4 decision; when they come they extend
+`AppRoute` with `{ page: 'webApp'; sessionId }`". They came, and the shape is
+one field wider than that guess, because there are THREE states and not two:
+
+```ts
+export type ChatAddress = null | 'landing' | { sessionId: string };
+//   null       /workspaces/:id           the panes own the view
+//   'landing'  /workspaces/:id/chat      the create surface, no session
+//   {sessionId}/workspaces/:id/chat/:id  that session
+```
+
+A bare `/workspaces/:id` still means the panes, so no existing link moves.
+
+**The URL is the ONLY place the selection persists, and that is the phase-4
+decision blocker 5 asked for.** `webapp_state` keeps owning terminal tabs and
+pane layout and learns nothing about chat sessions: the daemon's session list is
+the source of truth for WHICH sessions exist, and that document is shared across
+every member of a workspace — a stored id would point half of them at a session
+archived on somebody else's box. What may persist is the active SELECTION, and
+the address bar already persists every other selection this app has (the Drive
+folder, the settings section) across a reload, a deep link and the back button,
+with no server round trip and no cross-member leakage.
+
+The two directions are wired so they cannot fight. The address drives the
+surface (`CloudApp` effect → `api.openSession` / `api.openLanding`); the
+surface's own navigations — the landing's send creates a session and goes to it
+— mirror back (`router.subscribe('onResolved')` → `useLodyRail.mirror`). Both
+compare before they act, so the pair converges instead of looping, and
+`mirror` is a no-op while the panes own the view.
+
+§4.4's other half shipped as written: a terminal row, a new tab, a preview and
+an opened file all take the panes back, because `selectTtydSession` and
+`addWorkspaceTab` are the two places that happens.
+
+### 9.2 Six things the rail measured
+
+| # | This document / the plan says | What shipped | Why |
+|---|---|---|---|
+| 1 | plan §8: Chats above GitHub Worktrees | GitHub Worktrees, then Chats, then Terminals | `LoroSidebar` renders `sessionListProps` before `afterSessionListContent`, and their own comment says why: "so Chats reads as the last section". Reordering means a second seam patch or rebuilding their scroll region. §0's bias rule settles it. |
+| 2 | plan §8: three sections | Three HEADINGS, but an empty Lody section renders nothing at all | Upstream's rule (`loro-app-sidebar.tsx:2095`): a heading over no rows is a promise the sidebar cannot keep. Terminals is the exception because it is ours and its header carries the `+`. |
+| 3 | §0.3: the vendored zone is `shell-newbar` + `shell-list` | `shell-newbar` is GONE in that shape, not filled | Their `home` nav entry IS the new-chat affordance — same action, same place — so it takes the label "New session" through `labels` and no native button is built. |
+| 4 | §4.1: the surface is one mount | TWO mounts, one runtime | The rail is not a child of the provider stack, so the sidebar is `createPortal`-ed into `div.session-list--vendor`. A second stack around the rail would be a second runtime, WebSocket, IndexedDB repo and WASM instance. React context follows the RENDER tree, so the sidebar sits below `RuntimeProvider` and OUTSIDE the memory router — which is what makes `useResolvedWorkspaceScope` take its `currentWorkspaceIdAtom` branch there instead of the route-target one. |
+| 5 | §5.2: the token block keys off `.lody-surface` | `.session-list--vendor` is named beside it | The portal is Lody DOM under `#root`, not under `.lody-surface`, so `--muted` and `--hover` would resolve to our finished colors and every hover background in the sidebar would vanish. |
+| 6 | — (not anticipated) | `LoroSidebar` sizes its root with an INLINE width | Upstream it IS the window's resizable sidebar, sash included. The shell grid owns the rail's 252px, so `strip-rail.css` overrides the inline value — the one place an `!important` is the honest answer, because an inline style cannot be outranked any other way. |
+
+### 9.3 The codex capabilities refresh: not slow, and not ours
+
+§8.3 recorded that "the **codex** config's refresh did not complete inside the
+test window (~25 s)" and deferred it. Measured against a cold daemon over the
+real `/session-control` plane:
+
+| Config | Runtime override | Cold daemon | Under a full `SessionSurface` mount |
+|---|---|---|---|
+| `blitz-claude` | `/usr/local/bin/claude` | 1.9 s | 2.1 s |
+| `blitz-codex` | `/usr/local/bin/codex` | 0.8 s | 2.7 s |
+| `blitz-codex` | `/opt/blitz/npm/bin/codex` (the vendor binary, not the shim) | 0.9 s | — |
+
+**Codex is FASTER than claude, and nothing downloads.** The hypothesis in the
+phase-4 brief — a managed-runtime download because `runtimeOverrides` lacks a
+binary — is ruled out by construction and by measurement:
+`apps/cli/src/agent/setting.ts:413` short-circuits `resolveManagedRuntimeForLaunch`
+whenever `runtimeOverrides.codexPath` is set, spawns the bundled `codex-acp`
+adapter with `CODEX_PATH` pointing at it, and `/usr/local/bin/codex` is the
+box's PATH shim for `@openai/codex@0.147.0`. The shim and the vendor binary
+measure the same, so the shim's `-c check_for_update_on_startup=false` costs
+nothing either.
+
+So the ~25 s was an artifact of WHERE it was measured: inside a jsdom mount that
+was concurrently evaluating Monaco, three and mermaid and driving the composer,
+on a four-core box. The same call measured 15 s in the full `npm test` run once
+phase 4 added a second daemon-backed suite. Nothing is upstream's to fix and
+nothing is ours to change; the plan's §6 risk 6 stays closed, and no streaming
+bridge is built.
+
+Two consequences for the suite:
+
+- **The harness now takes a cross-file lock.** The local installation profile
+  holds a host lease on 17789, so a second `lody start` on the same box never
+  finishes provisioning its implicit workspace — it waits 60 s and the harness
+  reports a timeout whose log says nothing. Vitest runs files in parallel, and
+  phase 4 is the first change to need two daemon-backed suites.
+- **The phase-3 refresh probe's 10 s bound became a 45 s hang detector.** The
+  number was wall clock on a shared machine, which is exactly what the vendored
+  `AGENTS.md` says a test must not depend on. The decision it served is settled
+  by the clean numbers above.
+
+### 9.4 The permission-mode selector: not a submenu
+
+§8.6 recorded that "driving that selector through a Radix submenu in jsdom was
+not solved here", and that it is what stands between the exit test and the
+permission-request card (`BUILTIN_DEFAULT_MODE_IDS.claude` is `auto`, whose
+classifier answers prompts on the member's behalf).
+
+**It is not a submenu.** `DesktopPermissionModeButton`
+(`components/sessions/desktop-run-config-menu.tsx:1014`) is a FLAT
+`DropdownMenu` with its own trigger, `aria-label="Permission"`, deliberately
+separate from the run-configuration menu — their comment at `:73` says
+permission is "the knob users flip most". So it is driven exactly the way the
+phase-3 test already drives the run-configuration trigger: `pointerdown`,
+`mousedown`, `click`.
+
+`packages/webapp/test/lody-permission-mode.test.tsx` opens it, finds Auto and
+Manual, selects Manual and asserts the callback receives the mode ID `default`
+— not the label. It runs at the component boundary, so it costs no daemon and
+no turn. Its second case pins the other half of §8.3's finding: with no
+`acpCapability` rows the control returns `null` and does not render at all, so a
+test that looked for it would report "undrivable" when the real problem is that
+upstream's capabilities pass never runs for a BlitzOS box.
+
+The permission CARD is still unreached, and still needs a live turn whose mode
+is `default`. Nothing structural is in the way any more.
+
+### 9.5 Exit test: what is proven, and what is not
+
+`packages/webapp/test/lody-session-rail.test.tsx` (daemon-gated),
+`packages/webapp/test/session-rail.test.tsx`,
+`packages/webapp/test/shell-mobile-drawer.test.tsx`,
+`packages/webapp/test/lody-rail-defaults.test.tsx` and
+`packages/webapp/test/lody-permission-mode.test.tsx` (all free, all gating every
+merge).
+
+**Proven, free:** the rail's two shapes and the renamed DOM path; the vendored
+sidebar mounts into the portal host with no provider missing; their header and
+footer are suppressed; "+ New session" opens the landing; the terminal rows are
+byte-for-byte the old rail's and select their tab; the active-terminal highlight
+follows `hidden`; a session the daemon already holds is listed under Chats and
+its row opens the surface; the three chat addresses parse and round-trip; a
+fresh workspace lands on the chat landing with the flag on and on the Claude tab
+with it off; the mobile drawer opens, scrims and closes with the vendored zone
+inside it; Manual is selectable.
+
+**Proven, live (one turn, the whole phase-4 budget):** the rail's New session
+opened the landing, the real composer sent, the daemon created the session and
+the surface navigated to it.
+
+**NOT reached:** nothing structural. The live case's remaining assertion — the
+just-created session's row appearing in the rail — failed on the test's own
+selector (`SessionList` renders a row as `div[role=button]` with
+`data-sidebar-session-id`, and an anchor only when a `getSessionHref` is
+supplied, which this rail does not supply). The selector is fixed and the same
+assertion now passes for free against a seeded session, which is the same accept
+unit the landing writes minus the paid dispatch.
