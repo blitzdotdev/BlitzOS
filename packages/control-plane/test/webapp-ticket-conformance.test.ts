@@ -33,6 +33,9 @@ interface FixtureContext {
   workspaceId: string;
   workspaceToken: string;
   nowSeconds: number;
+  /** Numbers both verifiers must agree on but that no single ticket can pin.
+   * See the cap assertion below. */
+  limits: { maxShareSessions: number };
 }
 
 const contextSource = import.meta.glob<string>(
@@ -56,6 +59,26 @@ describe("webApp ticket conformance", () => {
 
   it("derives the workspace token the guests are given", async () => {
     await expect(auth.tokenFor(context.workspaceId)).resolves.toBe(context.workspaceToken);
+  });
+
+  /**
+   * THE CAP, on both sides of the contract.
+   *
+   * `MAX_TICKET_SHARE_SESSIONS` here and `maxTicketShareSessions` in
+   * `packages/box/gateway/main.go` decide the same thing — how many session ids
+   * one ticket may carry — and until phase 7 they agreed only by a comment
+   * naming each other (`plans/LODY-SHARING.md` §9, item 6, which called it the
+   * weakest link in this contract).
+   *
+   * It is a NUMBER in the corpus rather than a pair of ticket fixtures because
+   * the behaviour it selects cannot be pinned cheaply: a 64-id ticket and a
+   * 65-id ticket are about 3 KB of base64 each, they say nothing a reader can
+   * check by eye, and they would have to be regenerated whenever the cap moved.
+   * The number is what the two constants have to agree about, so the number is
+   * what the corpus carries.
+   */
+  it("agrees with the gateway about how many sessions a ticket may name", () => {
+    expect(MAX_TICKET_SHARE_SESSIONS).toBe(context.limits.maxShareSessions);
   });
 
   const entries = Object.entries(ticketSources).sort(([left], [right]) =>

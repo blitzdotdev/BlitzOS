@@ -54,11 +54,21 @@ path is temporary — see `TODO(identity-phase-4)`.
 ## Fixtures
 
 `context.json` carries the root secret, workspace id, derived workspace token,
-and the fixed clock every case is evaluated against. Each file under
+the fixed clock every case is evaluated against, and `limits`. Each file under
 `tickets/` holds a `credential`, the `expect` every verifier must agree on, and
 a `note` saying what the case is for. `expect.valid` false means refuse;
 `expect.kind` distinguishes a real ticket from the static-token compatibility
 path.
+
+`limits.maxShareSessions` is the 64-id cap, and it is a number rather than a
+pair of ticket fixtures on purpose. A 64-id credential and a 65-id one are about
+3 KB of base64 each, they say nothing a reader can check by eye, and they would
+have to be regenerated whenever the cap moved. What the two sides must agree
+about is the number — `MAX_TICKET_SHARE_SESSIONS` in
+`control-plane/core/webapp-tickets.ts` and `maxTicketShareSessions` in
+`box/gateway/main.go` — so the number is what the corpus carries and both
+conformance suites read. Until phase 7 those constants agreed only by a comment
+naming each other.
 
 Conformance suites: `control-plane/test/webapp-ticket-conformance.test.ts`,
 `box/gateway/main_test.go`.

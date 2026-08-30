@@ -16,10 +16,38 @@ import (
 // box.
 
 type ticketFixtureContext struct {
-	RootSecret     string `json:"rootSecret"`
-	WorkspaceID    string `json:"workspaceId"`
-	WorkspaceToken string `json:"workspaceToken"`
-	NowSeconds     int64  `json:"nowSeconds"`
+	RootSecret     string              `json:"rootSecret"`
+	WorkspaceID    string              `json:"workspaceId"`
+	WorkspaceToken string              `json:"workspaceToken"`
+	NowSeconds     int64               `json:"nowSeconds"`
+	Limits         ticketFixtureLimits `json:"limits"`
+}
+
+// Numbers both verifiers must agree on but that no single ticket can pin.
+type ticketFixtureLimits struct {
+	MaxShareSessions int `json:"maxShareSessions"`
+}
+
+// THE CAP, on both sides of the contract.
+//
+// maxTicketShareSessions here and MAX_TICKET_SHARE_SESSIONS in
+// control-plane/core/webapp-tickets.ts decide the same thing — how many session
+// ids one ticket may carry — and until phase 7 they agreed only by a comment
+// naming each other (plans/LODY-SHARING.md §9, item 6, which called it the
+// weakest link in this contract).
+//
+// A number in the corpus rather than a pair of ticket fixtures: a 64-id and a
+// 65-id credential are about 3 KB of base64 each, say nothing a reader can check
+// by eye, and would have to be regenerated whenever the cap moved.
+func TestTicketShareSessionCapMatchesCorpus(t *testing.T) {
+	context := readTicketContext(t)
+	if context.Limits.MaxShareSessions != maxTicketShareSessions {
+		t.Fatalf(
+			"share session cap disagrees with the corpus: gateway %d, fixtures %d",
+			maxTicketShareSessions,
+			context.Limits.MaxShareSessions,
+		)
+	}
 }
 
 type ticketFixtureExpectation struct {
