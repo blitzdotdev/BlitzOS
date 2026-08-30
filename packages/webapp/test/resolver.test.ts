@@ -16,6 +16,11 @@ describe("standalone endpoint resolver", () => {
     expect(resolver.resolve(target)).toEqual({
       terminalUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/terminal/",
       filesBase: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/workspace/",
+      // The sync URL leaves the resolver already on wss: unlike the terminal it
+      // is the exact path the gateway routes, so nothing downstream has to flip
+      // the scheme against `window.location`.
+      lodySyncUrl: "wss://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/sync",
+      lodyRpcUrl: "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/lody/rpc",
     });
     expect(resolver.previewUrl(target, 3000)).toBe(
       "https://cp.example.test/workspaces/workspace%20one%2Ftwo/webapp/7445/preview/3000/",

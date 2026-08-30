@@ -31,6 +31,8 @@ const resolver = {
   resolve: (wire: V2WorkspaceRecord['wire']) => ({
     terminalUrl: `https://box.example/${wire.id}/terminal/?token=discarded#fragment`,
     filesBase: `https://box.example/${wire.id}/workspace/`,
+    lodySyncUrl: `wss://box.example/${wire.id}/lody/sync`,
+    lodyRpcUrl: `https://box.example/${wire.id}/lody/rpc`,
   }),
   previewUrl: () => '',
 };

@@ -3,6 +3,10 @@ import type { WorkspaceView } from "@blitzos/schema";
 export interface BoxEndpoints {
   terminalUrl: string;
   filesBase: string;
+  /** WebSocket carrying the Lody session daemon's CRDT data plane. */
+  lodySyncUrl: string;
+  /** HTTP endpoint for the Lody daemon's machine RPC. */
+  lodyRpcUrl: string;
 }
 
 export interface EndpointResolver {
@@ -32,6 +36,13 @@ export function standaloneResolver(
     return {
       terminalUrl: `${prefix}/7445/terminal/`,
       filesBase: `${prefix}/7445${FILES_DAV_ROOT}/`,
+      // The terminal keeps its http URL and is flipped to wss by
+      // `terminalWebSocketUrl`, which also appends `/ws` and needs
+      // `window.location` to resolve it. This one is already the exact path the
+      // gateway routes, so the scheme swap happens here instead — a resolver
+      // used from a test or a worker has no `window` to lean on.
+      lodySyncUrl: `${prefix.replace(/^http(s?):\/\//u, "ws$1://")}/7445/lody/sync`,
+      lodyRpcUrl: `${prefix}/7445/lody/rpc`,
     };
   };
   return {
