@@ -32,14 +32,16 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-// SAFETY: the hook reads `id` and `members`; the resolver reads `id`.
+// SAFETY: the hook reads `id` and `members`; the resolver reads `id`. Stating
+// every other field of a `WorkspaceView` would say nothing about this test and
+// would have to be restated at every schema change.
 const workspace = {
   id: "ws-1",
   members: [
     { membershipId: "mem-owner", name: "Ada", avatarUrl: null, role: "editor", machine: null },
     { membershipId: "mem-me", name: "Me", avatarUrl: null, role: "editor", machine: null },
   ],
-} as WorkspaceView;
+} as unknown as WorkspaceView;
 
 const RECEIVED: ListSessionSharesResponse = {
   granted: [],

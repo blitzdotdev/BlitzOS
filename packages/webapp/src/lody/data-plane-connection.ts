@@ -32,9 +32,9 @@ import type { LodyDataPlaneConnection, LodyDataPlaneFrame } from "./wire-types.j
 
 /** Everything a `WebSocket` can deliver. The bridge only ever sends text, so
  * the other arms exist to be rejected rather than to be handled. */
-type WebSocketPayload = string | ArrayBuffer | Blob;
+export type WebSocketPayload = string | ArrayBuffer | Blob;
 
-function isTextPayload(data: WebSocketPayload): data is string {
+export function isTextPayload(data: WebSocketPayload): data is string {
   return typeof data === "string";
 }
 

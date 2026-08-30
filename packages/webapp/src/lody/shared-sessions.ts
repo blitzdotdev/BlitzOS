@@ -27,6 +27,7 @@
  */
 import { isJsonArray, isJsonObject, isJsonString, parseJson, type JsonValue } from "@blitzos/schema";
 import type { SessionShareLevel } from "@blitzos/schema";
+import { isTextPayload, type WebSocketPayload } from "./data-plane-connection.js";
 
 /** One row of the rail's "Shared with you" section. */
 export interface SharedSessionRow {
@@ -124,9 +125,11 @@ export async function readSharedSessionTitles(
           }),
         );
       };
-      socket.onmessage = (event: MessageEvent) => {
-        const frame = parseJson(typeof event.data === "string" ? event.data : "");
-        if (frame === undefined || !isJsonObject(frame)) return;
+      socket.onmessage = (event: MessageEvent<WebSocketPayload>) => {
+        // The bridge only ever sends text frames; anything else is not ours.
+        if (!isTextPayload(event.data)) return;
+        const frame = parseJson(event.data);
+        if (!isJsonObject(frame)) return;
         // A refusal settles the read as surely as an answer does: the rows keep
         // their ids and the rail stops waiting.
         if (frame.type === "error") settle(new Map());

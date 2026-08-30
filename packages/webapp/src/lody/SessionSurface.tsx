@@ -64,6 +64,7 @@ import {
   activeSessionIdFromPathname,
   createLodySessionRouter,
   type LodyRouter,
+  type LodySessionRouterOptions,
 } from "./router.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 import { initLodyI18n } from "./i18n.js";
@@ -364,16 +365,12 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
   // on every render of the host, and rebuilding the router would rebuild the
   // page under the member's cursor.
   const sharedSessionId = props.shared?.sessionId ?? null;
-  const router = useMemo<LodyRouter | null>(
-    () =>
-      slug === null
-        ? null
-        : createLodySessionRouter(slug, {
-            readOnly,
-            ...(sharedSessionId === null ? {} : { initialSessionId: sharedSessionId }),
-          }),
-    [slug, readOnly, sharedSessionId],
-  );
+  const router = useMemo<LodyRouter | null>(() => {
+    if (slug === null) return null;
+    const routerOptions: LodySessionRouterOptions = { readOnly };
+    if (sharedSessionId !== null) routerOptions.initialSessionId = sharedSessionId;
+    return createLodySessionRouter(slug, routerOptions);
+  }, [slug, readOnly, sharedSessionId]);
 
   // Both seeds are effects, so the first render below sees a null user and no
   // visible machine; both atoms are jotai state, so the surface converges on
