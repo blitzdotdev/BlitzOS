@@ -283,26 +283,19 @@ export function WorkspaceProviderRows({
               }`}
               key={row.name}
             >
-              {/* The whole tile is the control, the way a template tile is.
-                * That is what keeps a trailing button off every row. */}
+              {/* The tile opens and closes. It does not connect.
+                *
+                * It used to: a press on a backed row minted straight away, so
+                * reading a row and changing it were the same gesture and there
+                * was no way to look without acting. Only the buttons inside
+                * change state now, and every state is reachable by opening the
+                * row rather than by knowing what a press would do. */}
               <button
                 className="wsc-tile__main"
                 type="button"
                 aria-expanded={isOpen}
                 disabled={readOnly === true}
-                onClick={() => {
-                  if (isOpen) {
-                    close();
-                    return;
-                  }
-                  // A credential already stands behind it, so the press is the
-                  // whole act: connect, and let the tile flip.
-                  if (!row.connected && backed) {
-                    void connectNow(row);
-                    return;
-                  }
-                  open(row, 'connect');
-                }}
+                onClick={() => { if (isOpen) close(); else open(row, 'connect'); }}
               >
                 <span className="wsc-tile__head">
                   <ProviderGlyph className="wsc-tile__glyph" provider={row.name} />
@@ -355,8 +348,7 @@ export function WorkspaceProviderRows({
                       </div>
                     </>
                   ) : (
-                    // Only `blitz connections open` reaches this: pressing the
-                    // tile would have minted instead of opening it.
+                    // The one way to connect a row that is not connected yet.
                     <div className="wsc-tile__actions">
                       <button
                         className="webapp-action webapp-action--primary"
