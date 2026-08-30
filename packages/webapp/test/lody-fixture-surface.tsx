@@ -1,43 +1,75 @@
 /**
- * Phase-0 render spike (plans/LODY-SESSIONS.md §10, phase 0).
+ * The vendored Lody leaves, rendered from fixture props with no daemon, no CRDT
+ * and no network.
  *
- * Proves that three vendored Lody leaves — `SessionChatStreamView`, the
- * `ChatComposer`, and the `LoroSidebar` body — mount and render inside our
- * webapp shell from fixture props, with no daemon, no CRDT, and no network.
- * It mirrors the upstream Storybook stories named in `spike-fixtures.ts`.
+ * This was `src/lody/SessionSurfaceSpike.tsx` in phase 0. Phase 3 mounted the
+ * real `SessionSurface`, so the spike left `src/` — but its test did not lose
+ * its value and this is where it moved to (plans/LODY-RUNTIME-DESIGN.md §4.5:
+ * "their fixtures move to `packages/webapp/test/` as render fixtures").
  *
- * It is NOT the `SessionSurface` of §7.1: there is no runtime, no router
- * bridge and no theme overlay here. Those arrive in phases 2 and 3. Everything
- * in this directory lives OUTSIDE `vendor/`, per the §5.3 patch policy.
+ * WHY IT IS STILL WORTH KEEPING. The phase-3 exit test drives the mounted
+ * surface against a real `lody` daemon, so it SKIPS wherever the daemon is not
+ * installed — which is CI. This harness needs none of that: it is a plain
+ * component render, it gates every merge, and it is the thing that fails first
+ * when an upstream merge changes a prop contract on the three components the
+ * whole surface is built out of.
  */
 import { useRef, useState } from "react";
 import { I18nextProvider } from "react-i18next";
 import { ArrowUp, Bot, Github } from "lucide-react";
+import { createLocalPlatformProvider, createStaticStore } from "@lody/platform";
+import { PlatformContext } from "@lody/platform/react";
+import { AuthenticatedConvexContext } from "@lody/components/hooks/use-authenticated-convex";
 import { MessageRowView, SessionChatStreamView } from "@lody/components/components/ai-gui/view";
 import { ChatComposer } from "@lody/components/components/chat/chat-composer";
 import { LoroSidebar } from "@lody/components/components/loro-sidebar";
 import { OptionSelector } from "@lody/components/components/shared/option-selector";
 import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { Button } from "@lody/components/ui/button";
-import { initLodyI18n } from "./i18n";
+import { initLodyI18n } from "../src/lody/i18n";
+import { LODY_SURFACE_CLASS } from "../src/lody/surface-class";
 import type {
+  AuthenticatedConvexValue,
   MessageRowArgs,
   OptionSelectorOption,
   SessionListRepoState,
-} from "./spike-types";
-import { LodySpikePlatformProvider } from "./spike-platform";
+} from "./lody-fixture-types";
 import {
-  SPIKE_LAST_ASSISTANT_MESSAGE_ID,
-  SPIKE_SESSION_ID,
-  SPIKE_SESSION_LIST_PROPS,
-  SPIKE_SIDEBAR_UPDATED_ITEMS,
-  SPIKE_STREAM_ITEMS,
-} from "./spike-fixtures";
-import "./lody-surface.css";
-import "./lody-spike.css";
+  FIXTURE_LAST_ASSISTANT_MESSAGE_ID,
+  FIXTURE_SESSION_ID,
+  FIXTURE_SESSION_LIST_PROPS,
+  FIXTURE_SIDEBAR_UPDATED_ITEMS,
+  FIXTURE_STREAM_ITEMS,
+} from "./lody-fixtures";
+import "../src/lody/lody-surface.css";
+import "./lody-fixture-surface.css";
 
-/** The class the containment test treats as the session surface boundary. */
-export const LODY_SURFACE_CLASS = "lody-surface";
+const FIXTURE_USER_ID = "local:blitz-fixture";
+const FIXTURE_WORKSPACE_ID = "lw_blitz_fixture";
+
+const fixturePlatform = createLocalPlatformProvider({
+  session: createStaticStore({
+    status: "authenticated",
+    user: { id: FIXTURE_USER_ID, name: "Fixture", image: null },
+  }),
+  workspaces: createStaticStore({
+    status: "ready",
+    workspaces: [{ id: FIXTURE_WORKSPACE_ID, name: "Fixture", slug: "fixture", role: "owner" }],
+    activeWorkspaceId: FIXTURE_WORKSPACE_ID,
+  }),
+});
+
+/** The settled signed-out Convex value their Storybook preview supplies. The
+ * real provider supplies the same one; see `src/lody/platform.tsx`. */
+const signedOutConvex: AuthenticatedConvexValue = {
+  authSessionId: null,
+  isAuthenticated: false,
+  isLoading: false,
+  isRecovering: false,
+  confirmedUnauthenticated: true,
+  claimAutomaticCommand: () => false,
+  requestAuthRecovery: () => {},
+};
 
 // The vendored props type is `any` at our seam (see vendor-modules.d.ts), so
 // this row renderer states its own contract instead of borrowing one.
@@ -59,7 +91,7 @@ const repoOptions: OptionSelectorOption<string>[] = [
   },
 ];
 
-function SpikeComposer() {
+function FixtureComposer() {
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState("Move the rail over to Lody session rows.");
   const [agent, setAgent] = useState<string | null>("claude");
@@ -107,30 +139,30 @@ function SpikeComposer() {
   );
 }
 
-function SpikeSidebar() {
+function FixtureSidebar() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
-    SPIKE_SESSION_LIST_PROPS.selectedSessionId ?? null,
+    FIXTURE_SESSION_LIST_PROPS.selectedSessionId ?? null,
   );
-  const [repos, setRepos] = useState<SessionListRepoState[]>(SPIKE_SESSION_LIST_PROPS.repos);
+  const [repos, setRepos] = useState<SessionListRepoState[]>(FIXTURE_SESSION_LIST_PROPS.repos);
   const [chatsCollapsed, setChatsCollapsed] = useState(false);
 
   return (
     <LoroSidebar
-      workspaceName="Phase 0 spike"
-      userEmail="phase0@blitz.dev"
+      workspaceName="Fixture workspace"
+      userEmail="fixture@blitz.dev"
       repoSections={[]}
       chats={[]}
-      workspaces={[{ id: "lw_blitz_phase0", name: "Phase 0 spike" }]}
-      currentWorkspaceId="lw_blitz_phase0"
+      workspaces={[{ id: FIXTURE_WORKSPACE_ID, name: "Fixture workspace" }]}
+      currentWorkspaceId={FIXTURE_WORKSPACE_ID}
       activeNav="home"
       organizeMode="workspace"
       chatScope="my"
       pinnedItems={[]}
-      updatedItems={SPIKE_SIDEBAR_UPDATED_ITEMS}
+      updatedItems={FIXTURE_SIDEBAR_UPDATED_ITEMS}
       updatedSelectedItemId={selectedSessionId}
       updatedBucketsCollapsed={{}}
       sessionListProps={{
-        sessions: SPIKE_SESSION_LIST_PROPS.sessions,
+        sessions: FIXTURE_SESSION_LIST_PROPS.sessions,
         repos,
         chatsCollapsed,
         selectedSessionId,
@@ -155,36 +187,38 @@ function SpikeSidebar() {
 }
 
 /**
- * The spike surface. Everything Lody renders is nested under
+ * The fixture surface. Everything Lody renders is nested under
  * `.lody-surface`, which is the boundary the containment test probes.
  */
-export function SessionSurfaceSpike() {
+export function LodyFixtureSurface() {
   const i18n = initLodyI18n();
   return (
-    <LodySpikePlatformProvider>
-      <I18nextProvider i18n={i18n}>
-        <TooltipProvider>
-          <div className={`${LODY_SURFACE_CLASS} lody-spike-layout`}>
-            <aside className="lody-spike-rail">
-              <SpikeSidebar />
-            </aside>
-            <section className="lody-spike-pane">
-              <div className="lody-spike-stream">
-                <SessionChatStreamView
-                  items={SPIKE_STREAM_ITEMS}
-                  sessionId={SPIKE_SESSION_ID}
-                  renderMessageRow={renderMessageRow}
-                  lastAssistantMessageId={SPIKE_LAST_ASSISTANT_MESSAGE_ID}
-                  lastCompletedAssistantMessageId={SPIKE_LAST_ASSISTANT_MESSAGE_ID}
-                />
-              </div>
-              <div className="lody-spike-composer">
-                <SpikeComposer />
-              </div>
-            </section>
-          </div>
-        </TooltipProvider>
-      </I18nextProvider>
-    </LodySpikePlatformProvider>
+    <PlatformContext.Provider value={fixturePlatform}>
+      <AuthenticatedConvexContext.Provider value={signedOutConvex}>
+        <I18nextProvider i18n={i18n}>
+          <TooltipProvider>
+            <div className={`${LODY_SURFACE_CLASS} lody-fixture-layout`}>
+              <aside className="lody-fixture-rail">
+                <FixtureSidebar />
+              </aside>
+              <section className="lody-fixture-pane">
+                <div className="lody-fixture-stream">
+                  <SessionChatStreamView
+                    items={FIXTURE_STREAM_ITEMS}
+                    sessionId={FIXTURE_SESSION_ID}
+                    renderMessageRow={renderMessageRow}
+                    lastAssistantMessageId={FIXTURE_LAST_ASSISTANT_MESSAGE_ID}
+                    lastCompletedAssistantMessageId={FIXTURE_LAST_ASSISTANT_MESSAGE_ID}
+                  />
+                </div>
+                <div className="lody-fixture-composer">
+                  <FixtureComposer />
+                </div>
+              </section>
+            </div>
+          </TooltipProvider>
+        </I18nextProvider>
+      </AuthenticatedConvexContext.Provider>
+    </PlatformContext.Provider>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * Fixture props for the phase-0 render spike.
+ * Fixture props for the vendored Lody render harness (was the phase-0 spike).
  *
  * Mirrored from the vendored Storybook stories, which are the upstream
  * statement of how each leaf is driven without a daemon:
@@ -17,15 +17,15 @@ import type {
   SessionListProps,
   SessionListRow,
   SidebarUpdatedItem,
-} from "./spike-types";
+} from "./lody-fixture-types";
 
-export const SPIKE_SESSION_ID: SessionId = "session-blitz-phase0-spike";
+export const FIXTURE_SESSION_ID: SessionId = "session-blitz-fixture";
 
 const NOW = Date.parse("2026-08-30T12:00:00.000Z");
 const MINUTE = 60 * 1000;
 
 const streamingTurn: SessionHistoryParsed = {
-  id: "spike-user-1",
+  id: "fixture-user-1",
   role: "user",
   timestamp: "2026-08-30T11:58:00.000Z",
   read: true,
@@ -34,7 +34,7 @@ const streamingTurn: SessionHistoryParsed = {
 };
 
 const assistantTurn: SessionHistoryParsed = {
-  id: "spike-assistant-1",
+  id: "fixture-assistant-1",
   role: "assistant",
   timestamp: "2026-08-30T11:58:20.000Z",
   read: true,
@@ -51,14 +51,14 @@ const assistantTurn: SessionHistoryParsed = {
     },
     {
       type: "tool_call",
-      toolCallId: "spike-tool-1",
+      toolCallId: "fixture-tool-1",
       title: "rg shell-list packages/webapp/src",
       kind: "search",
       status: "completed",
     },
     {
       type: "tool_call",
-      toolCallId: "spike-tool-2",
+      toolCallId: "fixture-tool-2",
       title: "Edit packages/webapp/src/shell/SessionRail.tsx",
       kind: "edit",
       status: "completed",
@@ -70,16 +70,16 @@ const assistantTurn: SessionHistoryParsed = {
   ],
 };
 
-export const SPIKE_STREAM_ITEMS: ChatStreamMessageItem[] = [
-  { type: "message", sessionId: SPIKE_SESSION_ID, message: streamingTurn },
-  { type: "message", sessionId: SPIKE_SESSION_ID, message: assistantTurn },
+export const FIXTURE_STREAM_ITEMS: ChatStreamMessageItem[] = [
+  { type: "message", sessionId: FIXTURE_SESSION_ID, message: streamingTurn },
+  { type: "message", sessionId: FIXTURE_SESSION_ID, message: assistantTurn },
 ];
 
-export const SPIKE_LAST_ASSISTANT_MESSAGE_ID = assistantTurn.id;
+export const FIXTURE_LAST_ASSISTANT_MESSAGE_ID = assistantTurn.id;
 
 const sessionRows: SessionListRow[] = [
   {
-    sessionId: "spike-chat-1",
+    sessionId: "fixture-chat-1",
     title: "fix the login redirect",
     repoFullName: null,
     branchName: "",
@@ -92,7 +92,7 @@ const sessionRows: SessionListRow[] = [
     isWaitingPermission: false,
   },
   {
-    sessionId: "spike-chat-2",
+    sessionId: "fixture-chat-2",
     title: "yesterday's refactor",
     repoFullName: null,
     branchName: "",
@@ -105,7 +105,7 @@ const sessionRows: SessionListRow[] = [
     isWaitingPermission: false,
   },
   {
-    sessionId: "spike-worktree-1",
+    sessionId: "fixture-worktree-1",
     title: "rail swap",
     repoFullName: "blitzdotdev/BlitzOS",
     branchName: "lody/ab12cd34ef56",
@@ -119,7 +119,7 @@ const sessionRows: SessionListRow[] = [
     isWaitingPermission: false,
   },
   {
-    sessionId: "spike-worktree-2",
+    sessionId: "fixture-worktree-2",
     title: "gateway lody routes",
     repoFullName: "blitzdotdev/BlitzOS",
     branchName: "lody/99aa88bb77cc",
@@ -134,13 +134,13 @@ const sessionRows: SessionListRow[] = [
   },
 ];
 
-export const SPIKE_SESSION_LIST_PROPS: SessionListProps = {
-  selectedSessionId: "spike-worktree-1",
+export const FIXTURE_SESSION_LIST_PROPS: SessionListProps = {
+  selectedSessionId: "fixture-worktree-1",
   repos: [{ repoFullName: "blitzdotdev/BlitzOS", collapsed: false }],
   sessions: sessionRows,
 };
 
-export const SPIKE_SIDEBAR_UPDATED_ITEMS: SidebarUpdatedItem[] = sessionRows.map((row) =>
+export const FIXTURE_SIDEBAR_UPDATED_ITEMS: SidebarUpdatedItem[] = sessionRows.map((row) =>
   row.repoFullName === null || row.repoFullName === undefined
     ? {
         id: row.sessionId,

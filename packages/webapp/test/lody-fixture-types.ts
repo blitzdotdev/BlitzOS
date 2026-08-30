@@ -1,10 +1,10 @@
 /**
- * Our side of the vendored-component contract, for the phase-0 spike.
+ * Our side of the vendored-component contract, for the render harness.
  *
  * Everything imported from `@lody/*` is `any` here — see `vendor-modules.d.ts`
  * for why the vendor tree stays out of our typecheck. So the props we hand
  * their components are described locally instead: narrow, only the fields the
- * spike sets, and named after the upstream types they mirror so a reader can
+ * harness sets, and named after the upstream types they mirror so a reader can
  * follow them back.
  *
  * Field names come from:
@@ -15,7 +15,7 @@
  *   - `vendor/lody/packages/components/src/components/shared/option-selector.tsx`
  *
  * A field they add upstream and we never set does not belong here; a field we
- * set that they rename shows up as a render failure in the spike test, which
+ * set that they rename shows up as a render failure in the harness test, which
  * is the signal we want out of an upstream merge.
  */
 import type { ReactNode } from "react";
@@ -80,7 +80,7 @@ export interface SessionListRow {
   isWorktree?: boolean;
 }
 
-/** The subset of `SessionListProps` the sidebar spike drives. */
+/** The subset of `SessionListProps` the sidebar harness drives. */
 export interface SessionListProps {
   selectedSessionId: string;
   repos: SessionListRepoState[];

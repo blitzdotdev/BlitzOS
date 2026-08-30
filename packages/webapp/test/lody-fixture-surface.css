@@ -1,21 +1,21 @@
-/* Layout for the phase-0 spike page only. Unlayered, like every other
+/* Layout for the Lody fixture render harness only. Unlayered, like every other
    stylesheet under packages/webapp/src, so it outranks the vendored sheet. */
 
-.lody-spike-layout {
+.lody-fixture-layout {
   display: flex;
   width: 100%;
   height: 100%;
   min-height: 0;
 }
 
-.lody-spike-rail {
+.lody-fixture-rail {
   flex: 0 0 auto;
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
-.lody-spike-pane {
+.lody-fixture-pane {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -23,12 +23,12 @@
   min-height: 0;
 }
 
-.lody-spike-stream {
+.lody-fixture-stream {
   flex: 1 1 auto;
   min-height: 0;
 }
 
-.lody-spike-composer {
+.lody-fixture-composer {
   flex: 0 0 auto;
   padding: 12px 16px 16px;
 }
