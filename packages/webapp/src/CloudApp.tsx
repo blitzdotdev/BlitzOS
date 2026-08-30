@@ -195,6 +195,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const [confirmation, setConfirmation] = useState<WebAppConfirmation | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filesDrawerOpen, setFilesDrawerOpen] = useState(false);
+  // The section the member last chose in the mobile sheet, or null while they
+  // have chosen none and a persisted panel still speaks for them.
+  const [mobileSegment, setMobileSegment] = useState<WorkspaceDrawerSegment | null>(null);
   const [terminalSignInUrl, setTerminalSignInUrl] = useState<string | null>(null);
   const [showPasteCodeModal, setShowPasteCodeModal] = useState(false);
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
@@ -369,9 +372,21 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         (tab) => tab.type === 'panel' && tab.id === regionActiveId(activeWorkspaceTabs, 'side'),
       ) ?? null;
   // The sheet needs a selected segment even before its panel tab exists.
-  const drawerSegment: WorkspaceDrawerSegment = sidePanelTab?.type === 'panel'
+  //
+  const storedSegment: WorkspaceDrawerSegment = sidePanelTab?.type === 'panel'
     ? sidePanelTab.panel
     : 'files';
+  // On mobile a tap cannot go through the tab model. A panel tab that would be
+  // the only tab collapses into `main` (normalizedWorkspaceTabs refuses a side
+  // pane with an empty main), which leaves `sideActiveId` undefined, and the
+  // mobile strip hides panel tabs anyway — so the sheet read Files forever and
+  // its Connections and teenyapps tabs did nothing.
+  //
+  // A tap is an override, not a replacement: until one happens a panel the
+  // member left open still opens the sheet on its own section.
+  const drawerSegment: WorkspaceDrawerSegment = mobileWebApp
+    ? mobileSegment ?? storedSegment
+    : storedSegment;
   const filesTab = activeWorkspaceTabs === null
     ? null
     : panelTab(activeWorkspaceTabs, 'files');
@@ -1821,9 +1836,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           connectionsFocus={connectionsFocus}
           readOnly={activeWorkspace.accessRole === 'viewer'}
           onWidthChange={setSidePaneWidth}
-          onSegmentChange={(panel: WorkspaceDrawerSegment) => {
-            updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
-          }}
+          onSegmentChange={setMobileSegment}
           onResolveRequest={resolveWorkspaceRequest}
           livePorts={orderedLivePorts}
           previewLinks={orderedPreviewLinks}

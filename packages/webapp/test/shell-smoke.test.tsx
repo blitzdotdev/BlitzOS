@@ -818,6 +818,60 @@ describe("webapp shell smoke", () => {
     await view.unmount();
   });
 
+  /** The mobile sheet is the only way to reach Files, teenyapps and
+   * Connections on a phone: there is no icon rail below the breakpoint. Its
+   * segment cannot come from the tab model, because a panel tab that would be
+   * the only tab collapses out of the side region, so reading that region
+   * pinned the sheet to Files and the other two tabs did nothing. */
+  it("switches the mobile drawer between all three sections", async () => {
+    window.history.replaceState({}, "", "/workspaces/workspace-running");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({
+        matches: true,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }),
+    });
+    saveTabs("workspace-running", [{ id: 1, type: "terminal" }], 1);
+
+    const view = await render(
+      <CloudApp
+        client={runningClient()}
+        resolver={standaloneResolver({ acp: 7444, files: 7445 })}
+      />,
+    );
+    await settle();
+    await settle();
+
+    // The statusline button is the way in.
+    const drawerButton = view.container.querySelector<HTMLButtonElement>(
+      ".webapp-statusline__files",
+    );
+    if (drawerButton === null) throw new Error("mobile has no drawer button");
+    await act(async () => drawerButton.click());
+
+    const drawer = view.container.querySelector<HTMLElement>("#webapp-workspace-drawer");
+    if (drawer === null) throw new Error("mobile drawer did not render");
+    const segment = (label: string) => [
+      ...drawer.querySelectorAll<HTMLButtonElement>(".workspace-drawer-segments button"),
+    ].find((button) => (button.textContent ?? "").includes(label));
+    const selected = () => drawer
+      .querySelector<HTMLElement>(".webapp-tab-cell--active")
+      ?.textContent ?? "";
+
+    expect(selected()).toContain("Files");
+
+    for (const label of ["Connections", "teenyapps", "Files"]) {
+      const tab = segment(label);
+      if (tab === undefined) throw new Error(`no ${label} segment on mobile`);
+      await act(async () => tab.click());
+      expect(selected()).toContain(label);
+    }
+
+    await view.unmount();
+  });
+
   it("retains visited terminal panes while hiding inactive panes", async () => {
     window.history.replaceState({}, "", "/workspaces/workspace-running");
     saveTabs("workspace-running", [
