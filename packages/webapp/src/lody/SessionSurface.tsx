@@ -6,11 +6,12 @@
  * UI. This is both halves joined: their chat landing and their session detail,
  * inside our shell, against the box daemon.
  *
- * WHAT THIS FILE OWNS: the provider stack, the memory router, and the identity
- * seeding that stands in for the parts of their root route we do not mount. It
- * owns no session logic at all — `ChatLanding` and `SessionDetail` are theirs,
- * unmodified, and every send / steer / cancel / permission path inside them runs
- * their code (§0.2's vendor-wholesale rule).
+ * WHAT THIS FILE OWNS: the memory router and the identity seeding that stands in
+ * for the parts of their root route we do not mount, composed with the provider
+ * stack `surface-providers.tsx` holds. It owns no session logic at all —
+ * `ChatLanding` and `SessionDetail` are theirs, unmodified, and every send /
+ * steer / cancel / permission path inside them runs their code (§0.2's
+ * vendor-wholesale rule).
  *
  * WHAT WE DO NOT MOUNT, AND WHY IT IS SAFE. Their `__root.tsx` builds the Convex
  * and better-auth stack; their `$workspaceName/_auth.tsx` runs the organization
@@ -47,9 +48,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { Provider as JotaiProvider, createStore } from "jotai";
-import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
-import { TooltipProvider } from "@lody/components/ui/tooltip";
 import { RuntimeProvider } from "@lody/components/providers/runtime-provider";
 import { userAtom } from "@lody/components/atoms";
 import { localProbeResultAtom } from "@lody/components/atoms/local-probe";
@@ -70,14 +69,12 @@ import {
   type LodySessionRouterOptions,
 } from "./router.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints } from "./runtime.js";
-import { initLodyI18n } from "./i18n.js";
 import { SessionRailSidebar } from "./SessionRailSidebar.js";
 import type { SharedSessionRow } from "./shared-sessions.js";
 import { SurfaceTabsContext, type SurfaceTabsBinding } from "./surface-tabs.js";
 import { LODY_SURFACE_CLASS } from "./surface-class.js";
-import { seedWorktreeWorkdirDefault } from "./workdir-default.js";
 import type { DriveRailSession } from "../shell/rail-sessions.js";
-import { BlitzThemedLodyTree, adoptShellTheme } from "./shell-theme.js";
+import { LodySurfaceProviders } from "./surface-providers.js";
 import "./lody-surface.css";
 import "./lody-surface-shell.css";
 import "./blitz-skin.css";
@@ -324,29 +321,6 @@ function seedCurrentUser(
   });
 }
 
-/**
- * The stack below the platform providers, in the order design doc §1.4 fixes.
- *
- * Exported for `packages/webapp/test/prod-probe`, which mounts THIS — not a
- * hand-rolled equivalent — out of the production bundle. §14.10: the reskin was
- * shipped once with three green harnesses that all skipped this component, so
- * the probe has to hold the real one or it is measuring a lookalike.
- */
-export function LodySurfaceProviders(props: { children: ReactNode }) {
-  const i18n = useMemo(() => initLodyI18n(), []);
-  const theme = useMemo(() => adoptShellTheme(), []);
-  // Beside the theme adoption for the same reason: both write a key their own
-  // code reads on first render, so both have to happen before that render.
-  useMemo(() => seedWorktreeWorkdirDefault(), []);
-  return (
-    <I18nextProvider i18n={i18n}>
-      <BlitzThemedLodyTree theme={theme}>
-        <TooltipProvider>{props.children}</TooltipProvider>
-      </BlitzThemedLodyTree>
-    </I18nextProvider>
-  );
-}
-
 export function SessionSurface(props: LodySessionSurfaceProps) {
   const { endpoints, viewer, workspaceTitle, onApiReady, onActiveSessionChange } = props;
   // Installed before anything below renders; see the hook's comment.
@@ -553,5 +527,9 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
     </div>
   );
 }
+
+/** Re-exported here because this is the file a reader comes to for the surface's
+ * composition, and `surface-providers.tsx` states why the stack lives alone. */
+export { LodySurfaceProviders };
 
 export default SessionSurface;

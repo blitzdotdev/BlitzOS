@@ -296,6 +296,12 @@ describe("the overlay's vendor hooks", () => {
     { hook: "text-primary", file: ["components", "sidebar-row-shared.tsx"] },
     { hook: "bg-primary", file: ["components", "sidebar-row-shared.tsx"] },
     { hook: "viewportClassName", file: ["components", "loro-sidebar.tsx"] },
+    // Wave 4, C3: the side panel's tab strip. The attribute is upstream's own
+    // marker on the panel, and the tablist is inside their `ScrollArea`.
+    {
+      hook: 'data-lody-session-tab-region="side-panel"',
+      file: ["components", "sessions", "session-detail.tsx"],
+    },
   ];
 
   it.each(HOOKS)("still finds $hook in the vendored source", ({ hook, file }) => {

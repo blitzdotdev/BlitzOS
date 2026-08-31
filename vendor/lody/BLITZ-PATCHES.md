@@ -395,6 +395,86 @@ line that is not one of the anchors above, and it renders the real
   that instead — the BlitzOS half is one binding on
   `packages/webapp/src/lody/surface-tabs.ts`.
 
+### 6. The Side Chat launcher needs an assistant turn (wave 4, 2026-08-31)
+
+**One idea, four hunks in one file, and it is inert without one prop.** In a
+session the agent has not answered yet, the side panel's Side Chat entry accepts
+a click and nothing visible happens. The launcher forks the active conversation
+(`handleCreateSideSession` → `forkActiveConversation`), a fork needs a completed
+assistant turn, and with none `forkActiveConversation` returns after a
+`toast.error`. BlitzOS mounted no `<Toaster/>` until wave 4's C1, so that refusal
+was swallowed and the entry read as dead rather than as refused.
+
+C1 puts the message on screen. This patch makes the entry say so BEFORE the
+click, and it says it the way the same launcher already says it for an offline
+machine: `disabled`. Hiding the entry was the alternative and is worse — a
+session that has not answered yet would look like one where Side Chat does not
+exist, and the option comes back a second later.
+
+`packages/components/src/components/sessions/session-detail.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 21 | 666, 672 | `onMobileBack,` and `onMobileBack?: () => void;` — seam patch 5's own anchor | declares and defaults `sideChatRequiresAssistantTurn`, `false` |
+| 22 | 1080 | immediately above `const activeSessionTabId = useMemo<SessionId \| null>` | holds the active tab id in a ref and adds `activeTabAssistantTurnId` state |
+| 23 | 1691 | `chatRefsMap.current.set(tabId, ref);` inside `setChatTabRef` | mirrors `getLastAssistantTurnId()` into that state on ATTACH |
+| 24 | 3358 | `disabled: launcherState === 'disabled' \|\| isCreatingSideSession,` in `sideChatOption` | adds the third term, gated on the prop |
+
+Hunk 24 is the only one that replaces an upstream line, so it is the only one
+named in `lody-surface-tabs.test.tsx`'s anchor table; the other three add lines
+and are covered by that file's subsequence check.
+
+**Why a mirror and not a read.** `chatRefsMap` is a ref: `getLastAssistantTurnId()`
+answers when somebody asks, which is right for a click and useless for a rendered
+state — nothing re-renders when a turn lands. Hunk 23 turns the ref write into a
+state write, and `useImperativeHandle` is what makes it current: the handle's own
+dependency list carries `lastCompletedAssistantMessageId`
+(`session-chat-interface.tsx:4661`), so React re-attaches the ref on the commit
+that first has a turn. No new subscription, no second document read.
+
+**Hunk 23 IGNORES THE DETACH, and that is the whole of the loop safety.** Every
+render of the page hands each chat surface a fresh `ref={(el) => setChatTabRef(…)}`
+arrow, so React calls it with `null` and then with the handle inside one commit.
+Taking the `null` would queue a state change on every commit — `null`, then the
+value — and React cannot bail out of the pair, so the page would re-render for
+ever. Taking only the attach settles on one value, which `Object.is` bails out on
+when it has not changed.
+
+**What it costs, measured against what it fixes.** The mirror is empty until the
+active surface has attached its handle AND its message list has reported a
+completed turn, so a session that HAS answered shows the launcher disabled for
+the moment its history takes to paint. That is a control nobody is looking at
+during a page load; the alternative it replaces is a control a member clicks and
+which answers with an error.
+
+**The active tab arrives through a ref, not a dependency**, so `setChatTabRef`
+keeps its empty dependency list. A dependency would change the callback's
+identity on every tab switch, and that callback is what every chat surface is
+attached by.
+
+**Fork semantics are untouched.** `forkActiveConversation`, `handleForkAssistant`
+and the `sessions.forkNoAssistant` toast are exactly upstream's; what changes is
+whether the entry OFFERS the click. A host that does not pass the prop gets
+today's behaviour to the byte, and no upstream call site passes it —
+`packages/webapp/test/lody-surface-tabs.test.tsx` pins that with the same
+baseline subsequence check seam patch 5 uses, and
+`packages/webapp/test/lody-side-chat-guard.test.tsx` names each part.
+
+Upstream would probably rather have this unconditional — "disable Side Chat when
+there is nothing to fork" is not a BlitzOS opinion — and the prop exists only
+because the inertness rule above is what makes this tree's vendor edits safe to
+carry. Open it upstream as the unconditional version and **drop the prop when it
+merges.**
+
+**Merge conflict drill.**
+
+- If `sideChatOption` stops being built from `getSideChatLauncherState`, hunk 24
+  follows the `disabled` field to wherever the launcher's state is decided.
+- If the chat surfaces stop being attached through `setChatTabRef`, hunk 23 goes
+  to whatever replaces it — and the detach rule goes with it, or the page loops.
+- If upstream disables the launcher itself, DROP all four hunks and the
+  `sideChatRequiresAssistantTurn` line in `packages/webapp/src/lody/router.tsx`.
+
 ## Patches to the published npm artifact (NOT to this tree)
 
 These are applied at box-image build to the `lody` package installed from npm.

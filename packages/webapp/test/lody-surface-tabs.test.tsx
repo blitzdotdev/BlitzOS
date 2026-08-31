@@ -137,10 +137,11 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
     ]);
   });
 
-  it("removes nothing from session-detail.tsx but seam patches 4 and 5's anchors", () => {
+  it("removes nothing from session-detail.tsx but seam patches 4, 5 and 6's anchors", () => {
     expectSeam("session-detail.tsx", [
       // Seam patch 4's hunks are additive and remove nothing, which is why they
       // are absent from this list and still covered by the subsequence check.
+      // So are three of seam patch 6's four; its fourth is the last anchor here.
       // hunk 7: the `react` import gains `type ReactNode`
       [
         90,
@@ -160,6 +161,10 @@ describe("the vendored seam is exactly what BLITZ-PATCHES.md declares", () => {
       [947, "    setActiveTabSessionId(nextInitialTabState.activeTabSessionId);"],
       [2585, "      setActiveTabSessionId((prev) =>"],
       [2591, "    setActiveTabSessionId((prev) => (prev === sessionId ? prev : sessionId));"],
+      // Seam patch 6 hunk 24: the Side Chat launcher gains a third reason to be
+      // disabled. Its other three hunks add lines and remove none, so they are
+      // covered by the subsequence check rather than named here.
+      [3358, "      disabled: launcherState === 'disabled' || isCreatingSideSession,"],
     ]);
   });
 
