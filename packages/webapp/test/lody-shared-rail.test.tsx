@@ -265,3 +265,89 @@ describe("the rail's shared sessions", () => {
     await view.unmount();
   });
 });
+
+/**
+ * A grantee's surface gets NO host tabs (plans/LODY-TERMINAL-TABS.md §5.1).
+ *
+ * A terminal is an arbitrary shell on the OWNER's box, and no share level in
+ * `plans/LODY-SESSIONS.md` §0.1 grants that — the same reason the bridge
+ * refuses `/control` outright and narrows `/platform` to three fields. There is
+ * no gateway path, no bridge door and no ACL to write, because there is nothing
+ * to permit. So the binding is withheld at the region, before the surface that
+ * would draw it is even chosen.
+ */
+async function mountRegion(sharedOpen: unknown | null) {
+  vi.resetModules();
+  vi.stubEnv("VITE_BLITZ_LODY_SESSIONS", "true");
+  const props: { surfaceTabs?: unknown }[] = [];
+  vi.doMock("../src/lody/SessionSurface.js", () => ({
+    default: (received: { surfaceTabs?: unknown }) => {
+      props.push(received);
+      return null;
+    },
+  }));
+  const { LodySessionsRegion } = await import("../src/lody/LodySessionsRegion.js");
+  const endpoints = {
+    terminalUrl: "https://box.invalid/webapp/7681/",
+    filesBase: "https://box.invalid/webapp/5000/",
+    lodySyncUrl: "wss://box.invalid/webapp/7445/lody/sync",
+    lodyRpcUrl: "https://box.invalid/webapp/7445/lody/rpc",
+    lodyControlUrl: "https://box.invalid/webapp/7445/lody/control",
+    lodyProjectUrl: "https://box.invalid/webapp/7445/lody/project",
+    lodyPlatformUrl: "https://box.invalid/webapp/7445/lody/platform",
+  };
+  const surfaceTabs = {
+    tabs: [{ id: "blitz-tab:7", label: "claude", content: null }],
+    activeTabId: null,
+    onSelect: () => undefined,
+    onClose: () => undefined,
+  };
+  const view = await render(
+    // SAFETY: the region's own props are fully stated; `sharedOpen` and the
+    // endpoints are the two shapes this test varies, and the surface below is
+    // a mock that only records what it was handed.
+    <LodySessionsRegion
+      endpoints={endpoints as never}
+      sessions="present"
+      viewerName="Me"
+      viewerAvatarUrl={null}
+      workspaceTitle="Workspace"
+      visible
+      railHost={null}
+      terminals={[]}
+      activeTerminalId=""
+      onSelectTerminal={() => undefined}
+      surfaceTabs={surfaceTabs as never}
+      sharedOpen={sharedOpen as never}
+    />,
+  );
+  await settle();
+  return { props, view };
+}
+
+describe("host tabs and a shared surface", () => {
+  it("hands the binding to the member's OWN surface", async () => {
+    const { props, view } = await mountRegion(null);
+    expect(props.at(-1)?.surfaceTabs).toBeDefined();
+    await view.unmount();
+  });
+
+  it("hands it to no surface mounted against another member's box", async () => {
+    const { props, view } = await mountRegion({
+      ownerMembershipId: "mem-owner",
+      sessionId: "sess-beta",
+      level: "rw",
+      endpoints: {
+        terminalUrl: "https://owner.invalid/webapp/7681/",
+        filesBase: "https://owner.invalid/webapp/5000/",
+        lodySyncUrl: "wss://owner.invalid/webapp/7445/lody/sync",
+        lodyRpcUrl: "https://owner.invalid/webapp/7445/lody/rpc",
+        lodyControlUrl: "https://owner.invalid/webapp/7445/lody/control",
+        lodyProjectUrl: "https://owner.invalid/webapp/7445/lody/project",
+        lodyPlatformUrl: "https://owner.invalid/webapp/7445/lody/platform",
+      },
+    });
+    expect(props.at(-1)?.surfaceTabs).toBeUndefined();
+    await view.unmount();
+  });
+});

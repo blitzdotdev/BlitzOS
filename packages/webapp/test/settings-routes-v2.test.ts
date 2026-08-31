@@ -5,6 +5,7 @@ import {
   parseAppRoute,
   settingsPath,
   workspaceChatPath,
+  workspaceChatTerminalPath,
   workspacePath,
 } from '../src/sessions-page-state.js';
 
@@ -127,5 +128,49 @@ describe('settings routes', () => {
       workspaceId: null,
       page: 'drive',
     });
+  });
+
+  // plans/LODY-TERMINAL-TABS.md §4.2. A terminal is a tab of the SAME strip, so
+  // its selection is an address too, and it has both of the strip's hosts.
+  it('routes a terminal tab in both of the strip hosts, round trip', () => {
+    expect(parseAppRoute('/workspaces/ws-1/chat/terminal/7')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: { terminalId: '7' },
+    });
+    expect(parseAppRoute('/workspaces/ws-1/chat/terminal/7/')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: { terminalId: '7' },
+    });
+    expect(parseAppRoute('/workspaces/ws-1/chat/s%201/terminal/7')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: { sessionId: 's 1', terminalId: '7' },
+    });
+    expect(workspaceChatTerminalPath('ws-1', '7')).toBe('/workspaces/ws-1/chat/terminal/7');
+    expect(workspaceChatTerminalPath('ws-1', '7', 's 1'))
+      .toBe('/workspaces/ws-1/chat/s%201/terminal/7');
+  });
+
+  // `terminal` is a reserved segment exactly as `shared` is. The two shapes
+  // that could collide are stated here rather than left to be discovered.
+  it('keeps a session literally named "terminal" distinguishable', () => {
+    // Two segments after `chat` is a session, always — including this one.
+    expect(parseAppRoute('/workspaces/ws-1/chat/terminal')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: { sessionId: 'terminal' },
+    });
+    expect(workspaceChatPath('ws-1', 'terminal')).toBe('/workspaces/ws-1/chat/terminal');
+    // And that session's own terminal tab is four segments, which the
+    // session-host pattern claims and the landing-host pattern cannot.
+    expect(parseAppRoute('/workspaces/ws-1/chat/terminal/terminal/9')).toEqual({
+      workspaceId: 'ws-1',
+      page: 'webApp',
+      chat: { sessionId: 'terminal', terminalId: '9' },
+    });
+    expect(workspaceChatTerminalPath('ws-1', '9', 'terminal'))
+      .toBe('/workspaces/ws-1/chat/terminal/terminal/9');
   });
 });
