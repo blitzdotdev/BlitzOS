@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlitzOS — Lody surface, Blitz theme</title>
+  </head>
+  <body>
+    <!--
+      The theme review page, live. `npm run dev -w @blitzos/webapp`, then open
+      /theme-review.html.
+
+      It is NOT a Rollup input: `vite build` builds `index.html` alone, so this
+      file exists for `vite dev` and for nothing else, and the product bundle
+      never sees it or the fixtures it mounts.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/test/theme-review-entry.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,124 @@
+/* Layout for the theme review page only — the shell grid, and nothing else.
+   Every colour on this page comes from `tokens.css` or the generated Blitz theme;
+   nothing here declares one. Unlayered, like every stylesheet under
+   `packages/webapp/src`. */
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.review-shell {
+  display: grid;
+  overflow: hidden;
+  height: 100vh;
+  grid-template-columns: 48px 252px 1fr;
+  grid-template-rows: 1fr;
+}
+
+/* `strip-rail.css` positions both columns off the drive shell's grid rows;
+   this page has one row, so the two spans come off. */
+.review-shell .shell-strip,
+.review-shell .session-rail {
+  grid-row: 1;
+  height: 100%;
+}
+
+.review-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--paper);
+}
+
+/* The surface fills the pane, rather than covering it absolutely the way
+   `SessionSurface` does inside the workspace view. */
+.review-surface {
+  position: static;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.review-tabs {
+  display: flex;
+  height: 46px;
+  flex: none;
+  align-items: center;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.review-stream {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+/*
+ * The composer band is FULL-BLEED and its content is a `ConversationColumn`,
+ * which is how `SessionChatInputArea` composes it upstream: the band paints the
+ * background across the pane, the 46rem column inside it carries the gutter
+ * (`px-3 sm:px-4`) and lines the input up with the message rows. So no
+ * horizontal padding here — it would inset the column a second time and put the
+ * composer's edges inboard of the stream's.
+ */
+.review-composer {
+  flex: none;
+  padding: 8px 0 16px;
+}
+
+/* The Terminals section sits below the vendored scroll region on this page,
+   because the review is about the rows rather than the scroll behaviour. */
+.review-terminals {
+  flex: none;
+  padding: 0 8px 8px;
+}
+
+.session-list--vendor {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* The dark/light toggle. Shared by the live dev page (`theme-review-entry.tsx`)
+   and the static projection, so both read the same. */
+.review-bar {
+  position: fixed;
+  z-index: 99;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-control);
+  background: var(--paper);
+  box-shadow: var(--lift);
+  color: var(--muted);
+  font: 12px/1.4 var(--font-ui);
+}
+
+.review-bar button {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-item);
+  color: var(--muted);
+  background: transparent;
+  font: 600 12px/1 var(--font-ui);
+  cursor: pointer;
+}
+
+.review-bar button[aria-pressed='true'] {
+  color: var(--ink);
+  background: var(--selected);
+}
