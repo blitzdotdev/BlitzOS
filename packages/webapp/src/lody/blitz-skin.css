@@ -52,6 +52,50 @@ body > :where(:not(#root, .files-context-backdrop, .files-context-menu)) {
   scrollbar-width: thin;
 }
 
+/* ------------------------------------------- the side panel's tab strip */
+
+/*
+ * WHY A MEMBER COULD NOT REACH THE FIRST TAB (wave 4, C3).
+ *
+ * The strip is `SessionSidePanelTabBar`, and its tablist DOES sit in a scroll
+ * container: their `ScrollArea` with `scrollableX`, which Radix gives
+ * `overflow-x: scroll` as an inline style. So the tabs are not lost — but
+ * nothing on screen says so, and one thing actively hides them:
+ *
+ * - Radix hides the NATIVE bar (`[data-radix-scroll-area-viewport]{scrollbar-
+ *   width:none}`, injected beside the viewport) and draws its own only while the
+ *   pointer is inside the strip. At rest a strip that overflows looks exactly
+ *   like one that does not.
+ * - The strip scrolls its ACTIVE tab into view on every selection
+ *   (`session-side-panel-tab-bar.tsx:219`, `inline: 'nearest'`), which parks that
+ *   tab flush against the clipped edge. With four panels open at the panel's
+ *   default width that is a strip whose first and last tabs are cut in half by
+ *   the frame, with no bar and no hint that the rest is one flick away.
+ *
+ * `scroll-padding` is what `inline: 'nearest'` reads, so a gutter here means the
+ * active tab always lands with its neighbours peeking in on both sides — the
+ * strip says it scrolls by showing that it has more. `scrollbar-width` is
+ * restated because the rule above hands every element in the surface `thin`, and
+ * a 15px native bar inside a 44px strip is a third of it; ours and Radix's agree
+ * today only through document order, which is not a thing to depend on.
+ *
+ * Zero vendor change: `data-lody-session-tab-region="side-panel"` is upstream's
+ * own attribute on the panel (`session-detail.tsx`), and the tablist is theirs.
+ */
+.lody-surface [data-lody-session-tab-region="side-panel"] [data-radix-scroll-area-viewport] {
+  scrollbar-width: none;
+  scroll-padding-inline: 28px;
+  /* A horizontal flick inside a 44px strip must not become the browser's back
+     gesture, which is what an unhandled inline overscroll turns into. */
+  overscroll-behavior-inline: contain;
+}
+
+.lody-surface
+  [data-lody-session-tab-region="side-panel"]
+  [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+  display: none;
+}
+
 /* --------------------------------------------------- the rail's own rows */
 
 /*
