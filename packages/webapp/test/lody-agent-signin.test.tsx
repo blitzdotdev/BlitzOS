@@ -28,12 +28,15 @@ import { Provider as JotaiProvider, createStore } from "jotai";
 import { I18nextProvider } from "react-i18next";
 import { RouterProvider } from "@tanstack/react-router";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
-import { currentWorkspaceIdAtom, currentWorkspaceSlugAtom } from "@lody/components/atoms/workspace-context";
+import {
+  currentWorkspaceIdAtom,
+  currentWorkspaceSlugAtom,
+  setWorkspaceContextAtom,
+} from "@lody/components/atoms/workspace-context";
 import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-acp-authentication";
 import type { JsonValue } from "@blitzos/schema";
 import {
   AUTH_NOTICE_POLL_MS,
-  CLAUDE_CONNECTION_NAME,
   LodyAgentAuthNotice,
   sessionNeedsAgentSignIn,
 } from "../src/lody/agent-auth-notice";
@@ -500,16 +503,20 @@ describe("the signed-out banner", () => {
 
   async function mountNotice(
     history: JsonValue[],
-    onOpenConnections?: (provider: string) => void,
+    machineId?: string,
   ): Promise<{ container: HTMLElement; unmount: () => Promise<void> }> {
     const store = createStore();
     store.set(runtimeAtom, noticeRuntime(history));
     const mounted = await render(
-      <LodyAgentAuthNotice
-        store={store}
-        sessionId="session-1"
-        {...(onOpenConnections === undefined ? {} : { onOpenConnections })}
-      />,
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={initLodyI18n()}>
+          <LodyAgentAuthNotice
+            store={store}
+            sessionId="session-1"
+            {...(machineId === undefined ? {} : { machineId })}
+          />
+        </I18nextProvider>
+      </JotaiProvider>,
     );
     await settle();
     return mounted;
@@ -524,25 +531,33 @@ describe("the signed-out banner", () => {
     }
   });
 
-  it("names the workspace connection and offers to open the panel", async () => {
-    const opened: string[] = [];
-    const mounted = await mountNotice([noticeEntry("acp_auth_required")], (provider) => {
-      opened.push(provider);
-    });
+  it("offers Lody's sign-in and the terminal, and never the connections panel", async () => {
+    // The second canary dogfood finding. The first version of this banner said
+    // "connect Claude in the workspace Connections panel" — and there is no
+    // Claude card in that catalog, so the one instruction it gave could not be
+    // followed. Both routes named here are routes that exist.
+    const mounted = await mountNotice([noticeEntry("acp_auth_required")], MACHINE_ID);
     try {
       const text = mounted.container.textContent ?? "";
       expect(text).toContain("not signed in");
-      expect(text).toContain("Claude connection");
-      const button = [...mounted.container.querySelectorAll("button")].find(
-        (candidate) => candidate.textContent === "Open connections",
+      expect(text).toContain("terminal tab");
+      expect(text).not.toContain("connection");
+      const labels = [...mounted.container.querySelectorAll("button")].map(
+        (button) => button.textContent ?? "",
       );
-      expect(button).toBeDefined();
-      await act(async () => {
-        button?.click();
-      });
-      // The provider name `blitz connections open` uses, so the panel
-      // highlights the same row either route raised it from.
-      expect(opened).toEqual([CLAUDE_CONNECTION_NAME]);
+      expect(labels.some((label) => /Sign in with Claude/u.test(label))).toBe(true);
+      expect(labels).not.toContain("Open connections");
+    } finally {
+      await mounted.unmount();
+    }
+  });
+
+  it("still explains itself with no machine to address", async () => {
+    const mounted = await mountNotice([noticeEntry("acp_auth_required")]);
+    try {
+      const text = mounted.container.textContent ?? "";
+      expect(text).toContain("not signed in");
+      expect(text).toContain("terminal tab");
     } finally {
       await mounted.unmount();
     }
@@ -579,5 +594,132 @@ describe("the signed-out banner", () => {
     // Guards against a future edit turning a per-turn banner into a hot loop
     // over the whole session document.
     expect(AUTH_NOTICE_POLL_MS).toBeGreaterThanOrEqual(1_000);
+  });
+});
+
+// ── 4. The popup: a progress frame is what navigates it ──────────────────────
+
+/**
+ * The other half of the second canary finding, at the surface it was seen on.
+ *
+ * `AcpAuthenticationPanel.handleStart` opens a placeholder window reading
+ * "Preparing Claude sign-in…" and navigates it only when `onProgress` delivers
+ * `{ status: 'authorization', authorizationUrl }`. On canary that frame never
+ * arrived — `/lody/control` was answered as one buffered batch, so a response
+ * emitted WHILE `claude auth login` waited for the member could not reach the
+ * browser until that wait was over. The popup sat at `about:blank` forever.
+ *
+ * The transport half of the fix is pinned against a real daemon in
+ * `lody-acp-authentication.test.ts`. This is the renderer half: given the frame,
+ * the panel must reach its authorization state and navigate the window it
+ * opened. Both are needed — a chain that carries the frame to a panel that
+ * ignores it is the same stuck popup.
+ */
+interface FakePopup {
+  closed: boolean;
+  opener: unknown;
+  document: { title: string; body: { textContent: string; style: { cssText: string } } };
+  location: { href: string };
+  close: () => void;
+}
+
+function installFakePopups(): { popups: FakePopup[]; restore: () => void } {
+  const popups: FakePopup[] = [];
+  const original = window.open;
+  window.open = ((url?: string | URL) => {
+    const popup: FakePopup = {
+      closed: false,
+      opener: window,
+      document: { title: "", body: { textContent: "", style: { cssText: "" } } },
+      location: { href: url === undefined || String(url) === "" ? "about:blank" : String(url) },
+      close: () => {
+        popup.closed = true;
+      },
+    };
+    popups.push(popup);
+    return popup as unknown as Window;
+  }) as typeof window.open;
+  return { popups, restore: () => { window.open = original; } };
+}
+
+/** A claude.com authorization URL in the shape `claude auth login --claudeai`
+ * prints it — measured against claude 2.1.228, and the shape
+ * `isTrustedAuthorizationUrl` accepts (`acp-authentication-output.ts:24`). */
+const AUTHORIZATION_URL =
+  "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code";
+
+describe("the ACP sign-in panel, given a progress frame", () => {
+  it("reaches its authorization state and navigates the window it opened", async () => {
+    const popups = installFakePopups();
+    let emit: ((message: Record<string, unknown>) => void) | null = null;
+    const runtime = stubRuntime({
+      // The banner only draws for a session whose last notice is the auth
+      // failure; the panel under test is inside it.
+      withSessionStore: async <T,>(_sessionId: string, fn: (store: { getState: () => unknown }) => T) =>
+        fn({ getState: () => ({ history: [noticeEntry("acp_auth_required")] }) }),
+      sendControl: () => undefined,
+      subscribeMachineAcpAuthenticationProgress: (
+        _machineId: string,
+        _requestId: string,
+        listener: (message: Record<string, unknown>) => void,
+      ) => {
+        emit = listener;
+        return () => {
+          emit = null;
+        };
+      },
+      // Never settles inside the test: the panel leaves `running` only when the
+      // daemon answers, and what is under test is the state BEFORE that.
+      waitForMachineAcpAuthenticateResponse: () => new Promise(() => undefined),
+    } as unknown as Partial<LodyWorkspaceRuntime>);
+
+    const store = createStore();
+    store.set(runtimeAtom, runtime);
+    store.set(setWorkspaceContextAtom, { slug: WORKSPACE_SLUG, workspaceId: WORKSPACE_ID });
+    const mounted = await render(
+      <JotaiProvider store={store}>
+        <I18nextProvider i18n={initLodyI18n()}>
+          <LodyAgentAuthNotice store={store} sessionId="session-1" machineId={MACHINE_ID} />
+        </I18nextProvider>
+      </JotaiProvider>,
+    );
+    try {
+      await settle();
+      const start = [...mounted.container.querySelectorAll("button")].find((button) =>
+        /Sign in with Claude/u.test(button.textContent ?? ""),
+      );
+      expect(start).toBeDefined();
+      await act(async () => {
+        start?.click();
+      });
+      await settle();
+
+      // The placeholder, exactly as a member sees it before anything arrives.
+      expect(popups.popups).toHaveLength(1);
+      expect(popups.popups[0]?.location.href).toBe("about:blank");
+      expect(popups.popups[0]?.document.body.textContent).toContain("Preparing Claude sign-in");
+      expect(emit).not.toBeNull();
+
+      await act(async () => {
+        emit?.({
+          type: "machine/acp-authentication-progress",
+          machineId: MACHINE_ID,
+          requestId: "r",
+          agentType: "claude",
+          status: "authorization",
+          authorizationUrl: AUTHORIZATION_URL,
+          acceptsAuthorizationCode: true,
+        });
+      });
+      await settle();
+
+      expect(popups.popups[0]?.location.href).toBe(AUTHORIZATION_URL);
+      const text = mounted.container.textContent ?? "";
+      expect(text).toContain("Finish signing in to Claude");
+      expect(text).toContain("Authorization code");
+    } finally {
+      popups.restore();
+      await mounted.unmount();
+    }
   });
 });

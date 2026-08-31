@@ -1,21 +1,28 @@
 /**
  * What a BlitzOS box says when an agent turn comes back "Authentication
- * required" (plans/LODY-RUNTIME-DESIGN.md §12.3).
+ * required" (plans/LODY-RUNTIME-DESIGN.md §12.3, corrected in §13.4).
  *
- * WHY OURS AND NOT THEIRS. Lody already renders that failure, and it already
- * renders a Retry button beside it (`components/ai-gui/view.tsx:2373` →
- * `AcpAuthenticationPanel`). But the ACTION behind that button is Lody's
- * desktop answer: it asks the daemon to run `claude auth login --claudeai` and
- * drives an interactive CLI login on the machine. On a box that is the wrong
- * answer and cannot be the right one — nobody is sitting at the box, and the
- * box's Claude credential is not a thing a member types in. It is MINTED, per
- * process start, by `/usr/local/bin/claude` calling `blitz-cred-claude`
- * against the workspace's connected Claude account.
+ * WHAT THIS BANNER IS FOR. Lody renders that failure inside the transcript and
+ * puts an `AcpAuthenticationPanel` beside it (`components/ai-gui/view.tsx:2373`)
+ * — but only on the entry that failed, which a member has usually scrolled past
+ * by the time they read the message. This is a BAND above the chat that says the
+ * same thing where it can be seen, and it carries the SAME panel so the fix is
+ * one click from the notice.
  *
- * So the honest message names the credential the box actually uses and the one
- * place a member can supply it. It layers ON TOP of the vendor notice rather
- * than replacing it: zero vendor edits, and their Retry keeps working for the
- * cases where an interactive login IS what somebody wants.
+ * WHAT THE FIRST VERSION GOT WRONG (canary dogfood 2). It told members to
+ * connect Claude in the workspace Connections panel. There is no Claude card in
+ * that catalog and there never was: `blitz-cred get claude` mints from
+ * harness-credential ROAMING, which copies a credential that some box already
+ * has because somebody signed in on it interactively. So the panel that opened
+ * had nothing in it to click, and the one instruction the banner gave could not
+ * be followed. Both real routes are named here instead:
+ *
+ * 1. Lody's own sign-in, rendered below. It asks the daemon to run
+ *    `claude auth login --claudeai` against the SAME binary the agent runs
+ *    (`runtimeOverrides.claudeCodeExecutable`), streams the authorization URL
+ *    back, and accepts the pasted code.
+ * 2. `claude` in a terminal tab, which is the same login by hand and stores the
+ *    same box credential.
  *
  * WHY IT POLLS. The signal is a durable history item in the session's Loro doc
  * (`apps/cli/src/lib/message-handler.ts:1687` writes
@@ -31,12 +38,10 @@
 import { useEffect, useState } from "react";
 import { isJsonArray, isJsonObject, isJsonString, type JsonValue } from "@blitzos/schema";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
+import { AcpAuthenticationPanel } from "@lody/components/components/settings/acp-authentication-panel";
+import { BLITZ_CLAUDE_CONFIG_ID, BLITZ_CLAUDE_EXECUTABLE } from "./agent-configs.js";
 import type { LodyAtomStore, LodyWorkspaceRuntime } from "./runtime.js";
 import type { LodySessionDocState } from "./wire-types.js";
-
-/** The provider name `blitz connections open` knows, and the one the panel
- * highlights. Lower-case because that is the connection NAME, not a title. */
-export const CLAUDE_CONNECTION_NAME = "claude";
 
 /** Lody's own reason code for "the agent CLI is not signed in"
  * (`packages/shared/src/ai.ts:1105`, ACP error -32000). */
@@ -89,10 +94,10 @@ export interface LodyAgentAuthNoticeProps {
   store: LodyAtomStore;
   /** The session the surface is showing, or `null` on the chat landing. */
   sessionId: string | null;
-  /** Opens the workspace connections panel with `provider` selected. Absent
-   * leaves the banner as an explanation with no button — which is still better
-   * than the vendor panel's "Missing workspace context" was. */
-  onOpenConnections?: (provider: string) => void;
+  /** The box's machineId, from `/lody/platform`. The sign-in panel addresses a
+   * machine and the browser cannot mint the id. Absent leaves the banner as an
+   * explanation with the terminal route and no button. */
+  machineId?: string;
 }
 
 /** Reads the session doc on a timer and reports whether the agent is signed
@@ -107,7 +112,7 @@ export async function readAgentSignInState(
 }
 
 export function LodyAgentAuthNotice(props: LodyAgentAuthNoticeProps) {
-  const { store, sessionId, onOpenConnections } = props;
+  const { store, sessionId, machineId } = props;
   const [signedOut, setSignedOut] = useState(false);
   const [dismissed, setDismissed] = useState(false);
 
@@ -148,20 +153,30 @@ export function LodyAgentAuthNotice(props: LodyAgentAuthNoticeProps) {
     <div className="lody-surface__auth-notice" role="alert">
       <p className="lody-surface__auth-notice-title">Claude is not signed in on this box</p>
       <p>
-        Agents on a Blitz box sign in with a token minted from your workspace&rsquo;s Claude
-        connection. Connect Claude, then send the message again. Each agent start mints a
-        fresh token, so no restart is necessary.
+        Sign in once and this box keeps the credential; every agent start after that picks it
+        up. Then send the message again.
+      </p>
+      {machineId !== undefined && (
+        <div className="lody-surface__auth-notice-panel">
+          {/* Lody's own panel, unmodified. It opens a window on the authorization
+              URL the daemon streams back and takes the pasted code. The overrides
+              are what point the login at the box's `claude`, so the sign-in and
+              the agent are the same binary. */}
+          <AcpAuthenticationPanel
+            machineId={machineId}
+            configId={BLITZ_CLAUDE_CONFIG_ID}
+            cliType="builtin"
+            agentType="claude"
+            runtimeOverrides={{ claudeCodeExecutable: BLITZ_CLAUDE_EXECUTABLE }}
+            compact
+          />
+        </div>
+      )}
+      <p className="lody-surface__auth-notice-hint">
+        Or run <code>claude</code> in a terminal tab and sign in there — it stores the same box
+        credential.
       </p>
       <div className="lody-surface__auth-notice-actions">
-        {onOpenConnections !== undefined && (
-          <button
-            type="button"
-            className="lody-surface__auth-notice-button"
-            onClick={() => onOpenConnections(CLAUDE_CONNECTION_NAME)}
-          >
-            Open connections
-          </button>
-        )}
         <button
           type="button"
           className="lody-surface__auth-notice-dismiss"

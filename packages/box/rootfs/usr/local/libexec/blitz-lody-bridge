@@ -503,7 +503,44 @@ function forward(request, response, socketPath, upstreamPath, headers) {
 
 // The daemon requires `x-lody-local-control` on every control-socket POST; it is
 // what separates a deliberate local-control call from a stray browser request.
+//
+// The set is FIXED and the browser's own headers are dropped: a Cookie, an
+// Authorization or a Host from the page has no business on the daemon's control
+// socket, and forwarding whatever arrived would make that decision the caller's.
 const CONTROL_HEADERS = { "content-type": "application/json", "x-lody-local-control": "1" };
+
+// `LOCAL_SESSION_CONTROL_STREAM_MEDIA_TYPE`
+// (`vendor/lody/packages/shared/src/node/local-ipc.ts:33`). The daemon serves
+// `/session-control` two ways and picks by `Accept`: with this media type it
+// writes one NDJSON frame per response as the flow produces it, otherwise it
+// buffers the whole batch until the flow ends
+// (`apps/cli/src/lib/local-session-control.ts:33`).
+//
+// That negotiation is the only browser header this bridge carries, and it
+// carries it as a DECISION rather than a relay: the inbound value is inspected,
+// and what goes upstream is this constant or nothing. A verbatim forward would
+// put caller-chosen bytes in a daemon request header for no gain.
+//
+// It is load-bearing for exactly one flow. `machine/acp-authenticate` runs
+// `claude auth login --claudeai`, which prints its authorization URL and then
+// blocks on stdin waiting for the member to paste the code back. The URL
+// travels in a `machine/acp-authentication-progress` response emitted while
+// that process is still running, so on the buffered path it cannot arrive until
+// the sign-in it is supposed to enable has already finished.
+const SESSION_CONTROL_STREAM_MEDIA_TYPE = "application/x-ndjson";
+
+/** Whether an inbound `Accept` asks for the daemon's response stream. */
+function wantsControlStream(accept) {
+  const value = Array.isArray(accept) ? accept.join(",") : (accept ?? "");
+  return value.split(",").some((entry) => entry.trim().startsWith(SESSION_CONTROL_STREAM_MEDIA_TYPE));
+}
+
+/** The upstream headers for one control-socket POST. */
+function controlHeaders(request, upstreamPath) {
+  if (upstreamPath !== "/session-control") return CONTROL_HEADERS;
+  if (!wantsControlStream(request.headers.accept)) return CONTROL_HEADERS;
+  return { ...CONTROL_HEADERS, accept: SESSION_CONTROL_STREAM_MEDIA_TYPE };
+}
 
 // Browser path -> the control socket's own path. Three doors, one socket: the
 // daemon serves /machine-rpc, /session-control and /project-control on
@@ -634,8 +671,9 @@ const server = http.createServer((request, response) => {
   const share = parseShare(request.headers[SHARE_HEADER]);
   const controlPath = CONTROL_ROUTES[url.pathname];
   if (controlPath !== undefined && request.method === "POST") {
-    if (share === null) forward(request, response, controlSocket, controlPath, CONTROL_HEADERS);
-    else forwardShared(request, response, controlPath, share);
+    if (share === null) {
+      forward(request, response, controlSocket, controlPath, controlHeaders(request, controlPath));
+    } else forwardShared(request, response, controlPath, share);
     return;
   }
   if (url.pathname === "/platform" && request.method === "GET") {

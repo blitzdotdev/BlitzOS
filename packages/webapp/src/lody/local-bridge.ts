@@ -313,10 +313,13 @@ export function createLodyLocalBridge(endpoints: LodyLocalBridgeEndpoints): Lody
         // SAFETY: the daemon's own request union just accepted this object, and
         // every member carries the `type` discriminant our side names.
         const request = message.data as LodySessionControlMessage;
-        // Electron pushes each response as it streams; `/session-control`
-        // answers the whole batch at the end, so replay it through the push
-        // channel BEFORE resolving — `sendLocalSessionControl` unsubscribes in
-        // its `finally`, so a response emitted after this resolves is lost.
+        // Electron pushes each response as it streams, and so does this: the
+        // POST negotiates the daemon's NDJSON stream and `sendSessionControl`
+        // calls back per frame (`rpc-client.ts`). The push must happen BEFORE
+        // this resolves either way — `sendLocalSessionControl` unsubscribes in
+        // its `finally`, so a response emitted after that is lost. That
+        // ordering is what carries `machine/acp-authentication-progress`, the
+        // only frame the Claude sign-in URL ever travels in.
         return await sendSessionControl(endpoints, request, (response) => {
           for (const listener of listeners.sessionControlResponse) {
             listener({ requestId, response });

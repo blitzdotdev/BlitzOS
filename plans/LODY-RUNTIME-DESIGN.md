@@ -1458,3 +1458,228 @@ exactly the machine the product runs on, and the phase-2 exit test's
 "the daemon accepted the dispatch" early return was being taken for the wrong
 reason. It now also asks `blitz-cred-claude` by EXIT STATUS, with
 `stdio: 'ignore'`, so the token never enters the test process.
+
+## 13. What the second canary dogfood found (2026-08-31)
+
+The report: clicking "Sign in with Claude" opens a popup that says
+"Preparing Claude sign-in…" and never becomes anything else.
+
+Three defects sat behind it, and §12.3's banner turned out to be a fourth.
+
+### 13.1 The break point: async progress had no carrier
+
+`AcpAuthenticationPanel.handleStart`
+(`components/settings/acp-authentication-panel.tsx:113`) opens a placeholder
+window immediately and navigates it only when `startAuthentication`'s
+`onProgress` delivers `{status:'authorization', authorizationUrl}`. That frame
+is a `machine/acp-authentication-progress` RESPONSE, and the daemon emits it
+while the login process is still running — it is a NOTIFICATION on a request
+that has not finished, not a reply.
+
+The daemon serves `/session-control` two ways and picks by `Accept`
+(`apps/cli/src/lib/local-session-control.ts:33`):
+
+| `Accept` | Answer |
+|---|---|
+| `application/x-ndjson` | one `{"kind":"response"}` frame per response, as the flow produces it, then `{"kind":"complete"}` |
+| anything else | one `{ok, responses:[…]}` envelope, written when the whole request has finished |
+
+Neither of our two hops asked for the stream. `postLodyPlane`
+(`webapp/src/lody/rpc-client.ts`) sent `content-type` and the local-control
+header and no `Accept`, and read the body with `await response.text()`;
+`blitz-lody-bridge`'s `forward()` then replaced the browser's headers with a
+fixed `CONTROL_HEADERS` that had none either. So every call took the buffered
+path, and the URL could not arrive until the process waiting for the member had
+exited. Measured against a real `lody@0.88.1`: with the negotiation, the
+`authorization` frame lands **40 ms** after the POST opens; without it, not at
+all until the 285 s login timeout.
+
+Everything else in the chain was already correct and needed no change: the Go
+gateway proxies `/lody/control` with `FlushInterval: -1` (`gateway/main.go:1020`),
+the bridge's `forward()` already pipes `upstreamResponse.pipe(response)`, and the
+vendored runtime already de-duplicates a streamed response against the final
+array (`create-workspace-runtime.ts:2109`). The gap was one header on two hops.
+
+**Shipped.** `sendSessionControl` negotiates the stream, reads `response.body`
+frame by frame and calls its per-response `emit` as each lands — the order
+`sendLocalSessionControl` (`lib/electron-ipc-client.ts:66`) is written for, since
+it unsubscribes in its `finally`. The buffered envelope is still parsed when the
+daemon answers one, so a box whose bridge predates this degrades instead of
+failing. `blitz-lody-bridge` carries the negotiation as a DECISION, not a relay:
+it inspects the inbound `Accept` and sends the one constant or nothing, so no
+caller-chosen bytes reach the daemon's control socket.
+
+The per-request deadline moved with it. `postLodyPlane`'s flat 120 s cut a 285 s
+login in half, so `sessionControlTimeoutMs` now mirrors Lody's own per-type table
+(`apps/electron/src/main/services/cli-service.ts:74`): 300 s for
+`machine/acp-authenticate`.
+
+### 13.2 What the daemon's authenticate actually does, headless
+
+Measured, claude 2.1.228, non-TTY, piped stdio, scratch `HOME`:
+
+- It **honours `runtimeOverrides.claudeCodeExecutable`** — `setting.ts:503` uses
+  the override for both `auth login --claudeai` and `auth status --json`, and
+  falls back to a managed download only when there is none. Our agent config
+  always sets it (`agent-configs.ts:37`, `/usr/local/bin/claude`), so the sign-in
+  and the agent are the same binary and the same credential store.
+- It **produces the URL without being signed in**, which was the open question.
+  stdout carries `Opening browser to sign in…`, then
+  `If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?…`,
+  then `Paste code here if prompted > `. The daemon's parser accepts it because
+  the host is `claude.com` and the path contains `/oauth/`
+  (`acp-authentication-output.ts:24`), and marks `acceptsAuthorizationCode` for
+  claude, which is what renders the panel's code input.
+- Identical with a `CLAUDE_CODE_OAUTH_TOKEN` already in the environment, so a box
+  whose shim mints one still gets a usable sign-in flow.
+- It **binds no loopback callback** (checked with `ss -lntp` against the process
+  tree). `redirect_uri` is Anthropic's hosted `/oauth/code/callback`, which shows
+  the member a code. So the pasted code is the only way the flow can finish, and
+  it never exits on its own.
+
+### 13.3 The deadlock behind the paste, and the second bundle patch
+
+That last point exposed a defect the transport fix alone could not reach.
+`MessageProcessor.extractQueueKey` returns `null` for every message it does not
+name, and `ConcurrentQueue` maps `null` onto ONE shared chain, `__default__`,
+whose tasks run strictly in sequence. Every `machine/*` message shares it.
+
+So `submit-code` queues behind the `start` that is waiting for it. The daemon
+says so itself:
+
+```
+Message still waiting in queue type=machine/acp-authenticate sessionId=N/A
+queuedFor=10000ms active=1 waiting=0
+```
+
+`action: 'cancel'` is on the same chain, so Cancel cannot break it either; the
+only exit is the 285 s timeout. Verified directly against the daemon's own
+control socket, so it is not something our chain introduced.
+
+**Shipped:** `packages/box/patches/lody-acp-auth-queue.mjs`, a second patch to
+the published npm bundle beside `lody-local-platform.mjs`. It adds one case:
+
+```js
+case "machine/acp-authenticate":
+  return message.action === "start" ? `acp-auth:${message.agentType}` : null;
+```
+
+A `start` moves onto its own per-agent chain; `submit-code` and `cancel` keep the
+key they already had and are no longer behind it. Strictly narrowing — the only
+message that changes chains is the one that was blocking the others — and the
+per-agent grouping is a rule the daemon already enforces one layer in, from
+`runningByAgentType` (`acp-authentication.ts`).
+
+Its guard is the package version plus its own anchor at exactly one occurrence,
+NOT a whole-file sha256: two patches now run over the same artifact, and a file
+hash can only pin whichever runs first.
+
+### 13.4 §12.3's banner was wrong, and this is the corrected credential story
+
+The banner told members to connect Claude in the workspace Connections panel.
+**There is no Claude card in that catalog and there never was.** `blitz-cred get
+claude` mints from harness-credential ROAMING — it copies a credential some box
+already holds because somebody signed in on it interactively — so the panel it
+opened had nothing in it to click, and the one instruction the banner gave could
+not be followed.
+
+The two routes that DO exist, both of which end in the same box credential:
+
+1. **Lody's own sign-in**, now that §13.1 and §13.3 make it complete. The daemon
+   runs `claude auth login --claudeai` against `/usr/local/bin/claude`, streams
+   the authorization URL back, and takes the pasted code on its own request.
+2. **`claude` in a terminal tab.** The same login by hand, storing the same
+   credential in the daemon's own `HOME`.
+
+`agent-auth-notice.tsx` now renders Lody's `AcpAuthenticationPanel` inline as its
+primary action — the vendor component, unmodified, with the same overrides the
+agent config carries — and names the terminal beside it. The
+`onOpenConnections` prop is deleted from the banner, `SessionSurface`,
+`LodySessionsRegion` and `CloudApp`: a wire to a panel that cannot help is worse
+than no button.
+
+### 13.5 Why no test caught it, and the three that now do
+
+§12.4's suite is daemon-free by design, and a stub runtime cannot have a
+transport bug. The daemon-backed suites that could have are the ones CI skips.
+Worse, they had stopped running anywhere at all — see §13.6.
+
+- `webapp/test/lody-session-control-stream.test.ts` — the browser reads the
+  captured corpus through a fake `fetch` whose chunk boundaries fall mid-token,
+  and asserts every frame is emitted BEFORE the promise settles. Runs in CI.
+- `box/guest-tests/test/lody-bridge-control-stream.test.ts` — the real bridge
+  against a stand-in daemon that holds its stream open, so "piped, not pooled" is
+  established rather than inferred. Runs in CI.
+- `webapp/test/lody-acp-authentication.test.ts` — the whole chain against a real
+  `lody@0.88.1`, driving `machine/acp-authenticate` with a stand-in `claude` that
+  prints the real captured URL and then blocks on stdin. It asserts the
+  authorization frame arrives while the request is still open, then submits the
+  code and gets `input-accepted` — which is the §13.3 patch under test, since
+  without it that request cannot be answered at all. No paid turn: no model is
+  ever reached.
+
+`packages/schema/fixtures/lody-session-control-stream/` is the corpus, captured
+from a real daemon through the real bridge. The frame union stays Lody's
+(`local-ipc.ts:80`); what the corpus pins is that our hand-written copy of it —
+unavoidable, because that module is node-only and cannot enter a browser bundle —
+keeps agreeing.
+
+### 13.6 The harness could no longer start a daemon on a box
+
+Found while verifying the above, and it had disabled every daemon-backed suite in
+the repo: `startLodyHarness` failed with a 60 s "timed out waiting for the daemon
+to provision its implicit workspace", whose real cause was
+`Cannot start: foreground process N already owns the local agent runtime`.
+
+The single-instance host lease is one TCP port per installation profile — 17789
+for `lody-oss` — with no override, and **a box runs its own daemon on it**
+(`s6-rc.d/lody-daemon`). It only ever worked because the box image had not yet
+shipped `lody-local-platform.mjs`, so the box's own daemon could not reach local
+mode and never took the lease. On a current image it does.
+
+Two fixes, both in the harness:
+
+- It now declares itself a SUPERVISOR through Lody's own Supervisor↔Worker
+  contract (`local-cli-supervisor.ts`) — the same four env markers
+  `lody daemon start` sets for the worker it forks — which skips the lease. It is
+  one, in the sense the contract means: it spawns the process, owns its lifetime
+  and kills it. The daemon is spawned with an `ipc` stdio channel to match, since
+  a worker carrying the markers without one stops itself as an orphan. That buys
+  a property §10.8 wanted and could not have: a vitest worker killed by the OOM
+  reaper drops the channel, and the daemon exits by itself.
+- `lody-local-platform.mjs` treats an ALREADY-PATCHED bundle as success. The
+  harness copies the box's own `/opt/blitz/npm` bundle, which on a real box is
+  already patched, and refusing there reported "the pinned lody version moved" —
+  the wrong cause, loudly. The teeth are unchanged: that branch is taken only for
+  exactly four rewritten call sites, none of the originals, at the pinned version.
+
+### 13.7 The sharing relay's join, retried on a fresh socket
+
+With §13.6 letting the daemon-backed suites run again, `lody-sharing-relay`
+failed about one run in three — always the same way, always in `beforeAll`:
+
+```
+timed out waiting for a joined frame for session-<id>
+```
+
+The peer's frame list was EMPTY. Not `room_forbidden`, not an error frame —
+nothing at all, on a socket that had opened cleanly. Every other join in the
+suite answers in about 100 ms.
+
+It is not the relay and not this change. Measured on the same harness: a
+stand-alone peer doing exactly that join, shared and unshared, immediately after
+`startLodySession` and after a settling wait, got its `joined` frame every time.
+Reverting the §13.1 transport fix did not help, and neither did dropping the
+§13.3 patch — which is the expected result, because neither touches `/sync`.
+What is left is the harness's own gateway stand-in, which splices the WebSocket
+upgrade by hand where production uses `httputil.ReverseProxy`.
+
+So `readRoom` now retries on a FRESH socket, with a short bound, up to four
+times. The outer `untilRoom` already retried; the inner wait was simply
+spending the whole budget on one dead socket. Four consecutive runs green
+afterwards, where three runs before it had one failure.
+
+The suite could not have been compared against `main` on a current box, because
+there it does not start at all (§13.6). If this flake predates the port, the
+retry is still the right shape; if it is the stand-in shim, the retry is where
+it belongs — production's upgrade hop is Go, and `gateway/main_test.go` owns it.

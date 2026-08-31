@@ -128,13 +128,36 @@ describe.skipIf(!lodyDaemonAvailable())("phase 6: a grantee on the real relay", 
     return frame;
   }
 
-  /** The `joined` frame's payload, imported into a fresh replica. */
+  /**
+   * The `joined` frame's payload, imported into a fresh replica.
+   *
+   * RETRIED ON A FRESH SOCKET, because roughly one join in three on a busy box
+   * gets a socket that connects and then receives NOTHING — not even the
+   * `presence` frame every other join opens with. That is the harness's own
+   * gateway stand-in, which splices the WebSocket upgrade by hand
+   * (`lody-daemon-harness.ts`); production uses `httputil.ReverseProxy` for the
+   * same hop. The relay itself is fine — the other five tests here exercise it,
+   * and a join that answers at all answers in ~100 ms — so the right shape is a
+   * short bound and another socket, not a longer wait on a dead one.
+   */
   async function readRoom(claim: Claim | null, docId: string): Promise<LoroDoc> {
-    const client = await peer(claim);
-    client.send(joinFrame(client.peerId, docId));
-    const joined = await until(`a joined frame for ${docId}`, () =>
-      client.frames.find((frame) => frame.type === "joined"),
-    );
+    const attempts = 4;
+    let client = await peer(claim);
+    let joined: Record<string, unknown> | undefined;
+    for (let attempt = 1; ; attempt += 1) {
+      client.send(joinFrame(client.peerId, docId));
+      joined = await until(
+        `a joined frame for ${docId}`,
+        () => client.frames.find((frame) => frame.type === "joined"),
+        15_000,
+      ).catch((cause: unknown) => {
+        if (attempt >= attempts) throw cause;
+        return undefined;
+      });
+      if (joined !== undefined) break;
+      client.close();
+      client = await peer(claim);
+    }
     const doc = new LoroDoc();
     const payload = joined.payload as { kind?: string; dataBase64?: string } | undefined;
     if (payload?.dataBase64 !== undefined && payload.dataBase64 !== "") {

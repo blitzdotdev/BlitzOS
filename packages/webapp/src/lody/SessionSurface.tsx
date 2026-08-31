@@ -190,10 +190,6 @@ export interface LodySessionSurfaceProps {
   /** Follow the session without driving it. Suppresses the composer and the
    * permission card's answer buttons (seam patch 4). */
   readOnly?: boolean;
-  /** Opens the workspace connections panel with `provider` selected — the same
-   * action `blitz connections open <provider>` raises from inside the box. The
-   * signed-out banner is the only caller (`agent-auth-notice.tsx`). */
-  onOpenConnections?: (provider: string) => void;
 }
 
 /**
@@ -477,9 +473,12 @@ export function SessionSurface(props: LodySessionSurfaceProps) {
                 <LodyAgentAuthNotice
                   store={store}
                   sessionId={activeSessionId}
-                  {...(props.onOpenConnections === undefined
-                    ? {}
-                    : { onOpenConnections: props.onOpenConnections })}
+                  // A GRANTEE gets the explanation and no sign-in button. The
+                  // machine is somebody else's, and the bridge refuses
+                  // `/session-control` for a shared request outright
+                  // (`blitz-lody-bridge`, plans/LODY-SHARING.md §2.2) — so the
+                  // panel could only ever answer `share_forbidden`.
+                  {...(isShared ? {} : { machineId: snapshot.machineId })}
                 />
                 {isShared ? (
                   // A grantee's surface writes no agent configs at all — the

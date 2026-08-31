@@ -1,0 +1,2 @@
+{"kind":"response","response":{"type":"machine/acp-authenticate_response","machineId":"c41de1f7-beab-4509-84ee-d6703f540857","requestId":"req-cancel-1","agentType":"claude","success":true,"disposition":"not-running"}}
+{"kind":"complete"}
