@@ -35,11 +35,8 @@ import {
 } from "@lody/components/atoms/workspace-context";
 import { useMachineAcpAuthentication } from "@lody/components/hooks/use-machine-acp-authentication";
 import type { JsonValue } from "@blitzos/schema";
-import {
-  AUTH_NOTICE_POLL_MS,
-  LodyAgentAuthNotice,
-  sessionNeedsAgentSignIn,
-} from "../src/lody/agent-auth-notice";
+import { AUTH_NOTICE_POLL_MS, LodyAgentAuthNotice } from "../src/lody/agent-auth-notice";
+import { sessionNeedsAgentSignIn } from "../src/lody/session-auth-recovery";
 import { LodyAgentConfigGate } from "../src/lody/agent-config-gate";
 import { BLITZ_CLAUDE_CONFIG_ID, bootstrapLodyAgentConfigs } from "../src/lody/agent-configs";
 import { initLodyI18n } from "../src/lody/i18n";
@@ -83,7 +80,13 @@ function stubRuntime(overrides: Partial<LodyWorkspaceRuntime> = {}): LodyWorkspa
       flockRowPut: unimplemented("flockRowPut"),
       flockRowPutIfAbsent: unimplemented("flockRowPutIfAbsent"),
     },
-    repo: { openFlockDoc: unimplemented("openFlockDoc") },
+    repo: {
+      openFlockDoc: unimplemented("openFlockDoc"),
+      // The banner's poll also repairs a phantom ACP session id
+      // (`session-auth-recovery.ts`). Nothing here has one, so answering with
+      // no meta at all is the honest stub: the repair stops at its first read.
+      getDocMeta: async () => undefined,
+    },
     setLocalMachineId: () => undefined,
     resolveMachineTargetPlane: unimplemented("resolveMachineTargetPlane"),
     requestSessionDispatchTurn: unimplemented("requestSessionDispatchTurn"),

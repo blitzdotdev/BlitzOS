@@ -1683,3 +1683,141 @@ The suite could not have been compared against `main` on a current box, because
 there it does not start at all (§13.6). If this flake predates the port, the
 retry is still the right shape; if it is the stand-in shim, the retry is where
 it belongs — production's upgrade hop is Go, and `gateway/main_test.go` owns it.
+
+## 14. What the third canary dogfood found (2026-08-31)
+
+Four reports from one session on a real canary box. Three of them are one
+defect, and the fourth is two defects stacked — one upstream's, one the shape of
+the state we hand it.
+
+A fifth report — "terminal tabs should be integrated into Lody's tab viewer" —
+is a design change, not a defect, and is deliberately not in this change.
+
+### 14.1 A rail click moved a page nobody could see
+
+The reports: single-clicking an open session in the rail does not open it;
+clicking "New session" does not open the landing; and neither does it with a
+terminal tab open.
+
+**One cause, and §9.1 wrote the rule it broke.** That section settled that the
+ADDRESS drives the surface and the surface's own navigations mirror BACK, and
+that `mirror` is a no-op while the panes own the view — a background navigation
+inside a hidden surface must not yank the member out of their terminal. Phase 4
+then wired the vendored sidebar's row click and its `home` entry to
+`SessionSurface`'s own router (`onSelectSession={openSession}`), which is a
+navigation inside the surface. With `ChatAddress === null` the surface is
+`hidden`, so the click moved a page that was not on screen, `mirror` correctly
+ignored it, and the address never learned anything. Nothing happened, exactly as
+reported, and nothing was logged because nothing failed.
+
+The rail is drawn whether or not the surface is showing — it is the workspace's
+session list — so this is reachable from every workspace that has a terminal
+tab, which after §0.4 is every workspace that is not brand new.
+
+**Shipped:** the rail binding carries the SHELL's navigators.
+`LodyRailBinding` gains `onOpenSession` and `onOpenLanding`; `CloudApp` passes
+`lodyRail.openSession` and `lodyRail.openLanding` through `LodySessionsRegion`;
+the portal prefers them and falls back to the surface's router when a host
+supplies none, which is what a headless mount wants. A rail click is now an
+address change, and the address-follows effect §9.1 already built does the rest.
+`useLodyRail.go` also stops pushing a history entry when the address is already
+the one being asked for — a row is clickable while it is the open one, and every
+second click cost the member a press of the back button.
+
+Terminal rows are unchanged: `onSelectTerminal` → `selectTtydSession` →
+`closeChat`, which is §4.4's other half and was never broken.
+
+**Why the phase-4 exit test passed.** `lody-session-rail.test.tsx` asserts that
+a row click moves `activeSessionId`, which is the SURFACE's address — the very
+step that works. It never mounted the shell around it, so the missing half was
+invisible. It now records what the rail asked the shell for and drives the
+surface from there, which is the product's own order. And because that suite
+skips without a `lody` bundle — CI — the gate is a new daemon-free one:
+`packages/webapp/test/lody-rail-interactions.test.tsx` mounts `useLodyRail` and
+`LodySessionsRegion` with the surface mocked, and asserts the address moves from
+the panes for a session row, for New session, and for New session with a
+terminal tab open. Five of its seven cases fail against the phase-4 wiring.
+
+### 14.2 The first turn after a sign-in answered nothing
+
+The report, with a screenshot: the first prompt on a fresh box comes back
+"Authentication required" (§13's flow, working); the member signs in; the NEXT
+message shows a "Resuming conversation from chat history" divider and then "The
+agent ended the turn without producing any output"; the message after THAT
+works.
+
+**Reproduced against a real `lody@0.88.1` and a real signed-out claude**
+(`packages/webapp/test/lody-post-signin-turn.test.ts`; the stand-in is the
+CREDENTIAL — a shim that execs the same `/opt/blitz/npm/bin/claude` with a HOME
+that holds no credential — so nothing about the agent is simulated). The daemon
+log names the whole chain in two lines:
+
+```
+[<session>] Failed to create agent: [ACP_RESUME_FAILED] loadSession: Resource not found: 585b37cc-…
+[<session>] Turn assistant:… completed without any agent output; recording it as a failed turn
+```
+
+| # | What happens | Where |
+|---|---|---|
+| 1 | The claude adapter accepts `session/new` while the CLI is signed out and refuses only at PROMPT time. The daemon has already persisted `acpSessionId` — it writes it as soon as `session/new` answers, before the first prompt. | `apps/cli/src/session/session-manager.ts:1455`; the refusal at `dist/claude-acp.js:63913` |
+| 2 | The turn fails `acp_auth_required`, and the session keeps an id for an ACP session that carries no conversation. | §12.3 |
+| 3 | The sign-in changes no session state at all — no re-dispatch, no session-meta write, nothing. So the next message resumes that id. | `agent/acp-authentication.ts:309` and its callers |
+| 4 | `loadSession` answers `Resource not found`; the daemon falls into its resume-failure fallback, which is a fresh ACP session with the chat history replayed into the prompt. That fallback is what writes the divider. | `session-execution-service.ts:3499`, `:3635` |
+| 5 | That fallback turn resolves with ZERO `session/update`, so the daemon records `agent_no_output`. The message after it works, because by then a real ACP session exists to resume. | `session-execution-service.ts:3140` |
+
+**Shipped: `packages/webapp/src/lody/session-auth-recovery.ts`.** It drops the
+phantom `acpSessionId` from the session's doc meta, so the next dispatch takes
+the daemon's ordinary cold-restore path instead of its resume-failure fallback.
+Nothing is lost: the id named an ACP session that never held a turn. It is an
+authored write on a dual-authored document — the browser already writes that
+meta when it creates a session — so it needs no vendor hunk and no bundle patch,
+and **no image rebake.**
+
+Three conditions, each load-bearing, and each with a daemon-free case in
+`packages/webapp/test/lody-session-auth-recovery.test.tsx`:
+
+1. the session's LAST outcome is an `acp_auth_required` failure;
+2. it has never produced agent output — a credential that expires mid-conversation
+   fails the same way, and there the id names real context that a replay would
+   throw away;
+3. no turn is in flight — the daemon persists `acpSessionId` seconds before the
+   first block streams, so a repair that ignored `status` could delete the id of
+   the turn happening right now.
+
+It runs from the sign-in banner's EXISTING poll, not from the panel's success:
+the other product route is `claude` in a terminal tab (§13.4), which touches
+nothing of ours, and the repair has to have happened before the member's next
+message either way.
+
+**Verified live, and this is what the paid budget bought:** two turns, one to
+reproduce the failure with the phantom id in place and one to prove the same
+turn answers with it dropped. The second run's daemon log carries neither
+`ACP_RESUME_FAILED` nor `agent_no_output`.
+
+**Two upstream defects stay open**, both recorded in
+`vendor/lody/BLITZ-PATCHES.md`. Persisting `acpSessionId` before the ACP session
+has carried a turn is the one this works around. The silence itself is the
+other, and it is not ours to fix: the leading explanation is the adapter
+resolving a dead SDK stream as `end_turn` with no notification at all
+(`dist/claude-acp.js:63062`), which the daemon cannot classify because it never
+arrives as an error. Dropping the phantom id keeps the product off that path
+rather than repairing it.
+
+### 14.3 Why no test caught either, and what does now
+
+The same reason §12.4 gives, one layer along. The daemon-backed suites skip
+without a 21 MB bundle, so nothing they prove gates a merge; and the free suites
+tested each half of the rail against itself — the hook's addresses in one file,
+the surface's router in another — with no case that crossed the seam between
+them. Both new free suites cross it:
+
+- `lody-rail-interactions.test.tsx` — seven cases, the rail's clicks against the
+  shell's address, with the surface mocked.
+- `lody-session-auth-recovery.test.tsx` — nine cases, the repair's decision over a
+  stub runtime, plus the banner's poll actually calling it.
+
+And the two daemon-backed suites now assert the product's order rather than the
+surface's: `lody-session-rail.test.tsx` records what the rail asked the shell
+for, and `lody-post-signin-turn.test.ts` is new and drives the whole sign-in
+sequence, with its dispatch behind `BLITZ_LODY_LIVE_TURN=1` as every paid
+assertion here is.

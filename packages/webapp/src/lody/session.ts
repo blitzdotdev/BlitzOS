@@ -118,14 +118,21 @@ function builderString(value: JsonValue | undefined, what: string): string {
   return value;
 }
 
-export async function startLodySession(
-  runtime: LodyWorkspaceRuntime,
-  input: StartLodySessionInput,
-): Promise<StartedLodySession> {
-  const timestamp = new Date().toISOString();
+/** One pending user turn, built by Lody's own builder. Shared by the first turn
+ * and every turn after it — their builder mints a fresh id per call and knows
+ * nothing about which turn of a session this is. */
+function buildUserTurn(input: {
+  userId: string;
+  agentType: string;
+  prompt: string;
+  /** Explicitly `| undefined` rather than optional, so both callers can pass
+   * their own optional field straight through. */
+  modeId: string | undefined;
+  timestamp: string;
+}) {
   const entryArgs: LodyInitialHistoryEntryArgs = {
     userId: input.userId,
-    timestamp,
+    timestamp: input.timestamp,
     cliType: "builtin",
     agentType: input.agentType,
     prompt: input.prompt,
@@ -138,8 +145,25 @@ export async function startLodySession(
   const built = buildInitialHistoryEntry(entryArgs) as JsonValue;
   if (built === null) throw new LodySessionStartError("lody_session_empty_prompt");
   const entry = builderObject(built, "history entry");
-  const userTurnId = builderString(entry.id, "user turn id");
-  const inputConfig = builderObject(entry.inputConfig ?? null, "input config");
+  return {
+    entry,
+    userTurnId: builderString(entry.id, "user turn id"),
+    inputConfig: builderObject(entry.inputConfig ?? null, "input config"),
+  };
+}
+
+export async function startLodySession(
+  runtime: LodyWorkspaceRuntime,
+  input: StartLodySessionInput,
+): Promise<StartedLodySession> {
+  const timestamp = new Date().toISOString();
+  const { entry, userTurnId, inputConfig } = buildUserTurn({
+    userId: input.userId,
+    agentType: input.agentType,
+    prompt: input.prompt,
+    modeId: input.modeId,
+    timestamp,
+  });
 
   // SAFETY: `buildInitialSessionMetaPatch` returns Lody's `Partial<SessionMeta>`,
   // erased to an untyped value by the same seam; `builderObject` re-checks it.
@@ -175,6 +199,54 @@ export async function startLodySession(
     inputConfig,
   });
 
+  return { sessionId: input.sessionId, roomId, userTurnId, timestamp, inputConfig };
+}
+
+/** One more user turn on a session that already exists. */
+export interface ContinueLodySessionInput {
+  sessionId: string;
+  userId: string;
+  agentType: string;
+  prompt: string;
+  modeId?: string;
+}
+
+/**
+ * The composer's SECOND message, without React.
+ *
+ * `startLodySession` is the landing's send; this is every send after it. The
+ * accept unit is the same shape one level down — `appendSessionTurn` writes the
+ * pending user entry and the dispatch pointer in one transaction
+ * (`workspace-writer.ts:55`), where `startSession` also writes the meta — so the
+ * result is a `StartedLodySession` and `dispatchLodyTurn` takes it unchanged.
+ *
+ * It exists because a session's SECOND turn is a different code path on the
+ * daemon: the first turn creates the ACP session, and every turn after it either
+ * resumes that one or, when there is none to resume, replays the chat history
+ * into a fresh one. `plans/LODY-RUNTIME-DESIGN.md` §14.2 is what needed to drive
+ * that from a test, and nothing else in this package can.
+ */
+export async function continueLodySession(
+  runtime: LodyWorkspaceRuntime,
+  input: ContinueLodySessionInput,
+): Promise<StartedLodySession> {
+  const timestamp = new Date().toISOString();
+  const { entry, userTurnId, inputConfig } = buildUserTurn({
+    userId: input.userId,
+    agentType: input.agentType,
+    prompt: input.prompt,
+    modeId: input.modeId,
+    timestamp,
+  });
+  const roomId = getSessionRoomId(input.sessionId);
+  await runtime.ensureDocStream(roomId);
+  await runtime.writer.appendSessionTurn(input.sessionId, entry, {
+    sessionId: input.sessionId,
+    userTurnId,
+    userId: input.userId,
+    timestamp,
+    inputConfig,
+  });
   return { sessionId: input.sessionId, roomId, userTurnId, timestamp, inputConfig };
 }
 
