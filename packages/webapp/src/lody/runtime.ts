@@ -36,7 +36,12 @@ import {
   type LodyLocalBridge,
   type LodyLocalBridgeEndpoints,
 } from "./local-bridge.js";
+import type { LodyHttpPlaneEndpoints } from "./rpc-client.js";
 import type { LodyPlatformSnapshot } from "./platform-snapshot.js";
+import {
+  applyDefaultSessionProject,
+  createDefaultSessionProjectResolver,
+} from "./workdir-default.js";
 import type { LodySessionDocState } from "./wire-types.js";
 
 /** Unreachable by construction; see the module comment. */
@@ -239,8 +244,43 @@ export async function createLodyRuntime(options: {
   }
   runtime.setLocalMachineId(snapshot.machineId);
 
+  // A session started with no repo picked would otherwise run in the daemon's
+  // chat-storage directory rather than in the box's workspace, which is what
+  // makes a relative file chip open on nothing. `workdir-default.ts` states the
+  // whole chain.
+  //
+  // Applied HERE for a caller that builds its own runtime — the exit tests, and
+  // any headless driver. The product surface does not come through this
+  // function: `RuntimeProvider` creates the runtime and writes `runtimeAtom`
+  // itself, so `LodyAgentConfigGate` applies the same decorator to the atom's
+  // value. Both go through `applyDefaultSessionProject`, which is idempotent,
+  // so a runtime that passed one never pays for the other.
+  //
+  // The registration is LAZY, not warmed here. Warming it would put the one
+  // request that can be refused — a daemon that has not provisioned its
+  // implicit workspace yet answers `workspace_not_found` — in flight at the
+  // earliest possible moment, and a send that arrived while that refusal was
+  // still open would share it and land in the chats directory: the exact bug.
+  // Deferred to the first session write, the daemon has already answered the
+  // agent-config gate, so the call is made when it can succeed.
+  const planeEndpoints: LodyHttpPlaneEndpoints = {
+    rpcUrl: endpoints.rpcUrl,
+    controlUrl: endpoints.controlUrl,
+    projectUrl: endpoints.projectUrl,
+    platformUrl: endpoints.platformUrl,
+  };
+  if (endpoints.fetchImpl !== undefined) planeEndpoints.fetchImpl = endpoints.fetchImpl;
+  const resolveDefaultProject = createDefaultSessionProjectResolver(
+    planeEndpoints,
+    snapshot.machineId,
+    endpoints.filesRoot,
+  );
+  // `dispose` below still runs on the original, which is the object holding the
+  // repo and the transports.
+  const runtimeWithDefaults = applyDefaultSessionProject(runtime, resolveDefaultProject);
+
   return {
-    runtime,
+    runtime: runtimeWithDefaults,
     bridge,
     dispose: async () => {
       await runtime.dispose();

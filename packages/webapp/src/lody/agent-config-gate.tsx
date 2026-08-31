@@ -6,6 +6,12 @@
  * reason: it is the fix for a race, and a race needs a test that can drive it
  * without the vendored chat pages, Monaco, and the 3.5 MB of renderer those
  * pull in. Everything here reads one atom and our own seam.
+ *
+ * It also owns the one thing that has to be true of the runtime BEFORE a
+ * session can be started: a chat with no repo picked must work in `/workspace`
+ * (`workdir-default.ts`). That belongs here and not in `runtime.ts` because the
+ * product surface does not build its runtime there — their `RuntimeProvider`
+ * does, and this is the only place of ours that holds the atom it writes.
  */
 import { useEffect, useState, type ReactNode } from "react";
 import { runtimeAtom } from "@lody/components/atoms/runtime";
@@ -14,6 +20,10 @@ import {
   mirrorLocalProjectsToMachineMeta,
   publishBoxReposAsWorkspaceRepos,
 } from "./local-projects.js";
+import {
+  applyDefaultSessionProject,
+  createDefaultSessionProjectResolver,
+} from "./workdir-default.js";
 import type { LodyAtomStore, LodyRuntimeEndpoints, LodyWorkspaceRuntime } from "./runtime.js";
 
 /**
@@ -63,9 +73,28 @@ export function LodyAgentConfigGate(props: {
     const open = (): void => {
       if (!cancelled) setReady(true);
     };
+    const resolveDefaultProject = createDefaultSessionProjectResolver(
+      endpoints,
+      machineId,
+      endpoints.filesRoot,
+    );
     const run = (): void => {
       const runtime = store.get<LodyWorkspaceRuntime | null>(runtimeAtom);
       if (runtime === null || cancelled || runtime === started) return;
+      // BEFORE anything else, and before a session can be started: a chat with
+      // no repo picked has to be told it works in `/workspace`, or the daemon
+      // runs it in its own chat-storage directory and every relative file chip
+      // in that session opens on nothing (`workdir-default.ts`). The runtime
+      // this surface uses is built by their `RuntimeProvider`, so the writer is
+      // decorated by swapping the atom's value rather than at construction.
+      // This re-enters through the subscription with the decorated runtime,
+      // which `applyDefaultSessionProject` returns unchanged — so the bootstrap
+      // below runs once, on the runtime the composer will actually write with.
+      const withDefaults = applyDefaultSessionProject(runtime, resolveDefaultProject);
+      if (withDefaults !== runtime) {
+        store.set(runtimeAtom, withDefaults);
+        return;
+      }
       started = runtime;
       void (async () => {
         await bootstrapLodyAgentConfigs(store, runtime, machineId);
