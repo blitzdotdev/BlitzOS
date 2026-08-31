@@ -53,6 +53,7 @@ import {
   type SurfaceTabsBinding,
 } from './lody/surface-tabs';
 import { useLodyRail, type LodyRailSessions } from './lody/use-lody-rail';
+import { useTerminalAddressSync } from './lody/use-terminal-address-sync';
 import { useLodySessionsCapability } from './lody/box-capability';
 import { useSharedSessions } from './lody/use-shared-sessions';
 import type { LodySessionSurfaceApi } from './lody/SessionSurface';
@@ -89,7 +90,6 @@ import {
   renameTab,
   showPanelTab,
   splitTab,
-  togglePanelTab,
   withRegionActiveId,
 } from './workspace-panes';
 import { useWorkspaceTabDrag } from './use-workspace-tab-drag';
@@ -447,7 +447,10 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
       // the box raised it.
       setConnectionsFocus({ provider: focus.provider, at: focus.requestedAt });
       if (mobileWebApp) setFilesDrawerOpen(true);
-      updateWorkspaceTabs((tabs) => showPanelTab(tabs, 'connections'));
+      // `showPanel`, not the pane write it used to make: with the strip drawing
+      // the tabs, a panel tab nothing selects is a panel the member never sees,
+      // and the whole point of this marker is that the agent sent them here.
+      showPanel('connections');
       if (!mobileWebApp) setFocusedRegion('side');
     },
   );
@@ -806,39 +809,6 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     });
   }, [activeWorkspaceId, setWorkspaceTabs]);
 
-  const toggleFiles = useCallback(() => {
-    if (!activeWorkspaceId) return;
-    if (mobileWebApp) {
-      setDrawerOpen(false);
-      setFilesDrawerOpen((open) => !open);
-      return;
-    }
-    updateWorkspaceTabs((tabs) => togglePanelTab(tabs, 'files'));
-  }, [activeWorkspaceId, mobileWebApp, updateWorkspaceTabs]);
-
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const key = event.key.toLowerCase();
-      if (!event.shiftKey && key === 'b') {
-        if (!activeWorkspaceId) return;
-        event.preventDefault();
-        toggleFiles();
-      } else if (!event.shiftKey && key === 'n') {
-        event.preventDefault();
-        setShowCreateWorkspace(true);
-      } else if (!event.shiftKey && /^[1-9]$/.test(key)) {
-        const workspace = store.workspaces.filter(({ canControl }) => canControl)[Number(key) - 1];
-        if (workspace) {
-          event.preventDefault();
-          selectWorkspace(workspace.id);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleShortcut);
-    return () => window.removeEventListener('keydown', handleShortcut);
-  }, [activeWorkspaceId, selectWorkspace, store.workspaces, toggleFiles]);
-
   const requestDeleteWorkspace = useCallback((workspaceId: string) => {
     const workspace = storeRef.current.workspaces.find(({ id }) => id === workspaceId);
     if (!workspace?.canControl) return;
@@ -1129,6 +1099,12 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     ? ttydActiveType
     : null;
   const closeChat = lodyRail.closeChat;
+  // The address, read once. Everything below that has to agree with it — the
+  // strip's selection, the pane that mounts the tab body, the rail's highlight
+  // — reads these rather than `lodyRail` again, so the agreement is visible.
+  const addressTerminalId = lodyRail.terminalId;
+  const addressSessionId = lodyRail.sessionId;
+  const { openTerminal, openSession, openLanding } = lodyRail;
   // WHERE A WORKSPACE TAB IS SELECTED (plans/LODY-TERMINAL-TABS.md §4.1-§4.2).
   //
   // With the flag on and a box that serves the surface, a terminal is a TAB of
@@ -1158,29 +1134,141 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
     if (surfaceTabsEnabled) openTerminalTab(id);
     else closeChat();
   }, [closeChat, openTerminalTab, surfaceTabsEnabled]);
-  // `appendTab` hands the new tab `tabs.nextId`, so the id a fresh tab will
-  // carry is knowable before the write — which is what lets the selection above
-  // follow a spawn without reading state back out of a setState updater.
-  const nextWorkspaceTabId = activeWorkspaceTabs?.nextId ?? null;
+  // THE ID A SPAWN CREATED, READ FROM THE WRITE THAT CREATED IT.
+  //
+  // `appendTab` takes `tabs.nextId`, so the id is a property of the document the
+  // write starts from — and the previous version read it from the RENDER
+  // instead. Two spawns in one tick then both selected the first one's tab, and
+  // with the document not yet loaded the render-time id was `null`, which sent
+  // the member to the panes without having spawned anything at all.
+  //
+  // The updater reports the id it took and the selection follows on the commit
+  // that holds the new tab. Queued updaters run in order, so two spawns in one
+  // tick leave the SECOND one's id here — the newest tab wins the selection,
+  // which is what a member who pressed twice means.
+  const spawnedTabId = useRef<number | null>(null);
   const addWorkspaceTab = useCallback((
     createTab: (id: number) => WorkspaceTab,
     region: WorkspaceRegion = 'main',
   ) => {
-    updateWorkspaceTabs((tabs) => appendTab(tabs, region, createTab));
     setFocusedRegion(region);
-    if (nextWorkspaceTabId === null) closeChat();
-    else selectWorkspaceTab(String(nextWorkspaceTabId));
-  }, [closeChat, nextWorkspaceTabId, selectWorkspaceTab, updateWorkspaceTabs]);
+    updateWorkspaceTabs((tabs) => {
+      spawnedTabId.current = tabs.nextId;
+      return appendTab(tabs, region, createTab);
+    });
+  }, [updateWorkspaceTabs]);
   const spawnTtydSession = (type: SpawnSessionType) => {
     addWorkspaceTab((id) => ({ id, type }));
   };
-  const selectTtydSession = useCallback((id: string) => {
+  /** Make one workspace tab the active tab of its own pane, so its body mounts.
+   * `false` when the workspace does not hold it. */
+  const focusPaneTab = useCallback((id: string): boolean => {
     const session = ttydSessions.find((tab) => String(tab.id) === id);
-    if (session === undefined) return;
+    if (session === undefined) return false;
     setFocusedRegion(surfaceRegion(session));
     updateWorkspaceTabs((tabs) => withRegionActiveId(tabs, tabRegion(session), session.id));
+    return true;
+  }, [surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+  const selectTtydSession = useCallback((id: string) => {
+    if (!focusPaneTab(id)) return;
     selectWorkspaceTab(id);
-  }, [selectWorkspaceTab, surfaceRegion, ttydSessions, updateWorkspaceTabs]);
+  }, [focusPaneTab, selectWorkspaceTab]);
+  // The tail of a spawn: the tab exists now, so it can be selected.
+  useEffect(() => {
+    const id = spawnedTabId.current;
+    if (id === null) return;
+    if (!ttydSessions.some((tab) => tab.id === id)) return;
+    spawnedTabId.current = null;
+    selectWorkspaceTab(String(id));
+  }, [selectWorkspaceTab, ttydSessions]);
+
+  // OPENING A UTILITY PANEL ALSO HAS TO SHOW IT (wave-3 finding S4).
+  //
+  // `showPanelTab` and `togglePanelTab` are PANE verbs: they write the pane's
+  // own `activeId`, which is where the selection used to live. With the strip
+  // drawing the tabs the selection is the ADDRESS instead, so every one of
+  // these paths added a panel tab that nothing brought forward — Cmd/Ctrl+B,
+  // the three buttons of the right icon strip, and the box's own
+  // `blitz connections open`, all of them apparently dead.
+  //
+  // Two verbs, and the split is upstream's own: `showPanel` never closes,
+  // because the box's focus marker and the mobile sheet's segment strip both
+  // need a selection rather than a toggle.
+  const showPanel = useCallback((panel: WorkspaceDrawerSegment) => {
+    // On mobile the panels live in the off-canvas sheet, which reads the pane
+    // write directly and has no strip to select in.
+    if (mobileWebApp) {
+      updateWorkspaceTabs((tabs) => showPanelTab(tabs, panel));
+      return;
+    }
+    if (activeWorkspaceTabs === null) return;
+    const existing = panelTab(activeWorkspaceTabs, panel);
+    // The same write `showPanelTab` makes when the panel is not open, through
+    // the one place that knows how to follow a fresh tab's id.
+    if (existing === null) addWorkspaceTab((id) => ({ id, type: 'panel', panel }), 'side');
+    else selectTtydSession(String(existing.id));
+  }, [
+    activeWorkspaceTabs,
+    addWorkspaceTab,
+    mobileWebApp,
+    selectTtydSession,
+    updateWorkspaceTabs,
+  ]);
+  const togglePanel = useCallback((panel: WorkspaceDrawerSegment) => {
+    if (activeWorkspaceTabs === null) return;
+    const existing = panelTab(activeWorkspaceTabs, panel);
+    if (existing !== null) {
+      // "The tab you are looking at" is the address while the strip draws the
+      // tabs and the pane's own selection otherwise. Reading only the pane made
+      // a second press re-open what the first press had never shown.
+      const showing = surfaceTabsEnabled
+        ? addressTerminalId === String(existing.id)
+        : regionActiveId(activeWorkspaceTabs, tabRegion(existing)) === existing.id;
+      if (showing) {
+        updateWorkspaceTabs((tabs) => closePaneTab(tabs, existing.id));
+        return;
+      }
+    }
+    showPanel(panel);
+  }, [
+    activeWorkspaceTabs,
+    addressTerminalId,
+    showPanel,
+    surfaceTabsEnabled,
+    updateWorkspaceTabs,
+  ]);
+  const toggleFiles = useCallback(() => {
+    if (!activeWorkspaceId) return;
+    if (mobileWebApp) {
+      setDrawerOpen(false);
+      setFilesDrawerOpen((open) => !open);
+      return;
+    }
+    togglePanel('files');
+  }, [activeWorkspaceId, mobileWebApp, togglePanel]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (!event.shiftKey && key === 'b') {
+        if (!activeWorkspaceId) return;
+        event.preventDefault();
+        toggleFiles();
+      } else if (!event.shiftKey && key === 'n') {
+        event.preventDefault();
+        setShowCreateWorkspace(true);
+      } else if (!event.shiftKey && /^[1-9]$/.test(key)) {
+        const workspace = store.workspaces.filter(({ canControl }) => canControl)[Number(key) - 1];
+        if (workspace) {
+          event.preventDefault();
+          selectWorkspace(workspace.id);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, [activeWorkspaceId, selectWorkspace, store.workspaces, toggleFiles]);
   const openFile = (filePath: string) => {
     const existing = ttydSessions.find(
       (session) => session.type === 'file' && session.filePath === filePath,
@@ -1360,31 +1448,24 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         && retainedSessions.ids.has(sessionId)
       );
   });
-  // The address may name a tab this workspace no longer holds: the member just
-  // closed it, or a link was opened against a different document. `closeTab`
-  // has already picked the successor, so follow the pane's own choice; with no
-  // tab left, fall back to the host page the address named.
-  const mainActiveIdString = mainActiveId === null ? null : String(mainActiveId);
-  const addressTerminalId = lodyRail.terminalId;
-  const addressSessionId = lodyRail.sessionId;
-  const { openTerminal, openSession, openLanding } = lodyRail;
-  useEffect(() => {
-    if (!surfaceTabsEnabled || !tabsLoaded || addressTerminalId === null) return;
-    if (ttydSessions.some((tab) => String(tab.id) === addressTerminalId)) return;
-    if (mainActiveIdString !== null) openTerminal(mainActiveIdString);
-    else if (addressSessionId !== null) openSession(addressSessionId);
-    else openLanding();
-  }, [
-    addressSessionId,
-    addressTerminalId,
-    mainActiveIdString,
-    openLanding,
-    openSession,
-    openTerminal,
-    surfaceTabsEnabled,
+  // The terminal arm of the address, kept in step with the panes: a tab that is
+  // gone, a tab the pane is not showing, and a layout with no strip to draw it
+  // in. All three live in one hook; see `lody/use-terminal-address-sync.ts`.
+  useTerminalAddressSync({
+    enabled: surfaceTabsEnabled,
+    mobile: mobileWebApp,
     tabsLoaded,
-    ttydSessions,
-  ]);
+    tabs: ttydSessions,
+    mainActiveId,
+    sideActiveId,
+    terminalId: addressTerminalId,
+    sessionId: addressSessionId,
+    focusPaneTab,
+    openTerminal,
+    openSession,
+    openLanding,
+    closeChat,
+  });
   const loadingStage = activeWorkspace === undefined
     ? 'starting · workspace terminal'
     : workspaceProvisioning
@@ -1532,7 +1613,22 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   // hands the view back to the panes (`/workspaces/:id`, from a bookmark) the
   // panes own them again. The switch costs one tmux re-attach, which is the
   // same event a page refresh already causes.
+  //
+  // IT IS ALSO WHAT THE PANE STRIPS FOLLOW (wave-3 finding F2). §4.6 named
+  // `available` — the strip EXISTS — and that is a different question from
+  // whether the strip is ON SCREEN. `/workspaces/:id` is `chat === null`, which
+  // every bookmark, every workspace switch and every `navigateToWorkspacePage`
+  // lands on, and there the surface is hidden: the panes had given their strip
+  // away to a strip nobody could see, so a workspace full of terminals opened
+  // with no tab control at all.
   const surfaceHostsTabs = surfaceTabsEnabled && lodyRail.visible;
+  // WHICH TERMINAL ROW THE RAIL HIGHLIGHTS (wave-3 finding ADJ1). While the
+  // surface is up a terminal is a TAB of it, so the row is the one the ADDRESS
+  // names, and `''` honestly means "a conversation owns the pane". With the
+  // panes up it is the pane's own focused tab, exactly as before.
+  const railTerminalId = lodyRail.visible
+    ? addressTerminalId ?? ''
+    : railActiveSessionId ?? '';
   const paneSessions = surfaceHostsTabs ? NO_WORKSPACE_TABS : renderedSessions;
   const surfaceTabBody = (workspaceTabId: string): ReactNode => {
     // `renderedSessions` is the mount rule, unchanged: a tab that has never
@@ -1573,9 +1669,9 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
   const surfaceTabs: SurfaceTabsBinding | undefined = surfaceTabsEnabled
     ? {
         tabs: toSessionSurfaceTabs(ttydTabs, surfaceTabBody),
-        activeTabId: lodyRail.terminalId === null
+        activeTabId: addressTerminalId === null
           ? null
-          : surfaceTabId(lodyRail.terminalId),
+          : surfaceTabId(addressTerminalId),
         onSelect: (tabId) => {
           const workspaceTabId = workspaceTabIdFromSurfaceTabId(tabId);
           if (workspaceTabId !== null) selectTtydSession(workspaceTabId);
@@ -1589,6 +1685,22 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
         // attached — only the ADDRESS gives the selection back to its host
         // page, which is what makes the conversation visible again.
         onDeselect: lodyRail.closeTerminal,
+        // THE SESSION THIS STRIP WAS DRAWN IN DOES NOT EXIST (wave-3 F7).
+        //
+        // `SessionDetail` renders its not-found card and returns above the
+        // strip, so every tab goes with it — the terminal the member was
+        // looking at included, and its tmux session is still attached on the
+        // box. The selection moves to the strip's OTHER host, the landing's,
+        // which needs no session to be rooted in.
+        //
+        // WITH NO TERMINAL IN THE ADDRESS THE CARD STAYS. A dead session is
+        // then the whole of what the member asked for, and the card is the
+        // honest answer to it — the same one they get with the flag off.
+        onSessionMissing: () => {
+          if (addressTerminalId === null) return;
+          if (!ttydSessions.some((tab) => String(tab.id) === addressTerminalId)) return;
+          lodyRail.openTerminalOnLanding();
+        },
       }
     : undefined;
 
@@ -1812,7 +1924,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               visible={lodyRail.visible}
               railHost={lodyRail.railHost}
               terminals={railSessions}
-              activeTerminalId={railActiveSessionId ?? ''}
+              activeTerminalId={railTerminalId}
               onSelectTerminal={selectTtydSession}
               onOpenSession={lodyRail.openSession}
               onOpenLanding={openFreshLanding}
@@ -1849,7 +1961,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
               paneResizing={paneResizing}
               tabDrag={tabDrag}
               splitEnabled={splitEnabled}
-              tabStrips={!surfaceTabsEnabled}
+              tabStrips={!surfaceHostsTabs}
               mobile={mobileWebApp}
               drawerOpen={drawerOpen}
               tabsLoaded={tabsLoaded}
@@ -2079,7 +2191,7 @@ export default function CloudApp({ client, resolver }: CloudAppProps) {
           openPanels={openPanels}
           pendingRequestCount={activePendingRequests.length}
           onTogglePanel={(panel) => {
-            updateWorkspaceTabs((tabs) => togglePanelTab(tabs, panel));
+            togglePanel(panel);
             setFocusedRegion('side');
           }}
         />
