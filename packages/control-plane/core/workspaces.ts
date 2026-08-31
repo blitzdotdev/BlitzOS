@@ -862,17 +862,35 @@ export function addWorkspaceRoutes(
     }
   });
 
+  /**
+   * The app shell, when the request is a browser navigation rather than a
+   * fetch.
+   *
+   * Content negotiation is the whole test: a hard navigation — refresh, deep
+   * link, bookmark, open-in-new-tab — asks for `text/html`, and the SPA's own
+   * fetch calls do not. The shell is the same bytes for everyone, so it is
+   * served before any principal is resolved and carries the asset binding's
+   * own caching headers unchanged.
+   *
+   * Null means "not an HTML navigation": the caller answers as it otherwise
+   * would.
+   */
+  const appShell = (
+    runtime: CoreRuntime,
+    context: CoreContext,
+  ): Promise<Response> | null =>
+    runtime.assets !== undefined
+      && (context.req.header("accept") ?? "").includes("text/html")
+      ? runtime.assets.fetch(context.req.raw)
+      : null;
+
   router.get("/workspaces/:id", async (context) => {
     // The SPA's workspace page shares this path. A browser refresh navigates
     // here with an HTML accept; serve the app shell and keep JSON for fetch
     // callers.
     const runtime = runtimeFactory(context);
-    if (
-      runtime.assets !== undefined
-      && (context.req.header("accept") ?? "").includes("text/html")
-    ) {
-      return runtime.assets.fetch(context.req.raw);
-    }
+    const shell = appShell(runtime, context);
+    if (shell !== null) return shell;
     const principal = await requirePrincipal(context);
     const row = await workspaceById(runtime.db, context.req.param("id"));
     if (row === null || row.org_id !== principal.orgId || row.deleted_at !== null) {
@@ -882,6 +900,31 @@ export function addWorkspaceRoutes(
     if (view.role === null) throw new HttpError(403, "forbidden");
     return context.json<CreateWorkspaceResponse>({ workspace: view });
   });
+
+  /**
+   * The chat surface, which the SPA routes on the client alone.
+   *
+   * Five addresses live under here — `/chat`, `/chat/:sessionId`,
+   * `/chat/shared/:membershipId/:sessionId`, `/chat/terminal/:tabId` and
+   * `/chat/:sessionId/terminal/:tabId` (packages/webapp/src/sessions-page-state.ts).
+   * None of them is an API. They need a route anyway, because `/workspaces` is
+   * worker-first: the asset layer's single-page fallback never sees a path
+   * under it, so an address core does not route answered the JSON 404 from
+   * `installControlPlaneRoutes` and the SPA never loaded on a refresh.
+   *
+   * `chat` is a segment no API route uses, so these two registrations shadow
+   * nothing. The proxy answers under `/webapp/` and `/shared/`, and every
+   * other route under `/workspaces/:id/` names its own literal segment. A
+   * request that is not an HTML navigation keeps the 404 it has today, so no
+   * fetch caller sees a change.
+   */
+  const chatShell = (context: CoreContext): Promise<Response> => {
+    const shell = appShell(runtimeFactory(context), context);
+    if (shell === null) throw new HttpError(404, "not found");
+    return shell;
+  };
+  router.get("/workspaces/:id/chat", chatShell);
+  router.get("/workspaces/:id/chat/*", chatShell);
 
   /**
    * The proxy, for both addresses it answers on.
