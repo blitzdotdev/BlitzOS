@@ -130,7 +130,7 @@ jobs:
           # Inert while the policy above is byok-required, because a snapshot
           # cannot cross into an org's own project. It goes live for subscribed
           # orgs under plans/SUBSCRIPTION-COMPUTE.md.
-          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=425047509'
+          BLITZ_DEPLOY_VAR_HETZNER_SERVER_IMAGES: '*=426576280'
           # The box image canary boots, served as an R2 archive from canary's
           # own account (mode B in docs/BOX-IMAGE.md). Client prod uses mode A,
           # a GHCR digest pushed by release.yml on a `v*` tag.
