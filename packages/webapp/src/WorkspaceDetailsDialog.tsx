@@ -375,6 +375,7 @@ export function WorkspaceDetailsDialog({
   client,
   workspace,
   listMachineTypes,
+  refreshWorkspaces,
   initialTab = 'members',
   focusAddMember = false,
   onClose,
@@ -384,6 +385,11 @@ export function WorkspaceDetailsDialog({
   client: ControlPlaneClient;
   workspace: CloudWorkspaceModel;
   listMachineTypes: () => Promise<ListMachineTypesResponse>;
+  /** Runs the workspace poll now. The rows this dialog administers are the
+   * polled ones, so a settled write asks for the next poll rather than
+   * leaving the list stale until the 15 s tick. Must be stable: the import
+   * preview's debounce watches the callback it is given. */
+  refreshWorkspaces: () => void;
   initialTab?: WorkspaceDetailsTab;
   /** Opens with the add-member field focused, for the tile menu's Invite. */
   focusAddMember?: boolean;
@@ -435,10 +441,28 @@ export function WorkspaceDetailsDialog({
   }, [client, listMachineTypes, workspaceId]);
 
   /** Every write reports its own failure and leaves the poll to refresh the
-   * rows, so no edit invents a row the server has not agreed to. */
+   * rows, so no edit invents a row the server has not agreed to. A settled
+   * write runs that poll at once: the credential a member just saved, and the
+   * one they just revoked, are rows only the poll can produce. */
   const run = useCallback((action: Promise<unknown>) => {
-    void action.then(() => setError(null)).catch((caught: Error) => setError(caught.message));
-  }, []);
+    void action
+      .then(() => {
+        setError(null);
+        refreshWorkspaces();
+      })
+      .catch((caught: Error) => setError(caught.message));
+  }, [refreshWorkspaces]);
+
+  /** The import shares one call with its preview, so only the run that writes
+   * asks for a poll — a dry run has nothing for it to find. */
+  const importCredentials = useCallback(
+    async (input: ImportWorkspaceCredentialsRequest) => {
+      const response = await client.importWorkspaceCredentials(workspaceId, input);
+      if (input.dryRun !== true) refreshWorkspaces();
+      return response;
+    },
+    [client, refreshWorkspaces, workspaceId],
+  );
 
   const machineAction = (
     member: WorkspaceMemberView,
@@ -562,7 +586,7 @@ export function WorkspaceDetailsDialog({
               canManage={canManage}
               onPut={(input) => run(client.putWorkspaceCredential(workspace.id, input))}
               onRevoke={(name) => run(client.revokeWorkspaceCredential(workspace.id, name))}
-              onImport={(input) => client.importWorkspaceCredentials(workspace.id, input)}
+              onImport={importCredentials}
             />
           )}
           {tab === 'settings' && (

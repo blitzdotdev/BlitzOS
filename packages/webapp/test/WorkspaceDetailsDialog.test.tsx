@@ -1,8 +1,12 @@
-import { act } from 'react';
+import { act, useCallback, useMemo, useState } from 'react';
 import type {
+  ImportWorkspaceCredentialsRequest,
+  ImportWorkspaceCredentialsResponse,
   MachineState,
   MachineType,
   MachineView,
+  PutWorkspaceCredentialRequest,
+  WorkspaceCredentialView,
   WorkspaceMemberView,
 } from '@blitzos/schema';
 import type { ControlPlaneClient } from '../src/api.js';
@@ -97,18 +101,63 @@ function client(overrides: Partial<ControlPlaneClient> = {}): ControlPlaneClient
   } as unknown as ControlPlaneClient;
 }
 
+const listMachineTypesStub = async () => ({ machineTypes, failures: [] });
+const noop = () => undefined;
+
 function dialog(overrides: Partial<Parameters<typeof WorkspaceDetailsDialog>[0]> = {}) {
   return (
     <WorkspaceDetailsDialog
       client={client()}
       workspace={workspace}
-      listMachineTypes={async () => ({ machineTypes, failures: [] })}
-      onClose={() => undefined}
-      onClone={() => undefined}
-      onDelete={() => undefined}
+      listMachineTypes={listMachineTypesStub}
+      refreshWorkspaces={noop}
+      onClose={noop}
+      onClone={noop}
+      onDelete={noop}
       {...overrides}
     />
   );
+}
+
+/** What a credential write can and cannot answer with: the routes report an
+ * outcome, never the list, so the rows come from the workspace poll alone.
+ * The harness plays that poll — `refreshWorkspaces` is the only way the rows
+ * this store holds reach the dialog, so a dialog that never asks shows the
+ * list it opened with, which is the reported bug. */
+function CredentialsHarness({
+  wire,
+  store,
+}: {
+  wire: ControlPlaneClient;
+  store: { rows: WorkspaceCredentialView[] };
+}) {
+  const [credentials, setCredentials] = useState<WorkspaceCredentialView[]>(store.rows);
+  const refreshWorkspaces = useCallback(() => { setCredentials([...store.rows]); }, [store]);
+  const model = useMemo(() => ({ ...workspace, credentials }), [credentials]);
+  return (
+    <WorkspaceDetailsDialog
+      client={wire}
+      workspace={model}
+      listMachineTypes={listMachineTypesStub}
+      refreshWorkspaces={refreshWorkspaces}
+      initialTab="credentials"
+      onClose={noop}
+      onClone={noop}
+      onDelete={noop}
+    />
+  );
+}
+
+function storedCredential(name: string): WorkspaceCredentialView {
+  return { name, label: null, comment: null, createdAt: 1_700_000_100_000 };
+}
+
+function typeInto(field: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+  const prototype = field instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(field, text);
+  field.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function tab(container: HTMLElement, label: string): HTMLButtonElement | undefined {
@@ -321,6 +370,103 @@ describe('WorkspaceDetailsDialog', () => {
     expect(importWorkspaceCredentials).toHaveBeenLastCalledWith(workspace.id, { text });
     await settle();
     expect(view.container.textContent).toContain('Imported');
+    await view.unmount();
+  });
+
+  it('shows a saved credential without waiting for the next poll tick', async () => {
+    const store = { rows: [...workspace.credentials] };
+    const putWorkspaceCredential = vi.fn(
+      async (_workspaceId: string, input: PutWorkspaceCredentialRequest) => {
+        // A rotation is this same write under a name the store already holds,
+        // so both add and rotate settle through this one path.
+        store.rows = [
+          ...store.rows.filter((row) => row.name !== input.name),
+          storedCredential(input.name),
+        ];
+      },
+    );
+    const view = await render(
+      <CredentialsHarness wire={client({ putWorkspaceCredential })} store={store} />,
+    );
+    await settle();
+
+    const field = (label: string) => {
+      const input = view.container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`);
+      if (input === null) throw new Error(`the credentials tab has no ${label} field`);
+      return input;
+    };
+    await act(async () => {
+      typeInto(field('Credential name'), 'DEPLOY_KEY');
+      typeInto(field('Credential value'), 'secret-value');
+    });
+    const save = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent === 'Save credential');
+    await act(async () => save?.click());
+    await settle();
+
+    expect(putWorkspaceCredential).toHaveBeenCalledWith(
+      workspace.id,
+      { name: 'DEPLOY_KEY', value: 'secret-value' },
+    );
+    // The row the write produced, on the list the member is looking at.
+    expect(view.container.textContent).toContain('DEPLOY_KEY');
+    await view.unmount();
+  });
+
+  it('drops a revoked credential row without waiting for the next poll tick', async () => {
+    const store = { rows: [...workspace.credentials] };
+    const revokeWorkspaceCredential = vi.fn(async (_workspaceId: string, name: string) => {
+      store.rows = store.rows.filter((row) => row.name !== name);
+    });
+    const view = await render(
+      <CredentialsHarness wire={client({ revokeWorkspaceCredential })} store={store} />,
+    );
+    await settle();
+
+    const revoke = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Revoke STRIPE_API_KEY"]',
+    );
+    await act(async () => revoke?.click());
+    await settle();
+
+    expect(revokeWorkspaceCredential).toHaveBeenCalledWith(workspace.id, 'STRIPE_API_KEY');
+    expect(view.container.querySelector('button[aria-label="Revoke STRIPE_API_KEY"]')).toBeNull();
+    await view.unmount();
+  });
+
+  it('shows imported credentials at once, and asks for nothing after a dry run', async () => {
+    const store = { rows: [...workspace.credentials] };
+    const importWorkspaceCredentials = vi.fn(
+      async (
+        _workspaceId: string,
+        input: ImportWorkspaceCredentialsRequest,
+      ): Promise<ImportWorkspaceCredentialsResponse> => {
+        if (input.dryRun !== true) store.rows = [...store.rows, storedCredential('NEW_KEY')];
+        return { results: [{ name: 'NEW_KEY', line: 1, outcome: 'stored' }], linesRead: 1 };
+      },
+    );
+    const view = await render(
+      <CredentialsHarness wire={client({ importWorkspaceCredentials })} store={store} />,
+    );
+    await settle();
+
+    const textarea = view.container.querySelector<HTMLTextAreaElement>('[aria-label="Env file text"]');
+    if (textarea === null) throw new Error('the credentials tab has no import textarea');
+    await act(async () => typeInto(textarea, 'NEW_KEY=x\n'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, IMPORT_PREVIEW_DEBOUNCE_MS + 50));
+    });
+    // The dry run wrote nothing, so the list still holds what it opened with.
+    expect(view.container.querySelector('.workspace-credential-rows')?.textContent)
+      .not.toContain('NEW_KEY');
+
+    const importButton = [...view.container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.startsWith('Import'));
+    await act(async () => importButton?.click());
+    await settle();
+
+    expect(view.container.querySelector('.workspace-credential-rows')?.textContent)
+      .toContain('NEW_KEY');
     await view.unmount();
   });
 
