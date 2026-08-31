@@ -87,7 +87,16 @@ import {
 } from '@/components/terminal/terminal-controller';
 import { isElectronRenderer } from '@/lib/electron';
 import { sidebarCollapsedAtom } from '@/atoms/sidebar-state';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { useDocumentTitle } from '@/hooks/use-document-title';
 import { useTabStatus, type TabStatus } from '@/hooks/use-tab-status';
 import {
@@ -654,6 +663,25 @@ const TerminalDockToggleButton = memo(function TerminalDockToggleButton() {
   );
 });
 
+/** Stable empty default, so the memos that read `surfaceTabs` do not see a new
+ * array identity on every render of a page that contributes none. */
+const EMPTY_SURFACE_TABS: readonly SessionSurfaceTab[] = [];
+
+/** One tab the HOST contributes to this session's tab strip.
+ *
+ * A host that embeds this page may own surfaces of its own that belong beside
+ * the conversation rather than in a second strip. The page draws the tab and
+ * lays the content out; the host owns the list, the selection and both verbs. */
+export interface SessionSurfaceTab {
+  /** Unique across this strip. Must not collide with a session id. */
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  /** Rendered as a peer of the chat surfaces: mounted always, hidden when
+   *  another tab is active. */
+  content: ReactNode;
+}
+
 /**
  * Session detail page component.
  * Displays the chat interface for a single session.
@@ -665,6 +693,10 @@ const SessionDetail = ({
   urlBrowser,
   onMobileBack,
   readOnly = false,
+  surfaceTabs = EMPTY_SURFACE_TABS,
+  activeSurfaceTabId = null,
+  onSurfaceTabSelect,
+  onSurfaceTabClose,
 }: {
   sessionId: SessionId;
   urlTab?: string;
@@ -674,6 +706,13 @@ const SessionDetail = ({
   /** Follow the session without driving it. Passed to every chat surface this
    * page mounts; see `SessionChatInterfaceProps.readOnly`. */
   readOnly?: boolean;
+  /** Host-contributed tabs, drawn after the session tabs. Empty by default, so
+   * the strip and the surfaces are exactly what they were without them. */
+  surfaceTabs?: readonly SessionSurfaceTab[];
+  /** Which host tab is selected, or `null` when a session tab is. */
+  activeSurfaceTabId?: string | null;
+  onSurfaceTabSelect?: (tabId: string) => void;
+  onSurfaceTabClose?: (tabId: string) => void;
 }) => {
   const { t } = useTranslation();
   const router = useRouter();
@@ -3390,6 +3429,20 @@ const SessionDetail = ({
     return openedSidebarTabs.filter((tabId) => availableTabIds.has(tabId));
   }, [openedSidebarTabs, sidePanelFixedOptions]);
 
+  // Host tabs, in the shape the strip draws a non-session tab in. Memoized on
+  // the host's own list, so a page that contributes none hands `SessionTabBar`
+  // the same empty array on every render and its `memo` still holds.
+  const surfaceTabItems = useMemo<ViewerTabItem[]>(
+    () =>
+      surfaceTabs.map((tab) => ({
+        id: tab.id,
+        type: 'custom' as const,
+        label: tab.label,
+        icon: tab.icon,
+      })),
+    [surfaceTabs]
+  );
+
   // Shared viewer metadata powers the mobile switcher and desktop side-panel tabs.
   const viewerTabItems: ViewerTabItem[] = useMemo(
     () =>
@@ -5507,7 +5560,7 @@ const SessionDetail = ({
      lives in the context strip above the composer and in the "…" menu. */
   const tabBar = (
     <SessionTabBar
-      variant="session"
+      variant={surfaceTabs.length > 0 ? 'mixed' : 'session'}
       parentSession={activeSession}
       childSessions={visibleChildSessions}
       draftTabs={draftTabs}
@@ -5515,6 +5568,10 @@ const SessionDetail = ({
       activeTabSessionId={activeTabSessionId}
       onTabSelect={handleSessionTabSelect}
       onNewTab={handleNewTab}
+      viewerTabs={surfaceTabItems}
+      activeViewerTabId={activeSurfaceTabId}
+      onViewerTabSelect={onSurfaceTabSelect}
+      onViewerTabClose={onSurfaceTabClose}
       onTabRename={handleTabRename}
       onTabClose={handleTabClose}
       archivedChildSessions={archivedChildSessions}
@@ -5583,6 +5640,14 @@ const SessionDetail = ({
     };
   };
 
+  // An active HOST tab deselects every conversation surface, the same rule
+  // `hasActiveViewerTab` applies to the strip. Null when the host contributes
+  // none, so the surfaces below read exactly what they read before.
+  const activeChatSurfaceId =
+    activeSurfaceTabId !== null && surfaceTabs.some((tab) => tab.id === activeSurfaceTabId)
+      ? null
+      : activeTabSessionId;
+
   const desktopChatSurfaces = (
     <SessionMentionDropLayer
       enabled
@@ -5590,7 +5655,7 @@ const SessionDetail = ({
       onDropSessionId={handleInsertDroppedSessionMention}
     >
       {[activeSession, ...visibleChildSessions].map((tabSession) => {
-        const isActive = tabSession.id === activeTabSessionId;
+        const isActive = tabSession.id === activeChatSurfaceId;
         const externalHistoryRefresh = externalHistoryRefreshBySessionId[tabSession.id];
         const externalHistoryProviderLabel = externalHistoryRefresh
           ? getExternalHistoryProviderLabel(externalHistoryRefresh.provider)
@@ -5624,7 +5689,7 @@ const SessionDetail = ({
         );
       })}
       {draftTabs.map((draft) => {
-        const isActive = draft.id === activeTabSessionId;
+        const isActive = draft.id === activeChatSurfaceId;
         return (
           <div
             key={draft.id}
@@ -5640,6 +5705,19 @@ const SessionDetail = ({
               onSendDraft={handleSendDraft}
               onCommentReferencesChange={getCommentReferencesChangeHandler(draft.id)}
             />
+          </div>
+        );
+      })}
+      {surfaceTabs.map((tab) => {
+        const isActive = tab.id === activeSurfaceTabId;
+        return (
+          <div
+            key={tab.id}
+            className={cn('absolute inset-0', !isActive && 'hidden')}
+            aria-hidden={!isActive}
+            data-surface-tab-id={tab.id}
+          >
+            {tab.content}
           </div>
         );
       })}

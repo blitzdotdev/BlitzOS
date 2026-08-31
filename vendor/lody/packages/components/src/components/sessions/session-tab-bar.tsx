@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Plus, Loader2, X, History, Undo2, Pin, FileDiff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getSessionLaunchConfigLegacyFields, type SessionId, type SessionMeta } from '@lody/shared';
@@ -39,11 +39,18 @@ import {
   startSessionMentionDrag,
 } from '@/lib/session-mention-drag';
 
-/** A viewer tab item (file or diff) displayed in the tab bar. */
+/** A viewer tab item (file or diff) displayed in the tab bar.
+ *
+ * `custom` is for a tab a HOST contributes: the bar draws and sorts it exactly
+ * like a file or a diff tab, and the host supplies both the glyph ({@link icon})
+ * and the content, so the bar needs to know nothing about what is behind it. */
 export interface ViewerTabItem {
   id: string;
-  type: 'file' | 'diff';
+  type: 'file' | 'diff' | 'custom';
   label: string;
+  /** Drawn in place of the file/diff glyph. Required in practice for a
+   * `custom` tab, which has no file path to derive an icon from. */
+  icon?: ReactNode;
   filePath?: string;
   dirty?: boolean;
   saving?: boolean;
@@ -55,7 +62,10 @@ type MaybePromiseVoid = void | Promise<void>;
 
 interface SessionTabBarProps {
   variant?: SessionTabBarVariant;
-  parentSession: SessionMeta;
+  /** The session the strip is rooted in. Optional because `variant="viewer"`
+   * draws no session tabs at all, so a host using that variant has no session
+   * to name — requiring it is what stops the declared variant being usable. */
+  parentSession?: SessionMeta;
   childSessions: SessionMeta[];
   draftTabs: DraftSessionTab[];
   archivedChildSessions: SessionMeta[];
@@ -463,11 +473,11 @@ function ViewerTabContent({
       }}
     >
       <span className="shrink-0">
-        {tab.type === 'file' && tab.filePath ? (
+        {tab.icon ?? (tab.type === 'file' && tab.filePath ? (
           <FileIcon filePath={tab.filePath} className="h-3 w-3" />
         ) : (
           <FileDiff className="h-3 w-3 opacity-60" />
-        )}
+        ))}
       </span>
       {saveStateLabel ? (
         <span
@@ -723,8 +733,9 @@ export const SessionTabBar = memo(function SessionTabBar({
   // In mixed mode, an active viewer tab deselects the session tabs.
   const hasActiveViewerTab = variant === 'mixed' && !!activeViewerTabId;
   const visibleTabIds = useMemo(
-    () => (showSessionTabs ? [parentSession.id, ...sortableIds] : sortableIds),
-    [parentSession.id, showSessionTabs, sortableIds]
+    () =>
+      showSessionTabs && parentSession ? [parentSession.id, ...sortableIds] : sortableIds,
+    [parentSession, showSessionTabs, sortableIds]
   );
   const activeTabId =
     showViewerTabs && activeViewerTabId
@@ -762,7 +773,7 @@ export const SessionTabBar = memo(function SessionTabBar({
         paddingLeft={variant === 'session' ? 4 : 8}
         paddingRight={8}
       >
-        {showSessionTabs && (
+        {showSessionTabs && parentSession && (
           <AdaptiveTabStripItem itemId={parentSession.id}>
             <TabContent
               session={parentSession}

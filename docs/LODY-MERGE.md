@@ -52,7 +52,8 @@ git diff --name-only <pinned-sha>..FETCH_HEAD -- \
   'vendor/lody/packages/components/src/components/loro-sidebar.tsx' \
   'vendor/lody/packages/components/src/lib/electron-session-file-sender.ts' \
   'vendor/lody/packages/components/src/components/sessions/session-chat-interface.tsx' \
-  'vendor/lody/packages/components/src/components/sessions/session-detail.tsx'
+  'vendor/lody/packages/components/src/components/sessions/session-detail.tsx' \
+  'vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx'
 ```
 
 (The paths inside the upstream tree have no `vendor/lody/` prefix; drop it when
@@ -92,7 +93,7 @@ git log -1 --format=%B $(git rev-list -1 HEAD -- vendor/lody) | grep git-subtree
 ```
 
 If the pull conflicts, resolve with `BLITZ-PATCHES.md` open. Every conflict
-should be inside one of the seven files in §4; a conflict anywhere else means
+should be inside one of the eight files in §4; a conflict anywhere else means
 somebody edited `vendor/lody` outside a declared seam, which is a finding to
 report rather than to resolve quietly.
 
@@ -141,7 +142,7 @@ added — thousands of files, and no way to see the seven that matter. Comparing
 the upstream commit to `HEAD:vendor/lody` (a tree, which `git diff` accepts) is
 the comparison that answers the question.
 
-**Expect exactly SEVEN files.** They are:
+**Expect exactly EIGHT files.** They are:
 
 | # | File | Seam patch |
 |---|---|---|
@@ -151,9 +152,10 @@ the comparison that answers the question.
 | 4 | `packages/components/src/components/loro-sidebar.tsx` | 2 |
 | 5 | `packages/components/src/lib/electron-session-file-sender.ts` | 3 |
 | 6 | `packages/components/src/components/sessions/session-chat-interface.tsx` | 4 |
-| 7 | `packages/components/src/components/sessions/session-detail.tsx` | 4 |
+| 7 | `packages/components/src/components/sessions/session-detail.tsx` | 4 and 5 |
+| 8 | `packages/components/src/components/sessions/session-tab-bar.tsx` | 5 |
 
-More than seven means a hunk landed somewhere undeclared. Fewer means a patch
+More than eight means a hunk landed somewhere undeclared. Fewer means a patch
 was lost in the merge — which typecheck may not catch, because most of these
 widen a predicate rather than change a type. Check each against its row in
 `BLITZ-PATCHES.md`:
@@ -162,7 +164,17 @@ widen a predicate rather than change a type. Check each against its row in
 grep -rn '__LODY_LOCAL_BRIDGE__' vendor/lody/packages/components/src | wc -l   # expect 7
 grep -n 'hideHeader\|hideFooter' vendor/lody/packages/components/src/components/loro-sidebar.tsx | head
 grep -n 'readOnly' vendor/lody/packages/components/src/components/sessions/session-{detail,chat-interface}.tsx
+grep -n 'surfaceTabs' vendor/lody/packages/components/src/components/sessions/session-{detail,tab-bar}.tsx
+grep -n 'parentSession?' vendor/lody/packages/components/src/components/sessions/session-tab-bar.tsx
 ```
+
+The last two are seam patch 5, and they answer different questions. `surfaceTabs`
+is the four-prop API and its content render; `parentSession?` is the one hunk
+typecheck CANNOT catch in the other direction — losing it makes a REQUIRED prop
+required again at a call site (`packages/webapp/src/lody/TerminalTabsStrip.tsx`)
+that then stops compiling, so THAT loss is loud. What is quiet is upstream making
+the strip read `parentSession` somewhere new, and
+`packages/webapp/test/lody-surface-tabs.test.tsx` is what catches that.
 
 `BLITZ-PATCHES.md` carries a **merge conflict drill** for each patch, saying
 what to do when the anchor is reworded and what to do when upstream replaces the
@@ -183,10 +195,11 @@ fork starts:
 | 2 (`loro-sidebar.tsx`) | `plans/evidence/lody-sidebar-props-pr.md` | upstream has `hideHeader`/`hideFooter`, or any equivalent suppression |
 | 3 (`electron-session-file-sender.ts`) | `plans/evidence/lody-attachment-seam-pr.md` | upstream's local-file-send predicate stops requiring Electron |
 | 4 (`session-chat-interface.tsx`, `session-detail.tsx`) | `plans/evidence/lody-readonly-prop-pr.md` | upstream grows `readOnly` or its own viewer concept |
+| 5 (`session-tab-bar.tsx`, `session-detail.tsx`) | `plans/evidence/lody-surface-tabs-pr.md` | upstream lets a host contribute tabs to the session tab strip, in any spelling |
 
-**Two of them are still open and not yet submitted** (phase 7): the read-only
-prop and the attachment predicate. Neither has been sent upstream, so neither
-can have merged; the sidebar props PR is drafted and in the same state. If a
+**Three of them are still open and not yet submitted**: the read-only prop, the
+attachment predicate and the surface-tabs props. None has been sent upstream, so
+none can have merged; the sidebar props PR is drafted and in the same state. If a
 scheduled agent finds one of these merged upstream, that is news — say so
 prominently in the pull request body.
 

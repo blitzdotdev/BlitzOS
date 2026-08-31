@@ -80,11 +80,13 @@ git diff --stat <upstream-sha> $(git rev-parse HEAD:vendor/lody) -- . \
   ':!UPSTREAM.md' ':!BLITZ-PATCHES.md'
 ```
 
-Expected after phase 7: exactly SEVEN files — the three above with six
+Expected after seam patch 5: exactly EIGHT files — the three above with six
 added/changed lines, plus `components/loro-sidebar.tsx` from seam patch 2,
-`lib/electron-session-file-sender.ts` from seam patch 3, and
+`lib/electron-session-file-sender.ts` from seam patch 3,
 `components/sessions/session-chat-interface.tsx` +
-`components/sessions/session-detail.tsx` from seam patch 4.
+`components/sessions/session-detail.tsx` from seam patch 4, and
+`components/sessions/session-tab-bar.tsx` from seam patch 5, which also adds
+hunks to `session-detail.tsx`.
 
 ### 2. `LoroSidebar` header/footer suppression (phase 4, 2026-08-30)
 
@@ -221,6 +223,115 @@ re-apply by adding `readOnly ||` to whatever decides it renders. If upstream
 grows its own viewer concept (a role on the session, a capability), drop these
 hunks and pass that instead — the BlitzOS half is one boolean on
 `packages/webapp/src/lody/SessionSurface.tsx`.
+
+### 5. Pluggable surface tabs (2026-08-31)
+
+**One idea, two files.** A host that embeds the session viewer may contribute
+tabs of its own to the ONE tab strip `SessionTabBar` draws, and supply their
+content. BlitzOS uses it to put workspace terminals — ttyd over tmux, which is
+`webapp_state` and never a session — inside Lody's strip, so a member sees one
+tab system rather than two (`plans/LODY-TERMINAL-TABS.md`).
+
+The patch fills a hole that already exists rather than cutting a new one.
+`SessionTabBar` already carries a non-session tab channel that production does
+not use: `viewerTabs`, `activeViewerTabId`, `onViewerTabSelect`,
+`onViewerTabClose` are all declared, the `viewer` arm of `SortableItemData` is
+implemented, and the one production call site (`session-detail.tsx`) passes
+`variant="session"` and no viewer tabs at all. `variant="viewer"` is declared
+too — and cannot be used, because `parentSession` is required by a strip that
+variant tells not to draw.
+
+`packages/components/src/components/sessions/session-tab-bar.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 1 | 1 | the `react` import | adds `type ReactNode` |
+| 2 | 43 | `export interface ViewerTabItem` | widens `type` to `'file' \| 'diff' \| 'custom'` and adds `icon?: ReactNode` |
+| 3 | 464 | the `<span className="shrink-0">` glyph in `ViewerTabContent` | draws `tab.icon` when the host supplied one |
+| 4 | 58 | `parentSession: SessionMeta;` | makes it `parentSession?: SessionMeta;` |
+| 5 | 726 | `[parentSession.id, ...sortableIds]` | reads the id only when `showSessionTabs` AND a session was given |
+| 6 | 766 | `<AdaptiveTabStripItem itemId={parentSession.id}>` | the existing `showSessionTabs &&` guard gains `parentSession &&` |
+
+Hunks 4–6 are the "a strip need not be rooted in a session" half, and they are
+what `packages/webapp/src/lody/TerminalTabsStrip.tsx` mounts: the same component,
+`variant="viewer"`, on the chat landing where there is no session to root it in.
+
+`packages/components/src/components/sessions/session-detail.tsx`
+
+| # | Line (at `f3474894`) | Upstream anchor | What it does |
+|---|---|---|---|
+| 7 | 90 | the `react` import | adds `type ReactNode` |
+| 8 | 657 | after `TerminalDockToggleButton` | declares `SessionSurfaceTab` and the `EMPTY_SURFACE_TABS` default |
+| 9 | 667 | after `readOnly = false,` and its type entry (seam patch 4's anchor) | declares and defaults `surfaceTabs`, `activeSurfaceTabId`, `onSurfaceTabSelect`, `onSurfaceTabClose` |
+| 10 | 3393 | immediately above `viewerTabItems` | maps `surfaceTabs` to `ViewerTabItem[]`, memoized so a page contributing none hands `SessionTabBar` one stable empty array |
+| 11 | 5510 | `variant="session"` in the `SessionTabBar` element | `variant={surfaceTabs.length > 0 ? 'mixed' : 'session'}` |
+| 12 | 5517 | after `onNewTab={handleNewTab}` | passes `viewerTabs`, `activeViewerTabId`, `onViewerTabSelect`, `onViewerTabClose` |
+| 13 | 5586 | before `desktopChatSurfaces` | `activeChatSurfaceId`: an active HOST tab deselects every conversation surface, the same rule `hasActiveViewerTab` applies to the strip |
+| 14 | 5587, 5626 | the two `const isActive = … === activeTabSessionId;` | read `activeChatSurfaceId` instead |
+| 15 | 5624 | the end of `desktopChatSurfaces`'s children | maps `surfaceTabs` to `<div className={cn('absolute inset-0', !isActive && 'hidden')}>{tab.content}</div>`, the same shape the drafts get |
+
+**Hunk 10's position is load-bearing, and it is not where the design put it.**
+`SessionDetail` returns early below `:3400` (the loading and missing-session
+branches), so a `useMemo` beside the `tabBar` element runs on some renders and
+not others — React reports "Rendered more hooks than during the previous
+render", the page dies into `CatchBoundary`, and the session never draws. It
+sits beside `viewerTabItems` for that reason: the hook must be above every
+early return, next to the other list the strip is built from. Measured, not
+reasoned about — `packages/webapp/test/lody-shared-surface.test.tsx` caught it
+against a real daemon.
+
+The API is four props, one idea. The host owns the list, the selection and both
+verbs; the viewer owns the drawing and the layout. There is no registry, no atom
+and no context — grepping `registerTab|tabRegistry|registerPanel|panelRegistry`
+across `packages/components/src` returns nothing, so there is no extension
+mechanism to hook into and this is the smallest thing that could be one.
+
+```ts
+export interface SessionSurfaceTab {
+  id: string;        // unique across this strip; must not collide with a session id
+  label: string;
+  icon?: ReactNode;
+  content: ReactNode; // mounted always, hidden when another tab is active
+}
+
+surfaceTabs?: readonly SessionSurfaceTab[];
+activeSurfaceTabId?: string | null;
+onSurfaceTabSelect?: (tabId: string) => void;
+onSurfaceTabClose?: (tabId: string) => void;
+```
+
+**`content: ReactNode`, not a portal host.** A ref-callback host element was the
+first design, on the rail-portal precedent. It was rejected: React remounts a
+portal whose container identity changes, so the container swap it was meant to
+avoid happens anyway, and the prop is a fifth member of the seam that buys
+nothing. Mounted inline and hidden-not-unmounted, a host tab survives every tab
+switch inside one session.
+
+**The mobile branch is deliberately NOT patched.** `MobileSessionTabSheet` keeps
+a fourth, hand-maintained kind enum (`mobile/mobile-session-tab-sheet.tsx:55`);
+the props are inert there and the mobile drawer keeps today's behaviour.
+
+Strictly additive: with every new prop absent, `SessionDetail` and
+`SessionTabBar` render byte-for-byte what they rendered before, and no upstream
+call site passes one. `packages/webapp/test/lody-surface-tabs.test.tsx` pins
+that — it diffs this file against the upstream commit and refuses any changed
+line that is not one of the anchors above, and it renders the real
+`SessionTabBar` with today's production prop set. Upstream PR drafted at
+`plans/evidence/lody-surface-tabs-pr.md`; **drop this patch when it merges.**
+
+**Merge conflict drill.**
+
+- If `SortableItemData` grows a real fourth arm upstream — a host/custom kind of
+  its own — DROP hunks 2 and 3 and use theirs; the BlitzOS half is the same four
+  props either way.
+- If `variant` is removed, or `variant="viewer"` goes with it, hunks 4–6 go with
+  it too, and `TerminalTabsStrip` needs whatever replaces the variant.
+- If `desktopChatSurfaces` is restructured, re-apply hunks 13–15 by giving the
+  new structure the same rule: a host tab, when active, hides the conversation
+  surfaces and shows its own.
+- If upstream grows its own host-tab concept, delete all fifteen hunks and pass
+  that instead — the BlitzOS half is one binding on
+  `packages/webapp/src/lody/surface-tabs.ts`.
 
 ## Patches to the published npm artifact (NOT to this tree)
 
@@ -394,6 +505,24 @@ Recorded here because each is a candidate seam if the workaround stops holding.
   silent turn behind the fallback is a second, separate upstream defect and is
   not fixed here; the leading explanation is the adapter resolving a dead SDK
   stream as `end_turn` with no notification (`dist/claude-acp.js:63062`).
+- **Lody's own interactive terminal cannot reach a browser.**
+  `LocalTerminalPanel` is a real PTY (xterm.js → `TerminalChannel` → Electron
+  IPC → `TerminalRelay` → node-pty), and it is Electron-gated at two hard
+  places: `TerminalDockHost` returns `null` unless
+  `window.__LODY_ELECTRON__ === true` (`components/terminal-dock-host.tsx:25`,
+  `:54`) and `TerminalDockToggleButton` unless `isElectronRenderer()`
+  (`session-detail.tsx:628`). Their own docs say so
+  (`site-docs/.../(features)/terminal.mdx`). So BlitzOS keeps ttyd + tmux as the
+  tab CONTENT and adopts Lody's tab CHROME through seam patch 5 — and the gate
+  is also why the dock needs no hunt to stay invisible in our mount. **Watch for
+  the day `TerminalChannel` gains a non-Electron transport**: our channel
+  adapter would be a ~150-line file and the dock becomes an option again. Note
+  what would be LOST if it were adopted as-is, so the trade is re-made and not
+  assumed: the dock draws its own strip (`lody-terminal-tab-strip`,
+  `terminal-dock.tsx:490`), which is the second strip this whole effort deletes;
+  its open/active memory is a module-level `Map` that does not survive a reload,
+  where tmux survives the daemon and the browser; and `blitz-term`'s type map is
+  what makes a tab a Claude Code or Codex TUI.
 - **`acp-extension-dsh` is an empty submodule.** Aliased to a local stub; see
   `UPSTREAM.md`.
 - **`packages/components/vite-renderer-bundle-aliases.ts` cannot be imported.**
